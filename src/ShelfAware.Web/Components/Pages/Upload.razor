@@ -1,0 +1,341 @@
+@page "/receipt"
+@rendermode InteractiveServer
+@using ShelfAware.Core.Extraction
+@using Microsoft.Extensions.Options
+@inject IDbContextFactory<ShelfAwareDbContext> DbFactory
+@inject IReceiptExtractor Extractor
+@inject AppPaths Paths
+@inject IOptions<ShelfAware.Llm.LlmOptions> LlmOptions
+
+<PageTitle>Upload receipt — Shelf Aware</PageTitle>
+
+<h1>Upload receipt</h1>
+
+@if (phase is Phase.Idle or Phase.Error or Phase.Extracting)
+{
+    @* The InputFile must stay mounted while extracting — IBrowserFile reads stream
+       through the DOM element, and unmounting it breaks them mid-read. *@
+    <section class="panel">
+        <p>
+            Photograph a paper receipt, or screenshot a digital order page (multiple screenshots of one
+            long order are fine — they're merged). Print-to-PDF order pages also work.
+        </p>
+        <div hidden="@(phase == Phase.Extracting)">
+            <InputFile OnChange="OnFilesSelected" multiple accept="image/jpeg,image/png,image/gif,image/webp,application/pdf" />
+            @if (selectedFiles.Count > 0)
+            {
+                <p>@selectedFiles.Count file(s) selected.</p>
+                <button @onclick="Extract">Extract</button>
+            }
+        </div>
+        @if (phase == Phase.Extracting)
+        {
+            <p class="spinner">Reading your receipt… this usually takes a few seconds.</p>
+        }
+        @if (phase == Phase.Error)
+        {
+            <p class="error">@errorMessage</p>
+        }
+    </section>
+}
+else if (phase == Phase.Review && receipt is not null)
+{
+    <section class="panel">
+        <p>
+            <strong>@(receipt.Merchant ?? "Unknown merchant")</strong>
+            — @(receipt.PurchasedAt?.ToString("yyyy-MM-dd") ?? "no date detected")
+            — @reviewLines.Count item(s). Review and correct before confirming.
+        </p>
+        @if (reviewLines.Count == 0)
+        {
+            <p class="error">No purchasable items were found — this may not be a receipt. You can discard it below.</p>
+        }
+        <table>
+            <thead>
+                <tr>
+                    <th>Receipt text</th>
+                    <th>Item</th>
+                    <th>Qty</th>
+                    <th>Category</th>
+                    <th>Product match</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var line in reviewLines)
+                {
+                    <tr class="@(line.Confidence < 0.6m ? "low-confidence" : "")">
+                        <td class="raw">@line.RawText</td>
+                        <td><input @bind="line.NormalizedName" /></td>
+                        <td><input type="number" step="0.01" min="0.01" @bind="line.Quantity" size="5" /></td>
+                        <td>
+                            <select @bind="line.Category">
+                                @foreach (var c in Enum.GetValues<Category>())
+                                {
+                                    <option value="@c">@c</option>
+                                }
+                            </select>
+                        </td>
+                        <td>
+                            <select @bind="line.ProductId">
+                                <option value="0">➕ create new product</option>
+                                @foreach (var p in products)
+                                {
+                                    <option value="@p.Id">@p.Name</option>
+                                }
+                            </select>
+                            @if (line.AliasMatched)
+                            {
+                                <small title="Matched a previous receipt line from this merchant">🔗</small>
+                            }
+                        </td>
+                        <td><button @onclick="() => reviewLines.Remove(line)" title="Remove line">✕</button></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <button @onclick="ConfirmAll" disabled="@(reviewLines.Count == 0)">Confirm all</button>
+        <button @onclick="Discard">Discard receipt</button>
+    </section>
+}
+else if (phase == Phase.Done)
+{
+    <section class="panel">
+        <p>✅ @confirmSummary</p>
+        <button @onclick="Reset">Upload another</button>
+    </section>
+}
+
+@code {
+    private enum Phase { Idle, Extracting, Review, Done, Error }
+
+    private const long MaxUploadBytes = 25 * 1024 * 1024;
+
+    private Phase phase = Phase.Idle;
+    private string? errorMessage;
+    private List<IBrowserFile> selectedFiles = [];
+    private Receipt? receipt;
+    private List<ReviewLine> reviewLines = [];
+    private List<Product> products = [];
+    private string confirmSummary = "";
+
+    private class ReviewLine
+    {
+        public required string RawText { get; set; }
+        public string NormalizedName { get; set; } = "";
+        public decimal Quantity { get; set; } = 1;
+        public Category Category { get; set; }
+        public decimal Confidence { get; set; }
+        public decimal? UnitPrice { get; set; }
+        public int ProductId { get; set; }            // 0 = create new
+        public bool AliasMatched { get; set; }
+    }
+
+    private void OnFilesSelected(InputFileChangeEventArgs e)
+    {
+        selectedFiles = e.GetMultipleFiles(10).ToList();
+        errorMessage = null;
+        if (phase == Phase.Error) phase = Phase.Idle;
+    }
+
+    private async Task Extract()
+    {
+        phase = Phase.Extracting;
+        errorMessage = null;
+        StateHasChanged();
+
+        var folderName = $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}"[..40];
+        var folder = Path.Combine(Paths.ReceiptsDir, folderName);
+
+        try
+        {
+            Directory.CreateDirectory(folder);
+            var attachments = new List<ReceiptAttachment>();
+            var maxEdge = LlmOptions.Value.MaxImageEdgePx;
+            var index = 0;
+
+            foreach (var file in selectedFiles)
+            {
+                byte[] bytes;
+                string mediaType;
+                if (file.ContentType == "application/pdf")
+                {
+                    bytes = await ReadAllAsync(file.OpenReadStream(MaxUploadBytes));
+                    mediaType = "application/pdf";
+                }
+                else
+                {
+                    // Browser-side resize: longest edge capped per Llm:MaxImageEdgePx (DESIGN.md §5).
+                    var resized = await file.RequestImageFileAsync("image/jpeg", maxEdge, maxEdge);
+                    bytes = await ReadAllAsync(resized.OpenReadStream(MaxUploadBytes));
+                    mediaType = "image/jpeg";
+                }
+                attachments.Add(new ReceiptAttachment(bytes, mediaType));
+
+                var ext = mediaType == "application/pdf" ? "pdf" : "jpg";
+                await File.WriteAllBytesAsync(Path.Combine(folder, $"page-{index++}.{ext}"), bytes);
+            }
+
+            var result = await Extractor.ExtractAsync(attachments);
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+            receipt = new Receipt
+            {
+                ImagePath = Path.Combine("receipts", folderName),
+                RawModelJson = result.RawModelJson,
+                Status = ReceiptStatus.PendingReview,
+            };
+
+            if (!result.Success || result.Receipt is null)
+            {
+                db.Receipts.Add(receipt);
+                await db.SaveChangesAsync();
+                errorMessage = $"Sorry — that receipt couldn't be read. The image was kept for review. ({result.Error})";
+                phase = Phase.Error;
+                return;
+            }
+
+            receipt.Merchant = result.Receipt.Merchant;
+            receipt.PurchasedAt = result.Receipt.PurchaseDate;
+            receipt.Lines = result.Receipt.Lines.Select(l => new ReceiptLine
+            {
+                RawText = l.RawText,
+                NormalizedName = l.NormalizedName,
+                Quantity = l.Quantity,
+                UnitPrice = l.UnitPrice,
+                Category = l.Category,
+                Confidence = l.Confidence,
+            }).ToList();
+            db.Receipts.Add(receipt);
+            await db.SaveChangesAsync();
+
+            products = await db.Products.OrderBy(p => p.Name).ToListAsync();
+
+            // Alias flow (DESIGN.md §4): deterministic (Merchant, RawText) match pre-fills the product mapping.
+            var merchant = receipt.Merchant ?? "";
+            var aliases = await db.ProductAliases.Where(a => a.Merchant == merchant).ToListAsync();
+            reviewLines = receipt.Lines.Select(l =>
+            {
+                var alias = aliases.FirstOrDefault(a => a.RawText == l.RawText);
+                var nameMatch = alias is null
+                    ? products.FirstOrDefault(p => string.Equals(p.Name, l.NormalizedName, StringComparison.OrdinalIgnoreCase))
+                    : null;
+                return new ReviewLine
+                {
+                    RawText = l.RawText,
+                    NormalizedName = l.NormalizedName,
+                    Quantity = l.Quantity,
+                    Category = l.Category,
+                    Confidence = l.Confidence,
+                    UnitPrice = l.UnitPrice,
+                    ProductId = alias?.ProductId ?? nameMatch?.Id ?? 0,
+                    AliasMatched = alias is not null,
+                };
+            }).ToList();
+
+            phase = Phase.Review;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Sorry — something went wrong while reading the receipt: {ex.Message}";
+            phase = Phase.Error;
+        }
+        finally
+        {
+            selectedFiles = [];
+        }
+    }
+
+    private async Task ConfirmAll()
+    {
+        if (receipt is null) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var dbReceipt = await db.Receipts.Include(r => r.Lines).FirstAsync(r => r.Id == receipt.Id);
+        var purchaseDate = dbReceipt.PurchasedAt ?? DateOnly.FromDateTime(DateTime.Today);
+        var merchant = dbReceipt.Merchant ?? "";
+        var created = 0;
+
+        foreach (var line in reviewLines)
+        {
+            var name = line.NormalizedName.Trim();
+            if (name.Length == 0) continue;
+
+            Product product;
+            if (line.ProductId > 0)
+            {
+                product = await db.Products.FirstAsync(p => p.Id == line.ProductId);
+            }
+            else
+            {
+                product = new Product { Name = name, Category = line.Category };
+                db.Products.Add(product);
+                created++;
+            }
+
+            db.PurchaseEvents.Add(new PurchaseEvent
+            {
+                Product = product,
+                PurchasedAt = purchaseDate,
+                Quantity = line.Quantity,
+                Source = PurchaseSource.Receipt,
+                ReceiptId = dbReceipt.Id,
+            });
+
+            var dbLine = dbReceipt.Lines.FirstOrDefault(l => l.RawText == line.RawText);
+            if (dbLine is not null)
+            {
+                dbLine.NormalizedName = name;
+                dbLine.Quantity = line.Quantity;
+                dbLine.Category = line.Category;
+                dbLine.Product = product;
+            }
+
+            // Write/refresh alias so re-uploads pre-match deterministically (DESIGN.md §4).
+            var alias = await db.ProductAliases.FirstOrDefaultAsync(a => a.Merchant == merchant && a.RawText == line.RawText);
+            if (alias is null)
+            {
+                db.ProductAliases.Add(new ProductAlias { Merchant = merchant, RawText = line.RawText, Product = product });
+            }
+            else
+            {
+                alias.Product = product;
+            }
+        }
+
+        dbReceipt.Status = ReceiptStatus.Confirmed;
+        await db.SaveChangesAsync();
+
+        confirmSummary = $"Recorded {reviewLines.Count(l => l.NormalizedName.Trim().Length > 0)} purchases" +
+                         (created > 0 ? $" ({created} new product{(created == 1 ? "" : "s")})" : "") +
+                         $" from {(merchant.Length > 0 ? merchant : "unknown merchant")} on {purchaseDate:yyyy-MM-dd}.";
+        phase = Phase.Done;
+    }
+
+    private async Task Discard()
+    {
+        if (receipt is not null)
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var dbReceipt = await db.Receipts.FirstAsync(r => r.Id == receipt.Id);
+            dbReceipt.Status = ReceiptStatus.Discarded;
+            await db.SaveChangesAsync();
+        }
+        Reset();
+    }
+
+    private void Reset()
+    {
+        phase = Phase.Idle;
+        receipt = null;
+        reviewLines = [];
+        selectedFiles = [];
+        errorMessage = null;
+    }
+
+    private static async Task<byte[]> ReadAllAsync(Stream stream)
+    {
+        using var ms = new MemoryStream();
+        await stream.CopyToAsync(ms);
+        return ms.ToArray();
+    }
+}

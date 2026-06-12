@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "shelfaware-web",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "src/ShelfAware.Web", "--urls", "http://localhost:5179"],
+      "port": 5179
+    }
+  ]
+}

@@ -1,0 +1,198 @@
+@page "/products"
+@rendermode InteractiveServer
+@inject IDbContextFactory<ShelfAwareDbContext> DbFactory
+
+<PageTitle>Products — Shelf Aware</PageTitle>
+
+<h1>Products</h1>
+
+<section class="panel">
+    <h2>Add product</h2>
+    <form @onsubmit="AddProduct" @formname="add-product">
+        <input placeholder="Name" @bind="newName" />
+        <select @bind="newCategory">
+            @foreach (var c in Enum.GetValues<Category>())
+            {
+                <option value="@c">@c</option>
+            }
+        </select>
+        <input placeholder="Default unit (optional)" @bind="newUnit" size="14" />
+        <button type="submit">Add</button>
+    </form>
+    @if (addError is not null)
+    {
+        <p class="error">@addError</p>
+    }
+</section>
+
+@if (products is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Category</th>
+                <th>Tracked</th>
+                <th>Purchases</th>
+                <th>Median interval</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var p in products)
+            {
+                <tr>
+                    <td><input value="@p.Name" @onchange="e => Rename(p, (string?)e.Value)" /></td>
+                    <td>
+                        <select value="@p.Category" @onchange="e => SetCategory(p, (string?)e.Value)">
+                            @foreach (var c in Enum.GetValues<Category>())
+                            {
+                                <option value="@c">@c</option>
+                            }
+                        </select>
+                    </td>
+                    <td><input type="checkbox" checked="@p.IsTracked" @onchange="e => SetTracked(p, (bool)e.Value!)" /></td>
+                    <td>@purchaseCounts.GetValueOrDefault(p.Id)</td>
+                    <td>—</td>
+                    <td><button @onclick="() => Delete(p)">Delete</button></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+<section class="panel temp">
+    <h2>Manual purchase <small>(temporary Phase 1 form — replaced by receipt upload)</small></h2>
+    @if (products is { Count: > 0 })
+    {
+        <form @onsubmit="AddPurchase" @formname="add-purchase">
+            <select @bind="purchaseProductId">
+                @foreach (var p in products)
+                {
+                    <option value="@p.Id">@p.Name</option>
+                }
+            </select>
+            <input type="date" @bind="purchaseDate" />
+            <input type="number" step="0.01" min="0.01" @bind="purchaseQty" size="6" />
+            <button type="submit">Record purchase</button>
+        </form>
+        @if (purchaseNote is not null)
+        {
+            <p>@purchaseNote</p>
+        }
+    }
+    else
+    {
+        <p>Add a product first.</p>
+    }
+</section>
+
+@code {
+    private List<Product>? products;
+    private Dictionary<int, int> purchaseCounts = [];
+
+    private string newName = "";
+    private Category newCategory = Category.Pantry;
+    private string newUnit = "";
+    private string? addError;
+
+    private int purchaseProductId;
+    private DateOnly purchaseDate = DateOnly.FromDateTime(DateTime.Today);
+    private decimal purchaseQty = 1;
+    private string? purchaseNote;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        products = await db.Products.OrderBy(p => p.Name).ToListAsync();
+        purchaseCounts = await db.PurchaseEvents
+            .GroupBy(e => e.ProductId)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Key, x => x.Count);
+        if (products.Count > 0 && products.All(p => p.Id != purchaseProductId))
+        {
+            purchaseProductId = products[0].Id;
+        }
+    }
+
+    private async Task AddProduct()
+    {
+        addError = null;
+        var name = newName.Trim();
+        if (name.Length == 0)
+        {
+            addError = "Name is required.";
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.Products.Add(new Product
+        {
+            Name = name,
+            Category = newCategory,
+            DefaultUnit = string.IsNullOrWhiteSpace(newUnit) ? null : newUnit.Trim()
+        });
+        await db.SaveChangesAsync();
+        newName = "";
+        newUnit = "";
+        await LoadAsync();
+    }
+
+    private async Task Rename(Product p, string? value)
+    {
+        var name = value?.Trim();
+        if (string.IsNullOrEmpty(name) || name == p.Name) return;
+        p.Name = name;
+        await Save(p);
+    }
+
+    private async Task SetCategory(Product p, string? value)
+    {
+        if (!Enum.TryParse<Category>(value, out var category)) return;
+        p.Category = category;
+        await Save(p);
+    }
+
+    private async Task SetTracked(Product p, bool tracked)
+    {
+        p.IsTracked = tracked;
+        await Save(p);
+    }
+
+    private async Task Save(Product p)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.Products.Update(p);
+        await db.SaveChangesAsync();
+    }
+
+    private async Task Delete(Product p)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.Products.Remove(p);
+        await db.SaveChangesAsync();
+        await LoadAsync();
+    }
+
+    private async Task AddPurchase()
+    {
+        if (purchaseQty <= 0 || products is null || products.All(p => p.Id != purchaseProductId)) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.PurchaseEvents.Add(new PurchaseEvent
+        {
+            ProductId = purchaseProductId,
+            PurchasedAt = purchaseDate,
+            Quantity = purchaseQty,
+            Source = PurchaseSource.Manual
+        });
+        await db.SaveChangesAsync();
+        purchaseNote = $"Recorded {purchaseQty} × {products.First(p => p.Id == purchaseProductId).Name} on {purchaseDate:yyyy-MM-dd}.";
+        await LoadAsync();
+    }
+}

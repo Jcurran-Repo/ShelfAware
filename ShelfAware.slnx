@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ShelfAware.Core/ShelfAware.Core.csproj" />
+    <Project Path="src/ShelfAware.Llm/ShelfAware.Llm.csproj" />
+    <Project Path="src/ShelfAware.Web/ShelfAware.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ShelfAware.Evals/ShelfAware.Evals.csproj" />
+    <Project Path="tests/ShelfAware.Tests/ShelfAware.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,22 @@
+using ShelfAware.Core.Domain;
+
+namespace ShelfAware.Core.Extraction;
+
+public record ExtractedReceipt
+{
+    public string? Merchant { get; init; }
+    public DateOnly? PurchaseDate { get; init; }
+    public List<ExtractedLine> Lines { get; init; } = [];
+}
+
+public record ExtractedLine
+{
+    public required string RawText { get; init; }
+    public required string NormalizedName { get; init; }
+    public string? Brand { get; init; }
+    public decimal Quantity { get; init; } = 1;
+    public string? Size { get; init; }
+    public decimal? UnitPrice { get; init; }
+    public Category Category { get; init; } = Category.Other;
+    public decimal Confidence { get; init; }
+}
