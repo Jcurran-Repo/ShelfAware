@@ -1,5 +1,6 @@
 @page "/receipt"
 @rendermode InteractiveServer
+@using ShelfAware.Core.Chat
 @using ShelfAware.Core.Extraction
 @using Microsoft.Extensions.Options
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
@@ -50,6 +51,7 @@ else if (phase == Phase.Review && receipt is not null)
         {
             <p class="error">No purchasable items were found — this may not be a receipt. You can discard it below.</p>
         }
+        <div class="table-scroll">
         <table>
             <thead>
                 <tr>
@@ -65,7 +67,15 @@ else if (phase == Phase.Review && receipt is not null)
                 @foreach (var line in reviewLines)
                 {
                     <tr class="@(line.Confidence < 0.6m ? "low-confidence" : "")">
-                        <td class="raw">@line.RawText</td>
+                        <td class="raw">
+                            @line.RawText
+                            <div>
+                                <span class="chip chip-@(line.Confidence < 0.6m ? "duesoon" : "stocked")"
+                                      title="How confident the extraction was in this line">
+                                    @line.Confidence.ToString("P0") sure
+                                </span>
+                            </div>
+                        </td>
                         <td><input @bind="line.NormalizedName" /></td>
                         <td><input type="number" step="0.01" min="0.01" @bind="line.Quantity" size="5" /></td>
                         <td>
@@ -89,13 +99,16 @@ else if (phase == Phase.Review && receipt is not null)
                                 <small title="Matched a previous receipt line from this merchant">🔗</small>
                             }
                         </td>
-                        <td><button @onclick="() => reviewLines.Remove(line)" title="Remove line">✕</button></td>
+                        <td><button class="secondary" @onclick="() => reviewLines.Remove(line)" title="Remove line">✕</button></td>
                     </tr>
                 }
             </tbody>
         </table>
-        <button @onclick="ConfirmAll" disabled="@(reviewLines.Count == 0)">Confirm all</button>
-        <button @onclick="Discard">Discard receipt</button>
+        </div>
+        <div class="review-actions">
+            <button @onclick="ConfirmAll" disabled="@(reviewLines.Count == 0)">Confirm all</button>
+            <button class="secondary" @onclick="Discard">Discard receipt</button>
+        </div>
     </section>
 }
 else if (phase == Phase.Done)
@@ -176,7 +189,12 @@ else if (phase == Phase.Done)
                 await File.WriteAllBytesAsync(Path.Combine(folder, $"page-{index++}.{ext}"), bytes);
             }
 
-            var result = await Extractor.ExtractAsync(attachments);
+            // Load existing products first so the model can match lines against them (LLM-assisted matching).
+            await using (var pdb = await DbFactory.CreateDbContextAsync())
+            {
+                products = await pdb.Products.OrderBy(p => p.Name).ToListAsync();
+            }
+            var result = await Extractor.ExtractAsync(attachments, products.Select(p => p.Name).ToList());
 
             await using var db = await DbFactory.CreateDbContextAsync();
             receipt = new Receipt
@@ -209,17 +227,21 @@ else if (phase == Phase.Done)
             db.Receipts.Add(receipt);
             await db.SaveChangesAsync();
 
-            products = await db.Products.OrderBy(p => p.Name).ToListAsync();
-
-            // Alias flow (DESIGN.md §4): deterministic (Merchant, RawText) match pre-fills the product mapping.
+            // Pre-fill the product mapping by trust order: learned alias (DESIGN.md §4) →
+            // model's suggested match → deterministic ProductMatcher → create new.
             var merchant = receipt.Merchant ?? "";
             var aliases = await db.ProductAliases.Where(a => a.Merchant == merchant).ToListAsync();
-            reviewLines = receipt.Lines.Select(l =>
+            reviewLines = result.Receipt!.Lines.Select(l =>
             {
                 var alias = aliases.FirstOrDefault(a => a.RawText == l.RawText);
-                var nameMatch = alias is null
-                    ? products.FirstOrDefault(p => string.Equals(p.Name, l.NormalizedName, StringComparison.OrdinalIgnoreCase))
-                    : null;
+                Product? match = null;
+                if (alias is null)
+                {
+                    match = l.SuggestedProductName is { Length: > 0 }
+                        ? products.FirstOrDefault(p => string.Equals(p.Name, l.SuggestedProductName, StringComparison.OrdinalIgnoreCase))
+                        : null;
+                    match ??= ProductMatcher.Resolve(l.NormalizedName, products);
+                }
                 return new ReviewLine
                 {
                     RawText = l.RawText,
@@ -228,7 +250,7 @@ else if (phase == Phase.Done)
                     Category = l.Category,
                     Confidence = l.Confidence,
                     UnitPrice = l.UnitPrice,
-                    ProductId = alias?.ProductId ?? nameMatch?.Id ?? 0,
+                    ProductId = alias?.ProductId ?? match?.Id ?? 0,
                     AliasMatched = alias is not null,
                 };
             }).ToList();

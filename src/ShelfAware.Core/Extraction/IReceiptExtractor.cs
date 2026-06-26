@@ -7,7 +7,13 @@ namespace ShelfAware.Core.Extraction;
 /// </summary>
 public interface IReceiptExtractor
 {
-    Task<ExtractionResult> ExtractAsync(IReadOnlyList<ReceiptAttachment> attachments, CancellationToken cancellationToken = default);
+    /// <param name="knownProductNames">Existing product names the model may match lines against
+    /// (LLM-assisted matching). When null/empty, no matching is attempted and
+    /// <see cref="ExtractedLine.SuggestedProductName"/> is always null.</param>
+    Task<ExtractionResult> ExtractAsync(
+        IReadOnlyList<ReceiptAttachment> attachments,
+        IReadOnlyList<string>? knownProductNames = null,
+        CancellationToken cancellationToken = default);
 }
 
 /// <param name="MediaType">MIME type: image/jpeg, image/png, image/gif, image/webp, or application/pdf.</param>

@@ -19,4 +19,8 @@ public record ExtractedLine
     public decimal? UnitPrice { get; init; }
     public Category Category { get; init; } = Category.Other;
     public decimal Confidence { get; init; }
+
+    /// <summary>Exact name of an existing product the model judged this line to match, or null.
+    /// Only set when a candidate product list is passed to extraction (LLM-assisted matching).</summary>
+    public string? SuggestedProductName { get; init; }
 }

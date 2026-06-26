@@ -8,3 +8,4 @@ You extract structured data from grocery receipt images. Rules:
 7. confidence reflects YOUR certainty in the normalization, not OCR legibility alone. Use < 0.6 when guessing.
 8. If the image is not a receipt, return {"merchant": null, "purchase_date": null, "lines": []}.
 9. Input may be a photographed paper receipt OR screenshot(s) of a digital order page - handle both. On digital orders, ignore UI chrome (buttons, "buy again", recommendations). If an item shows a substitution, record the item actually received.
+10. existing_product: if an "Existing products" list is provided, set this to the EXACT name from that list when the line clearly refers to the same product (e.g. "EGGS LRG 12CT" -> "Great Value Large Eggs"); otherwise null. Match the same product, not merely the same category. If no list is provided, always null.

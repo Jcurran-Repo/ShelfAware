@@ -48,6 +48,10 @@ header count chips; the user's signal note is split from the statistical basis
 (`PredictionResult.SignalNote`); Products page median-interval column is populated
 with status chips; thin-data items show honest "N more purchases to start
 predicting" hints; a design-system stylesheet + responsive pass spans all pages.
+The receipt review also gained per-line confidence chips, a primary/secondary
+button hierarchy, and LLM-assisted product matching — verified live: an eggs line
+printed as "EGGS LRG 12CT" (no brand) pre-filled the existing "Great Value Large
+Eggs", while a genuinely new item correctly offered "create new".
 
 ## Decisions & deviations from the spec
 
@@ -89,6 +93,15 @@ predicting" hints; a design-system stylesheet + responsive pass spans all pages.
   stock" / "Marked running low") is surfaced separately from `Basis` so the UI
   presents the statistical prediction and the user's own statement as distinct
   cues, rather than concatenating them.
+- **LLM-assisted product matching (extends §4)** — the extraction call now also
+  receives the existing product list and returns a per-line `existing_product`
+  (exact name or null) → `ExtractedLine.SuggestedProductName`. `ExtractAsync`
+  gained an optional `knownProductNames` param (null → no matching, fully
+  backward-compatible; the Evals harness is unchanged). Upload review pre-fills by
+  trust order: learned alias → model suggestion → `ProductMatcher` (deterministic)
+  → create new. §4 specified deterministic aliases only; this adds semantic
+  matching where name understanding genuinely helps, which fits the README thesis
+  ("LLMs where language understanding is required, plain code where it suffices").
 
 ## Environment & workflow gotchas
 
