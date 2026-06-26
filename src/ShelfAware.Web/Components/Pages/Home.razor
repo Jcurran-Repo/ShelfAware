@@ -1,7 +1,154 @@
 @page "/"
+@rendermode InteractiveServer
+@using ShelfAware.Core.Prediction
+@inject IDbContextFactory<ShelfAwareDbContext> DbFactory
 
 <PageTitle>Shelf Aware</PageTitle>
 
-<h1>Dashboard</h1>
+<h1>Running Low</h1>
 
-<p>The "Running Low" dashboard arrives in Phase 3. For now, manage products on the <a href="/products">Products</a> page.</p>
+@if (products is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    @if (runningLow.Count == 0)
+    {
+        <p class="panel">Nothing's running low right now. <span class="muted">Tracked items show up here as they approach their predicted run-out date.</span></p>
+    }
+    else
+    {
+        <table>
+            <thead>
+                <tr><th>Item</th><th>Status</th><th>Why</th><th></th></tr>
+            </thead>
+            <tbody>
+                @foreach (var p in runningLow)
+                {
+                    var r = predictions[p.Id];
+                    <tr>
+                        <td>@p.Name @if (r.Pinned) { <span title="You marked this out">📌</span> }</td>
+                        <td><span class="chip chip-@ChipClass(r.Status)">@StatusLabel(r.Status)</span></td>
+                        <td class="muted">@r.Basis</td>
+                        <td class="row-actions">
+                            <button @onclick="() => BoughtToday(p)">Bought today</button>
+                            <button @onclick="() => Restocked(p)">Restocked</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+
+    <section class="panel temp">
+        <h2>Quick update <small>(natural-language box arrives in Phase 4)</small></h2>
+        <p class="muted">Soon: type things like "we're out of dog food, almost out of coffee" to update inventory here.</p>
+    </section>
+
+    <details class="everything-else">
+        <summary>Everything else (@everythingElse.Count)</summary>
+        @if (everythingElse.Count == 0)
+        {
+            <p class="muted">No other tracked products yet.</p>
+        }
+        else
+        {
+            <table>
+                <thead>
+                    <tr><th>Item</th><th>Status</th><th>Why</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var p in everythingElse)
+                    {
+                        var r = predictions[p.Id];
+                        <tr>
+                            <td>@p.Name</td>
+                            <td><span class="chip chip-@ChipClass(r.Status)">@StatusLabel(r.Status)</span></td>
+                            <td class="muted">@r.Basis</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </details>
+}
+
+@code {
+    private List<Product>? products;
+    private Dictionary<int, PredictionResult> predictions = [];
+    private List<Product> runningLow = [];
+    private List<Product> everythingElse = [];
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        products = await db.Products
+            .Where(p => p.IsTracked)
+            .Include(p => p.Purchases)
+            .Include(p => p.Signals)
+            .OrderBy(p => p.Name)
+            .ToListAsync();
+
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        predictions = products.ToDictionary(p => p.Id, p => ReplenishmentPredictor.Predict(p, today));
+
+        // Running Low = Overdue + DueSoon, signal-pinned first, then most overdue first (§8).
+        runningLow = products
+            .Where(p => predictions[p.Id].Status is PredictionStatus.Overdue or PredictionStatus.DueSoon)
+            .OrderByDescending(p => predictions[p.Id].Pinned)
+            .ThenByDescending(p => predictions[p.Id].Status)
+            .ThenBy(p => predictions[p.Id].DueDate ?? DateOnly.MaxValue)
+            .ThenBy(p => p.Name)
+            .ToList();
+
+        everythingElse = products
+            .Where(p => predictions[p.Id].Status is PredictionStatus.Stocked or PredictionStatus.Unknown)
+            .ToList();
+    }
+
+    private async Task BoughtToday(Product p)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.PurchaseEvents.Add(new PurchaseEvent
+        {
+            ProductId = p.Id,
+            PurchasedAt = DateOnly.FromDateTime(DateTime.Today),
+            Quantity = 1,
+            Source = PurchaseSource.Manual
+        });
+        await db.SaveChangesAsync();
+        await LoadAsync();
+    }
+
+    private async Task Restocked(Product p)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.InventorySignals.Add(new InventorySignal
+        {
+            ProductId = p.Id,
+            Kind = SignalKind.Restocked,
+            SignaledAt = DateTimeOffset.Now
+        });
+        await db.SaveChangesAsync();
+        await LoadAsync();
+    }
+
+    private static string ChipClass(PredictionStatus s) => s switch
+    {
+        PredictionStatus.Overdue => "overdue",
+        PredictionStatus.DueSoon => "duesoon",
+        PredictionStatus.Stocked => "stocked",
+        _ => "unknown"
+    };
+
+    private static string StatusLabel(PredictionStatus s) => s switch
+    {
+        PredictionStatus.Overdue => "Overdue",
+        PredictionStatus.DueSoon => "Due soon",
+        PredictionStatus.Stocked => "Stocked",
+        _ => "Still learning"
+    };
+}

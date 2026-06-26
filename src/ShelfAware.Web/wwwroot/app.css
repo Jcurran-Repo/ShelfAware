@@ -64,6 +64,40 @@ th, td {
     color: #e50000;
 }
 
+/* Dashboard status chips (Phase 3, DESIGN.md §8). */
+.chip {
+    display: inline-block;
+    padding: 0.1rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.chip-overdue { background: #f8d7da; color: #842029; }
+.chip-duesoon { background: #fff3cd; color: #664d03; }
+.chip-stocked { background: #d1e7dd; color: #0f5132; }
+.chip-unknown { background: #e2e3e5; color: #41464b; }
+
+.muted {
+    color: #666;
+    font-size: 0.9rem;
+}
+
+.row-actions {
+    white-space: nowrap;
+}
+
+.row-actions button {
+    margin-right: 0.35rem;
+}
+
+.everything-else summary {
+    cursor: pointer;
+    font-weight: 600;
+    margin: 1rem 0 0.25rem;
+}
+
 .low-confidence {
     background: #fff3cd;
 }

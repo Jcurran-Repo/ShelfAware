@@ -5,20 +5,29 @@ Working notes for Claude Code sessions on this repo. The authoritative spec is
 This file records build state, decisions, and environment quirks that the spec
 and code don't capture.
 
-## Build state (updated 2026-06-12)
+## Build state (updated 2026-06-26)
 
 | Phase (DESIGN.md §10) | Status |
 |---|---|
 | 1 — Skeleton + data (solution, entities, EF/SQLite, Products CRUD) | ✅ Done, acceptance verified |
 | 2 — Extraction pipeline (IReceiptExtractor, upload/review/confirm, aliases) | ✅ Done, all 3 acceptance criteria verified with live API calls |
-| 3 — Prediction engine + dashboard | ⬜ Next up |
-| 4 — Chat tools (IPantryChat) | ⬜ |
+| 3 — Prediction engine + dashboard | ✅ Done, 15 engine tests green + dashboard verified in browser |
+| 4 — Chat tools (IPantryChat) | ⬜ Next up |
 | 5 — Azure deploy + README | ⬜ |
 
 Phase 2 verification details: synthetic Walmart receipt round-tripped to 6
 confirmed PurchaseEvents; re-upload pre-matched all lines via aliases; a
 non-receipt image returned zero lines and was discardable; API errors surface
 as a friendly message with the receipt kept as PendingReview.
+
+Phase 3 verification details: `ReplenishmentPredictor` (pure C# in
+`ShelfAware.Core/Prediction/`) with 15 xUnit tests covering the §6-required
+cases (2-event minimum, median + 3× outlier trim, every status boundary ±1 day,
+each signal override, same-day collapse) — all green. Dashboard (`Home.razor`)
+verified live: Running Low list bucketed Overdue/DueSoon correctly, "everything
+else" held the Unknown ("still learning") items, and the **Bought today** quick
+button round-tripped (wrote a purchase → engine recomputed median → row moved
+to Stocked) with no console errors.
 
 ## Decisions & deviations from the spec
 
@@ -40,6 +49,12 @@ as a friendly message with the receipt kept as PendingReview.
   The schema omits `minimum`/`maximum` on confidence (unsupported in strict
   mode) — confidence is clamped in code instead.
 - Extraction model pinned: `claude-haiku-4-5-20251001` (never aliases, per §2).
+- **`PredictionResult.Pinned`** — added beyond the §6.7 field list to serve §8's
+  "signal-pinned first" ordering. Set true when an active OutNow signal forces
+  Overdue; the dashboard sorts pinned rows to the top. A Restocked signal is
+  treated as a purchase-equivalent date (feeds the interval median and clears an
+  earlier OutNow), which is how §6.6's "→ Stocked" falls out naturally rather
+  than being forced.
 
 ## Environment & workflow gotchas
 
