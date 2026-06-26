@@ -14,8 +14,12 @@ public record PredictionResult
     /// Median repurchase interval in days; null when there is too little history.
     public double? MedianIntervalDays { get; init; }
 
-    /// Short human-readable explanation for UI transparency, e.g. "bought 5×, ~every 12 days".
+    /// Short statistical explanation for UI transparency, e.g. "bought 5×, ~every 12 days".
     public required string Basis { get; init; }
+
+    /// Active user-statement note, e.g. "Marked out of stock"; null when none. Kept separate from
+    /// Basis so the UI can present the prediction and the user's own signal as distinct cues.
+    public string? SignalNote { get; init; }
 
     /// True when an active OutNow signal pins this item to the top of the list (§6.6 / §8).
     public bool Pinned { get; init; }

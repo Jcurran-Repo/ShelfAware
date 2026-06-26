@@ -101,6 +101,7 @@ public class ReplenishmentPredictorTests
 
         Assert.Equal(PredictionStatus.Overdue, r.Status);
         Assert.True(r.Pinned);
+        Assert.Equal("Marked out of stock", r.SignalNote);
     }
 
     [Fact]
@@ -112,6 +113,7 @@ public class ReplenishmentPredictorTests
 
         Assert.Equal(PredictionStatus.DueSoon, r.Status);
         Assert.False(r.Pinned);
+        Assert.Equal("Marked running low", r.SignalNote);
     }
 
     [Fact]

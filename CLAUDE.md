@@ -5,6 +5,12 @@ Working notes for Claude Code sessions on this repo. The authoritative spec is
 This file records build state, decisions, and environment quirks that the spec
 and code don't capture.
 
+**Audience & quality bar:** this is a portfolio piece with real users (Jordan +
+his wife) and professional viewers (current + prospective employers). The goal is
+to demonstrate production-ready work, so robustness, clean atomic git history,
+tests, accessibility, and visual polish are in-scope and expected — not
+gold-plating. Don't dismiss polish as overkill "because it's single-user."
+
 ## Build state (updated 2026-06-26)
 
 | Phase (DESIGN.md §10) | Status |
@@ -35,6 +41,13 @@ verified live: Running Low list bucketed Overdue/DueSoon correctly, "everything
 else" held the Unknown ("still learning") items, and the **Bought today** quick
 button round-tripped (wrote a purchase → engine recomputed median → row moved
 to Stocked) with no console errors.
+
+Post-Phase-4 polish (pre-deploy, browser-verified): dashboard rebuilt as
+status-accented cards that surface plain-language urgency ("12 days overdue") and
+header count chips; the user's signal note is split from the statistical basis
+(`PredictionResult.SignalNote`); Products page median-interval column is populated
+with status chips; thin-data items show honest "N more purchases to start
+predicting" hints; a design-system stylesheet + responsive pass spans all pages.
 
 ## Decisions & deviations from the spec
 
@@ -72,6 +85,10 @@ to Stocked) with no console errors.
   treated as a purchase-equivalent date (feeds the interval median and clears an
   earlier OutNow), which is how §6.6's "→ Stocked" falls out naturally rather
   than being forced.
+- **`PredictionResult.SignalNote`** — the active user signal ("Marked out of
+  stock" / "Marked running low") is surfaced separately from `Basis` so the UI
+  presents the statistical prediction and the user's own statement as distinct
+  cues, rather than concatenating them.
 
 ## Environment & workflow gotchas
 

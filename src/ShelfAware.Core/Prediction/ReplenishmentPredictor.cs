@@ -98,7 +98,8 @@ public static class ReplenishmentPredictor
             Status = status,
             DueDate = dueDate,
             MedianIntervalDays = medianDays,
-            Basis = BuildBasis(purchaseDates.Count, medianDays, activeSignal?.Kind),
+            Basis = BuildBasis(purchaseDates.Count, medianDays),
+            SignalNote = SignalNoteFor(activeSignal?.Kind),
             Pinned = pinned
         };
     }
@@ -115,17 +116,15 @@ public static class ReplenishmentPredictor
     // Days are whole; round halves away from zero so a 12.5-day median reads as 13, not banker's 12.
     private static int Round(double value) => (int)Math.Round(value, MidpointRounding.AwayFromZero);
 
-    private static string BuildBasis(int purchaseCount, double? medianDays, SignalKind? activeSignal)
-    {
-        var core = medianDays is { } m
+    private static string BuildBasis(int purchaseCount, double? medianDays) =>
+        medianDays is { } m
             ? $"bought {purchaseCount}×, ~every {Round(m)} days"
             : purchaseCount == 0 ? "no purchases yet" : $"bought {purchaseCount}×, still learning";
 
-        return activeSignal switch
-        {
-            SignalKind.OutNow => $"marked out of stock · {core}",
-            SignalKind.RunningLow => $"{core} · marked running low",
-            _ => core
-        };
-    }
+    private static string? SignalNoteFor(SignalKind? activeSignal) => activeSignal switch
+    {
+        SignalKind.OutNow => "Marked out of stock",
+        SignalKind.RunningLow => "Marked running low",
+        _ => null,
+    };
 }

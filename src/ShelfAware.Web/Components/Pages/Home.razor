@@ -7,7 +7,29 @@
 
 <PageTitle>Shelf Aware</PageTitle>
 
-<h1>Running Low</h1>
+<header class="page-head">
+    <h1>Running Low</h1>
+    @if (products is not null)
+    {
+        <div class="summary">
+            @if (runningLow.Count == 0)
+            {
+                <span class="all-good">You're all stocked up.</span>
+            }
+            else
+            {
+                @if (overdueCount > 0)
+                {
+                    <span class="chip chip-overdue">@overdueCount overdue</span>
+                }
+                @if (dueSoonCount > 0)
+                {
+                    <span class="chip chip-duesoon">@dueSoonCount due soon</span>
+                }
+            }
+        </div>
+    }
+</header>
 
 @if (products is null)
 {
@@ -17,37 +39,47 @@ else
 {
     @if (runningLow.Count == 0)
     {
-        <p class="panel">Nothing's running low right now. <span class="muted">Tracked items show up here as they approach their predicted run-out date.</span></p>
+        <p class="muted empty-note">Tracked items show up here as they approach their predicted run-out date.</p>
     }
     else
     {
-        <table>
-            <thead>
-                <tr><th>Item</th><th>Status</th><th>Why</th><th></th></tr>
-            </thead>
-            <tbody>
-                @foreach (var p in runningLow)
-                {
-                    var r = predictions[p.Id];
-                    <tr>
-                        <td>@p.Name @if (r.Pinned) { <span title="You marked this out">📌</span> }</td>
-                        <td><span class="chip chip-@ChipClass(r.Status)">@StatusLabel(r.Status)</span></td>
-                        <td class="muted">@r.Basis</td>
-                        <td class="row-actions">
-                            <button @onclick="() => BoughtToday(p)">Bought today</button>
-                            <button @onclick="() => Restocked(p)">Restocked</button>
-                        </td>
-                    </tr>
-                }
-            </tbody>
-        </table>
+        <ul class="cards">
+            @foreach (var p in runningLow)
+            {
+                var r = predictions[p.Id];
+                <li class="card accent-@ChipClass(r.Status)">
+                    <div class="card-body">
+                        <div class="card-top">
+                            <span class="card-name">@p.Name</span>
+                            <span class="chip chip-@ChipClass(r.Status)">@StatusLabel(r.Status)</span>
+                        </div>
+                        @{
+                            var urgency = Urgency(r);
+                        }
+                        @if (urgency.Length > 0)
+                        {
+                            <div class="card-urgency">@urgency</div>
+                        }
+                        @if (r.SignalNote is not null)
+                        {
+                            <div class="card-note">@(r.Pinned ? "📌 " : "")@r.SignalNote</div>
+                        }
+                        <div class="card-basis muted">@r.Basis</div>
+                    </div>
+                    <div class="card-actions">
+                        <button @onclick="() => BoughtToday(p)">Bought today</button>
+                        <button class="secondary" @onclick="() => Restocked(p)">Restocked</button>
+                    </div>
+                </li>
+            }
+        </ul>
     }
 
-    <section class="panel">
+    <section class="panel quick-update">
         <h2>Quick update</h2>
         <form @onsubmit="SendChat" @formname="quick-update">
             <input @bind="chatInput" @bind:event="oninput" placeholder="e.g. we're out of dog food, almost out of coffee"
-                   size="50" disabled="@chatBusy" />
+                   disabled="@chatBusy" />
             <button type="submit" disabled="@(chatBusy || string.IsNullOrWhiteSpace(chatInput))">
                 @(chatBusy ? "Working…" : "Send")
             </button>
@@ -77,7 +109,7 @@ else
                         <tr>
                             <td>@p.Name</td>
                             <td><span class="chip chip-@ChipClass(r.Status)">@StatusLabel(r.Status)</span></td>
-                            <td class="muted">@r.Basis</td>
+                            <td class="muted">@(r.Status == PredictionStatus.Unknown ? LearningHint(p) : r.Basis)</td>
                         </tr>
                     }
                 </tbody>
@@ -92,10 +124,15 @@ else
     private List<Product> runningLow = [];
     private List<Product> everythingElse = [];
 
+    private DateOnly today;
+
     private string chatInput = "";
     private string? chatReply;
     private bool chatError;
     private bool chatBusy;
+
+    private int overdueCount => runningLow.Count(p => predictions[p.Id].Status == PredictionStatus.Overdue);
+    private int dueSoonCount => runningLow.Count(p => predictions[p.Id].Status == PredictionStatus.DueSoon);
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
 
@@ -109,7 +146,7 @@ else
             .OrderBy(p => p.Name)
             .ToListAsync();
 
-        var today = DateOnly.FromDateTime(DateTime.Today);
+        today = DateOnly.FromDateTime(DateTime.Today);
         predictions = products.ToDictionary(p => p.Id, p => ReplenishmentPredictor.Predict(p, today));
 
         // Running Low = Overdue + DueSoon, signal-pinned first, then most overdue first (§8).
@@ -190,4 +227,32 @@ else
         PredictionStatus.Stocked => "Stocked",
         _ => "Still learning"
     };
+
+    // Translate the predicted run-out date into plain urgency — the answer to the app's one question.
+    private string Urgency(PredictionResult r)
+    {
+        if (r.DueDate is not { } due) return "";
+        var days = due.DayNumber - today.DayNumber;
+        return days switch
+        {
+            < 0 => $"{-days} day{Plural(-days)} overdue",
+            0 => "Due today",
+            _ => $"Due in {days} day{Plural(days)}"
+        };
+    }
+
+    private static string Plural(int n) => n == 1 ? "" : "s";
+
+    // Honest thin-data message: how many more purchases until the engine can predict (needs ≥ 2
+    // distinct purchase-equivalent dates, §6.2). Mirrors the engine's counting (purchases ∪ restocks).
+    private static string LearningHint(Product p)
+    {
+        var distinctDates = p.Purchases.Select(x => x.PurchasedAt)
+            .Concat(p.Signals.Where(s => s.Kind == SignalKind.Restocked).Select(s => DateOnly.FromDateTime(s.SignaledAt.Date)))
+            .Distinct().Count();
+        var needed = 2 - distinctDates;
+        return needed <= 0
+            ? "still learning"
+            : $"{needed} more purchase{Plural(needed)} to start predicting";
+    }
 }

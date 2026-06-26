@@ -1,5 +1,6 @@
 @page "/products"
 @rendermode InteractiveServer
+@using ShelfAware.Core.Prediction
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
 
 <PageTitle>Products — Shelf Aware</PageTitle>
@@ -38,6 +39,7 @@ else
                 <th>Category</th>
                 <th>Tracked</th>
                 <th>Purchases</th>
+                <th>Status</th>
                 <th>Median interval</th>
                 <th></th>
             </tr>
@@ -57,7 +59,13 @@ else
                     </td>
                     <td><input type="checkbox" checked="@p.IsTracked" @onchange="e => SetTracked(p, (bool)e.Value!)" /></td>
                     <td>@purchaseCounts.GetValueOrDefault(p.Id)</td>
-                    <td>—</td>
+                    <td>
+                        @if (predictions.TryGetValue(p.Id, out var r))
+                        {
+                            <span class="chip chip-@ChipClass(r.Status)">@StatusLabel(r.Status)</span>
+                        }
+                    </td>
+                    <td>@MedianText(p.Id)</td>
                     <td><button @onclick="() => Delete(p)">Delete</button></td>
                 </tr>
             }
@@ -94,6 +102,7 @@ else
 @code {
     private List<Product>? products;
     private Dictionary<int, int> purchaseCounts = [];
+    private Dictionary<int, PredictionResult> predictions = [];
 
     private string newName = "";
     private Category newCategory = Category.Pantry;
@@ -110,16 +119,42 @@ else
     private async Task LoadAsync()
     {
         await using var db = await DbFactory.CreateDbContextAsync();
-        products = await db.Products.OrderBy(p => p.Name).ToListAsync();
-        purchaseCounts = await db.PurchaseEvents
-            .GroupBy(e => e.ProductId)
-            .Select(g => new { g.Key, Count = g.Count() })
-            .ToDictionaryAsync(x => x.Key, x => x.Count);
+        products = await db.Products
+            .Include(p => p.Purchases)
+            .Include(p => p.Signals)
+            .OrderBy(p => p.Name)
+            .ToListAsync();
+        purchaseCounts = products.ToDictionary(p => p.Id, p => p.Purchases.Count);
+
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        predictions = products.ToDictionary(p => p.Id, p => ReplenishmentPredictor.Predict(p, today));
+
         if (products.Count > 0 && products.All(p => p.Id != purchaseProductId))
         {
             purchaseProductId = products[0].Id;
         }
     }
+
+    private string MedianText(int productId) =>
+        predictions.TryGetValue(productId, out var r) && r.MedianIntervalDays is { } m
+            ? $"~{Math.Round(m)} days"
+            : "—";
+
+    private static string ChipClass(PredictionStatus s) => s switch
+    {
+        PredictionStatus.Overdue => "overdue",
+        PredictionStatus.DueSoon => "duesoon",
+        PredictionStatus.Stocked => "stocked",
+        _ => "unknown"
+    };
+
+    private static string StatusLabel(PredictionStatus s) => s switch
+    {
+        PredictionStatus.Overdue => "Overdue",
+        PredictionStatus.DueSoon => "Due soon",
+        PredictionStatus.Stocked => "Stocked",
+        _ => "Still learning"
+    };
 
     private async Task AddProduct()
     {

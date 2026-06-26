@@ -1,52 +1,174 @@
-/* Minimal clean styling per DESIGN.md §8 — no polish until Phase 4 is done. */
-body {
-    font-family: system-ui, sans-serif;
-    margin: 0;
-    color: #222;
+/* Shelf Aware — clean, minimal design system (polish unlocked after Phase 4, DESIGN.md §8). */
+:root {
+    --ink: #1f2328;
+    --ink-soft: #59636e;
+    --line: #e2e5e9;
+    --surface: #ffffff;
+    --bg: #f6f7f9;
+    --accent: #2563eb;
+    --accent-ink: #1d4ed8;
+
+    --overdue-bg: #fde7e9;  --overdue-ink: #b42318;  --overdue-line: #e8625a;
+    --duesoon-bg: #fef4d6;  --duesoon-ink: #8a6100;  --duesoon-line: #e3b341;
+    --stocked-bg: #dcf3e6;  --stocked-ink: #116b3c;  --stocked-line: #58b487;
+    --unknown-bg: #e8eaed;  --unknown-ink: #4a525b;  --unknown-line: #b6bdc6;
+
+    --radius: 8px;
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.05);
 }
 
+body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    margin: 0;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.45;
+}
+
+/* ---- App chrome ---- */
 .site-header {
     display: flex;
     align-items: baseline;
     gap: 1.5rem;
-    padding: 0.75rem 1.25rem;
-    border-bottom: 1px solid #ddd;
+    padding: 0.85rem 1.5rem;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
 }
 
 .site-header .brand {
     font-weight: 700;
+    letter-spacing: -0.01em;
 }
 
 .site-header nav a {
     margin-right: 1rem;
+    color: var(--ink-soft);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.site-header nav a:hover {
+    color: var(--accent-ink);
 }
 
 .site-main {
-    padding: 1rem 1.25rem;
-    max-width: 60rem;
+    padding: 1.5rem;
+    max-width: 56rem;
+    margin: 0 auto;
 }
 
+h1 {
+    font-size: 1.6rem;
+    letter-spacing: -0.02em;
+    margin: 0;
+}
+
+h2 {
+    font-size: 1.05rem;
+}
+
+h1:focus {
+    outline: none;
+}
+
+/* ---- Tables (Products, Upload, "everything else") ---- */
 table {
     border-collapse: collapse;
     margin: 1rem 0;
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+}
+
+/* Wide editable grids (receipt review) scroll horizontally inside their own box
+   instead of overflowing the page. */
+.table-scroll {
+    overflow-x: auto;
+    margin: 1rem 0;
+}
+
+.table-scroll table {
+    margin: 0;
 }
 
 th, td {
-    border: 1px solid #ddd;
-    padding: 0.35rem 0.6rem;
+    border-bottom: 1px solid var(--line);
+    padding: 0.5rem 0.75rem;
     text-align: left;
 }
 
+th {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ink-soft);
+    background: #fbfcfd;
+}
+
+tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* ---- Buttons & inputs ---- */
+button {
+    font: inherit;
+    padding: 0.4rem 0.8rem;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #fff;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+    background: var(--accent-ink);
+    border-color: var(--accent-ink);
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+button.secondary {
+    background: var(--surface);
+    color: var(--ink);
+    border-color: var(--line);
+}
+
+button.secondary:hover:not(:disabled) {
+    background: #fbfcfd;
+    border-color: var(--ink-soft);
+}
+
+input, select {
+    font: inherit;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--ink);
+}
+
+input:focus, select:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+}
+
+/* ---- Panels ---- */
 .panel {
     margin: 1rem 0;
-    padding: 0.75rem 1rem;
-    border: 1px solid #ddd;
-    border-radius: 4px;
+    padding: 1rem 1.15rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow);
 }
 
 .panel h2 {
     margin-top: 0;
-    font-size: 1.1rem;
 }
 
 .panel form {
@@ -58,57 +180,163 @@ th, td {
 
 .panel.temp {
     border-style: dashed;
+    box-shadow: none;
+    background: transparent;
 }
 
-.error {
-    color: #e50000;
+/* ---- Dashboard: header + summary ---- */
+.page-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
 }
 
-/* Dashboard status chips (Phase 3, DESIGN.md §8). */
+.summary {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+
+.summary .all-good {
+    color: var(--stocked-ink);
+    font-weight: 600;
+}
+
+.empty-note {
+    margin-top: 0.25rem;
+}
+
+/* ---- Dashboard: running-low cards ---- */
+.cards {
+    list-style: none;
+    padding: 0;
+    margin: 1rem 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.85rem 1rem 0.85rem 1.15rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--unknown-line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+}
+
+.card.accent-overdue { border-left-color: var(--overdue-line); }
+.card.accent-duesoon { border-left-color: var(--duesoon-line); }
+
+.card-top {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.card-name {
+    font-weight: 600;
+    font-size: 1.05rem;
+}
+
+.card-urgency {
+    font-weight: 600;
+    margin-top: 0.15rem;
+}
+
+.card.accent-overdue .card-urgency { color: var(--overdue-ink); }
+.card.accent-duesoon .card-urgency { color: var(--duesoon-ink); }
+
+.card-note {
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+    margin-top: 0.1rem;
+}
+
+.card-basis {
+    margin-top: 0.1rem;
+}
+
+.card-actions {
+    display: flex;
+    gap: 0.4rem;
+    flex-shrink: 0;
+}
+
+.quick-update input {
+    flex: 1 1 18rem;
+}
+
+/* ---- Narrow screens ---- */
+@media (max-width: 560px) {
+    .site-main {
+        padding: 1rem;
+    }
+
+    .card {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .card-actions {
+        justify-content: flex-start;
+    }
+
+    /* Keep wide management tables from overflowing the viewport. */
+    table {
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+    }
+}
+
+/* ---- Status chips ---- */
 .chip {
     display: inline-block;
     padding: 0.1rem 0.55rem;
     border-radius: 999px;
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     font-weight: 600;
     white-space: nowrap;
 }
 
-.chip-overdue { background: #f8d7da; color: #842029; }
-.chip-duesoon { background: #fff3cd; color: #664d03; }
-.chip-stocked { background: #d1e7dd; color: #0f5132; }
-.chip-unknown { background: #e2e3e5; color: #41464b; }
+.chip-overdue { background: var(--overdue-bg); color: var(--overdue-ink); }
+.chip-duesoon { background: var(--duesoon-bg); color: var(--duesoon-ink); }
+.chip-stocked { background: var(--stocked-bg); color: var(--stocked-ink); }
+.chip-unknown { background: var(--unknown-bg); color: var(--unknown-ink); }
 
+/* ---- Everything-else disclosure ---- */
+.everything-else summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--ink-soft);
+    margin: 1.25rem 0 0;
+}
+
+/* ---- Text helpers ---- */
 .muted {
-    color: #666;
+    color: var(--ink-soft);
     font-size: 0.9rem;
 }
 
 .chat-reply {
-    color: #0f5132;
+    color: var(--stocked-ink);
     font-weight: 600;
 }
 
-.row-actions {
-    white-space: nowrap;
+.error {
+    color: var(--overdue-ink);
 }
 
-.row-actions button {
-    margin-right: 0.35rem;
-}
-
-.everything-else summary {
-    cursor: pointer;
-    font-weight: 600;
-    margin: 1rem 0 0.25rem;
-}
-
+/* ---- Upload review table cues ---- */
 .low-confidence {
-    background: #fff3cd;
-}
-
-.low-confidence td.raw::after {
-    content: " ⚠";
+    background: var(--duesoon-bg);
 }
 
 .spinner {
@@ -116,15 +344,24 @@ th, td {
 }
 
 td.raw {
-    font-family: monospace;
+    font-family: ui-monospace, monospace;
     font-size: 0.85rem;
-    color: #555;
+    color: var(--ink-soft);
+    vertical-align: top;
 }
 
-h1:focus {
-    outline: none;
+td.raw .chip {
+    margin-top: 0.3rem;
+    font-family: system-ui, sans-serif;
 }
 
+.review-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+/* ---- Blazor form validation + error boundary defaults ---- */
 .valid.modified:not([type=checkbox]) {
     outline: 1px solid #26b050;
 }
@@ -149,13 +386,4 @@ h1:focus {
 
 .darker-border-checkbox.form-check-input {
     border-color: #929292;
-}
-
-.form-floating > .form-control-plaintext::placeholder, .form-floating > .form-control::placeholder {
-    color: var(--bs-secondary-color);
-    text-align: end;
-}
-
-.form-floating > .form-control-plaintext:focus::placeholder, .form-floating > .form-control:focus::placeholder {
-    text-align: start;
 }
