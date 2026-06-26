@@ -84,6 +84,11 @@ th, td {
     font-size: 0.9rem;
 }
 
+.chat-reply {
+    color: #0f5132;
+    font-weight: 600;
+}
+
 .row-actions {
     white-space: nowrap;
 }

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using ShelfAware.Core.Chat;
 using ShelfAware.Core.Extraction;
 using ShelfAware.Llm;
 using ShelfAware.Web.Components;
@@ -20,6 +21,8 @@ builder.Services.AddSingleton(new AppPaths(dataDir, receiptsDir));
 
 builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection(LlmOptions.SectionName));
 builder.Services.AddSingleton<IReceiptExtractor, AnthropicReceiptExtractor>();
+builder.Services.AddSingleton<IPantryStore, EfPantryStore>();
+builder.Services.AddSingleton<IPantryChat, AnthropicPantryChat>();
 
 var app = builder.Build();
 

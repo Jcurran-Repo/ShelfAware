@@ -1,7 +1,9 @@
 @page "/"
 @rendermode InteractiveServer
+@using ShelfAware.Core.Chat
 @using ShelfAware.Core.Prediction
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
+@inject IPantryChat Chat
 
 <PageTitle>Shelf Aware</PageTitle>
 
@@ -41,9 +43,19 @@ else
         </table>
     }
 
-    <section class="panel temp">
-        <h2>Quick update <small>(natural-language box arrives in Phase 4)</small></h2>
-        <p class="muted">Soon: type things like "we're out of dog food, almost out of coffee" to update inventory here.</p>
+    <section class="panel">
+        <h2>Quick update</h2>
+        <form @onsubmit="SendChat" @formname="quick-update">
+            <input @bind="chatInput" @bind:event="oninput" placeholder="e.g. we're out of dog food, almost out of coffee"
+                   size="50" disabled="@chatBusy" />
+            <button type="submit" disabled="@(chatBusy || string.IsNullOrWhiteSpace(chatInput))">
+                @(chatBusy ? "Working…" : "Send")
+            </button>
+        </form>
+        @if (chatReply is not null)
+        {
+            <p class="@(chatError ? "error" : "chat-reply")">@chatReply</p>
+        }
     </section>
 
     <details class="everything-else">
@@ -79,6 +91,11 @@ else
     private Dictionary<int, PredictionResult> predictions = [];
     private List<Product> runningLow = [];
     private List<Product> everythingElse = [];
+
+    private string chatInput = "";
+    private string? chatReply;
+    private bool chatError;
+    private bool chatBusy;
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
 
@@ -134,6 +151,28 @@ else
         });
         await db.SaveChangesAsync();
         await LoadAsync();
+    }
+
+    private async Task SendChat()
+    {
+        if (chatBusy || string.IsNullOrWhiteSpace(chatInput)) return;
+        chatBusy = true;
+        chatReply = null;
+        try
+        {
+            var result = await Chat.HandleAsync(chatInput);
+            chatReply = result.Reply;
+            chatError = !result.Success;
+            if (result.Success)
+            {
+                chatInput = "";
+                await LoadAsync(); // reflect new signals/purchases in the lists
+            }
+        }
+        finally
+        {
+            chatBusy = false;
+        }
     }
 
     private static string ChipClass(PredictionStatus s) => s switch

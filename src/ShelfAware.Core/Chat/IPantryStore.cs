@@ -1,0 +1,21 @@
+using ShelfAware.Core.Domain;
+
+namespace ShelfAware.Core.Chat;
+
+/// <summary>
+/// Data port the chat tools act through. Defined in Core (no EF here) and implemented in
+/// Web so <see cref="IPantryChat"/> can read products and apply changes without referencing
+/// the DbContext directly (DESIGN.md §3: Core has no EF).
+/// </summary>
+public interface IPantryStore
+{
+    /// <summary>All products with their purchases and signals loaded (needed for fuzzy
+    /// matching and for running the prediction engine on a status query).</summary>
+    Task<IReadOnlyList<Product>> GetProductsAsync(CancellationToken cancellationToken = default);
+
+    Task<int> CreateProductAsync(string name, Category category, CancellationToken cancellationToken = default);
+
+    Task AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default);
+
+    Task RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default);
+}

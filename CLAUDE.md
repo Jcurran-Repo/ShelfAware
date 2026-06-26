@@ -12,13 +12,20 @@ and code don't capture.
 | 1 — Skeleton + data (solution, entities, EF/SQLite, Products CRUD) | ✅ Done, acceptance verified |
 | 2 — Extraction pipeline (IReceiptExtractor, upload/review/confirm, aliases) | ✅ Done, all 3 acceptance criteria verified with live API calls |
 | 3 — Prediction engine + dashboard | ✅ Done, 15 engine tests green + dashboard verified in browser |
-| 4 — Chat tools (IPantryChat) | ⬜ Next up |
-| 5 — Azure deploy + README | ⬜ |
+| 4 — Chat tools (IPantryChat) | ✅ Done, acceptance verified with a live tool-calling call |
+| 5 — Azure deploy + README | ⬜ Next up |
 
 Phase 2 verification details: synthetic Walmart receipt round-tripped to 6
 confirmed PurchaseEvents; re-upload pre-matched all lines via aliases; a
 non-receipt image returned zero lines and was discardable; API errors surface
 as a friendly message with the receipt kept as PendingReview.
+
+Phase 4 verification details: typing "we're out of dog food and almost out of
+coffee" into the dashboard quick-update box produced two tool calls →
+record_signal(OutNow) for Pedigree Dog Food and record_signal(RunningLow) for
+Folgers Classic Coffee → dog food went Overdue + pinned, coffee went DueSoon,
+with the one-line reply "Marked dog food as out and coffee as running low." Fuzzy
+matching resolved both loose references; no console errors.
 
 Phase 3 verification details: `ReplenishmentPredictor` (pure C# in
 `ShelfAware.Core/Prediction/`) with 15 xUnit tests covering the §6-required
@@ -49,6 +56,16 @@ to Stocked) with no console errors.
   The schema omits `minimum`/`maximum` on confidence (unsupported in strict
   mode) — confidence is clamped in code instead.
 - Extraction model pinned: `claude-haiku-4-5-20251001` (never aliases, per §2).
+- **Chat = manual tool-call loop over the SDK (§7 Option B)**, not Semantic
+  Kernel. Consistent with the existing direct-SDK choice for extraction; SK would
+  add a dependency for no gain here. `AnthropicPantryChat` loops on
+  `Messages.Create` with the 4 tools, executes each tool against `IPantryStore`,
+  and feeds tool_result blocks back until the model returns its one-line reply.
+- **`IPantryStore` (Core/Chat) is the chat data port** — Core defines it, Web
+  implements it (`EfPantryStore`) so the chat layer touches no EF (§3). Chat
+  purchases are recorded with `PurchaseSource.Chat`. Fuzzy name→product
+  resolution lives in `ProductMatcher` (Core, unit-tested): exact → substring →
+  token-overlap ≥ 0.5.
 - **`PredictionResult.Pinned`** — added beyond the §6.7 field list to serve §8's
   "signal-pinned first" ordering. Set true when an active OutNow signal forces
   Overdue; the dashboard sorts pinned rows to the top. A Restocked signal is
