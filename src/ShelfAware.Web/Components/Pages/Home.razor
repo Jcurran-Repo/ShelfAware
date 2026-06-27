@@ -50,7 +50,7 @@ else
                 <li class="card accent-@ChipClass(r.Status)">
                     <div class="card-body">
                         <div class="card-top">
-                            <span class="card-name">@p.Name</span>
+                            <a class="card-name" href="/product/@p.Id">@p.Name</a>
                             <span class="chip chip-@ChipClass(r.Status)">@StatusLabel(r.Status)</span>
                         </div>
                         @{

@@ -127,6 +127,7 @@ else
                                 <dt>Est. cost</dt>
                                 <dd>@(e.ExpectedCost is { } cost ? cost.ToString("C") : "unknown")</dd>
                             </dl>
+                            <a href="/product/@p.Id">View history →</a>
                         </div>
                     </td>
                     <td><button class="icon-btn" @onclick="() => Delete(p)" aria-label="Delete @p.Name" title="Delete @p.Name"><span aria-hidden="true">🗑</span></button></td>

@@ -1,0 +1,147 @@
+@page "/product/{Id:int}"
+@rendermode InteractiveServer
+@using ShelfAware.Core.Prediction
+@using ShelfAware.Core.Shopping
+@inject IDbContextFactory<ShelfAwareDbContext> DbFactory
+
+<PageTitle>@(product?.Name ?? "Product") — Shelf Aware</PageTitle>
+
+@if (notFound)
+{
+    <p>Product not found. <a href="/products">Back to products</a>.</p>
+}
+else if (product is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <div class="page-head">
+        <h1>@product.Name</h1>
+        <span class="chip chip-@ChipClass(prediction.Status)">@StatusLabel(prediction.Status)</span>
+    </div>
+    <p class="muted">@product.Category@(product.DefaultUnit is { } u ? $" · {u}" : "") · <a href="/products">All products</a></p>
+
+    <section class="panel">
+        <h2>Current rhythm</h2>
+        <dl class="rhythm">
+            <dt>Next buy</dt>
+            <dd>@(estimate.NextBuyDate is { } d ? $"{d:MMM d, yyyy} ({Relative(estimate.DaysUntil!.Value)})" : "still learning")</dd>
+            <dt>Typical interval</dt>
+            <dd>@(prediction.MedianIntervalDays is { } m ? $"~{Math.Round(m)} days" : "—")</dd>
+            <dt>Typical quantity</dt>
+            <dd>@estimate.TypicalQuantity.ToString("0.##")@(product.DefaultUnit is { } u2 ? $" {u2}" : "")</dd>
+            <dt>Last bought</dt>
+            <dd>@(estimate.LastPurchased is { } lb ? lb.ToString("MMM d, yyyy") : "never")</dd>
+            <dt>Est. cost / buy</dt>
+            <dd>@(estimate.ExpectedCost is { } c ? c.ToString("C") : "unknown")</dd>
+        </dl>
+        <p class="muted">@prediction.Basis@(prediction.SignalNote is { } note ? $" · {note}" : "")</p>
+    </section>
+
+    <section class="panel">
+        <h2>Recent purchases <span class="muted">— most recent first</span></h2>
+        @if (history.Count == 0)
+        {
+            <p class="muted">No purchases recorded yet. Upload a receipt or use the dashboard quick update.</p>
+        }
+        else
+        {
+            <table>
+                <thead>
+                    <tr>
+                        <th scope="col">Date</th>
+                        <th scope="col">Since previous</th>
+                        <th scope="col">Qty</th>
+                        <th scope="col">Unit price</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var h in history)
+                    {
+                        <tr>
+                            <td>@h.Date.ToString("MMM d, yyyy")</td>
+                            <td>@(h.GapDays is { } g ? $"{g} day{(g == 1 ? "" : "s")}" : "—")</td>
+                            <td>@h.Quantity.ToString("0.##")</td>
+                            <td>@(h.UnitPrice is { } up ? up.ToString("C") : "—")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private Product? product;
+    private bool notFound;
+    private PredictionResult prediction = null!;
+    private ProductEstimate estimate = null!;
+    private readonly List<PurchaseRow> history = [];
+
+    private record PurchaseRow(DateOnly Date, int? GapDays, decimal Quantity, decimal? UnitPrice);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        product = await db.Products
+            .Include(p => p.Purchases)
+            .Include(p => p.Signals)
+            .FirstOrDefaultAsync(p => p.Id == Id);
+
+        if (product is null)
+        {
+            notFound = true;
+            return;
+        }
+
+        // Per-receipt unit price for this product, so each purchase can show what it cost.
+        var priceByReceipt = await db.ReceiptLines
+            .Where(l => l.ProductId == Id && l.UnitPrice != null && l.ReceiptId != 0)
+            .Select(l => new { l.ReceiptId, Price = l.UnitPrice!.Value })
+            .ToListAsync();
+        var priceLookup = priceByReceipt
+            .GroupBy(x => x.ReceiptId)
+            .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
+        var avgPrice = priceByReceipt.Count > 0 ? priceByReceipt.Average(x => x.Price) : (decimal?)null;
+
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        prediction = ReplenishmentPredictor.Predict(product, today);
+        estimate = ShoppingEstimator.For(product, prediction, today, avgPrice);
+
+        var ordered = product.Purchases.OrderBy(p => p.PurchasedAt).ToList();
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            var pe = ordered[i];
+            int? gap = i > 0 ? pe.PurchasedAt.DayNumber - ordered[i - 1].PurchasedAt.DayNumber : null;
+            decimal? price = pe.ReceiptId is { } rid && priceLookup.TryGetValue(rid, out var pr) ? pr : null;
+            history.Add(new PurchaseRow(pe.PurchasedAt, gap, pe.Quantity, price));
+        }
+        history.Reverse(); // most recent first
+    }
+
+    private static string Relative(int days) => days switch
+    {
+        < 0 => $"{-days} day{(days == -1 ? "" : "s")} overdue",
+        0 => "today",
+        _ => $"in {days} day{(days == 1 ? "" : "s")}"
+    };
+
+    private static string ChipClass(PredictionStatus s) => s switch
+    {
+        PredictionStatus.Overdue => "overdue",
+        PredictionStatus.DueSoon => "duesoon",
+        PredictionStatus.Stocked => "stocked",
+        _ => "unknown"
+    };
+
+    private static string StatusLabel(PredictionStatus s) => s switch
+    {
+        PredictionStatus.Overdue => "Overdue",
+        PredictionStatus.DueSoon => "Due soon",
+        PredictionStatus.Stocked => "Stocked",
+        _ => "Still learning"
+    };
+}

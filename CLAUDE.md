@@ -77,7 +77,13 @@ old receipts uploaded in one sitting keeps accurate intervals. Also: a
 **Copy list** (clipboard) and **Print** (print stylesheet) actions; and the
 Products detail moved from a `title` tooltip to an **accessible native popover**
 (`popovertarget`, Escape-closes, focus-managed) so the breakdown is keyboard- and
-screen-reader-reachable.
+screen-reader-reachable. A **Product Detail page** (`/product/{id}`,
+ProductDetail.razor) shows a product's current rhythm (next buy, typical interval,
+typical quantity, last bought, est. cost/buy) and a recent-purchases table with
+the gap between buys + per-purchase unit price — linked from the dashboard card
+names and the Products popover. (A "grocery-stocks" Spend Insight/Trends page with
+price-over-time charts, historical totals, and a next-month spend forecast is the
+planned next page.)
 
 ## Decisions & deviations from the spec
 

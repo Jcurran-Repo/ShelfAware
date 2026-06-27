@@ -269,6 +269,30 @@ input:focus, select:focus {
 .card-name {
     font-weight: 600;
     font-size: 1.05rem;
+    color: var(--ink);
+    text-decoration: none;
+}
+
+.card-name:hover {
+    color: var(--accent-ink);
+    text-decoration: underline;
+}
+
+.rhythm {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.25rem 1rem;
+    margin: 0;
+    max-width: 28rem;
+}
+
+.rhythm dt {
+    color: var(--ink-soft);
+}
+
+.rhythm dd {
+    margin: 0;
+    font-weight: 600;
 }
 
 .card-urgency {
