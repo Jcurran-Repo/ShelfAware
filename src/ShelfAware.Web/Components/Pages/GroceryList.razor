@@ -1,0 +1,182 @@
+@page "/list"
+@rendermode InteractiveServer
+@using ShelfAware.Core.Prediction
+@using ShelfAware.Web.Services
+@inject IDbContextFactory<ShelfAwareDbContext> DbFactory
+
+<PageTitle>Grocery List — Shelf Aware</PageTitle>
+
+<div class="page-head">
+    <h1>Grocery List</h1>
+    @if (loaded)
+    {
+        <span class="summary">
+            <strong>Next run ≈ @Money(buyNowTotal)</strong>
+            @if (buyNowUnknownCount > 0)
+            {
+                <span class="muted">+@buyNowUnknownCount with no price yet</span>
+            }
+        </span>
+    }
+</div>
+
+@if (!loaded)
+{
+    <p>Loading…</p>
+}
+else if (buyNow.Count == 0 && comingUp.Count == 0 && learning.Count == 0)
+{
+    <p class="muted">No tracked products yet. Add some on the <a href="/products">Products</a> page.</p>
+}
+else
+{
+    @if (buyNow.Count > 0)
+    {
+        <h2>Buy now <span class="muted">— @buyNow.Count item@(buyNow.Count == 1 ? "" : "s")</span></h2>
+        @ReportTable(buyNow, buyNowTotal, buyNowUnknownCount)
+    }
+
+    @if (comingUp.Count > 0)
+    {
+        <h2>Coming up</h2>
+        @ReportTable(comingUp, comingUpTotal, comingUpUnknownCount)
+    }
+
+    @if (buyNow.Count > 0 && comingUp.Count > 0)
+    {
+        <p class="grand-total"><strong>Everything tracked: @Money(buyNowTotal + comingUpTotal)</strong> <span class="muted">(known prices)</span></p>
+    }
+
+    @if (learning.Count > 0)
+    {
+        <details class="everything-else">
+            <summary>Still learning (@learning.Count)</summary>
+            <p class="muted">No estimate yet — buy each a couple of times and it'll move up: @string.Join(", ", learning.Select(e => e.Name)).</p>
+        </details>
+    }
+}
+
+@code {
+    private bool loaded;
+    private List<ProductEstimate> buyNow = [];
+    private List<ProductEstimate> comingUp = [];
+    private List<ProductEstimate> learning = [];
+    private decimal buyNowTotal, comingUpTotal;
+    private int buyNowUnknownCount, comingUpUnknownCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var products = await db.Products
+            .Where(p => p.IsTracked)
+            .Include(p => p.Purchases)
+            .Include(p => p.Signals)
+            .OrderBy(p => p.Name)
+            .ToListAsync();
+
+        var priceLines = await db.ReceiptLines
+            .Where(l => l.ProductId != null && l.UnitPrice != null)
+            .Select(l => new { Id = l.ProductId!.Value, Price = l.UnitPrice!.Value })
+            .ToListAsync();
+        var priceByProduct = priceLines
+            .GroupBy(x => x.Id)
+            .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
+
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var all = products.Select(p =>
+        {
+            var prediction = ReplenishmentPredictor.Predict(p, today);
+            return ShoppingEstimator.For(p, prediction, today,
+                priceByProduct.TryGetValue(p.Id, out var price) ? price : null);
+        }).ToList();
+
+        buyNow = all
+            .Where(e => e.Status is PredictionStatus.Overdue or PredictionStatus.DueSoon)
+            .OrderBy(e => e.DaysUntil ?? int.MaxValue)
+            .ThenBy(e => e.Name)
+            .ToList();
+        comingUp = all
+            .Where(e => e.Status == PredictionStatus.Stocked)
+            .OrderBy(e => e.NextBuyDate ?? DateOnly.MaxValue)
+            .ThenBy(e => e.Name)
+            .ToList();
+        learning = all
+            .Where(e => e.Status == PredictionStatus.Unknown)
+            .OrderBy(e => e.Name)
+            .ToList();
+
+        buyNowTotal = buyNow.Sum(e => e.ExpectedCost ?? 0m);
+        comingUpTotal = comingUp.Sum(e => e.ExpectedCost ?? 0m);
+        buyNowUnknownCount = buyNow.Count(e => e.ExpectedCost is null);
+        comingUpUnknownCount = comingUp.Count(e => e.ExpectedCost is null);
+        loaded = true;
+    }
+
+    private RenderFragment ReportTable(List<ProductEstimate> items, decimal subtotal, int unknownCount) =>
+        @<div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th scope="col">Item</th>
+                        <th scope="col">Category</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Next buy</th>
+                        <th scope="col">Qty</th>
+                        <th scope="col">Est. cost</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var e in items)
+                    {
+                        <tr>
+                            <td>@e.Name</td>
+                            <td>@e.Category</td>
+                            <td><span class="chip chip-@ChipClass(e.Status)">@StatusLabel(e.Status)</span></td>
+                            <td>
+                                @(e.NextBuyDate is { } d ? d.ToString("MMM d") : "—")
+                                @if (e.DaysUntil is { } du)
+                                {
+                                    <span class="muted"> (@Relative(du))</span>
+                                }
+                            </td>
+                            <td>@e.TypicalQuantity.ToString("0.##")</td>
+                            <td>@(e.ExpectedCost is { } c ? Money(c) : "—")</td>
+                        </tr>
+                    }
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="5" class="subtotal-label">Subtotal@(unknownCount > 0 ? $" ({unknownCount} without a price)" : "")</td>
+                        <td class="subtotal">@Money(subtotal)</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>;
+
+    private static string Money(decimal amount) => amount.ToString("C");
+
+    private static string Relative(int days) => days switch
+    {
+        < 0 => $"{-days} day{P(-days)} overdue",
+        0 => "today",
+        _ => $"in {days} day{P(days)}"
+    };
+
+    private static string P(int n) => n == 1 ? "" : "s";
+
+    private static string ChipClass(PredictionStatus s) => s switch
+    {
+        PredictionStatus.Overdue => "overdue",
+        PredictionStatus.DueSoon => "duesoon",
+        PredictionStatus.Stocked => "stocked",
+        _ => "unknown"
+    };
+
+    private static string StatusLabel(PredictionStatus s) => s switch
+    {
+        PredictionStatus.Overdue => "Overdue",
+        PredictionStatus.DueSoon => "Due soon",
+        PredictionStatus.Stocked => "Stocked",
+        _ => "Still learning"
+    };
+}

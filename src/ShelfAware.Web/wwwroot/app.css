@@ -436,6 +436,27 @@ td.raw .chip {
     color: var(--overdue-ink);
 }
 
+/* ---- Grocery List report ---- */
+tfoot td {
+    border-top: 2px solid var(--line);
+    background: #fbfcfd;
+}
+
+.subtotal-label {
+    text-align: right;
+    color: var(--ink-soft);
+}
+
+.subtotal {
+    text-align: right;
+    font-weight: 700;
+}
+
+.grand-total {
+    margin: 1rem 0;
+    font-size: 1.05rem;
+}
+
 /* ---- Blazor form validation + error boundary defaults ---- */
 .valid.modified:not([type=checkbox]) {
     outline: 1px solid #26b050;

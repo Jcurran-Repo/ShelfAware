@@ -61,8 +61,11 @@ table `scope`/`caption`. The Products grid gained integrated in-header filters
 (search/category/status/tracking), a "Next buy" estimate column with a detail
 tooltip (last bought, typical quantity, expected cost), and a small trash-icon
 delete; the temporary Phase 1 manual-purchase form was removed (purchases now
-come from receipts, chat, and the dashboard quick buttons). A Grocery List report
-page is the next piece.
+come from receipts, chat, and the dashboard quick buttons). The Grocery List
+report page (`/list`, GroceryList.razor) groups tracked products into "Buy now"
+(Overdue + DueSoon) and "Coming up" (Stocked) with per-item expected cost via
+`ShoppingEstimator`, group subtotals, a grand total, and a "still learning"
+section — verified live ("Next run ≈ $41.22").
 
 ## Decisions & deviations from the spec
 
