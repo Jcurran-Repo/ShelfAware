@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build-test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore ShelfAware.slnx
+
+      - name: Build
+        run: dotnet build ShelfAware.slnx --configuration Release --no-restore
+
+      # Only the pure unit tests run in CI. The extraction eval harness
+      # (tests/ShelfAware.Evals) needs a live API key and is run manually.
+      - name: Test
+        run: dotnet test tests/ShelfAware.Tests/ShelfAware.Tests.csproj --configuration Release --no-build
