@@ -43,9 +43,20 @@ else if (phase == Phase.Review && receipt is not null)
 {
     <section class="panel">
         <p>
-            <strong>@(receipt.Merchant ?? "Unknown merchant")</strong>
-            — @(receipt.PurchasedAt?.ToString("yyyy-MM-dd") ?? "no date detected")
-            — @reviewLines.Count item(s). Review and correct before confirming.
+            <strong>@(receipt.Merchant ?? "Unknown merchant")</strong> — @reviewLines.Count item(s). Review and correct before confirming.
+        </p>
+        <p class="review-date">
+            <label for="receipt-date"><strong>Purchase date</strong></label>
+            <input id="receipt-date" type="date" @bind="reviewDate"
+                   max="@DateOnly.FromDateTime(DateTime.Today).ToString("yyyy-MM-dd")" />
+            @if (receipt.PurchasedAt is null)
+            {
+                <span class="error">No date detected — set the actual purchase date so refill timing stays accurate.</span>
+            }
+            else
+            {
+                <span class="muted">Detected from the receipt. Correct it if it's wrong — this drives the refill predictions.</span>
+            }
         </p>
         @if (reviewLines.Count == 0)
         {
@@ -128,6 +139,7 @@ else if (phase == Phase.Done)
     private string? errorMessage;
     private List<IBrowserFile> selectedFiles = [];
     private Receipt? receipt;
+    private DateOnly reviewDate = DateOnly.FromDateTime(DateTime.Today);
     private List<ReviewLine> reviewLines = [];
     private List<Product> products = [];
     private string confirmSummary = "";
@@ -215,6 +227,7 @@ else if (phase == Phase.Done)
 
             receipt.Merchant = result.Receipt.Merchant;
             receipt.PurchasedAt = result.Receipt.PurchaseDate;
+            reviewDate = receipt.PurchasedAt ?? DateOnly.FromDateTime(DateTime.Today);
             receipt.Lines = result.Receipt.Lines.Select(l => new ReceiptLine
             {
                 RawText = l.RawText,
@@ -273,7 +286,10 @@ else if (phase == Phase.Done)
         if (receipt is null) return;
         await using var db = await DbFactory.CreateDbContextAsync();
         var dbReceipt = await db.Receipts.Include(r => r.Lines).FirstAsync(r => r.Id == receipt.Id);
-        var purchaseDate = dbReceipt.PurchasedAt ?? DateOnly.FromDateTime(DateTime.Today);
+        // Use the user-confirmed receipt date (not the upload date) so refill intervals are accurate
+        // even when many receipts are uploaded in one sitting.
+        var purchaseDate = reviewDate;
+        dbReceipt.PurchasedAt = reviewDate;
         var merchant = dbReceipt.Merchant ?? "";
         var created = 0;
 
