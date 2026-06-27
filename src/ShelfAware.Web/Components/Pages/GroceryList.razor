@@ -3,6 +3,7 @@
 @using ShelfAware.Core.Prediction
 @using ShelfAware.Core.Shopping
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
+@inject IJSRuntime JS
 
 <PageTitle>Grocery List — Shelf Aware</PageTitle>
 
@@ -19,6 +20,18 @@
         </span>
     }
 </div>
+
+@if (loaded && buyNow.Count > 0)
+{
+    <div class="list-actions">
+        <button class="secondary" @onclick="CopyList">Copy list</button>
+        <button class="secondary" @onclick="PrintList">Print</button>
+        @if (copied)
+        {
+            <span class="muted" role="status">Copied to clipboard</span>
+        }
+    </div>
+}
 
 @if (!loaded)
 {
@@ -90,9 +103,12 @@ else
                 priceByProduct.TryGetValue(p.Id, out var price) ? price : null);
         }).ToList();
 
+        // Ordered by aisle (category) so the list matches how you walk a store,
+        // then by urgency within each aisle.
         buyNow = all
             .Where(e => e.Status is PredictionStatus.Overdue or PredictionStatus.DueSoon)
-            .OrderBy(e => e.DaysUntil ?? int.MaxValue)
+            .OrderBy(e => e.Category)
+            .ThenBy(e => e.DaysUntil ?? int.MaxValue)
             .ThenBy(e => e.Name)
             .ToList();
         comingUp = all
@@ -152,6 +168,29 @@ else
                 </tfoot>
             </table>
         </div>;
+
+    private bool copied;
+
+    private async Task CopyList()
+    {
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", BuildListText());
+        copied = true;
+    }
+
+    private async Task PrintList() => await JS.InvokeVoidAsync("window.print");
+
+    private string BuildListText()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"Grocery List — {DateOnly.FromDateTime(DateTime.Today):yyyy-MM-dd}");
+        sb.AppendLine($"Buy now (~{Money(buyNowTotal)}):");
+        foreach (var e in buyNow)
+        {
+            var cost = e.ExpectedCost is { } c ? $" — {Money(c)}" : "";
+            sb.AppendLine($"- {e.Name} ×{e.TypicalQuantity:0.##}{cost}");
+        }
+        return sb.ToString();
+    }
 
     private static string Money(decimal amount) => amount.ToString("C");
 

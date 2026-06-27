@@ -4,6 +4,7 @@
     --ink-soft: #59636e;
     --line: #e2e5e9;
     --surface: #ffffff;
+    --surface-alt: var(--surface-alt);
     --bg: #f6f7f9;
     --accent: #2563eb;
     --accent-ink: #1d4ed8;
@@ -15,6 +16,26 @@
 
     --radius: 8px;
     --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --ink: #e6e8eb;
+        --ink-soft: #9aa4af;
+        --line: #2b3138;
+        --surface: #1b1f24;
+        --surface-alt: #20252b;
+        --bg: #131619;
+        --accent: #4b86ff;
+        --accent-ink: #7aa6ff;
+
+        --overdue-bg: #3a1d1f;  --overdue-ink: #f4a6a0;  --overdue-line: #b4524a;
+        --duesoon-bg: #38300f;  --duesoon-ink: #eccf85;  --duesoon-line: #9a7d2c;
+        --stocked-bg: #143427;  --stocked-ink: #84dfac;  --stocked-line: #3f8e64;
+        --unknown-bg: #2a2f36;  --unknown-ink: #aab2bb;  --unknown-line: #586675;
+
+        --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+    }
 }
 
 body {
@@ -109,7 +130,7 @@ th {
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--ink-soft);
-    background: #fbfcfd;
+    background: var(--surface-alt);
 }
 
 tbody tr:last-child td {
@@ -144,7 +165,7 @@ button.secondary {
 }
 
 button.secondary:hover:not(:disabled) {
-    background: #fbfcfd;
+    background: var(--surface-alt);
     border-color: var(--ink-soft);
 }
 
@@ -409,7 +430,7 @@ td.raw .chip {
 /* Integrated in-header filter row. */
 .filter-row th {
     padding: 0.3rem 0.5rem;
-    background: #fff;
+    background: var(--surface-alt);
     font-weight: 400;
     border-bottom: 2px solid var(--line);
 }
@@ -431,7 +452,7 @@ td.raw .chip {
 }
 
 .icon-btn:hover:not(:disabled) {
-    background: #fbfcfd;
+    background: var(--surface-alt);
     border-color: var(--overdue-line);
     color: var(--overdue-ink);
 }
@@ -439,7 +460,7 @@ td.raw .chip {
 /* ---- Grocery List report ---- */
 tfoot td {
     border-top: 2px solid var(--line);
-    background: #fbfcfd;
+    background: var(--surface-alt);
 }
 
 .subtotal-label {
@@ -455,6 +476,75 @@ tfoot td {
 .grand-total {
     margin: 1rem 0;
     font-size: 1.05rem;
+}
+
+/* ---- Accessible detail popover (Products grid) ---- */
+.info-btn {
+    padding: 0 0.3rem;
+    margin-left: 0.25rem;
+    background: transparent;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 0.95rem;
+}
+
+.popover {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem;
+    background: var(--surface);
+    color: var(--ink);
+    box-shadow: var(--shadow);
+    max-width: 20rem;
+}
+
+.popover dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.15rem 0.75rem;
+    margin: 0.5rem 0 0;
+}
+
+.popover dt {
+    color: var(--ink-soft);
+}
+
+.popover dd {
+    margin: 0;
+}
+
+/* ---- Grocery List actions, review date, print ---- */
+.list-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin: 0.5rem 0 1rem;
+}
+
+.review-date {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+@media print {
+    .site-header,
+    .list-actions,
+    details.everything-else,
+    .info-btn {
+        display: none !important;
+    }
+
+    body {
+        background: #fff;
+        color: #000;
+    }
+
+    table {
+        box-shadow: none;
+    }
 }
 
 /* ---- Blazor form validation + error boundary defaults ---- */

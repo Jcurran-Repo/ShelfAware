@@ -102,7 +102,7 @@ else
                     <td><input type="checkbox" checked="@p.IsTracked" aria-label="Track @p.Name" @onchange="ev => SetTracked(p, (bool)ev.Value!)" /></td>
                     <td>@purchaseCounts.GetValueOrDefault(p.Id)</td>
                     <td><span class="chip chip-@ChipClass(e.Status)">@StatusLabel(e.Status)</span></td>
-                    <td title="@Tooltip(p)">
+                    <td>
                         @if (e.NextBuyDate is { } d)
                         {
                             @d.ToString("MMM d")
@@ -112,6 +112,22 @@ else
                         {
                             <span class="muted">still learning</span>
                         }
+                        <button class="info-btn" popovertarget="est-@p.Id" aria-label="Purchase details for @p.Name"><span aria-hidden="true">ⓘ</span></button>
+                        <div popover id="est-@p.Id" class="popover">
+                            <strong>@p.Name</strong>
+                            <dl>
+                                <dt>Last bought</dt>
+                                <dd>@(e.LastPurchased?.ToString("yyyy-MM-dd") ?? "never")</dd>
+                                <dt>Typical buy</dt>
+                                <dd>@e.TypicalQuantity.ToString("0.##")@(p.DefaultUnit is { } u ? " " + u : "")</dd>
+                                <dt>Next buy</dt>
+                                <dd>@(e.NextBuyDate is { } nb ? $"{nb:yyyy-MM-dd} ({Relative(e.DaysUntil!.Value)})" : "still learning")</dd>
+                                <dt>Est. unit price</dt>
+                                <dd>@(e.UnitPrice is { } up ? up.ToString("C") : "unknown")</dd>
+                                <dt>Est. cost</dt>
+                                <dd>@(e.ExpectedCost is { } cost ? cost.ToString("C") : "unknown")</dd>
+                            </dl>
+                        </div>
                     </td>
                     <td><button class="icon-btn" @onclick="() => Delete(p)" aria-label="Delete @p.Name" title="Delete @p.Name"><span aria-hidden="true">🗑</span></button></td>
                 </tr>
@@ -176,21 +192,6 @@ else
             p => p.Id,
             p => ShoppingEstimator.For(p, predictions[p.Id], today,
                 priceByProduct.TryGetValue(p.Id, out var price) ? price : null));
-    }
-
-    private string Tooltip(Product p)
-    {
-        var e = estimates[p.Id];
-        var lines = new List<string>
-        {
-            $"Last bought: {(e.LastPurchased is { } lb ? lb.ToString("yyyy-MM-dd") : "never")}",
-            $"Typical buy: {e.TypicalQuantity:0.##}{(p.DefaultUnit is { } u ? " " + u : "")}",
-            e.NextBuyDate is { } nb ? $"Next buy: {nb:yyyy-MM-dd} ({Relative(e.DaysUntil!.Value)})" : "Next buy: still learning",
-            $"Est. unit price: {(e.UnitPrice is { } up ? up.ToString("C") : "unknown")}",
-            $"Est. cost: {(e.ExpectedCost is { } c ? c.ToString("C") : "unknown")}",
-            e.Basis,
-        };
-        return string.Join("\n", lines);
     }
 
     private static string Relative(int days) => days switch

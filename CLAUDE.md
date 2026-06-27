@@ -67,6 +67,18 @@ report page (`/list`, GroceryList.razor) groups tracked products into "Buy now"
 `ShoppingEstimator`, group subtotals, a grand total, and a "still learning"
 section — verified live ("Next run ≈ $41.22").
 
+Later pass (browser-verified): **purchase date now comes from the receipt, not the
+upload date** — the review screen exposes an editable, labeled "Purchase date"
+field (defaulting to the extracted date, or today with a warning when none was
+detected) and `ConfirmAll` writes that date to every PurchaseEvent, so a batch of
+old receipts uploaded in one sitting keeps accurate intervals. Also: a
+`prefers-color-scheme` **dark mode** (all colors are CSS variables, incl. a
+`--surface-alt`); the Grocery List is **ordered by aisle/category** with
+**Copy list** (clipboard) and **Print** (print stylesheet) actions; and the
+Products detail moved from a `title` tooltip to an **accessible native popover**
+(`popovertarget`, Escape-closes, focus-managed) so the breakdown is keyboard- and
+screen-reader-reachable.
+
 ## Decisions & deviations from the spec
 
 - **`SignalKind.Restocked`** — the spec's enum value "ShelfAwareed" is a
