@@ -22,7 +22,7 @@
             long order are fine — they're merged). Print-to-PDF order pages also work.
         </p>
         <div hidden="@(phase == Phase.Extracting)">
-            <InputFile OnChange="OnFilesSelected" multiple accept="image/jpeg,image/png,image/gif,image/webp,application/pdf" />
+            <InputFile OnChange="OnFilesSelected" multiple accept="image/jpeg,image/png,image/gif,image/webp,application/pdf" aria-label="Upload receipt images or PDF" />
             @if (selectedFiles.Count > 0)
             {
                 <p>@selectedFiles.Count file(s) selected.</p>
@@ -55,12 +55,12 @@ else if (phase == Phase.Review && receipt is not null)
         <table>
             <thead>
                 <tr>
-                    <th>Receipt text</th>
-                    <th>Item</th>
-                    <th>Qty</th>
-                    <th>Category</th>
-                    <th>Product match</th>
-                    <th></th>
+                    <th scope="col">Receipt text</th>
+                    <th scope="col">Item</th>
+                    <th scope="col">Qty</th>
+                    <th scope="col">Category</th>
+                    <th scope="col">Product match</th>
+                    <th scope="col"><span class="visually-hidden">Actions</span></th>
                 </tr>
             </thead>
             <tbody>
@@ -76,10 +76,10 @@ else if (phase == Phase.Review && receipt is not null)
                                 </span>
                             </div>
                         </td>
-                        <td><input @bind="line.NormalizedName" /></td>
-                        <td><input type="number" step="0.01" min="0.01" @bind="line.Quantity" size="5" /></td>
+                        <td><input @bind="line.NormalizedName" aria-label="Item name for @line.RawText" /></td>
+                        <td><input type="number" step="0.01" min="0.01" @bind="line.Quantity" size="5" aria-label="Quantity for @line.RawText" /></td>
                         <td>
-                            <select @bind="line.Category">
+                            <select @bind="line.Category" aria-label="Category for @line.RawText">
                                 @foreach (var c in Enum.GetValues<Category>())
                                 {
                                     <option value="@c">@c</option>
@@ -87,7 +87,7 @@ else if (phase == Phase.Review && receipt is not null)
                             </select>
                         </td>
                         <td>
-                            <select @bind="line.ProductId">
+                            <select @bind="line.ProductId" aria-label="Product match for @line.RawText">
                                 <option value="0">➕ create new product</option>
                                 @foreach (var p in products)
                                 {
@@ -96,10 +96,10 @@ else if (phase == Phase.Review && receipt is not null)
                             </select>
                             @if (line.AliasMatched)
                             {
-                                <small title="Matched a previous receipt line from this merchant">🔗</small>
+                                <span role="img" aria-label="Matched a previous receipt line from this merchant" title="Matched a previous receipt line from this merchant">🔗</span>
                             }
                         </td>
-                        <td><button class="secondary" @onclick="() => reviewLines.Remove(line)" title="Remove line">✕</button></td>
+                        <td><button class="secondary" @onclick="() => reviewLines.Remove(line)" aria-label="Remove line @line.RawText"><span aria-hidden="true">✕</span></button></td>
                     </tr>
                 }
             </tbody>

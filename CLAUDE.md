@@ -53,6 +53,17 @@ button hierarchy, and LLM-assisted product matching — verified live: an eggs l
 printed as "EGGS LRG 12CT" (no brand) pre-filled the existing "Great Value Large
 Eggs", while a genuinely new item correctly offered "create new".
 
+Accessibility + Products overhaul (browser-verified): site-wide a11y pass —
+`NavLink` for `aria-current="page"`, `:focus-visible` outlines, `aria-label`s on
+all controls, icon glyphs marked `aria-hidden`, disambiguated repeated buttons
+("Delete Bananas"), an `aria-live` status region for the chat reply, and
+table `scope`/`caption`. The Products grid gained integrated in-header filters
+(search/category/status/tracking), a "Next buy" estimate column with a detail
+tooltip (last bought, typical quantity, expected cost), and a small trash-icon
+delete; the temporary Phase 1 manual-purchase form was removed (purchases now
+come from receipts, chat, and the dashboard quick buttons). A Grocery List report
+page is the next piece.
+
 ## Decisions & deviations from the spec
 
 - **`SignalKind.Restocked`** — the spec's enum value "ShelfAwareed" is a
@@ -93,6 +104,11 @@ Eggs", while a genuinely new item correctly offered "create new".
   stock" / "Marked running low") is surfaced separately from `Basis` so the UI
   presents the statistical prediction and the user's own statement as distinct
   cues, rather than concatenating them.
+- **Cost estimates live in Web, not Core** — `ShelfAware.Web/Services/ShoppingEstimator.cs`
+  combines the price-free Core prediction with quantity (median purchase qty) and
+  unit price (average of confirmed `ReceiptLine.UnitPrice` for the product) into a
+  `ProductEstimate`. The prediction engine stays pure timing statistics (§1/§6);
+  money never enters Core. Used by the Products grid and the Grocery List page.
 - **LLM-assisted product matching (extends §4)** — the extraction call now also
   receives the existing product list and returns a per-line `existing_product`
   (exact name or null) → `ExtractedLine.SuggestedProductName`. `ExtractAsync`

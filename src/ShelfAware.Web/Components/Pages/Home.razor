@@ -62,13 +62,13 @@ else
                         }
                         @if (r.SignalNote is not null)
                         {
-                            <div class="card-note">@(r.Pinned ? "📌 " : "")@r.SignalNote</div>
+                            <div class="card-note">@if (r.Pinned) { <span aria-hidden="true">📌 </span> }@r.SignalNote</div>
                         }
                         <div class="card-basis muted">@r.Basis</div>
                     </div>
                     <div class="card-actions">
-                        <button @onclick="() => BoughtToday(p)">Bought today</button>
-                        <button class="secondary" @onclick="() => Restocked(p)">Restocked</button>
+                        <button @onclick="() => BoughtToday(p)" aria-label="Mark @p.Name bought today">Bought today</button>
+                        <button class="secondary" @onclick="() => Restocked(p)" aria-label="Mark @p.Name restocked">Restocked</button>
                     </div>
                 </li>
             }
@@ -79,15 +79,17 @@ else
         <h2>Quick update</h2>
         <form @onsubmit="SendChat" @formname="quick-update">
             <input @bind="chatInput" @bind:event="oninput" placeholder="e.g. we're out of dog food, almost out of coffee"
-                   disabled="@chatBusy" />
+                   aria-label="Quick update — say what you bought or ran low on" disabled="@chatBusy" />
             <button type="submit" disabled="@(chatBusy || string.IsNullOrWhiteSpace(chatInput))">
                 @(chatBusy ? "Working…" : "Send")
             </button>
         </form>
-        @if (chatReply is not null)
-        {
-            <p class="@(chatError ? "error" : "chat-reply")">@chatReply</p>
-        }
+        <div role="status" aria-live="polite">
+            @if (chatReply is not null)
+            {
+                <p class="@(chatError ? "error" : "chat-reply")">@chatReply</p>
+            }
+        </div>
     </section>
 
     <details class="everything-else">

@@ -1,23 +1,30 @@
 @page "/products"
 @rendermode InteractiveServer
 @using ShelfAware.Core.Prediction
+@using ShelfAware.Web.Services
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
 
 <PageTitle>Products — Shelf Aware</PageTitle>
 
-<h1>Products</h1>
+<div class="page-head">
+    <h1>Products</h1>
+    @if (products is not null)
+    {
+        <span class="muted">Showing @FilteredProducts.Count() of @products.Count</span>
+    }
+</div>
 
 <section class="panel">
     <h2>Add product</h2>
-    <form @onsubmit="AddProduct" @formname="add-product">
-        <input placeholder="Name" @bind="newName" />
-        <select @bind="newCategory">
+    <form @onsubmit="AddProduct" @formname="add-product" aria-label="Add product">
+        <input placeholder="Name" aria-label="New product name" @bind="newName" />
+        <select aria-label="New product category" @bind="newCategory">
             @foreach (var c in Enum.GetValues<Category>())
             {
                 <option value="@c">@c</option>
             }
         </select>
-        <input placeholder="Default unit (optional)" @bind="newUnit" size="14" />
+        <input placeholder="Default unit (optional)" aria-label="Default unit (optional)" @bind="newUnit" size="14" />
         <button type="submit">Add</button>
     </form>
     @if (addError is not null)
@@ -32,87 +39,115 @@
 }
 else
 {
+    var shown = FilteredProducts.ToList();
+
     <table>
+        <caption class="visually-hidden">Products with category, tracking, purchase count, replenishment status, and next predicted buy date. Use the filter row to narrow the list.</caption>
         <thead>
             <tr>
-                <th>Name</th>
-                <th>Category</th>
-                <th>Tracked</th>
-                <th>Purchases</th>
-                <th>Status</th>
-                <th>Median interval</th>
+                <th scope="col">Name</th>
+                <th scope="col">Category</th>
+                <th scope="col">Tracked</th>
+                <th scope="col">Purchases</th>
+                <th scope="col">Status</th>
+                <th scope="col">Next buy</th>
+                <th scope="col"><span class="visually-hidden">Actions</span></th>
+            </tr>
+            <tr class="filter-row">
+                <th><input type="search" placeholder="Search…" aria-label="Search products by name" @bind="searchText" @bind:event="oninput" /></th>
+                <th>
+                    <select aria-label="Filter by category" @bind="categoryFilter">
+                        <option value="">All</option>
+                        @foreach (var c in Enum.GetValues<Category>())
+                        {
+                            <option value="@c">@c</option>
+                        }
+                    </select>
+                </th>
+                <th>
+                    <select aria-label="Filter by tracking" @bind="trackedFilter">
+                        <option value="">All</option>
+                        <option value="true">Tracked</option>
+                        <option value="false">Untracked</option>
+                    </select>
+                </th>
+                <th></th>
+                <th>
+                    <select aria-label="Filter by status" @bind="statusFilter">
+                        <option value="">All</option>
+                        <option value="Overdue">Overdue</option>
+                        <option value="DueSoon">Due soon</option>
+                        <option value="Stocked">Stocked</option>
+                        <option value="Unknown">Still learning</option>
+                    </select>
+                </th>
+                <th></th>
                 <th></th>
             </tr>
         </thead>
         <tbody>
-            @foreach (var p in products)
+            @foreach (var p in shown)
             {
+                var e = estimates[p.Id];
                 <tr>
-                    <td><input value="@p.Name" @onchange="e => Rename(p, (string?)e.Value)" /></td>
+                    <td><input value="@p.Name" aria-label="Product name" @onchange="ev => Rename(p, (string?)ev.Value)" /></td>
                     <td>
-                        <select value="@p.Category" @onchange="e => SetCategory(p, (string?)e.Value)">
+                        <select value="@p.Category" aria-label="Category for @p.Name" @onchange="ev => SetCategory(p, (string?)ev.Value)">
                             @foreach (var c in Enum.GetValues<Category>())
                             {
                                 <option value="@c">@c</option>
                             }
                         </select>
                     </td>
-                    <td><input type="checkbox" checked="@p.IsTracked" @onchange="e => SetTracked(p, (bool)e.Value!)" /></td>
+                    <td><input type="checkbox" checked="@p.IsTracked" aria-label="Track @p.Name" @onchange="ev => SetTracked(p, (bool)ev.Value!)" /></td>
                     <td>@purchaseCounts.GetValueOrDefault(p.Id)</td>
-                    <td>
-                        @if (predictions.TryGetValue(p.Id, out var r))
+                    <td><span class="chip chip-@ChipClass(e.Status)">@StatusLabel(e.Status)</span></td>
+                    <td title="@Tooltip(p)">
+                        @if (e.NextBuyDate is { } d)
                         {
-                            <span class="chip chip-@ChipClass(r.Status)">@StatusLabel(r.Status)</span>
+                            @d.ToString("MMM d")
+                            <span class="muted"> (@Relative(e.DaysUntil!.Value))</span>
+                        }
+                        else
+                        {
+                            <span class="muted">still learning</span>
                         }
                     </td>
-                    <td>@MedianText(p.Id)</td>
-                    <td><button @onclick="() => Delete(p)">Delete</button></td>
+                    <td><button class="icon-btn" @onclick="() => Delete(p)" aria-label="Delete @p.Name" title="Delete @p.Name"><span aria-hidden="true">🗑</span></button></td>
                 </tr>
+            }
+            @if (shown.Count == 0)
+            {
+                <tr class="empty-row"><td colspan="7">No products match these filters.</td></tr>
             }
         </tbody>
     </table>
 }
 
-<section class="panel temp">
-    <h2>Manual purchase <small>(temporary Phase 1 form — replaced by receipt upload)</small></h2>
-    @if (products is { Count: > 0 })
-    {
-        <form @onsubmit="AddPurchase" @formname="add-purchase">
-            <select @bind="purchaseProductId">
-                @foreach (var p in products)
-                {
-                    <option value="@p.Id">@p.Name</option>
-                }
-            </select>
-            <input type="date" @bind="purchaseDate" />
-            <input type="number" step="0.01" min="0.01" @bind="purchaseQty" size="6" />
-            <button type="submit">Record purchase</button>
-        </form>
-        @if (purchaseNote is not null)
-        {
-            <p>@purchaseNote</p>
-        }
-    }
-    else
-    {
-        <p>Add a product first.</p>
-    }
-</section>
-
 @code {
     private List<Product>? products;
     private Dictionary<int, int> purchaseCounts = [];
     private Dictionary<int, PredictionResult> predictions = [];
+    private Dictionary<int, ProductEstimate> estimates = [];
 
     private string newName = "";
     private Category newCategory = Category.Pantry;
     private string newUnit = "";
     private string? addError;
 
-    private int purchaseProductId;
-    private DateOnly purchaseDate = DateOnly.FromDateTime(DateTime.Today);
-    private decimal purchaseQty = 1;
-    private string? purchaseNote;
+    private string searchText = "";
+    private string categoryFilter = "";
+    private string statusFilter = "";
+    private string trackedFilter = "";
+
+    private IEnumerable<Product> FilteredProducts => (products ?? Enumerable.Empty<Product>()).Where(p =>
+    {
+        if (searchText.Trim() is { Length: > 0 } q && !p.Name.Contains(q, StringComparison.OrdinalIgnoreCase)) return false;
+        if (categoryFilter.Length > 0 && p.Category.ToString() != categoryFilter) return false;
+        if (trackedFilter.Length > 0 && p.IsTracked != bool.Parse(trackedFilter)) return false;
+        if (statusFilter.Length > 0 && (!predictions.TryGetValue(p.Id, out var r) || r.Status.ToString() != statusFilter)) return false;
+        return true;
+    });
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
 
@@ -126,19 +161,46 @@ else
             .ToListAsync();
         purchaseCounts = products.ToDictionary(p => p.Id, p => p.Purchases.Count);
 
+        // Average confirmed unit price per product (for expected-cost estimates).
+        var priceLines = await db.ReceiptLines
+            .Where(l => l.ProductId != null && l.UnitPrice != null)
+            .Select(l => new { Id = l.ProductId!.Value, Price = l.UnitPrice!.Value })
+            .ToListAsync();
+        var priceByProduct = priceLines
+            .GroupBy(x => x.Id)
+            .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
+
         var today = DateOnly.FromDateTime(DateTime.Today);
         predictions = products.ToDictionary(p => p.Id, p => ReplenishmentPredictor.Predict(p, today));
-
-        if (products.Count > 0 && products.All(p => p.Id != purchaseProductId))
-        {
-            purchaseProductId = products[0].Id;
-        }
+        estimates = products.ToDictionary(
+            p => p.Id,
+            p => ShoppingEstimator.For(p, predictions[p.Id], today,
+                priceByProduct.TryGetValue(p.Id, out var price) ? price : null));
     }
 
-    private string MedianText(int productId) =>
-        predictions.TryGetValue(productId, out var r) && r.MedianIntervalDays is { } m
-            ? $"~{Math.Round(m)} days"
-            : "—";
+    private string Tooltip(Product p)
+    {
+        var e = estimates[p.Id];
+        var lines = new List<string>
+        {
+            $"Last bought: {(e.LastPurchased is { } lb ? lb.ToString("yyyy-MM-dd") : "never")}",
+            $"Typical buy: {e.TypicalQuantity:0.##}{(p.DefaultUnit is { } u ? " " + u : "")}",
+            e.NextBuyDate is { } nb ? $"Next buy: {nb:yyyy-MM-dd} ({Relative(e.DaysUntil!.Value)})" : "Next buy: still learning",
+            $"Est. unit price: {(e.UnitPrice is { } up ? up.ToString("C") : "unknown")}",
+            $"Est. cost: {(e.ExpectedCost is { } c ? c.ToString("C") : "unknown")}",
+            e.Basis,
+        };
+        return string.Join("\n", lines);
+    }
+
+    private static string Relative(int days) => days switch
+    {
+        < 0 => $"{-days} day{P(-days)} overdue",
+        0 => "today",
+        _ => $"in {days} day{P(days)}"
+    };
+
+    private static string P(int n) => n == 1 ? "" : "s";
 
     private static string ChipClass(PredictionStatus s) => s switch
     {
@@ -212,22 +274,6 @@ else
         await using var db = await DbFactory.CreateDbContextAsync();
         db.Products.Remove(p);
         await db.SaveChangesAsync();
-        await LoadAsync();
-    }
-
-    private async Task AddPurchase()
-    {
-        if (purchaseQty <= 0 || products is null || products.All(p => p.Id != purchaseProductId)) return;
-        await using var db = await DbFactory.CreateDbContextAsync();
-        db.PurchaseEvents.Add(new PurchaseEvent
-        {
-            ProductId = purchaseProductId,
-            PurchasedAt = purchaseDate,
-            Quantity = purchaseQty,
-            Source = PurchaseSource.Manual
-        });
-        await db.SaveChangesAsync();
-        purchaseNote = $"Recorded {purchaseQty} × {products.First(p => p.Id == purchaseProductId).Name} on {purchaseDate:yyyy-MM-dd}.";
         await LoadAsync();
     }
 }
