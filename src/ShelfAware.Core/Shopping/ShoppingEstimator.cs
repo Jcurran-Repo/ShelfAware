@@ -1,13 +1,13 @@
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Prediction;
 
-namespace ShelfAware.Web.Services;
+namespace ShelfAware.Core.Shopping;
 
 /// <summary>
-/// Per-product shopping estimate combining the (price-free) timing prediction with quantity and
-/// price history. Kept in Web because cost comes from EF-stored ReceiptLine prices — the Core
-/// prediction engine stays pure timing statistics (DESIGN.md §1/§6). Shared by the Products grid
-/// tooltip and the Grocery List report.
+/// Per-product shopping estimate combining the (price-free) timing prediction with quantity and a
+/// unit price. Pure C#: the unit price is passed IN — the Web layer fetches it from EF-stored
+/// ReceiptLine prices and supplies it here, so Core stays EF-free (DESIGN.md §3) and the prediction
+/// engine stays pure timing statistics (§1/§6). Shared by the Products grid and the Grocery List.
 /// </summary>
 public record ProductEstimate
 {
@@ -23,7 +23,7 @@ public record ProductEstimate
     public int? DaysUntil { get; init; }
 
     public decimal TypicalQuantity { get; init; } = 1m;
-    /// <summary>Average unit price from confirmed receipt lines, or null when there's no price history.</summary>
+    /// <summary>Unit price supplied by the caller (avg of confirmed receipt lines), or null when unknown.</summary>
     public decimal? UnitPrice { get; init; }
     public decimal? ExpectedCost { get; init; }
 }

@@ -107,11 +107,12 @@ section — verified live ("Next run ≈ $41.22").
   stock" / "Marked running low") is surfaced separately from `Basis` so the UI
   presents the statistical prediction and the user's own statement as distinct
   cues, rather than concatenating them.
-- **Cost estimates live in Web, not Core** — `ShelfAware.Web/Services/ShoppingEstimator.cs`
-  combines the price-free Core prediction with quantity (median purchase qty) and
-  unit price (average of confirmed `ReceiptLine.UnitPrice` for the product) into a
-  `ProductEstimate`. The prediction engine stays pure timing statistics (§1/§6);
-  money never enters Core. Used by the Products grid and the Grocery List page.
+- **`ShoppingEstimator` (Core/Shopping) is pure and unit-tested** — it combines the
+  price-free Core prediction with quantity (median purchase qty) and a unit price
+  into a `ProductEstimate`. The unit price is passed IN as a parameter; the Web
+  layer fetches it (average of confirmed `ReceiptLine.UnitPrice` for the product)
+  and supplies it, so Core stays EF-free (§3) and the prediction engine itself
+  stays pure timing statistics (§1/§6). Used by the Products grid + Grocery List.
 - **LLM-assisted product matching (extends §4)** — the extraction call now also
   receives the existing product list and returns a per-line `existing_product`
   (exact name or null) → `ExtractedLine.SuggestedProductName`. `ExtractAsync`
