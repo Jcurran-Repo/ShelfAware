@@ -39,6 +39,19 @@ else
         <p class="muted">@prediction.Basis@(prediction.SignalNote is { } note ? $" · {note}" : "")</p>
     </section>
 
+    @if (priceSeries.Count >= 2)
+    {
+        <section class="panel">
+            <h2>Price history</h2>
+            <LineChart Values="priceSeries" W="520" H="140" ShowDots="true"
+                       AriaLabel="@($"{product.Name} price per purchase over time")" />
+            <p class="muted">
+                @priceSeries.Count price points · low @Money(priceSeries.Min()) ·
+                high @Money(priceSeries.Max()) · latest @Money(priceSeries[^1])
+            </p>
+        </section>
+    }
+
     <section class="panel">
         <h2>Recent purchases <span class="muted">— most recent first</span></h2>
         @if (history.Count == 0)
@@ -80,6 +93,7 @@ else
     private PredictionResult prediction = null!;
     private ProductEstimate estimate = null!;
     private readonly List<PurchaseRow> history = [];
+    private readonly List<decimal> priceSeries = [];
 
     private record PurchaseRow(DateOnly Date, int? GapDays, decimal Quantity, decimal? UnitPrice);
 
@@ -117,10 +131,13 @@ else
             var pe = ordered[i];
             int? gap = i > 0 ? pe.PurchasedAt.DayNumber - ordered[i - 1].PurchasedAt.DayNumber : null;
             decimal? price = pe.ReceiptId is { } rid && priceLookup.TryGetValue(rid, out var pr) ? pr : null;
+            if (price is { } pv) priceSeries.Add(pv); // ascending, for the chart
             history.Add(new PurchaseRow(pe.PurchasedAt, gap, pe.Quantity, price));
         }
         history.Reverse(); // most recent first
     }
+
+    private static string Money(decimal amount) => amount.ToString("C");
 
     private static string Relative(int days) => days switch
     {

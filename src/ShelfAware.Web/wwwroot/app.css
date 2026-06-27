@@ -295,6 +295,72 @@ input:focus, select:focus {
     font-weight: 600;
 }
 
+/* ---- Trends (spend insight) ---- */
+.portfolio {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin: 1rem 0 1.5rem;
+}
+
+.stat {
+    flex: 1 1 9rem;
+    padding: 0.75rem 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+}
+
+.stat-label {
+    display: block;
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.stat-value {
+    font-size: 1.4rem;
+    font-weight: 700;
+}
+
+.stat.forecast {
+    border-color: var(--accent);
+}
+
+.stat.forecast .stat-value {
+    color: var(--accent-ink);
+}
+
+.stat.pass { border-color: var(--stocked-line); }
+.stat.pass .stat-value { color: var(--stocked-ink); }
+.stat.fail { border-color: var(--overdue-line); }
+.stat.fail .stat-value { color: var(--overdue-ink); }
+
+pre {
+    background: var(--surface-alt);
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    border: 1px solid var(--line);
+}
+
+.change-up {
+    color: var(--overdue-ink);
+    font-weight: 600;
+}
+
+.change-down {
+    color: var(--stocked-ink);
+    font-weight: 600;
+}
+
+.linechart {
+    display: block;
+    vertical-align: middle;
+}
+
 .card-urgency {
     font-weight: 600;
     margin-top: 0.15rem;

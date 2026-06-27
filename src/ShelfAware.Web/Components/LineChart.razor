@@ -1,0 +1,51 @@
+@* Minimal, dependency-free SVG line chart for price history. Index-spaced points. *@
+<svg class="linechart" viewBox="@ViewBox" xmlns="http://www.w3.org/2000/svg"
+     width="@W.ToString(Inv)" height="@H.ToString(Inv)" role="img" aria-label="@AriaLabel" preserveAspectRatio="none">
+    @if (Values.Count >= 2)
+    {
+        <polyline fill="none" stroke="@Stroke" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="@PointsString" />
+    }
+    @if (ShowDots)
+    {
+        @foreach (var (x, y) in Coords())
+        {
+            <circle cx="@x.ToString(Inv)" cy="@y.ToString(Inv)" r="2.5" fill="@Stroke" />
+        }
+    }
+</svg>
+
+@code {
+    private static readonly System.Globalization.CultureInfo Inv = System.Globalization.CultureInfo.InvariantCulture;
+
+    [Parameter] public IReadOnlyList<decimal> Values { get; set; } = [];
+    [Parameter] public double W { get; set; } = 120;
+    [Parameter] public double H { get; set; } = 36;
+    [Parameter] public string Stroke { get; set; } = "var(--accent)";
+    [Parameter] public bool ShowDots { get; set; }
+    [Parameter] public string AriaLabel { get; set; } = "Price history";
+
+    private const double Pad = 4;
+
+    private string ViewBox => $"0 0 {W.ToString(Inv)} {H.ToString(Inv)}";
+
+    private IEnumerable<(double x, double y)> Coords()
+    {
+        var n = Values.Count;
+        if (n == 0) yield break;
+        var min = (double)Values.Min();
+        var max = (double)Values.Max();
+        var range = max - min;
+        var flat = range == 0;
+        var plotH = H - 2 * Pad;
+        for (var i = 0; i < n; i++)
+        {
+            var x = n == 1 ? W / 2 : (double)i / (n - 1) * W;
+            var norm = flat ? 0.5 : ((double)Values[i] - min) / range;
+            var y = Pad + (1 - norm) * plotH;
+            yield return (Math.Round(x, 2), Math.Round(y, 2));
+        }
+    }
+
+    private string PointsString =>
+        string.Join(" ", Coords().Select(c => $"{c.x.ToString(Inv)},{c.y.ToString(Inv)}"));
+}

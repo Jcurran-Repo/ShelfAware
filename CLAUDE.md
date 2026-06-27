@@ -85,6 +85,23 @@ names and the Products popover. (A "grocery-stocks" Spend Insight/Trends page wi
 price-over-time charts, historical totals, and a next-month spend forecast is the
 planned next page.)
 
+Final pass this stretch:
+- **GitHub Actions CI** (`.github/workflows/ci.yml`): restore + build (Release) +
+  run the unit-test project on every push/PR. The eval harness is excluded (needs
+  a live API key).
+- **Trends page** (`/trends`, SpendInsight.razor): "grocery stocks" view —
+  portfolio stats (this/last month, this year actual spend + next-month forecast
+  by stepping each item's due date through the window) and per-product price
+  "tickers" with a dependency-free SVG `LineChart` component and a ▲/▼ change vs
+  the previous purchase (up = red/costs more). Spend is valued from
+  `ReceiptLine.UnitPrice`. Product Detail gained a full price-history line chart.
+- **Eval harness** (DESIGN.md §9): `tests/ShelfAware.Evals` now scores fixtures
+  (`<name>.expected.json` + image) for line recall/precision + field accuracy
+  (Jaccard name match ≥ 0.8), prints a table, and writes `eval-results.json`
+  (shape = `EvalResults` in Core/Evaluation). The **Accuracy page** (`/accuracy`)
+  renders that JSON from wwwroot, or shows run instructions when absent. No real
+  fixtures committed yet — run it once real receipts exist.
+
 ## Decisions & deviations from the spec
 
 - **`SignalKind.Restocked`** — the spec's enum value "ShelfAwareed" is a

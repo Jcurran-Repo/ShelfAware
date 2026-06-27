@@ -1,0 +1,180 @@
+@page "/trends"
+@rendermode InteractiveServer
+@using ShelfAware.Core.Domain
+@using ShelfAware.Core.Prediction
+@using ShelfAware.Core.Shopping
+@inject IDbContextFactory<ShelfAwareDbContext> DbFactory
+
+<PageTitle>Trends — Shelf Aware</PageTitle>
+
+<h1>Trends</h1>
+<p class="muted">Grocery spend over time, and how each item's price is moving.</p>
+
+@if (!loaded)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <div class="portfolio">
+        <div class="stat"><span class="stat-label">This month</span><span class="stat-value">@Money(thisMonth)</span></div>
+        <div class="stat"><span class="stat-label">Last month</span><span class="stat-value">@Money(lastMonth)</span></div>
+        <div class="stat"><span class="stat-label">This year</span><span class="stat-value">@Money(thisYear)</span></div>
+        <div class="stat forecast">
+            <span class="stat-label">Forecast · next month</span>
+            <span class="stat-value">@Money(nextMonthForecast)</span>
+        </div>
+    </div>
+
+    @if (tickers.Count == 0)
+    {
+        <p class="muted">No price history yet. Prices are read from confirmed receipts.</p>
+    }
+    else
+    {
+        <div class="table-scroll">
+            <table>
+                <caption class="visually-hidden">Per-product price history and recent change, highest yearly spend first.</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">Item</th>
+                        <th scope="col">Category</th>
+                        <th scope="col">Price history</th>
+                        <th scope="col">Current</th>
+                        <th scope="col">Change</th>
+                        <th scope="col">Spend (yr)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var t in tickers)
+                    {
+                        <tr>
+                            <td><a href="/product/@t.ProductId">@t.Name</a></td>
+                            <td>@t.Category</td>
+                            <td><LineChart Values="t.Prices" Stroke="@TrendColor(t)" AriaLabel="@($"{t.Name} price history")" /></td>
+                            <td>@Money(t.Current)</td>
+                            <td>
+                                @if (t.PrevDelta is { } delta && t.PrevPct is { } pct)
+                                {
+                                    <span class="@ChangeClass(delta)">@Arrow(delta) @Math.Abs(pct).ToString("0.#")%</span>
+                                }
+                                else
+                                {
+                                    <span class="muted">—</span>
+                                }
+                            </td>
+                            <td>@Money(t.SpendThisYear)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <p class="muted">▲ = price went up since the previous purchase (costs more); ▼ = down. Spend is valued from receipt prices.</p>
+    }
+}
+
+@code {
+    private bool loaded;
+    private decimal thisMonth, lastMonth, thisYear, nextMonthForecast;
+    private List<Ticker> tickers = [];
+
+    private record Ticker(int ProductId, string Name, Category Category, List<decimal> Prices,
+        decimal Current, decimal? PrevDelta, decimal? PrevPct, decimal SpendThisYear);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var products = await db.Products
+            .Include(p => p.Purchases)
+            .Include(p => p.Signals)
+            .ToListAsync();
+
+        var lineData = await db.ReceiptLines
+            .Where(l => l.ProductId != null && l.UnitPrice != null)
+            .Select(l => new { ProductId = l.ProductId!.Value, l.ReceiptId, Price = l.UnitPrice!.Value, Date = l.Receipt!.PurchasedAt })
+            .ToListAsync();
+
+        var pricesByProduct = lineData
+            .GroupBy(x => x.ProductId)
+            .ToDictionary(g => g.Key, g => g.OrderBy(x => x.Date ?? DateOnly.MinValue).Select(x => x.Price).ToList());
+        var avgByProduct = lineData
+            .GroupBy(x => x.ProductId)
+            .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
+        var byReceiptProduct = lineData
+            .GroupBy(x => (x.ReceiptId, x.ProductId))
+            .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
+
+        decimal? PriceFor(PurchaseEvent pe)
+        {
+            if (pe.ReceiptId is { } rid && byReceiptProduct.TryGetValue((rid, pe.ProductId), out var p)) return p;
+            return avgByProduct.TryGetValue(pe.ProductId, out var a) ? a : null;
+        }
+
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var firstThisMonth = new DateOnly(today.Year, today.Month, 1);
+        var firstLastMonth = firstThisMonth.AddMonths(-1);
+        var firstNextMonth = firstThisMonth.AddMonths(1);
+        var lastNextMonth = firstNextMonth.AddMonths(1).AddDays(-1);
+
+        var spendThisYearByProduct = new Dictionary<int, decimal>();
+        foreach (var p in products)
+        {
+            foreach (var pe in p.Purchases)
+            {
+                if (PriceFor(pe) is not { } price) continue;
+                var spend = price * pe.Quantity;
+                if (pe.PurchasedAt.Year == today.Year && pe.PurchasedAt.Month == today.Month) thisMonth += spend;
+                if (pe.PurchasedAt >= firstLastMonth && pe.PurchasedAt < firstThisMonth) lastMonth += spend;
+                if (pe.PurchasedAt.Year == today.Year)
+                {
+                    thisYear += spend;
+                    spendThisYearByProduct[p.Id] = spendThisYearByProduct.GetValueOrDefault(p.Id) + spend;
+                }
+            }
+        }
+
+        // Forecast next month: step each tracked item's due date by its interval through the window.
+        foreach (var p in products.Where(p => p.IsTracked))
+        {
+            var prediction = ReplenishmentPredictor.Predict(p, today);
+            if (prediction.MedianIntervalDays is not { } m || prediction.DueDate is not { } due) continue;
+            if (!avgByProduct.TryGetValue(p.Id, out var price)) continue;
+
+            var typicalQty = ShoppingEstimator.For(p, prediction, today, price).TypicalQuantity;
+            var interval = Math.Max(1, (int)Math.Round(m));
+            var d = due;
+            var guard = 0;
+            while (d <= lastNextMonth && guard++ < 400)
+            {
+                if (d >= firstNextMonth && d > today) nextMonthForecast += price * typicalQty;
+                d = d.AddDays(interval);
+            }
+        }
+
+        foreach (var p in products)
+        {
+            if (!pricesByProduct.TryGetValue(p.Id, out var prices) || prices.Count == 0) continue;
+            var current = prices[^1];
+            decimal? delta = prices.Count >= 2 ? current - prices[^2] : null;
+            decimal? pct = delta is { } dl && prices[^2] != 0 ? dl / prices[^2] * 100 : null;
+            tickers.Add(new Ticker(p.Id, p.Name, p.Category, prices, current, delta, pct,
+                spendThisYearByProduct.GetValueOrDefault(p.Id)));
+        }
+        tickers = tickers.OrderByDescending(t => t.SpendThisYear).ThenBy(t => t.Name).ToList();
+        loaded = true;
+    }
+
+    private static string Money(decimal amount) => amount.ToString("C");
+
+    // Grocery semantics: a price increase costs more (red), a decrease is cheaper (green).
+    private static string TrendColor(Ticker t) => t.PrevDelta switch
+    {
+        > 0 => "var(--overdue-line)",
+        < 0 => "var(--stocked-line)",
+        _ => "var(--accent)"
+    };
+
+    private static string ChangeClass(decimal delta) => delta > 0 ? "change-up" : delta < 0 ? "change-down" : "";
+
+    private static string Arrow(decimal delta) => delta > 0 ? "▲" : delta < 0 ? "▼" : "→";
+}

@@ -1,0 +1,95 @@
+@page "/accuracy"
+@using System.Text.Json
+@using ShelfAware.Core.Evaluation
+@inject IWebHostEnvironment Env
+
+<PageTitle>Model Accuracy — Shelf Aware</PageTitle>
+
+<h1>Model Accuracy</h1>
+<p class="muted">How well the LLM extracts receipts, scored against hand-labelled fixtures (DESIGN.md §9).</p>
+
+@if (results is null || results.Fixtures.Count == 0)
+{
+    <section class="panel">
+        <p>No eval results yet. Run the harness against labelled fixtures, writing its output here:</p>
+        <pre>dotnet run --project tests/ShelfAware.Evals -- &lt;fixtures-dir&gt; src/ShelfAware.Web/wwwroot/eval-results.json</pre>
+        <p class="muted">
+            Each fixture is a receipt image with a sibling <code>&lt;name&gt;.expected.json</code> listing the
+            ground-truth lines. Set the <code>Llm__ApiKey</code> environment variable first.
+        </p>
+    </section>
+}
+else
+{
+    <div class="portfolio">
+        @Stat("Line recall", results.Aggregate.Recall, 0.90)
+        @Stat("Line precision", results.Aggregate.Precision, 0.90)
+        @Stat("Field accuracy", results.Aggregate.FieldAccuracy, 0.85)
+    </div>
+    <p class="muted">Model @results.Model · generated @results.GeneratedAt.ToString("yyyy-MM-dd HH:mm")</p>
+
+    <div class="table-scroll">
+        <table>
+            <caption class="visually-hidden">Per-fixture extraction scores.</caption>
+            <thead>
+                <tr>
+                    <th scope="col">Fixture</th>
+                    <th scope="col">Expected</th>
+                    <th scope="col">Found</th>
+                    <th scope="col">Matched</th>
+                    <th scope="col">Recall</th>
+                    <th scope="col">Precision</th>
+                    <th scope="col">Field</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var f in results.Fixtures)
+                {
+                    <tr>
+                        <td>@f.Name</td>
+                        @if (f.Error is { } err)
+                        {
+                            <td colspan="6" class="error">@err</td>
+                        }
+                        else
+                        {
+                            <td>@f.ExpectedLines</td>
+                            <td>@f.FoundLines</td>
+                            <td>@f.MatchedLines</td>
+                            <td>@f.Recall.ToString("P0")</td>
+                            <td>@f.Precision.ToString("P0")</td>
+                            <td>@f.FieldAccuracy.ToString("P0")</td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private EvalResults? results;
+
+    protected override void OnInitialized()
+    {
+        var path = Path.Combine(Env.WebRootPath, "eval-results.json");
+        if (!File.Exists(path)) return;
+        try
+        {
+            results = JsonSerializer.Deserialize<EvalResults>(
+                File.ReadAllText(path),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch
+        {
+            results = null;
+        }
+    }
+
+    private RenderFragment Stat(string label, double value, double target) =>
+        @<div class="stat @(value >= target ? "pass" : "fail")">
+            <span class="stat-label">@label</span>
+            <span class="stat-value">@value.ToString("P0")</span>
+            <span class="muted">target @target.ToString("P0")</span>
+        </div>;
+}
