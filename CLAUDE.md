@@ -102,6 +102,38 @@ Final pass this stretch:
   renders that JSON from wwwroot, or shows run instructions when absent. No real
   fixtures committed yet — run it once real receipts exist.
 
+## Planned (not yet built): brand-agnostic products + brand per purchase
+
+Jordan's call (2026-06-28): a product should be a brand-agnostic *item* and the
+brand tracked *per purchase*, so the same item bought across brands rolls up
+together and the Product Detail page can show a "Brands bought" breakdown with
+purchase counts. This also dissolves the store-brand matching trap (see the
+ProductMatcher note below) because matching keys on the brand-stripped item name.
+
+Steps when picking this up:
+1. **Extraction** — `ExtractedLine` returns `Brand` separately and `NormalizedName`
+   becomes the brand-stripped item ("Great Value Half & Half, 16 fl oz" → item
+   "Half & Half", brand "Great Value"). Add `brand` to the embedded prompt + the
+   strict JSON schema (`Llm/Prompts`); keep the existing-product match keyed on the
+   item name.
+2. **Domain/EF** — add `Brand` (string?) to `ReceiptLine` (extracted source) and to
+   `PurchaseEvent` (so the breakdown groups purchases); `ConfirmAll` copies the
+   line's brand onto each PurchaseEvent. `Product.Name` now holds the item name.
+3. **Matching** — `ProductMatcher` + aliases key on the item name. The dog-treats
+   case (ASMPET vs Pawmate "Chicken Wrapped Cod Skin Dog Treats") then becomes ONE
+   item with two brands instead of a stray merge.
+4. **UI** — Product Detail gains a "Brands bought" list (group PurchaseEvents by
+   Brand → brand + count, maybe latest price). Upload review shows/edits the brand
+   per line. Products grid shows the item name (optionally a "usual brand" hint).
+5. **Data** — schema change, and `EnsureCreated` does not migrate, so reset
+   `app-data/shelfaware.db*` and re-import the 3 real receipts to repopulate.
+
+Open design choice: keep one per-item price series (mixing brands) or split per
+brand? Mixing brands re-introduces the "different brand/size prices" noise that
+made Half & Half look crazy, so per-brand (or brand-filtered) price history is
+probably the right move. Size (16 oz vs half gallon) is a related but separate
+sub-attribute, out of scope for this step.
+
 ## Decisions & deviations from the spec
 
 - **`SignalKind.Restocked`** — the spec's enum value "ShelfAwareed" is a
