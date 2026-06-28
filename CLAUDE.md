@@ -186,6 +186,12 @@ Final pass this stretch:
 - Shell is Windows PowerShell 5.1 — no `&&`, no ternary; commands that probe
   state (`Get-NetTCPConnection` finding nothing) can exit 1 without being
   failures.
+- **Commit with a message file, not an inline `-m`.** Write the full commit
+  message (including the `Co-Authored-By` trailer) to a temp file and run
+  `git commit -F <file>` from PowerShell. Multi-line `-m`/heredoc commits issued
+  through the Bash tool silently no-op'd here — staging worked but the commit
+  never happened and no error was reported — so the message-file path is the
+  reliable one.
 
 ## Conventions
 
