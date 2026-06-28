@@ -544,6 +544,13 @@ td.raw .chip {
     padding: 1rem;
 }
 
+/* "Usual brand" hint under the product (item) name in the Products grid. */
+.usual-brand {
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+    margin-top: 0.2rem;
+}
+
 /* Keep the "Next buy" date + relative on one line (the popover keeps normal wrapping). */
 .nextbuy {
     white-space: nowrap;

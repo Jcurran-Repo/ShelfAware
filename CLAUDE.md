@@ -143,9 +143,14 @@ products / 83 purchases / 73 branded; "Brioche Style Bread Loaf Thick Sliced" ro
 Nature's Own + Sara Lee and "Chicken Wrapped Cod Skin Dog Treats" rolls up ASMPET +
 Pawmate; unbranded produce/meat (e.g. "93% Lean Ground Beef") stay null.
 
-Still open (optional): a "usual brand" hint on the Products grid, and a per-brand (vs
-mixed) price chart — mixing brands/sizes in one series can still look noisy, though
-most items here are single-brand or same-price.
+Products grid now shows a "usual brand" hint (most-bought brand under the item name,
+with "+N" when bought across several brands). The per-brand-vs-mixed price chart was
+left as-is: a DB check showed mixing brands is NOT a real problem here — multi-brand
+items (brioche bread = Nature's Own + Sara Lee, cod-skin dog treats = ASMPET + Pawmate)
+rang up at the same price across brands, so their charts are flat. The only latent risk
+is SIZE mixing (e.g. a gallon vs a half-gallon of milk both roll up to "Whole Milk", so
+the chart would show a misleading drop) — and Size isn't stored on ReceiptLine/
+PurchaseEvent yet, so it can't surface until size is persisted.
 
 ## Decisions & deviations from the spec
 

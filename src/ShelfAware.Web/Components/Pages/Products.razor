@@ -90,7 +90,13 @@ else
             {
                 var e = estimates[p.Id];
                 <tr>
-                    <td><input value="@p.Name" aria-label="Product name" @onchange="ev => Rename(p, (string?)ev.Value)" /></td>
+                    <td>
+                        <input value="@p.Name" aria-label="Product name" @onchange="ev => Rename(p, (string?)ev.Value)" />
+                        @if (UsualBrand(p) is { } ub)
+                        {
+                            <div class="usual-brand">@ub</div>
+                        }
+                    </td>
                     <td>
                         <select value="@p.Category" aria-label="Category for @p.Name" @onchange="ev => SetCategory(p, (string?)ev.Value)">
                             @foreach (var c in Enum.GetValues<Category>())
@@ -219,6 +225,19 @@ else
         PredictionStatus.Stocked => "Stocked",
         _ => "Still learning"
     };
+
+    // Most-bought brand for this item, with a "+N" hint when it's been bought across several brands.
+    private static string? UsualBrand(Product p)
+    {
+        var brands = p.Purchases
+            .Where(pe => !string.IsNullOrWhiteSpace(pe.Brand))
+            .GroupBy(pe => pe.Brand!.Trim())
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key)
+            .ToList();
+        if (brands.Count == 0) return null;
+        return brands.Count == 1 ? brands[0].Key : $"{brands[0].Key} +{brands.Count - 1}";
+    }
 
     private async Task AddProduct()
     {
