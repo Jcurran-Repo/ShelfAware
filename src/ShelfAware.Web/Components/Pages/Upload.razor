@@ -120,6 +120,10 @@ else if (phase == Phase.Review && receipt is not null)
             <button @onclick="ConfirmAll" disabled="@(reviewLines.Count == 0)">Confirm all</button>
             <button class="secondary" @onclick="Discard">Discard receipt</button>
         </div>
+        @if (confirmError is not null)
+        {
+            <p class="error" role="alert">@confirmError</p>
+        }
     </section>
 }
 else if (phase == Phase.Done)
@@ -143,6 +147,7 @@ else if (phase == Phase.Done)
     private List<ReviewLine> reviewLines = [];
     private List<Product> products = [];
     private string confirmSummary = "";
+    private string? confirmError;
 
     private class ReviewLine
     {
@@ -284,69 +289,102 @@ else if (phase == Phase.Done)
     private async Task ConfirmAll()
     {
         if (receipt is null) return;
-        await using var db = await DbFactory.CreateDbContextAsync();
-        var dbReceipt = await db.Receipts.Include(r => r.Lines).FirstAsync(r => r.Id == receipt.Id);
-        // Use the user-confirmed receipt date (not the upload date) so refill intervals are accurate
-        // even when many receipts are uploaded in one sitting.
-        var purchaseDate = reviewDate;
-        dbReceipt.PurchasedAt = reviewDate;
-        var merchant = dbReceipt.Merchant ?? "";
-        var created = 0;
-
-        foreach (var line in reviewLines)
+        confirmError = null;
+        try
         {
-            var name = line.NormalizedName.Trim();
-            if (name.Length == 0) continue;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var dbReceipt = await db.Receipts.Include(r => r.Lines).FirstAsync(r => r.Id == receipt.Id);
+            // Use the user-confirmed receipt date (not the upload date) so refill intervals are accurate
+            // even when many receipts are uploaded in one sitting.
+            var purchaseDate = reviewDate;
+            dbReceipt.PurchasedAt = reviewDate;
+            var merchant = dbReceipt.Merchant ?? "";
+            var created = 0;
 
-            Product product;
-            if (line.ProductId > 0)
+            // Real receipts repeat identical lines (two of the same item scan as two rows), and the
+            // (Merchant, RawText) alias index is unique. Querying the DB per line wouldn't see an alias
+            // added earlier in THIS loop, so a duplicate raw line would try to INSERT a second alias and
+            // blow up SaveChanges (the "Error confirming receipt" failure). Load this merchant's aliases
+            // once and track them by raw text so each raw line owns exactly one alias (last write wins).
+            var aliasesByRaw = (await db.ProductAliases.Where(a => a.Merchant == merchant).ToListAsync())
+                .ToDictionary(a => a.RawText, a => a);
+            // Pair each review line to a distinct receipt line so duplicate raw lines each get their own
+            // product link (and their unit price counts toward price history), rather than all collapsing
+            // onto the first matching row.
+            var unmatchedLines = dbReceipt.Lines.ToList();
+            // One trip can list a single new item on two lines (e.g. two racks of ribs). Map both lines to
+            // one new product — each line still records its own purchase — instead of creating duplicates.
+            var createdByName = new Dictionary<string, Product>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var line in reviewLines)
             {
-                product = await db.Products.FirstAsync(p => p.Id == line.ProductId);
-            }
-            else
-            {
-                product = new Product { Name = name, Category = line.Category };
-                db.Products.Add(product);
-                created++;
+                var name = line.NormalizedName.Trim();
+                if (name.Length == 0) continue;
+
+                Product product;
+                if (line.ProductId > 0)
+                {
+                    product = await db.Products.FirstAsync(p => p.Id == line.ProductId);
+                }
+                else if (createdByName.TryGetValue(name, out var existingNew))
+                {
+                    product = existingNew;
+                }
+                else
+                {
+                    product = new Product { Name = name, Category = line.Category };
+                    db.Products.Add(product);
+                    createdByName[name] = product;
+                    created++;
+                }
+
+                db.PurchaseEvents.Add(new PurchaseEvent
+                {
+                    Product = product,
+                    PurchasedAt = purchaseDate,
+                    Quantity = line.Quantity,
+                    Source = PurchaseSource.Receipt,
+                    ReceiptId = dbReceipt.Id,
+                });
+
+                var dbLine = unmatchedLines.FirstOrDefault(l => l.RawText == line.RawText);
+                if (dbLine is not null)
+                {
+                    unmatchedLines.Remove(dbLine);
+                    dbLine.NormalizedName = name;
+                    dbLine.Quantity = line.Quantity;
+                    dbLine.Category = line.Category;
+                    dbLine.Product = product;
+                }
+
+                // Write/refresh alias so re-uploads pre-match deterministically (DESIGN.md §4),
+                // de-duplicated within this receipt so the unique (Merchant, RawText) index holds.
+                if (aliasesByRaw.TryGetValue(line.RawText, out var alias))
+                {
+                    alias.Product = product;
+                }
+                else
+                {
+                    var newAlias = new ProductAlias { Merchant = merchant, RawText = line.RawText, Product = product };
+                    db.ProductAliases.Add(newAlias);
+                    aliasesByRaw[line.RawText] = newAlias;
+                }
             }
 
-            db.PurchaseEvents.Add(new PurchaseEvent
-            {
-                Product = product,
-                PurchasedAt = purchaseDate,
-                Quantity = line.Quantity,
-                Source = PurchaseSource.Receipt,
-                ReceiptId = dbReceipt.Id,
-            });
+            dbReceipt.Status = ReceiptStatus.Confirmed;
+            await db.SaveChangesAsync();
 
-            var dbLine = dbReceipt.Lines.FirstOrDefault(l => l.RawText == line.RawText);
-            if (dbLine is not null)
-            {
-                dbLine.NormalizedName = name;
-                dbLine.Quantity = line.Quantity;
-                dbLine.Category = line.Category;
-                dbLine.Product = product;
-            }
-
-            // Write/refresh alias so re-uploads pre-match deterministically (DESIGN.md §4).
-            var alias = await db.ProductAliases.FirstOrDefaultAsync(a => a.Merchant == merchant && a.RawText == line.RawText);
-            if (alias is null)
-            {
-                db.ProductAliases.Add(new ProductAlias { Merchant = merchant, RawText = line.RawText, Product = product });
-            }
-            else
-            {
-                alias.Product = product;
-            }
+            confirmSummary = $"Recorded {reviewLines.Count(l => l.NormalizedName.Trim().Length > 0)} purchases" +
+                             (created > 0 ? $" ({created} new product{(created == 1 ? "" : "s")})" : "") +
+                             $" from {(merchant.Length > 0 ? merchant : "unknown merchant")} on {purchaseDate:yyyy-MM-dd}.";
+            phase = Phase.Done;
         }
-
-        dbReceipt.Status = ReceiptStatus.Confirmed;
-        await db.SaveChangesAsync();
-
-        confirmSummary = $"Recorded {reviewLines.Count(l => l.NormalizedName.Trim().Length > 0)} purchases" +
-                         (created > 0 ? $" ({created} new product{(created == 1 ? "" : "s")})" : "") +
-                         $" from {(merchant.Length > 0 ? merchant : "unknown merchant")} on {purchaseDate:yyyy-MM-dd}.";
-        phase = Phase.Done;
+        catch (Exception ex)
+        {
+            // One SaveChanges in a single transaction, so a failure persists nothing: keep the receipt in
+            // review so the user can adjust a line and retry instead of losing the extraction to a crash.
+            confirmError = $"Couldn't save these purchases: {ex.Message}. Nothing was recorded — adjust a line and try again, or discard the receipt.";
+        }
     }
 
     private async Task Discard()
@@ -368,6 +406,7 @@ else if (phase == Phase.Done)
         reviewLines = [];
         selectedFiles = [];
         errorMessage = null;
+        confirmError = null;
     }
 
     private static async Task<byte[]> ReadAllAsync(Stream stream)
