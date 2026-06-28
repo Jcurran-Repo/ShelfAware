@@ -143,14 +143,25 @@ products / 83 purchases / 73 branded; "Brioche Style Bread Loaf Thick Sliced" ro
 Nature's Own + Sara Lee and "Chicken Wrapped Cod Skin Dog Treats" rolls up ASMPET +
 Pawmate; unbranded produce/meat (e.g. "93% Lean Ground Beef") stay null.
 
-Products grid now shows a "usual brand" hint (most-bought brand under the item name,
-with "+N" when bought across several brands). The per-brand-vs-mixed price chart was
-left as-is: a DB check showed mixing brands is NOT a real problem here — multi-brand
-items (brioche bread = Nature's Own + Sara Lee, cod-skin dog treats = ASMPET + Pawmate)
-rang up at the same price across brands, so their charts are flat. The only latent risk
-is SIZE mixing (e.g. a gallon vs a half-gallon of milk both roll up to "Whole Milk", so
-the chart would show a misleading drop) — and Size isn't stored on ReceiptLine/
-PurchaseEvent yet, so it can't surface until size is persisted.
+Products grid shows a "usual brand" hint (most-bought brand under the item name, with
+"+N" when bought across several brands).
+
+**Package size is part of product identity (built 2026-06-28).** `Product.Size` (string?)
+was added so a gallon and a half-gallon of the same item are DIFFERENT products. Display:
+a neutral `.size-chip` next to the title (Product Detail) and under the name (Products
+grid); the Upload review has an editable Size column. Matching: existing products are
+passed to the model as composed "Item (size)" strings (`Compose`), the LLM's
+`existing_product` is resolved back, and new products de-dupe on `KeyOf` = (item, size).
+KEY TENSION (Jordan's call): strict size-string identity ALSO splits trivially-different
+sizes — ASMPET 10.6 oz vs Pawmate 11 oz dog treats split into two products, killing the
+brand rollup he liked. Resolution: the prompt (rule 10) now tells the model to split only
+on MEANINGFUL size differences (gallon vs half-gallon, 6-pack vs 24-pack) and roll up
+trivial ones (10.6 vs 11 oz). The deterministic `SizeEq` fallback stays exact (conservative
+backstop; only fires when the LLM returns no match). Verified after re-import: the dog
+treats roll back up to one product (10.6 oz, ASMPET + Pawmate) while size still shows.
+Note: a rolled-up product keeps the first-seen size string even if a later purchase was a
+hair different (e.g. shows "10.6 oz" though one buy was 11 oz) — acceptable; per-purchase
+size isn't tracked.
 
 ## Decisions & deviations from the spec
 

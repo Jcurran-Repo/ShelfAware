@@ -69,6 +69,7 @@ else if (phase == Phase.Review && receipt is not null)
                     <th scope="col">Receipt text</th>
                     <th scope="col">Item</th>
                     <th scope="col">Brand</th>
+                    <th scope="col">Size</th>
                     <th scope="col">Qty</th>
                     <th scope="col">Category</th>
                     <th scope="col">Product match</th>
@@ -90,6 +91,7 @@ else if (phase == Phase.Review && receipt is not null)
                         </td>
                         <td><input @bind="line.NormalizedName" aria-label="Item name for @line.RawText" /></td>
                         <td><input @bind="line.Brand" size="12" placeholder="—" aria-label="Brand for @line.RawText" /></td>
+                        <td><input @bind="line.Size" size="8" placeholder="—" aria-label="Size for @line.RawText" /></td>
                         <td><input type="number" step="0.01" min="0.01" @bind="line.Quantity" size="5" aria-label="Quantity for @line.RawText" /></td>
                         <td>
                             <select @bind="line.Category" aria-label="Category for @line.RawText">
@@ -156,6 +158,7 @@ else if (phase == Phase.Done)
         public required string RawText { get; set; }
         public string NormalizedName { get; set; } = "";
         public string? Brand { get; set; }
+        public string? Size { get; set; }
         public decimal Quantity { get; set; } = 1;
         public Category Category { get; set; }
         public decimal Confidence { get; set; }
@@ -214,7 +217,9 @@ else if (phase == Phase.Done)
             {
                 products = await pdb.Products.OrderBy(p => p.Name).ToListAsync();
             }
-            var result = await Extractor.ExtractAsync(attachments, products.Select(p => p.Name).ToList());
+            // Pass existing products as composed "Item (size)" strings so the model matches on item AND
+            // size (a gallon line should not match a half-gallon product).
+            var result = await Extractor.ExtractAsync(attachments, products.Select(p => Compose(p.Name, p.Size)).Distinct().ToList());
 
             await using var db = await DbFactory.CreateDbContextAsync();
             receipt = new Receipt
@@ -259,16 +264,21 @@ else if (phase == Phase.Done)
                 Product? match = null;
                 if (alias is null)
                 {
-                    match = l.SuggestedProductName is { Length: > 0 }
-                        ? products.FirstOrDefault(p => string.Equals(p.Name, l.SuggestedProductName, StringComparison.OrdinalIgnoreCase))
-                        : null;
-                    match ??= ProductMatcher.Resolve(l.NormalizedName, products);
+                    // The LLM suggests an existing product as a composed "Item (size)" string — resolve it back.
+                    if (l.SuggestedProductName is { Length: > 0 } sug)
+                        match = products.FirstOrDefault(p => string.Equals(Compose(p.Name, p.Size), sug, StringComparison.OrdinalIgnoreCase));
+                    // Deterministic fallback: match the item name, then require the size to agree so a gallon
+                    // line can't pre-fill a half-gallon product.
+                    if (match is null && ProductMatcher.Resolve(l.NormalizedName, products) is { } byName)
+                        match = products.FirstOrDefault(p =>
+                            string.Equals(p.Name, byName.Name, StringComparison.OrdinalIgnoreCase) && SizeEq(p.Size, l.Size));
                 }
                 return new ReviewLine
                 {
                     RawText = l.RawText,
                     NormalizedName = l.NormalizedName,
                     Brand = l.Brand,
+                    Size = l.Size,
                     Quantity = l.Quantity,
                     Category = l.Category,
                     Confidence = l.Confidence,
@@ -318,29 +328,31 @@ else if (phase == Phase.Done)
             // onto the first matching row.
             var unmatchedLines = dbReceipt.Lines.ToList();
             // One trip can list a single new item on two lines (e.g. two racks of ribs). Map both lines to
-            // one new product — each line still records its own purchase — instead of creating duplicates.
-            var createdByName = new Dictionary<string, Product>(StringComparer.OrdinalIgnoreCase);
+            // one new product — keyed by item + size so different sizes stay distinct — with each line
+            // still recording its own purchase, instead of creating duplicates.
+            var createdByKey = new Dictionary<(string, string), Product>();
 
             foreach (var line in reviewLines)
             {
                 var name = line.NormalizedName.Trim();
                 if (name.Length == 0) continue;
                 var brand = string.IsNullOrWhiteSpace(line.Brand) ? null : line.Brand.Trim();
+                var size = string.IsNullOrWhiteSpace(line.Size) ? null : line.Size.Trim();
 
                 Product product;
                 if (line.ProductId > 0)
                 {
                     product = await db.Products.FirstAsync(p => p.Id == line.ProductId);
                 }
-                else if (createdByName.TryGetValue(name, out var existingNew))
+                else if (createdByKey.TryGetValue(KeyOf(name, size), out var existingNew))
                 {
                     product = existingNew;
                 }
                 else
                 {
-                    product = new Product { Name = name, Category = line.Category };
+                    product = new Product { Name = name, Size = size, Category = line.Category };
                     db.Products.Add(product);
-                    createdByName[name] = product;
+                    createdByKey[KeyOf(name, size)] = product;
                     created++;
                 }
 
@@ -423,4 +435,15 @@ else if (phase == Phase.Done)
         await stream.CopyToAsync(ms);
         return ms.ToArray();
     }
+
+    // Compose a product's identity for display/matching: "Item (size)", or just "Item" when sizeless.
+    private static string Compose(string name, string? size) =>
+        string.IsNullOrWhiteSpace(size) ? name : $"{name} ({size.Trim()})";
+
+    // Case-insensitive item+size key for de-duping newly-created products within one receipt.
+    private static (string, string) KeyOf(string name, string? size) => (name.Trim().ToLowerInvariant(), (size ?? "").Trim().ToLowerInvariant());
+
+    // Two sizes are "the same" when they match case-insensitively (null/blank both mean no size).
+    private static bool SizeEq(string? a, string? b) =>
+        string.Equals((a ?? "").Trim(), (b ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
 }

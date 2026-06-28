@@ -544,11 +544,32 @@ td.raw .chip {
     padding: 1rem;
 }
 
-/* "Usual brand" hint under the product (item) name in the Products grid. */
+/* Size + "usual brand" hints under the product (item) name in the Products grid. */
+.item-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    margin-top: 0.2rem;
+}
+
 .usual-brand {
     font-size: 0.78rem;
     color: var(--ink-soft);
-    margin-top: 0.2rem;
+}
+
+/* Neutral pill for package size (part of the product's identity). */
+.size-chip {
+    display: inline-block;
+    padding: 0.05rem 0.45rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--ink-soft);
+    background: var(--surface-alt);
+    white-space: nowrap;
+    vertical-align: middle;
 }
 
 /* Keep the "Next buy" date + relative on one line (the popover keeps normal wrapping). */

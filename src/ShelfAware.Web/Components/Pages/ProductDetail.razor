@@ -17,7 +17,13 @@ else if (product is null)
 else
 {
     <div class="page-head">
-        <h1>@product.Name</h1>
+        <h1>
+            @product.Name
+            @if (product.Size is { Length: > 0 } sz)
+            {
+                <span class="size-chip">@sz</span>
+            }
+        </h1>
         <span class="chip chip-@ChipClass(prediction.Status)">@StatusLabel(prediction.Status)</span>
     </div>
     <p class="muted">@product.Category@(product.DefaultUnit is { } u ? $" · {u}" : "") · <a href="/products">All products</a></p>
