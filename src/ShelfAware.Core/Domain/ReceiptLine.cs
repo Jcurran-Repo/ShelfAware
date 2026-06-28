@@ -7,6 +7,7 @@ public class ReceiptLine
     public Receipt? Receipt { get; set; }
     public required string RawText { get; set; }
     public required string NormalizedName { get; set; }
+    public string? Brand { get; set; }
     public decimal Quantity { get; set; } = 1;
     public decimal? UnitPrice { get; set; }
     public Category Category { get; set; }

@@ -102,7 +102,7 @@ Final pass this stretch:
   renders that JSON from wwwroot, or shows run instructions when absent. No real
   fixtures committed yet — run it once real receipts exist.
 
-## Planned (not yet built): brand-agnostic products + brand per purchase
+## Brand-agnostic products + brand per purchase (BUILT 2026-06-28)
 
 Jordan's call (2026-06-28): a product should be a brand-agnostic *item* and the
 brand tracked *per purchase*, so the same item bought across brands rolls up
@@ -128,11 +128,24 @@ Steps when picking this up:
 5. **Data** — schema change, and `EnsureCreated` does not migrate, so reset
    `app-data/shelfaware.db*` and re-import the 3 real receipts to repopulate.
 
-Open design choice: keep one per-item price series (mixing brands) or split per
-brand? Mixing brands re-introduces the "different brand/size prices" noise that
-made Half & Half look crazy, so per-brand (or brand-filtered) price history is
-probably the right move. Size (16 oz vs half gallon) is a related but separate
-sub-attribute, out of scope for this step.
+Done as above. `Brand` (string?) is on `ReceiptLine` + `PurchaseEvent`, `ConfirmAll`
+copies the line brand onto both, the Upload review has an editable Brand column, and
+Product Detail shows a "Brands bought" list (brand · purchase count · avg price), only
+when a real brand exists. `brand`/`size` were already in `ExtractedLine` and the JSON
+schema — the prompt now drives them and makes `normalized_name` the brand-stripped item.
+
+KEY NUANCE learned mid-build: keep the item's DISTINGUISHING words
+(variety/cut/flavor/form) and strip ONLY brand + size. An early prompt over-shortened
+"…High Protein Chicken Jerky Dog Treats" to a bare "Dog Treats" and merged genuinely
+different products (re-creating the mixed-price-chart problem), so the prompt now
+explicitly forbids bare-category names. Verified by re-importing the 3 receipts: 56
+products / 83 purchases / 73 branded; "Brioche Style Bread Loaf Thick Sliced" rolls up
+Nature's Own + Sara Lee and "Chicken Wrapped Cod Skin Dog Treats" rolls up ASMPET +
+Pawmate; unbranded produce/meat (e.g. "93% Lean Ground Beef") stay null.
+
+Still open (optional): a "usual brand" hint on the Products grid, and a per-brand (vs
+mixed) price chart — mixing brands/sizes in one series can still look noisy, though
+most items here are single-brand or same-price.
 
 ## Decisions & deviations from the spec
 

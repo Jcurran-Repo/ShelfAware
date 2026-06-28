@@ -39,6 +39,22 @@ else
         <p class="muted">@prediction.Basis@(prediction.SignalNote is { } note ? $" · {note}" : "")</p>
     </section>
 
+    @if (brandBreakdown.Any(b => b.Brand != Unbranded))
+    {
+        <section class="panel">
+            <h2>Brands bought</h2>
+            <ul class="brands">
+                @foreach (var b in brandBreakdown)
+                {
+                    <li>
+                        <span class="brand-name">@b.Brand</span>
+                        <span class="muted">@b.Count purchase@(b.Count == 1 ? "" : "s")@(b.AvgPrice is { } ap ? $" · avg {Money(ap)}" : "")</span>
+                    </li>
+                }
+            </ul>
+        </section>
+    }
+
     @if (priceSeries.Count >= 2)
     {
         <section class="panel">
@@ -94,8 +110,12 @@ else
     private ProductEstimate estimate = null!;
     private readonly List<PurchaseRow> history = [];
     private readonly List<decimal> priceSeries = [];
+    private List<BrandRow> brandBreakdown = [];
+
+    private const string Unbranded = "Unbranded";
 
     private record PurchaseRow(DateOnly Date, int? GapDays, decimal Quantity, decimal? UnitPrice);
+    private record BrandRow(string Brand, int Count, decimal? AvgPrice);
 
     protected override async Task OnInitializedAsync()
     {
@@ -135,6 +155,19 @@ else
             history.Add(new PurchaseRow(pe.PurchasedAt, gap, pe.Quantity, price));
         }
         history.Reverse(); // most recent first
+
+        // Brand-agnostic product: which brands of this item have been bought, and how often.
+        decimal? PriceOf(PurchaseEvent pe) =>
+            pe.ReceiptId is { } rid && priceLookup.TryGetValue(rid, out var pr) ? pr : null;
+        brandBreakdown = product.Purchases
+            .GroupBy(pe => string.IsNullOrWhiteSpace(pe.Brand) ? Unbranded : pe.Brand!.Trim())
+            .Select(g =>
+            {
+                var prices = g.Select(PriceOf).Where(p => p is not null).Select(p => p!.Value).ToList();
+                return new BrandRow(g.Key, g.Count(), prices.Count > 0 ? prices.Average() : null);
+            })
+            .OrderByDescending(b => b.Count).ThenBy(b => b.Brand)
+            .ToList();
     }
 
     private static string Money(decimal amount) => amount.ToString("C");

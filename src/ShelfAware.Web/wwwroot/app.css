@@ -301,6 +301,27 @@ input:focus, select:focus {
     font-weight: 600;
 }
 
+/* ---- Product detail: brands-bought breakdown ---- */
+.brands {
+    list-style: none;
+    padding: 0;
+    margin: 0.5rem 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.brands li {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+}
+
+.brand-name {
+    font-weight: 600;
+}
+
 /* ---- Trends (spend insight) ---- */
 .portfolio {
     display: flex;
