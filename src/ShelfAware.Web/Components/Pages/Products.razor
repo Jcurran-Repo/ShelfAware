@@ -102,7 +102,7 @@ else
                     <td><input type="checkbox" checked="@p.IsTracked" aria-label="Track @p.Name" @onchange="ev => SetTracked(p, (bool)ev.Value!)" /></td>
                     <td>@purchaseCounts.GetValueOrDefault(p.Id)</td>
                     <td><span class="chip chip-@ChipClass(e.Status)">@StatusLabel(e.Status)</span></td>
-                    <td>
+                    <td class="nextbuy">
                         @if (e.NextBuyDate is { } d)
                         {
                             @d.ToString("MMM d")

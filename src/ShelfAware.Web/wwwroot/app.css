@@ -4,7 +4,7 @@
     --ink-soft: #59636e;
     --line: #e2e5e9;
     --surface: #ffffff;
-    --surface-alt: var(--surface-alt);
+    --surface-alt: #f0f2f5;
     --bg: #f6f7f9;
     --accent: #2563eb;
     --accent-ink: #1d4ed8;
@@ -330,7 +330,12 @@ input:focus, select:focus {
 }
 
 .stat.forecast .stat-value {
-    color: var(--accent-ink);
+    color: var(--accent);
+}
+
+/* Trends: all blue text uses the chart blue (--accent) so links and totals match the line charts. */
+.trends a {
+    color: var(--accent);
 }
 
 .stat.pass { border-color: var(--stocked-line); }
@@ -515,6 +520,15 @@ td.raw .chip {
     color: var(--ink-soft);
     text-align: center;
     padding: 1rem;
+}
+
+/* Keep the "Next buy" date + relative on one line (the popover keeps normal wrapping). */
+.nextbuy {
+    white-space: nowrap;
+}
+
+.nextbuy .popover {
+    white-space: normal;
 }
 
 /* Integrated in-header filter row. */
