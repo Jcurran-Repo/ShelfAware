@@ -97,6 +97,12 @@ h1:focus {
     outline: none;
 }
 
+/* Content links use the chart blue (--accent) so they match the price-history line charts.
+   The top nav (.site-header nav a) has its own muted/active treatment and overrides this. */
+a {
+    color: var(--accent);
+}
+
 /* ---- Tables (Products, Upload, "everything else") ---- */
 table {
     border-collapse: collapse;
@@ -269,7 +275,7 @@ input:focus, select:focus {
 .card-name {
     font-weight: 600;
     font-size: 1.05rem;
-    color: var(--ink);
+    color: var(--accent);
     text-decoration: none;
 }
 
@@ -330,11 +336,6 @@ input:focus, select:focus {
 }
 
 .stat.forecast .stat-value {
-    color: var(--accent);
-}
-
-/* Trends: all blue text uses the chart blue (--accent) so links and totals match the line charts. */
-.trends a {
     color: var(--accent);
 }
 
