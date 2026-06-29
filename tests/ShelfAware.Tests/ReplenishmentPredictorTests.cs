@@ -218,4 +218,29 @@ public class ReplenishmentPredictorTests
 
         Assert.Equal("1/2 gal", r.RecommendedSize);
     }
+
+    [Fact]
+    public void MixedSizes_FallBackToAllPurchases_WhenNoSizeHasEnoughHistory()
+    {
+        // One 10.6 oz and one 11 oz buy: no single size has 2 yet, so instead of "still learning" we
+        // predict from all purchases (trivially-different sizes shouldn't strand the item). Still
+        // recommend the dominant (here: most-recent) size.
+        var product = new Product
+        {
+            Id = 1,
+            Name = "Cod Skin Dog Treats",
+            Purchases =
+            [
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(0),  Size = "10.6 oz" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(20), Size = "11 oz" },
+            ],
+        };
+
+        var r = ReplenishmentPredictor.Predict(product, D(25));
+
+        Assert.NotEqual(PredictionStatus.Unknown, r.Status);  // predicts, not "still learning"
+        Assert.Equal(20, r.MedianIntervalDays);               // gap between the two buys
+        Assert.Equal(D(40), r.DueDate);
+        Assert.Equal("11 oz", r.RecommendedSize);
+    }
 }

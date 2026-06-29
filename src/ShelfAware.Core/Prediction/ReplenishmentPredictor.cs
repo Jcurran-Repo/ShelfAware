@@ -14,14 +14,19 @@ public static class ReplenishmentPredictor
         // 1. Distinct purchase dates — same-day events collapse (§6.1). Restocked signals count
         //    as purchase-equivalent dates for the interval math (§6.6).
         //    Size is metadata, not identity: an item bought in random sizes (e.g. milk as a half-gallon
-        //    or a gallon) is ONE product. Predict the cadence from the DOMINANT size's purchases only, so
-        //    the timing is consistent and we recommend a single size instead of a noisy blend.
+        //    or a gallon) is ONE product. Predict the cadence from the DOMINANT size's purchases when that
+        //    size has enough history (≥2 buys), so the timing is genuinely size-aware; otherwise fall back
+        //    to ALL purchases so a mixed-size item still gets a prediction instead of dropping to "still
+        //    learning". Either way we recommend the dominant size.
         var dominantSize = DominantSize(product.Purchases);
-        var purchaseDates = product.Purchases
+        var dominantDates = product.Purchases
             .Where(p => SizeKey(p.Size) == SizeKey(dominantSize))
             .Select(p => p.PurchasedAt)
             .Distinct()
             .ToList();
+        var purchaseDates = dominantDates.Count >= 2
+            ? dominantDates
+            : product.Purchases.Select(p => p.PurchasedAt).Distinct().ToList();
 
         var restockDates = product.Signals
             .Where(s => s.Kind == SignalKind.Restocked)

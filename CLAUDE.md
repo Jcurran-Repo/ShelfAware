@@ -169,12 +169,14 @@ trivially-different sizes too. Final model:
   a half-gallon". No unit arithmetic (we explicitly chose the emergent approach over parsing
   "1 gal" = 2 × "64 fl oz"). Shown: Recommended size in the Product Detail rhythm + a Size
   column in recent purchases; a recommended-size chip under the Products-grid name.
-- KNOWN TRADE-OFF (surfaced to Jordan): filtering to the dominant size means LESS data, so a
-  mixed-size item with few buys reads "still learning" longer (e.g. the cod-skin dog treats:
-  one 10.6 oz + one 11 oz → dominant 10.6 oz has only 1 buy → still learning, though "bought
-  N×" counts all purchases so it's not self-contradictory). Trivial size differences (10.6 vs
-  11 oz) still count as different sizes here — distinguishing trivial from meaningful would
-  need the unit math we set aside. Revisit if "still learning" lingers too long.
+- HYBRID cadence (the chosen design): predict from the dominant size's purchases WHEN that size
+  has ≥2 buys (genuinely size-aware), otherwise fall back to ALL purchases — so a mixed-size
+  item still predicts instead of dropping to "still learning". This fixed the dog-treats case
+  (one 10.6 oz + one 11 oz → no size has 2 → falls back to all → "Stocked, ~every 23 days,
+  recommend 10.6 oz" instead of "still learning"). "bought N×" counts all purchases either way.
+  Self-improving: blended early, size-precise once a size accumulates 2+ buys. Trivial-vs-
+  meaningful size (10.6 vs 11 oz) is still not distinguished within the dominant-size math —
+  that would need the unit arithmetic we deliberately skipped; revisit only if it actually bites.
 
 ## Decisions & deviations from the spec
 
