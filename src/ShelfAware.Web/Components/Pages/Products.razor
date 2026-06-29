@@ -92,13 +92,13 @@ else
                 <tr>
                     <td>
                         <input value="@p.Name" aria-label="Product name" @onchange="ev => Rename(p, (string?)ev.Value)" />
-                        @{ var ub = UsualBrand(p); }
-                        @if (p.Size is { Length: > 0 } || ub is not null)
+                        @{ var ub = UsualBrand(p); var rs = predictions[p.Id].RecommendedSize; }
+                        @if (rs is { Length: > 0 } || ub is not null)
                         {
                             <div class="item-meta">
-                                @if (p.Size is { Length: > 0 } sz)
+                                @if (rs is { Length: > 0 } sz)
                                 {
-                                    <span class="size-chip" title="Package size">@sz</span>
+                                    <span class="size-chip" title="Usual size to buy">@sz</span>
                                 }
                                 @if (ub is not null)
                                 {

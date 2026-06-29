@@ -14,6 +14,10 @@ public record PredictionResult
     /// Median repurchase interval in days; null when there is too little history.
     public double? MedianIntervalDays { get; init; }
 
+    /// The package size to recommend buying — the size bought most often (ties: most recent). Null for
+    /// items with no recorded size. Different sizes roll up into one product; this picks the one to suggest.
+    public string? RecommendedSize { get; init; }
+
     /// Short statistical explanation for UI transparency, e.g. "bought 5×, ~every 12 days".
     public required string Basis { get; init; }
 

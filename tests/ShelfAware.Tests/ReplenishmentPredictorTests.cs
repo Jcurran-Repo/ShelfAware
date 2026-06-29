@@ -167,4 +167,55 @@ public class ReplenishmentPredictorTests
         Assert.Equal(10, r.MedianIntervalDays);  // gaps {10, 10}, not {0, 10, 0, 10}
         Assert.Equal(D(30), r.DueDate);
     }
+
+    // --- Size is metadata: the dominant size drives cadence + recommendation -----
+
+    [Fact]
+    public void DominantSize_DrivesCadenceAndRecommendation()
+    {
+        // Milk bought mostly as gallons (3×, every 20 days) plus a couple of random half-gallons. The
+        // gallon is dominant, so the cadence comes from the gallon purchases only — not a noisy blend of
+        // all five dates — and we recommend the gallon.
+        var product = new Product
+        {
+            Id = 1,
+            Name = "Whole Milk",
+            Purchases =
+            [
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(0),  Size = "1 gal" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(5),  Size = "1/2 gal" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(10), Size = "1/2 gal" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(20), Size = "1 gal" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(40), Size = "1 gal" },
+            ],
+        };
+
+        var r = ReplenishmentPredictor.Predict(product, D(45));
+
+        Assert.Equal("1 gal", r.RecommendedSize);
+        Assert.Equal(20, r.MedianIntervalDays);  // gallon gaps {20, 20}, not the all-sizes blend
+        Assert.Equal(D(60), r.DueDate);          // last gallon D(40) + 20
+    }
+
+    [Fact]
+    public void DominantSize_TieBreaksToMostRecentlyBought()
+    {
+        // 2 gallons and 2 half-gallons, but the most recent buy was a half-gallon → recommend that.
+        var product = new Product
+        {
+            Id = 1,
+            Name = "Whole Milk",
+            Purchases =
+            [
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(0),  Size = "1 gal" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(10), Size = "1 gal" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(20), Size = "1/2 gal" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(30), Size = "1/2 gal" },
+            ],
+        };
+
+        var r = ReplenishmentPredictor.Predict(product, D(35));
+
+        Assert.Equal("1/2 gal", r.RecommendedSize);
+    }
 }

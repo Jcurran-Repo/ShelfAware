@@ -17,13 +17,7 @@ else if (product is null)
 else
 {
     <div class="page-head">
-        <h1>
-            @product.Name
-            @if (product.Size is { Length: > 0 } sz)
-            {
-                <span class="size-chip">@sz</span>
-            }
-        </h1>
+        <h1>@product.Name</h1>
         <span class="chip chip-@ChipClass(prediction.Status)">@StatusLabel(prediction.Status)</span>
     </div>
     <p class="muted">@product.Category@(product.DefaultUnit is { } u ? $" · {u}" : "") · <a href="/products">All products</a></p>
@@ -37,6 +31,11 @@ else
             <dd>@(prediction.MedianIntervalDays is { } m ? $"~{Math.Round(m)} days" : "—")</dd>
             <dt>Typical quantity</dt>
             <dd>@estimate.TypicalQuantity.ToString("0.##")@(product.DefaultUnit is { } u2 ? $" {u2}" : "")</dd>
+            @if (prediction.RecommendedSize is { Length: > 0 } rs)
+            {
+                <dt>Recommended size</dt>
+                <dd>@rs</dd>
+            }
             <dt>Last bought</dt>
             <dd>@(estimate.LastPurchased is { } lb ? lb.ToString("MMM d, yyyy") : "never")</dd>
             <dt>Est. cost / buy</dt>
@@ -88,6 +87,7 @@ else
                         <th scope="col">Date</th>
                         <th scope="col">Since previous</th>
                         <th scope="col">Qty</th>
+                        <th scope="col">Size</th>
                         <th scope="col">Unit price</th>
                     </tr>
                 </thead>
@@ -98,6 +98,7 @@ else
                             <td>@h.Date.ToString("MMM d, yyyy")</td>
                             <td>@(h.GapDays is { } g ? $"{g} day{(g == 1 ? "" : "s")}" : "—")</td>
                             <td>@h.Quantity.ToString("0.##")</td>
+                            <td>@(h.Size is { Length: > 0 } s ? s : "—")</td>
                             <td>@(h.UnitPrice is { } up ? up.ToString("C") : "—")</td>
                         </tr>
                     }
@@ -120,7 +121,7 @@ else
 
     private const string Unbranded = "Unbranded";
 
-    private record PurchaseRow(DateOnly Date, int? GapDays, decimal Quantity, decimal? UnitPrice);
+    private record PurchaseRow(DateOnly Date, int? GapDays, decimal Quantity, string? Size, decimal? UnitPrice);
     private record BrandRow(string Brand, int Count, decimal? AvgPrice);
 
     protected override async Task OnInitializedAsync()
@@ -158,7 +159,7 @@ else
             int? gap = i > 0 ? pe.PurchasedAt.DayNumber - ordered[i - 1].PurchasedAt.DayNumber : null;
             decimal? price = pe.ReceiptId is { } rid && priceLookup.TryGetValue(rid, out var pr) ? pr : null;
             if (price is { } pv) priceSeries.Add(pv); // ascending, for the chart
-            history.Add(new PurchaseRow(pe.PurchasedAt, gap, pe.Quantity, price));
+            history.Add(new PurchaseRow(pe.PurchasedAt, gap, pe.Quantity, pe.Size, price));
         }
         history.Reverse(); // most recent first
 

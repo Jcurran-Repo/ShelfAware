@@ -11,6 +11,15 @@ to demonstrate production-ready work, so robustness, clean atomic git history,
 tests, accessibility, and visual polish are in-scope and expected — not
 gold-plating. Don't dismiss polish as overkill "because it's single-user."
 
+## Design directives
+
+- **Co-creation — stop and discuss before diverging.** Jordan and Claude are
+  co-creators of this app. Always stop and talk it through if you disagree about a
+  direction, or if you see a better, riskier, or materially harder path than what
+  was asked. Don't silently build what you think is best, and don't silently
+  implement something you believe is wrong or won't work — surface the trade-off,
+  reason it out together, and decide jointly before writing code.
+
 ## Build state (updated 2026-06-26)
 
 | Phase (DESIGN.md §10) | Status |
@@ -146,22 +155,26 @@ Pawmate; unbranded produce/meat (e.g. "93% Lean Ground Beef") stay null.
 Products grid shows a "usual brand" hint (most-bought brand under the item name, with
 "+N" when bought across several brands).
 
-**Package size is part of product identity (built 2026-06-28).** `Product.Size` (string?)
-was added so a gallon and a half-gallon of the same item are DIFFERENT products. Display:
-a neutral `.size-chip` next to the title (Product Detail) and under the name (Products
-grid); the Upload review has an editable Size column. Matching: existing products are
-passed to the model as composed "Item (size)" strings (`Compose`), the LLM's
-`existing_product` is resolved back, and new products de-dupe on `KeyOf` = (item, size).
-KEY TENSION (Jordan's call): strict size-string identity ALSO splits trivially-different
-sizes — ASMPET 10.6 oz vs Pawmate 11 oz dog treats split into two products, killing the
-brand rollup he liked. Resolution: the prompt (rule 10) now tells the model to split only
-on MEANINGFUL size differences (gallon vs half-gallon, 6-pack vs 24-pack) and roll up
-trivial ones (10.6 vs 11 oz). The deterministic `SizeEq` fallback stays exact (conservative
-backstop; only fires when the LLM returns no match). Verified after re-import: the dog
-treats roll back up to one product (10.6 oz, ASMPET + Pawmate) while size still shows.
-Note: a rolled-up product keeps the first-seen size string even if a later purchase was a
-hair different (e.g. shows "10.6 oz" though one buy was 11 oz) — acceptable; per-purchase
-size isn't tracked.
+**Package size is metadata, and the DOMINANT size drives the prediction (final call,
+2026-06-28).** We first made size part of product identity (`Product.Size`), but Jordan
+reversed it: he buys milk as a half-gallon OR a gallon at random, and identity-by-size
+either split it into two products (told to buy both) or — with strict size strings — split
+trivially-different sizes too. Final model:
+- `Product.Size` was removed; `PurchaseEvent.Size` (string?) holds size as per-purchase
+  metadata. Different sizes ROLL UP into one product; matching is item-name only again (no
+  composed strings / size keys). The Upload review keeps an editable Size column.
+- `ReplenishmentPredictor` now predicts the cadence from the DOMINANT size's purchases only
+  (most-bought size; ties → most recent) and exposes `RecommendedSize`, so a random-size
+  item gives one consistent cadence and we recommend a single size — never "buy a gallon AND
+  a half-gallon". No unit arithmetic (we explicitly chose the emergent approach over parsing
+  "1 gal" = 2 × "64 fl oz"). Shown: Recommended size in the Product Detail rhythm + a Size
+  column in recent purchases; a recommended-size chip under the Products-grid name.
+- KNOWN TRADE-OFF (surfaced to Jordan): filtering to the dominant size means LESS data, so a
+  mixed-size item with few buys reads "still learning" longer (e.g. the cod-skin dog treats:
+  one 10.6 oz + one 11 oz → dominant 10.6 oz has only 1 buy → still learning, though "bought
+  N×" counts all purchases so it's not self-contradictory). Trivial size differences (10.6 vs
+  11 oz) still count as different sizes here — distinguishing trivial from meaningful would
+  need the unit math we set aside. Revisit if "still learning" lingers too long.
 
 ## Decisions & deviations from the spec
 
@@ -227,8 +240,7 @@ size isn't tracked.
   `.claude/launch.json` (repo root and one in the parent ClaudeCodeSessions
   folder), port 5179.
 - **API key** lives in dotnet user-secrets, id `3d6755e6-9881-43a6-813c-fe3ebd974cd9`,
-  key `Llm:ApiKey`. Editing that file by hand repeatedly failed for the user
-  (Windows 11 Notepad unsaved-tab confusion + hidden AppData folder). If the
+  key `Llm:ApiKey`. Editing that file by hand repeatedly failed for the user. If the
   key must change: have the user save the bare key to an easy location
   (Desktop key.txt), move it into secrets.json programmatically, delete the
   temp file. Never echo the key into chat or commit it.

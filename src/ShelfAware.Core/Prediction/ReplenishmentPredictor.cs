@@ -13,7 +13,12 @@ public static class ReplenishmentPredictor
     {
         // 1. Distinct purchase dates — same-day events collapse (§6.1). Restocked signals count
         //    as purchase-equivalent dates for the interval math (§6.6).
+        //    Size is metadata, not identity: an item bought in random sizes (e.g. milk as a half-gallon
+        //    or a gallon) is ONE product. Predict the cadence from the DOMINANT size's purchases only, so
+        //    the timing is consistent and we recommend a single size instead of a noisy blend.
+        var dominantSize = DominantSize(product.Purchases);
         var purchaseDates = product.Purchases
+            .Where(p => SizeKey(p.Size) == SizeKey(dominantSize))
             .Select(p => p.PurchasedAt)
             .Distinct()
             .ToList();
@@ -98,11 +103,36 @@ public static class ReplenishmentPredictor
             Status = status,
             DueDate = dueDate,
             MedianIntervalDays = medianDays,
-            Basis = BuildBasis(purchaseDates.Count, medianDays),
+            // "bought N×" reflects ALL purchases (matches what the user sees elsewhere), while the cadence
+            // comes from the dominant size — so a mixed-size item reads "bought 2×, still learning" rather
+            // than a confusing "bought 1×" next to a 2-purchase brand list.
+            Basis = BuildBasis(product.Purchases.Select(p => p.PurchasedAt).Distinct().Count(), medianDays),
             SignalNote = SignalNoteFor(activeSignal?.Kind),
+            RecommendedSize = dominantSize,
             Pinned = pinned
         };
     }
+
+    // The size bought most often; ties broken by the most recently purchased size. Null when no purchase
+    // carries a size. Drives both the cadence (predict from this size's purchases) and what we recommend.
+    private static string? DominantSize(IReadOnlyCollection<PurchaseEvent> purchases)
+    {
+        if (purchases.Count == 0) return null;
+        return purchases
+            .GroupBy(p => SizeKey(p.Size))
+            .Select(g => new
+            {
+                Display = g.OrderByDescending(p => p.PurchasedAt).First().Size,
+                Count = g.Count(),
+                Latest = g.Max(p => p.PurchasedAt),
+            })
+            .OrderByDescending(x => x.Count)
+            .ThenByDescending(x => x.Latest)
+            .Select(x => x.Display)
+            .First();
+    }
+
+    private static string SizeKey(string? size) => (size ?? "").Trim().ToLowerInvariant();
 
     private static double Median(IReadOnlyList<int> values)
     {
