@@ -244,6 +244,7 @@ else if (phase == Phase.Done)
                 RawText = l.RawText,
                 NormalizedName = l.NormalizedName,
                 Brand = l.Brand,
+                Size = l.Size,
                 Quantity = l.Quantity,
                 UnitPrice = l.UnitPrice,
                 Category = l.Category,
@@ -368,6 +369,7 @@ else if (phase == Phase.Done)
                     unmatchedLines.Remove(dbLine);
                     dbLine.NormalizedName = name;
                     dbLine.Brand = brand;
+                    dbLine.Size = size;
                     dbLine.Quantity = line.Quantity;
                     dbLine.Category = line.Category;
                     dbLine.Product = product;

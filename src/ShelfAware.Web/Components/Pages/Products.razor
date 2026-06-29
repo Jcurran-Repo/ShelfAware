@@ -92,7 +92,7 @@ else
                 <tr>
                     <td>
                         <input value="@p.Name" aria-label="Product name" @onchange="ev => Rename(p, (string?)ev.Value)" />
-                        @{ var ub = UsualBrand(p); var rs = predictions[p.Id].RecommendedSize; }
+                        @{ var ub = e.UsualBrand; var rs = e.RecommendedSize; }
                         @if (rs is { Length: > 0 } || ub is not null)
                         {
                             <div class="item-meta">
@@ -194,22 +194,33 @@ else
             .ToListAsync();
         purchaseCounts = products.ToDictionary(p => p.Id, p => p.Purchases.Count);
 
-        // Average confirmed unit price per product (for expected-cost estimates).
+        // Confirmed unit price per product, keyed by size so the estimate prices the recommended
+        // (dominant) size rather than blending across sizes; falls back to the product's overall average.
         var priceLines = await db.ReceiptLines
             .Where(l => l.ProductId != null && l.UnitPrice != null)
-            .Select(l => new { Id = l.ProductId!.Value, Price = l.UnitPrice!.Value })
+            .Select(l => new { Id = l.ProductId!.Value, l.Size, Price = l.UnitPrice!.Value })
             .ToListAsync();
+        var priceBySize = priceLines
+            .GroupBy(x => (x.Id, Key: SizeKey(x.Size)))
+            .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
         var priceByProduct = priceLines
             .GroupBy(x => x.Id)
             .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
+
+        decimal? PriceFor(int productId, string? recommendedSize)
+        {
+            if (priceBySize.TryGetValue((productId, SizeKey(recommendedSize)), out var sp)) return sp;
+            return priceByProduct.TryGetValue(productId, out var ap) ? ap : null;
+        }
 
         var today = DateOnly.FromDateTime(DateTime.Today);
         predictions = products.ToDictionary(p => p.Id, p => ReplenishmentPredictor.Predict(p, today));
         estimates = products.ToDictionary(
             p => p.Id,
-            p => ShoppingEstimator.For(p, predictions[p.Id], today,
-                priceByProduct.TryGetValue(p.Id, out var price) ? price : null));
+            p => ShoppingEstimator.For(p, predictions[p.Id], today, PriceFor(p.Id, predictions[p.Id].RecommendedSize)));
     }
+
+    private static string SizeKey(string? size) => (size ?? "").Trim().ToLowerInvariant();
 
     private static string Relative(int days) => days switch
     {
@@ -235,19 +246,6 @@ else
         PredictionStatus.Stocked => "Stocked",
         _ => "Still learning"
     };
-
-    // Most-bought brand for this item, with a "+N" hint when it's been bought across several brands.
-    private static string? UsualBrand(Product p)
-    {
-        var brands = p.Purchases
-            .Where(pe => !string.IsNullOrWhiteSpace(pe.Brand))
-            .GroupBy(pe => pe.Brand!.Trim())
-            .OrderByDescending(g => g.Count())
-            .ThenBy(g => g.Key)
-            .ToList();
-        if (brands.Count == 0) return null;
-        return brands.Count == 1 ? brands[0].Key : $"{brands[0].Key} +{brands.Count - 1}";
-    }
 
     private async Task AddProduct()
     {

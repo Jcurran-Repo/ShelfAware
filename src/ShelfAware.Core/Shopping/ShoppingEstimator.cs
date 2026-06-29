@@ -23,9 +23,16 @@ public record ProductEstimate
     public int? DaysUntil { get; init; }
 
     public decimal TypicalQuantity { get; init; } = 1m;
-    /// <summary>Unit price supplied by the caller (avg of confirmed receipt lines), or null when unknown.</summary>
+    /// <summary>Unit price supplied by the caller (avg of confirmed receipt lines for the recommended
+    /// size), or null when unknown.</summary>
     public decimal? UnitPrice { get; init; }
     public decimal? ExpectedCost { get; init; }
+
+    /// <summary>Display-normalized package size to recommend buying (the dominant size), or null.</summary>
+    public string? RecommendedSize { get; init; }
+    /// <summary>Most-bought brand for this item, with a "+N" hint when bought across several brands
+    /// (e.g. "Great Value +2"); null when no purchase carries a brand.</summary>
+    public string? UsualBrand { get; init; }
 }
 
 public static class ShoppingEstimator
@@ -49,7 +56,24 @@ public static class ShoppingEstimator
             TypicalQuantity = typicalQuantity,
             UnitPrice = unitPrice,
             ExpectedCost = unitPrice is { } price ? price * typicalQuantity : null,
+            RecommendedSize = SizeFormat.Normalize(prediction.RecommendedSize),
+            UsualBrand = UsualBrandOf(product.Purchases),
         };
+    }
+
+    /// <summary>Most-bought brand across an item's purchases, with a "+N" hint when bought across several
+    /// brands (e.g. "Great Value +2"); null when no purchase carries a brand. Shared by the Products grid,
+    /// Grocery List, and dashboard so the "usual brand" reads identically everywhere.</summary>
+    public static string? UsualBrandOf(IEnumerable<PurchaseEvent> purchases)
+    {
+        var brands = purchases
+            .Where(pe => !string.IsNullOrWhiteSpace(pe.Brand))
+            .GroupBy(pe => pe.Brand!.Trim())
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key)
+            .ToList();
+        if (brands.Count == 0) return null;
+        return brands.Count == 1 ? brands[0].Key : $"{brands[0].Key} +{brands.Count - 1}";
     }
 
     private static decimal Median(List<decimal> values)

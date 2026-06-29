@@ -31,7 +31,7 @@ else
             <dd>@(prediction.MedianIntervalDays is { } m ? $"~{Math.Round(m)} days" : "—")</dd>
             <dt>Typical quantity</dt>
             <dd>@estimate.TypicalQuantity.ToString("0.##")@(product.DefaultUnit is { } u2 ? $" {u2}" : "")</dd>
-            @if (prediction.RecommendedSize is { Length: > 0 } rs)
+            @if (SizeFormat.Normalize(prediction.RecommendedSize) is { Length: > 0 } rs)
             {
                 <dt>Recommended size</dt>
                 <dd>@rs</dd>
@@ -98,7 +98,7 @@ else
                             <td>@h.Date.ToString("MMM d, yyyy")</td>
                             <td>@(h.GapDays is { } g ? $"{g} day{(g == 1 ? "" : "s")}" : "—")</td>
                             <td>@h.Quantity.ToString("0.##")</td>
-                            <td>@(h.Size is { Length: > 0 } s ? s : "—")</td>
+                            <td>@(SizeFormat.Normalize(h.Size) is { Length: > 0 } s ? s : "—")</td>
                             <td>@(h.UnitPrice is { } up ? up.ToString("C") : "—")</td>
                         </tr>
                     }
@@ -138,19 +138,26 @@ else
             return;
         }
 
-        // Per-receipt unit price for this product, so each purchase can show what it cost.
+        // Per-receipt unit price for this product, so each purchase can show what it cost. Size rides
+        // along so the est. cost/buy can price the recommended size, not a blend across sizes.
         var priceByReceipt = await db.ReceiptLines
             .Where(l => l.ProductId == Id && l.UnitPrice != null && l.ReceiptId != 0)
-            .Select(l => new { l.ReceiptId, Price = l.UnitPrice!.Value })
+            .Select(l => new { l.ReceiptId, l.Size, Price = l.UnitPrice!.Value })
             .ToListAsync();
         var priceLookup = priceByReceipt
             .GroupBy(x => x.ReceiptId)
             .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
-        var avgPrice = priceByReceipt.Count > 0 ? priceByReceipt.Average(x => x.Price) : (decimal?)null;
 
         var today = DateOnly.FromDateTime(DateTime.Today);
         prediction = ReplenishmentPredictor.Predict(product, today);
-        estimate = ShoppingEstimator.For(product, prediction, today, avgPrice);
+
+        // Price the recommended (dominant) size specifically; fall back to the overall average.
+        var recommendedKey = SizeKey(prediction.RecommendedSize);
+        var recommendedSizePrices = priceByReceipt.Where(x => SizeKey(x.Size) == recommendedKey).Select(x => x.Price).ToList();
+        decimal? estPrice = recommendedSizePrices.Count > 0
+            ? recommendedSizePrices.Average()
+            : priceByReceipt.Count > 0 ? priceByReceipt.Average(x => x.Price) : null;
+        estimate = ShoppingEstimator.For(product, prediction, today, estPrice);
 
         var ordered = product.Purchases.OrderBy(p => p.PurchasedAt).ToList();
         for (var i = 0; i < ordered.Count; i++)
@@ -176,6 +183,8 @@ else
             .OrderByDescending(b => b.Count).ThenBy(b => b.Brand)
             .ToList();
     }
+
+    private static string SizeKey(string? size) => (size ?? "").Trim().ToLowerInvariant();
 
     private static string Money(decimal amount) => amount.ToString("C");
 

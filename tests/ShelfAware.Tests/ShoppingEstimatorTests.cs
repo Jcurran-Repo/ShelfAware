@@ -109,4 +109,61 @@ public class ShoppingEstimatorTests
         // cost is still computable from quantity + price even without a date
         Assert.Equal(2m, e.ExpectedCost);
     }
+
+    [Fact]
+    public void RecommendedSize_IsCarriedFromPrediction_AndNormalizedForDisplay()
+    {
+        var product = ProductWith((0, 1m), (10, 1m));
+        var prediction = Prediction(PredictionStatus.Stocked, D(20)) with { RecommendedSize = "1 GAL" };
+
+        var e = ShoppingEstimator.For(product, prediction, D(10), unitPrice: null);
+
+        Assert.Equal("1 gal", e.RecommendedSize);
+    }
+
+    [Fact]
+    public void UsualBrand_IsMostBoughtBrand_WithPlusNHintAcrossBrands()
+    {
+        var product = new Product
+        {
+            Id = 1,
+            Name = "Bread",
+            Category = Category.Pantry,
+            Purchases =
+            [
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(0), Brand = "Nature's Own" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(10), Brand = "Nature's Own" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(20), Brand = "Sara Lee" },
+            ],
+        };
+
+        var e = ShoppingEstimator.For(product, Prediction(PredictionStatus.Stocked, D(30)), D(20), unitPrice: null);
+
+        Assert.Equal("Nature's Own +1", e.UsualBrand);
+    }
+
+    [Fact]
+    public void UsualBrand_IsNull_WhenNoPurchaseCarriesABrand()
+    {
+        var product = ProductWith((0, 1m), (10, 1m)); // ProductWith leaves Brand null
+
+        var e = ShoppingEstimator.For(product, Prediction(PredictionStatus.Stocked, D(20)), D(10), unitPrice: null);
+
+        Assert.Null(e.UsualBrand);
+    }
+
+    [Fact]
+    public void UsualBrandOf_PrefersHigherCount_ThenAlphabetical()
+    {
+        var purchases = new[]
+        {
+            new PurchaseEvent { Brand = "Zebra" },
+            new PurchaseEvent { Brand = "Acme" },
+            new PurchaseEvent { Brand = "Acme" },
+            new PurchaseEvent { Brand = null },
+            new PurchaseEvent { Brand = "  " },
+        };
+
+        Assert.Equal("Acme +1", ShoppingEstimator.UsualBrandOf(purchases));
+    }
 }

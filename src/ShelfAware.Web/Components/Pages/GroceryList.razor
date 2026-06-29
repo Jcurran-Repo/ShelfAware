@@ -89,18 +89,29 @@ else
 
         var priceLines = await db.ReceiptLines
             .Where(l => l.ProductId != null && l.UnitPrice != null)
-            .Select(l => new { Id = l.ProductId!.Value, Price = l.UnitPrice!.Value })
+            .Select(l => new { Id = l.ProductId!.Value, l.Size, Price = l.UnitPrice!.Value })
             .ToListAsync();
+        // Price the recommended (dominant) size specifically, not a blend across every size bought —
+        // so a half-gallon-vs-gallon item estimates the size we actually tell you to buy. Fall back to
+        // the product's overall average when that size has no priced line.
+        var priceBySize = priceLines
+            .GroupBy(x => (x.Id, Key: SizeKey(x.Size)))
+            .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
         var priceByProduct = priceLines
             .GroupBy(x => x.Id)
             .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
+
+        decimal? PriceFor(int productId, string? recommendedSize)
+        {
+            if (priceBySize.TryGetValue((productId, SizeKey(recommendedSize)), out var sp)) return sp;
+            return priceByProduct.TryGetValue(productId, out var ap) ? ap : null;
+        }
 
         var today = DateOnly.FromDateTime(DateTime.Today);
         var all = products.Select(p =>
         {
             var prediction = ReplenishmentPredictor.Predict(p, today);
-            return ShoppingEstimator.For(p, prediction, today,
-                priceByProduct.TryGetValue(p.Id, out var price) ? price : null);
+            return ShoppingEstimator.For(p, prediction, today, PriceFor(p.Id, prediction.RecommendedSize));
         }).ToList();
 
         // Ordered by aisle (category) so the list matches how you walk a store,
@@ -145,7 +156,22 @@ else
                     @foreach (var e in items)
                     {
                         <tr>
-                            <td>@e.Name</td>
+                            <td>
+                                @e.Name
+                                @if (e.RecommendedSize is { Length: > 0 } || e.UsualBrand is not null)
+                                {
+                                    <div class="item-meta">
+                                        @if (e.RecommendedSize is { Length: > 0 } sz)
+                                        {
+                                            <span class="size-chip" title="Suggested size to buy">@sz</span>
+                                        }
+                                        @if (e.UsualBrand is { } brand)
+                                        {
+                                            <span class="usual-brand">@brand</span>
+                                        }
+                                    </div>
+                                }
+                            </td>
                             <td>@e.Category</td>
                             <td><span class="chip chip-@ChipClass(e.Status)">@StatusLabel(e.Status)</span></td>
                             <td>
@@ -186,11 +212,17 @@ else
         sb.AppendLine($"Buy now (~{Money(buyNowTotal)}):");
         foreach (var e in buyNow)
         {
+            var qualifiers = new List<string>();
+            if (e.UsualBrand is { } b) qualifiers.Add(b);
+            if (e.RecommendedSize is { Length: > 0 } s) qualifiers.Add(s);
+            var q = qualifiers.Count > 0 ? $" ({string.Join(", ", qualifiers)})" : "";
             var cost = e.ExpectedCost is { } c ? $" — {Money(c)}" : "";
-            sb.AppendLine($"- {e.Name} ×{e.TypicalQuantity:0.##}{cost}");
+            sb.AppendLine($"- {e.Name}{q} ×{e.TypicalQuantity:0.##}{cost}");
         }
         return sb.ToString();
     }
+
+    private static string SizeKey(string? size) => (size ?? "").Trim().ToLowerInvariant();
 
     private static string Money(decimal amount) => amount.ToString("C");
 

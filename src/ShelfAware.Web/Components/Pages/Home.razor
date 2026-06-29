@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 @using ShelfAware.Core.Chat
 @using ShelfAware.Core.Prediction
+@using ShelfAware.Core.Shopping
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
 @inject IPantryChat Chat
 
@@ -53,6 +54,23 @@ else
                             <a class="card-name" href="/product/@p.Id">@p.Name</a>
                             <span class="chip chip-@ChipClass(r.Status)">@StatusLabel(r.Status)</span>
                         </div>
+                        @{
+                            var size = SizeFormat.Normalize(r.RecommendedSize);
+                            var brand = ShoppingEstimator.UsualBrandOf(p.Purchases);
+                        }
+                        @if (size is { Length: > 0 } || brand is not null)
+                        {
+                            <div class="item-meta">
+                                @if (size is { Length: > 0 } sz)
+                                {
+                                    <span class="size-chip" title="Suggested size to buy">@sz</span>
+                                }
+                                @if (brand is not null)
+                                {
+                                    <span class="usual-brand">@brand</span>
+                                }
+                            </div>
+                        }
                         @{
                             var urgency = Urgency(r);
                         }
