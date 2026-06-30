@@ -169,7 +169,10 @@ else
                             <a href="/product/@p.Id">View history →</a>
                         </div>
                     </td>
-                    <td><button class="icon-btn" @onclick="() => Delete(p)" aria-label="Delete @p.Name" title="Delete @p.Name"><span aria-hidden="true">🗑</span></button></td>
+                    <td class="row-actions">
+                        <button class="mark-out" @onclick="() => MarkOut(p)" aria-label="Mark @p.Name out of stock" title="Mark @p.Name out of stock">Out</button>
+                        <button class="icon-btn" @onclick="() => Delete(p)" aria-label="Delete @p.Name" title="Delete @p.Name"><span aria-hidden="true">🗑</span></button>
+                    </td>
                 </tr>
             }
             @if (shown.Count == 0)
@@ -339,6 +342,22 @@ else
         await using var db = await DbFactory.CreateDbContextAsync();
         db.Products.Update(p);
         await db.SaveChangesAsync();
+    }
+
+    // Mark a product out of stock from here (always available, unlike the dashboard which only lists
+    // items already running low). Records an OutNow signal → the item reads Overdue/"due today" and
+    // surfaces on the dashboard, where Restocked clears it.
+    private async Task MarkOut(Product p)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.InventorySignals.Add(new InventorySignal
+        {
+            ProductId = p.Id,
+            Kind = SignalKind.OutNow,
+            SignaledAt = DateTimeOffset.Now
+        });
+        await db.SaveChangesAsync();
+        await LoadAsync();
     }
 
     private async Task Delete(Product p)

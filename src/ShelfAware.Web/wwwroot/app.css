@@ -681,6 +681,30 @@ button.tag-chip {
     align-items: center;
 }
 
+/* Products grid row actions: a tiny "Out" button (always-available mark-out) + delete. */
+.row-actions {
+    display: flex;
+    gap: 0.3rem;
+    align-items: center;
+    white-space: nowrap;
+}
+
+.mark-out {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--overdue-ink);
+    background: transparent;
+    border: 1px solid var(--overdue-line);
+    border-radius: 6px;
+    padding: 0.05rem 0.45rem;
+    cursor: pointer;
+    line-height: 1.5;
+}
+
+.mark-out:hover {
+    background: var(--overdue-bg);
+}
+
 /* Keep the "Next buy" date + relative on one line (the popover keeps normal wrapping). */
 .nextbuy {
     white-space: nowrap;
