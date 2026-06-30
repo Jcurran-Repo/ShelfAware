@@ -40,6 +40,8 @@ public record ProductEstimate
     /// <summary>Most-bought brand for this item, with a "+N" hint when bought across several brands
     /// (e.g. "Great Value +2"); null when no purchase carries a brand.</summary>
     public string? UsualBrand { get; init; }
+    /// <summary>The product's descriptive tags, for display on the shopping list.</summary>
+    public IReadOnlyList<string> Tags { get; init; } = [];
 }
 
 public static class ShoppingEstimator
@@ -71,6 +73,7 @@ public static class ShoppingEstimator
             ExpectedCost = unitPrice is { } price ? price * recommendedQuantity : null,
             RecommendedSize = SizeFormat.Normalize(prediction.RecommendedSize),
             UsualBrand = UsualBrandOf(product.Purchases),
+            Tags = product.Tags.Select(t => t.Value).OrderBy(t => t).ToList(),
         };
     }
 

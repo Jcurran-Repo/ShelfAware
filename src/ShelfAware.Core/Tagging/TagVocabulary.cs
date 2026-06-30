@@ -12,7 +12,9 @@ public static class TagVocabulary
     public static readonly IReadOnlyList<string> Seed =
     [
         "Condiment", "Sauce", "Canned", "Snack", "Spice", "Baking", "Breakfast",
-        "Cleaning", "Paper Goods", "First Aid", "Frozen Meal", "Bakery", "Deli",
+        "Bakery", "Deli", "Frozen Meal", "Protein",
+        "Cleaning", "Laundry", "Paper Goods", "Trash Bags", "Storage Bags",
+        "First Aid", "Pet Food", "Pet Treats",
     ];
 
     /// <summary>Returns an existing tag the candidate is a near-duplicate of (case/whitespace/simple
