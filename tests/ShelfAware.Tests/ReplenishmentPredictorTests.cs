@@ -116,6 +116,35 @@ public class ReplenishmentPredictorTests
     }
 
     [Fact]
+    public void OutNow_SetsDueDateToTheOutageDate_NotTheStatisticalFuture()
+    {
+        // Bought day 0 and 20 (~20-day cadence) → stats alone would put the due date around day 40.
+        // Marking it out on day 25 means it's out NOW: the due date becomes the outage date, so the UI
+        // reads overdue/now instead of the contradictory "due in ~15 days" next to an Overdue chip.
+        var product = ProductWith([D(0), D(20)], [Signal(SignalKind.OutNow, D(25))]);
+
+        var r = ReplenishmentPredictor.Predict(product, D(25));
+
+        Assert.Equal(PredictionStatus.Overdue, r.Status);
+        Assert.True(r.Pinned);
+        Assert.Equal(D(25), r.DueDate); // the outage date, not the statistical ~D(40)
+    }
+
+    [Fact]
+    public void OutNow_WithOnePurchase_IsOutNow_ButDoesNotFabricateCadence()
+    {
+        // Marking a once-bought item out makes it "out now" (Overdue, due = the outage date), but we
+        // don't invent a cadence from the single purchase→outage gap — cadence stays "still learning".
+        var product = ProductWith([D(0)], [Signal(SignalKind.OutNow, D(12))]);
+
+        var r = ReplenishmentPredictor.Predict(product, D(12));
+
+        Assert.Equal(PredictionStatus.Overdue, r.Status);
+        Assert.Equal(D(12), r.DueDate);
+        Assert.Null(r.MedianIntervalDays); // no cadence fabricated from one purchase
+    }
+
+    [Fact]
     public void RunningLow_FloorsAtDueSoon()
     {
         var product = ProductWith([D(0), D(20)], [Signal(SignalKind.RunningLow, D(24))]);

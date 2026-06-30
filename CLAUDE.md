@@ -54,8 +54,17 @@ pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + 
    code where it suffices": Mermaid diagram, extract→match→predict→chat flow, demo GIF,
    eval-table screenshot, local-run instructions, marked placeholder for the live-demo URL.
 
+Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
+floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
+on the list; weight items stay fractional); **out-now shows "due today"** — an active
+OutNow sets the effective due date to the outage date so the card no longer says
+"Overdue" next to "due in 21 days".
+
 Deferred: Azure App Service deploy (Phase 5); a tiny "dapper blob" mascot for the
-header; a per-size Trends price chart.
+header; a per-size Trends price chart; **cadence-learning from outages** — should an
+OutNow date feed the interval median (consumption time) vs. the current rebuy-interval
+model? A real §6 decision (avoid the on-mark/off-restock flicker + mixing two interval
+types); deferred for a deliberate design pass, not a quick fold.
 
 ## Data model: brand-agnostic products, size as metadata (final, 2026-06-28)
 

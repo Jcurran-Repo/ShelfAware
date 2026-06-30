@@ -49,6 +49,15 @@ public static class ReplenishmentPredictor
             .ThenByDescending(s => s.Kind == SignalKind.OutNow) // OutNow wins a same-instant tie
             .FirstOrDefault();
 
+        // When an item is marked out, the outage date is its effective due date (it's out NOW), so the UI
+        // reads "due today / overdue" instead of a future statistical date. We deliberately do NOT fold the
+        // outage into the cadence median: purchase→outage is consumption time while purchase→purchase is
+        // rebuy time, and blending them (plus the on-mark/off-restock flicker) muddies the cadence —
+        // learning from outages is a separate §6 decision (see CLAUDE.md backlog).
+        var outageDate = activeSignal?.Kind == SignalKind.OutNow
+            ? DateOnly.FromDateTime(activeSignal.SignaledAt.Date)
+            : (DateOnly?)null;
+
         // 2–5. Statistical base prediction.
         PredictionStatus status;
         DateOnly? dueDate = null;
@@ -75,8 +84,8 @@ public static class ReplenishmentPredictor
             }
 
             medianDays = median;
-            var lastPurchase = eventDates[^1];
-            dueDate = lastPurchase.AddDays(Floor(median));
+            var lastDate = eventDates[^1];
+            dueDate = lastDate.AddDays(Floor(median));
 
             var threshold = Round(Math.Max(3.0, 0.2 * median));
             var dueSoonStart = dueDate.Value.AddDays(-threshold);
@@ -96,6 +105,7 @@ public static class ReplenishmentPredictor
         {
             status = PredictionStatus.Overdue; // pinned to top until next purchase / Restocked
             pinned = true;
+            dueDate = outageDate; // out NOW → due is the outage date (today or earlier), never a future date
         }
         else if (activeSignal?.Kind == SignalKind.RunningLow && status is PredictionStatus.Stocked or PredictionStatus.Unknown)
         {
