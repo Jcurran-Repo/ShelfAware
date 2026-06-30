@@ -52,6 +52,17 @@ public class ReplenishmentPredictorTests
         Assert.Equal(PredictionStatus.Stocked, r.Status);
     }
 
+    [Fact]
+    public void DueDate_FloorsTheInterval_ErringEarly()
+    {
+        // Gaps 10 and 13 → median 11.5. The due date floors the interval to 11 days, landing a day
+        // early rather than a day late — the "stay ahead" bias. (MedianIntervalDays keeps the raw 11.5.)
+        var r = ReplenishmentPredictor.Predict(ProductWith([D(0), D(10), D(23)]), D(25));
+
+        Assert.Equal(11.5, r.MedianIntervalDays);
+        Assert.Equal(D(34), r.DueDate); // D(23) + floor(11.5) = +11, not the rounded +12
+    }
+
     // --- §6.3: median is robust; ≥4 events trim outliers --------------------
 
     [Fact]

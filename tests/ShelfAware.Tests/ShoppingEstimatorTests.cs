@@ -64,6 +64,31 @@ public class ShoppingEstimatorTests
     }
 
     [Fact]
+    public void RecommendedQuantity_RoundsUpWholeUnitItems_KeepingTypicalExact()
+    {
+        // Bought 1 then 2 → median 1.5. You can't buy half a box, so recommend 2; keep 1.5 as the stat.
+        var product = ProductWith((0, 1m), (10, 2m));
+
+        var e = ShoppingEstimator.For(product, Prediction(PredictionStatus.Stocked, D(20)), D(10), unitPrice: 2m);
+
+        Assert.Equal(1.5m, e.TypicalQuantity);
+        Assert.Equal(2m, e.RecommendedQuantity);
+        Assert.Equal(4m, e.ExpectedCost); // cost uses the rounded buy-quantity: 2 × $2
+    }
+
+    [Fact]
+    public void RecommendedQuantity_StaysFractional_ForWeightPricedItems()
+    {
+        // Weight-priced (2.31 lb, 1.8 lb) → genuinely fractional, so don't round it to a whole number.
+        var product = ProductWith((0, 2.31m), (10, 1.8m));
+
+        var e = ShoppingEstimator.For(product, Prediction(PredictionStatus.Stocked, D(20)), D(10), unitPrice: null);
+
+        Assert.Equal(2.055m, e.TypicalQuantity);
+        Assert.Equal(2.055m, e.RecommendedQuantity); // unchanged — a real fraction, not a count
+    }
+
+    [Fact]
     public void ExpectedCost_IsNull_WhenNoPriceKnown()
     {
         var product = ProductWith((0, 1m), (10, 1m));

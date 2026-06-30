@@ -135,7 +135,7 @@ else
                                 <dt>Last bought</dt>
                                 <dd>@(e.LastPurchased?.ToString("yyyy-MM-dd") ?? "never")</dd>
                                 <dt>Typical buy</dt>
-                                <dd>@e.TypicalQuantity.ToString("0.##")@(p.DefaultUnit is { } u ? " " + u : "")</dd>
+                                <dd>@e.RecommendedQuantity.ToString("0.##")@(p.DefaultUnit is { } u ? " " + u : "")</dd>
                                 <dt>Next buy</dt>
                                 <dd>@(e.NextBuyDate is { } nb ? $"{nb:yyyy-MM-dd} ({Relative(e.DaysUntil!.Value)})" : "still learning")</dd>
                                 <dt>Est. unit price</dt>

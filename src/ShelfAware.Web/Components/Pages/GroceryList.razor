@@ -181,7 +181,7 @@ else
                                     <span class="muted"> (@Relative(du))</span>
                                 }
                             </td>
-                            <td>@e.TypicalQuantity.ToString("0.##")</td>
+                            <td>@e.RecommendedQuantity.ToString("0.##")</td>
                             <td>@(e.ExpectedCost is { } c ? Money(c) : "—")</td>
                         </tr>
                     }
@@ -217,7 +217,7 @@ else
             if (e.RecommendedSize is { Length: > 0 } s) qualifiers.Add(s);
             var q = qualifiers.Count > 0 ? $" ({string.Join(", ", qualifiers)})" : "";
             var cost = e.ExpectedCost is { } c ? $" — {Money(c)}" : "";
-            sb.AppendLine($"- {e.Name}{q} ×{e.TypicalQuantity:0.##}{cost}");
+            sb.AppendLine($"- {e.Name}{q} ×{e.RecommendedQuantity:0.##}{cost}");
         }
         return sb.ToString();
     }

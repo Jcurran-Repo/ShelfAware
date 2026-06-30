@@ -29,8 +29,8 @@ else
             <dd>@(estimate.NextBuyDate is { } d ? $"{d:MMM d, yyyy} ({Relative(estimate.DaysUntil!.Value)})" : "still learning")</dd>
             <dt>Typical interval</dt>
             <dd>@(prediction.MedianIntervalDays is { } m ? $"~{Math.Round(m)} days" : "—")</dd>
-            <dt>Typical quantity</dt>
-            <dd>@estimate.TypicalQuantity.ToString("0.##")@(product.DefaultUnit is { } u2 ? $" {u2}" : "")</dd>
+            <dt>Typical buy</dt>
+            <dd>@estimate.RecommendedQuantity.ToString("0.##")@(product.DefaultUnit is { } u2 ? $" {u2}" : "")</dd>
             @if (SizeFormat.Normalize(prediction.RecommendedSize) is { Length: > 0 } rs)
             {
                 <dt>Recommended size</dt>

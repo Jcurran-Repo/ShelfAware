@@ -76,7 +76,7 @@ public static class ReplenishmentPredictor
 
             medianDays = median;
             var lastPurchase = eventDates[^1];
-            dueDate = lastPurchase.AddDays(Round(median));
+            dueDate = lastPurchase.AddDays(Floor(median));
 
             var threshold = Round(Math.Max(3.0, 0.2 * median));
             var dueSoonStart = dueDate.Value.AddDays(-threshold);
@@ -148,12 +148,16 @@ public static class ReplenishmentPredictor
             : (sorted[mid - 1] + sorted[mid]) / 2.0;
     }
 
-    // Days are whole; round halves away from zero so a 12.5-day median reads as 13, not banker's 12.
+    // The DueSoon-window threshold rounds halves away from zero (e.g. 12.5 → 13).
     private static int Round(double value) => (int)Math.Round(value, MidpointRounding.AwayFromZero);
+
+    // The predicted run-out interval rounds DOWN (floor): the due date lands a touch early, so we err
+    // toward reminding *before* an item runs out rather than after. Pairs with buy-quantity rounding UP.
+    private static int Floor(double value) => (int)Math.Floor(value);
 
     private static string BuildBasis(int purchaseCount, double? medianDays) =>
         medianDays is { } m
-            ? $"bought {purchaseCount}×, ~every {Round(m)} days"
+            ? $"bought {purchaseCount}×, ~every {Floor(m)} days"
             : purchaseCount == 0 ? "no purchases yet" : $"bought {purchaseCount}×, still learning";
 
     private static string? SignalNoteFor(SignalKind? activeSignal) => activeSignal switch
