@@ -1,6 +1,41 @@
 {
-  "GeneratedAt": "0001-01-01T00:00:00+00:00",
-  "Model": "",
-  "Aggregate": { "Recall": 0, "Precision": 0, "FieldAccuracy": 0 },
-  "Fixtures": []
+  "GeneratedAt": "2026-06-30T11:48:49.6464679-05:00",
+  "Model": "claude-haiku-4-5-20251001",
+  "Aggregate": {
+    "Recall": 0.98989898989899,
+    "Precision": 0.98989898989899,
+    "FieldAccuracy": 0.9305555555555555
+  },
+  "Fixtures": [
+    {
+      "Name": "walmart-2026-06-03",
+      "ExpectedLines": 36,
+      "FoundLines": 36,
+      "MatchedLines": 36,
+      "Recall": 1,
+      "Precision": 1,
+      "FieldAccuracy": 0.9166666666666666,
+      "Error": null
+    },
+    {
+      "Name": "walmart-2026-06-15",
+      "ExpectedLines": 14,
+      "FoundLines": 14,
+      "MatchedLines": 14,
+      "Recall": 1,
+      "Precision": 1,
+      "FieldAccuracy": 1,
+      "Error": null
+    },
+    {
+      "Name": "walmart-2026-06-26",
+      "ExpectedLines": 33,
+      "FoundLines": 33,
+      "MatchedLines": 32,
+      "Recall": 0.9696969696969697,
+      "Precision": 0.9696969696969697,
+      "FieldAccuracy": 0.875,
+      "Error": null
+    }
+  ]
 }

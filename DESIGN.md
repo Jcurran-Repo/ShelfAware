@@ -103,7 +103,7 @@ Spec baseline was three pages — Dashboard (`/`), Upload (`/receipt`), Products
 ## 9. Eval harness (`tests/ShelfAware.Evals`)
 Console app: `dotnet run --project tests/ShelfAware.Evals`.
 - `fixtures/` holds real receipts (digital screenshots + a few paper; a multi-screenshot order = one fixture) with `<name>.expected.json` hand-labeled ground truth.
-- Per fixture: run extraction, score **line recall** (found/expected), **line precision** (real found/found), **field accuracy** on quantity + category for matched lines (name match fuzzy, ≥ 0.8 token similarity). Print a table + aggregate.
+- Per fixture: run extraction, score **line recall** (found/expected), **line precision** (real found/found), **field accuracy** on quantity + category for matched lines. Names are matched fuzzily by the **token containment coefficient** (|A∩B| / min(|A|,|B|)) ≥ 0.6 — robust to the descriptor-word differences real product names carry ("Lean Ground Beef" vs "All Natural 93% Lean Ground Beef"); symmetric Jaccard wrongly penalized those. Print a table + aggregate; `EVAL_VERBOSE=1` lists every matched pair + unmatched line.
 - **Targets: ≥ 90% recall, ≥ 90% precision, ≥ 85% field accuracy.** Below target → iterate the prompt, not the code. Screenshot the table for the README.
 
 ## 10. Build phases & acceptance criteria

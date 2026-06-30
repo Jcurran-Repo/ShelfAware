@@ -26,5 +26,7 @@ dotnet run --project tests/ShelfAware.Evals -- tests/ShelfAware.Evals/fixtures s
 
 Scoring (DESIGN.md §9): line recall = matched/expected, precision =
 matched/found, field accuracy = matched lines with correct quantity + category.
-Names are matched fuzzily (Jaccard token similarity ≥ 0.8). Targets: ≥90% recall,
-≥90% precision, ≥85% field accuracy.
+Names are matched fuzzily by the token **containment coefficient** (|A∩B| /
+min(|A|,|B|)) ≥ 0.6 — robust to descriptor-word differences in product names.
+Targets: ≥90% recall, ≥90% precision, ≥85% field accuracy. Set `EVAL_VERBOSE=1`
+to print every matched pair + unmatched line (handy for spotting wobble).

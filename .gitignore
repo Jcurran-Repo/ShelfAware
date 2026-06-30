@@ -484,3 +484,11 @@ $RECYCLE.BIN/
 # ShelfAware local data (SQLite DB, receipt images)
 src/ShelfAware.Web/app-data/
 
+# Real receipt fixtures are private — commit the labels (*.expected.json) + results, not the receipts
+tests/ShelfAware.Evals/fixtures/*.pdf
+tests/ShelfAware.Evals/fixtures/*.png
+tests/ShelfAware.Evals/fixtures/*.jpg
+tests/ShelfAware.Evals/fixtures/*.jpeg
+tests/ShelfAware.Evals/fixtures/*.webp
+tests/ShelfAware.Evals/fixtures/*.gif
+
