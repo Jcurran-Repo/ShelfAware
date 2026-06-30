@@ -1,10 +1,10 @@
 {
-  "GeneratedAt": "2026-06-30T11:48:49.6464679-05:00",
+  "GeneratedAt": "2026-06-30T12:25:30.3930009-05:00",
   "Model": "claude-haiku-4-5-20251001",
   "Aggregate": {
     "Recall": 0.98989898989899,
     "Precision": 0.98989898989899,
-    "FieldAccuracy": 0.9305555555555555
+    "FieldAccuracy": 1
   },
   "Fixtures": [
     {
@@ -14,7 +14,7 @@
       "MatchedLines": 36,
       "Recall": 1,
       "Precision": 1,
-      "FieldAccuracy": 0.9166666666666666,
+      "FieldAccuracy": 1,
       "Error": null
     },
     {
@@ -34,7 +34,7 @@
       "MatchedLines": 32,
       "Recall": 0.9696969696969697,
       "Precision": 0.9696969696969697,
-      "FieldAccuracy": 0.875,
+      "FieldAccuracy": 1,
       "Error": null
     }
   ]
