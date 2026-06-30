@@ -59,6 +59,7 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
     public async Task<ExtractionResult> ExtractAsync(
         IReadOnlyList<ReceiptAttachment> attachments,
         IReadOnlyList<string>? knownProductNames = null,
+        IReadOnlyList<string>? knownTags = null,
         CancellationToken cancellationToken = default)
     {
         if (attachments.Count == 0) return ExtractionResult.Fail("No attachments provided.");
@@ -76,6 +77,15 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
             {
                 Text = "Existing products — set existing_product to the EXACT matching name from this list, or null if none fits:\n- "
                        + string.Join("\n- ", knownProductNames),
+            });
+        }
+
+        if (knownTags is { Count: > 0 })
+        {
+            content.Add(new TextBlockParam
+            {
+                Text = "Existing tags — when a tag fits, REUSE one from this list verbatim instead of coining a near-duplicate; only invent a new tag if none fit:\n- "
+                       + string.Join("\n- ", knownTags),
             });
         }
 

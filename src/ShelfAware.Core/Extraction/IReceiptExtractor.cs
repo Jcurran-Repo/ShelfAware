@@ -10,9 +10,13 @@ public interface IReceiptExtractor
     /// <param name="knownProductNames">Existing product names the model may match lines against
     /// (LLM-assisted matching). When null/empty, no matching is attempted and
     /// <see cref="ExtractedLine.SuggestedProductName"/> is always null.</param>
+    /// <param name="knownTags">The current tag vocabulary (seed + user-added) the model should reuse
+    /// when suggesting tags, so the cloud doesn't fragment. When null/empty, the prompt's default seed
+    /// list is used.</param>
     Task<ExtractionResult> ExtractAsync(
         IReadOnlyList<ReceiptAttachment> attachments,
         IReadOnlyList<string>? knownProductNames = null,
+        IReadOnlyList<string>? knownTags = null,
         CancellationToken cancellationToken = default);
 }
 

@@ -257,7 +257,7 @@ else if (phase == Phase.Done)
                 allKnownTags = TagVocabulary.Seed.Concat(stored)
                     .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t).ToList();
             }
-            var result = await Extractor.ExtractAsync(attachments, products.Select(p => p.Name).Distinct().ToList());
+            var result = await Extractor.ExtractAsync(attachments, products.Select(p => p.Name).Distinct().ToList(), allKnownTags);
 
             await using var db = await DbFactory.CreateDbContextAsync();
             receipt = new Receipt
