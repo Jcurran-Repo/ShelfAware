@@ -33,10 +33,11 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
               "size":            { "type": ["string", "null"], "description": "e.g. '1 gal', '12 ct'" },
               "unit_price":      { "type": ["number", "null"] },
               "category":        { "type": "string", "enum": ["Dairy","Meat","Produce","Pantry","Frozen","Beverage","Household","PetCare","PersonalCare","Other"] },
+              "tags":            { "type": "array", "items": { "type": "string" }, "description": "Descriptive tags, additional to category. [] when none apply." },
               "confidence":      { "type": "number" },
               "existing_product":{ "type": ["string", "null"], "description": "Exact name from the provided existing-products list this line matches, or null." }
             },
-            "required": ["raw_text", "normalized_name", "brand", "quantity", "size", "unit_price", "category", "confidence", "existing_product"],
+            "required": ["raw_text", "normalized_name", "brand", "quantity", "size", "unit_price", "category", "tags", "confidence", "existing_product"],
             "additionalProperties": false
           }
         }
@@ -167,6 +168,7 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
                 Size = GetNullableString(line, "size"),
                 UnitPrice = line.TryGetProperty("unit_price", out var up) && up.ValueKind == JsonValueKind.Number ? up.GetDecimal() : null,
                 Category = Enum.TryParse<Category>(line.GetProperty("category").GetString(), ignoreCase: true, out var cat) ? cat : Category.Other,
+                Tags = ParseTags(line),
                 Confidence = Math.Clamp(line.GetProperty("confidence").GetDecimal(), 0m, 1m),
                 SuggestedProductName = GetNullableString(line, "existing_product"),
             });
@@ -179,6 +181,12 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
             Lines = lines,
         };
     }
+
+    private static string[] ParseTags(JsonElement line) =>
+        line.TryGetProperty("tags", out var t) && t.ValueKind == JsonValueKind.Array
+            ? t.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String)
+                .Select(e => e.GetString()!.Trim()).Where(s => s.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+            : [];
 
     private static string? GetNullableString(JsonElement element, string name) =>
         element.TryGetProperty(name, out var prop) && prop.ValueKind == JsonValueKind.String ? prop.GetString() : null;

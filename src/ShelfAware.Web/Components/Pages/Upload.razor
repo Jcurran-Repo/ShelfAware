@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 @using ShelfAware.Core.Chat
 @using ShelfAware.Core.Extraction
+@using ShelfAware.Core.Tagging
 @using Microsoft.Extensions.Options
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
 @inject IReceiptExtractor Extractor
@@ -163,6 +164,7 @@ else if (phase == Phase.Done)
         public Category Category { get; set; }
         public decimal Confidence { get; set; }
         public decimal? UnitPrice { get; set; }
+        public List<string> Tags { get; set; } = [];
         public int ProductId { get; set; }            // 0 = create new
         public bool AliasMatched { get; set; }
     }
@@ -279,6 +281,7 @@ else if (phase == Phase.Done)
                     Category = l.Category,
                     Confidence = l.Confidence,
                     UnitPrice = l.UnitPrice,
+                    Tags = l.Tags.ToList(),
                     ProductId = alias?.ProductId ?? match?.Id ?? 0,
                     AliasMatched = alias is not null,
                 };
@@ -338,7 +341,7 @@ else if (phase == Phase.Done)
                 Product product;
                 if (line.ProductId > 0)
                 {
-                    product = await db.Products.FirstAsync(p => p.Id == line.ProductId);
+                    product = await db.Products.Include(p => p.Tags).FirstAsync(p => p.Id == line.ProductId);
                 }
                 else if (createdByName.TryGetValue(name, out var existingNew))
                 {
@@ -362,6 +365,18 @@ else if (phase == Phase.Done)
                     Source = PurchaseSource.Receipt,
                     ReceiptId = dbReceipt.Id,
                 });
+
+                // Apply the reviewed tags to the (brand-agnostic) product, skipping ones it already has
+                // or near-duplicates of them so the tag cloud stays clean.
+                foreach (var rawTag in line.Tags)
+                {
+                    var tag = rawTag.Trim();
+                    if (tag.Length == 0) continue;
+                    var existing = product.Tags.Select(t => t.Value).ToList();
+                    if (existing.Any(v => string.Equals(v, tag, StringComparison.OrdinalIgnoreCase))) continue;
+                    if (TagVocabulary.FindNearDuplicate(tag, existing) is not null) continue;
+                    product.Tags.Add(new ProductTag { Value = tag });
+                }
 
                 var dbLine = unmatchedLines.FirstOrDefault(l => l.RawText == line.RawText);
                 if (dbLine is not null)

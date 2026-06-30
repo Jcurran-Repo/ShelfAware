@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Extraction;
+using ShelfAware.Core.Tagging;
 using ShelfAware.Llm;
 using ShelfAware.Web.Components;
 using ShelfAware.Web.Data;
@@ -23,6 +24,7 @@ builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection(LlmOptio
 builder.Services.AddSingleton<IReceiptExtractor, AnthropicReceiptExtractor>();
 builder.Services.AddSingleton<IPantryStore, EfPantryStore>();
 builder.Services.AddSingleton<IPantryChat, AnthropicPantryChat>();
+builder.Services.AddSingleton<ITagAdvisor, AnthropicTagAdvisor>();
 
 var app = builder.Build();
 

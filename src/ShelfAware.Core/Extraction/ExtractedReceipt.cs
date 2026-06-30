@@ -18,6 +18,9 @@ public record ExtractedLine
     public string? Size { get; init; }
     public decimal? UnitPrice { get; init; }
     public Category Category { get; init; } = Category.Other;
+    /// <summary>Descriptive tags the model suggests for this item (from the seed vocabulary), applied to
+    /// the product on confirm. Empty when none apply.</summary>
+    public string[] Tags { get; init; } = [];
     public decimal Confidence { get; init; }
 
     /// <summary>Exact name of an existing product the model judged this line to match, or null.

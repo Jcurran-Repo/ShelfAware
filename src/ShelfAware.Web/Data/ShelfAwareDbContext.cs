@@ -11,6 +11,7 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
     public DbSet<ReceiptLine> ReceiptLines => Set<ReceiptLine>();
     public DbSet<ProductAlias> ProductAliases => Set<ProductAlias>();
     public DbSet<InventorySignal> InventorySignals => Set<InventorySignal>();
+    public DbSet<ProductTag> ProductTags => Set<ProductTag>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
