@@ -172,7 +172,7 @@ else
                                         }
                                         @foreach (var t in e.Tags)
                                         {
-                                            <span class="tag-chip tag-chip-mini">@t</span>
+                                            <a class="tag-chip tag-chip-mini" href="/products?tag=@Uri.EscapeDataString(t)" title="See all @t products">@t</a>
                                         }
                                     </div>
                                 }
