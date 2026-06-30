@@ -6,6 +6,7 @@
 @using Microsoft.Extensions.Options
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
 @inject IReceiptExtractor Extractor
+@inject ITagAdvisor Advisor
 @inject AppPaths Paths
 @inject IOptions<ShelfAware.Llm.LlmOptions> LlmOptions
 
@@ -73,6 +74,7 @@ else if (phase == Phase.Review && receipt is not null)
                     <th scope="col">Size</th>
                     <th scope="col">Qty</th>
                     <th scope="col">Category</th>
+                    <th scope="col">Tags</th>
                     <th scope="col">Product match</th>
                     <th scope="col"><span class="visually-hidden">Actions</span></th>
                 </tr>
@@ -102,6 +104,26 @@ else if (phase == Phase.Review && receipt is not null)
                                 }
                             </select>
                         </td>
+                        <td class="tags-cell">
+                            <div class="tag-list">
+                                @foreach (var t in line.Tags)
+                                {
+                                    <span class="tag-chip">@t<button type="button" class="tag-x" @onclick="() => line.Tags.Remove(t)" aria-label="Remove tag @t">×</button></span>
+                                }
+                            </div>
+                            <div class="tag-add">
+                                <input list="known-tags" placeholder="+ tag" size="9" @bind="line.NewTag" @bind:event="oninput" aria-label="Add a tag to @line.RawText" />
+                                <button type="button" @onclick="() => AddTag(line)" disabled="@(line.Checking || string.IsNullOrWhiteSpace(line.NewTag))">@(line.Checking ? "…" : "Add")</button>
+                            </div>
+                            @if (line.Suggestion is { } sug)
+                            {
+                                <div class="tag-warning" role="status">
+                                    “@line.PendingTag” looks like “<strong>@sug</strong>”.
+                                    <button type="button" @onclick="() => UseSuggestion(line)">Use “@sug”</button>
+                                    <button type="button" class="secondary" @onclick="() => AddAnyway(line)">Add “@line.PendingTag” anyway</button>
+                                </div>
+                            }
+                        </td>
                         <td>
                             <select @bind="line.ProductId" aria-label="Product match for @line.RawText">
                                 <option value="0">➕ create new product</option>
@@ -121,6 +143,12 @@ else if (phase == Phase.Review && receipt is not null)
             </tbody>
         </table>
         </div>
+        <datalist id="known-tags">
+            @foreach (var t in allKnownTags)
+            {
+                <option value="@t" />
+            }
+        </datalist>
         <div class="review-actions">
             <button @onclick="ConfirmAll" disabled="@(reviewLines.Count == 0)">Confirm all</button>
             <button class="secondary" @onclick="Discard">Discard receipt</button>
@@ -165,9 +193,16 @@ else if (phase == Phase.Done)
         public decimal Confidence { get; set; }
         public decimal? UnitPrice { get; set; }
         public List<string> Tags { get; set; } = [];
+        public string? NewTag { get; set; }           // the in-progress "add tag" input
+        public string? PendingTag { get; set; }        // a new tag awaiting the user's dedup decision
+        public string? Suggestion { get; set; }        // the existing tag PendingTag looks like
+        public bool Checking { get; set; }             // an async synonym check is running
         public int ProductId { get; set; }            // 0 = create new
         public bool AliasMatched { get; set; }
     }
+
+    // Tag universe for suggestions + dedup: seed vocabulary ∪ tags already stored on products.
+    private List<string> allKnownTags = [];
 
     private void OnFilesSelected(InputFileChangeEventArgs e)
     {
@@ -218,6 +253,9 @@ else if (phase == Phase.Done)
             await using (var pdb = await DbFactory.CreateDbContextAsync())
             {
                 products = await pdb.Products.OrderBy(p => p.Name).ToListAsync();
+                var stored = await pdb.ProductTags.Select(t => t.Value).Distinct().ToListAsync();
+                allKnownTags = TagVocabulary.Seed.Concat(stored)
+                    .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t).ToList();
             }
             var result = await Extractor.ExtractAsync(attachments, products.Select(p => p.Name).Distinct().ToList());
 
@@ -418,6 +456,70 @@ else if (phase == Phase.Done)
             // review so the user can adjust a line and retry instead of losing the extraction to a crash.
             confirmError = $"Couldn't save these purchases: {ex.Message}. Nothing was recorded — adjust a line and try again, or discard the receipt.";
         }
+    }
+
+    // Two-stage tag dedup so the cloud doesn't fragment: cheap plain-code near-duplicate first, then an
+    // LLM synonym check only when that finds nothing. Either way the user can override and add it anyway.
+    private async Task AddTag(ReviewLine line)
+    {
+        line.Suggestion = null;
+        line.PendingTag = null;
+        var tag = (line.NewTag ?? "").Trim();
+        if (tag.Length == 0) return;
+        if (line.Tags.Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase))) { line.NewTag = ""; return; }
+
+        var universe = allKnownTags.Concat(line.Tags).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        // Picked an existing tag verbatim → just add its canonical form, no dedup needed.
+        var exact = universe.FirstOrDefault(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase));
+        if (exact is not null) { AddNewTag(line, exact); return; }
+
+        // Stage 1: instant plain-code near-duplicate (casing / plural / typo).
+        if (TagVocabulary.FindNearDuplicate(tag, universe) is { } near)
+        {
+            line.PendingTag = tag;
+            line.Suggestion = near;
+            return;
+        }
+
+        // Stage 2: LLM synonym check (Soda ≈ Soft Drink) — only when the cheap check is clean.
+        line.Checking = true;
+        try
+        {
+            if (await Advisor.FindSynonymAsync(tag, universe) is { } synonym)
+            {
+                line.PendingTag = tag;
+                line.Suggestion = synonym;
+                return;
+            }
+        }
+        finally
+        {
+            line.Checking = false;
+        }
+
+        AddNewTag(line, tag); // genuinely new
+    }
+
+    private void UseSuggestion(ReviewLine line)
+    {
+        if (line.Suggestion is { } s) AddNewTag(line, s);
+        line.Suggestion = null;
+        line.PendingTag = null;
+    }
+
+    private void AddAnyway(ReviewLine line)
+    {
+        if (line.PendingTag is { } t) AddNewTag(line, t);
+        line.Suggestion = null;
+        line.PendingTag = null;
+    }
+
+    private void AddNewTag(ReviewLine line, string tag)
+    {
+        if (!line.Tags.Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase))) line.Tags.Add(tag);
+        if (!allKnownTags.Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase))) allKnownTags.Add(tag);
+        line.NewTag = "";
     }
 
     private async Task Discard()

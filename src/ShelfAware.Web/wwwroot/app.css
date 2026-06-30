@@ -572,6 +572,115 @@ td.raw .chip {
     vertical-align: middle;
 }
 
+/* ── Tags: the descriptive second category layer (cloud, chips, review editor) ── */
+.tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    align-items: center;
+}
+
+.tag-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.08rem 0.5rem;
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    text-decoration: none;
+    line-height: 1.5;
+}
+
+a.tag-chip:hover,
+button.tag-chip:hover {
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+button.tag-chip {
+    cursor: pointer;
+}
+
+.tag-chip .tag-x {
+    border: none;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+    font-size: 0.85rem;
+    line-height: 1;
+    padding: 0;
+}
+
+.tag-chip-mini {
+    font-size: 0.68rem;
+    padding: 0.02rem 0.4rem;
+    font-weight: 500;
+}
+
+.detail-tags {
+    margin: -0.2rem 0 0.6rem;
+}
+
+/* The browsable tag cloud on the Products page. */
+.tag-cloud {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+    margin: 0.4rem 0 0.9rem;
+}
+
+.tag-cloud-chip {
+    font-size: 0.8rem;
+}
+
+.tag-cloud-chip.active {
+    color: var(--surface);
+    background: var(--accent);
+}
+
+.tag-count {
+    font-size: 0.66rem;
+    opacity: 0.8;
+}
+
+.tag-clear {
+    border: none;
+    background: none;
+    color: var(--ink-soft);
+    cursor: pointer;
+    font-size: 0.78rem;
+    text-decoration: underline;
+}
+
+/* Per-line tag editor on the receipt review screen. */
+.tags-cell {
+    min-width: 11rem;
+}
+
+.tags-cell .tag-add {
+    display: flex;
+    gap: 0.25rem;
+    margin-top: 0.3rem;
+}
+
+.tags-cell .tag-add input {
+    width: 6rem;
+}
+
+.tag-warning {
+    margin-top: 0.3rem;
+    font-size: 0.74rem;
+    color: var(--ink-soft);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    align-items: center;
+}
+
 /* Keep the "Next buy" date + relative on one line (the popover keeps normal wrapping). */
 .nextbuy {
     white-space: nowrap;

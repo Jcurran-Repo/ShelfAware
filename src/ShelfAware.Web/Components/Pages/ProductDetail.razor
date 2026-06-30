@@ -21,6 +21,15 @@ else
         <span class="chip chip-@ChipClass(prediction.Status)">@StatusLabel(prediction.Status)</span>
     </div>
     <p class="muted">@product.Category@(product.DefaultUnit is { } u ? $" · {u}" : "") · <a href="/products">All products</a></p>
+    @if (product.Tags.Count > 0)
+    {
+        <div class="tag-list detail-tags">
+            @foreach (var t in product.Tags.OrderBy(t => t.Value))
+            {
+                <a class="tag-chip" href="/products?tag=@Uri.EscapeDataString(t.Value)" title="See all @t.Value products">@t.Value</a>
+            }
+        </div>
+    }
 
     <section class="panel">
         <h2>Current rhythm</h2>
@@ -130,6 +139,7 @@ else
         product = await db.Products
             .Include(p => p.Purchases)
             .Include(p => p.Signals)
+            .Include(p => p.Tags)
             .FirstOrDefaultAsync(p => p.Id == Id);
 
         if (product is null)

@@ -41,6 +41,25 @@ else
 {
     var shown = FilteredProducts.ToList();
 
+    @if (tagCounts.Count > 0)
+    {
+        <div class="tag-cloud" role="group" aria-label="Filter products by tag">
+            <span class="muted">Filter by tag:</span>
+            @foreach (var (value, count) in tagCounts)
+            {
+                var active = string.Equals(value, tagFilter, StringComparison.OrdinalIgnoreCase);
+                <button type="button" class="tag-chip tag-cloud-chip @(active ? "active" : "")"
+                        @onclick="() => ToggleTag(value)" aria-pressed="@active">
+                    @value <span class="tag-count">@count</span>
+                </button>
+            }
+            @if (tagFilter is not null)
+            {
+                <button type="button" class="tag-clear" @onclick="() => ToggleTag(tagFilter!)">Clear ✕</button>
+            }
+        </div>
+    }
+
     <table>
         <caption class="visually-hidden">Products with category, tracking, purchase count, replenishment status, and next predicted buy date. Use the filter row to narrow the list.</caption>
         <thead>
@@ -93,7 +112,7 @@ else
                     <td>
                         <input value="@p.Name" aria-label="Product name" @onchange="ev => Rename(p, (string?)ev.Value)" />
                         @{ var ub = e.UsualBrand; var rs = e.RecommendedSize; }
-                        @if (rs is { Length: > 0 } || ub is not null)
+                        @if (rs is { Length: > 0 } || ub is not null || p.Tags.Count > 0)
                         {
                             <div class="item-meta">
                                 @if (rs is { Length: > 0 } sz)
@@ -103,6 +122,10 @@ else
                                 @if (ub is not null)
                                 {
                                     <span class="usual-brand">@ub</span>
+                                }
+                                @foreach (var t in p.Tags.OrderBy(t => t.Value))
+                                {
+                                    <button type="button" class="tag-chip tag-chip-mini" @onclick="() => ToggleTag(t.Value)" title="Filter by @t.Value">@t.Value</button>
                                 }
                             </div>
                         }
@@ -172,6 +195,11 @@ else
     private string categoryFilter = "";
     private string statusFilter = "";
     private string trackedFilter = "";
+    private string? tagFilter;
+    private List<(string Value, int Count)> tagCounts = [];
+
+    /// <summary>Deep-link from a tag chip elsewhere (e.g. Product Detail) → /products?tag=Condiment.</summary>
+    [SupplyParameterFromQuery(Name = "tag")] public string? Tag { get; set; }
 
     private IEnumerable<Product> FilteredProducts => (products ?? Enumerable.Empty<Product>()).Where(p =>
     {
@@ -179,10 +207,18 @@ else
         if (categoryFilter.Length > 0 && p.Category.ToString() != categoryFilter) return false;
         if (trackedFilter.Length > 0 && p.IsTracked != bool.Parse(trackedFilter)) return false;
         if (statusFilter.Length > 0 && (!predictions.TryGetValue(p.Id, out var r) || r.Status.ToString() != statusFilter)) return false;
+        if (tagFilter is { Length: > 0 } && !p.Tags.Any(t => string.Equals(t.Value, tagFilter, StringComparison.OrdinalIgnoreCase))) return false;
         return true;
     });
 
-    protected override async Task OnInitializedAsync() => await LoadAsync();
+    private void ToggleTag(string value) =>
+        tagFilter = string.Equals(value, tagFilter, StringComparison.OrdinalIgnoreCase) ? null : value;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        if (Tag is { Length: > 0 }) tagFilter = Tag; // honor the deep-link on first load
+    }
 
     private async Task LoadAsync()
     {
@@ -190,9 +226,16 @@ else
         products = await db.Products
             .Include(p => p.Purchases)
             .Include(p => p.Signals)
+            .Include(p => p.Tags)
             .OrderBy(p => p.Name)
             .ToListAsync();
         purchaseCounts = products.ToDictionary(p => p.Id, p => p.Purchases.Count);
+        tagCounts = products
+            .SelectMany(p => p.Tags)
+            .GroupBy(t => t.Value, StringComparer.OrdinalIgnoreCase)
+            .Select(g => (Value: g.Key, Count: g.Count()))
+            .OrderByDescending(x => x.Count).ThenBy(x => x.Value)
+            .ToList();
 
         // Confirmed unit price per product, keyed by size so the estimate prices the recommended
         // (dominant) size rather than blending across sizes; falls back to the product's overall average.
