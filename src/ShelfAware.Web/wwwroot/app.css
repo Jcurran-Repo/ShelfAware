@@ -705,6 +705,17 @@ button.tag-chip {
     background: var(--overdue-bg);
 }
 
+/* Grocery-list item name → product detail. */
+.item-name {
+    font-weight: 600;
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.item-name:hover {
+    text-decoration: underline;
+}
+
 /* Keep the "Next buy" date + relative on one line (the popover keeps normal wrapping). */
 .nextbuy {
     white-space: nowrap;

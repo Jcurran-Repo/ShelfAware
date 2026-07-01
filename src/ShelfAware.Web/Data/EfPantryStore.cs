@@ -50,4 +50,13 @@ public class EfPantryStore(IDbContextFactory<ShelfAwareDbContext> dbFactory) : I
         });
         await db.SaveChangesAsync(cancellationToken);
     }
+
+    public async Task SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var product = await db.Products.FindAsync([productId], cancellationToken);
+        if (product is null) return;
+        product.IsTracked = tracked;
+        await db.SaveChangesAsync(cancellationToken);
+    }
 }

@@ -18,4 +18,8 @@ public interface IPantryStore
     Task AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default);
 
     Task RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default);
+
+    /// <summary>Start or stop tracking a product for replenishment (untracked = kept in the catalog
+    /// but not predicted or shown as running low).</summary>
+    Task SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default);
 }

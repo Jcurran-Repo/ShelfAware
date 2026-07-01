@@ -110,6 +110,8 @@ public class AnthropicPantryChat : IPantryChat
             tool.Input.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
         decimal? Dec(string key) =>
             tool.Input.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDecimal() : null;
+        bool? Bool(string key) =>
+            tool.Input.TryGetValue(key, out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False ? v.GetBoolean() : null;
 
         switch (tool.Name)
         {
@@ -162,6 +164,18 @@ public class AnthropicPantryChat : IPantryChat
                 var pr = ReplenishmentPredictor.Predict(product, today);
                 var due = pr.DueDate is { } dd ? $", due {dd:yyyy-MM-dd}" : "";
                 return ($"{product.Name}: {pr.Status} ({pr.Basis}){due}.", false);
+            }
+
+            case "set_tracking":
+            {
+                var name = Str("product_name");
+                var product = ProductMatcher.Resolve(name, products);
+                if (product is null)
+                    return ($"No product matches \"{name}\".", true);
+                var tracked = Bool("tracked") ?? false;
+                await _store.SetTrackingAsync(product.Id, tracked, ct);
+                actions.Add($"{(tracked ? "tracking" : "untracked")} → {product.Name}");
+                return ($"{(tracked ? "Now tracking" : "Stopped tracking")} {product.Name}.", false);
             }
 
             case "create_product":
@@ -217,6 +231,16 @@ public class AnthropicPantryChat : IPantryChat
                 }
                 """,
                 []),
+
+            MakeTool("set_tracking",
+                "Start or stop tracking a product for replenishment. tracked=false stops predicting a one-off / unwanted item; tracked=true resumes.",
+                """
+                {
+                  "product_name": { "type": "string", "description": "Canonical product name from the list." },
+                  "tracked": { "type": "boolean", "description": "false to stop tracking, true to resume." }
+                }
+                """,
+                ["product_name", "tracked"]),
 
             MakeTool("create_product",
                 "Create a new product. Only when the referenced item has no fuzzy match in the list.",

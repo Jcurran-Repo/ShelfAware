@@ -158,7 +158,7 @@ else
                     {
                         <tr>
                             <td>
-                                @e.Name
+                                <a class="item-name" href="/product/@e.ProductId">@e.Name</a>
                                 @if (e.RecommendedSize is { Length: > 0 } || e.UsualBrand is not null || e.Tags.Count > 0)
                                 {
                                     <div class="item-meta">
