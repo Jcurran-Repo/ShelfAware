@@ -1,0 +1,212 @@
+@page "/recipes"
+@rendermode InteractiveServer
+@using ShelfAware.Core.Prediction
+@using ShelfAware.Core.Recipes
+@inject IDbContextFactory<ShelfAwareDbContext> DbFactory
+@inject IRecipeAdvisor Advisor
+
+<PageTitle>Recipes — Shelf Aware</PageTitle>
+
+<div class="page-head">
+    <h1>Recipes</h1>
+</div>
+
+<p class="recipe-disclaimer" role="note">
+    ⚠️ Ideas only — <strong>always check ingredient labels yourself</strong>. This is not allergy-safe or
+    medical advice; the “won’t eat” list is a best-effort filter, not a guarantee.
+</p>
+
+<section class="panel">
+    <h2>Foods I won’t eat</h2>
+    <p class="muted">Allergies or dislikes — recipes will avoid these. Applies to every suggestion.</p>
+    <div class="tag-list">
+        @foreach (var f in excludedFoods)
+        {
+            <span class="tag-chip">@f.Value<button type="button" class="tag-x" @onclick="() => RemoveExcluded(f)" aria-label="Remove @f.Value">×</button></span>
+        }
+        @if (excludedFoods.Count == 0)
+        {
+            <span class="muted">Nothing excluded yet.</span>
+        }
+    </div>
+    <div class="tag-add">
+        <input placeholder="e.g. mushrooms" @bind="newExcluded" @bind:event="oninput"
+               aria-label="Add a food you won't eat" />
+        <button type="button" @onclick="AddExcluded" disabled="@string.IsNullOrWhiteSpace(newExcluded)">Add</button>
+    </div>
+</section>
+
+<section class="panel">
+    <h2>What can I make?</h2>
+    <form @onsubmit="Suggest" @formname="recipe-request">
+        <input @bind="request" @bind:event="oninput" placeholder="e.g. I'm feeling Mediterranean tonight"
+               aria-label="Describe what you're in the mood for" disabled="@suggesting" />
+        <button type="submit" disabled="@(suggesting || string.IsNullOrWhiteSpace(request))">
+            @(suggesting ? "Thinking…" : "Get ideas")
+        </button>
+    </form>
+    @if (suggestError is not null)
+    {
+        <p class="error">@suggestError</p>
+    }
+
+    @if (suggestions.Count > 0)
+    {
+        <div class="recipe-suggestions">
+            @foreach (var s in suggestions)
+            {
+                <article class="recipe-card">
+                    <div class="recipe-card-top">
+                        <h3>@s.Name</h3>
+                        <button class="secondary" @onclick="() => Save(s)" disabled="@savedNames.Contains(s.Name)">
+                            @(savedNames.Contains(s.Name) ? "Saved ✓" : "Save")
+                        </button>
+                    </div>
+                    <p class="muted">@s.Blurb</p>
+                    <ul class="ingredient-list">
+                        @foreach (var i in s.Ingredients.Where(i => i.IsMain))
+                        {
+                            <li>@i.Name</li>
+                        }
+                        @{ var seasonings = s.Ingredients.Where(i => !i.IsMain).Select(i => i.Name).ToList(); }
+                        @if (seasonings.Count > 0)
+                        {
+                            <li class="muted">+ @string.Join(", ", seasonings)</li>
+                        }
+                    </ul>
+                </article>
+            }
+        </div>
+    }
+</section>
+
+<section class="panel">
+    <h2>Saved recipes <span class="muted">— @savedRecipes.Count</span></h2>
+    @if (savedRecipes.Count == 0)
+    {
+        <p class="muted">None yet — get some ideas above and hit Save on the ones you like.</p>
+    }
+    else
+    {
+        <ul class="saved-recipes">
+            @foreach (var r in savedRecipes)
+            {
+                <li>
+                    <div class="saved-top">
+                        <strong>@r.Name</strong>
+                        <button class="icon-btn" @onclick="() => DeleteSaved(r)" aria-label="Delete @r.Name" title="Delete @r.Name"><span aria-hidden="true">🗑</span></button>
+                    </div>
+                    @if (r.Blurb is { Length: > 0 })
+                    {
+                        <p class="muted">@r.Blurb</p>
+                    }
+                    <p class="muted small">@string.Join(", ", r.Ingredients.Where(i => i.IsMain).Select(i => i.Name))</p>
+                </li>
+            }
+        </ul>
+    }
+</section>
+
+@code {
+    private List<ExcludedFood> excludedFoods = [];
+    private string newExcluded = "";
+
+    private string request = "";
+    private bool suggesting;
+    private string? suggestError;
+    private List<RecipeSuggestion> suggestions = [];
+
+    private List<Recipe> savedRecipes = [];
+    private HashSet<string> savedNames = new(StringComparer.OrdinalIgnoreCase);
+
+    private List<string> onHand = [];
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        excludedFoods = await db.ExcludedFoods.OrderBy(f => f.Value).ToListAsync();
+        // SQLite can't ORDER BY a DateTimeOffset column — sort client-side.
+        savedRecipes = (await db.Recipes.Include(r => r.Ingredients).ToListAsync())
+            .OrderByDescending(r => r.SavedAt).ToList();
+        savedNames = savedRecipes.Select(r => r.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // "Likely on hand" = tracked products the engine doesn't think you've run out of.
+        var products = await db.Products.Where(p => p.IsTracked).Include(p => p.Purchases).Include(p => p.Signals).ToListAsync();
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        onHand = products
+            .Where(p => ReplenishmentPredictor.Predict(p, today).Status != PredictionStatus.Overdue)
+            .Select(p => p.Name)
+            .OrderBy(n => n)
+            .ToList();
+    }
+
+    private async Task AddExcluded()
+    {
+        var value = newExcluded.Trim();
+        if (value.Length == 0) return;
+        if (!excludedFoods.Any(f => string.Equals(f.Value, value, StringComparison.OrdinalIgnoreCase)))
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            db.ExcludedFoods.Add(new ExcludedFood { Value = value });
+            await db.SaveChangesAsync();
+        }
+        newExcluded = "";
+        await LoadAsync();
+    }
+
+    private async Task RemoveExcluded(ExcludedFood f)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.ExcludedFoods.Remove(await db.ExcludedFoods.FindAsync(f.Id) ?? f);
+        await db.SaveChangesAsync();
+        await LoadAsync();
+    }
+
+    private async Task Suggest()
+    {
+        if (suggesting || string.IsNullOrWhiteSpace(request)) return;
+        suggesting = true;
+        suggestError = null;
+        suggestions = [];
+        try
+        {
+            // onHand still grounds the suggestions in real catalog items. We deliberately DON'T display a
+            // have/grab verdict here — the model's self-reported availability is unreliable and accurate
+            // ingredient↔product matching is Phase 2 (captured as an ingredient→product map at save time).
+            suggestions = (await Advisor.SuggestAsync(request, onHand, excludedFoods.Select(f => f.Value).ToList())).ToList();
+            if (suggestions.Count == 0) suggestError = "No ideas came back — try rephrasing.";
+        }
+        catch (Exception ex)
+        {
+            suggestError = $"Couldn't get ideas just now: {ex.Message}";
+        }
+        finally
+        {
+            suggesting = false;
+        }
+    }
+
+    private async Task Save(RecipeSuggestion s)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.Recipes.Add(new Recipe
+        {
+            Name = s.Name,
+            Blurb = s.Blurb,
+            SavedAt = DateTimeOffset.Now,
+            Ingredients = s.Ingredients.Select(i => new RecipeIngredient { Name = i.Name, IsMain = i.IsMain }).ToList(),
+        });
+        await db.SaveChangesAsync();
+        await LoadAsync();
+    }
+
+    private async Task DeleteSaved(Recipe r)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.Recipes.Remove(await db.Recipes.FindAsync(r.Id) ?? r);
+        await db.SaveChangesAsync();
+        await LoadAsync();
+    }
+}

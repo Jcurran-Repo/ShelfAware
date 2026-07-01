@@ -716,6 +716,90 @@ button.tag-chip {
     text-decoration: underline;
 }
 
+/* ── Recipes ── */
+.recipe-disclaimer {
+    background: var(--duesoon-bg);
+    color: var(--duesoon-ink);
+    border: 1px solid var(--duesoon-line);
+    border-radius: var(--radius);
+    padding: 0.6rem 0.9rem;
+    font-size: 0.85rem;
+}
+
+.recipe-suggestions {
+    display: grid;
+    gap: 0.8rem;
+    margin-top: 0.9rem;
+}
+
+.recipe-card {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 0.8rem 1rem;
+    background: var(--surface-alt);
+}
+
+.recipe-card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.recipe-card-top h3 {
+    margin: 0;
+}
+
+.ingredient-list {
+    list-style: none;
+    padding: 0;
+    margin: 0.5rem 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem 1rem;
+}
+
+.ingredient-list li.grab {
+    color: var(--overdue-ink);
+    font-weight: 600;
+}
+
+.ingredient-list li.have {
+    color: var(--stocked-ink);
+}
+
+.recipe-grab {
+    font-size: 0.88rem;
+    margin: 0.2rem 0 0;
+}
+
+.recipe-grab.all-good {
+    color: var(--stocked-ink);
+}
+
+.saved-recipes {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 0.6rem;
+}
+
+.saved-recipes li {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 0.5rem;
+}
+
+.saved-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.muted.small {
+    font-size: 0.8rem;
+}
+
 /* Keep the "Next buy" date + relative on one line (the popover keeps normal wrapping). */
 .nextbuy {
     white-space: nowrap;
