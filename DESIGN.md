@@ -1,7 +1,7 @@
 # Shelf Aware — Design Document
 *LLM-powered pantry replenishment tracker. Display name: **Shelf Aware**. Repo/solution/namespace: `ShelfAware`.*
 
-**Author:** Jordan Curran · **Status:** Approved for build · **Target:** 2 weekends, hard cap
+**Author:** Jordan Curran · **Status:** Approved for build · **Target:** 2-weekend core — then kept going over later weekends because it was fun (and enjoying the work matters)
 *As-built deviations and environment notes live in [CLAUDE.md](CLAUDE.md).*
 
 ---
