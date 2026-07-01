@@ -33,9 +33,9 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
                   "properties": {
                     "name": { "type": "string" },
                     "main": { "type": "boolean" },
-                    "have": { "type": "boolean" }
+                    "matched_product": { "type": ["string", "null"] }
                   },
-                  "required": ["name", "main", "have"],
+                  "required": ["name", "main", "matched_product"],
                   "additionalProperties": false
                 }
               }
@@ -102,7 +102,7 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
                     ingredients.Add(new SuggestedIngredient(
                         i.GetProperty("name").GetString() ?? "",
                         i.TryGetProperty("main", out var m) && m.ValueKind == JsonValueKind.True,
-                        i.TryGetProperty("have", out var h) && h.ValueKind == JsonValueKind.True));
+                        i.TryGetProperty("matched_product", out var mp) && mp.ValueKind == JsonValueKind.String ? mp.GetString() : null));
                 }
             }
             recipes.Add(new RecipeSuggestion(

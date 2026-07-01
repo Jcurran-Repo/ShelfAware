@@ -800,6 +800,27 @@ button.tag-chip {
     font-size: 0.8rem;
 }
 
+.saved-top {
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+}
+
+.saved-actions {
+    display: inline-flex;
+    gap: 0.3rem;
+    align-items: center;
+    margin-left: auto;
+}
+
+.picked-banner {
+    background: var(--stocked-bg);
+    color: var(--stocked-ink);
+    border: 1px solid var(--stocked-line);
+    border-radius: var(--radius);
+    padding: 0.5rem 0.8rem;
+}
+
 /* Keep the "Next buy" date + relative on one line (the popover keeps normal wrapping). */
 .nextbuy {
     white-space: nowrap;

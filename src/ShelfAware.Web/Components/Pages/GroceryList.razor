@@ -21,6 +21,24 @@
     }
 </div>
 
+<section class="panel extras">
+    <h2>Extras <span class="muted">— add anything manually, or from a recipe</span></h2>
+    <div class="tag-list">
+        @foreach (var e in extras)
+        {
+            <span class="tag-chip">@e.Name<button type="button" class="tag-x" @onclick="() => RemoveExtra(e)" aria-label="Remove @e.Name">×</button></span>
+        }
+        @if (extras.Count == 0)
+        {
+            <span class="muted">Nothing extra yet.</span>
+        }
+    </div>
+    <div class="tag-add">
+        <input placeholder="+ add an item" @bind="newExtra" @bind:event="oninput" aria-label="Add an item to the grocery list" />
+        <button type="button" @onclick="AddExtra" disabled="@string.IsNullOrWhiteSpace(newExtra)">Add</button>
+    </div>
+</section>
+
 @if (loaded && buyNow.Count > 0)
 {
     <div class="list-actions">
@@ -77,9 +95,13 @@ else
     private decimal buyNowTotal, comingUpTotal;
     private int buyNowUnknownCount, comingUpUnknownCount;
 
+    private List<GroceryExtra> extras = [];
+    private string newExtra = "";
+
     protected override async Task OnInitializedAsync()
     {
         await using var db = await DbFactory.CreateDbContextAsync();
+        extras = await db.GroceryExtras.OrderBy(e => e.Name).ToListAsync();
         var products = await db.Products
             .Where(p => p.IsTracked)
             .Include(p => p.Purchases)
@@ -200,6 +222,29 @@ else
             </table>
         </div>;
 
+    private async Task AddExtra()
+    {
+        var name = newExtra.Trim();
+        if (name.Length == 0) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var have = await db.GroceryExtras.Select(e => e.Name).ToListAsync();
+        if (!have.Any(h => string.Equals(h, name, StringComparison.OrdinalIgnoreCase)))
+        {
+            db.GroceryExtras.Add(new GroceryExtra { Name = name });
+            await db.SaveChangesAsync();
+        }
+        newExtra = "";
+        extras = await db.GroceryExtras.OrderBy(e => e.Name).ToListAsync();
+    }
+
+    private async Task RemoveExtra(GroceryExtra e)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.GroceryExtras.Remove(await db.GroceryExtras.FindAsync(e.Id) ?? e);
+        await db.SaveChangesAsync();
+        extras = await db.GroceryExtras.OrderBy(x => x.Name).ToListAsync();
+    }
+
     private bool copied;
 
     private async Task CopyList()
@@ -223,6 +268,11 @@ else
             var q = qualifiers.Count > 0 ? $" ({string.Join(", ", qualifiers)})" : "";
             var cost = e.ExpectedCost is { } c ? $" — {Money(c)}" : "";
             sb.AppendLine($"- {e.Name}{q} ×{e.RecommendedQuantity:0.##}{cost}");
+        }
+        if (extras.Count > 0)
+        {
+            sb.AppendLine("Extras:");
+            foreach (var x in extras) sb.AppendLine($"- {x.Name}");
         }
         return sb.ToString();
     }

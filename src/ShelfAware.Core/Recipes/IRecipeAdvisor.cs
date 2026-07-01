@@ -21,5 +21,10 @@ public record RecipeSuggestion(string Name, string Blurb, IReadOnlyList<Suggeste
 }
 
 /// <param name="IsMain">True = a real/main ingredient (counts toward makeability); false = seasoning/staple.</param>
-/// <param name="Have">Whether the user likely already has it.</param>
-public record SuggestedIngredient(string Name, bool IsMain, bool Have);
+/// <param name="MatchedProduct">The existing on-hand product this ingredient maps to (the model picks it
+/// from the provided list), or null if the user doesn't have it. Grounded matching, not a self-reported
+/// guess — <see cref="Have"/> is derived from it, and it's persisted so the makeability check is plain code.</param>
+public record SuggestedIngredient(string Name, bool IsMain, string? MatchedProduct)
+{
+    public bool Have => MatchedProduct is not null;
+}

@@ -66,7 +66,7 @@
                     <ul class="ingredient-list">
                         @foreach (var i in s.Ingredients.Where(i => i.IsMain))
                         {
-                            <li>@i.Name</li>
+                            <li class="@(i.Have ? "have" : "grab")">@(i.Have ? "✓" : "🛒") @i.Name</li>
                         }
                         @{ var seasonings = s.Ingredients.Where(i => !i.IsMain).Select(i => i.Name).ToList(); }
                         @if (seasonings.Count > 0)
@@ -74,6 +74,15 @@
                             <li class="muted">+ @string.Join(", ", seasonings)</li>
                         }
                     </ul>
+                    @{ var grab = s.ToGrab.ToList(); }
+                    @if (grab.Count > 0)
+                    {
+                        <p class="recipe-grab">Grab: <strong>@string.Join(", ", grab.Select(g => g.Name))</strong></p>
+                    }
+                    else
+                    {
+                        <p class="recipe-grab all-good">You’ve got everything for this. 🎉</p>
+                    }
                 </article>
             }
         </div>
@@ -81,7 +90,21 @@
 </section>
 
 <section class="panel">
-    <h2>Saved recipes <span class="muted">— @savedRecipes.Count</span></h2>
+    <div class="page-head">
+        <h2>Saved recipes <span class="muted">— @savedRecipes.Count</span></h2>
+        @if (PickPool.Count > 0)
+        {
+            <button @onclick="PickForMe">🎲 Pick for me</button>
+        }
+    </div>
+    @if (picked is not null)
+    {
+        <p class="picked-banner">Tonight: <strong>@picked.Name</strong>@(picked.Blurb is { Length: > 0 } pb ? $" — {pb}" : "")</p>
+    }
+    @if (extraNote is not null)
+    {
+        <p class="chat-reply" role="status">@extraNote</p>
+    }
     @if (savedRecipes.Count == 0)
     {
         <p class="muted">None yet — get some ideas above and hit Save on the ones you like.</p>
@@ -91,16 +114,27 @@
         <ul class="saved-recipes">
             @foreach (var r in savedRecipes)
             {
+                var makeable = Makeable(r);
                 <li>
                     <div class="saved-top">
                         <strong>@r.Name</strong>
-                        <button class="icon-btn" @onclick="() => DeleteSaved(r)" aria-label="Delete @r.Name" title="Delete @r.Name"><span aria-hidden="true">🗑</span></button>
+                        <span class="chip chip-@(makeable ? "stocked" : "unknown")">@(makeable ? "Ready to make" : "Missing items")</span>
+                        <span class="saved-actions">
+                            <button class="secondary" @onclick="() => MarkEaten(r)" aria-label="Mark @r.Name eaten">Ate it</button>
+                            @if (!makeable)
+                            {
+                                <button class="secondary" @onclick="() => AddMissingToList(r)" aria-label="Add missing ingredients for @r.Name to the grocery list">Add missing to list</button>
+                            }
+                            <button class="icon-btn" @onclick="() => DeleteSaved(r)" aria-label="Delete @r.Name" title="Delete @r.Name"><span aria-hidden="true">🗑</span></button>
+                        </span>
                     </div>
                     @if (r.Blurb is { Length: > 0 })
                     {
                         <p class="muted">@r.Blurb</p>
                     }
-                    <p class="muted small">@string.Join(", ", r.Ingredients.Where(i => i.IsMain).Select(i => i.Name))</p>
+                    <p class="muted small">
+                        @string.Join(", ", r.Ingredients.Where(i => i.IsMain).Select(i => i.Name))@(r.TimesEaten > 0 ? $" · eaten {r.TimesEaten}×" : "")
+                    </p>
                 </li>
             }
         </ul>
@@ -120,6 +154,29 @@
     private HashSet<string> savedNames = new(StringComparer.OrdinalIgnoreCase);
 
     private List<string> onHand = [];
+    private HashSet<string> onHandSet = new(StringComparer.OrdinalIgnoreCase);
+
+    private Recipe? picked;
+    private string? extraNote;
+    private readonly Random rng = new();
+
+    // A saved recipe is makeable when every MAIN ingredient mapped to a product you currently have on hand
+    // (seasonings/staples are ignored — plain-code check over the mapping captured at save time).
+    private bool Makeable(Recipe r)
+    {
+        var mains = r.Ingredients.Where(i => i.IsMain).ToList();
+        return mains.Count > 0 && mains.All(i => i.MatchedProduct is not null && onHandSet.Contains(i.MatchedProduct));
+    }
+
+    // "Pick for me" pool: saved recipes you've eaten before AND can make right now — the reliable
+    // "I can definitely eat this, just tell me" set.
+    private List<Recipe> PickPool => savedRecipes.Where(r => r.TimesEaten > 0 && Makeable(r)).ToList();
+
+    private void PickForMe()
+    {
+        var pool = PickPool;
+        picked = pool.Count > 0 ? pool[rng.Next(pool.Count)] : null;
+    }
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
 
@@ -140,6 +197,7 @@
             .Select(p => p.Name)
             .OrderBy(n => n)
             .ToList();
+        onHandSet = onHand.ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     private async Task AddExcluded()
@@ -196,10 +254,46 @@
             Name = s.Name,
             Blurb = s.Blurb,
             SavedAt = DateTimeOffset.Now,
-            Ingredients = s.Ingredients.Select(i => new RecipeIngredient { Name = i.Name, IsMain = i.IsMain }).ToList(),
+            Ingredients = s.Ingredients.Select(i => new RecipeIngredient { Name = i.Name, IsMain = i.IsMain, MatchedProduct = i.MatchedProduct }).ToList(),
         });
         await db.SaveChangesAsync();
         await LoadAsync();
+    }
+
+    private async Task MarkEaten(Recipe r)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var rec = await db.Recipes.FindAsync(r.Id);
+        if (rec is null) return;
+        rec.TimesEaten++;
+        await db.SaveChangesAsync();
+        await LoadAsync();
+    }
+
+    // Send the main ingredients you don't currently have to the grocery list's manual "extras" section.
+    private async Task AddMissingToList(Recipe r)
+    {
+        var missing = r.Ingredients
+            .Where(i => i.IsMain && (i.MatchedProduct is null || !onHandSet.Contains(i.MatchedProduct)))
+            .Select(i => i.Name).ToList();
+        if (missing.Count == 0) { extraNote = "You already have everything for this."; return; }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var have = await db.GroceryExtras.Select(e => e.Name).ToListAsync();
+        var added = 0;
+        foreach (var name in missing)
+        {
+            if (!have.Any(h => string.Equals(h, name, StringComparison.OrdinalIgnoreCase)))
+            {
+                db.GroceryExtras.Add(new GroceryExtra { Name = name });
+                have.Add(name);
+                added++;
+            }
+        }
+        await db.SaveChangesAsync();
+        extraNote = added > 0
+            ? $"Added {added} item{(added == 1 ? "" : "s")} to your grocery list."
+            : "Those are already on your grocery list.";
     }
 
     private async Task DeleteSaved(Recipe r)
