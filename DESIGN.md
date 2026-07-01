@@ -9,7 +9,7 @@
 ## 0. Instructions to the AI coding assistant
 1. **Don't expand scope.** No auth, multi-user, mobile, notifications, or retailer integration. Not in this doc → ask first.
 2. **Prefer boring solutions.** Minimal packages, no speculative abstractions, no microservices/CQRS/MediatR. One solution, three projects (§3).
-3. **Keep all LLM interaction behind interfaces** (`IReceiptExtractor`, `IPantryChat`) — provider swappable, the rest of the app testable without API calls.
+3. **Keep all LLM interaction behind interfaces** (`IReceiptExtractor`, `IPantryChat`, and — added later — `ITagAdvisor`, `IRecipeAdvisor`) — provider swappable, the rest of the app testable without API calls.
 4. **The prediction engine must be pure, deterministic C#** with unit tests. No LLM in the prediction path.
 5. Build in §10 phase order; don't start a phase until the previous one's acceptance passes.
 
@@ -39,7 +39,7 @@ A single-user web app answering one question: **"What am I about to run out of?"
 ShelfAware.slnx
   src/ShelfAware.Web/     # Blazor app: pages, components, DI wiring
   src/ShelfAware.Core/    # Domain: entities, prediction engine, interfaces (no LLM, no EF)
-  src/ShelfAware.Llm/     # IReceiptExtractor + IPantryChat impls, prompts, schemas
+  src/ShelfAware.Llm/     # LLM impls (receipt extractor, pantry chat, tag + recipe advisors), prompts, schemas
   tests/ShelfAware.Tests/ # xUnit: prediction engine unit tests
   tests/ShelfAware.Evals/ # Console eval harness for extraction accuracy (§9)
   DESIGN.md               # this file
@@ -47,8 +47,8 @@ ShelfAware.slnx
 
 ## 4. Data model (EF Core entities)
 ```
-Product         Id · Name (canonical item, brand-stripped) · Category (enum below) ·
-                DefaultUnit (string?) · IsTracked (bool, default true)
+Product         Id · Name (canonical item, brand-stripped) · Category (store-aisle enum below) ·
+                DefaultUnit (string?) · IsTracked (bool, default true) · Tags (ProductTag[])
 PurchaseEvent   Id · ProductId · PurchasedAt (DateOnly) · Quantity (decimal=1) ·
                 Brand (string?) · Size (string?) · Source (Receipt|Manual|Chat) · ReceiptId (FK?)
 Receipt         Id · Merchant (string?) · PurchasedAt (DateOnly?) · ImagePath ·
@@ -57,9 +57,18 @@ ReceiptLine     Id · ReceiptId · RawText (verbatim) · NormalizedName · Brand
                 Quantity · UnitPrice (decimal?) · Category · Confidence (0–1) · ProductId (FK?, set at confirm)
 ProductAlias    Id · Merchant · RawText (unique with Merchant) · ProductId   # deterministic repeat-match memory
 InventorySignal Id · ProductId · SignaledAt (DateTimeOffset) · Kind (OutNow|RunningLow|Restocked)
+ProductTag      Id · ProductId · Value                            # free-form descriptive tag (2nd category layer)
 
-Category enum: Dairy, Meat, Produce, Pantry, Frozen, Beverage, Household, PetCare, PersonalCare, Other
+# Recipes feature (§8) — beyond the original spec:
+ExcludedFood    Id · Value                                        # foods the user won't eat; hard-excluded from suggestions
+Recipe          Id · Name · Blurb (string?) · SavedAt (DateTimeOffset) · TimesEaten (int) · Ingredients (RecipeIngredient[])
+RecipeIngredient Id · RecipeId · Name · IsMain (bool) · MatchedProduct (string?)  # LLM's ingredient→product map, captured once at save
+GroceryExtra    Id · Name                                         # manual / from-recipe one-off grocery-list item
+
+Category enum (store aisle): Dairy, Meat, Produce, Pantry, Frozen, Beverage, Household, PetCare, PersonalCare, Other
 ```
+**Two-layer categories:** `Category` is the single store-aisle (drives grocery-list order); `ProductTag`s are free-form descriptive labels (Condiment, Canned, Snack, …) powering a browsable, filterable tag cloud. See CLAUDE.md for the two-stage tag dedup and the recipe availability model.
+
 **Alias flow:** before LLM normalization, match `(Merchant, RawText)` against `ProductAlias`; pre-matched lines skip the LLM (cheaper, deterministic). On confirm, write/refresh aliases.
 
 > Brand and Size are per-purchase metadata on both ReceiptLine and PurchaseEvent — the product is the brand/size-agnostic item, so the same item bought across brands/sizes rolls up. See CLAUDE.md for the matching + dominant-size prediction model.
@@ -69,7 +78,7 @@ Category enum: Dairy, Meat, Produce, Pantry, Frozen, Beverage, Household, PetCar
 
 **A receipt = one or more images.** Paper receipts are one image; digital order pages can span several screenshots — send all images for one receipt in a single call and merge into one line list. **Print-to-PDF order pages too:** pass the PDF as a document content block (Anthropic ingests PDFs natively — no rasterizing/resize); barcode/payment pages are noise the prompt discards.
 
-**Output contract** — strict JSON Schema: `merchant`, `purchase_date`, `lines[]`; each line `raw_text`, `normalized_name`, `brand?`, `quantity`, `size?`, `unit_price?`, `category` (enum), `confidence` (0–1). Validated server-side and in C#.
+**Output contract** — strict JSON Schema: `merchant`, `purchase_date`, `lines[]`; each line `raw_text`, `normalized_name`, `brand?`, `quantity`, `size?`, `unit_price?`, `category` (store-aisle enum), `tags[]` (descriptive labels for the second category layer), `confidence` (0–1). Validated server-side and in C#. **Extraction is also fed the existing product names (LLM-assisted matching → per-line `existing_product`) and the live tag vocabulary (so the model reuses tags instead of coining near-dupes).**
 
 **System prompt** — the live prompt is an embedded resource in `src/ShelfAware.Llm/Prompts/`; iterate there, not in code. Key rules: output ONLY schema JSON (no prose/fences); `raw_text` verbatim; `normalized_name` = short canonical item — EXPAND paper abbreviations ("GV WHL MLK 1GAL" → "Whole Milk"), COMPRESS verbose digital titles, keep the item's distinguishing words, put size in `size` and brand in `brand`; don't invent items, skip non-product lines (subtotal/tax/coupons/loyalty/fuel); "2 @ 3.99" = qty 2, unit_price 3.99; digital "Qty N" + one price = line total → unit_price = price ÷ qty; weight-priced → quantity = weight, unit in `size`; `confidence` = certainty in the normalization (< 0.6 when guessing); non-receipt image → empty lines; handle paper OR digital, ignore UI chrome, record a substitution as the item actually received.
 
@@ -94,11 +103,12 @@ record_signal(product_name, kind: OutNow|RunningLow|Restocked)
 add_purchase(product_name, date?, quantity?)
 query_status(product_name?)                 # null = return the Running Low list
 create_product(name, category)              # only when no fuzzy match exists
+set_tracking(product_name, tracked)         # start/stop tracking a product (untrack)
 ```
 Chat prompt: resolve names against the provided product list with fuzzy matching; clarify ONLY when two products are plausibly intended; multiple statements → multiple tool calls; reply with a one-line confirmation. Same pinned Haiku ID.
 
 ## 8. UI
-Spec baseline was three pages — Dashboard (`/`), Upload (`/receipt`), Products (`/products`); the build added Grocery List, Trends, Product Detail, and Accuracy (CLAUDE.md). Dashboard = "Running Low" (Overdue + DueSoon, signal-pinned first), each row name / status chip / `Basis` / [Bought today][Restocked], plus the chat box and a collapsed "everything else" table. Upload = image → spinner → editable review table (name, qty, category, product-match dropdown w/ "create new", low-confidence highlight) → [Confirm all]. Visual polish deferred until after Phase 4.
+Spec baseline was three pages — Dashboard (`/`), Upload (`/receipt`), Products (`/products`); the build added Grocery List (`/list`), Trends (`/trends`), Product Detail (`/product/{id}`), Accuracy (`/accuracy`), and Recipes (`/recipes`) (CLAUDE.md). Dashboard = "Running Low" (Overdue + DueSoon, signal-pinned first), each row name / status chip / `Basis` / [Bought today][Restocked], plus the chat box and a collapsed "everything else" table. Upload = image → spinner → editable review table (name, qty, category, tags editor, product-match dropdown w/ "create new", low-confidence highlight) → [Confirm all]. Products grid = filters + an always-available **[Out]** button + a clickable **tag cloud** that filters the grid (deep-linkable `?tag=`). Grocery List = by aisle + copy/print + a manual **Extras** section. Recipes = won't-eat list, NL "what can I make?" suggestions grounded in on-hand products, saved recipes with "Ready to make"/"Missing items" badges, "Ate it", "Pick for me", and "Add missing to list". Visual polish deferred until after Phase 4.
 
 ## 9. Eval harness (`tests/ShelfAware.Evals`)
 Console app: `dotnet run --project tests/ShelfAware.Evals`.
@@ -111,7 +121,7 @@ Console app: `dotnet run --project tests/ShelfAware.Evals`.
 2. **Extraction pipeline** — `IReceiptExtractor` + Anthropic call, upload + review/confirm, alias write-back. ✅ *Real receipt round-trips to confirmed PurchaseEvents; re-upload pre-matches via aliases; bad image fails gracefully.*
 3. **Prediction + dashboard** — engine + unit tests, Running Low + quick buttons. ✅ *All engine tests pass; dashboard reflects history.*
 4. **Chat tools** — `IPantryChat` + 4 tools on the dashboard box. ✅ *"out of dog food, almost out of coffee" → two correct signals + a one-line confirmation.*
-5. **Deploy + README** — Azure App Service (SQLite under `/home/data/`), README with Mermaid diagram, demo GIF, eval screenshot, the "statistics where statistics suffice" thesis. ✅ *Public URL works end-to-end; README presentable to a hiring manager.* (Azure deferred — see CLAUDE.md.)
+5. **Deploy + README** — Azure App Service (SQLite under `/home/data/`), README with Mermaid diagram, demo GIF, eval screenshot, the "statistics where statistics suffice" thesis. ◑ *Public URL works end-to-end; README presentable to a hiring manager.* — **README ✅ done + pushed** (demo GIF + `/accuracy` screenshot + live-demo URL still placeholders); **Azure deploy deferred** pending Jordan's account (see CLAUDE.md).
 
 **Stretch (only after Phase 5):** GitHub Actions deploy; daily email digest; Walmart *catalog search* deep links. **Never:** checkout automation.
 
@@ -119,4 +129,8 @@ Console app: `dotnet run --project tests/ShelfAware.Evals`.
 One `appsettings` section: `Llm: { Provider, ExtractionModel, ChatModel, MaxImageEdgePx }`. Receipts ~1–2k tokens on Haiku → single-digit dollars total. Set a monthly provider spend cap anyway.
 
 ## 12. Explicitly out of scope (do not build)
-Auth/accounts · multi-user · mobile apps · push/SMS/email (digest is stretch-only) · barcode scanning · price tracking/budgeting · meal planning · retailer checkout automation · background OCR queues · Docker/K8s.
+Auth/accounts · multi-user · mobile apps · push/SMS/email (digest is stretch-only) · barcode scanning · budgeting / price-comparison / deal-hunting · retailer checkout automation · background OCR queues · Docker/K8s.
+
+> **Deliberate scope decisions (pulled in during the build).** Both were scoped out at the start to protect the timebox, then consciously brought in when they proved high-value and low-cost given what the pipeline already captured. Judgment calls — promoting a backlog item once the data made it nearly free — not scope slips.
+> - **Spend insight / price history** — the **Trends** page (§8) + Product Detail price chart: per-item price movement, spend totals, and a next-month forecast, all derived from data already sitting on confirmed receipts. Cheap to add (the price data was already there), high personal value (where the grocery money actually goes). Still deliberately bounded — informational only: no budgeting/limits, no price-comparison or deal-hunting.
+> - **Recipes / meal planning** — shipped as the inventory-aware **Recipes** feature (§8): recipes from what you have + what to grab, not a generic generator, so it stays on-mission.
