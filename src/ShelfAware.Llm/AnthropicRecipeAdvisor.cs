@@ -1,7 +1,6 @@
 using System.Reflection;
 using System.Text.Json;
-using Anthropic;
-using Anthropic.Models.Messages;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Recipes;
@@ -51,15 +50,15 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
     }
     """;
 
-    private readonly AnthropicClient _client;
+    private readonly IChatClient _chat;
     private readonly LlmOptions _options;
     private readonly ILogger<AnthropicRecipeAdvisor> _logger;
 
-    public AnthropicRecipeAdvisor(IOptions<LlmOptions> options, ILogger<AnthropicRecipeAdvisor> logger)
+    public AnthropicRecipeAdvisor(IChatClient chat, IOptions<LlmOptions> options, ILogger<AnthropicRecipeAdvisor> logger)
     {
+        _chat = chat;
         _options = options.Value;
         _logger = logger;
-        _client = new AnthropicClient { ApiKey = _options.ApiKey };
     }
 
     public async Task<IReadOnlyList<RecipeSuggestion>> SuggestAsync(
@@ -71,23 +70,22 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
             "Likely on hand:\n" + (onHand.Count > 0 ? "- " + string.Join("\n- ", onHand) : "(nothing recorded)") + "\n\n" +
             "Will NOT eat (exclude entirely):\n" + (excludedFoods.Count > 0 ? "- " + string.Join("\n- ", excludedFoods) : "(none)");
 
-        var response = await _client.Messages.Create(new MessageCreateParams
+        var messages = new List<ChatMessage>
         {
-            Model = _options.ChatModel,
-            MaxTokens = 2048,
-            System = SystemPrompt,
-            OutputConfig = new OutputConfig
-            {
-                Format = new JsonOutputFormat
-                {
-                    Schema = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(OutputSchemaJson)!,
-                },
-            },
-            Messages = [new() { Role = Role.User, Content = content }],
-        }, cancellationToken: cancellationToken);
+            new(ChatRole.System, SystemPrompt),
+            new(ChatRole.User, content),
+        };
+        var options = new ChatOptions
+        {
+            ModelId = _options.ChatModel,
+            MaxOutputTokens = 2048,
+            ResponseFormat = ChatResponseFormat.ForJsonSchema(
+                JsonSerializer.Deserialize<JsonElement>(OutputSchemaJson),
+                schemaName: "recipe_suggestions"),
+        };
 
-        var json = string.Concat(response.Content.Select(b => b.Value).OfType<TextBlock>().Select(t => t.Text));
-        var suggestions = Parse(json);
+        var response = await _chat.GetResponseAsync(messages, options, cancellationToken);
+        var suggestions = Parse(response.Text);
         _logger.LogInformation("Recipe advisor returned {Count} suggestion(s) for {OnHand} on-hand item(s).", suggestions.Count, onHand.Count);
         return suggestions;
     }

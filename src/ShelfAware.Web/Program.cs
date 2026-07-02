@@ -1,4 +1,7 @@
+using Anthropic;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Options;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Extraction;
 using ShelfAware.Core.Recipes;
@@ -22,6 +25,16 @@ builder.Services.AddDbContextFactory<ShelfAwareDbContext>(options =>
 builder.Services.AddSingleton(new AppPaths(dataDir, receiptsDir));
 
 builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection(LlmOptions.SectionName));
+
+// One IChatClient over the Anthropic SDK's built-in Microsoft.Extensions.AI adapter. The AI services
+// depend on this abstraction (not the raw SDK), so the provider is a DI swap and the logic is fakeable
+// in tests. Model + token limits are set per call via ChatOptions.
+builder.Services.AddSingleton<IChatClient>(sp =>
+{
+    var opts = sp.GetRequiredService<IOptions<LlmOptions>>().Value;
+    return new AnthropicClient { ApiKey = opts.ApiKey }.AsIChatClient(opts.ChatModel);
+});
+
 builder.Services.AddSingleton<IReceiptExtractor, AnthropicReceiptExtractor>();
 builder.Services.AddSingleton<IPantryStore, EfPantryStore>();
 builder.Services.AddSingleton<IPantryChat, AnthropicPantryChat>();
