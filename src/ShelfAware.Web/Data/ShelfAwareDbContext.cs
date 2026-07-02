@@ -15,6 +15,7 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
     public DbSet<ExcludedFood> ExcludedFoods => Set<ExcludedFood>();
     public DbSet<Recipe> Recipes => Set<Recipe>();
     public DbSet<RecipeIngredient> RecipeIngredients => Set<RecipeIngredient>();
+    public DbSet<RecipeStep> RecipeSteps => Set<RecipeStep>();
     public DbSet<GroceryExtra> GroceryExtras => Set<GroceryExtra>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

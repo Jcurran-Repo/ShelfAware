@@ -14,7 +14,8 @@ public interface IRecipeAdvisor
         CancellationToken cancellationToken = default);
 }
 
-public record RecipeSuggestion(string Name, string Blurb, IReadOnlyList<SuggestedIngredient> Ingredients)
+public record RecipeSuggestion(
+    string Name, string Blurb, IReadOnlyList<SuggestedIngredient> Ingredients, IReadOnlyList<string> Steps)
 {
     /// <summary>Main ingredients the user still needs to buy — what to add to the grocery list.</summary>
     public IEnumerable<SuggestedIngredient> ToGrab => Ingredients.Where(i => i.IsMain && !i.Have);

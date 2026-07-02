@@ -74,7 +74,7 @@ _Last updated: 7/2/2026_
 - [ ] v2.1 — Conversational multi-turn — Not complete
 - [ ] Recipe read-aloud — TTS plays a saved recipe — Not complete
 - [ ] Voice control of read-aloud: stop / resume / next step (barge-in, pairs with v2.1) — Not complete
-- [ ] Recipe cooking steps (data model + advisor) — enables step-by-step read-aloud — Not complete
+- [x] Recipe cooking steps (data model + advisor) — enables step-by-step read-aloud — 7/2/2026
 
 ### Prediction
 - [x] Two-stream cadence model (rebuy rhythm + burn rate, hybrid) — 7/2/2026

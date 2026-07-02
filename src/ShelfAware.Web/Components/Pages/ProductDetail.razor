@@ -70,6 +70,19 @@ else
         }
     </section>
 
+    @if (usedInRecipes.Count > 0)
+    {
+        <section class="panel">
+            <h2>Recipes that use this <span class="muted">— @usedInRecipes.Count</span></h2>
+            <ul class="recipe-links">
+                @foreach (var r in usedInRecipes)
+                {
+                    <li><a href="/recipes#recipe-@r.Id">@r.Name</a></li>
+                }
+            </ul>
+        </section>
+    }
+
     @if (brandBreakdown.Any(b => b.Brand != Unbranded))
     {
         <section class="panel">
@@ -144,11 +157,13 @@ else
     private readonly List<PurchaseRow> history = [];
     private readonly List<decimal> priceSeries = [];
     private List<BrandRow> brandBreakdown = [];
+    private List<RecipeLink> usedInRecipes = [];
 
     private const string Unbranded = "Unbranded";
 
     private record PurchaseRow(DateOnly Date, int? GapDays, decimal Quantity, string? Size, decimal? UnitPrice);
     private record BrandRow(string Brand, int Count, decimal? AvgPrice);
+    private record RecipeLink(int Id, string Name);
 
     protected override async Task OnInitializedAsync()
     {
@@ -208,6 +223,15 @@ else
                 return new BrandRow(g.Key, g.Count(), prices.Count > 0 ? prices.Average() : null);
             })
             .OrderByDescending(b => b.Count).ThenBy(b => b.Brand)
+            .ToList();
+
+        // Saved recipes whose ingredient→product map points at this item (grounded match captured at
+        // save time). Just links out to the recipe on /recipes — no recipe content duplicated here.
+        var productName = product.Name;
+        usedInRecipes = (await db.Recipes.Include(r => r.Ingredients).ToListAsync())
+            .Where(r => r.Ingredients.Any(i => string.Equals(i.MatchedProduct, productName, StringComparison.OrdinalIgnoreCase)))
+            .OrderBy(r => r.Name)
+            .Select(r => new RecipeLink(r.Id, r.Name))
             .ToList();
     }
 

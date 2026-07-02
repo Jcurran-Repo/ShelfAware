@@ -11,4 +11,6 @@ public class Recipe
     /// <summary>Number of times marked "eaten" — the reliability signal for the Phase-2 "Pick for me".</summary>
     public int TimesEaten { get; set; }
     public List<RecipeIngredient> Ingredients { get; set; } = [];
+    /// <summary>Ordered cooking method (v2) — the content read-aloud steps through.</summary>
+    public List<RecipeStep> Steps { get; set; } = [];
 }

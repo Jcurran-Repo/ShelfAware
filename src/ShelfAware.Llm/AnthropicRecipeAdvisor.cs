@@ -38,9 +38,14 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
                   "required": ["name", "main", "matched_product"],
                   "additionalProperties": false
                 }
+              },
+              "steps": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Ordered cooking method, one short instruction per element."
               }
             },
-            "required": ["name", "blurb", "ingredients"],
+            "required": ["name", "blurb", "ingredients", "steps"],
             "additionalProperties": false
           }
         }
@@ -78,7 +83,7 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
         var options = new ChatOptions
         {
             ModelId = _options.ChatModel,
-            MaxOutputTokens = 2048,
+            MaxOutputTokens = 4096, // steps add length beyond name/blurb/ingredients
             ResponseFormat = ChatResponseFormat.ForJsonSchema(
                 JsonSerializer.Deserialize<JsonElement>(OutputSchemaJson),
                 schemaName: "recipe_suggestions"),
@@ -108,10 +113,19 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
                         i.TryGetProperty("matched_product", out var mp) && mp.ValueKind == JsonValueKind.String ? mp.GetString() : null));
                 }
             }
+            var steps = new List<string>();
+            if (r.TryGetProperty("steps", out var st) && st.ValueKind == JsonValueKind.Array)
+            {
+                steps.AddRange(st.EnumerateArray()
+                    .Where(e => e.ValueKind == JsonValueKind.String)
+                    .Select(e => e.GetString()!.Trim())
+                    .Where(s => s.Length > 0));
+            }
             recipes.Add(new RecipeSuggestion(
                 r.GetProperty("name").GetString() ?? "",
                 r.TryGetProperty("blurb", out var b) ? b.GetString() ?? "" : "",
-                ingredients));
+                ingredients,
+                steps));
         }
         return recipes;
     }

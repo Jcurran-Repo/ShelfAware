@@ -892,6 +892,33 @@ button.tag-chip {
     color: var(--stocked-ink);
 }
 
+.recipe-steps {
+    margin-top: 0.45rem;
+    font-size: 0.88rem;
+}
+
+.recipe-steps summary {
+    cursor: pointer;
+    color: var(--accent-ink);
+    font-weight: 600;
+}
+
+.recipe-steps ol {
+    margin: 0.4rem 0 0;
+    padding-left: 1.3rem;
+    display: grid;
+    gap: 0.25rem;
+}
+
+.recipe-links {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 0.9rem;
+}
+
 .saved-recipes {
     list-style: none;
     padding: 0;

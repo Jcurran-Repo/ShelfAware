@@ -83,6 +83,18 @@
                     {
                         <p class="recipe-grab all-good">You’ve got everything for this. 🎉</p>
                     }
+                    @if (s.Steps.Count > 0)
+                    {
+                        <details class="recipe-steps">
+                            <summary>Steps (@s.Steps.Count)</summary>
+                            <ol>
+                                @foreach (var step in s.Steps)
+                                {
+                                    <li>@step</li>
+                                }
+                            </ol>
+                        </details>
+                    }
                 </article>
             }
         </div>
@@ -115,7 +127,7 @@
             @foreach (var r in savedRecipes)
             {
                 var makeable = Makeable(r);
-                <li>
+                <li id="recipe-@r.Id">
                     <div class="saved-top">
                         <strong>@r.Name</strong>
                         <span class="chip chip-@(makeable ? "stocked" : "unknown")">@(makeable ? "Ready to make" : "Missing items")</span>
@@ -135,6 +147,18 @@
                     <p class="muted small">
                         @string.Join(", ", r.Ingredients.Where(i => i.IsMain).Select(i => i.Name))@(r.TimesEaten > 0 ? $" · eaten {r.TimesEaten}×" : "")
                     </p>
+                    @if (r.Steps.Count > 0)
+                    {
+                        <details class="recipe-steps">
+                            <summary>Steps (@r.Steps.Count)</summary>
+                            <ol>
+                                @foreach (var step in r.Steps.OrderBy(s => s.Order))
+                                {
+                                    <li>@step.Text</li>
+                                }
+                            </ol>
+                        </details>
+                    }
                 </li>
             }
         </ul>
@@ -185,7 +209,7 @@
         await using var db = await DbFactory.CreateDbContextAsync();
         excludedFoods = await db.ExcludedFoods.OrderBy(f => f.Value).ToListAsync();
         // SQLite can't ORDER BY a DateTimeOffset column — sort client-side.
-        savedRecipes = (await db.Recipes.Include(r => r.Ingredients).ToListAsync())
+        savedRecipes = (await db.Recipes.Include(r => r.Ingredients).Include(r => r.Steps).ToListAsync())
             .OrderByDescending(r => r.SavedAt).ToList();
         savedNames = savedRecipes.Select(r => r.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -255,6 +279,7 @@
             Blurb = s.Blurb,
             SavedAt = DateTimeOffset.Now,
             Ingredients = s.Ingredients.Select(i => new RecipeIngredient { Name = i.Name, IsMain = i.IsMain, MatchedProduct = i.MatchedProduct }).ToList(),
+            Steps = s.Steps.Select((t, idx) => new RecipeStep { Order = idx + 1, Text = t }).ToList(),
         });
         await db.SaveChangesAsync();
         await LoadAsync();
