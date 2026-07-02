@@ -71,15 +71,11 @@ OutNow sets the effective due date to the outage date so the card no longer says
 "Overdue" next to "due in 21 days".
 
 Deferred / backlog: **Azure App Service deploy** (Phase 5 — then swap the README live-demo
-URL + add `docs/demo.gif` + `docs/accuracy.png`); **double-scroll fix** — nested `.table-scroll`
-buries the horizontal scrollbar at the bottom of tall tables (Grocery List + Upload review);
-**CSV history importer — PARKED** (Walmart won't export to Jordan's state; needs another
-itemized source); a tiny "dapper blob" mascot for the header; a per-size Trends price chart;
-**cadence-learning from outages** — should an OutNow date feed the interval median
-(consumption time) vs. the current rebuy-interval model? A real §6 decision (avoid the
-on-mark/off-restock flicker + mixing two interval types); Jordan's direction (2026-06-30):
-track outage dates and purchase dates **separately** (two date streams), not merged into one
-interval series — deferred for a deliberate design pass, not a quick fold.
+URL + add `docs/demo.gif` + `docs/accuracy.png`); **CSV history importer — PARKED** (Walmart won't export to Jordan's state; needs another
+itemized source); a tiny "dapper blob" mascot for the header; a per-size Trends price chart.
+(Shipped since this note: the double-scroll fix; the **two-stream cadence model** — rebuy rhythm +
+burn rate, hybrid, restock is status-only (§6); and the whole **production-hardening pass** —
+logging, the SQLite CVE patch, the `IChatClient` migration, and faked-client tests.)
 
 ## Tags & Recipes (feature arc beyond the original spec)
 
@@ -169,8 +165,10 @@ the same item bought across brands/sizes rolls up into one product.
   seam pattern (Core defines, Llm implements). Tag advisor uses `ExtractionModel`, recipe advisor
   uses `ChatModel` (both Haiku).
 - **Prediction extras beyond §6.7:** `PredictionResult.Pinned` (OutNow forces Overdue + sorts to
-  top); `SignalNote` (user's statement, surfaced separately from `Basis`); `RecommendedSize`. A
-  Restocked signal is a purchase-equivalent date (feeds the median, clears an earlier OutNow).
+  top); `SignalNote` (user's statement, surfaced separately from `Basis`); `RecommendedSize`;
+  `RebuyIntervalDays` + `BurnRateDays` (the two-stream rhythms). A Restocked signal is **status-only**
+  — it clears an earlier OutNow and re-anchors the due date (a "last stock-back"), but does NOT feed
+  either cadence rhythm; only real purchases do (§6 two-stream model).
 - **`ShoppingEstimator` (Core/Shopping) is pure + unit-tested** — combines the price-free Core
   prediction with median quantity and a unit price passed IN by Web (avg of confirmed
   `ReceiptLine.UnitPrice` for the recommended size), so Core stays EF-free and the engine stays

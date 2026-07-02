@@ -77,7 +77,7 @@ _Last updated: 7/2/2026_
 - [ ] Recipe cooking steps (data model + advisor) — enables step-by-step read-aloud — Not complete
 
 ### Prediction
-- [ ] Two-stream cadence model (outage vs purchase dates tracked separately) — Not complete
+- [x] Two-stream cadence model (rebuy rhythm + burn rate, hybrid) — 7/2/2026
 
 ---
 

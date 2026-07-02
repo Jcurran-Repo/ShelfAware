@@ -85,16 +85,16 @@ Category enum (store aisle): Dairy, Meat, Produce, Pantry, Frozen, Beverage, Hou
 **Robustness:** validate output against the schema; on failure retry once with the error appended. Two failures → friendly error, keep the image, mark `PendingReview`.
 
 ## 6. Prediction engine (pure C#, `ShelfAware.Core`)
-For each tracked `Product`:
-1. Distinct `PurchasedAt` dates, sorted; collapse same-day events.
-2. `< 2` events → **Unknown** ("still learning").
-3. Intervals = gaps between consecutive purchases; use the **median** (robust to a stock-up outlier). `≥ 4` events → discard intervals > 3× median, then re-take the median.
-4. `DueDate = LastPurchase + MedianInterval`.
+For each tracked `Product`, **two purchase-anchored rhythms** — learned from real purchases only, never restocks:
+1. Distinct `PurchasedAt` dates, sorted; collapse same-day events. `< 2` purchases → **Unknown** ("still learning").
+2. **Rebuy rhythm** = median gap between consecutive purchases (robust to a stock-up outlier; `≥ 4` dates → discard gaps > 3× median, re-take). "You buy this ~every N days."
+3. **Burn rate** = for each purchase, days to the *first* `OutNow` after it (before the next purchase), one cycle per purchase; median once there are `≥ 2` completed cycles. "One lasts ~N days."
+4. **Hybrid:** burn rate drives the prediction when available (the truer run-out signal), else fall back to the rebuy rhythm. `DueDate = LastStockBack + Floor(drivingMedian)`, where **LastStockBack** = the most recent purchase *or* restock.
 5. Status: **Overdue** today > DueDate · **DueSoon** today ≥ DueDate − max(3 days, 20% of median) · **Stocked** otherwise.
-6. `InventorySignal` overrides: `OutNow` → **Overdue** (pinned) until next purchase or `Restocked`; `RunningLow` → at least **DueSoon**; `Restocked` → **Stocked** + counts as a purchase-equivalent date for the next interval.
-7. `PredictionResult { ProductId, Status, DueDate?, MedianIntervalDays?, Basis }` — `Basis` is a short human string ("bought 5×, ~every 12 days").
+6. `InventorySignal` overrides: `OutNow` → **Overdue** (pinned), DueDate = the outage date, until a later purchase/restock; `RunningLow` → at least **DueSoon**; `Restocked` → clears an out/overdue state and re-anchors the due date (it's a "last stock-back"), but is **status-only** — it does NOT feed either rhythm (only real purchases do — "count it if I bought one, not if I found one").
+7. `PredictionResult { ProductId, Status, DueDate?, MedianIntervalDays? (the winning one), RebuyIntervalDays?, BurnRateDays?, Basis }`. Product Detail shows both rhythms + the gap ("out ~N days before you restock"); everywhere else shows the winning number.
 
-**Unit tests required:** 2-event minimum, median vs outlier trim, each status boundary (±1 day), every signal override, same-day collapse.
+**Unit tests required:** 2-purchase minimum, median vs outlier trim, each status boundary (±1 day), every signal override, same-day collapse, burn-rate pairing + hybrid switchover, restock-not-in-rhythm.
 
 ## 7. Natural-language updates (tool calling)
 Single-turn dashboard box. `IPantryChat.HandleAsync(userText)` runs a tool-calling loop with:
