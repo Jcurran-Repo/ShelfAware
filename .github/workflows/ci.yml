@@ -24,7 +24,12 @@ jobs:
       - name: Build
         run: dotnet build ShelfAware.slnx --configuration Release --no-restore
 
-      # Only the pure unit tests run in CI. The extraction eval harness
-      # (tests/ShelfAware.Evals) needs a live API key and is run manually.
-      - name: Test
+      # Both unit-test projects run in CI: the pure engine tests, and the AI-layer
+      # tests that drive the tool loop / extractor retry through a faked IChatClient
+      # (no key). Only the extraction eval harness (tests/ShelfAware.Evals) needs a
+      # live API key and is run manually.
+      - name: Test — engine
         run: dotnet test tests/ShelfAware.Tests/ShelfAware.Tests.csproj --configuration Release --no-build
+
+      - name: Test — AI layer (faked client)
+        run: dotnet test tests/ShelfAware.Llm.Tests/ShelfAware.Llm.Tests.csproj --configuration Release --no-build
