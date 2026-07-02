@@ -321,6 +321,16 @@ input:focus, select:focus {
     font-weight: 600;
 }
 
+/* The two-stream "gap" insight — the actionable line on Product Detail (out-before-restock, or ahead). */
+.rhythm-gap {
+    margin: 0.75rem 0 0;
+    padding: 0.5rem 0.75rem;
+    background: var(--surface-alt);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    font-size: 0.9rem;
+}
+
 /* ---- Product detail: brands-bought breakdown ---- */
 .brands {
     list-style: none;

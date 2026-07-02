@@ -36,8 +36,13 @@ else
         <dl class="rhythm">
             <dt>Next buy</dt>
             <dd>@(estimate.NextBuyDate is { } d ? $"{d:MMM d, yyyy} ({Relative(estimate.DaysUntil!.Value)})" : "still learning")</dd>
-            <dt>Typical interval</dt>
-            <dd>@(prediction.MedianIntervalDays is { } m ? $"~{Math.Round(m)} days" : "—")</dd>
+            <dt>Rebuy rhythm</dt>
+            <dd>@(prediction.RebuyIntervalDays is { } rb ? $"~every {Math.Round(rb)} days" : "—")</dd>
+            @if (prediction.BurnRateDays is { } burn)
+            {
+                <dt>Burn rate</dt>
+                <dd>one lasts ~@Math.Round(burn) days</dd>
+            }
             <dt>Typical buy</dt>
             <dd>@estimate.RecommendedQuantity.ToString("0.##")@(product.DefaultUnit is { } u2 ? $" {u2}" : "")</dd>
             @if (SizeFormat.Normalize(prediction.RecommendedSize) is { Length: > 0 } rs)
@@ -51,6 +56,18 @@ else
             <dd>@(estimate.ExpectedCost is { } c ? c.ToString("C") : "unknown")</dd>
         </dl>
         <p class="muted">@prediction.Basis@(prediction.SignalNote is { } note ? $" · {note}" : "")</p>
+        @if (prediction.RebuyIntervalDays is { } rbGap && prediction.BurnRateDays is { } burnGap)
+        {
+            var gap = (int)Math.Round(rbGap - burnGap);
+            if (gap > 0)
+            {
+                <p class="rhythm-gap">⚠️ You typically run out about <strong>@gap day@(gap == 1 ? "" : "s")</strong> before you restock — worth buying it sooner.</p>
+            }
+            else if (gap < 0)
+            {
+                <p class="rhythm-gap">You usually restock about <strong>@(-gap) day@(-gap == 1 ? "" : "s")</strong> before running out — comfortably ahead.</p>
+            }
+        }
     </section>
 
     @if (brandBreakdown.Any(b => b.Brand != Unbranded))

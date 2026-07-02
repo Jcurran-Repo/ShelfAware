@@ -167,16 +167,52 @@ public class ReplenishmentPredictorTests
     }
 
     [Fact]
-    public void Restocked_CountsAsPurchaseEquivalentDate()
+    public void Restocked_DoesNotFabricateCadence_OnlyRealBuysCount()
     {
-        // One real purchase + a Restocked signal = two event dates → no longer "still learning".
+        // A single purchase + a "found one" restock is NOT two buys — a restock feeds neither rhythm, so
+        // there's still no cadence to predict from. (Under the old model this wrongly read as a 10-day
+        // cadence; Jordan's rule: count it only if I bought one, not if I found one.)
         var product = ProductWith([D(0)], [Signal(SignalKind.Restocked, D(10))]);
 
         var r = ReplenishmentPredictor.Predict(product, D(12));
 
-        Assert.Equal(10, r.MedianIntervalDays);
-        Assert.Equal(D(20), r.DueDate);
-        Assert.Equal(PredictionStatus.Stocked, r.Status);
+        Assert.Equal(PredictionStatus.Unknown, r.Status);
+        Assert.Null(r.MedianIntervalDays);
+        Assert.Null(r.RebuyIntervalDays);
+    }
+
+    // --- Two-stream cadence: burn rate (purchase→outage) vs rebuy rhythm ----
+
+    [Fact]
+    public void BurnRate_DrivesThePrediction_WhenOutageCyclesExist()
+    {
+        // Bought every ~30 days, but runs out ~10 days after each buy (chronically under-stocked). Two
+        // completed purchase→outage cycles → burn rate drives, predicting run-out from the last purchase.
+        var product = ProductWith(
+            [D(0), D(30), D(60)],
+            [Signal(SignalKind.OutNow, D(10)), Signal(SignalKind.OutNow, D(40))]);
+
+        var r = ReplenishmentPredictor.Predict(product, D(65));
+
+        Assert.Equal(10, r.BurnRateDays);        // cycles {10, 10} → median 10
+        Assert.Equal(30, r.RebuyIntervalDays);   // purchase gaps {30, 30}
+        Assert.Equal(10, r.MedianIntervalDays);  // burn rate is the winning number
+        Assert.Equal(D(70), r.DueDate);          // last purchase D(60) + 10
+    }
+
+    [Fact]
+    public void OneOutageCycle_IsNotEnough_RebuyStillDrives()
+    {
+        // A single purchase→outage cycle can't form a median → fall back to the rebuy rhythm.
+        var product = ProductWith(
+            [D(0), D(30)],
+            [Signal(SignalKind.OutNow, D(10))]);
+
+        var r = ReplenishmentPredictor.Predict(product, D(35));
+
+        Assert.Null(r.BurnRateDays);
+        Assert.Equal(30, r.RebuyIntervalDays);
+        Assert.Equal(30, r.MedianIntervalDays); // rebuy drives
     }
 
     [Fact]

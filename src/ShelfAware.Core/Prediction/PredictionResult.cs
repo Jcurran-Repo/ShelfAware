@@ -11,8 +11,18 @@ public record PredictionResult
     /// Predicted run-out date; null when status is <see cref="PredictionStatus.Unknown"/>.
     public DateOnly? DueDate { get; init; }
 
-    /// Median repurchase interval in days; null when there is too little history.
+    /// The driving ("winning") interval in days — the burn rate when it's available, else the rebuy
+    /// rhythm. Shown everywhere. Null when there is too little history.
     public double? MedianIntervalDays { get; init; }
+
+    /// Rebuy rhythm: the median gap between purchases ("you buy this ~every N days"). Null with &lt; 2
+    /// purchases. Shown alongside <see cref="BurnRateDays"/> on Product Detail.
+    public double? RebuyIntervalDays { get; init; }
+
+    /// Burn rate: how long a purchase lasts before running out (median purchase→outage), once there are
+    /// ≥ 2 completed outage cycles. Null otherwise. The gap from <see cref="RebuyIntervalDays"/> reveals
+    /// how long you typically go without before restocking.
+    public double? BurnRateDays { get; init; }
 
     /// The package size to recommend buying — the size bought most often (ties: most recent). Null for
     /// items with no recorded size. Different sizes roll up into one product; this picks the one to suggest.

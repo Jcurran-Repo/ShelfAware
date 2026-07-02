@@ -6,87 +6,63 @@ namespace ShelfAware.Core.Prediction;
 /// Pure, deterministic replenishment predictor (DESIGN.md §6). No LLM, no I/O — give it a
 /// product's purchase history and signals plus "today" and it returns a <see cref="PredictionResult"/>.
 /// Side-effect-free and fully unit-testable; the prediction path never calls the model (§0.4).
+///
+/// Two purchase-anchored rhythms, learned only from real purchases (never restocks):
+///   • Rebuy rhythm — median gap between consecutive purchases ("you buy this ~every 12 days").
+///   • Burn rate    — for each purchase, days to the first "out now" after it ("one lasts ~9 days").
+/// Hybrid: burn rate drives the run-out prediction once there are ≥2 completed outage cycles (it's the
+/// truer answer to "when will I run out"); otherwise fall back to the rebuy rhythm.
 /// </summary>
 public static class ReplenishmentPredictor
 {
     public static PredictionResult Predict(Product product, DateOnly today)
     {
-        // 1. Distinct purchase dates — same-day events collapse (§6.1). Restocked signals count
-        //    as purchase-equivalent dates for the interval math (§6.6).
-        //    Size is metadata, not identity: an item bought in random sizes (e.g. milk as a half-gallon
-        //    or a gallon) is ONE product. Predict the cadence from the DOMINANT size's purchases when that
-        //    size has enough history (≥2 buys), so the timing is genuinely size-aware; otherwise fall back
-        //    to ALL purchases so a mixed-size item still gets a prediction instead of dropping to "still
-        //    learning". Either way we recommend the dominant size.
+        // 1. Distinct purchase dates — same-day events collapse (§6.1). Size is metadata, not identity: an
+        //    item bought in random sizes (milk as a half-gallon or a gallon) is ONE product. Learn the
+        //    rebuy rhythm from the DOMINANT size's purchases when that size has enough history (≥2 buys),
+        //    else fall back to ALL purchases so a mixed-size item still predicts. Either way recommend the
+        //    dominant size.
         var dominantSize = DominantSize(product.Purchases);
         var dominantDates = product.Purchases
             .Where(p => SizeKey(p.Size) == SizeKey(dominantSize))
             .Select(p => p.PurchasedAt)
             .Distinct()
             .ToList();
-        var purchaseDates = dominantDates.Count >= 2
-            ? dominantDates
-            : product.Purchases.Select(p => p.PurchasedAt).Distinct().ToList();
+        var allPurchaseDates = product.Purchases.Select(p => p.PurchasedAt).Distinct().OrderBy(d => d).ToList();
+        var rebuyDates = dominantDates.Count >= 2 ? dominantDates : allPurchaseDates;
 
         var restockDates = product.Signals
             .Where(s => s.Kind == SignalKind.Restocked)
             .Select(s => DateOnly.FromDateTime(s.SignaledAt.Date))
             .ToList();
 
-        var eventDates = purchaseDates
-            .Concat(restockDates)
-            .Distinct()
+        var outageDates = product.Signals
+            .Where(s => s.Kind == SignalKind.OutNow)
+            .Select(s => DateOnly.FromDateTime(s.SignaledAt.Date))
             .OrderBy(d => d)
             .ToList();
 
-        // Which OutNow/RunningLow signal (if any) is still in effect? A later purchase or restock
-        // clears it — §6.6: OutNow holds "until next purchase or Restocked".
-        var lastEvent = eventDates.Count > 0 ? eventDates[^1] : (DateOnly?)null;
-        var activeSignal = product.Signals
-            .Where(s => s.Kind is SignalKind.OutNow or SignalKind.RunningLow)
-            .Where(s => lastEvent is null || DateOnly.FromDateTime(s.SignaledAt.Date) > lastEvent)
-            .OrderByDescending(s => s.SignaledAt)
-            .ThenByDescending(s => s.Kind == SignalKind.OutNow) // OutNow wins a same-instant tie
-            .FirstOrDefault();
+        // "Last time I had stock" — a purchase OR a restock ("found one"). A restock anchors the projected
+        // due date (so restocking clears an out/overdue state) but does NOT feed either learned rhythm:
+        // only real buys count (Jordan: "count it if I bought one, not if I found one"). This also clears an
+        // OutNow — any signal older than the last stock-back is no longer in effect (§6.6).
+        DateOnly? lastStockBack = allPurchaseDates.Concat(restockDates).Cast<DateOnly?>().Max();
 
-        // When an item is marked out, the outage date is its effective due date (it's out NOW), so the UI
-        // reads "due today / overdue" instead of a future statistical date. We deliberately do NOT fold the
-        // outage into the cadence median: purchase→outage is consumption time while purchase→purchase is
-        // rebuy time, and blending them (plus the on-mark/off-restock flicker) muddies the cadence —
-        // learning from outages is a separate §6 decision (see CLAUDE.md backlog).
-        var outageDate = activeSignal?.Kind == SignalKind.OutNow
-            ? DateOnly.FromDateTime(activeSignal.SignaledAt.Date)
-            : (DateOnly?)null;
+        // 2–3. The two rhythms, both from purchases only.
+        double? rebuyMedian = MedianInterval(rebuyDates);
+        double? burnMedian = BurnRate(allPurchaseDates, outageDates);
 
-        // 2–5. Statistical base prediction.
+        // 4. Hybrid: burn rate drives once we have ≥2 outage cycles; else the rebuy rhythm.
+        var burnDrives = burnMedian is not null;
+        double? drivingMedian = burnMedian ?? rebuyMedian;
+
+        // 5. Statistical base: project the driving rhythm from the last time we had stock.
         PredictionStatus status;
         DateOnly? dueDate = null;
-        double? medianDays = null;
 
-        if (eventDates.Count >= 2)
+        if (drivingMedian is { } median && lastStockBack is { } anchor)
         {
-            var intervals = new List<int>();
-            for (var i = 1; i < eventDates.Count; i++)
-            {
-                intervals.Add(eventDates[i].DayNumber - eventDates[i - 1].DayNumber);
-            }
-
-            var median = Median(intervals);
-
-            // ≥4 events → discard intervals longer than 3× median, then re-take the median (§6.3).
-            if (eventDates.Count >= 4)
-            {
-                var trimmed = intervals.Where(d => d <= 3 * median).ToList();
-                if (trimmed.Count > 0)
-                {
-                    median = Median(trimmed);
-                }
-            }
-
-            medianDays = median;
-            var lastDate = eventDates[^1];
-            dueDate = lastDate.AddDays(Floor(median));
-
+            dueDate = anchor.AddDays(Floor(median));
             var threshold = Round(Math.Max(3.0, 0.2 * median));
             var dueSoonStart = dueDate.Value.AddDays(-threshold);
 
@@ -99,13 +75,20 @@ public static class ReplenishmentPredictor
             status = PredictionStatus.Unknown;
         }
 
-        // 6. Signal overrides on top of the statistical base.
+        // 6. Signal overrides on top of the statistical base. Active = later than the last stock-back.
+        var activeSignal = product.Signals
+            .Where(s => s.Kind is SignalKind.OutNow or SignalKind.RunningLow)
+            .Where(s => lastStockBack is null || DateOnly.FromDateTime(s.SignaledAt.Date) > lastStockBack)
+            .OrderByDescending(s => s.SignaledAt)
+            .ThenByDescending(s => s.Kind == SignalKind.OutNow) // OutNow wins a same-instant tie
+            .FirstOrDefault();
+
         var pinned = false;
         if (activeSignal?.Kind == SignalKind.OutNow)
         {
-            status = PredictionStatus.Overdue; // pinned to top until next purchase / Restocked
+            status = PredictionStatus.Overdue; // pinned to top until next purchase / restock
             pinned = true;
-            dueDate = outageDate; // out NOW → due is the outage date (today or earlier), never a future date
+            dueDate = DateOnly.FromDateTime(activeSignal.SignaledAt.Date); // out NOW → due is the outage date
         }
         else if (activeSignal?.Kind == SignalKind.RunningLow && status is PredictionStatus.Stocked or PredictionStatus.Unknown)
         {
@@ -117,15 +100,61 @@ public static class ReplenishmentPredictor
             ProductId = product.Id,
             Status = status,
             DueDate = dueDate,
-            MedianIntervalDays = medianDays,
-            // "bought N×" reflects ALL purchases (matches what the user sees elsewhere), while the cadence
-            // comes from the dominant size — so a mixed-size item reads "bought 2×, still learning" rather
-            // than a confusing "bought 1×" next to a 2-purchase brand list.
-            Basis = BuildBasis(product.Purchases.Select(p => p.PurchasedAt).Distinct().Count(), medianDays),
+            MedianIntervalDays = drivingMedian, // the winning number — shown everywhere
+            RebuyIntervalDays = rebuyMedian,
+            BurnRateDays = burnMedian,
+            Basis = BuildBasis(allPurchaseDates.Count, drivingMedian, burnDrives),
             SignalNote = SignalNoteFor(activeSignal?.Kind),
             RecommendedSize = dominantSize,
-            Pinned = pinned
+            Pinned = pinned,
         };
+    }
+
+    // Rebuy rhythm: median gap between consecutive purchase dates. ≥4 dates (≥3 gaps) → discard gaps longer
+    // than 3× median and re-take it (§6.3). Null with fewer than 2 dates.
+    private static double? MedianInterval(IReadOnlyList<DateOnly> dates)
+    {
+        if (dates.Count < 2) return null;
+        var sorted = dates.OrderBy(d => d).ToList();
+        var intervals = new List<int>();
+        for (var i = 1; i < sorted.Count; i++)
+        {
+            intervals.Add(sorted[i].DayNumber - sorted[i - 1].DayNumber);
+        }
+        return MedianWithTrim(intervals);
+    }
+
+    // Burn rate: for each purchase, the days to the FIRST outage after it (before the next purchase) — one
+    // cycle per purchase. Median of those cycles. Needs ≥2 completed cycles; null otherwise. Restocks are
+    // ignored here too — only a real purchase starts a burn cycle.
+    private static double? BurnRate(IReadOnlyList<DateOnly> purchaseDates, IReadOnlyList<DateOnly> outageDates)
+    {
+        if (purchaseDates.Count == 0 || outageDates.Count == 0) return null;
+
+        var cycles = new List<int>();
+        for (var i = 0; i < purchaseDates.Count; i++)
+        {
+            var start = purchaseDates[i];
+            DateOnly? nextPurchase = i + 1 < purchaseDates.Count ? purchaseDates[i + 1] : null;
+            var outage = outageDates
+                .Where(o => o > start && (nextPurchase is not { } np || o < np))
+                .Cast<DateOnly?>()
+                .FirstOrDefault();
+            if (outage is { } o) cycles.Add(o.DayNumber - start.DayNumber);
+        }
+
+        return cycles.Count >= 2 ? MedianWithTrim(cycles) : null;
+    }
+
+    private static double MedianWithTrim(List<int> intervals)
+    {
+        var median = Median(intervals);
+        if (intervals.Count >= 3) // ≥3 data points → robust enough to drop a stock-up/vacation outlier
+        {
+            var trimmed = intervals.Where(d => d <= 3 * median).ToList();
+            if (trimmed.Count > 0) median = Median(trimmed);
+        }
+        return median;
     }
 
     // The size bought most often; ties broken by the most recently purchased size. Null when no purchase
@@ -165,9 +194,11 @@ public static class ReplenishmentPredictor
     // toward reminding *before* an item runs out rather than after. Pairs with buy-quantity rounding UP.
     private static int Floor(double value) => (int)Math.Floor(value);
 
-    private static string BuildBasis(int purchaseCount, double? medianDays) =>
-        medianDays is { } m
-            ? $"bought {purchaseCount}×, ~every {Floor(m)} days"
+    private static string BuildBasis(int purchaseCount, double? drivingMedian, bool burnDrives) =>
+        drivingMedian is { } m
+            ? burnDrives
+                ? $"bought {purchaseCount}×, lasts ~{Floor(m)} days"
+                : $"bought {purchaseCount}×, ~every {Floor(m)} days"
             : purchaseCount == 0 ? "no purchases yet" : $"bought {purchaseCount}×, still learning";
 
     private static string? SignalNoteFor(SignalKind? activeSignal) => activeSignal switch
