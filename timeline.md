@@ -8,7 +8,7 @@ done yet — survives even if everything else is lost.
 **Terminology:** Phases 1–5 are the original v1 build milestones. v2 / v3 are later versions.
 `[x]` + date = shipped · `[ ]` = not done yet.
 
-_Last updated: 7/1/2026_
+_Last updated: 7/2/2026_
 
 ---
 
@@ -88,7 +88,7 @@ _Last updated: 7/1/2026_
 ---
 
 ## Backlog (unscheduled)
-- [ ] Double-scroll fix (Grocery List + Upload review) — Not complete
+- [x] Double-scroll fix (Grocery List + Upload review) — 7/2/2026
 - [ ] CSV history importer — Parked (blocked on an itemized data export)
 - [ ] More eval fixtures (paper / Edwards receipts) — Not complete
 - [ ] Per-size Trends price chart — Not complete
