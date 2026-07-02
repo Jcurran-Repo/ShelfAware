@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using Anthropic;
 using Anthropic.Models.Messages;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
@@ -23,11 +24,13 @@ public class AnthropicPantryChat : IPantryChat
     private readonly AnthropicClient _client;
     private readonly LlmOptions _options;
     private readonly IPantryStore _store;
+    private readonly ILogger<AnthropicPantryChat> _logger;
 
-    public AnthropicPantryChat(IOptions<LlmOptions> options, IPantryStore store)
+    public AnthropicPantryChat(IOptions<LlmOptions> options, IPantryStore store, ILogger<AnthropicPantryChat> logger)
     {
         _options = options.Value;
         _store = store;
+        _logger = logger;
         _client = new AnthropicClient { ApiKey = _options.ApiKey };
     }
 
@@ -60,6 +63,7 @@ public class AnthropicPantryChat : IPantryChat
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Pantry chat call to the model failed on turn {Turn}.", turn + 1);
                 return ChatResult.Fail($"Sorry — I couldn't reach the assistant just now. ({ex.Message})");
             }
 
@@ -67,6 +71,7 @@ public class AnthropicPantryChat : IPantryChat
             if (toolUses.Count == 0)
             {
                 var text = string.Concat(response.Content.Select(b => b.Value).OfType<TextBlock>().Select(t => t.Text)).Trim();
+                _logger.LogInformation("Pantry chat completed on turn {Turn} with {ActionCount} action(s) applied.", turn + 1, actions.Count);
                 return ChatResult.Ok(text.Length > 0 ? text : "Done.", actions);
             }
 
@@ -98,6 +103,7 @@ public class AnthropicPantryChat : IPantryChat
             products = await _store.GetProductsAsync(cancellationToken);
         }
 
+        _logger.LogWarning("Pantry chat hit the {MaxTurns}-turn limit without a final reply ({ActionCount} action(s) applied).", MaxTurns, actions.Count);
         return ChatResult.Ok(
             actions.Count > 0 ? $"Applied: {string.Join(", ", actions)}." : "Stopped after several steps without finishing.",
             actions);

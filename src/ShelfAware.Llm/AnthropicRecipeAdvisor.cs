@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using Anthropic;
 using Anthropic.Models.Messages;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Recipes;
 
@@ -52,10 +53,12 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
 
     private readonly AnthropicClient _client;
     private readonly LlmOptions _options;
+    private readonly ILogger<AnthropicRecipeAdvisor> _logger;
 
-    public AnthropicRecipeAdvisor(IOptions<LlmOptions> options)
+    public AnthropicRecipeAdvisor(IOptions<LlmOptions> options, ILogger<AnthropicRecipeAdvisor> logger)
     {
         _options = options.Value;
+        _logger = logger;
         _client = new AnthropicClient { ApiKey = _options.ApiKey };
     }
 
@@ -84,7 +87,9 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
         }, cancellationToken: cancellationToken);
 
         var json = string.Concat(response.Content.Select(b => b.Value).OfType<TextBlock>().Select(t => t.Text));
-        return Parse(json);
+        var suggestions = Parse(json);
+        _logger.LogInformation("Recipe advisor returned {Count} suggestion(s) for {OnHand} on-hand item(s).", suggestions.Count, onHand.Count);
+        return suggestions;
     }
 
     private static List<RecipeSuggestion> Parse(string json)

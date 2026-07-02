@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Evaluation;
@@ -37,7 +38,9 @@ if (!Directory.Exists(fixturesDir))
 }
 
 var model = new LlmOptions().ExtractionModel;
-IReceiptExtractor extractor = new AnthropicReceiptExtractor(Options.Create(new LlmOptions { ApiKey = apiKey }));
+IReceiptExtractor extractor = new AnthropicReceiptExtractor(
+    Options.Create(new LlmOptions { ApiKey = apiKey }),
+    NullLogger<AnthropicReceiptExtractor>.Instance);
 
 var expectedFiles = Directory.GetFiles(fixturesDir, "*.expected.json").OrderBy(f => f).ToList();
 if (expectedFiles.Count == 0)

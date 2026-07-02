@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using Anthropic;
 using Anthropic.Models.Messages;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Extraction;
 using Category = ShelfAware.Core.Domain.Category;
@@ -49,10 +50,12 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
 
     private readonly AnthropicClient _client;
     private readonly LlmOptions _options;
+    private readonly ILogger<AnthropicReceiptExtractor> _logger;
 
-    public AnthropicReceiptExtractor(IOptions<LlmOptions> options)
+    public AnthropicReceiptExtractor(IOptions<LlmOptions> options, ILogger<AnthropicReceiptExtractor> logger)
     {
         _options = options.Value;
+        _logger = logger;
         _client = new AnthropicClient { ApiKey = _options.ApiKey };
     }
 
@@ -63,6 +66,9 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
         CancellationToken cancellationToken = default)
     {
         if (attachments.Count == 0) return ExtractionResult.Fail("No attachments provided.");
+
+        _logger.LogInformation("Extracting receipt from {AttachmentCount} attachment(s) ({ProductHints} product hints, {TagHints} tag hints).",
+            attachments.Count, knownProductNames?.Count ?? 0, knownTags?.Count ?? 0);
 
         var content = new List<ContentBlockParam>();
         foreach (var attachment in attachments)
@@ -125,20 +131,25 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
 
                 rawJson = string.Concat(response.Content.Select(b => b.Value).OfType<TextBlock>().Select(t => t.Text));
                 var receipt = ParseReceipt(rawJson);
+                _logger.LogInformation("Extraction succeeded: {LineCount} line(s), merchant {Merchant}.",
+                    receipt.Lines.Count, receipt.Merchant ?? "(none)");
                 return ExtractionResult.Ok(receipt, rawJson);
             }
             catch (JsonException ex)
             {
                 lastError = ex.Message;
+                _logger.LogWarning("Extraction attempt {Attempt} produced unparseable output: {Error}", attempt + 1, ex.Message);
             }
             catch (Exception ex)
             {
                 // API/transport errors (auth, rate limit, network) — not fixable by a retry
                 // here; the SDK already retries retryable statuses internally.
+                _logger.LogError(ex, "Extraction call to the model failed.");
                 return ExtractionResult.Fail(ex.Message, rawJson);
             }
         }
 
+        _logger.LogWarning("Extraction failed after a retry: {Error}", lastError);
         return ExtractionResult.Fail($"The extraction output could not be parsed after a retry: {lastError}", rawJson);
     }
 

@@ -1,5 +1,6 @@
 using Anthropic;
 using Anthropic.Models.Messages;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Tagging;
 
@@ -14,10 +15,12 @@ public class AnthropicTagAdvisor : ITagAdvisor
 {
     private readonly AnthropicClient _client;
     private readonly LlmOptions _options;
+    private readonly ILogger<AnthropicTagAdvisor> _logger;
 
-    public AnthropicTagAdvisor(IOptions<LlmOptions> options)
+    public AnthropicTagAdvisor(IOptions<LlmOptions> options, ILogger<AnthropicTagAdvisor> logger)
     {
         _options = options.Value;
+        _logger = logger;
         _client = new AnthropicClient { ApiKey = _options.ApiKey };
     }
 
@@ -43,9 +46,12 @@ public class AnthropicTagAdvisor : ITagAdvisor
             var reply = string.Concat(response.Content.Select(b => b.Value).OfType<TextBlock>().Select(t => t.Text)).Trim();
             return existing.FirstOrDefault(t => string.Equals(t, reply, StringComparison.OrdinalIgnoreCase));
         }
-        catch
+        catch (Exception ex)
         {
-            return null; // fail open — never block tag creation on an API hiccup
+            // Fail open — never block tag creation on an API hiccup — but leave a trail so a
+            // silently-degraded dedup (e.g. a bad key or rate limit) is visible in the logs.
+            _logger.LogWarning(ex, "Tag synonym check failed for \"{Candidate}\"; failing open.", candidate.Trim());
+            return null;
         }
     }
 }
