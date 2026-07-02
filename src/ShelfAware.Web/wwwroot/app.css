@@ -114,8 +114,10 @@ table {
     box-shadow: var(--shadow);
 }
 
-/* Wide editable grids (receipt review) scroll horizontally inside their own box
-   instead of overflowing the page. */
+/* Wide grids scroll horizontally inside their own box instead of overflowing the page.
+   The wrapper is the SINGLE scroll container: keep the inner table a normal table so the
+   narrow-screen `table { display:block; overflow-x:auto }` rule (below) can't stack a SECOND
+   horizontal scrollbar inside .table-scroll — that nesting is the "two scrollbars" bug. */
 .table-scroll {
     overflow-x: auto;
     margin: 1rem 0;
@@ -123,6 +125,24 @@ table {
 
 .table-scroll table {
     margin: 0;
+    display: table;
+    overflow-x: visible;
+    white-space: normal;
+}
+
+/* The wide editable review grid also caps its height to the viewport and pins its header, so
+   its horizontal scrollbar stays reachable instead of buried at the bottom of a tall receipt
+   (you no longer scroll the whole page down just to find it). Scoped to the review grid — the
+   report tables fit horizontally, so they don't need a scroll box. */
+.table-scroll--capped {
+    max-height: min(75vh, 42rem);
+    overflow: auto;
+}
+
+.table-scroll--capped thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
 }
 
 th, td {
