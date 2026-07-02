@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Anthropic;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Domain;
@@ -38,7 +40,9 @@ if (!Directory.Exists(fixturesDir))
 }
 
 var model = new LlmOptions().ExtractionModel;
+var chatClient = new AnthropicClient { ApiKey = apiKey }.AsIChatClient(model);
 IReceiptExtractor extractor = new AnthropicReceiptExtractor(
+    chatClient,
     Options.Create(new LlmOptions { ApiKey = apiKey }),
     NullLogger<AnthropicReceiptExtractor>.Instance);
 

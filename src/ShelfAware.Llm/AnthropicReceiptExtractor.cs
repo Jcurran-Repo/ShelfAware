@@ -1,7 +1,6 @@
 using System.Reflection;
 using System.Text.Json;
-using Anthropic;
-using Anthropic.Models.Messages;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Extraction;
@@ -48,15 +47,15 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
     }
     """;
 
-    private readonly AnthropicClient _client;
+    private readonly IChatClient _chat;
     private readonly LlmOptions _options;
     private readonly ILogger<AnthropicReceiptExtractor> _logger;
 
-    public AnthropicReceiptExtractor(IOptions<LlmOptions> options, ILogger<AnthropicReceiptExtractor> logger)
+    public AnthropicReceiptExtractor(IChatClient chat, IOptions<LlmOptions> options, ILogger<AnthropicReceiptExtractor> logger)
     {
+        _chat = chat;
         _options = options.Value;
         _logger = logger;
-        _client = new AnthropicClient { ApiKey = _options.ApiKey };
     }
 
     public async Task<ExtractionResult> ExtractAsync(
@@ -70,66 +69,59 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
         _logger.LogInformation("Extracting receipt from {AttachmentCount} attachment(s) ({ProductHints} product hints, {TagHints} tag hints).",
             attachments.Count, knownProductNames?.Count ?? 0, knownTags?.Count ?? 0);
 
-        var content = new List<ContentBlockParam>();
+        var content = new List<AIContent>();
         foreach (var attachment in attachments)
         {
-            content.Add(ToContentBlock(attachment));
+            content.Add(new DataContent(attachment.Data, attachment.MediaType));
         }
-        content.Add(new TextBlockParam { Text = "Extract this receipt. All attachments belong to ONE receipt; merge into a single line list." });
+        content.Add(new TextContent("Extract this receipt. All attachments belong to ONE receipt; merge into a single line list."));
 
         if (knownProductNames is { Count: > 0 })
         {
-            content.Add(new TextBlockParam
-            {
-                Text = "Existing products — set existing_product to the EXACT matching name from this list, or null if none fits:\n- "
-                       + string.Join("\n- ", knownProductNames),
-            });
+            content.Add(new TextContent(
+                "Existing products — set existing_product to the EXACT matching name from this list, or null if none fits:\n- "
+                + string.Join("\n- ", knownProductNames)));
         }
 
         if (knownTags is { Count: > 0 })
         {
-            content.Add(new TextBlockParam
-            {
-                Text = "Existing tags — when a tag fits, REUSE one from this list verbatim instead of coining a near-duplicate; only invent a new tag if none fit:\n- "
-                       + string.Join("\n- ", knownTags),
-            });
+            content.Add(new TextContent(
+                "Existing tags — when a tag fits, REUSE one from this list verbatim instead of coining a near-duplicate; only invent a new tag if none fit:\n- "
+                + string.Join("\n- ", knownTags)));
         }
 
         string rawJson = "";
         string? lastError = null;
 
+        var options = new ChatOptions
+        {
+            ModelId = _options.ExtractionModel,
+            MaxOutputTokens = 8192,
+            ResponseFormat = ChatResponseFormat.ForJsonSchema(
+                JsonSerializer.Deserialize<JsonElement>(OutputSchemaJson),
+                schemaName: "receipt_extraction"),
+        };
+
         // DESIGN.md §5 robustness: one retry with the validation error appended; two failures → friendly error.
         for (var attempt = 0; attempt < 2; attempt++)
         {
-            var messages = new List<MessageParam> { new() { Role = Role.User, Content = content } };
+            var messages = new List<ChatMessage>
+            {
+                new(ChatRole.System, SystemPrompt),
+                new(ChatRole.User, content),
+            };
             if (attempt > 0)
             {
-                messages.Add(new MessageParam { Role = Role.Assistant, Content = rawJson });
-                messages.Add(new MessageParam
-                {
-                    Role = Role.User,
-                    Content = $"Your previous output failed validation: {lastError}. Output corrected JSON matching the schema.",
-                });
+                messages.Add(new ChatMessage(ChatRole.Assistant, rawJson));
+                messages.Add(new ChatMessage(ChatRole.User,
+                    $"Your previous output failed validation: {lastError}. Output corrected JSON matching the schema."));
             }
 
             try
             {
-                var response = await _client.Messages.Create(new MessageCreateParams
-                {
-                    Model = _options.ExtractionModel,
-                    MaxTokens = 8192,
-                    System = SystemPrompt,
-                    OutputConfig = new OutputConfig
-                    {
-                        Format = new JsonOutputFormat
-                        {
-                            Schema = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(OutputSchemaJson)!,
-                        },
-                    },
-                    Messages = messages,
-                }, cancellationToken: cancellationToken);
+                var response = await _chat.GetResponseAsync(messages, options, cancellationToken);
 
-                rawJson = string.Concat(response.Content.Select(b => b.Value).OfType<TextBlock>().Select(t => t.Text));
+                rawJson = response.Text;
                 var receipt = ParseReceipt(rawJson);
                 _logger.LogInformation("Extraction succeeded: {LineCount} line(s), merchant {Merchant}.",
                     receipt.Lines.Count, receipt.Merchant ?? "(none)");
@@ -151,25 +143,6 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
 
         _logger.LogWarning("Extraction failed after a retry: {Error}", lastError);
         return ExtractionResult.Fail($"The extraction output could not be parsed after a retry: {lastError}", rawJson);
-    }
-
-    private static ContentBlockParam ToContentBlock(ReceiptAttachment attachment)
-    {
-        var base64 = Convert.ToBase64String(attachment.Data);
-        if (attachment.MediaType == "application/pdf")
-        {
-            return new DocumentBlockParam { Source = new Base64PdfSource { Data = base64 } };
-        }
-
-        var mediaType = attachment.MediaType switch
-        {
-            "image/jpeg" => MediaType.ImageJpeg,
-            "image/png" => MediaType.ImagePng,
-            "image/gif" => MediaType.ImageGif,
-            "image/webp" => MediaType.ImageWebP,
-            _ => throw new NotSupportedException($"Unsupported attachment type: {attachment.MediaType}"),
-        };
-        return new ImageBlockParam { Source = new Base64ImageSource { Data = base64, MediaType = mediaType } };
     }
 
     private static ExtractedReceipt ParseReceipt(string json)
