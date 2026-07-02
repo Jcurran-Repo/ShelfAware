@@ -64,7 +64,7 @@ _Last updated: 7/2/2026_
 ## v2 — Voice + production hardening
 
 ### Production hardening (do before voice)
-- [ ] Structured logging / observability (ILogger) — Not complete
+- [x] Structured logging / observability (ILogger) — 7/2/2026
 - [ ] Provider-agnostic AI seam (Microsoft.Extensions.AI IChatClient) — Not complete
 - [ ] Separate AI/LLM test project (keep the plain-code test project pure) — Not complete
 - [ ] CI tests for the LLM tool-loop via a faked client — Not complete
