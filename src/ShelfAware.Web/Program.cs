@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Extraction;
 using ShelfAware.Core.Recipes;
+using ShelfAware.Core.Speech;
 using ShelfAware.Core.Tagging;
 using ShelfAware.Llm;
 using ShelfAware.Web.Components;
@@ -40,6 +41,22 @@ builder.Services.AddSingleton<IPantryStore, EfPantryStore>();
 builder.Services.AddSingleton<IPantryChat, AnthropicPantryChat>();
 builder.Services.AddSingleton<ITagAdvisor, AnthropicTagAdvisor>();
 builder.Services.AddSingleton<IRecipeAdvisor, AnthropicRecipeAdvisor>();
+
+// Voice I/O (ElevenLabs): Scribe = STT (ear), TTS = mouth. Speech is its own REST API, not an
+// IChatClient workload, so each rides a typed HttpClient with the base address + xi-api-key header.
+// Typed clients are transient (the factory owns handler lifetime) — fine, the services are stateless.
+builder.Services.Configure<ElevenLabsOptions>(builder.Configuration.GetSection(ElevenLabsOptions.SectionName));
+builder.Services.AddHttpClient<ISpeechToText, ElevenLabsSpeechToText>(ConfigureElevenLabs);
+builder.Services.AddHttpClient<ITextToSpeech, ElevenLabsTextToSpeech>(ConfigureElevenLabs);
+
+static void ConfigureElevenLabs(IServiceProvider sp, HttpClient http)
+{
+    var opts = sp.GetRequiredService<IOptions<ElevenLabsOptions>>().Value;
+    http.BaseAddress = new Uri("https://api.elevenlabs.io");
+    // No key yet? Leave the header off and let the call 401 gracefully — the app still boots.
+    if (!string.IsNullOrEmpty(opts.ApiKey))
+        http.DefaultRequestHeaders.Add("xi-api-key", opts.ApiKey);
+}
 
 var app = builder.Build();
 

@@ -1,3 +1,6 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Text;
 using Microsoft.Extensions.AI;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
@@ -89,4 +92,50 @@ internal sealed class FakePantryStore : IPantryStore
         Tracking.Add((productId, tracked));
         return Task.CompletedTask;
     }
+}
+
+/// <summary>
+/// A scripted <see cref="HttpMessageHandler"/>: returns queued responses in order and records each
+/// request it received (method, URI, xi-api-key header, content-type, and the buffered body). The
+/// HTTP-level analogue of <see cref="FakeChatClient"/> — it lets us drive the ElevenLabs speech
+/// services with no live API. The body is read eagerly in <see cref="SendAsync"/> because request
+/// content is disposed once the call returns.
+/// </summary>
+internal sealed class FakeHttpMessageHandler : HttpMessageHandler
+{
+    private readonly Queue<Func<HttpResponseMessage>> _script;
+    public List<CapturedRequest> Requests { get; } = [];
+
+    public FakeHttpMessageHandler(params Func<HttpResponseMessage>[] script) => _script = new(script);
+
+    public static FakeHttpMessageHandler Returning(params HttpResponseMessage[] responses) =>
+        new([.. responses.Select(r => (Func<HttpResponseMessage>)(() => r))]);
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken);
+        Requests.Add(new CapturedRequest(
+            request.Method,
+            request.RequestUri!,
+            request.Headers.TryGetValues("xi-api-key", out var k) ? k.FirstOrDefault() : null,
+            request.Content?.Headers.ContentType?.MediaType,
+            body));
+        if (_script.Count == 0) throw new InvalidOperationException("FakeHttpMessageHandler ran out of scripted responses.");
+        return _script.Dequeue()();
+    }
+}
+
+internal record CapturedRequest(HttpMethod Method, Uri Uri, string? ApiKey, string? ContentType, string Body);
+
+/// <summary>Terse builders for the canned HTTP responses the fake handler hands back.</summary>
+internal static class HttpResponses
+{
+    public static HttpResponseMessage Json(string json, HttpStatusCode status = HttpStatusCode.OK) =>
+        new(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+
+    public static HttpResponseMessage Audio(byte[] bytes, string mediaType = "audio/mpeg", HttpStatusCode status = HttpStatusCode.OK) =>
+        new(status) { Content = new ByteArrayContent(bytes) { Headers = { ContentType = new MediaTypeHeaderValue(mediaType) } } };
+
+    public static HttpResponseMessage Error(HttpStatusCode status, string body = "") =>
+        new(status) { Content = new StringContent(body) };
 }
