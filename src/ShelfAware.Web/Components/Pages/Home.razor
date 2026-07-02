@@ -108,6 +108,8 @@ else
                 <p class="@(chatError ? "error" : "chat-reply")">@chatReply</p>
             }
         </div>
+        <div class="voice-divider"><span>or hold to talk</span></div>
+        <PushToTalk OnApplied="LoadAsync" />
     </section>
 
     <details class="everything-else">

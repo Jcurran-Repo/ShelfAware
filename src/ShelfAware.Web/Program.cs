@@ -14,7 +14,10 @@ using ShelfAware.Web.Data;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorComponents()
-    .AddInteractiveServerComponents();
+    .AddInteractiveServerComponents()
+    // Voice sends a recorded utterance from the browser to .NET as base64 over the circuit; the 32 KB
+    // default is too small for even a few seconds of audio. 4 MB comfortably covers a push-to-talk bark.
+    .AddHubOptions(o => o.MaximumReceiveMessageSize = 4 * 1024 * 1024);
 
 // SQLite lives in a configurable data directory: ./app-data locally, /home/data on Azure.
 // (Not "data": on case-insensitive filesystems that collides with the Data/ source folder.)

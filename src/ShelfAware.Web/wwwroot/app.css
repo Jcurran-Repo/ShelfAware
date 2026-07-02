@@ -446,6 +446,91 @@ pre {
     flex: 1 1 18rem;
 }
 
+/* ---- Voice / push-to-talk ---- */
+.voice {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.voice-divider {
+    display: flex;
+    align-items: center;
+    text-align: center;
+    color: var(--ink-soft);
+    font-size: 0.82rem;
+    margin: 0.85rem 0 0.15rem;
+}
+
+.voice-divider::before,
+.voice-divider::after {
+    content: "";
+    flex: 1;
+    border-top: 1px solid var(--line);
+}
+
+.voice-divider span {
+    padding: 0 0.6rem;
+}
+
+button.mic {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    align-self: flex-start;
+    padding: 0.5rem 1rem;
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--accent-ink);
+    border: 1px solid var(--accent);
+    /* Let press-and-hold work without the browser treating it as a scroll/long-press gesture. */
+    touch-action: none;
+    user-select: none;
+}
+
+button.mic:hover:not(:disabled) {
+    background: var(--surface-alt);
+    border-color: var(--accent-ink);
+}
+
+button.mic .mic-glyph {
+    font-size: 1.05rem;
+    line-height: 1;
+}
+
+button.mic-recording,
+button.mic-recording:hover:not(:disabled) {
+    background: var(--overdue-bg);
+    color: var(--overdue-ink);
+    border-color: var(--overdue-line);
+    animation: mic-pulse 1.2s ease-in-out infinite;
+}
+
+button.mic-thinking,
+button.mic-speaking {
+    color: var(--ink-soft);
+    border-color: var(--line);
+}
+
+@keyframes mic-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(180, 35, 24, 0.35); }
+    50% { box-shadow: 0 0 0 6px rgba(180, 35, 24, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    button.mic-recording { animation: none; }
+}
+
+.voice-status {
+    min-height: 1.2em;
+}
+
+.voice-heard {
+    margin: 0.1rem 0;
+    color: var(--ink-soft);
+    font-style: italic;
+}
+
 /* ---- Narrow screens ---- */
 @media (max-width: 560px) {
     .site-main {

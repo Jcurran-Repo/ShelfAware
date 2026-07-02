@@ -1,0 +1,187 @@
+@* Push-to-talk voice shell around the pantry chat (v2.0). Hold the button, say the whole thing,
+   release: STT -> IPantryChat.HandleAsync -> TTS read-back. Stateless one-shot — the SAME brain the
+   text box uses; voice is just swappable I/O. Raises OnApplied so the parent refreshes its lists. *@
+@using ShelfAware.Core.Chat
+@using ShelfAware.Core.Speech
+@implements IAsyncDisposable
+@inject ISpeechToText Stt
+@inject IPantryChat Chat
+@inject ITextToSpeech Tts
+@inject IJSRuntime JS
+
+<div class="voice">
+    <button type="button"
+            class="mic mic-@State.ToString().ToLowerInvariant()"
+            disabled="@(_checked && !_supported || Busy)"
+            @onpointerdown="StartAsync"
+            @onpointerup="StopAsync"
+            @onpointerleave="StopAsync"
+            @onpointercancel="StopAsync"
+            @onkeydown="OnKeyDown"
+            @onkeyup="OnKeyUp"
+            aria-label="@ButtonAria"
+            aria-pressed="@(State == VoiceState.Recording)"
+            title="Press and hold, say what you bought or ran low on, then release.">
+        <span class="mic-glyph" aria-hidden="true">@(State == VoiceState.Recording ? "●" : "🎙")</span>
+        <span class="mic-label">@ButtonLabel</span>
+    </button>
+
+    <div class="voice-status" role="status" aria-live="polite">
+        @if (_checked && !_supported)
+        {
+            <span class="muted">Voice input isn't supported in this browser.</span>
+        }
+        else
+        {
+            @if (_transcript is not null)
+            {
+                <p class="voice-heard">“@_transcript”</p>
+            }
+            @if (_reply is not null)
+            {
+                <p class="@(_error ? "error" : "chat-reply")">@_reply</p>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public EventCallback OnApplied { get; set; }
+
+    private enum VoiceState { Idle, Recording, Thinking, Speaking }
+    private VoiceState State = VoiceState.Idle;
+
+    private IJSObjectReference? _module;
+    private bool _supported;
+    private bool _checked;
+    private bool _keyHeld;
+
+    private string? _transcript;
+    private string? _reply;
+    private bool _error;
+
+    private bool Busy => State is VoiceState.Thinking or VoiceState.Speaking;
+
+    private string ButtonLabel => State switch
+    {
+        VoiceState.Recording => "Listening…",
+        VoiceState.Thinking => "Working…",
+        VoiceState.Speaking => "Speaking…",
+        _ => "Hold to talk",
+    };
+
+    private string ButtonAria => State == VoiceState.Recording ? "Recording — release to send" : "Hold to talk";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _module = await JS.InvokeAsync<IJSObjectReference>("import", "/js/voice.js");
+        _supported = await _module.InvokeAsync<bool>("isSupported");
+        _checked = true;
+        StateHasChanged();
+    }
+
+    private async Task StartAsync()
+    {
+        if (_module is null || !_supported || State != VoiceState.Idle) return;
+        _transcript = null;
+        _reply = null;
+        _error = false;
+        State = VoiceState.Recording;
+        try
+        {
+            await _module.InvokeVoidAsync("start");
+        }
+        catch
+        {
+            Finish(error: true, reply: "Couldn't access the microphone — check the browser's mic permission.");
+        }
+    }
+
+    private async Task StopAsync()
+    {
+        if (_module is null || State != VoiceState.Recording) return;
+        State = VoiceState.Thinking;
+        StateHasChanged();
+
+        VoiceCapture? capture;
+        try
+        {
+            capture = await _module.InvokeAsync<VoiceCapture?>("stop");
+        }
+        catch
+        {
+            capture = null;
+        }
+
+        if (capture is null || string.IsNullOrEmpty(capture.Audio))
+        {
+            Finish(error: true, reply: "Didn't catch anything — hold the button a beat longer.");
+            return;
+        }
+
+        // STT -> chat brain -> TTS. The brain is the existing tested tool-loop, untouched.
+        var heard = await Stt.TranscribeAsync(new AudioClip(Convert.FromBase64String(capture.Audio), capture.MimeType));
+        if (!heard.Success || string.IsNullOrWhiteSpace(heard.Text))
+        {
+            Finish(error: true, reply: "Sorry — I couldn't make out the audio.");
+            return;
+        }
+
+        _transcript = heard.Text;
+        StateHasChanged();
+
+        var result = await Chat.HandleAsync(heard.Text);
+        _reply = result.Reply;
+        _error = !result.Success;
+        if (result.Success)
+            await OnApplied.InvokeAsync();
+
+        await SpeakAsync(result.Reply);
+        State = VoiceState.Idle;
+        StateHasChanged();
+    }
+
+    private async Task SpeakAsync(string text)
+    {
+        if (_module is null || string.IsNullOrWhiteSpace(text)) return;
+        var speech = await Tts.SynthesizeAsync(text);
+        if (!speech.Success) return; // the state change already applied; the read-back is a bonus
+        State = VoiceState.Speaking;
+        StateHasChanged();
+        await _module.InvokeVoidAsync("play", Convert.ToBase64String(speech.Audio), speech.MediaType);
+    }
+
+    private void Finish(bool error, string reply)
+    {
+        _error = error;
+        _reply = reply;
+        State = VoiceState.Idle;
+        StateHasChanged();
+    }
+
+    // Keyboard hold-to-talk (Space/Enter): keydown starts, keyup sends. keydown auto-repeats, so guard.
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key is not (" " or "Enter") || _keyHeld || State != VoiceState.Idle) return;
+        _keyHeld = true;
+        await StartAsync();
+    }
+
+    private async Task OnKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key is not (" " or "Enter") || !_keyHeld) return;
+        _keyHeld = false;
+        await StopAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_module is not null)
+        {
+            try { await _module.DisposeAsync(); } catch { /* circuit already gone */ }
+        }
+    }
+
+    private sealed record VoiceCapture(string Audio, string MimeType, long Size);
+}
