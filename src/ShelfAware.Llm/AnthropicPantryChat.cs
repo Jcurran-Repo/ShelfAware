@@ -1,7 +1,7 @@
 using System.Reflection;
 using System.Text.Json;
-using Anthropic;
 using Anthropic.Models.Messages;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Chat;
@@ -21,17 +21,17 @@ public class AnthropicPantryChat : IPantryChat
     private const int MaxTurns = 5;
     private static readonly string SystemPrompt = ReadEmbedded("Prompts.pantry-chat-system.txt");
 
-    private readonly AnthropicClient _client;
+    private readonly IChatClient _chat;
     private readonly LlmOptions _options;
     private readonly IPantryStore _store;
     private readonly ILogger<AnthropicPantryChat> _logger;
 
-    public AnthropicPantryChat(IOptions<LlmOptions> options, IPantryStore store, ILogger<AnthropicPantryChat> logger)
+    public AnthropicPantryChat(IChatClient chat, IOptions<LlmOptions> options, IPantryStore store, ILogger<AnthropicPantryChat> logger)
     {
+        _chat = chat;
         _options = options.Value;
         _store = store;
         _logger = logger;
-        _client = new AnthropicClient { ApiKey = _options.ApiKey };
     }
 
     public async Task<ChatResult> HandleAsync(string userText, CancellationToken cancellationToken = default)
@@ -43,23 +43,25 @@ public class AnthropicPantryChat : IPantryChat
             ? "(none yet)"
             : string.Join("\n", products.OrderBy(p => p.Name).Select(p => $"- {p.Name} ({p.Category})")));
 
-        var tools = BuildTools();
-        var messages = new List<MessageParam> { new() { Role = Role.User, Content = userText } };
+        var chatOptions = new ChatOptions
+        {
+            ModelId = _options.ChatModel,
+            MaxOutputTokens = 1024,
+            Tools = BuildTools(),
+        };
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.System, system),
+            new(ChatRole.User, userText),
+        };
         var actions = new List<string>();
 
         for (var turn = 0; turn < MaxTurns; turn++)
         {
-            Message response;
+            ChatResponse response;
             try
             {
-                response = await _client.Messages.Create(new MessageCreateParams
-                {
-                    Model = _options.ChatModel,
-                    MaxTokens = 1024,
-                    System = system,
-                    Tools = tools,
-                    Messages = messages,
-                }, cancellationToken: cancellationToken);
+                response = await _chat.GetResponseAsync(messages, chatOptions, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -67,37 +69,24 @@ public class AnthropicPantryChat : IPantryChat
                 return ChatResult.Fail($"Sorry — I couldn't reach the assistant just now. ({ex.Message})");
             }
 
-            var toolUses = response.Content.Select(b => b.Value).OfType<ToolUseBlock>().ToList();
-            if (toolUses.Count == 0)
+            var calls = response.Messages.SelectMany(m => m.Contents).OfType<FunctionCallContent>().ToList();
+            if (calls.Count == 0)
             {
-                var text = string.Concat(response.Content.Select(b => b.Value).OfType<TextBlock>().Select(t => t.Text)).Trim();
+                var text = response.Text.Trim();
                 _logger.LogInformation("Pantry chat completed on turn {Turn} with {ActionCount} action(s) applied.", turn + 1, actions.Count);
                 return ChatResult.Ok(text.Length > 0 ? text : "Done.", actions);
             }
 
-            // Echo the assistant turn (it must carry the tool_use blocks), then answer with results.
-            var assistantContent = new List<ContentBlockParam>();
-            foreach (var block in response.Content)
-            {
-                switch (block.Value)
-                {
-                    case TextBlock tb when !string.IsNullOrWhiteSpace(tb.Text):
-                        assistantContent.Add(new TextBlockParam { Text = tb.Text });
-                        break;
-                    case ToolUseBlock tu:
-                        assistantContent.Add(new ToolUseBlockParam { ID = tu.ID, Name = tu.Name, Input = tu.Input });
-                        break;
-                }
-            }
-            messages.Add(new MessageParam { Role = Role.Assistant, Content = assistantContent });
+            // Carry the assistant's tool-call turn back into the history, then answer each call.
+            messages.AddRange(response.Messages);
 
-            var resultContent = new List<ContentBlockParam>();
-            foreach (var tu in toolUses)
+            var results = new List<AIContent>();
+            foreach (var call in calls)
             {
-                var (text, isError) = await ExecuteToolAsync(tu, products, actions, cancellationToken);
-                resultContent.Add(new ToolResultBlockParam { ToolUseID = tu.ID, Content = text, IsError = isError });
+                var (text, _) = await ExecuteToolAsync(call, products, actions, cancellationToken);
+                results.Add(new FunctionResultContent(call.CallId, text));
             }
-            messages.Add(new MessageParam { Role = Role.User, Content = resultContent });
+            messages.Add(new ChatMessage(ChatRole.Tool, results));
 
             // create_product may have added rows — refresh so later fuzzy matches see them.
             products = await _store.GetProductsAsync(cancellationToken);
@@ -110,16 +99,13 @@ public class AnthropicPantryChat : IPantryChat
     }
 
     private async Task<(string text, bool isError)> ExecuteToolAsync(
-        ToolUseBlock tool, IReadOnlyList<Product> products, List<string> actions, CancellationToken ct)
+        FunctionCallContent call, IReadOnlyList<Product> products, List<string> actions, CancellationToken ct)
     {
-        string? Str(string key) =>
-            tool.Input.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-        decimal? Dec(string key) =>
-            tool.Input.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDecimal() : null;
-        bool? Bool(string key) =>
-            tool.Input.TryGetValue(key, out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False ? v.GetBoolean() : null;
+        string? Str(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsString(v) : null;
+        decimal? Dec(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsDecimal(v) : null;
+        bool? Bool(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsBool(v) : null;
 
-        switch (tool.Name)
+        switch (call.Name)
         {
             case "record_signal":
             {
@@ -198,15 +184,17 @@ public class AnthropicPantryChat : IPantryChat
             }
 
             default:
-                return ($"Unknown tool: {tool.Name}.", true);
+                return ($"Unknown tool: {call.Name}.", true);
         }
     }
 
-    private static IReadOnlyList<ToolUnion> BuildTools()
+    private static IList<AITool> BuildTools()
     {
         const string categoryEnum = """["Dairy","Meat","Produce","Pantry","Frozen","Beverage","Household","PetCare","PersonalCare","Other"]""";
 
-        return
+        // Reuse the existing Anthropic tool definitions, wrapped as AITool via the SDK's AsAITool
+        // helper so they flow through IChatClient. Tool calls come back as FunctionCallContent.
+        ToolUnion[] tools =
         [
             MakeTool("record_signal",
                 "Record an explicit inventory statement about an existing product.",
@@ -258,6 +246,8 @@ public class AnthropicPantryChat : IPantryChat
                 """,
                 ["name", "category"]),
         ];
+
+        return tools.Select(t => t.AsAITool()).ToList();
     }
 
     private static ToolUnion MakeTool(string name, string description, string propertiesJson, string[] required) =>
@@ -281,4 +271,34 @@ public class AnthropicPantryChat : IPantryChat
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }
+
+    // Tool-call arguments arrive as JsonElement (deserialized from the wire) or boxed primitives; read either.
+    private static string? AsString(object? v) => v switch
+    {
+        null => null,
+        string s => s,
+        JsonElement { ValueKind: JsonValueKind.String } e => e.GetString(),
+        JsonElement e => e.ToString(),
+        _ => v.ToString(),
+    };
+
+    private static decimal? AsDecimal(object? v) => v switch
+    {
+        decimal d => d,
+        double db => (decimal)db,
+        int i => i,
+        long l => l,
+        JsonElement { ValueKind: JsonValueKind.Number } e => e.GetDecimal(),
+        string s when decimal.TryParse(s, out var d) => d,
+        _ => null,
+    };
+
+    private static bool? AsBool(object? v) => v switch
+    {
+        bool b => b,
+        JsonElement { ValueKind: JsonValueKind.True } => true,
+        JsonElement { ValueKind: JsonValueKind.False } => false,
+        string s when bool.TryParse(s, out var b) => b,
+        _ => null,
+    };
 }

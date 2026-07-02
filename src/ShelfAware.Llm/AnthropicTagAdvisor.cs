@@ -1,5 +1,4 @@
-using Anthropic;
-using Anthropic.Models.Messages;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Tagging;
@@ -13,15 +12,15 @@ namespace ShelfAware.Llm;
 /// </summary>
 public class AnthropicTagAdvisor : ITagAdvisor
 {
-    private readonly AnthropicClient _client;
+    private readonly IChatClient _chat;
     private readonly LlmOptions _options;
     private readonly ILogger<AnthropicTagAdvisor> _logger;
 
-    public AnthropicTagAdvisor(IOptions<LlmOptions> options, ILogger<AnthropicTagAdvisor> logger)
+    public AnthropicTagAdvisor(IChatClient chat, IOptions<LlmOptions> options, ILogger<AnthropicTagAdvisor> logger)
     {
+        _chat = chat;
         _options = options.Value;
         _logger = logger;
-        _client = new AnthropicClient { ApiKey = _options.ApiKey };
     }
 
     public async Task<string?> FindSynonymAsync(string candidate, IReadOnlyList<string> existing, CancellationToken cancellationToken = default)
@@ -36,14 +35,10 @@ public class AnthropicTagAdvisor : ITagAdvisor
                 "e.g. \"Soda\" and \"Soft Drink\", \"Cleaner\" and \"Detergent\"), reply with that existing " +
                 "tag EXACTLY as written above and nothing else. If it is genuinely different, reply with only: NONE";
 
-            var response = await _client.Messages.Create(new MessageCreateParams
-            {
-                Model = _options.ExtractionModel,
-                MaxTokens = 32,
-                Messages = [new() { Role = Role.User, Content = prompt }],
-            }, cancellationToken: cancellationToken);
+            var options = new ChatOptions { ModelId = _options.ExtractionModel, MaxOutputTokens = 32 };
+            var response = await _chat.GetResponseAsync(prompt, options, cancellationToken);
 
-            var reply = string.Concat(response.Content.Select(b => b.Value).OfType<TextBlock>().Select(t => t.Text)).Trim();
+            var reply = response.Text.Trim();
             return existing.FirstOrDefault(t => string.Equals(t, reply, StringComparison.OrdinalIgnoreCase));
         }
         catch (Exception ex)
