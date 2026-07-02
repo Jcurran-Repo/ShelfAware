@@ -1,0 +1,187 @@
+@* Recipe read-aloud (Phase 3, button-controlled — no barge-in yet). Synthesizes the recipe name +
+   each step to audio (ElevenLabs TTS from Phase 0) and plays them as a step-by-step playlist with
+   pause/resume/prev/next, highlighting the step currently being read. One reader is active at a time;
+   the parent renders this once for the recipe being read. *@
+@using ShelfAware.Core.Speech
+@implements IAsyncDisposable
+@inject ITextToSpeech Tts
+@inject IJSRuntime JS
+
+<div class="read-aloud panel">
+    <div class="ra-head">
+        <h3>🔊 Reading: @Recipe.Name</h3>
+        <button class="icon-btn" @onclick="CloseAsync" aria-label="Stop reading @Recipe.Name" title="Stop reading">✕</button>
+    </div>
+
+    @if (error is not null)
+    {
+        <p class="error">@error</p>
+    }
+    else if (preparing)
+    {
+        <p class="muted" role="status">Preparing narration…</p>
+    }
+    else
+    {
+        @if (steps.Count > 0)
+        {
+            <ol class="ra-steps">
+                @for (var i = 0; i < steps.Count; i++)
+                {
+                    var stepNo = i + 1;
+                    <li class="@(currentIndex == stepNo ? "current" : null)"
+                        aria-current="@(currentIndex == stepNo ? "true" : null)">@steps[i].Text</li>
+                }
+            </ol>
+        }
+        <div class="ra-controls" role="group" aria-label="Read-aloud controls">
+            <button class="secondary" @onclick="PrevAsync" aria-label="Previous step">⏮ Prev</button>
+            <button @onclick="TogglePauseAsync">@(paused ? "▶ Resume" : "⏸ Pause")</button>
+            <button class="secondary" @onclick="NextAsync" aria-label="Next step">Next ⏭</button>
+            @if (finished)
+            {
+                <button @onclick="ReplayAsync" aria-label="Replay from the start">↻ Replay</button>
+            }
+        </div>
+        <p class="muted small" role="status">@Status</p>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public Recipe Recipe { get; set; } = null!;
+    [Parameter] public EventCallback OnClosed { get; set; }
+
+    private IJSObjectReference? _module;
+    private DotNetObjectReference<RecipeReadAloud>? _selfRef;
+
+    private List<RecipeStep> steps = [];
+    private bool preparing = true;
+    private string? error;
+    private bool paused;
+    private bool finished;
+    private int currentIndex; // 0 = intro (recipe name); 1..N = step number being read
+
+    private string Status => finished
+        ? "Done."
+        : currentIndex == 0 ? "Intro…" : $"Step {currentIndex} of {steps.Count}";
+
+    protected override void OnInitialized() =>
+        steps = Recipe.Steps.OrderBy(s => s.Order).ToList();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        _module = await JS.InvokeAsync<IJSObjectReference>("import", "/js/readaloud.js");
+
+        // Segment 0 = spoken intro (name + blurb); segments 1..N = the steps, so a segment index maps
+        // straight onto a step number for highlighting. Synthesized with bounded parallelism so a long
+        // recipe narrates quickly without hammering the TTS concurrency limit.
+        var texts = new List<string> { Intro() };
+        texts.AddRange(steps.Select((s, i) => $"Step {i + 1}. {s.Text}"));
+
+        var clips = await SynthesizeBounded(texts, maxConcurrency: 4);
+        if (clips.Any(c => !c.Success))
+        {
+            error = "Couldn't generate the narration — check that the ElevenLabs key is set.";
+            preparing = false;
+            StateHasChanged();
+            return;
+        }
+
+        var segments = clips.Select(c => new Segment(Convert.ToBase64String(c.Audio), c.MediaType)).ToArray();
+        _selfRef = DotNetObjectReference.Create(this);
+        await _module.InvokeVoidAsync("load", segments, _selfRef);
+
+        preparing = false;
+        paused = false;
+        StateHasChanged();
+        await _module.InvokeVoidAsync("playFrom", 0);
+    }
+
+    private string Intro() =>
+        string.IsNullOrWhiteSpace(Recipe.Blurb) ? $"{Recipe.Name}." : $"{Recipe.Name}. {Recipe.Blurb}";
+
+    private async Task<TextToSpeechResult[]> SynthesizeBounded(IReadOnlyList<string> texts, int maxConcurrency)
+    {
+        using var gate = new SemaphoreSlim(maxConcurrency);
+        var tasks = texts.Select(async t =>
+        {
+            await gate.WaitAsync();
+            try { return await Tts.SynthesizeAsync(t); }
+            finally { gate.Release(); }
+        });
+        return await Task.WhenAll(tasks); // WhenAll preserves input order
+    }
+
+    private async Task TogglePauseAsync()
+    {
+        if (_module is null) return;
+        paused = await _module.InvokeAsync<bool>("togglePause");
+    }
+
+    private async Task NextAsync()
+    {
+        if (_module is null) return;
+        finished = false;
+        paused = false;
+        await _module.InvokeVoidAsync("next");
+    }
+
+    private async Task PrevAsync()
+    {
+        if (_module is null) return;
+        finished = false;
+        paused = false;
+        await _module.InvokeVoidAsync("prev");
+    }
+
+    private async Task ReplayAsync()
+    {
+        if (_module is null) return;
+        finished = false;
+        paused = false;
+        await _module.InvokeVoidAsync("playFrom", 0);
+    }
+
+    private async Task CloseAsync()
+    {
+        if (_module is not null)
+        {
+            try { await _module.InvokeVoidAsync("stop"); } catch { /* circuit gone */ }
+        }
+        await OnClosed.InvokeAsync();
+    }
+
+    [JSInvokable]
+    public Task OnIndex(int i)
+    {
+        currentIndex = i;
+        finished = false;
+        return InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public Task OnFinished()
+    {
+        finished = true;
+        paused = false;
+        return InvokeAsync(StateHasChanged);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_module is not null)
+        {
+            try
+            {
+                await _module.InvokeVoidAsync("stop");
+                await _module.DisposeAsync();
+            }
+            catch { /* circuit already gone */ }
+        }
+        _selfRef?.Dispose();
+    }
+
+    private sealed record Segment(string Base64, string Mime);
+}

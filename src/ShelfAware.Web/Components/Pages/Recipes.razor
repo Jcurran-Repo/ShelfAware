@@ -109,6 +109,10 @@
             <button @onclick="PickForMe">🎲 Pick for me</button>
         }
     </div>
+    @if (readingRecipe is not null)
+    {
+        <RecipeReadAloud Recipe="readingRecipe" @key="readingRecipe.Id" OnClosed="StopReading" />
+    }
     @if (picked is not null)
     {
         <p class="picked-banner">Tonight: <strong>@picked.Name</strong>@(picked.Blurb is { Length: > 0 } pb ? $" — {pb}" : "")</p>
@@ -132,6 +136,10 @@
                         <strong>@r.Name</strong>
                         <span class="chip chip-@(makeable ? "stocked" : "unknown")">@(makeable ? "Ready to make" : "Missing items")</span>
                         <span class="saved-actions">
+                            @if (r.Steps.Count > 0)
+                            {
+                                <button class="secondary" @onclick="() => StartReading(r)" aria-label="Read @r.Name aloud">🔊 Read it to me</button>
+                            }
                             <button class="secondary" @onclick="() => MarkEaten(r)" aria-label="Mark @r.Name eaten">Ate it</button>
                             @if (!makeable)
                             {
@@ -182,7 +190,11 @@
 
     private Recipe? picked;
     private string? extraNote;
+    private Recipe? readingRecipe;
     private readonly Random rng = new();
+
+    private void StartReading(Recipe r) => readingRecipe = r;
+    private void StopReading() => readingRecipe = null;
 
     // A saved recipe is makeable when every MAIN ingredient mapped to a product you currently have on hand
     // (seasonings/staples are ignored — plain-code check over the mapping captured at save time).

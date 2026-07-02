@@ -919,6 +919,48 @@ button.tag-chip {
     gap: 0.4rem 0.9rem;
 }
 
+/* ---- Recipe read-aloud (Phase 3) ---- */
+.read-aloud {
+    border: 1px solid var(--accent);
+    background: var(--surface-alt);
+}
+
+.ra-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.ra-head h3 {
+    margin: 0;
+}
+
+.ra-steps {
+    margin: 0.6rem 0;
+    padding-left: 1.4rem;
+    display: grid;
+    gap: 0.3rem;
+}
+
+.ra-steps li {
+    padding: 0.15rem 0.4rem;
+    border-radius: 6px;
+}
+
+.ra-steps li.current {
+    background: var(--duesoon-bg);
+    color: var(--duesoon-ink);
+    font-weight: 600;
+}
+
+.ra-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.4rem;
+}
+
 .saved-recipes {
     list-style: none;
     padding: 0;
