@@ -72,7 +72,7 @@ _Last updated: 7/2/2026_
 ### Voice
 - [ ] v2.0 — Push-to-talk (ElevenLabs STT + TTS, existing chat brain) — Not complete
 - [ ] v2.1 — Conversational multi-turn — Not complete
-- [ ] Recipe read-aloud — TTS plays a saved recipe — Not complete
+- [x] Recipe read-aloud — TTS plays a saved recipe — 7/2/2026
 - [ ] Voice control of read-aloud: stop / resume / next step (barge-in, pairs with v2.1) — Not complete
 - [x] Recipe cooking steps (data model + advisor) — enables step-by-step read-aloud — 7/2/2026
 
