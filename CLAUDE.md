@@ -189,8 +189,19 @@ the same item bought across brands/sizes rolls up into one product.
   (repo root + parent folder), port 5179.
 - **API key** is in dotnet user-secrets, id `3d6755e6-9881-43a6-813c-fe3ebd974cd9`, key `Llm:ApiKey`.
   Editing that file by hand repeatedly failed for Jordan. To change it: have him save the bare key
-  to Desktop `key.txt`, move it into secrets.json programmatically, delete the temp file. Never echo
-  or commit the key.
+  to a gitignored repo file (see the sandbox gotcha below), move it into secrets.json programmatically,
+  delete the temp file. Never echo or commit the key.
+- **Claude's tool sandbox reads a FROZEN snapshot of the user's `%APPDATA%` / user-secrets, separate
+  from the real machine.** The repo dir is live-shared (edits + commits are real), but the user profile
+  is NOT: a key the user adds via `dotnet user-secrets` in their own terminal is INVISIBLE to the dev
+  server Claude launches (which reads the stale sandbox copy — e.g. it was seen frozen at 2026-06-12
+  with only `Llm:ApiKey`). Tell-tale symptom: `dotnet user-secrets list` shows different keys in
+  Claude's shell vs. the user's terminal. Consequences: (a) Claude's launched app only has whatever
+  secrets existed when the sandbox was created; (b) to test a feature needing a NEWLY-added secret,
+  either the USER runs the app themselves, OR drop the key into a **gitignored repo path** (e.g.
+  `src/ShelfAware.Web/app-data/elkey.txt` — `app-data/` is ignored; NOT the Desktop, which the sandbox
+  can't see) and have Claude read it and `dotnet user-secrets set` it into the sandbox store, then
+  delete the file. Suppress the `set` command's stdout so the value isn't echoed.
 - **Schema changes need a fresh DB** — `EnsureCreated()` does NOT migrate. Either delete
   `app-data/shelfaware.db*` (clean empty DB; re-import the 3 real receipts via Upload) OR, to keep
   the curated data without re-extraction, `ALTER TABLE … ADD COLUMN` + backfill against the SQLite
