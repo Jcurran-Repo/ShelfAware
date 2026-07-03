@@ -627,6 +627,39 @@ button.mic-speaking {
     margin-right: 0.4rem;
 }
 
+.convo-phase {
+    margin: 0.35rem 0 0;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.convo-phase.listening {
+    color: var(--stocked-ink);
+}
+
+.convo-phase.speaking {
+    color: var(--accent-ink);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .convo-phase.listening::before {
+        content: "";
+        display: inline-block;
+        width: 0.55rem;
+        height: 0.55rem;
+        margin-right: 0.4rem;
+        border-radius: 50%;
+        background: var(--stocked-line);
+        vertical-align: middle;
+        animation: convo-listen-pulse 1.2s ease-in-out infinite;
+    }
+}
+
+@keyframes convo-listen-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(0.75); }
+}
+
 /* ---- Narrow screens ---- */
 @media (max-width: 560px) {
     .site-main {
