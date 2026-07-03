@@ -1,0 +1,111 @@
+@page "/settings"
+@rendermode InteractiveServer
+@using ShelfAware.Core.Settings
+@using ShelfAware.Core.Ingest
+@inject IAppSettings SettingsStore
+@inject IReceiptInbox Inbox
+@inject IReceiptImporter Importer
+@inject IDbContextFactory<ShelfAwareDbContext> DbFactory
+
+<PageTitle>Settings — Shelf Aware</PageTitle>
+
+<div class="page-head">
+    <h1>Settings</h1>
+</div>
+
+<section class="panel">
+    <h2>Receipt auto-import</h2>
+    <p class="muted">
+        Point this at a folder of receipt images or PDFs. The assistant auto-imports new ones — on
+        startup, when you press “Scan now”, or when you tell it <em>“import my receipts”</em>. Imported
+        receipts are <strong>auto-confirmed</strong> straight into your history with no review step, so
+        use this once the extraction is reliable for your receipts.
+    </p>
+
+    <div class="tag-add">
+        <input @bind="folder" @bind:event="oninput" placeholder="e.g. C:\Users\you\Documents\Receipts"
+               aria-label="Receipt folder path" size="48" />
+        <button @onclick="SaveFolder" disabled="@saving">@(saving ? "Saving…" : "Save")</button>
+    </div>
+    @if (savedNote is not null)
+    {
+        <p class="chat-reply" role="status">@savedNote</p>
+    }
+
+    <p class="@(configured ? "muted" : "error")">@FolderStatus</p>
+
+    <div class="review-actions">
+        <button @onclick="ScanNow" disabled="@(scanning || !configured)">@(scanning ? "Scanning…" : "Scan now")</button>
+    </div>
+    @if (scanResult is not null)
+    {
+        <p class="chat-reply" role="status">@scanResult</p>
+    }
+</section>
+
+@code {
+    private string folder = "";
+    private bool configured;
+    private int fileCount;
+    private int newCount;
+    private bool saving;
+    private bool scanning;
+    private string? savedNote;
+    private string? scanResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        folder = await SettingsStore.GetAsync(SettingKeys.ReceiptFolder) ?? "";
+        await RefreshStatus();
+    }
+
+    private string FolderStatus => !configured
+        ? (string.IsNullOrWhiteSpace(folder) ? "No folder set yet." : "That folder isn't set or doesn't exist yet.")
+        : $"{fileCount} receipt file(s) in the folder · {newCount} not yet imported.";
+
+    private async Task RefreshStatus()
+    {
+        configured = await Inbox.IsConfiguredAsync();
+        if (!configured) { fileCount = 0; newCount = 0; return; }
+
+        var items = await Inbox.ListAsync();
+        fileCount = items.Count;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var imported = (await db.Receipts.Where(r => r.SourceFile != null).Select(r => r.SourceFile!).ToListAsync())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        newCount = items.Count(i => !imported.Contains(i.Id));
+    }
+
+    private async Task SaveFolder()
+    {
+        saving = true;
+        savedNote = null;
+        scanResult = null;
+        try
+        {
+            await SettingsStore.SetAsync(SettingKeys.ReceiptFolder, folder.Trim());
+            await RefreshStatus();
+            savedNote = "Saved.";
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private async Task ScanNow()
+    {
+        scanning = true;
+        scanResult = null;
+        try
+        {
+            var summary = await Importer.ImportNewAsync();
+            scanResult = summary.Describe();
+            await RefreshStatus();
+        }
+        finally
+        {
+            scanning = false;
+        }
+    }
+}

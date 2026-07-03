@@ -171,6 +171,23 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task Import_receipts_tool_invokes_the_importer_and_reports()
+    {
+        var importer = new FakeReceiptImporter(new ShelfAware.Core.Ingest.ImportSummary(true, 2, 7, 1, 0));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("import_receipts")),
+            () => Responses.Text("Imported your receipts."));
+        var chat = new AnthropicPantryChat(client, Options.Create(new LlmOptions()), new FakePantryStore(),
+            NullLogger<AnthropicPantryChat>.Instance, importer);
+
+        var result = await chat.HandleAsync("import my receipts");
+
+        Assert.True(result.Success);
+        Assert.Equal(1, importer.Calls);
+        Assert.Contains("imported 2 receipt(s)", result.Actions);
+    }
+
+    [Fact]
     public async Task Stops_after_the_turn_limit()
     {
         // The model keeps calling a tool and never gives a final answer → the loop must bail out.

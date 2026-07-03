@@ -17,9 +17,12 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
     public DbSet<RecipeIngredient> RecipeIngredients => Set<RecipeIngredient>();
     public DbSet<RecipeStep> RecipeSteps => Set<RecipeStep>();
     public DbSet<GroceryExtra> GroceryExtras => Set<GroceryExtra>();
+    public DbSet<AppSetting> AppSettings => Set<AppSetting>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<AppSetting>().HasKey(s => s.Key);
+
         modelBuilder.Entity<ProductAlias>()
             .HasIndex(a => new { a.Merchant, a.RawText })
             .IsUnique();

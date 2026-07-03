@@ -4,12 +4,15 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Extraction;
+using ShelfAware.Core.Ingest;
 using ShelfAware.Core.Recipes;
+using ShelfAware.Core.Settings;
 using ShelfAware.Core.Speech;
 using ShelfAware.Core.Tagging;
 using ShelfAware.Llm;
 using ShelfAware.Web.Components;
 using ShelfAware.Web.Data;
+using ShelfAware.Web.Ingest;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -45,6 +48,12 @@ builder.Services.AddSingleton<IPantryChat, AnthropicPantryChat>();
 builder.Services.AddSingleton<ITagAdvisor, AnthropicTagAdvisor>();
 builder.Services.AddSingleton<IRecipeAdvisor, AnthropicRecipeAdvisor>();
 
+// Receipt auto-import: a swappable inbox (local folder now, cloud later) + the importer the chat/voice
+// agent triggers, plus the runtime settings store behind the /settings page.
+builder.Services.AddSingleton<IAppSettings, EfAppSettings>();
+builder.Services.AddSingleton<IReceiptInbox, LocalFolderReceiptInbox>();
+builder.Services.AddSingleton<IReceiptImporter, ReceiptImporter>();
+
 // Voice I/O (ElevenLabs): Scribe = STT (ear), TTS = mouth. Speech is its own REST API, not an
 // IChatClient workload, so each rides a typed HttpClient with the base address + xi-api-key header.
 // Typed clients are transient (the factory owns handler lifetime) — fine, the services are stateless.
@@ -72,6 +81,9 @@ using (var scope = app.Services.CreateScope())
     // an existing one, so columns added after a single-user DB was first created must be backfilled or
     // the app breaks on load. Idempotent — only adds the column when it's missing.
     EnsureColumn(db, "Recipes", "EstimatedCaloriesPerServing", "INTEGER NULL");
+    EnsureColumn(db, "Receipts", "SourceFile", "TEXT NULL");
+    db.Database.ExecuteSqlRaw(
+        "CREATE TABLE IF NOT EXISTS \"AppSettings\" (\"Key\" TEXT NOT NULL CONSTRAINT \"PK_AppSettings\" PRIMARY KEY, \"Value\" TEXT NOT NULL);");
 }
 
 static void EnsureColumn(ShelfAwareDbContext db, string table, string column, string columnDef)
@@ -93,6 +105,23 @@ static void EnsureColumn(ShelfAwareDbContext db, string table, string column, st
     finally
     {
         if (wasClosed) conn.Close();
+    }
+}
+
+// Auto-scan the receipt inbox on startup (in the background; a no-op when no folder is configured), so
+// dropped receipts get imported with no manual step — the low-input path.
+app.Lifetime.ApplicationStarted.Register(() => _ = ScanReceiptsAsync(app));
+
+static async Task ScanReceiptsAsync(WebApplication app)
+{
+    try
+    {
+        await app.Services.GetRequiredService<IReceiptImporter>().ImportNewAsync();
+    }
+    catch (Exception ex)
+    {
+        app.Services.GetRequiredService<ILoggerFactory>()
+            .CreateLogger("ReceiptAutoScan").LogError(ex, "Startup receipt auto-scan failed.");
     }
 }
 

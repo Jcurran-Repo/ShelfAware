@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
+using ShelfAware.Core.Ingest;
 using ShelfAware.Core.Prediction;
 using Category = ShelfAware.Core.Domain.Category;
 
@@ -24,13 +25,17 @@ public class AnthropicPantryChat : IPantryChat
     private readonly IChatClient _chat;
     private readonly LlmOptions _options;
     private readonly IPantryStore _store;
+    private readonly IReceiptImporter? _importer;
     private readonly ILogger<AnthropicPantryChat> _logger;
 
-    public AnthropicPantryChat(IChatClient chat, IOptions<LlmOptions> options, IPantryStore store, ILogger<AnthropicPantryChat> logger)
+    public AnthropicPantryChat(
+        IChatClient chat, IOptions<LlmOptions> options, IPantryStore store, ILogger<AnthropicPantryChat> logger,
+        IReceiptImporter? importer = null)
     {
         _chat = chat;
         _options = options.Value;
         _store = store;
+        _importer = importer;
         _logger = logger;
     }
 
@@ -192,6 +197,15 @@ public class AnthropicPantryChat : IPantryChat
                 return ($"Created {name} ({category}).", false);
             }
 
+            case "import_receipts":
+            {
+                if (_importer is null)
+                    return ("Receipt import isn't set up.", true);
+                var summary = await _importer.ImportNewAsync(ct);
+                if (summary.Imported > 0) actions.Add($"imported {summary.Imported} receipt(s)");
+                return (summary.Describe(), false);
+            }
+
             default:
                 return ($"Unknown tool: {call.Name}.", true);
         }
@@ -254,6 +268,14 @@ public class AnthropicPantryChat : IPantryChat
                 }
                 """,
                 ["name", "category"]),
+
+            MakeTool("import_receipts",
+                "Scan the configured receipt folder and auto-import any NEW receipt files (extract + record the purchases). Use when the user asks to import, upload, scan, or process their receipts.",
+                """
+                {
+                }
+                """,
+                []),
         ];
 
         return tools.Select(t => t.AsAITool()).ToList();
