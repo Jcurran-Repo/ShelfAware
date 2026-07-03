@@ -531,6 +531,52 @@ button.mic-speaking {
     font-style: italic;
 }
 
+/* ---- Voice conversation (v2.1 multi-turn) ---- */
+.voice-convo {
+    margin-top: 0.6rem;
+}
+
+.convo-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.4rem;
+}
+
+.convo-log {
+    display: grid;
+    gap: 0.35rem;
+    margin-bottom: 0.6rem;
+    max-height: 16rem;
+    overflow-y: auto;
+}
+
+.convo-user,
+.convo-bot {
+    margin: 0;
+    padding: 0.3rem 0.5rem;
+    border-radius: 8px;
+}
+
+.convo-user {
+    background: var(--surface-alt);
+}
+
+.convo-bot {
+    background: var(--stocked-bg);
+    color: var(--stocked-ink);
+}
+
+.convo-user .who,
+.convo-bot .who {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    opacity: 0.7;
+    margin-right: 0.4rem;
+}
+
 /* ---- Narrow screens ---- */
 @media (max-width: 560px) {
     .site-main {
