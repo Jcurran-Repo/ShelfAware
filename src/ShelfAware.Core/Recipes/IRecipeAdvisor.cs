@@ -15,7 +15,8 @@ public interface IRecipeAdvisor
 }
 
 public record RecipeSuggestion(
-    string Name, string Blurb, IReadOnlyList<SuggestedIngredient> Ingredients, IReadOnlyList<string> Steps)
+    string Name, string Blurb, IReadOnlyList<SuggestedIngredient> Ingredients, IReadOnlyList<string> Steps,
+    int? CaloriesPerServing = null)
 {
     /// <summary>Main ingredients the user still needs to buy — what to add to the grocery list.</summary>
     public IEnumerable<SuggestedIngredient> ToGrab => Ingredients.Where(i => i.IsMain && !i.Have);

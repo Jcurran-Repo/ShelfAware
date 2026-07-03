@@ -68,6 +68,32 @@ using (var scope = app.Services.CreateScope())
     var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<ShelfAwareDbContext>>();
     using var db = factory.CreateDbContext();
     db.Database.EnsureCreated();
+    // Lightweight additive "migration": EnsureCreated builds a fresh DB's full schema but never ALTERs
+    // an existing one, so columns added after a single-user DB was first created must be backfilled or
+    // the app breaks on load. Idempotent — only adds the column when it's missing.
+    EnsureColumn(db, "Recipes", "EstimatedCaloriesPerServing", "INTEGER NULL");
+}
+
+static void EnsureColumn(ShelfAwareDbContext db, string table, string column, string columnDef)
+{
+    var conn = db.Database.GetDbConnection();
+    var wasClosed = conn.State != System.Data.ConnectionState.Open;
+    if (wasClosed) conn.Open();
+    try
+    {
+        using (var check = conn.CreateCommand())
+        {
+            check.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = '{column}';";
+            if (Convert.ToInt64(check.ExecuteScalar()) > 0) return;
+        }
+        using var alter = conn.CreateCommand();
+        alter.CommandText = $"ALTER TABLE \"{table}\" ADD COLUMN \"{column}\" {columnDef};";
+        alter.ExecuteNonQuery();
+    }
+    finally
+    {
+        if (wasClosed) conn.Close();
+    }
 }
 
 if (!app.Environment.IsDevelopment())

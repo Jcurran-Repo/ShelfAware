@@ -71,7 +71,9 @@
     {
         var steps = Recipe.Steps.OrderBy(s => s.Order).Select((s, i) => $"{i + 1}. {s.Text}");
         var intro = string.IsNullOrWhiteSpace(Recipe.Blurb) ? Recipe.Name : $"{Recipe.Name}. {Recipe.Blurb}";
-        return intro + "\n\nSteps:\n" + string.Join("\n", steps);
+        // Include the estimated calories so the agent can answer "how many calories?" from its context.
+        var cals = Recipe.EstimatedCaloriesPerServing is { } c ? $"\nEstimated calories per serving: ~{c} (rough estimate)." : "";
+        return intro + cals + "\n\nSteps:\n" + string.Join("\n", steps);
     }
 
     [JSInvokable]

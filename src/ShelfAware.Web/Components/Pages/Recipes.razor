@@ -66,6 +66,10 @@
                         </button>
                     </div>
                     <p class="muted">@s.Blurb</p>
+                    @if (s.CaloriesPerServing is { } cal)
+                    {
+                        <p class="recipe-cal">~@cal cal / serving <span class="muted">(est.)</span></p>
+                    }
                     <ul class="ingredient-list">
                         @foreach (var i in s.Ingredients.Where(i => i.IsMain))
                         {
@@ -168,6 +172,10 @@
                     @if (r.Blurb is { Length: > 0 })
                     {
                         <p class="muted">@r.Blurb</p>
+                    }
+                    @if (r.EstimatedCaloriesPerServing is { } cal)
+                    {
+                        <p class="recipe-cal">~@cal cal / serving <span class="muted">(est.)</span></p>
                     }
                     <ul class="ingredient-list">
                         @foreach (var i in r.Ingredients.Where(i => i.IsMain))
@@ -329,6 +337,7 @@
             SavedAt = DateTimeOffset.Now,
             Ingredients = s.Ingredients.Select(i => new RecipeIngredient { Name = i.Name, IsMain = i.IsMain, MatchedProduct = i.MatchedProduct }).ToList(),
             Steps = s.Steps.Select((t, idx) => new RecipeStep { Order = idx + 1, Text = t }).ToList(),
+            EstimatedCaloriesPerServing = s.CaloriesPerServing,
         });
         await db.SaveChangesAsync();
         await LoadAsync();

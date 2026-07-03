@@ -13,4 +13,6 @@ public class Recipe
     public List<RecipeIngredient> Ingredients { get; set; } = [];
     /// <summary>Ordered cooking method (v2) — the content read-aloud steps through.</summary>
     public List<RecipeStep> Steps { get; set; } = [];
+    /// <summary>LLM's rough estimated calories per serving (ballpark, not precise nutrition); null if unknown.</summary>
+    public int? EstimatedCaloriesPerServing { get; set; }
 }

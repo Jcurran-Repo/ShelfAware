@@ -31,7 +31,8 @@ public class RecipeAdvisorTests
                 "Toast the bread.",
                 "Mash the avocado and spread it on.",
                 "Crumble feta over the top and drizzle with oil."
-              ]
+              ],
+              "calories_per_serving": 520
             }
           ]
         }
@@ -45,6 +46,7 @@ public class RecipeAdvisorTests
         Assert.Equal(3, recipe.Steps.Count);
         Assert.Equal("Toast the bread.", recipe.Steps[0]);
         Assert.Equal("Crumble feta over the top and drizzle with oil.", recipe.Steps[2]);
+        Assert.Equal(520, recipe.CaloriesPerServing);
         // Grounded match -> Have; unmatched main -> shows up in ToGrab.
         Assert.Contains(recipe.Ingredients, i => i.Name == "Avocado" && i.Have);
         Assert.Contains(recipe.ToGrab, g => g.Name == "Feta");
@@ -61,6 +63,7 @@ public class RecipeAdvisorTests
         var recipe = Assert.Single(await advisor.SuggestAsync("quick", [], []));
 
         Assert.Empty(recipe.Steps);
+        Assert.Null(recipe.CaloriesPerServing); // absent in the response -> null, not a parse failure
     }
 
     [Fact]
