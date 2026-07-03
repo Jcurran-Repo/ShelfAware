@@ -70,10 +70,10 @@ _Last updated: 7/2/2026_
 - [x] CI tests for the LLM tool-loop via a faked client — 7/2/2026
 
 ### Voice
-- [ ] v2.0 — Push-to-talk (ElevenLabs STT + TTS, existing chat brain) — Not complete
-- [ ] v2.1 — Conversational multi-turn — Not complete
+- [x] v2.0 — Push-to-talk (ElevenLabs STT + TTS, existing chat brain) — 7/3/2026
+- [x] v2.1 — Conversational multi-turn (owned IPantryChat + ElevenLabs STT/TTS) — 7/3/2026
 - [x] Recipe read-aloud — TTS plays a saved recipe — 7/2/2026
-- [ ] Voice control of read-aloud: stop / resume / next step (barge-in, pairs with v2.1) — Not complete
+- [x] Voice control of read-aloud: stop / next / repeat (barge-in via an ElevenLabs agent) — 7/3/2026
 - [x] Recipe cooking steps (data model + advisor) — enables step-by-step read-aloud — 7/2/2026
 
 ### Prediction
