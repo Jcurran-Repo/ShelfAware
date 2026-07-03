@@ -79,6 +79,11 @@ _Last updated: 7/2/2026_
 ### Prediction
 - [x] Two-stream cadence model (rebuy rhythm + burn rate, hybrid) — 7/2/2026
 
+### Ingestion
+- [x] Receipt auto-import: settings page + swappable inbox seam + agent tool (auto-confirm) — 7/3/2026
+- [x] Recipe calorie estimate (advisor + display + cook-along context) — 7/3/2026
+- [ ] Cloud receipt inbox (Azure Blob / drive) — non-local import at deploy — Not complete
+
 ---
 
 ## v3 — Accounts & multi-user (prerequisite for selling)
