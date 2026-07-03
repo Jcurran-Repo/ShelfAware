@@ -34,7 +34,8 @@ public class AnthropicPantryChat : IPantryChat
         _logger = logger;
     }
 
-    public async Task<ChatResult> HandleAsync(string userText, CancellationToken cancellationToken = default)
+    public async Task<ChatResult> HandleAsync(
+        string userText, IReadOnlyList<ChatTurn>? history = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(userText)) return ChatResult.Fail("Type something to update.");
 
@@ -49,11 +50,19 @@ public class AnthropicPantryChat : IPantryChat
             MaxOutputTokens = 1024,
             Tools = BuildTools(),
         };
-        var messages = new List<ChatMessage>
+        // Replay prior (user, assistant) exchanges so follow-ups resolve against what was just said,
+        // then append the new user turn. Empty history = the original single-turn behaviour.
+        var messages = new List<ChatMessage> { new(ChatRole.System, system) };
+        if (history is { Count: > 0 })
         {
-            new(ChatRole.System, system),
-            new(ChatRole.User, userText),
-        };
+            foreach (var turn in history)
+            {
+                messages.Add(new ChatMessage(ChatRole.User, turn.User));
+                messages.Add(new ChatMessage(ChatRole.Assistant, turn.Assistant));
+            }
+        }
+        messages.Add(new ChatMessage(ChatRole.User, userText));
+
         var actions = new List<string>();
 
         for (var turn = 0; turn < MaxTurns; turn++)

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 
 namespace ShelfAware.Llm.Tests;
@@ -139,6 +140,34 @@ public class PantryChatTests
 
         Assert.False(result.Success);
         Assert.Contains("couldn't reach", result.Reply);
+    }
+
+    [Fact]
+    public async Task Replays_conversation_history_so_follow_ups_have_context()
+    {
+        // Turn 1 ("what am I low on?") already happened; now the follow-up references it. The prior
+        // exchange must be replayed into the model's context so "the first two" is resolvable.
+        var store = new FakePantryStore(P(1, "Olive Oil", Category.Pantry), P(2, "Coffee", Category.Beverage));
+        var history = new[] { new ChatTurn("what am I low on?", "You're low on olive oil and coffee.") };
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(
+                Responses.Call("add_purchase", ("product_name", "olive oil")),
+                Responses.Call("add_purchase", ("product_name", "coffee"))),
+            () => Responses.Text("Added olive oil and coffee."));
+
+        var result = await Chat(client, store).HandleAsync("add the first two", history);
+
+        Assert.True(result.Success);
+        Assert.Equal(2, store.Purchases.Count);
+
+        // First model call of this turn must carry: system, then the prior turn, then the new user text.
+        var convo = client.ReceivedMessages[0]
+            .Where(m => m.Role != ChatRole.System)
+            .Select(m => (m.Role, m.Text))
+            .ToList();
+        Assert.Equal((ChatRole.User, "what am I low on?"), convo[0]);
+        Assert.Equal((ChatRole.Assistant, "You're low on olive oil and coffee."), convo[1]);
+        Assert.Equal((ChatRole.User, "add the first two"), convo[2]);
     }
 
     [Fact]

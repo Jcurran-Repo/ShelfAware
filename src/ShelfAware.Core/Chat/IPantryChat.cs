@@ -8,8 +8,17 @@ namespace ShelfAware.Core.Chat;
 /// </summary>
 public interface IPantryChat
 {
-    Task<ChatResult> HandleAsync(string userText, CancellationToken cancellationToken = default);
+    /// <param name="history">Prior turns of the same conversation, oldest first, so a follow-up can
+    /// reference earlier context ("add the first two"). Null/empty = a fresh single-turn request
+    /// (the original dashboard behaviour).</param>
+    Task<ChatResult> HandleAsync(
+        string userText, IReadOnlyList<ChatTurn>? history = null, CancellationToken cancellationToken = default);
 }
+
+/// <summary>One completed exchange in a multi-turn voice conversation (v2.1). The assistant's reply
+/// text carries enough context that replaying (user, assistant) pairs lets the model resolve
+/// references on the next turn — so we don't need to persist the intermediate tool calls.</summary>
+public record ChatTurn(string User, string Assistant);
 
 public record ChatResult
 {
