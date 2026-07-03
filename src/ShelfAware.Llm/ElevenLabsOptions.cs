@@ -23,4 +23,9 @@ public class ElevenLabsOptions
 
     /// <summary>TTS output encoding (ElevenLabs output_format query value). mp3_44100_128 plays natively in browsers.</summary>
     public string OutputFormat { get; set; } = "mp3_44100_128";
+
+    /// <summary>Conversational-AI agent id for the hands-free recipe cook-along (v2.1). Empty = the
+    /// cook-along button is hidden. Not a secret (it's referenced client-side), but account-specific,
+    /// so it's configured rather than hard-coded.</summary>
+    public string AgentId { get; set; } = "";
 }

@@ -81,6 +81,29 @@ app.UseHttpsRedirection();
 app.UseAntiforgery();
 
 app.MapStaticAssets();
+
+// Mints a short-lived signed URL so the browser can open a realtime ElevenLabs cook-along session
+// WITHOUT ever seeing the API key (the key stays here on the server). The agent handles turn-taking +
+// barge-in; the recipe is injected client-side as a dynamic variable.
+app.MapGet("/api/cookalong/signed-url", async (IHttpClientFactory httpFactory, IOptions<ElevenLabsOptions> opts, CancellationToken ct) =>
+{
+    var o = opts.Value;
+    if (string.IsNullOrEmpty(o.ApiKey) || string.IsNullOrEmpty(o.AgentId))
+        return Results.Problem("Hands-free cook-along isn't configured (needs ElevenLabs key + agent id).", statusCode: 503);
+
+    var http = httpFactory.CreateClient();
+    using var request = new HttpRequestMessage(HttpMethod.Get,
+        $"https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id={Uri.EscapeDataString(o.AgentId)}");
+    request.Headers.Add("xi-api-key", o.ApiKey);
+
+    using var response = await http.SendAsync(request, ct);
+    if (!response.IsSuccessStatusCode)
+        return Results.Problem($"Couldn't start the cook-along session ({(int)response.StatusCode}).", statusCode: 502);
+
+    // ElevenLabs returns { "signed_url": "wss://..." }; pass it straight through to the client.
+    return Results.Content(await response.Content.ReadAsStringAsync(ct), "application/json");
+});
+
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 

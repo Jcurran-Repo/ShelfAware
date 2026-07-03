@@ -2,8 +2,11 @@
 @rendermode InteractiveServer
 @using ShelfAware.Core.Prediction
 @using ShelfAware.Core.Recipes
+@using ShelfAware.Llm
+@using Microsoft.Extensions.Options
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
 @inject IRecipeAdvisor Advisor
+@inject IOptions<ElevenLabsOptions> ElOptions
 
 <PageTitle>Recipes — Shelf Aware</PageTitle>
 
@@ -113,6 +116,10 @@
     {
         <RecipeReadAloud Recipe="readingRecipe" @key="readingRecipe.Id" OnClosed="StopReading" />
     }
+    @if (cookingRecipe is not null)
+    {
+        <CookAlong Recipe="cookingRecipe" @key="cookingRecipe.Id" OnClosed="StopCooking" />
+    }
     @if (picked is not null)
     {
         <p class="picked-banner">Tonight: <strong>@picked.Name</strong>@(picked.Blurb is { Length: > 0 } pb ? $" — {pb}" : "")</p>
@@ -139,6 +146,10 @@
                             @if (r.Steps.Count > 0)
                             {
                                 <button class="secondary" @onclick="() => StartReading(r)" aria-label="Read @r.Name aloud">🔊 Read it to me</button>
+                                @if (CookAlongAvailable)
+                                {
+                                    <button class="secondary" @onclick="() => StartCooking(r)" aria-label="Hands-free cook-along for @r.Name">🎙 Cook-along</button>
+                                }
                             }
                             <button class="secondary" @onclick="() => MarkEaten(r)" aria-label="Mark @r.Name eaten">Ate it</button>
                             @if (!makeable)
@@ -191,10 +202,17 @@
     private Recipe? picked;
     private string? extraNote;
     private Recipe? readingRecipe;
+    private Recipe? cookingRecipe;
     private readonly Random rng = new();
 
-    private void StartReading(Recipe r) => readingRecipe = r;
+    // Hands-free cook-along only shows when an ElevenLabs agent is configured (empty id = hidden).
+    private bool CookAlongAvailable => !string.IsNullOrEmpty(ElOptions.Value.AgentId);
+
+    // Only one voice surface at a time — starting one closes the other.
+    private void StartReading(Recipe r) { cookingRecipe = null; readingRecipe = r; }
     private void StopReading() => readingRecipe = null;
+    private void StartCooking(Recipe r) { readingRecipe = null; cookingRecipe = r; }
+    private void StopCooking() => cookingRecipe = null;
 
     // A saved recipe is makeable when every MAIN ingredient mapped to a product you currently have on hand
     // (seasonings/staples are ignored — plain-code check over the mapping captured at save time).

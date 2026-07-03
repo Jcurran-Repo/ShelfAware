@@ -1,0 +1,117 @@
+@* Hands-free recipe cook-along (Phase 4b). Opens a realtime ElevenLabs agent conversation (via a
+   server-minted signed URL) with the recipe injected as a dynamic variable. The agent reads steps and
+   responds to spoken "next / back / repeat / stop" WHILE listening — native barge-in, no tap needed.
+   This is the one surface where we hand the loop to ElevenLabs' agent on purpose; the pantry brain
+   stays ours (VoiceConversation). *@
+@using ShelfAware.Core.Domain
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<div class="cookalong panel">
+    <div class="ra-head">
+        <h3>🎙 Cook-along: @Recipe.Name</h3>
+        <button class="icon-btn" @onclick="CloseAsync" aria-label="End cook-along" title="End cook-along">✕</button>
+    </div>
+
+    <p class="cookalong-status @StatusClass" role="status" aria-live="polite">@StatusText</p>
+
+    @if (transcript.Count > 0)
+    {
+        <div class="convo-log">
+            @foreach (var line in transcript)
+            {
+                <p class="@(line.Source == "user" ? "convo-user" : "convo-bot")">
+                    <span class="who">@(line.Source == "user" ? "You" : "Chef")</span> @line.Text
+                </p>
+            }
+        </div>
+    }
+
+    <p class="muted small">Say “next”, “back”, “repeat”, or “stop”. Just talk — it listens while it speaks.</p>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public Recipe Recipe { get; set; } = null!;
+    [Parameter] public EventCallback OnClosed { get; set; }
+
+    private IJSObjectReference? _module;
+    private DotNetObjectReference<CookAlong>? _selfRef;
+
+    private string status = "connecting";
+    private string mode = "listening";
+    private readonly List<(string Source, string Text)> transcript = [];
+
+    private string StatusText => status switch
+    {
+        "connecting" => "Connecting…",
+        "connected" => mode == "speaking" ? "Chef is speaking…" : "Listening — go ahead",
+        "unconfigured" => "Hands-free cook-along isn't set up on the server.",
+        "error" => "Couldn't start the cook-along — check your connection and mic permission.",
+        "ended" => "Cook-along ended.",
+        _ => "…",
+    };
+
+    private string StatusClass => status switch
+    {
+        "error" or "unconfigured" => "error",
+        "connected" => mode == "speaking" ? "speaking" : "listening",
+        _ => "muted",
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _module = await JS.InvokeAsync<IJSObjectReference>("import", "/js/cookalong.js");
+        _selfRef = DotNetObjectReference.Create(this);
+        await _module.InvokeAsync<bool>("start", RecipeText(), _selfRef);
+    }
+
+    // What the agent's {{recipe}} dynamic variable is filled with — name, blurb, and the ordered steps.
+    private string RecipeText()
+    {
+        var steps = Recipe.Steps.OrderBy(s => s.Order).Select((s, i) => $"{i + 1}. {s.Text}");
+        var intro = string.IsNullOrWhiteSpace(Recipe.Blurb) ? Recipe.Name : $"{Recipe.Name}. {Recipe.Blurb}";
+        return intro + "\n\nSteps:\n" + string.Join("\n", steps);
+    }
+
+    [JSInvokable]
+    public Task OnStatus(string s)
+    {
+        status = s;
+        return InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public Task OnMode(string m)
+    {
+        mode = m;
+        if (status == "connecting") status = "connected";
+        return InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public Task OnTranscript(string source, string text)
+    {
+        transcript.Add((source, text));
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private async Task CloseAsync()
+    {
+        if (_module is not null)
+        {
+            try { await _module.InvokeVoidAsync("stop"); } catch { /* already closed */ }
+        }
+        await OnClosed.InvokeAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_module is not null)
+        {
+            try { await _module.InvokeVoidAsync("stop"); await _module.DisposeAsync(); }
+            catch { /* circuit already gone */ }
+        }
+        _selfRef?.Dispose();
+    }
+}

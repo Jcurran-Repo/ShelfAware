@@ -1007,6 +1007,25 @@ button.tag-chip {
     margin-top: 0.4rem;
 }
 
+/* ---- Hands-free cook-along (Phase 4b) ---- */
+.cookalong {
+    border: 1px solid var(--accent);
+    background: var(--surface-alt);
+}
+
+.cookalong-status {
+    font-weight: 600;
+    margin: 0.3rem 0;
+}
+
+.cookalong-status.listening {
+    color: var(--stocked-ink);
+}
+
+.cookalong-status.speaking {
+    color: var(--accent-ink);
+}
+
 .saved-recipes {
     list-style: none;
     padding: 0;
