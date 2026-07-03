@@ -163,9 +163,22 @@
                     {
                         <p class="muted">@r.Blurb</p>
                     }
-                    <p class="muted small">
-                        @string.Join(", ", r.Ingredients.Where(i => i.IsMain).Select(i => i.Name))@(r.TimesEaten > 0 ? $" · eaten {r.TimesEaten}×" : "")
-                    </p>
+                    <ul class="ingredient-list">
+                        @foreach (var i in r.Ingredients.Where(i => i.IsMain))
+                        {
+                            var have = i.MatchedProduct is not null && onHandSet.Contains(i.MatchedProduct);
+                            <li class="@(have ? "have" : "grab")">@(have ? "✓" : "🛒") @i.Name</li>
+                        }
+                        @{ var extras = r.Ingredients.Where(i => !i.IsMain).Select(i => i.Name).ToList(); }
+                        @if (extras.Count > 0)
+                        {
+                            <li class="muted">+ @string.Join(", ", extras)</li>
+                        }
+                    </ul>
+                    @if (r.TimesEaten > 0)
+                    {
+                        <p class="muted small">eaten @r.TimesEaten×</p>
+                    }
                     @if (r.Steps.Count > 0)
                     {
                         <details class="recipe-steps">
