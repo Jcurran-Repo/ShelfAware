@@ -1,0 +1,40 @@
+@* A split button: a prominent primary action plus a caret that opens a little menu of alternate
+   actions (supplied as child <button>s). The menu closes on selection or an outside click. *@
+<div class="split-btn">
+    <button type="button" class="split-main @MainClass" @onclick="HandlePrimaryAsync" aria-label="@PrimaryAriaLabel">
+        @PrimaryLabel
+    </button>
+    <button type="button" class="split-caret @MainClass" @onclick="Toggle"
+            aria-haspopup="true" aria-expanded="@(_open ? "true" : "false")"
+            aria-label="@($"More options for {PrimaryLabel}")">
+        <span aria-hidden="true">▾</span>
+    </button>
+    @if (_open)
+    {
+        <div class="split-backdrop" @onclick="Close"></div>
+        <div class="split-menu" @onclick="Close">
+            @ChildContent
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string PrimaryLabel { get; set; } = "";
+    [Parameter] public string? PrimaryAriaLabel { get; set; }
+    [Parameter] public EventCallback OnPrimary { get; set; }
+    /// <summary>Extra class for the main+caret buttons, e.g. "secondary" (default is the accent button).</summary>
+    [Parameter] public string MainClass { get; set; } = "";
+    /// <summary>The alternate option(s) as child &lt;button&gt;s; clicking one runs its handler and closes the menu.</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    private bool _open;
+
+    private void Toggle() => _open = !_open;
+    private void Close() => _open = false;
+
+    private async Task HandlePrimaryAsync()
+    {
+        _open = false;
+        await OnPrimary.InvokeAsync();
+    }
+}

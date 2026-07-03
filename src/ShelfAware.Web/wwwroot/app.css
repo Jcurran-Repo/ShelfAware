@@ -195,6 +195,56 @@ button.secondary:hover:not(:disabled) {
     border-color: var(--ink-soft);
 }
 
+/* ---- Split button (primary action + caret menu) ---- */
+.split-btn {
+    position: relative;
+    display: inline-flex;
+}
+
+.split-btn .split-main {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    border-right: none;
+}
+
+.split-btn .split-caret {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    padding-left: 0.4rem;
+    padding-right: 0.5rem;
+    display: inline-flex;
+    align-items: center;
+}
+
+.split-menu {
+    position: absolute;
+    top: calc(100% + 0.25rem);
+    right: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    min-width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+}
+
+.split-menu button {
+    border: none;
+    border-radius: 0;
+    white-space: nowrap;
+    text-align: left;
+    width: 100%;
+}
+
+.split-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+}
+
 input, select {
     font: inherit;
     padding: 0.35rem 0.5rem;

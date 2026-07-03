@@ -85,8 +85,10 @@ else
                         <div class="card-basis muted">@r.Basis</div>
                     </div>
                     <div class="card-actions">
-                        <button @onclick="() => BoughtToday(p)" aria-label="Mark @p.Name bought today">Bought today</button>
-                        <button class="secondary" @onclick="() => Restocked(p)" aria-label="Mark @p.Name restocked">Restocked</button>
+                        <SplitButton PrimaryLabel="Bought today" OnPrimary="() => BoughtToday(p)"
+                                     PrimaryAriaLabel="@($"Mark {p.Name} bought today")">
+                            <button class="secondary" @onclick="() => Restocked(p)" aria-label="Mark @p.Name restocked">Restocked</button>
+                        </SplitButton>
                     </div>
                 </li>
             }

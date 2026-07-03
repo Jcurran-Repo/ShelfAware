@@ -145,10 +145,16 @@
                         <span class="saved-actions">
                             @if (r.Steps.Count > 0)
                             {
-                                <button class="secondary" @onclick="() => StartReading(r)" aria-label="Read @r.Name aloud">🔊 Read it to me</button>
                                 @if (CookAlongAvailable)
                                 {
-                                    <button class="secondary" @onclick="() => StartCooking(r)" aria-label="Hands-free cook-along for @r.Name">🎙 Cook-along</button>
+                                    <SplitButton PrimaryLabel="🎙 Cook-along" MainClass="secondary" OnPrimary="() => StartCooking(r)"
+                                                 PrimaryAriaLabel="@($"Hands-free cook-along for {r.Name}")">
+                                        <button class="secondary" @onclick="() => StartReading(r)" aria-label="Read @r.Name aloud">🔊 Read it to me</button>
+                                    </SplitButton>
+                                }
+                                else
+                                {
+                                    <button class="secondary" @onclick="() => StartReading(r)" aria-label="Read @r.Name aloud">🔊 Read it to me</button>
                                 }
                             }
                             <button class="secondary" @onclick="() => MarkEaten(r)" aria-label="Mark @r.Name eaten">Ate it</button>
