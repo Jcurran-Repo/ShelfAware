@@ -3,6 +3,7 @@ using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Extraction;
 using ShelfAware.Core.Ingest;
+using ShelfAware.Core.Settings;
 using ShelfAware.Core.Tagging;
 using ShelfAware.Web.Data;
 
@@ -17,6 +18,7 @@ public class ReceiptImporter(
     IDbContextFactory<ShelfAwareDbContext> dbFactory,
     IReceiptExtractor extractor,
     IReceiptInbox inbox,
+    IAppSettings settings,
     AppPaths paths,
     ILogger<ReceiptImporter> logger) : IReceiptImporter
 {
@@ -34,20 +36,24 @@ public class ReceiptImporter(
         }
 
         var newItems = items.Where(i => !alreadyImported.Contains(i.Id)).ToList();
-        if (newItems.Count == 0) return new ImportSummary(true, 0, 0, 0, 0);
+        if (newItems.Count == 0) return new ImportSummary(true, 0, 0, 0, 0, 0);
 
-        logger.LogInformation("Auto-import: {New} new receipt file(s) of {Total} in the inbox.", newItems.Count, items.Count);
+        // Default on: auto-confirm. Off (unchecked on the Settings page): queue as pending for review.
+        var autoConfirmRaw = await settings.GetAsync(SettingKeys.AutoConfirmImports, cancellationToken);
+        var autoConfirm = autoConfirmRaw is null || (bool.TryParse(autoConfirmRaw, out var b) && b);
 
-        int imported = 0, purchases = 0, newProducts = 0, failed = 0;
+        logger.LogInformation("Auto-import: {New} new receipt file(s) of {Total} ({Mode}).",
+            newItems.Count, items.Count, autoConfirm ? "auto-confirm" : "review");
+
+        int imported = 0, purchases = 0, newProducts = 0, awaitingReview = 0, failed = 0;
         foreach (var item in newItems)
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                var (p, np) = await ImportOneAsync(item, cancellationToken);
-                imported++;
-                purchases += p;
-                newProducts += np;
+                var (p, np, queued) = await ImportOneAsync(item, autoConfirm, cancellationToken);
+                if (queued) awaitingReview++;
+                else { imported++; purchases += p; newProducts += np; }
             }
             catch (Exception ex)
             {
@@ -56,12 +62,12 @@ public class ReceiptImporter(
             }
         }
 
-        logger.LogInformation("Auto-import done: {Imported} imported, {Purchases} purchase(s), {NewProducts} new product(s), {Failed} failed.",
-            imported, purchases, newProducts, failed);
-        return new ImportSummary(true, imported, purchases, newProducts, failed);
+        logger.LogInformation("Auto-import done: {Imported} imported, {Queued} queued for review, {Purchases} purchase(s), {NewProducts} new product(s), {Failed} failed.",
+            imported, awaitingReview, purchases, newProducts, failed);
+        return new ImportSummary(true, imported, purchases, newProducts, awaitingReview, failed);
     }
 
-    private async Task<(int Purchases, int NewProducts)> ImportOneAsync(InboxItem item, CancellationToken ct)
+    private async Task<(int Purchases, int NewProducts, bool Queued)> ImportOneAsync(InboxItem item, bool autoConfirm, CancellationToken ct)
     {
         var bytes = await inbox.ReadAsync(item.Id, ct);
 
@@ -98,8 +104,36 @@ public class ReceiptImporter(
         receipt.Merchant = extraction.Receipt.Merchant;
         var purchaseDate = extraction.Receipt.PurchaseDate ?? DateOnly.FromDateTime(DateTime.Today);
         receipt.PurchasedAt = purchaseDate;
-        receipt.Status = ReceiptStatus.Confirmed;
 
+        if (!autoConfirm)
+        {
+            // Review mode: store the extracted lines (no product / no purchase) and leave the receipt
+            // pending, so the Upload page's review flow can edit + approve it — mirrors a manual upload's
+            // state right after extraction.
+            receipt.Status = ReceiptStatus.PendingReview;
+            foreach (var line in extraction.Receipt.Lines)
+            {
+                var itemName = line.NormalizedName.Trim();
+                if (itemName.Length == 0) continue;
+                receipt.Lines.Add(new ReceiptLine
+                {
+                    RawText = line.RawText,
+                    NormalizedName = itemName,
+                    Brand = string.IsNullOrWhiteSpace(line.Brand) ? null : line.Brand!.Trim(),
+                    Size = string.IsNullOrWhiteSpace(line.Size) ? null : line.Size!.Trim(),
+                    Quantity = line.Quantity,
+                    UnitPrice = line.UnitPrice,
+                    Category = line.Category,
+                    Confidence = line.Confidence,
+                });
+            }
+            db.Receipts.Add(receipt);
+            await db.SaveChangesAsync(ct);
+            logger.LogInformation("Queued {File} for review: {Lines} line(s).", item.Name, receipt.Lines.Count);
+            return (0, 0, true);
+        }
+
+        receipt.Status = ReceiptStatus.Confirmed;
         var merchant = receipt.Merchant ?? "";
         // Load this merchant's aliases once (unique (Merchant, RawText) index); dedup within the receipt
         // so a repeated raw line doesn't try to insert a second alias.
@@ -191,6 +225,6 @@ public class ReceiptImporter(
         db.Receipts.Add(receipt);
         await db.SaveChangesAsync(ct);
         logger.LogInformation("Auto-imported {File}: {Purchases} purchase(s), {NewProducts} new product(s).", item.Name, purchases, newProducts);
-        return (purchases, newProducts);
+        return (purchases, newProducts, false);
     }
 }

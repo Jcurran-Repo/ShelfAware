@@ -1028,6 +1028,39 @@ button.tag-chip {
     color: var(--ink-soft);
 }
 
+/* ---- Settings + pending imports ---- */
+.setting-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-weight: 600;
+    margin: 0.6rem 0 0.15rem;
+    cursor: pointer;
+}
+
+.pending-receipts {
+    list-style: none;
+    padding: 0;
+    margin: 0.4rem 0 0;
+    display: grid;
+    gap: 0.5rem;
+}
+
+.pending-receipts li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 0.5rem;
+}
+
+.pending-actions {
+    display: inline-flex;
+    gap: 0.4rem;
+}
+
 .recipe-steps {
     margin-top: 0.45rem;
     font-size: 0.88rem;

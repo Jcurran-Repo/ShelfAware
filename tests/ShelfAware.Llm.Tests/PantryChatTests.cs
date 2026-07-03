@@ -173,7 +173,7 @@ public class PantryChatTests
     [Fact]
     public async Task Import_receipts_tool_invokes_the_importer_and_reports()
     {
-        var importer = new FakeReceiptImporter(new ShelfAware.Core.Ingest.ImportSummary(true, 2, 7, 1, 0));
+        var importer = new FakeReceiptImporter(new ShelfAware.Core.Ingest.ImportSummary(true, 2, 7, 1, 0, 0));
         var client = new FakeChatClient(
             () => Responses.ToolCalls(Responses.Call("import_receipts")),
             () => Responses.Text("Imported your receipts."));

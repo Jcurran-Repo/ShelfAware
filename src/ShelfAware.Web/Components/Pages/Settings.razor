@@ -16,10 +16,17 @@
 <section class="panel">
     <h2>Receipt auto-import</h2>
     <p class="muted">
-        Point this at a folder of receipt images or PDFs. The assistant auto-imports new ones — on
-        startup, when you press “Scan now”, or when you tell it <em>“import my receipts”</em>. Imported
-        receipts are <strong>auto-confirmed</strong> straight into your history with no review step, so
-        use this once the extraction is reliable for your receipts.
+        Point this at a folder of receipt images or PDFs. The assistant imports new ones — on startup,
+        when you press “Scan now”, or when you tell it <em>“import my receipts”</em>.
+    </p>
+
+    <label class="setting-toggle">
+        <input type="checkbox" @bind="autoConfirm" @bind:after="SaveAutoConfirm" />
+        Auto-confirm imported receipts
+    </label>
+    <p class="muted small">
+        On: imports go straight into your history. Off: they wait as pending for you to review and
+        approve (or fix) on the <a href="/receipt">Upload</a> page.
     </p>
 
     <div class="tag-add">
@@ -45,6 +52,7 @@
 
 @code {
     private string folder = "";
+    private bool autoConfirm = true;
     private bool configured;
     private int fileCount;
     private int newCount;
@@ -56,8 +64,13 @@
     protected override async Task OnInitializedAsync()
     {
         folder = await SettingsStore.GetAsync(SettingKeys.ReceiptFolder) ?? "";
+        var ac = await SettingsStore.GetAsync(SettingKeys.AutoConfirmImports);
+        autoConfirm = ac is null || (bool.TryParse(ac, out var b) && b); // default on
         await RefreshStatus();
     }
+
+    private Task SaveAutoConfirm() =>
+        SettingsStore.SetAsync(SettingKeys.AutoConfirmImports, autoConfirm ? "true" : "false");
 
     private string FolderStatus => !configured
         ? (string.IsNullOrWhiteSpace(folder) ? "No folder set yet." : "That folder isn't set or doesn't exist yet.")

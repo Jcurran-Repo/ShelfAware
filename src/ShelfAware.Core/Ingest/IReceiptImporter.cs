@@ -10,20 +10,24 @@ public interface IReceiptImporter
     Task<ImportSummary> ImportNewAsync(CancellationToken cancellationToken = default);
 }
 
-public record ImportSummary(bool Configured, int Imported, int Purchases, int NewProducts, int Failed)
+public record ImportSummary(bool Configured, int Imported, int Purchases, int NewProducts, int AwaitingReview, int Failed)
 {
-    public static ImportSummary NotConfigured { get; } = new(false, 0, 0, 0, 0);
+    public static ImportSummary NotConfigured { get; } = new(false, 0, 0, 0, 0, 0);
 
     /// <summary>One-line, speakable result for the chat/voice agent.</summary>
-    public string Describe() =>
-        !Configured
-            ? "No receipt folder is set up yet — add one on the Settings page."
-            : Imported == 0
-                ? "No new receipts to import."
-                : $"Imported {Imported} receipt{Plural(Imported)}: {Purchases} purchase{Plural(Purchases)}"
-                    + (NewProducts > 0 ? $", {NewProducts} new product{Plural(NewProducts)}" : "")
-                    + (Failed > 0 ? $" ({Failed} couldn't be read)" : "")
-                    + ".";
+    public string Describe()
+    {
+        if (!Configured) return "No receipt folder is set up yet — add one on the Settings page.";
+
+        var failedNote = Failed > 0 ? $" ({Failed} couldn't be read)" : "";
+        if (AwaitingReview > 0)
+            return $"Queued {AwaitingReview} receipt{Plural(AwaitingReview)} for you to review on the Upload page{failedNote}.";
+        if (Imported > 0)
+            return $"Imported {Imported} receipt{Plural(Imported)}: {Purchases} purchase{Plural(Purchases)}"
+                + (NewProducts > 0 ? $", {NewProducts} new product{Plural(NewProducts)}" : "")
+                + failedNote + ".";
+        return Failed > 0 ? $"Couldn't read {Failed} receipt{Plural(Failed)}." : "No new receipts to import.";
+    }
 
     private static string Plural(int n) => n == 1 ? "" : "s";
 }

@@ -40,6 +40,29 @@
             <p class="error">@errorMessage</p>
         }
     </section>
+
+    @if (phase == Phase.Idle && pendingReceipts.Count > 0)
+    {
+        <section class="panel">
+            <h2>Waiting for review (@pendingReceipts.Count)</h2>
+            <p class="muted">Auto-imported receipts held for your approval (auto-confirm is off in Settings).</p>
+            <ul class="pending-receipts">
+                @foreach (var pr in pendingReceipts)
+                {
+                    <li>
+                        <span>
+                            <strong>@(pr.Merchant ?? "Unknown merchant")</strong>
+                            <span class="muted"> · @(pr.PurchasedAt?.ToString("MMM d, yyyy") ?? "no date") · @pr.LineCount item(s)</span>
+                        </span>
+                        <span class="pending-actions">
+                            <button @onclick="() => ReviewPending(pr.Id)">Review</button>
+                            <button class="secondary" @onclick="() => DiscardPending(pr.Id)" aria-label="Discard receipt from @(pr.Merchant ?? "unknown merchant")">Discard</button>
+                        </span>
+                    </li>
+                }
+            </ul>
+        </section>
+    }
 }
 else if (phase == Phase.Review && receipt is not null)
 {
@@ -182,6 +205,9 @@ else if (phase == Phase.Done)
     private string confirmSummary = "";
     private string? confirmError;
 
+    private List<PendingRow> pendingReceipts = [];
+    private record PendingRow(int Id, string? Merchant, DateOnly? PurchasedAt, int LineCount);
+
     private class ReviewLine
     {
         public required string RawText { get; set; }
@@ -203,6 +229,71 @@ else if (phase == Phase.Done)
 
     // Tag universe for suggestions + dedup: seed vocabulary ∪ tags already stored on products.
     private List<string> allKnownTags = [];
+
+    protected override async Task OnInitializedAsync() => await LoadPendingAsync();
+
+    // Receipts the auto-importer queued (auto-confirm off) — PendingReview with extracted lines.
+    private async Task LoadPendingAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        pendingReceipts = await db.Receipts
+            .Where(r => r.Status == ReceiptStatus.PendingReview && r.Lines.Count > 0)
+            .OrderBy(r => r.Id)
+            .Select(r => new PendingRow(r.Id, r.Merchant, r.PurchasedAt, r.Lines.Count))
+            .ToListAsync();
+    }
+
+    // Load a queued receipt into the SAME editable review table the manual upload uses, so it can be
+    // edited + confirmed (or discarded) — reusing ConfirmAll, which already works off the receipt id.
+    private async Task ReviewPending(int receiptId)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var r = await db.Receipts.Include(x => x.Lines).FirstOrDefaultAsync(x => x.Id == receiptId);
+        if (r is null) { await LoadPendingAsync(); return; }
+
+        receipt = r;
+        reviewDate = r.PurchasedAt ?? DateOnly.FromDateTime(DateTime.Today);
+        products = await db.Products.OrderBy(p => p.Name).ToListAsync();
+        var stored = await db.ProductTags.Select(t => t.Value).Distinct().ToListAsync();
+        allKnownTags = TagVocabulary.Seed.Concat(stored).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t).ToList();
+
+        var merchant = r.Merchant ?? "";
+        var aliases = await db.ProductAliases.Where(a => a.Merchant == merchant).ToListAsync();
+        reviewLines = r.Lines.Select(l =>
+        {
+            var alias = aliases.FirstOrDefault(a => a.RawText == l.RawText);
+            var match = alias is null ? ProductMatcher.Resolve(l.NormalizedName, products) : null;
+            return new ReviewLine
+            {
+                RawText = l.RawText,
+                NormalizedName = l.NormalizedName,
+                Brand = l.Brand,
+                Size = l.Size,
+                Quantity = l.Quantity,
+                Category = l.Category,
+                Confidence = l.Confidence,
+                UnitPrice = l.UnitPrice,
+                Tags = [],
+                ProductId = alias?.ProductId ?? match?.Id ?? 0,
+                AliasMatched = alias is not null,
+            };
+        }).ToList();
+
+        confirmError = null;
+        phase = Phase.Review;
+    }
+
+    private async Task DiscardPending(int receiptId)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var r = await db.Receipts.FirstOrDefaultAsync(x => x.Id == receiptId);
+        if (r is not null)
+        {
+            r.Status = ReceiptStatus.Discarded;
+            await db.SaveChangesAsync();
+        }
+        await LoadPendingAsync();
+    }
 
     private void OnFilesSelected(InputFileChangeEventArgs e)
     {
@@ -448,6 +539,7 @@ else if (phase == Phase.Done)
             confirmSummary = $"Recorded {reviewLines.Count(l => l.NormalizedName.Trim().Length > 0)} purchases" +
                              (created > 0 ? $" ({created} new product{(created == 1 ? "" : "s")})" : "") +
                              $" from {(merchant.Length > 0 ? merchant : "unknown merchant")} on {purchaseDate:yyyy-MM-dd}.";
+            await LoadPendingAsync(); // a queued receipt just left the pending list
             phase = Phase.Done;
         }
         catch (Exception ex)
@@ -531,6 +623,7 @@ else if (phase == Phase.Done)
             dbReceipt.Status = ReceiptStatus.Discarded;
             await db.SaveChangesAsync();
         }
+        await LoadPendingAsync();
         Reset();
     }
 
