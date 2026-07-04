@@ -46,22 +46,43 @@
     {
         <section class="panel">
             <h2>Waiting for review (@pendingReceipts.Count)</h2>
-            <p class="muted">Auto-imported receipts held for your approval (auto-confirm is off in Settings).</p>
+            <p class="muted">Imports held for your approval, plus any receipt that couldn't be read.</p>
             <ul class="pending-receipts">
                 @foreach (var pr in pendingReceipts)
                 {
                     <li>
                         <span>
                             <strong>@(pr.Merchant ?? "Unknown merchant")</strong>
-                            <span class="muted"> · @(pr.PurchasedAt?.ToString("MMM d, yyyy") ?? "no date") · @pr.LineCount item(s)</span>
+                            @if (pr.LineCount == 0)
+                            {
+                                <span class="error"> · couldn't be read — retry or discard</span>
+                            }
+                            else
+                            {
+                                <span class="muted"> · @(pr.PurchasedAt?.ToString("MMM d, yyyy") ?? "no date") · @pr.LineCount item(s)</span>
+                            }
                         </span>
                         <span class="pending-actions">
-                            <button @onclick="() => ReviewPending(pr.Id)">Review</button>
-                            <button class="secondary" @onclick="() => DiscardPending(pr.Id)" aria-label="Discard receipt from @(pr.Merchant ?? "unknown merchant")">Discard</button>
+                            @if (pr.LineCount == 0)
+                            {
+                                <button @onclick="() => RetryPending(pr.Id)" disabled="@(retryingId is not null)"
+                                        aria-label="Retry reading receipt from @(pr.Merchant ?? "unknown merchant")">
+                                    @(retryingId == pr.Id ? "Retrying…" : "Retry")
+                                </button>
+                            }
+                            else
+                            {
+                                <button @onclick="() => ReviewPending(pr.Id)">Review</button>
+                            }
+                            <button class="secondary" @onclick="() => DiscardPending(pr.Id)" disabled="@(retryingId is not null)" aria-label="Discard receipt from @(pr.Merchant ?? "unknown merchant")">Discard</button>
                         </span>
                     </li>
                 }
             </ul>
+            @if (pendingError is not null)
+            {
+                <p class="error" role="alert">@pendingError</p>
+            }
         </section>
     }
 }
@@ -209,6 +230,8 @@ else if (phase == Phase.Done)
 
     private List<PendingRow> pendingReceipts = [];
     private record PendingRow(int Id, string? Merchant, DateOnly? PurchasedAt, int LineCount);
+    private int? retryingId;
+    private string? pendingError;
 
     private class ReviewLine
     {
@@ -234,12 +257,14 @@ else if (phase == Phase.Done)
 
     protected override async Task OnInitializedAsync() => await LoadPendingAsync();
 
-    // Receipts the auto-importer queued (auto-confirm off) — PendingReview with extracted lines.
+    // Everything PendingReview: receipts the importer queued (Smart/Review mode), abandoned manual
+    // reviews, AND zero-line receipts whose extraction failed — those used to be filtered out and were
+    // invisible forever (the only recovery was reading the server logs).
     private async Task LoadPendingAsync()
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         pendingReceipts = await db.Receipts
-            .Where(r => r.Status == ReceiptStatus.PendingReview && r.Lines.Count > 0)
+            .Where(r => r.Status == ReceiptStatus.PendingReview)
             .OrderBy(r => r.Id)
             .Select(r => new PendingRow(r.Id, r.Merchant, r.PurchasedAt, r.Lines.Count))
             .ToListAsync();
@@ -309,6 +334,92 @@ else if (phase == Phase.Done)
         }
         await LoadPendingAsync();
     }
+
+    // Re-extract a failed (zero-line) receipt from the audit copy saved at import time — a transient
+    // API blip during an auto-scan used to park the file permanently with no way back but the logs.
+    private async Task RetryPending(int receiptId)
+    {
+        if (retryingId is not null) return;
+        retryingId = receiptId;
+        pendingError = null;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var r = await db.Receipts.Include(x => x.Lines).FirstOrDefaultAsync(x => x.Id == receiptId);
+            if (r is null) { await LoadPendingAsync(); return; }
+
+            var folder = Path.Combine(Paths.DataDir, r.ImagePath);
+            var files = Directory.Exists(folder)
+                ? Directory.GetFiles(folder, "page-*.*").OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList()
+                : [];
+            if (files.Count == 0)
+            {
+                pendingError = "The saved copy of this receipt is missing — discard it and re-upload.";
+                return;
+            }
+
+            var attachments = new List<ReceiptAttachment>();
+            foreach (var file in files)
+            {
+                attachments.Add(new ReceiptAttachment(await File.ReadAllBytesAsync(file), MediaTypeFor(file)));
+            }
+
+            List<string> productNames;
+            List<string> tagHints;
+            await using (var pdb = await DbFactory.CreateDbContextAsync())
+            {
+                productNames = await pdb.Products.OrderBy(p => p.Name).Select(p => p.Name).Distinct().ToListAsync();
+                var stored = await pdb.ProductTags.Select(t => t.Value).Distinct().ToListAsync();
+                tagHints = TagVocabulary.Seed.Concat(stored)
+                    .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t).ToList();
+            }
+
+            var result = await Extractor.ExtractAsync(attachments, productNames, tagHints);
+            if (!result.Success || result.Receipt is null)
+            {
+                pendingError = $"Still couldn't read it. ({result.Error})";
+                return;
+            }
+
+            r.RawModelJson = result.RawModelJson;
+            r.Merchant = result.Receipt.Merchant;
+            r.PurchasedAt = result.Receipt.PurchaseDate;
+            db.ReceiptLines.RemoveRange(r.Lines);
+            r.Lines = result.Receipt.Lines.Select(l => new ReceiptLine
+            {
+                RawText = l.RawText,
+                NormalizedName = l.NormalizedName,
+                Brand = l.Brand,
+                Size = l.Size,
+                Quantity = l.Quantity,
+                UnitPrice = l.UnitPrice,
+                Category = l.Category,
+                Confidence = l.Confidence,
+                TagsJson = ReceiptConfirmationService.SerializeTags(l.Tags),
+                SuggestedProduct = l.SuggestedProductName,
+            }).ToList();
+            await db.SaveChangesAsync();
+
+            await LoadReviewAsync(r.Id); // straight into the normal review flow
+        }
+        catch (Exception ex)
+        {
+            pendingError = $"Retry failed: {ex.Message}";
+        }
+        finally
+        {
+            retryingId = null;
+        }
+    }
+
+    private static string MediaTypeFor(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".png" => "image/png",
+        ".gif" => "image/gif",
+        ".webp" => "image/webp",
+        ".pdf" => "application/pdf",
+        _ => "image/jpeg",
+    };
 
     private void OnFilesSelected(InputFileChangeEventArgs e)
     {
