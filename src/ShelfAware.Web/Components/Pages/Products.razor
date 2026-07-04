@@ -3,6 +3,7 @@
 @using ShelfAware.Core.Prediction
 @using ShelfAware.Core.Shopping
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
+@inject IJSRuntime JS
 
 <PageTitle>Products — Shelf Aware</PageTitle>
 
@@ -181,6 +182,10 @@ else
             }
         </tbody>
     </table>
+    @if (deleteError is not null)
+    {
+        <p class="error" role="alert">@deleteError</p>
+    }
 }
 
 @code {
@@ -193,6 +198,7 @@ else
     private Category newCategory = Category.Pantry;
     private string newUnit = "";
     private string? addError;
+    private string? deleteError;
 
     private string searchText = "";
     private string categoryFilter = "";
@@ -362,9 +368,29 @@ else
 
     private async Task Delete(Product p)
     {
-        await using var db = await DbFactory.CreateDbContextAsync();
-        db.Products.Remove(p);
-        await db.SaveChangesAsync();
+        // One click destroys purchase history — make the user say so.
+        if (!await JS.InvokeAsync<bool>("confirm", $"Delete \"{p.Name}\" and its purchase history?")) return;
+
+        deleteError = null;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            await using var tx = await db.Database.BeginTransactionAsync();
+            // Confirmed receipt lines reference the product through an OPTIONAL FK with no DB-level
+            // ON DELETE action, and they aren't loaded here — so SQLite rejects the delete unless we
+            // detach them first. The lines themselves stay (they're the receipt's audit trail); they
+            // just no longer point at a product. Required children (purchases, signals, tags, aliases)
+            // cascade at the DB level.
+            await db.ReceiptLines.Where(l => l.ProductId == p.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(l => l.ProductId, (int?)null));
+            db.Products.Remove(p);
+            await db.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        catch (Exception ex)
+        {
+            deleteError = $"Couldn't delete {p.Name}: {ex.Message}";
+        }
         await LoadAsync();
     }
 }
