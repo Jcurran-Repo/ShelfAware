@@ -117,20 +117,14 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
                     $"Your previous output failed validation: {lastError}. Output corrected JSON matching the schema."));
             }
 
+            ChatResponse response;
             try
             {
-                var response = await _chat.GetResponseAsync(messages, options, cancellationToken);
-
-                rawJson = response.Text;
-                var receipt = ParseReceipt(rawJson);
-                _logger.LogInformation("Extraction succeeded: {LineCount} line(s), merchant {Merchant}.",
-                    receipt.Lines.Count, receipt.Merchant ?? "(none)");
-                return ExtractionResult.Ok(receipt, rawJson);
+                response = await _chat.GetResponseAsync(messages, options, cancellationToken);
             }
-            catch (JsonException ex)
+            catch (OperationCanceledException)
             {
-                lastError = ex.Message;
-                _logger.LogWarning("Extraction attempt {Attempt} produced unparseable output: {Error}", attempt + 1, ex.Message);
+                throw; // the caller cancelled — not an extraction failure
             }
             catch (Exception ex)
             {
@@ -138,6 +132,23 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
                 // here; the SDK already retries retryable statuses internally.
                 _logger.LogError(ex, "Extraction call to the model failed.");
                 return ExtractionResult.Fail(ex.Message, rawJson);
+            }
+
+            rawJson = response.Text;
+            try
+            {
+                var receipt = ParseReceipt(rawJson);
+                _logger.LogInformation("Extraction succeeded: {LineCount} line(s), merchant {Merchant}.",
+                    receipt.Lines.Count, receipt.Merchant ?? "(none)");
+                return ExtractionResult.Ok(receipt, rawJson);
+            }
+            catch (Exception ex)
+            {
+                // ANY invalid output is retryable, not just malformed JSON — parseable-but-wrong-shape
+                // output throws KeyNotFound/InvalidOperation from the property reads, and the §5
+                // "validate → retry once with the error" contract covers those the same way.
+                lastError = ex.Message;
+                _logger.LogWarning("Extraction attempt {Attempt} produced invalid output: {Error}", attempt + 1, ex.Message);
             }
         }
 

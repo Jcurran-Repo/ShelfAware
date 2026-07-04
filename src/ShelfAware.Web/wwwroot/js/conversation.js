@@ -5,6 +5,7 @@
 
 let stream = null, audioCtx = null, analyser = null, timeData = null;
 let recorder = null, chunks = [], rafId = null, aborted = false, currentAudio = null;
+let currentFinish = null; // pending captureTurn's finish — stop() must resolve it or .NET awaits forever
 
 // Tunable VAD thresholds (per-mic/room; conservative defaults).
 const SPEECH_RMS = 0.02;    // RMS above this counts as speech
@@ -44,6 +45,7 @@ export async function captureTurn() {
         const finish = (withClip) => {
             if (settled) return;
             settled = true;
+            currentFinish = null;
             stopRaf();
             const rec = recorder;
             if (!withClip) {
@@ -61,6 +63,7 @@ export async function captureTurn() {
             try { rec.stop(); } catch { resolve(null); }
         };
 
+        currentFinish = finish;
         let speaking = false;
         const t0 = performance.now();
         let lastVoice = t0;
@@ -101,6 +104,9 @@ export function stopPlayback() {
 // End the conversation: abort any pending capture, stop playback, release the mic.
 export function stop() {
     aborted = true;
+    // Resolve a mid-capture promise with null (cancelling the rAF tick alone would leave it — and the
+    // .NET turn loop awaiting it — hanging forever; the loop's cleanup would never run).
+    if (currentFinish) currentFinish(false);
     stopRaf();
     stopPlayback();
     if (recorder && recorder.state !== 'inactive') { try { recorder.onstop = null; recorder.stop(); } catch { /* ignore */ } }

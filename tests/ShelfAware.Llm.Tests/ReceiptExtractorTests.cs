@@ -55,6 +55,21 @@ public class ReceiptExtractorTests
     }
 
     [Fact]
+    public async Task Retries_on_parseable_but_wrong_shape_output()
+    {
+        // Valid JSON that violates the schema shape (no "lines") must hit the retry path too —
+        // it used to be misreported as a non-retryable API failure.
+        var client = new FakeChatClient(
+            () => Responses.Text("""{ "merchant": "Walmart" }"""),
+            () => Responses.Text(ValidJson));
+
+        var result = await Extractor(client).ExtractAsync(OneImage);
+
+        Assert.True(result.Success);
+        Assert.Equal(2, client.CallCount);
+    }
+
+    [Fact]
     public async Task Fails_after_two_unparseable_outputs()
     {
         var client = new FakeChatClient(

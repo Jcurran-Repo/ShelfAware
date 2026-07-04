@@ -71,7 +71,11 @@ OutNow sets the effective due date to the outage date so the card no longer says
 "Overdue" next to "due in 21 days".
 
 Deferred / backlog: **Azure App Service deploy** (Phase 5 — then swap the README live-demo
-URL + add `docs/demo.gif` + `docs/accuracy.png`); **CSV history importer — PARKED** (Walmart won't export to Jordan's state; needs another
+URL + add `docs/demo.gif` + `docs/accuracy.png`). **Deploy gotcha — timezone:** every "today"
+in the app (purchases, signals, predictions) is server-local `DateTime.Today`/`DateTimeOffset.Now`,
+deliberately consistent; on Azure (UTC) an evening "Bought today" would land on tomorrow's date, so
+set the App Service `WEBSITE_TIME_ZONE` (Linux: `TZ`) app setting to Jordan's timezone at deploy.
+Also backlog: **CSV history importer — PARKED** (Walmart won't export to Jordan's state; needs another
 itemized source); a tiny "dapper blob" mascot for the header; a per-size Trends price chart.
 (Shipped since this note: the double-scroll fix; the **two-stream cadence model** — rebuy rhythm +
 burn rate, hybrid, restock is status-only (§6); and the whole **production-hardening pass** —

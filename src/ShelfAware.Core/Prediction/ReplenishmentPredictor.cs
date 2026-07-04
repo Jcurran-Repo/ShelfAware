@@ -75,7 +75,11 @@ public static class ReplenishmentPredictor
             status = PredictionStatus.Unknown;
         }
 
-        // 6. Signal overrides on top of the statistical base. Active = later than the last stock-back.
+        // 6. Signal overrides on top of the statistical base. Active = STRICTLY later than the last
+        //    stock-back. Same-day ties are ambiguous at date granularity (purchases carry no time), and
+        //    the purchase deliberately wins: the primary flow is "item pinned Overdue → [Bought today]",
+        //    which must clear the pin. The cost is the rare inverse ("bought this morning, discovered
+        //    we're out tonight") — that OutNow is ignored until tomorrow. Pinned by a unit test.
         var activeSignal = product.Signals
             .Where(s => s.Kind is SignalKind.OutNow or SignalKind.RunningLow)
             .Where(s => lastStockBack is null || DateOnly.FromDateTime(s.SignaledAt.Date) > lastStockBack)

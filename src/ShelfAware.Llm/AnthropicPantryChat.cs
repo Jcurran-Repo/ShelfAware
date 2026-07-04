@@ -77,6 +77,10 @@ public class AnthropicPantryChat : IPantryChat
             {
                 response = await _chat.GetResponseAsync(messages, chatOptions, cancellationToken);
             }
+            catch (OperationCanceledException)
+            {
+                throw; // the caller cancelled (e.g. circuit gone) — not a model failure
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Pantry chat call to the model failed on turn {Turn}.", turn + 1);

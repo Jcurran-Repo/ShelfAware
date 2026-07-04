@@ -11,6 +11,7 @@
 @inject IPantryChat Chat
 @inject ITextToSpeech Tts
 @inject IJSRuntime JS
+@inject ILogger<VoiceConversation> Log
 
 <div class="voice-convo">
     @if (!active)
@@ -162,7 +163,12 @@
                     await _module.InvokeVoidAsync("play", Convert.ToBase64String(speech.Audio), speech.MediaType);
             }
         }
-        catch { /* swallow — the finally cleans up */ }
+        catch (Exception ex)
+        {
+            // Fail soft but not SILENTLY — the conversation ends, the user is told, the log says why.
+            error = "The conversation hit a snag and ended — tap to start it again.";
+            Log.LogError(ex, "Voice conversation loop failed.");
+        }
         finally
         {
             await EndInternal();

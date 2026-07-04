@@ -269,12 +269,11 @@ else
     private static string Plural(int n) => n == 1 ? "" : "s";
 
     // Honest thin-data message: how many more purchases until the engine can predict (needs ≥ 2
-    // distinct purchase-equivalent dates, §6.2). Mirrors the engine's counting (purchases ∪ restocks).
+    // distinct purchase dates, §6.2). PURCHASES only — since the two-stream model, restocks anchor the
+    // due date but never feed the rhythm, so counting them here promised predictions that never came.
     private static string LearningHint(Product p)
     {
-        var distinctDates = p.Purchases.Select(x => x.PurchasedAt)
-            .Concat(p.Signals.Where(s => s.Kind == SignalKind.Restocked).Select(s => DateOnly.FromDateTime(s.SignaledAt.Date)))
-            .Distinct().Count();
+        var distinctDates = p.Purchases.Select(x => x.PurchasedAt).Distinct().Count();
         var needed = 2 - distinctDates;
         return needed <= 0
             ? "still learning"

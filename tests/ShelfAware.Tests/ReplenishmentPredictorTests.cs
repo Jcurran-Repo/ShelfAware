@@ -216,6 +216,22 @@ public class ReplenishmentPredictorTests
     }
 
     [Fact]
+    public void SameDayTie_PurchaseWins_OutNowSignalIsCleared()
+    {
+        // A signal dated the SAME day as the last purchase is not active — purchases carry no time of
+        // day, so the tie is ambiguous, and the purchase must win or the primary flow breaks: an item
+        // pinned Overdue is bought via [Bought today], and that purchase has to clear the pin even
+        // though the OutNow was signaled earlier the same day.
+        var product = ProductWith([D(0), D(20)], [Signal(SignalKind.OutNow, D(20))]);
+
+        var r = ReplenishmentPredictor.Predict(product, D(21));
+
+        Assert.False(r.Pinned);
+        Assert.NotEqual(PredictionStatus.Overdue, r.Status);
+        Assert.Null(r.SignalNote);
+    }
+
+    [Fact]
     public void Restocked_ClearsAnEarlierOutNow()
     {
         var product = ProductWith([D(0), D(20)],
