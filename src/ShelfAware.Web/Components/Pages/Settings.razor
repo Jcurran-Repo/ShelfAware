@@ -25,20 +25,20 @@
         <label>
             <input type="radio" name="import-mode" checked="@(mode == ImportMode.Smart)"
                    @onchange="() => SetMode(ImportMode.Smart)" />
-            <strong>Smart</strong> <span class="muted">(recommended)</span> — confirm automatically only when
+            <span><strong>Smart</strong> <span class="muted">(recommended)</span> — confirm automatically only when
             every line matches a product you already have (a learned alias or a confident match); anything
-            uncertain — a new product, a shaky read — waits for your review.
+            uncertain — a new product, a shaky read — waits for your review.</span>
         </label>
         <label>
             <input type="radio" name="import-mode" checked="@(mode == ImportMode.Review)"
                    @onchange="() => SetMode(ImportMode.Review)" />
-            <strong>Review everything</strong> — every import waits as pending for you to review and
-            approve (or fix) on the <a href="/receipt">Upload</a> page.
+            <span><strong>Review everything</strong> — every import waits as pending for you to review and
+            approve (or fix) on the <a href="/receipt">Upload</a> page.</span>
         </label>
         <label>
             <input type="radio" name="import-mode" checked="@(mode == ImportMode.Auto)"
                    @onchange="() => SetMode(ImportMode.Auto)" />
-            <strong>Confirm everything</strong> — imports go straight into your history, new products included.
+            <span><strong>Confirm everything</strong> — imports go straight into your history, new products included.</span>
         </label>
     </fieldset>
 
