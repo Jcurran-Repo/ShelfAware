@@ -19,7 +19,7 @@ as overkill "because it's single-user."
   build what you think is best, and don't silently implement something you believe is
   wrong — surface the trade-off, reason it out together, decide jointly, then code.
 
-## Build state (updated 2026-07-01)
+## Build state (updated 2026-07-04)
 
 | Phase (DESIGN.md §10) | Status |
 |---|---|
@@ -29,7 +29,8 @@ as overkill "because it's single-user."
 | 4 — Chat tools (IPantryChat) | ✅ Done, acceptance verified with a live tool-call |
 | 5 — Azure deploy + README | ◑ README ✅ done + pushed (`4757839`); **Azure still deferred** (pending Jordan's account) |
 
-Everything below is built, verified live, committed, and **pushed** (master @ `612fcbd`).
+Everything below is built, verified live, and committed (**pushed through `612fcbd`; the 2026-07-04
+v2.2 review-hardening commits are local, not yet pushed**).
 Beyond the spec's 3 pages, the app now has Dashboard (`/`), Upload (`/receipt`),
 Products (`/products`), Grocery List (`/list`, by aisle + copy/print + a manual **Extras**
 section), Trends (`/trends`, price tickers + spend forecast — page component is
@@ -37,7 +38,8 @@ section), Trends (`/trends`, price tickers + spend forecast — page component i
 Accuracy (`/accuracy`, renders `eval-results.json`), and **Recipes (`/recipes`)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **64 green xUnit tests.**
++ unit tests; Evals excluded — needs a live key). **135 green xUnit tests across three
+projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -54,15 +56,33 @@ pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + 
 3. **Two-layer categories** (`9670d39`, `b250103`, `628fecf`, `994ead7`, `8da2114`) — see the
    Tags section below.
 4. **Recipes** (`ff1fd83` P1, `612fcbd` P2) — see the Recipes section below.
-5. **README capstone** (`4757839`) — thesis, Mermaid diagram, extract→match→predict→chat flow,
-   the 99/99/100 table + the 58%→100% story, tech stack, local-run steps, roadmap. **3
-   placeholders Jordan must still fill:** live-demo URL (`<!-- LIVE_DEMO_URL -->`),
-   `docs/demo.gif`, `docs/accuracy.png`. Jordan's feedback (2026-06-30): "not a bad first
-   draft, just hard to read" — wants a later, more casual/usage-focused, less show-and-tell
-   rewrite; keep the diagram/eval but trim the dense prose.
+5. **README capstone** (`4757839`), **rewritten 2026-07-04** per Jordan's "more casual /
+   usage-focused" feedback — now covers the v2 arc (voice, graduated auto-import, two-stream
+   cadence) and the both-halves accuracy story (extraction eval + prediction backtest).
+   **Placeholders Jordan must still fill:** live-demo URL (`<!-- LIVE_DEMO_URL -->`),
+   `docs/demo.gif`, `docs/accuracy.png`.
 6. **Small UI adds:** always-available **"Out" button** on the Products grid (`9c78a14`) — the
    dashboard only lists running-low items, so the grid is the home for marking any product out;
    grocery-list item names link to `/product/{id}` (`b6afb35`).
+7. **v2.2 review-hardening pass (2026-07-04, from the 7/3 code review — see timeline.md):**
+   - **`ReceiptConfirmationService` (Web/Data) is THE confirm path** — Upload's ConfirmAll and the
+     auto-importer both go through it. Idempotent (already-Confirmed = no-op), clamps qty ≤ 0 → 1
+     and future dates → today, canonicalizes tags against the GLOBAL vocabulary, and takes a
+     `writeAliases` flag: **only human-confirmed receipts write merchant aliases** (machine matches
+     must not become sticky). Don't add a second confirm path.
+   - **`ReceiptLine` gained `TagsJson` + `SuggestedProduct`** (additive EnsureColumn migrations in
+     Program.cs) so queued receipts keep tags + the LLM match through review.
+   - **ImportMode setting** (Review/Smart/Auto; Smart default; legacy `AutoConfirmImports` still
+     honored) — Smart auto-confirms only when every line resolves via alias or ≥ 0.8-confidence
+     match to an existing product. Importer holds a static scan lock; failed imports are listed on
+     Upload ("couldn't be read") with Retry (re-extracts from the saved audit copy) and Discard.
+   - **Engine:** `IntervalSpreadDays` (IQR of the driving samples) widens the DueSoon window;
+     `StockUpFactor` (extend-only, ≤ 3×) stretches the due date after a bigger-than-usual buy;
+     same-day signal ties deliberately lose to the purchase (documented + pinned by a test).
+   - **`PredictionBacktest` (Core)** — walk-forward self-scoring of the engine, rendered live on
+     `/accuracy` next to the extraction eval.
+   - **`tests/ShelfAware.Web.Tests`** — real EF on in-memory SQLite (FKs + unique indexes enforced);
+     covers the confirmation service, importer routing, and the product-delete FK regression.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

@@ -8,7 +8,7 @@ done yet — survives even if everything else is lost.
 **Terminology:** Phases 1–5 are the original v1 build milestones. v2 / v3 are later versions.
 `[x]` + date = shipped · `[ ]` = not done yet.
 
-_Last updated: 7/2/2026_
+_Last updated: 7/4/2026_
 
 ---
 
@@ -83,6 +83,21 @@ _Last updated: 7/2/2026_
 - [x] Receipt auto-import: settings page + swappable inbox seam + agent tool (auto-confirm) — 7/3/2026
 - [x] Recipe calorie estimate (advisor + display + cook-along context) — 7/3/2026
 - [ ] Cloud receipt inbox (Azure Blob / drive) — non-local import at deploy — Not complete
+
+### v2.2 — Review hardening + self-measuring accuracy (from the 7/3 code review)
+- [x] Product delete no longer crashes on receipt-sourced products (+ confirm dialog) — 7/4/2026
+- [x] One shared, idempotent receipt-confirmation service (Upload + importer; double-click safe) — 7/4/2026
+- [x] Queued receipts keep tags + the model's product suggestion (persisted on ReceiptLine) — 7/4/2026
+- [x] Smart graduated import mode (Review / Smart / Auto; Smart = new default) — 7/4/2026
+- [x] Machine-confirmed imports write no merchant aliases (human-only trust) — 7/4/2026
+- [x] Import scan lock (no concurrent double-imports) — 7/4/2026
+- [x] Failed imports visible + retryable on Upload — 7/4/2026
+- [x] Persistence test project on in-memory SQLite + CI step — 7/4/2026
+- [x] Voice loop leak fix + surfaced conversation errors — 7/4/2026
+- [x] Cadence spread (IQR) widens the DueSoon window — 7/4/2026
+- [x] Stock-up quantity stretches the due date — 7/4/2026
+- [x] Prediction backtest — the engine scores itself, live on /accuracy — 7/4/2026
+- [x] README v2 refresh (voice, auto-import, both-halves accuracy) — 7/4/2026
 
 ---
 
