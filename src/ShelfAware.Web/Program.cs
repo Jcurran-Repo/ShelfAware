@@ -49,10 +49,12 @@ builder.Services.AddSingleton<ITagAdvisor, AnthropicTagAdvisor>();
 builder.Services.AddSingleton<IRecipeAdvisor, AnthropicRecipeAdvisor>();
 
 // Receipt auto-import: a swappable inbox (local folder now, cloud later) + the importer the chat/voice
-// agent triggers, plus the runtime settings store behind the /settings page.
+// agent triggers, plus the runtime settings store behind the /settings page. Both the importer and the
+// manual Upload review confirm receipts through the ONE shared confirmation service.
 builder.Services.AddSingleton<IAppSettings, EfAppSettings>();
 builder.Services.AddSingleton<IReceiptInbox, LocalFolderReceiptInbox>();
 builder.Services.AddSingleton<IReceiptImporter, ReceiptImporter>();
+builder.Services.AddSingleton<ReceiptConfirmationService>();
 
 // Voice I/O (ElevenLabs): Scribe = STT (ear), TTS = mouth. Speech is its own REST API, not an
 // IChatClient workload, so each rides a typed HttpClient with the base address + xi-api-key header.
@@ -82,6 +84,8 @@ using (var scope = app.Services.CreateScope())
     // the app breaks on load. Idempotent — only adds the column when it's missing.
     EnsureColumn(db, "Recipes", "EstimatedCaloriesPerServing", "INTEGER NULL");
     EnsureColumn(db, "Receipts", "SourceFile", "TEXT NULL");
+    EnsureColumn(db, "ReceiptLines", "TagsJson", "TEXT NULL");
+    EnsureColumn(db, "ReceiptLines", "SuggestedProduct", "TEXT NULL");
     db.Database.ExecuteSqlRaw(
         "CREATE TABLE IF NOT EXISTS \"AppSettings\" (\"Key\" TEXT NOT NULL CONSTRAINT \"PK_AppSettings\" PRIMARY KEY, \"Value\" TEXT NOT NULL);");
 }

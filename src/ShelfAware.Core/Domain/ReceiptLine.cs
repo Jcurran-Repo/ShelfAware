@@ -18,4 +18,11 @@ public class ReceiptLine
     public decimal Confidence { get; set; }
     public int? ProductId { get; set; }
     public Product? Product { get; set; }
+    /// <summary>JSON array of the descriptive tags extracted (then reviewed) for this line, or null.
+    /// Persisted so a receipt queued for review keeps its tags — they used to live only in memory and
+    /// were lost when the auto-importer queued a receipt.</summary>
+    public string? TagsJson { get; set; }
+    /// <summary>Exact existing-product name the model suggested for this line, or null. Persisted so
+    /// the review pre-fill's trust order (alias → model suggestion → matcher) survives a queued receipt.</summary>
+    public string? SuggestedProduct { get; set; }
 }

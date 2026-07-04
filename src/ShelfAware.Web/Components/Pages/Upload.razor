@@ -9,6 +9,7 @@
 @inject ITagAdvisor Advisor
 @inject AppPaths Paths
 @inject IOptions<ShelfAware.Llm.LlmOptions> LlmOptions
+@inject ReceiptConfirmationService Confirmer
 
 <PageTitle>Upload receipt — Shelf Aware</PageTitle>
 
@@ -173,8 +174,8 @@ else if (phase == Phase.Review && receipt is not null)
             }
         </datalist>
         <div class="review-actions">
-            <button @onclick="ConfirmAll" disabled="@(reviewLines.Count == 0)">Confirm all</button>
-            <button class="secondary" @onclick="Discard">Discard receipt</button>
+            <button @onclick="ConfirmAll" disabled="@(reviewLines.Count == 0 || confirming)">@(confirming ? "Saving…" : "Confirm all")</button>
+            <button class="secondary" @onclick="Discard" disabled="@confirming">Discard receipt</button>
         </div>
         @if (confirmError is not null)
         {
@@ -204,6 +205,7 @@ else if (phase == Phase.Done)
     private List<Product> products = [];
     private string confirmSummary = "";
     private string? confirmError;
+    private bool confirming;
 
     private List<PendingRow> pendingReceipts = [];
     private record PendingRow(int Id, string? Merchant, DateOnly? PurchasedAt, int LineCount);
@@ -245,11 +247,16 @@ else if (phase == Phase.Done)
 
     // Load a queued receipt into the SAME editable review table the manual upload uses, so it can be
     // edited + confirmed (or discarded) — reusing ConfirmAll, which already works off the receipt id.
-    private async Task ReviewPending(int receiptId)
+    private Task ReviewPending(int receiptId) => LoadReviewAsync(receiptId);
+
+    // ONE review pre-fill for both entry paths (fresh extraction and auto-import queue): lines come
+    // from the stored receipt — tags and the model's suggestion are persisted on ReceiptLine now —
+    // with the product pre-filled by trust order: learned alias → model suggestion → matcher → new.
+    private async Task LoadReviewAsync(int receiptId)
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         var r = await db.Receipts.Include(x => x.Lines).FirstOrDefaultAsync(x => x.Id == receiptId);
-        if (r is null) { await LoadPendingAsync(); return; }
+        if (r is null || r.Status != ReceiptStatus.PendingReview) { await LoadPendingAsync(); return; }
 
         receipt = r;
         reviewDate = r.PurchasedAt ?? DateOnly.FromDateTime(DateTime.Today);
@@ -262,7 +269,15 @@ else if (phase == Phase.Done)
         reviewLines = r.Lines.Select(l =>
         {
             var alias = aliases.FirstOrDefault(a => a.RawText == l.RawText);
-            var match = alias is null ? ProductMatcher.Resolve(l.NormalizedName, products) : null;
+            Product? match = null;
+            if (alias is null)
+            {
+                // Size is metadata, not identity — match on item name only (all sizes roll up).
+                match = l.SuggestedProduct is { Length: > 0 }
+                    ? products.FirstOrDefault(p => string.Equals(p.Name, l.SuggestedProduct, StringComparison.OrdinalIgnoreCase))
+                    : null;
+                match ??= ProductMatcher.Resolve(l.NormalizedName, products);
+            }
             return new ReviewLine
             {
                 RawText = l.RawText,
@@ -273,7 +288,7 @@ else if (phase == Phase.Done)
                 Category = l.Category,
                 Confidence = l.Confidence,
                 UnitPrice = l.UnitPrice,
-                Tags = [],
+                Tags = ReceiptConfirmationService.DeserializeTags(l.TagsJson),
                 ProductId = alias?.ProductId ?? match?.Id ?? 0,
                 AliasMatched = alias is not null,
             };
@@ -369,7 +384,6 @@ else if (phase == Phase.Done)
 
             receipt.Merchant = result.Receipt.Merchant;
             receipt.PurchasedAt = result.Receipt.PurchaseDate;
-            reviewDate = receipt.PurchasedAt ?? DateOnly.FromDateTime(DateTime.Today);
             receipt.Lines = result.Receipt.Lines.Select(l => new ReceiptLine
             {
                 RawText = l.RawText,
@@ -380,43 +394,15 @@ else if (phase == Phase.Done)
                 UnitPrice = l.UnitPrice,
                 Category = l.Category,
                 Confidence = l.Confidence,
+                TagsJson = ReceiptConfirmationService.SerializeTags(l.Tags),
+                SuggestedProduct = l.SuggestedProductName,
             }).ToList();
             db.Receipts.Add(receipt);
             await db.SaveChangesAsync();
 
-            // Pre-fill the product mapping by trust order: learned alias (DESIGN.md §4) →
-            // model's suggested match → deterministic ProductMatcher → create new.
-            var merchant = receipt.Merchant ?? "";
-            var aliases = await db.ProductAliases.Where(a => a.Merchant == merchant).ToListAsync();
-            reviewLines = result.Receipt!.Lines.Select(l =>
-            {
-                var alias = aliases.FirstOrDefault(a => a.RawText == l.RawText);
-                Product? match = null;
-                if (alias is null)
-                {
-                    // Size is metadata, not identity — match on item name only (all sizes roll up).
-                    match = l.SuggestedProductName is { Length: > 0 }
-                        ? products.FirstOrDefault(p => string.Equals(p.Name, l.SuggestedProductName, StringComparison.OrdinalIgnoreCase))
-                        : null;
-                    match ??= ProductMatcher.Resolve(l.NormalizedName, products);
-                }
-                return new ReviewLine
-                {
-                    RawText = l.RawText,
-                    NormalizedName = l.NormalizedName,
-                    Brand = l.Brand,
-                    Size = l.Size,
-                    Quantity = l.Quantity,
-                    Category = l.Category,
-                    Confidence = l.Confidence,
-                    UnitPrice = l.UnitPrice,
-                    Tags = l.Tags.ToList(),
-                    ProductId = alias?.ProductId ?? match?.Id ?? 0,
-                    AliasMatched = alias is not null,
-                };
-            }).ToList();
-
-            phase = Phase.Review;
+            // The stored lines now carry everything review needs (tags + suggestion included), so the
+            // fresh-extraction path and the auto-import queue share one pre-fill.
+            await LoadReviewAsync(receipt.Id);
         }
         catch (Exception ex)
         {
@@ -429,116 +415,29 @@ else if (phase == Phase.Done)
         }
     }
 
+    // Persistence lives in ReceiptConfirmationService — the ONE confirm path shared with the
+    // auto-importer. The service is idempotent (an already-confirmed receipt is a no-op) and the
+    // `confirming` flag keeps a double-click from even reaching it.
     private async Task ConfirmAll()
     {
-        if (receipt is null) return;
+        if (receipt is null || confirming) return;
+        confirming = true;
         confirmError = null;
         try
         {
-            await using var db = await DbFactory.CreateDbContextAsync();
-            var dbReceipt = await db.Receipts.Include(r => r.Lines).FirstAsync(r => r.Id == receipt.Id);
+            var lines = reviewLines.Select(l => new ReceiptConfirmationService.ConfirmLine(
+                l.RawText, l.NormalizedName, l.Brand, l.Size, l.Quantity, l.Category, l.Tags, l.ProductId)).ToList();
             // Use the user-confirmed receipt date (not the upload date) so refill intervals are accurate
-            // even when many receipts are uploaded in one sitting.
-            var purchaseDate = reviewDate;
-            dbReceipt.PurchasedAt = reviewDate;
-            var merchant = dbReceipt.Merchant ?? "";
-            var created = 0;
+            // even when many receipts are uploaded in one sitting. writeAliases: a human reviewed these
+            // pairings, so they're allowed to become sticky merchant aliases.
+            var outcome = await Confirmer.ConfirmAsync(receipt.Id, reviewDate, lines, writeAliases: true);
 
-            // Real receipts repeat identical lines (two of the same item scan as two rows), and the
-            // (Merchant, RawText) alias index is unique. Querying the DB per line wouldn't see an alias
-            // added earlier in THIS loop, so a duplicate raw line would try to INSERT a second alias and
-            // blow up SaveChanges (the "Error confirming receipt" failure). Load this merchant's aliases
-            // once and track them by raw text so each raw line owns exactly one alias (last write wins).
-            var aliasesByRaw = (await db.ProductAliases.Where(a => a.Merchant == merchant).ToListAsync())
-                .ToDictionary(a => a.RawText, a => a);
-            // Pair each review line to a distinct receipt line so duplicate raw lines each get their own
-            // product link (and their unit price counts toward price history), rather than all collapsing
-            // onto the first matching row.
-            var unmatchedLines = dbReceipt.Lines.ToList();
-            // One trip can list a single new item on two lines (e.g. two racks of ribs). Map both lines to
-            // one new product — keyed by item name — each line still recording its own purchase, instead of
-            // creating duplicates. Size is metadata on the purchase, not a separate product.
-            var createdByName = new Dictionary<string, Product>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var line in reviewLines)
-            {
-                var name = line.NormalizedName.Trim();
-                if (name.Length == 0) continue;
-                var brand = string.IsNullOrWhiteSpace(line.Brand) ? null : line.Brand.Trim();
-                var size = string.IsNullOrWhiteSpace(line.Size) ? null : line.Size.Trim();
-
-                Product product;
-                if (line.ProductId > 0)
-                {
-                    product = await db.Products.Include(p => p.Tags).FirstAsync(p => p.Id == line.ProductId);
-                }
-                else if (createdByName.TryGetValue(name, out var existingNew))
-                {
-                    product = existingNew;
-                }
-                else
-                {
-                    product = new Product { Name = name, Category = line.Category };
-                    db.Products.Add(product);
-                    createdByName[name] = product;
-                    created++;
-                }
-
-                db.PurchaseEvents.Add(new PurchaseEvent
-                {
-                    Product = product,
-                    PurchasedAt = purchaseDate,
-                    Quantity = line.Quantity,
-                    Brand = brand,
-                    Size = size,
-                    Source = PurchaseSource.Receipt,
-                    ReceiptId = dbReceipt.Id,
-                });
-
-                // Apply the reviewed tags to the (brand-agnostic) product, skipping ones it already has
-                // or near-duplicates of them so the tag cloud stays clean.
-                foreach (var rawTag in line.Tags)
-                {
-                    var tag = rawTag.Trim();
-                    if (tag.Length == 0) continue;
-                    var existing = product.Tags.Select(t => t.Value).ToList();
-                    if (existing.Any(v => string.Equals(v, tag, StringComparison.OrdinalIgnoreCase))) continue;
-                    if (TagVocabulary.FindNearDuplicate(tag, existing) is not null) continue;
-                    product.Tags.Add(new ProductTag { Value = tag });
-                }
-
-                var dbLine = unmatchedLines.FirstOrDefault(l => l.RawText == line.RawText);
-                if (dbLine is not null)
-                {
-                    unmatchedLines.Remove(dbLine);
-                    dbLine.NormalizedName = name;
-                    dbLine.Brand = brand;
-                    dbLine.Size = size;
-                    dbLine.Quantity = line.Quantity;
-                    dbLine.Category = line.Category;
-                    dbLine.Product = product;
-                }
-
-                // Write/refresh alias so re-uploads pre-match deterministically (DESIGN.md §4),
-                // de-duplicated within this receipt so the unique (Merchant, RawText) index holds.
-                if (aliasesByRaw.TryGetValue(line.RawText, out var alias))
-                {
-                    alias.Product = product;
-                }
-                else
-                {
-                    var newAlias = new ProductAlias { Merchant = merchant, RawText = line.RawText, Product = product };
-                    db.ProductAliases.Add(newAlias);
-                    aliasesByRaw[line.RawText] = newAlias;
-                }
-            }
-
-            dbReceipt.Status = ReceiptStatus.Confirmed;
-            await db.SaveChangesAsync();
-
-            confirmSummary = $"Recorded {reviewLines.Count(l => l.NormalizedName.Trim().Length > 0)} purchases" +
-                             (created > 0 ? $" ({created} new product{(created == 1 ? "" : "s")})" : "") +
-                             $" from {(merchant.Length > 0 ? merchant : "unknown merchant")} on {purchaseDate:yyyy-MM-dd}.";
+            var merchant = receipt.Merchant ?? "";
+            confirmSummary = outcome.AlreadyConfirmed
+                ? "These purchases were already recorded."
+                : $"Recorded {outcome.Purchases} purchases" +
+                  (outcome.NewProducts > 0 ? $" ({outcome.NewProducts} new product{(outcome.NewProducts == 1 ? "" : "s")})" : "") +
+                  $" from {(merchant.Length > 0 ? merchant : "unknown merchant")} on {reviewDate:yyyy-MM-dd}.";
             await LoadPendingAsync(); // a queued receipt just left the pending list
             phase = Phase.Done;
         }
@@ -547,6 +446,10 @@ else if (phase == Phase.Done)
             // One SaveChanges in a single transaction, so a failure persists nothing: keep the receipt in
             // review so the user can adjust a line and retry instead of losing the extraction to a crash.
             confirmError = $"Couldn't save these purchases: {ex.Message}. Nothing was recorded — adjust a line and try again, or discard the receipt.";
+        }
+        finally
+        {
+            confirming = false;
         }
     }
 
