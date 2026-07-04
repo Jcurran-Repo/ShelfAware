@@ -232,6 +232,10 @@
     private Recipe? cookingRecipe;
     private readonly Random rng = new();
 
+    /// <summary>Deep link from the chat's read_recipe tool (/recipes?read={id}) — auto-starts the
+    /// read-aloud, so one dashboard voice command ends with the recipe being read out loud.</summary>
+    [SupplyParameterFromQuery(Name = "read")] public int? ReadId { get; set; }
+
     // Hands-free cook-along only shows when an ElevenLabs agent is configured (empty id = hidden).
     private bool CookAlongAvailable => !string.IsNullOrEmpty(ElOptions.Value.AgentId);
 
@@ -259,7 +263,12 @@
         picked = pool.Count > 0 ? pool[rng.Next(pool.Count)] : null;
     }
 
-    protected override async Task OnInitializedAsync() => await LoadAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        if (ReadId is { } id && savedRecipes.FirstOrDefault(r => r.Id == id) is { Steps.Count: > 0 } target)
+            StartReading(target);
+    }
 
     private async Task LoadAsync()
     {

@@ -22,4 +22,11 @@ public interface IPantryStore
     /// <summary>Start or stop tracking a product for replenishment (untracked = kept in the catalog
     /// but not predicted or shown as running low).</summary>
     Task SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default);
+
+    /// <summary>Saved recipes (id, name, whether cooking steps exist) — lets the read_recipe chat
+    /// tool resolve a spoken name to something the Recipes page can read aloud.</summary>
+    Task<IReadOnlyList<RecipeRef>> GetRecipesAsync(CancellationToken cancellationToken = default);
 }
+
+/// <summary>Lightweight saved-recipe reference for chat-tool resolution.</summary>
+public record RecipeRef(int Id, string Name, bool HasSteps);

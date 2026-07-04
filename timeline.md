@@ -98,6 +98,8 @@ _Last updated: 7/4/2026_
 - [x] Stock-up quantity stretches the due date — 7/4/2026
 - [x] Prediction backtest — the engine scores itself, live on /accuracy — 7/4/2026
 - [x] README v2 refresh (voice, auto-import, both-halves accuracy) — 7/4/2026
+- [x] "Stop listening" ends any voice surface (plain-code phrase detection) — 7/4/2026
+- [x] One-command recipe handoff: chat navigates pages + auto-starts read-aloud (open_page / read_recipe) — 7/4/2026
 
 ---
 

@@ -30,8 +30,13 @@ public record ChatResult
     /// <summary>Short descriptions of state changes applied, for UI transparency.</summary>
     public IReadOnlyList<string> Actions { get; init; } = [];
 
-    public static ChatResult Ok(string reply, IReadOnlyList<string> actions) =>
-        new() { Success = true, Reply = reply, Actions = actions };
+    /// <summary>Relative URL the UI should navigate to after showing/speaking the reply (set by the
+    /// open_page / read_recipe tools, e.g. "/recipes?read=12"), or null. A plain string so Core stays
+    /// UI-framework-agnostic; the Blazor layer applies it with its NavigationManager.</summary>
+    public string? NavigateTo { get; init; }
+
+    public static ChatResult Ok(string reply, IReadOnlyList<string> actions, string? navigateTo = null) =>
+        new() { Success = true, Reply = reply, Actions = actions, NavigateTo = navigateTo };
 
     public static ChatResult Fail(string reply) =>
         new() { Success = false, Reply = reply };

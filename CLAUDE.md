@@ -83,6 +83,13 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      `/accuracy` next to the extraction eval.
    - **`tests/ShelfAware.Web.Tests`** — real EF on in-memory SQLite (FKs + unique indexes enforced);
      covers the confirmation service, importer routing, and the product-delete FK regression.
+   - **Chat can navigate the UI:** `ChatResult.NavigateTo` (a relative URL) is set by the `open_page`
+     and `read_recipe` tools; Home / PushToTalk / VoiceConversation apply it via NavigationManager
+     after showing/speaking the reply, and `/recipes?read={id}` auto-starts the read-aloud — one
+     dashboard voice command ends with a recipe being read out loud. Recipe names resolve exact →
+     substring → token containment ≥ 0.6 (unique winner). **"Stop listening"** (`VoiceCommands`,
+     Core, plain code — whole-utterance match, filler tolerated) ends the conversation BEFORE the
+     LLM is called; cookalong.js also force-closes the session on the phrase.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

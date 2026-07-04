@@ -188,6 +188,99 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task Open_page_carries_a_navigation_target_out()
+    {
+        var store = new FakePantryStore();
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("open_page", ("page", "grocery_list"))),
+            () => Responses.Text("Opening the grocery list."));
+
+        var result = await Chat(client, store).HandleAsync("show me the grocery list");
+
+        Assert.True(result.Success);
+        Assert.Equal("/list", result.NavigateTo);
+    }
+
+    [Fact]
+    public async Task Open_product_page_resolves_the_product_fuzzily()
+    {
+        var store = new FakePantryStore(P(7, "Whole Milk", Category.Dairy));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("open_page", ("page", "product"), ("product_name", "milk"))),
+            () => Responses.Text("Opening Whole Milk."));
+
+        var result = await Chat(client, store).HandleAsync("show me the milk page");
+
+        Assert.Equal("/product/7", result.NavigateTo);
+    }
+
+    [Fact]
+    public async Task Read_recipe_resolves_a_close_name_and_navigates_to_the_reader()
+    {
+        var store = new FakePantryStore();
+        store.Recipes.Add(new RecipeRef(12, "Spaghetti Carbonara", HasSteps: true));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("read_recipe", ("recipe_name", "carbonara"))),
+            () => Responses.Text("Opening Spaghetti Carbonara and reading it aloud."));
+
+        var result = await Chat(client, store).HandleAsync("read me the carbonara recipe");
+
+        Assert.True(result.Success);
+        Assert.Equal("/recipes?read=12", result.NavigateTo);
+        Assert.Contains("reading Spaghetti Carbonara", result.Actions);
+    }
+
+    [Fact]
+    public async Task Read_recipe_resolves_a_descriptive_reference_by_token_containment()
+    {
+        // "the chicken and potatoes recipe" is neither exact nor a substring of the saved name —
+        // token containment (the eval harness's matcher) must land it deterministically.
+        var store = new FakePantryStore();
+        store.Recipes.Add(new RecipeRef(5, "Pan-Seared Chicken with Roasted Potatoes", HasSteps: true));
+        store.Recipes.Add(new RecipeRef(6, "Beef Stroganoff", HasSteps: true));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("read_recipe", ("recipe_name", "the chicken and potatoes recipe"))),
+            () => Responses.Text("Opening it."));
+
+        var result = await Chat(client, store).HandleAsync("read me the chicken and potatoes recipe");
+
+        Assert.Equal("/recipes?read=5", result.NavigateTo);
+    }
+
+    [Fact]
+    public async Task Read_recipe_with_no_match_reports_the_saved_names_and_does_not_navigate()
+    {
+        var store = new FakePantryStore();
+        store.Recipes.Add(new RecipeRef(12, "Spaghetti Carbonara", HasSteps: true));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("read_recipe", ("recipe_name", "beef wellington"))),
+            () => Responses.Text("I don't have that one saved — you do have Spaghetti Carbonara."));
+
+        var result = await Chat(client, store).HandleAsync("read me the beef wellington recipe");
+
+        Assert.Null(result.NavigateTo);
+        // The tool result fed back to the model must list what IS saved, so it can self-correct.
+        var toolResult = client.ReceivedMessages[1]
+            .Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result?.ToString();
+        Assert.Contains("Spaghetti Carbonara", toolResult);
+    }
+
+    [Fact]
+    public async Task Read_recipe_without_steps_refuses_to_navigate()
+    {
+        var store = new FakePantryStore();
+        store.Recipes.Add(new RecipeRef(3, "Caprese Salad", HasSteps: false));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("read_recipe", ("recipe_name", "caprese salad"))),
+            () => Responses.Text("That one has no steps saved."));
+
+        var result = await Chat(client, store).HandleAsync("read me the caprese recipe");
+
+        Assert.Null(result.NavigateTo);
+    }
+
+    [Fact]
     public async Task Stops_after_the_turn_limit()
     {
         // The model keeps calling a tool and never gives a final answer → the loop must bail out.

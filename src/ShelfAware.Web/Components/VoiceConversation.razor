@@ -11,6 +11,7 @@
 @inject IPantryChat Chat
 @inject ITextToSpeech Tts
 @inject IJSRuntime JS
+@inject NavigationManager Nav
 @inject ILogger<VoiceConversation> Log
 
 <div class="voice-convo">
@@ -145,6 +146,19 @@
                 if (!heard.Success || string.IsNullOrWhiteSpace(heard.Text))
                     continue; // couldn't make it out -> just listen again
 
+                // "Stop listening" (and friends) ends the session in plain code — instant, free, and
+                // deterministic; the control phrase never reaches the LLM.
+                if (VoiceCommands.IsStop(heard.Text))
+                {
+                    history.Add(new ChatTurn(heard.Text, "Okay — stopped listening."));
+                    phase = Phase.Speaking;
+                    await InvokeAsync(StateHasChanged);
+                    var bye = await Tts.SynthesizeAsync("Okay — stopped listening.");
+                    if (bye.Success)
+                        await _module.InvokeVoidAsync("play", Convert.ToBase64String(bye.Audio), bye.MediaType);
+                    break;
+                }
+
                 pendingUser = heard.Text;
                 await InvokeAsync(StateHasChanged);
 
@@ -161,6 +175,15 @@
                 if (!active) break;
                 if (speech.Success)
                     await _module.InvokeVoidAsync("play", Convert.ToBase64String(speech.Audio), speech.MediaType);
+
+                // Navigation hand-off: "read me the ribs recipe" → confirmation is spoken, then the
+                // conversation winds down and the target page takes over (e.g. the recipe read-aloud
+                // auto-starts from /recipes?read=N). One command on the dashboard, hands-free end to end.
+                if (result.Success && result.NavigateTo is { } url)
+                {
+                    Nav.NavigateTo(url);
+                    break;
+                }
             }
         }
         catch (Exception ex)

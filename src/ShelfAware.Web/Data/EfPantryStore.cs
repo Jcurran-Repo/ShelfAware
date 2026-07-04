@@ -59,4 +59,13 @@ public class EfPantryStore(IDbContextFactory<ShelfAwareDbContext> dbFactory) : I
         product.IsTracked = tracked;
         await db.SaveChangesAsync(cancellationToken);
     }
+
+    public async Task<IReadOnlyList<RecipeRef>> GetRecipesAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.Recipes
+            .OrderBy(r => r.Name)
+            .Select(r => new RecipeRef(r.Id, r.Name, r.Steps.Count > 0))
+            .ToListAsync(cancellationToken);
+    }
 }

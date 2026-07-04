@@ -70,12 +70,16 @@ internal static class Responses
 internal sealed class FakePantryStore : IPantryStore
 {
     public List<Product> Products { get; }
+    public List<RecipeRef> Recipes { get; } = [];
     public List<(int ProductId, SignalKind Kind)> Signals { get; } = [];
     public List<(int ProductId, DateOnly Date, decimal Qty)> Purchases { get; } = [];
     public List<(int ProductId, bool Tracked)> Tracking { get; } = [];
     public List<(string Name, Category Category)> Created { get; } = [];
 
     public FakePantryStore(params Product[] products) => Products = [.. products];
+
+    public Task<IReadOnlyList<RecipeRef>> GetRecipesAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<RecipeRef>>(Recipes);
 
     public Task<IReadOnlyList<Product>> GetProductsAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<Product>>(Products);

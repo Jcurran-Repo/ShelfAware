@@ -69,6 +69,7 @@ public class AnthropicPantryChat : IPantryChat
         messages.Add(new ChatMessage(ChatRole.User, userText));
 
         var actions = new List<string>();
+        var nav = new NavigationTarget(); // set by open_page / read_recipe; carried out on ChatResult
 
         for (var turn = 0; turn < MaxTurns; turn++)
         {
@@ -92,7 +93,7 @@ public class AnthropicPantryChat : IPantryChat
             {
                 var text = response.Text.Trim();
                 _logger.LogInformation("Pantry chat completed on turn {Turn} with {ActionCount} action(s) applied.", turn + 1, actions.Count);
-                return ChatResult.Ok(text.Length > 0 ? text : "Done.", actions);
+                return ChatResult.Ok(text.Length > 0 ? text : "Done.", actions, nav.Url);
             }
 
             // Carry the assistant's tool-call turn back into the history, then answer each call.
@@ -101,7 +102,7 @@ public class AnthropicPantryChat : IPantryChat
             var results = new List<AIContent>();
             foreach (var call in calls)
             {
-                var (text, _) = await ExecuteToolAsync(call, products, actions, cancellationToken);
+                var (text, _) = await ExecuteToolAsync(call, products, actions, nav, cancellationToken);
                 results.Add(new FunctionResultContent(call.CallId, text));
             }
             messages.Add(new ChatMessage(ChatRole.Tool, results));
@@ -113,11 +114,15 @@ public class AnthropicPantryChat : IPantryChat
         _logger.LogWarning("Pantry chat hit the {MaxTurns}-turn limit without a final reply ({ActionCount} action(s) applied).", MaxTurns, actions.Count);
         return ChatResult.Ok(
             actions.Count > 0 ? $"Applied: {string.Join(", ", actions)}." : "Stopped after several steps without finishing.",
-            actions);
+            actions, nav.Url);
     }
 
+    /// <summary>Mutable navigation slot the tool handlers write into (last navigation wins) — the
+    /// service is a singleton, so per-request state rides through parameters, never fields.</summary>
+    private sealed class NavigationTarget { public string? Url; }
+
     private async Task<(string text, bool isError)> ExecuteToolAsync(
-        FunctionCallContent call, IReadOnlyList<Product> products, List<string> actions, CancellationToken ct)
+        FunctionCallContent call, IReadOnlyList<Product> products, List<string> actions, NavigationTarget nav, CancellationToken ct)
     {
         string? Str(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsString(v) : null;
         decimal? Dec(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsDecimal(v) : null;
@@ -210,6 +215,55 @@ public class AnthropicPantryChat : IPantryChat
                 return (summary.Describe(), false);
             }
 
+            case "open_page":
+            {
+                var page = Str("page")?.Trim().ToLowerInvariant();
+                if (page == "product")
+                {
+                    var name = Str("product_name");
+                    var product = ProductMatcher.Resolve(name, products);
+                    if (product is null)
+                        return ($"No product matches \"{name}\".", true);
+                    nav.Url = $"/product/{product.Id}";
+                    actions.Add($"opened {product.Name}");
+                    return ($"Opening {product.Name}.", false);
+                }
+                string? url = page switch
+                {
+                    "dashboard" or "home" => "/",
+                    "grocery_list" or "list" => "/list",
+                    "recipes" => "/recipes",
+                    "trends" => "/trends",
+                    "upload" or "receipt" => "/receipt",
+                    "products" => "/products",
+                    "accuracy" => "/accuracy",
+                    "settings" => "/settings",
+                    _ => null,
+                };
+                if (url is null) return ($"Unknown page '{page}'.", true);
+                nav.Url = url;
+                actions.Add($"opened {page!.Replace('_', ' ')}");
+                return ($"Opening the {page.Replace('_', ' ')} page.", false);
+            }
+
+            case "read_recipe":
+            {
+                var name = Str("recipe_name")?.Trim();
+                if (string.IsNullOrWhiteSpace(name)) return ("A recipe name is required.", true);
+                var recipes = await _store.GetRecipesAsync(ct);
+                if (recipes.Count == 0)
+                    return ("There are no saved recipes yet — save one on the Recipes page first.", true);
+                var match = ResolveRecipe(name, recipes);
+                if (match is null)
+                    // Feed the real names back so the model can self-correct or ask which one was meant.
+                    return ($"No saved recipe matches \"{name}\". Saved recipes: {string.Join("; ", recipes.Select(r => r.Name))}.", true);
+                if (!match.HasSteps)
+                    return ($"\"{match.Name}\" has no cooking steps saved, so there's nothing to read aloud.", true);
+                nav.Url = $"/recipes?read={match.Id}";
+                actions.Add($"reading {match.Name}");
+                return ($"Opening {match.Name} and reading it aloud.", false);
+            }
+
             default:
                 return ($"Unknown tool: {call.Name}.", true);
         }
@@ -280,10 +334,65 @@ public class AnthropicPantryChat : IPantryChat
                 }
                 """,
                 []),
+
+            MakeTool("open_page",
+                "Navigate the user's screen to a page of the app. Use when they ask to see, open, go to, or show a page — or a specific product's detail (page='product' + product_name).",
+                """
+                {
+                  "page": { "type": "string", "enum": ["dashboard","grocery_list","recipes","trends","upload","products","accuracy","settings","product"] },
+                  "product_name": { "type": "string", "description": "Only with page='product': the product whose detail page to open." }
+                }
+                """,
+                ["page"]),
+
+            MakeTool("read_recipe",
+                "Open a SAVED recipe on screen and read it aloud step-by-step. Use when the user asks to hear, read, or be walked through a recipe.",
+                """
+                {
+                  "recipe_name": { "type": "string", "description": "Name of the saved recipe (close match is fine)." }
+                }
+                """,
+                ["recipe_name"]),
         ];
 
         return tools.Select(t => t.AsAITool()).ToList();
     }
+
+    // Exact (case-insensitive) → unique substring either way → token containment (the eval harness's
+    // matcher: |q ∩ name| / min sizes ≥ 0.6, unique best) — so "chicken and potatoes" finds
+    // "Pan-Seared Chicken with Roasted Potatoes" deterministically. On no match the tool result lists
+    // the saved names, so the model can self-correct on its next loop turn.
+    private static RecipeRef? ResolveRecipe(string query, IReadOnlyList<RecipeRef> recipes)
+    {
+        var q = query.Trim();
+        var exact = recipes.FirstOrDefault(r => string.Equals(r.Name, q, StringComparison.OrdinalIgnoreCase));
+        if (exact is not null) return exact;
+        var contains = recipes.Where(r =>
+            r.Name.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+            q.Contains(r.Name, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (contains.Count == 1) return contains[0];
+
+        var qTokens = RecipeTokens(q);
+        if (qTokens.Count == 0) return null;
+        var scored = recipes
+            .Select(r => (Recipe: r, Score: Containment(qTokens, RecipeTokens(r.Name))))
+            .Where(x => x.Score >= 0.6)
+            .OrderByDescending(x => x.Score)
+            .ToList();
+        // A unique winner only — two recipes tied above the bar means it's genuinely ambiguous.
+        return scored.Count == 1 || (scored.Count > 1 && scored[0].Score > scored[1].Score)
+            ? scored[0].Recipe
+            : null;
+    }
+
+    private static double Containment(HashSet<string> a, HashSet<string> b) =>
+        a.Count == 0 || b.Count == 0 ? 0 : (double)a.Intersect(b).Count() / Math.Min(a.Count, b.Count);
+
+    private static HashSet<string> RecipeTokens(string s) =>
+        new string(s.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : ' ').ToArray())
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(t => t is not ("the" or "a" or "an" or "and" or "with" or "of" or "recipe"))
+            .ToHashSet();
 
     private static ToolUnion MakeTool(string name, string description, string propertiesJson, string[] required) =>
         new Tool

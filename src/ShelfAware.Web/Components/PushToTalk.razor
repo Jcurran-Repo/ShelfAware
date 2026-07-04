@@ -8,6 +8,7 @@
 @inject IPantryChat Chat
 @inject ITextToSpeech Tts
 @inject IJSRuntime JS
+@inject NavigationManager Nav
 
 <div class="voice">
     <button type="button"
@@ -140,6 +141,9 @@
         await SpeakAsync(result.Reply);
         State = VoiceState.Idle;
         StateHasChanged();
+
+        // Navigation tools ("show me the grocery list") take effect after the spoken confirmation.
+        if (result.Success && result.NavigateTo is { } url) Nav.NavigateTo(url);
     }
 
     private async Task SpeakAsync(string text)

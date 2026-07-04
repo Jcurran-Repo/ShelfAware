@@ -5,6 +5,7 @@
 @using ShelfAware.Core.Shopping
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
 @inject IPantryChat Chat
+@inject NavigationManager Nav
 
 <PageTitle>Shelf Aware</PageTitle>
 
@@ -229,6 +230,9 @@ else
             {
                 chatInput = "";
                 await LoadAsync(); // reflect new signals/purchases in the lists
+                // A navigation tool ran ("show me the grocery list", "read me the ribs recipe") —
+                // the reply stays visible for a beat via the aria-live region, then the page changes.
+                if (result.NavigateTo is { } url) Nav.NavigateTo(url);
             }
         }
         finally

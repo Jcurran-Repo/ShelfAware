@@ -44,7 +44,16 @@ export async function start(recipe, dotnetRef) {
             onError: () => dotnetRef.invokeMethodAsync('OnStatus', 'error'),
             onModeChange: (m) => dotnetRef.invokeMethodAsync('OnMode', modeOf(m)),
             onMessage: (msg) => {
-                if (msg && msg.message) dotnetRef.invokeMethodAsync('OnTranscript', String(msg.source ?? 'ai'), String(msg.message));
+                if (!msg || !msg.message) return;
+                const source = String(msg.source ?? 'ai');
+                const text = String(msg.message);
+                dotnetRef.invokeMethodAsync('OnTranscript', source, text);
+                // Client-side guarantee for "stop listening": the agent's own prompt handles "stop",
+                // but the mic must close even if the agent misses or ignores the phrase.
+                if (source === 'user' && /\bstop listening\b/i.test(text)) {
+                    stop();
+                    dotnetRef.invokeMethodAsync('OnStatus', 'ended');
+                }
             },
         });
         return true;
