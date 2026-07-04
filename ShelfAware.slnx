@@ -8,5 +8,6 @@
     <Project Path="tests/ShelfAware.Evals/ShelfAware.Evals.csproj" />
     <Project Path="tests/ShelfAware.Llm.Tests/ShelfAware.Llm.Tests.csproj" />
     <Project Path="tests/ShelfAware.Tests/ShelfAware.Tests.csproj" />
+    <Project Path="tests/ShelfAware.Web.Tests/ShelfAware.Web.Tests.csproj" />
   </Folder>
 </Solution>

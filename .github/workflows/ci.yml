@@ -33,3 +33,6 @@ jobs:
 
       - name: Test — AI layer (faked client)
         run: dotnet test tests/ShelfAware.Llm.Tests/ShelfAware.Llm.Tests.csproj --configuration Release --no-build
+
+      - name: Test — persistence (in-memory SQLite)
+        run: dotnet test tests/ShelfAware.Web.Tests/ShelfAware.Web.Tests.csproj --configuration Release --no-build
