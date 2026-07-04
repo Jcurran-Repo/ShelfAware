@@ -1038,6 +1038,29 @@ button.tag-chip {
     cursor: pointer;
 }
 
+.import-mode {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.6rem 0.9rem 0.8rem;
+    margin: 0.6rem 0 0.4rem;
+    display: grid;
+    gap: 0.55rem;
+}
+
+.import-mode legend {
+    font-weight: 600;
+    padding: 0 0.35rem;
+}
+
+.import-mode label {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.5rem;
+    align-items: baseline;
+    cursor: pointer;
+    font-size: 0.92rem;
+}
+
 .pending-receipts {
     list-style: none;
     padding: 0;

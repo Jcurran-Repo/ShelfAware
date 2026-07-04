@@ -13,7 +13,10 @@ public static class SettingKeys
     /// <summary>Folder the assistant scans for new receipt files to auto-import.</summary>
     public const string ReceiptFolder = "ReceiptFolder";
 
-    /// <summary>"true"/"false" — when true (default), imports are auto-confirmed straight into history;
-    /// when false, they're queued as pending for the user to review + approve on the Upload page.</summary>
+    /// <summary>An <see cref="Ingest.ImportMode"/> name: Review, Smart (default), or Auto.</summary>
+    public const string ImportMode = "ImportMode";
+
+    /// <summary>LEGACY "true"/"false" from before the three-way <see cref="ImportMode"/> existed —
+    /// still read as a fallback (true → Auto, false → Review) so an existing choice is honored.</summary>
     public const string AutoConfirmImports = "AutoConfirmImports";
 }

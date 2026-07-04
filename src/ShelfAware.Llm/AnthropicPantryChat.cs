@@ -270,7 +270,7 @@ public class AnthropicPantryChat : IPantryChat
                 ["name", "category"]),
 
             MakeTool("import_receipts",
-                "Scan the configured receipt folder and auto-import any NEW receipt files (extract + record the purchases). Use when the user asks to import, upload, scan, or process their receipts.",
+                "Scan the configured receipt folder and process any NEW receipt files — depending on the import-mode setting each is recorded directly or queued for review. Use when the user asks to import, upload, scan, or process their receipts.",
                 """
                 {
                 }

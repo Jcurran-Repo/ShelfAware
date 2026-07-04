@@ -10,22 +10,47 @@ using ShelfAware.Web.Data;
 namespace ShelfAware.Web.Ingest;
 
 /// <summary>
-/// <see cref="IReceiptImporter"/>: scans the inbox and auto-imports each new receipt file — extract →
-/// AUTO-CONFIRM (no human review), reusing the same product-resolution + persistence as the manual
-/// Upload confirm. Each file is its own transaction, so one bad receipt doesn't sink the batch.
+/// <see cref="IReceiptImporter"/>: scans the inbox and imports each new receipt file. Every receipt is
+/// first persisted PENDING in exactly the shape a manual upload stores (lines + tags + the model's
+/// product suggestion), then — depending on the <see cref="ImportMode"/> — either confirmed through the
+/// same shared <see cref="ReceiptConfirmationService"/> the Upload review uses, or left queued for a
+/// human. Each file is its own unit of work, so one bad receipt doesn't sink the batch.
 /// </summary>
 public class ReceiptImporter(
     IDbContextFactory<ShelfAwareDbContext> dbFactory,
     IReceiptExtractor extractor,
     IReceiptInbox inbox,
     IAppSettings settings,
+    ReceiptConfirmationService confirmer,
     AppPaths paths,
     ILogger<ReceiptImporter> logger) : IReceiptImporter
 {
+    /// <summary>A line auto-confirms only at/above this extraction confidence (unless an alias vouches
+    /// for it). Below it, Smart mode queues the receipt for human review.</summary>
+    public const decimal SmartConfidenceFloor = 0.8m;
+
+    // One scan at a time: the startup background scan, the Settings "Scan now" button, and the chat
+    // import_receipts tool can otherwise interleave, each read the already-imported set before the
+    // other saves, and import the same file twice.
+    private static readonly SemaphoreSlim ScanLock = new(1, 1);
+
     public async Task<ImportSummary> ImportNewAsync(CancellationToken cancellationToken = default)
     {
         if (!await inbox.IsConfiguredAsync(cancellationToken)) return ImportSummary.NotConfigured;
 
+        await ScanLock.WaitAsync(cancellationToken);
+        try
+        {
+            return await ScanAsync(cancellationToken);
+        }
+        finally
+        {
+            ScanLock.Release();
+        }
+    }
+
+    private async Task<ImportSummary> ScanAsync(CancellationToken cancellationToken)
+    {
         var items = await inbox.ListAsync(cancellationToken);
         HashSet<string> alreadyImported;
         await using (var db = await dbFactory.CreateDbContextAsync(cancellationToken))
@@ -38,12 +63,12 @@ public class ReceiptImporter(
         var newItems = items.Where(i => !alreadyImported.Contains(i.Id)).ToList();
         if (newItems.Count == 0) return new ImportSummary(true, 0, 0, 0, 0, 0);
 
-        // Default on: auto-confirm. Off (unchecked on the Settings page): queue as pending for review.
-        var autoConfirmRaw = await settings.GetAsync(SettingKeys.AutoConfirmImports, cancellationToken);
-        var autoConfirm = autoConfirmRaw is null || (bool.TryParse(autoConfirmRaw, out var b) && b);
+        var mode = ImportModes.Parse(
+            await settings.GetAsync(SettingKeys.ImportMode, cancellationToken),
+            await settings.GetAsync(SettingKeys.AutoConfirmImports, cancellationToken));
 
-        logger.LogInformation("Auto-import: {New} new receipt file(s) of {Total} ({Mode}).",
-            newItems.Count, items.Count, autoConfirm ? "auto-confirm" : "review");
+        logger.LogInformation("Auto-import: {New} new receipt file(s) of {Total} ({Mode} mode).",
+            newItems.Count, items.Count, mode);
 
         int imported = 0, purchases = 0, newProducts = 0, awaitingReview = 0, failed = 0;
         foreach (var item in newItems)
@@ -51,9 +76,13 @@ public class ReceiptImporter(
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                var (p, np, queued) = await ImportOneAsync(item, autoConfirm, cancellationToken);
+                var (p, np, queued) = await ImportOneAsync(item, mode, cancellationToken);
                 if (queued) awaitingReview++;
                 else { imported++; purchases += p; newProducts += np; }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -67,17 +96,30 @@ public class ReceiptImporter(
         return new ImportSummary(true, imported, purchases, newProducts, awaitingReview, failed);
     }
 
-    private async Task<(int Purchases, int NewProducts, bool Queued)> ImportOneAsync(InboxItem item, bool autoConfirm, CancellationToken ct)
+    private async Task<(int Purchases, int NewProducts, bool Queued)> ImportOneAsync(
+        InboxItem item, ImportMode mode, CancellationToken ct)
     {
         var bytes = await inbox.ReadAsync(item.Id, ct);
 
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var products = await db.Products.Include(p => p.Tags).OrderBy(p => p.Name).ToListAsync(ct);
+        List<Product> products;
+        List<string> knownTags;
+        await using (var db = await dbFactory.CreateDbContextAsync(ct))
+        {
+            products = await db.Products.OrderBy(p => p.Name).ToListAsync(ct);
+            knownTags = TagVocabulary.Seed
+                .Concat(await db.ProductTags.Select(t => t.Value).Distinct().ToListAsync(ct))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(t => t)
+                .ToList();
+        }
 
+        // Feed the live tag vocabulary too (dedup-at-source), exactly like the manual upload path —
+        // skipping it here made the auto path coin near-duplicate tags the manual path wouldn't.
         var extraction = await extractor.ExtractAsync(
             [new ReceiptAttachment(bytes, item.MediaType)],
             products.Select(p => p.Name).Distinct().ToList(),
-            cancellationToken: ct);
+            knownTags,
+            ct);
 
         // Keep a copy of the source file (mirrors the manual upload's audit trail).
         var folderName = $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}"[..40];
@@ -94,8 +136,11 @@ public class ReceiptImporter(
 
         if (!extraction.Success || extraction.Receipt is null)
         {
-            // Record it (pending review) so we don't re-extract a bad file every scan, then report failure.
+            // Record it so a re-scan doesn't re-extract the same file every startup. The Upload page
+            // lists 0-line pending receipts under "couldn't be read" with Retry (re-extracts from the
+            // saved copy) and Discard — a transient API failure isn't a silent permanent loss.
             receipt.Status = ReceiptStatus.PendingReview;
+            await using var db = await dbFactory.CreateDbContextAsync(ct);
             db.Receipts.Add(receipt);
             await db.SaveChangesAsync(ct);
             throw new InvalidOperationException($"Extraction failed: {extraction.Error}");
@@ -104,127 +149,83 @@ public class ReceiptImporter(
         receipt.Merchant = extraction.Receipt.Merchant;
         var purchaseDate = extraction.Receipt.PurchaseDate ?? DateOnly.FromDateTime(DateTime.Today);
         receipt.PurchasedAt = purchaseDate;
+        receipt.Status = ReceiptStatus.PendingReview;
 
-        if (!autoConfirm)
+        // Persist the receipt + lines FIRST, pending, in the same shape a manual upload stores — so a
+        // queued receipt loses nothing (tags + suggestion included) and confirm is the shared service.
+        var merchant = receipt.Merchant ?? "";
+        List<ProductAlias> aliases;
+        await using (var db = await dbFactory.CreateDbContextAsync(ct))
         {
-            // Review mode: store the extracted lines (no product / no purchase) and leave the receipt
-            // pending, so the Upload page's review flow can edit + approve it — mirrors a manual upload's
-            // state right after extraction.
-            receipt.Status = ReceiptStatus.PendingReview;
+            aliases = await db.ProductAliases.Where(a => a.Merchant == merchant).ToListAsync(ct);
             foreach (var line in extraction.Receipt.Lines)
             {
-                var itemName = line.NormalizedName.Trim();
-                if (itemName.Length == 0) continue;
+                var name = line.NormalizedName.Trim();
+                if (name.Length == 0) continue;
                 receipt.Lines.Add(new ReceiptLine
                 {
                     RawText = line.RawText,
-                    NormalizedName = itemName,
+                    NormalizedName = name,
                     Brand = string.IsNullOrWhiteSpace(line.Brand) ? null : line.Brand!.Trim(),
                     Size = string.IsNullOrWhiteSpace(line.Size) ? null : line.Size!.Trim(),
                     Quantity = line.Quantity,
                     UnitPrice = line.UnitPrice,
                     Category = line.Category,
                     Confidence = line.Confidence,
+                    TagsJson = ReceiptConfirmationService.SerializeTags(line.Tags),
+                    SuggestedProduct = line.SuggestedProductName,
                 });
             }
             db.Receipts.Add(receipt);
             await db.SaveChangesAsync(ct);
-            logger.LogInformation("Queued {File} for review: {Lines} line(s).", item.Name, receipt.Lines.Count);
-            return (0, 0, true);
         }
 
-        receipt.Status = ReceiptStatus.Confirmed;
-        var merchant = receipt.Merchant ?? "";
-        // Load this merchant's aliases once (unique (Merchant, RawText) index); dedup within the receipt
-        // so a repeated raw line doesn't try to insert a second alias.
-        var aliasesByRaw = (await db.ProductAliases.Where(a => a.Merchant == merchant).ToListAsync(ct))
-            .ToDictionary(a => a.RawText, a => a);
-        var createdByName = new Dictionary<string, Product>(StringComparer.OrdinalIgnoreCase);
-        int purchases = 0, newProducts = 0;
-
+        // Resolve each line by the same trust order the review pre-fill uses:
+        // learned alias → model suggestion → deterministic matcher → create new.
+        var confirmLines = new List<ReceiptConfirmationService.ConfirmLine>();
+        var allTrusted = true;
         foreach (var line in extraction.Receipt.Lines)
         {
             var name = line.NormalizedName.Trim();
             if (name.Length == 0) continue;
-            var brand = string.IsNullOrWhiteSpace(line.Brand) ? null : line.Brand!.Trim();
-            var size = string.IsNullOrWhiteSpace(line.Size) ? null : line.Size!.Trim();
 
-            // Trust order (same as the review pre-fill): learned alias -> model suggestion -> matcher -> new.
-            Product? resolved = null;
-            if (aliasesByRaw.TryGetValue(line.RawText, out var alias))
-                resolved = products.FirstOrDefault(p => p.Id == alias.ProductId);
+            var alias = aliases.FirstOrDefault(a => a.RawText == line.RawText);
+            var resolved = alias is not null ? products.FirstOrDefault(p => p.Id == alias.ProductId) : null;
             resolved ??= line.SuggestedProductName is { Length: > 0 }
                 ? products.FirstOrDefault(p => string.Equals(p.Name, line.SuggestedProductName, StringComparison.OrdinalIgnoreCase))
                 : null;
             resolved ??= ProductMatcher.Resolve(name, products);
 
-            Product product;
-            if (resolved is not null)
-            {
-                product = resolved;
-            }
-            else if (createdByName.TryGetValue(name, out var existingNew))
-            {
-                product = existingNew;
-            }
-            else
-            {
-                product = new Product { Name = name, Category = line.Category };
-                db.Products.Add(product);
-                products.Add(product); // so later lines in this receipt can match it too
-                createdByName[name] = product;
-                newProducts++;
-            }
+            // Trusted = a human-taught alias vouches for it, or it's a confident match to a product
+            // that already exists. A brand-new product or a shaky line should get human eyes first.
+            allTrusted &= alias is not null || (resolved is not null && line.Confidence >= SmartConfidenceFloor);
 
-            db.PurchaseEvents.Add(new PurchaseEvent
-            {
-                Product = product,
-                PurchasedAt = purchaseDate,
-                Quantity = line.Quantity > 0 ? line.Quantity : 1,
-                Brand = brand,
-                Size = size,
-                Source = PurchaseSource.Receipt,
-            });
-            purchases++;
-
-            foreach (var rawTag in line.Tags)
-            {
-                var tag = rawTag.Trim();
-                if (tag.Length == 0) continue;
-                var existing = product.Tags.Select(t => t.Value).ToList();
-                if (existing.Any(v => string.Equals(v, tag, StringComparison.OrdinalIgnoreCase))) continue;
-                if (TagVocabulary.FindNearDuplicate(tag, existing) is not null) continue;
-                product.Tags.Add(new ProductTag { Value = tag });
-            }
-
-            receipt.Lines.Add(new ReceiptLine
-            {
-                RawText = line.RawText,
-                NormalizedName = name,
-                Brand = brand,
-                Size = size,
-                Quantity = line.Quantity,
-                UnitPrice = line.UnitPrice,
-                Category = line.Category,
-                Confidence = line.Confidence,
-                Product = product,
-            });
-
-            if (aliasesByRaw.TryGetValue(line.RawText, out var existingAlias))
-            {
-                existingAlias.Product = product;
-            }
-            else
-            {
-                var newAlias = new ProductAlias { Merchant = merchant, RawText = line.RawText, Product = product };
-                db.ProductAliases.Add(newAlias);
-                aliasesByRaw[line.RawText] = newAlias;
-            }
+            confirmLines.Add(new ReceiptConfirmationService.ConfirmLine(
+                line.RawText, name, line.Brand, line.Size, line.Quantity, line.Category, line.Tags,
+                resolved?.Id ?? 0));
         }
 
-        db.Receipts.Add(receipt);
-        await db.SaveChangesAsync(ct);
-        logger.LogInformation("Auto-imported {File}: {Purchases} purchase(s), {NewProducts} new product(s).", item.Name, purchases, newProducts);
-        return (purchases, newProducts, false);
+        // Zero purchasable lines (e.g. not actually a receipt) always queues — confirming an empty
+        // receipt would just hide it.
+        var confirm = confirmLines.Count > 0 && mode switch
+        {
+            ImportMode.Auto => true,
+            ImportMode.Smart => allTrusted,
+            _ => false,
+        };
+
+        if (!confirm)
+        {
+            logger.LogInformation("Queued {File} for review: {Lines} line(s) ({Mode} mode).",
+                item.Name, receipt.Lines.Count, mode);
+            return (0, 0, true);
+        }
+
+        // writeAliases: false — no human looked at these pairings, so they must not become sticky
+        // merchant aliases (a wrong machine match would silently pre-match every future receipt).
+        var outcome = await confirmer.ConfirmAsync(receipt.Id, purchaseDate, confirmLines, writeAliases: false, ct);
+        logger.LogInformation("Auto-imported {File}: {Purchases} purchase(s), {NewProducts} new product(s).",
+            item.Name, outcome.Purchases, outcome.NewProducts);
+        return (outcome.Purchases, outcome.NewProducts, false);
     }
 }

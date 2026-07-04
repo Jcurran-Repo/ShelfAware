@@ -20,14 +20,27 @@
         when you press “Scan now”, or when you tell it <em>“import my receipts”</em>.
     </p>
 
-    <label class="setting-toggle">
-        <input type="checkbox" @bind="autoConfirm" @bind:after="SaveAutoConfirm" />
-        Auto-confirm imported receipts
-    </label>
-    <p class="muted small">
-        On: imports go straight into your history. Off: they wait as pending for you to review and
-        approve (or fix) on the <a href="/receipt">Upload</a> page.
-    </p>
+    <fieldset class="import-mode">
+        <legend>When a receipt is imported</legend>
+        <label>
+            <input type="radio" name="import-mode" checked="@(mode == ImportMode.Smart)"
+                   @onchange="() => SetMode(ImportMode.Smart)" />
+            <strong>Smart</strong> <span class="muted">(recommended)</span> — confirm automatically only when
+            every line matches a product you already have (a learned alias or a confident match); anything
+            uncertain — a new product, a shaky read — waits for your review.
+        </label>
+        <label>
+            <input type="radio" name="import-mode" checked="@(mode == ImportMode.Review)"
+                   @onchange="() => SetMode(ImportMode.Review)" />
+            <strong>Review everything</strong> — every import waits as pending for you to review and
+            approve (or fix) on the <a href="/receipt">Upload</a> page.
+        </label>
+        <label>
+            <input type="radio" name="import-mode" checked="@(mode == ImportMode.Auto)"
+                   @onchange="() => SetMode(ImportMode.Auto)" />
+            <strong>Confirm everything</strong> — imports go straight into your history, new products included.
+        </label>
+    </fieldset>
 
     <div class="tag-add">
         <input @bind="folder" @bind:event="oninput" placeholder="e.g. C:\Users\you\Documents\Receipts"
@@ -52,7 +65,7 @@
 
 @code {
     private string folder = "";
-    private bool autoConfirm = true;
+    private ImportMode mode = ImportMode.Smart;
     private bool configured;
     private int fileCount;
     private int newCount;
@@ -64,13 +77,17 @@
     protected override async Task OnInitializedAsync()
     {
         folder = await SettingsStore.GetAsync(SettingKeys.ReceiptFolder) ?? "";
-        var ac = await SettingsStore.GetAsync(SettingKeys.AutoConfirmImports);
-        autoConfirm = ac is null || (bool.TryParse(ac, out var b) && b); // default on
+        mode = ImportModes.Parse(
+            await SettingsStore.GetAsync(SettingKeys.ImportMode),
+            await SettingsStore.GetAsync(SettingKeys.AutoConfirmImports)); // legacy toggle honored
         await RefreshStatus();
     }
 
-    private Task SaveAutoConfirm() =>
-        SettingsStore.SetAsync(SettingKeys.AutoConfirmImports, autoConfirm ? "true" : "false");
+    private async Task SetMode(ImportMode m)
+    {
+        mode = m;
+        await SettingsStore.SetAsync(SettingKeys.ImportMode, m.ToString());
+    }
 
     private string FolderStatus => !configured
         ? (string.IsNullOrWhiteSpace(folder) ? "No folder set yet." : "That folder isn't set or doesn't exist yet.")
