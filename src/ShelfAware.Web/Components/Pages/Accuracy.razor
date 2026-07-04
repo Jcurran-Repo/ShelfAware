@@ -1,12 +1,19 @@
 @page "/accuracy"
 @using System.Text.Json
 @using ShelfAware.Core.Evaluation
+@using ShelfAware.Core.Prediction
 @inject IWebHostEnvironment Env
+@inject IDbContextFactory<ShelfAwareDbContext> DbFactory
 
 <PageTitle>Model Accuracy — Shelf Aware</PageTitle>
 
 <h1>Model Accuracy</h1>
-<p class="muted">How well the LLM extracts receipts, scored against hand-labelled fixtures (DESIGN.md §9).</p>
+<p class="muted">
+    Both halves of the app, measured: how well the LLM reads receipts, and how well the
+    plain-statistics engine predicts your repurchases.
+</p>
+
+<h2>Receipt extraction <span class="muted">— LLM vs hand-labelled receipts</span></h2>
 
 @if (results is null || results.Fixtures.Count == 0)
 {
@@ -67,23 +74,94 @@ else
     </div>
 }
 
+<h2>Replenishment prediction <span class="muted">— walk-forward backtest, live from your history</span></h2>
+
+@if (backtest is null || backtest.Samples == 0)
+{
+    <section class="panel">
+        <p class="muted">
+            Not enough history yet — the backtest scores products with at least 3 distinct purchase
+            dates, predicting each repurchase from only the trips before it.
+        </p>
+    </section>
+}
+else
+{
+    <div class="portfolio">
+        <div class="stat">
+            <span class="stat-label">Within ±2 days</span>
+            <span class="stat-value">@backtest.HitRate.ToString("P0")</span>
+            <span class="muted">@backtest.WithinTwoDays of @backtest.Samples predictions</span>
+        </div>
+        <div class="stat">
+            <span class="stat-label">Median error</span>
+            <span class="stat-value">@backtest.MedianAbsErrorDays.ToString("0.#") d</span>
+            <span class="muted">across @backtest.Products products</span>
+        </div>
+    </div>
+    <p class="muted">
+        Walk-forward: every repurchase is predicted using only the history <em>before</em> it (no
+        peeking), then scored against the real repurchase date. One honest caveat: the engine predicts
+        <em>run-out</em> and the observable truth is the next <em>repurchase</em> — for the rebuy rhythm
+        they coincide; when the burn rate drives they can legitimately differ.
+    </p>
+
+    <div class="table-scroll">
+        <table>
+            <caption class="visually-hidden">Per-product prediction backtest scores.</caption>
+            <thead>
+                <tr>
+                    <th scope="col">Product</th>
+                    <th scope="col">Predictions</th>
+                    <th scope="col">Median error</th>
+                    <th scope="col">Within ±2 days</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var p in backtest.PerProduct)
+                {
+                    <tr>
+                        <td><a href="/product/@p.ProductId">@p.Name</a></td>
+                        <td>@p.Samples</td>
+                        <td>@p.MedianAbsErrorDays.ToString("0.#") d</td>
+                        <td>@p.HitRate.ToString("P0")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
 @code {
     private EvalResults? results;
+    private PredictionBacktest.Summary? backtest;
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         var path = Path.Combine(Env.WebRootPath, "eval-results.json");
-        if (!File.Exists(path)) return;
-        try
+        if (File.Exists(path))
         {
-            results = JsonSerializer.Deserialize<EvalResults>(
-                File.ReadAllText(path),
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            try
+            {
+                results = JsonSerializer.Deserialize<EvalResults>(
+                    File.ReadAllText(path),
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            }
+            catch
+            {
+                results = null;
+            }
         }
-        catch
-        {
-            results = null;
-        }
+
+        // The prediction backtest is computed live from the real purchase history — nothing to
+        // pre-generate, no API key needed, and it updates itself as receipts land.
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var products = await db.Products
+            .Where(p => p.IsTracked)
+            .Include(p => p.Purchases)
+            .Include(p => p.Signals)
+            .ToListAsync();
+        backtest = PredictionBacktest.Run(products);
     }
 
     private RenderFragment Stat(string label, double value, double target) =>
