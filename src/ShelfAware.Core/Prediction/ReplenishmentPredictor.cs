@@ -49,21 +49,31 @@ public static class ReplenishmentPredictor
         DateOnly? lastStockBack = allPurchaseDates.Concat(restockDates).Cast<DateOnly?>().Max();
 
         // 2–3. The two rhythms, both from purchases only.
-        double? rebuyMedian = MedianInterval(rebuyDates);
-        double? burnMedian = BurnRate(allPurchaseDates, outageDates);
+        var rebuy = MedianInterval(rebuyDates);
+        var burn = BurnRate(allPurchaseDates, outageDates);
 
         // 4. Hybrid: burn rate drives once we have ≥2 outage cycles; else the rebuy rhythm.
-        var burnDrives = burnMedian is not null;
-        double? drivingMedian = burnMedian ?? rebuyMedian;
+        var burnDrives = burn is not null;
+        var driving = burn ?? rebuy;
+        double? drivingMedian = driving?.Median;
+        // The cadence's "give or take": IQR of the driving rhythm's samples. With < 3 samples a spread
+        // is meaningless, so it stays null and the warning window falls back to the flat rule.
+        double? spread = driving is { Samples.Count: >= 3 } d ? Iqr(d.Samples) : null;
 
         // 5. Statistical base: project the driving rhythm from the last time we had stock.
         PredictionStatus status;
         DateOnly? dueDate = null;
+        var stockUp = 1.0;
 
         if (drivingMedian is { } median && lastStockBack is { } anchor)
         {
-            dueDate = anchor.AddDays(Floor(median));
-            var threshold = Round(Math.Max(3.0, 0.2 * median));
+            // A stock-up stretches the projection: buying ~3× the usual amount pushes the due date out
+            // ~3× instead of nagging on the one-unit cadence.
+            stockUp = StockUpFactor(product.Purchases, anchor);
+            dueDate = anchor.AddDays(Floor(median * stockUp));
+            // The DueSoon window earns its width from the cadence's real variance: a noisy rhythm
+            // (IQR above the flat max(3, 20%) rule) warns earlier; a metronomic one stays tight.
+            var threshold = Round(Math.Max(3.0, Math.Max(0.2 * median, spread ?? 0)));
             var dueSoonStart = dueDate.Value.AddDays(-threshold);
 
             if (today > dueDate.Value) status = PredictionStatus.Overdue;
@@ -105,8 +115,10 @@ public static class ReplenishmentPredictor
             Status = status,
             DueDate = dueDate,
             MedianIntervalDays = drivingMedian, // the winning number — shown everywhere
-            RebuyIntervalDays = rebuyMedian,
-            BurnRateDays = burnMedian,
+            RebuyIntervalDays = rebuy?.Median,
+            BurnRateDays = burn?.Median,
+            IntervalSpreadDays = spread,
+            StockUpFactor = stockUp > 1.0 ? stockUp : null,
             Basis = BuildBasis(allPurchaseDates.Count, drivingMedian, burnDrives),
             SignalNote = SignalNoteFor(activeSignal?.Kind),
             RecommendedSize = dominantSize,
@@ -114,9 +126,13 @@ public static class ReplenishmentPredictor
         };
     }
 
+    // A learned rhythm: the (trimmed) median plus the samples it came from, so callers can also
+    // measure the spread of the same numbers the median was taken over.
+    private sealed record Rhythm(double Median, List<int> Samples);
+
     // Rebuy rhythm: median gap between consecutive purchase dates. ≥4 dates (≥3 gaps) → discard gaps longer
     // than 3× median and re-take it (§6.3). Null with fewer than 2 dates.
-    private static double? MedianInterval(IReadOnlyList<DateOnly> dates)
+    private static Rhythm? MedianInterval(IReadOnlyList<DateOnly> dates)
     {
         if (dates.Count < 2) return null;
         var sorted = dates.OrderBy(d => d).ToList();
@@ -131,7 +147,7 @@ public static class ReplenishmentPredictor
     // Burn rate: for each purchase, the days to the FIRST outage after it (before the next purchase) — one
     // cycle per purchase. Median of those cycles. Needs ≥2 completed cycles; null otherwise. Restocks are
     // ignored here too — only a real purchase starts a burn cycle.
-    private static double? BurnRate(IReadOnlyList<DateOnly> purchaseDates, IReadOnlyList<DateOnly> outageDates)
+    private static Rhythm? BurnRate(IReadOnlyList<DateOnly> purchaseDates, IReadOnlyList<DateOnly> outageDates)
     {
         if (purchaseDates.Count == 0 || outageDates.Count == 0) return null;
 
@@ -150,15 +166,53 @@ public static class ReplenishmentPredictor
         return cycles.Count >= 2 ? MedianWithTrim(cycles) : null;
     }
 
-    private static double MedianWithTrim(List<int> intervals)
+    private static Rhythm MedianWithTrim(List<int> intervals)
     {
         var median = Median(intervals);
+        var samples = intervals;
         if (intervals.Count >= 3) // ≥3 data points → robust enough to drop a stock-up/vacation outlier
         {
             var trimmed = intervals.Where(d => d <= 3 * median).ToList();
-            if (trimmed.Count > 0) median = Median(trimmed);
+            if (trimmed.Count > 0)
+            {
+                median = Median(trimmed);
+                samples = trimmed;
+            }
         }
-        return median;
+        return new Rhythm(median, samples);
+    }
+
+    // Interquartile range (median-of-halves method) — the robust "give or take" on a rhythm.
+    private static double Iqr(List<int> values)
+    {
+        var sorted = values.OrderBy(v => v).ToList();
+        var mid = sorted.Count / 2;
+        var lower = sorted.Take(mid).ToList();
+        var upper = sorted.Skip(sorted.Count % 2 == 1 ? mid + 1 : mid).ToList();
+        return Median(upper) - Median(lower);
+    }
+
+    // A stock-up stretches the projection: when the anchor (last stock-back) is a purchase date whose
+    // same-day summed quantity is above the typical per-trip quantity, scale the interval by the ratio.
+    // Extend-only — buying LESS than usual doesn't shorten the projection (too twitchy on noisy
+    // quantities) — and capped at 3× so one bulk run can't push an item out of sight for a year.
+    private static double StockUpFactor(IReadOnlyCollection<PurchaseEvent> purchases, DateOnly anchor)
+    {
+        var totalsByDate = purchases
+            .Where(p => p.Quantity > 0)
+            .GroupBy(p => p.PurchasedAt)
+            .ToDictionary(g => g.Key, g => g.Sum(p => p.Quantity));
+        if (!totalsByDate.TryGetValue(anchor, out var lastQty)) return 1.0; // anchor is a restock, not a buy
+        var typical = MedianDecimal([.. totalsByDate.Values]);
+        if (typical <= 0 || lastQty <= typical) return 1.0;
+        return Math.Min((double)(lastQty / typical), 3.0);
+    }
+
+    private static decimal MedianDecimal(List<decimal> values)
+    {
+        values.Sort();
+        var mid = values.Count / 2;
+        return values.Count % 2 == 1 ? values[mid] : (values[mid - 1] + values[mid]) / 2m;
     }
 
     // The size bought most often; ties broken by the most recently purchased size. Null when no purchase

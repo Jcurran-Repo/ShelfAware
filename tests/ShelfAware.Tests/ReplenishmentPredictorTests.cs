@@ -246,6 +246,116 @@ public class ReplenishmentPredictorTests
         Assert.False(r.Pinned);
     }
 
+    // --- Interval spread: the DueSoon window earns its width from real variance ----
+
+    [Fact]
+    public void NoisyCadence_WidensTheDueSoonWindow_ByTheIqr()
+    {
+        // Gaps {10, 20, 12} → median 12, IQR (median-of-halves) = 20 − 10 = 10. The flat rule would give
+        // max(3, 20% of 12) = 3; the noisy rhythm earns a 10-day window instead. Due = D(42)+12 = D(54),
+        // so DueSoon starts at D(44).
+        var product = ProductWith([D(0), D(10), D(30), D(42)]);
+
+        var r = ReplenishmentPredictor.Predict(product, D(44));
+
+        Assert.Equal(10, r.IntervalSpreadDays);
+        Assert.Equal(PredictionStatus.DueSoon, r.Status);
+        Assert.Equal(PredictionStatus.Stocked, ReplenishmentPredictor.Predict(product, D(43)).Status);
+    }
+
+    [Fact]
+    public void MetronomicCadence_KeepsTheTightWindow()
+    {
+        // Gaps {10, 10, 10} → IQR 0 → window stays the flat max(3, 20%) = 3. Due = D(40); DueSoon from D(37).
+        var product = ProductWith([D(0), D(10), D(20), D(30)]);
+
+        var r = ReplenishmentPredictor.Predict(product, D(36));
+
+        Assert.Equal(0, r.IntervalSpreadDays);
+        Assert.Equal(PredictionStatus.Stocked, r.Status);
+        Assert.Equal(PredictionStatus.DueSoon, ReplenishmentPredictor.Predict(product, D(37)).Status);
+    }
+
+    [Fact]
+    public void TwoPurchases_HaveNoSpread()
+    {
+        var r = ReplenishmentPredictor.Predict(ProductWith([D(0), D(20)]), D(21));
+
+        Assert.Null(r.IntervalSpreadDays); // one gap — a spread would be noise
+    }
+
+    // --- Stock-up factor: a big buy pushes the due date out --------------------
+
+    private static Product ProductWithQuantities(params (int Day, decimal Qty)[] purchases) => new()
+    {
+        Id = 1,
+        Name = "Test",
+        Purchases = purchases.Select(p => new PurchaseEvent { ProductId = 1, PurchasedAt = D(p.Day), Quantity = p.Qty }).ToList(),
+    };
+
+    [Fact]
+    public void StockUp_ExtendsTheDueDate_ByTheQuantityRatio()
+    {
+        // Usually 1 bag every ~10 days; the last trip bought 3 → the projection stretches to ~30 days.
+        var product = ProductWithQuantities((0, 1), (10, 1), (20, 3));
+
+        var r = ReplenishmentPredictor.Predict(product, D(25));
+
+        Assert.Equal(3.0, r.StockUpFactor);
+        Assert.Equal(D(50), r.DueDate); // D(20) + floor(10 × 3)
+    }
+
+    [Fact]
+    public void StockUpFactor_IsCappedAtThree()
+    {
+        var product = ProductWithQuantities((0, 1), (10, 1), (20, 12));
+
+        var r = ReplenishmentPredictor.Predict(product, D(25));
+
+        Assert.Equal(3.0, r.StockUpFactor);
+        Assert.Equal(D(50), r.DueDate); // capped: not D(20) + 120
+    }
+
+    [Fact]
+    public void SmallerThanUsualBuy_DoesNotShortenTheDueDate()
+    {
+        // Extend-only: quantities are noisy (weights, partial packs) — a small last buy keeps the
+        // normal cadence rather than nagging early.
+        var product = ProductWithQuantities((0, 2), (10, 2), (20, 1));
+
+        var r = ReplenishmentPredictor.Predict(product, D(25));
+
+        Assert.Null(r.StockUpFactor);
+        Assert.Equal(D(30), r.DueDate); // D(20) + the unscaled median 10
+    }
+
+    [Fact]
+    public void RestockAnchor_IgnoresTheQuantityFactor()
+    {
+        // The last stock-back is a restock ("found one"), not a purchase — there's no quantity to
+        // scale by, so the plain median projects from the restock date.
+        var product = ProductWithQuantities((0, 1), (10, 3));
+        product.Signals.Add(Signal(SignalKind.Restocked, D(15)));
+
+        var r = ReplenishmentPredictor.Predict(product, D(16));
+
+        Assert.Null(r.StockUpFactor);
+        Assert.Equal(D(25), r.DueDate); // D(15) + median 10, unscaled
+    }
+
+    [Fact]
+    public void SameDayQuantities_SumIntoOneTrip()
+    {
+        // Two 1-unit rows on the same date are one 2-unit trip — same-day collapse applies to
+        // quantities too, so a split receipt line doesn't read as a stock-up against itself.
+        var product = ProductWithQuantities((0, 1), (0, 1), (10, 1), (10, 1), (20, 2));
+
+        var r = ReplenishmentPredictor.Predict(product, D(25));
+
+        Assert.Null(r.StockUpFactor); // every trip totals 2 — nothing unusual about the last one
+        Assert.Equal(D(30), r.DueDate);
+    }
+
     // --- §6.1: same-day collapse -------------------------------------------
 
     [Fact]

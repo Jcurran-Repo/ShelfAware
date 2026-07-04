@@ -24,6 +24,17 @@ public record PredictionResult
     /// how long you typically go without before restocking.
     public double? BurnRateDays { get; init; }
 
+    /// The cadence's "give or take": interquartile range of the driving rhythm's (trimmed) samples, in
+    /// days. Null with fewer than 3 samples. A noisy rhythm widens the DueSoon warning window; a
+    /// metronomic one keeps it tight — and the UI can say "~every 12 days, give or take 3".
+    public double? IntervalSpreadDays { get; init; }
+
+    /// &gt; 1 when the most recent stock-back was a purchase noticeably bigger than the typical trip
+    /// (same-day quantities summed), in which case the due date is projected that much further out —
+    /// buying 3 bags shouldn't nag on the 1-bag cadence. Null when the last buy was typical (or the
+    /// anchor was a restock). Capped at 3×.
+    public double? StockUpFactor { get; init; }
+
     /// The package size to recommend buying — the size bought most often (ties: most recent). Null for
     /// items with no recorded size. Different sizes roll up into one product; this picks the one to suggest.
     public string? RecommendedSize { get; init; }

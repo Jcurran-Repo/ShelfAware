@@ -43,6 +43,16 @@ else
                 <dt>Burn rate</dt>
                 <dd>one lasts ~@Math.Round(burn) days</dd>
             }
+            @if (prediction.IntervalSpreadDays is { } sp && Math.Round(sp) >= 1)
+            {
+                <dt>Consistency</dt>
+                <dd>give or take ~@Math.Round(sp) day@(Math.Round(sp) == 1 ? "" : "s")</dd>
+            }
+            @if (prediction.StockUpFactor is { } su)
+            {
+                <dt>Stocked up</dt>
+                <dd>last buy was ~@su.ToString("0.#")× the usual — due date pushed out to match</dd>
+            }
             <dt>Typical buy</dt>
             <dd>@estimate.RecommendedQuantity.ToString("0.##")@(product.DefaultUnit is { } u2 ? $" {u2}" : "")</dd>
             @if (SizeFormat.Normalize(prediction.RecommendedSize) is { Length: > 0 } rs)
