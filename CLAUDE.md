@@ -29,8 +29,8 @@ as overkill "because it's single-user."
 | 4 — Chat tools (IPantryChat) | ✅ Done, acceptance verified with a live tool-call |
 | 5 — Azure deploy + README | ◑ README ✅ done + pushed (`4757839`); **Azure still deferred** (pending Jordan's account) |
 
-Everything below is built, verified live, and committed (**pushed through `612fcbd`; the 2026-07-04
-v2.2 review-hardening commits are local, not yet pushed**).
+Everything below is built, verified live, committed, and **pushed** (master, through the 2026-07-04
+v2.2 review-hardening + voice-handoff commits).
 Beyond the spec's 3 pages, the app now has Dashboard (`/`), Upload (`/receipt`),
 Products (`/products`), Grocery List (`/list`, by aisle + copy/print + a manual **Extras**
 section), Trends (`/trends`, price tickers + spend forecast — page component is
