@@ -39,13 +39,20 @@ builder.Services.AddSingleton(new AppPaths(dataDir, receiptsDir));
 
 builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection(LlmOptions.SectionName));
 
-// One IChatClient over the Anthropic SDK's built-in Microsoft.Extensions.AI adapter. The AI services
-// depend on this abstraction (not the raw SDK), so the provider is a DI swap and the logic is fakeable
-// in tests. Model + token limits are set per call via ChatOptions.
+// The provider seam: one IChatClient, built for the configured provider (Anthropic or OpenAI) via the
+// factory. The AI services depend only on IChatClient, so the provider is a swap and the logic stays
+// fakeable in tests. Model + token limits are set per call via ChatOptions. (BYOK replaces this singleton
+// with per-circuit clients built from the visitor's own key — this config path stays for local dev.)
+builder.Services.AddSingleton<IChatClientFactory, ChatClientFactory>();
 builder.Services.AddSingleton<IChatClient>(sp =>
 {
     var opts = sp.GetRequiredService<IOptions<LlmOptions>>().Value;
-    return new AnthropicClient { ApiKey = opts.ApiKey }.AsIChatClient(opts.ChatModel);
+    var provider = Enum.TryParse<AiProvider>(opts.Provider, ignoreCase: true, out var p) ? p : AiProvider.Anthropic;
+    // A fresh open-source clone has no key yet: build a keyless Anthropic client so the app still boots
+    // (the AI services surface a friendly error on first use) instead of throwing at DI resolution.
+    if (string.IsNullOrWhiteSpace(opts.ApiKey))
+        return new AnthropicClient { ApiKey = "" }.AsIChatClient(opts.ChatModel);
+    return sp.GetRequiredService<IChatClientFactory>().Create(provider, opts.ApiKey, opts.ChatModel);
 });
 
 // Per-circuit bus wiring the layout voice agent to the pages (data-changed refresh + resume hand-off).
