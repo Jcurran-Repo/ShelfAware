@@ -56,6 +56,15 @@ public static class IngredientMatcher
         return need.All(n => cand.Any(c => TokenMatches(n, c)));
     }
 
+    /// <summary>True if <paramref name="form"/> (e.g. "chicken thighs") is present among any of
+    /// <paramref name="names"/> — the core words of the form all appear in one of them. Used to verify an
+    /// adapt actually honored a chosen swap (and elsewhere a phrase is really referenced).</summary>
+    public static bool IsMentionedIn(string form, IEnumerable<string> names)
+    {
+        var need = CoreTokens(form);
+        return need.Count > 0 && names.Any(n => Covers(need, n));
+    }
+
     // The core food words of an ingredient name, with trivial modifiers and bare numbers removed.
     internal static List<string> CoreTokens(string? name) =>
         Tokenize(name).Where(t => !Trivial.Contains(t) && !t.All(char.IsDigit)).ToList();

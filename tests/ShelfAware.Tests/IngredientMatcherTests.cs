@@ -81,4 +81,15 @@ public class IngredientMatcherTests
     {
         Assert.False(IngredientMatcher.IsSatisfied("  ", matchedProduct: null, Pantry));
     }
+
+    [Theory]
+    [InlineData("chicken thighs", new[] { "chicken thighs", "potatoes" }, true)]
+    [InlineData("chicken thighs", new[] { "Boneless Chicken Thighs" }, true)]  // modifiers tolerated
+    [InlineData("chicken thighs", new[] { "chicken tenderloins", "potatoes" }, false)] // a different cut
+    [InlineData("chicken thighs", new string[0], false)]
+    public void IsMentionedIn_checks_whether_a_form_appears_among_names(string form, string[] names, bool expected)
+    {
+        // Used by the adapt guard to confirm the model actually used the chosen swap.
+        Assert.Equal(expected, IngredientMatcher.IsMentionedIn(form, names));
+    }
 }

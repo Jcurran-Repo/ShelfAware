@@ -102,13 +102,16 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
 
     public async Task<RecipeSuggestion?> AdaptAsync(
         RecipeToAdapt recipe, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods,
-        CancellationToken cancellationToken = default)
+        string? preference = null, CancellationToken cancellationToken = default)
     {
         var ingredients = string.Join("\n", recipe.Ingredients.Select(i => $"- {i.Name}{(i.IsMain ? "" : " (seasoning)")}"));
         var steps = recipe.Steps.Count > 0
             ? string.Join("\n", recipe.Steps.Select((s, i) => $"{i + 1}. {s}"))
             : "(none)";
         var content =
+            (string.IsNullOrWhiteSpace(preference)
+                ? ""
+                : $"USER'S CHOSEN SWAP (MANDATORY — build the recipe around this exact form even if it isn't on hand; see rule 8): {preference}\n\n") +
             $"Original recipe: {recipe.Name}\n" +
             (string.IsNullOrWhiteSpace(recipe.Blurb) ? "" : $"Blurb: {recipe.Blurb}\n") +
             $"Ingredients:\n{ingredients}\n\nSteps:\n{steps}\n\n" +

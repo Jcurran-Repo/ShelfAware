@@ -1,8 +1,29 @@
 using ShelfAware.Core.Extraction;
 using ShelfAware.Core.Ingest;
+using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Settings;
 
 namespace ShelfAware.Web.Tests;
+
+/// <summary>Returns a canned adaptation and records what it was asked with — drives RecipeAdapter tests.</summary>
+internal sealed class FakeRecipeAdvisor(RecipeSuggestion? adaptResult) : IRecipeAdvisor
+{
+    public string? LastPreference { get; private set; }
+    public IReadOnlyList<string>? LastOnHand { get; private set; }
+
+    public Task<IReadOnlyList<RecipeSuggestion>> SuggestAsync(
+        string request, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<RecipeSuggestion>>([]);
+
+    public Task<RecipeSuggestion?> AdaptAsync(
+        RecipeToAdapt recipe, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods,
+        string? preference = null, CancellationToken cancellationToken = default)
+    {
+        LastPreference = preference;
+        LastOnHand = onHand;
+        return Task.FromResult(adaptResult);
+    }
+}
 
 /// <summary>In-memory <see cref="IAppSettings"/> — a dictionary.</summary>
 internal sealed class FakeAppSettings : IAppSettings

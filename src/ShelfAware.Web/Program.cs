@@ -52,6 +52,7 @@ builder.Services.AddSingleton<IPantryChat, AnthropicPantryChat>();
 builder.Services.AddSingleton<ITagAdvisor, AnthropicTagAdvisor>();
 builder.Services.AddSingleton<IRecipeAdvisor, AnthropicRecipeAdvisor>();
 builder.Services.AddSingleton<IProductSubstituteAdvisor, AnthropicProductSubstituteAdvisor>();
+builder.Services.AddSingleton<IIngredientAlternativesAdvisor, AnthropicIngredientAlternativesAdvisor>();
 // Adapt-a-recipe-to-what-you-have; singleton so the singleton IPantryChat can inject it (uses the
 // DbContext factory + advisor, both singleton-safe).
 builder.Services.AddSingleton<IRecipeAdapter, RecipeAdapter>();
@@ -92,6 +93,7 @@ using (var scope = app.Services.CreateScope())
     // the app breaks on load. Idempotent — only adds the column when it's missing.
     EnsureColumn(db, "Recipes", "EstimatedCaloriesPerServing", "INTEGER NULL");
     EnsureColumn(db, "Recipes", "ParentRecipeId", "INTEGER NULL");
+    EnsureColumn(db, "RecipeIngredients", "AlternativesJson", "TEXT NULL");
     EnsureColumn(db, "Receipts", "SourceFile", "TEXT NULL");
     EnsureColumn(db, "ReceiptLines", "TagsJson", "TEXT NULL");
     EnsureColumn(db, "ReceiptLines", "SuggestedProduct", "TEXT NULL");

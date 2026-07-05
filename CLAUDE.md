@@ -19,6 +19,15 @@ as overkill "because it's single-user."
   build what you think is best, and don't silently implement something you believe is
   wrong — surface the trade-off, reason it out together, decide jointly, then code.
 
+- **Craftsmanship — take pride in every change; no shortcuts.** Always do the polished,
+  professional thing, not the quickest thing that happens to pass. Concretely: **no empty
+  or catch-all `catch` blocks that swallow errors** — catch specific exceptions, log via
+  `ILogger`, and let cancellation (`OperationCanceledException`) propagate; don't duplicate
+  logic that should live in one shared place; don't ship behavior without tests; leave no
+  dead code, orphaned state, or TODO-shaped gaps. If you spot a corner being cut — yours or
+  the existing code's — fix it or flag it, never leave it. Assume every line will be read by
+  a prospective employer, because it will.
+
 ## Build state (updated 2026-07-04)
 
 | Phase (DESIGN.md §10) | Status |
@@ -166,11 +175,19 @@ EXISTS in Program.cs for existing DBs).
 missing main(s) for ones you have and **rewrites the steps + cook times** (thighs cook longer than breast),
 saved as a **variant** (`Recipe.ParentRecipeId`, additive column) grouped under the original on the Recipes
 page. On-demand only (no AI calls on load). One orchestration path — `IRecipeAdapter` (Core) →
-`RecipeAdapter` (Web, singleton; loads the recipe + edible/not-overdue on-hand + excluded, calls
-`IRecipeAdvisor.AdaptAsync`, saves the variant) — drives BOTH the "🔀 Adapt to what I have" button and the
-**`adapt_recipe` chat/voice tool**. Adapt prompt is `recipe-adapt-system.txt`; the "edible" rule is
-`CategoryExtensions.IsEdible` (Core, shared with the Recipes page). **Planned next:** a bubble-cloud
-alternate picker per ingredient (green/red) to adapt to a specific chosen form.
+`RecipeAdapter` (Web, singleton; loads the recipe + on-hand + excluded, calls `IRecipeAdvisor.AdaptAsync`,
+saves the variant) — drives the "🔀 Adapt to what I have" button, the **`adapt_recipe` chat/voice tool**,
+AND the per-ingredient bubble cloud. Adapt prompt is `recipe-adapt-system.txt`. On-hand = the shared
+`PantryOnHand.EdibleInStock` (Core; `CategoryExtensions.IsEdible` + not-overdue). **Robustness:** re-adapting
+**dedupes by main-ingredient content signature** (not the AI's title) so it updates in place; variants are
+saved only when valid, and the adapter logs + re-throws cancellation (no swallowed errors).
+
+**Bubble-cloud ingredient picker (v2.2).** Each main ingredient on an original recipe has a **⇄ swap**
+that opens a cloud of interchangeable forms (`IIngredientAlternativesAdvisor`, Haiku; generated once and
+**cached** on `RecipeIngredient.AlternativesJson`), colored green/red via `IngredientMatcher`. Clicking a
+bubble runs a **targeted adapt** — a typed `IngredientSwap(IngredientName, ChosenForm)` the adapter turns
+into the prompt preference AND **guards**: if the model ignores the pick, `IngredientMatcher.IsMentionedIn`
+catches it and the adapt is rejected (retry) rather than saving a mislabeled variant.
 
 ## Data model: brand-agnostic products, size as metadata (final, 2026-06-28)
 

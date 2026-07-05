@@ -318,7 +318,7 @@ public class AnthropicPantryChat : IPantryChat
                 var match = ResolveRecipe(name, recipes);
                 if (match is null)
                     return ($"No saved recipe matches \"{name}\". Saved recipes: {string.Join("; ", recipes.Select(r => r.Name))}.", true);
-                var adaptResult = await _recipeAdapter.AdaptToOnHandAsync(match.Id, ct);
+                var adaptResult = await _recipeAdapter.AdaptToOnHandAsync(match.Id, cancellationToken: ct);
                 if (adaptResult.Success)
                 {
                     actions.Add($"adapted {match.Name}");

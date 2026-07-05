@@ -8,8 +8,14 @@ namespace ShelfAware.Core.Recipes;
 /// </summary>
 public interface IRecipeAdapter
 {
-    Task<AdaptResult> AdaptToOnHandAsync(int recipeId, CancellationToken cancellationToken = default);
+    /// <param name="swap">An explicit ingredient swap the user picked from the bubble cloud, or null to
+    /// adapt everything to what's on hand.</param>
+    Task<AdaptResult> AdaptToOnHandAsync(int recipeId, IngredientSwap? swap = null, CancellationToken cancellationToken = default);
 }
+
+/// <summary>A specific swap chosen for one ingredient — use <see cref="ChosenForm"/> ("chicken thighs")
+/// in place of <see cref="IngredientName"/> ("chicken breast").</summary>
+public record IngredientSwap(string IngredientName, string ChosenForm);
 
 /// <param name="Success">Whether a variant was created.</param>
 /// <param name="Message">A one-line, user-facing summary (spoken/shown).</param>

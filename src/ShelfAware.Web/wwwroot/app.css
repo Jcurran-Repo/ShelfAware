@@ -1097,6 +1097,68 @@ button.tag-chip {
     color: var(--stocked-ink);
 }
 
+/* Ingredient row with its swap control + bubble cloud. */
+.ingredient-list li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+/* When a swap cloud is open, the ingredient takes the full row so the bubbles sit under it. */
+.ingredient-list li:has(.alt-cloud) {
+    flex-basis: 100%;
+}
+
+.alt-swap {
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 0.95rem;
+    line-height: 1;
+    padding: 0 0.2rem;
+}
+
+.alt-swap:hover {
+    color: var(--accent-ink);
+}
+
+.alt-cloud {
+    flex-basis: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin: 0.25rem 0 0.15rem 1.2rem;
+}
+
+.alt-bubble {
+    border-radius: 999px;
+    padding: 0.15rem 0.6rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid var(--line);
+    background: var(--surface);
+}
+
+.alt-bubble.have {
+    color: var(--stocked-ink);
+    border-color: var(--stocked-line);
+    background: var(--stocked-bg);
+}
+
+.alt-bubble.grab {
+    color: var(--overdue-ink);
+    border-color: var(--overdue-line);
+    background: var(--overdue-bg);
+}
+
+.alt-bubble:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
 .recipe-grab {
     font-size: 0.88rem;
     margin: 0.2rem 0 0;

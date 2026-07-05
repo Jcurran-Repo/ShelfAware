@@ -1,5 +1,6 @@
 @page "/recipes"
 @implements IDisposable
+@using System.Text.Json
 @using ShelfAware.Core.Prediction
 @using ShelfAware.Core.Recipes
 @using ShelfAware.Llm
@@ -7,6 +8,7 @@
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
 @inject IRecipeAdvisor Advisor
 @inject IRecipeAdapter Adapter
+@inject IIngredientAlternativesAdvisor AltAdvisor
 @inject IOptions<ElevenLabsOptions> ElOptions
 @inject VoiceCoordinator Coordinator
 
@@ -204,7 +206,38 @@
                         @foreach (var i in r.Ingredients.Where(i => i.IsMain))
                         {
                             var have = Have(i);
-                            <li class="@(have ? "have" : "grab")">@(have ? "✓" : "🛒") @i.Name</li>
+                            <li class="@(have ? "have" : "grab")">
+                                <span class="ingredient-name">@(have ? "✓" : "🛒") @i.Name</span>
+                                @if (!isVariant)
+                                {
+                                    <button type="button" class="alt-swap" @onclick="() => ToggleAlternatives(i)"
+                                            aria-label="Swap @i.Name for something else" title="Swap this ingredient">⇄</button>
+                                }
+                                @if (openAltFor == i.Id)
+                                {
+                                    <div class="alt-cloud" role="group" aria-label="Swap @i.Name">
+                                        @if (generatingAltFor == i.Id)
+                                        {
+                                            <span class="muted small">Finding swaps…</span>
+                                        }
+                                        else if (AlternativesOf(i).Count == 0)
+                                        {
+                                            <span class="muted small">No good swaps for this one.</span>
+                                        }
+                                        else
+                                        {
+                                            @foreach (var alt in AlternativesOf(i))
+                                            {
+                                                var altHave = HaveForm(alt);
+                                                <button type="button" class="alt-bubble @(altHave ? "have" : "grab")"
+                                                        disabled="@(adaptingId == r.Id)"
+                                                        @onclick="() => AdaptToChoice(r, i, alt)"
+                                                        title="Make a version with @alt">@(altHave ? "✓" : "🛒") @alt</button>
+                                            }
+                                        }
+                                    </div>
+                                }
+                            </li>
                         }
                         @{ var extras = r.Ingredients.Where(i => !i.IsMain).Select(i => i.Name).ToList(); }
                         @if (extras.Count > 0)
@@ -252,8 +285,10 @@
     private List<(Recipe Recipe, bool IsVariant)> renderList = [];
     private Dictionary<int, string> productNamesById = [];
     private string? filterProductName;
-    private int? adaptingId;   // the recipe currently being adapted (button shows a spinner)
-    private string? adaptNote; // result of the last Adapt
+    private int? adaptingId;      // the recipe currently being adapted (button shows a spinner)
+    private string? adaptNote;    // result of the last Adapt
+    private int? openAltFor;      // RecipeIngredient.Id whose swap bubble-cloud is open (one at a time)
+    private int? generatingAltFor; // RecipeIngredient.Id whose alternates are being generated
 
     private List<PantryProduct> onHand = [];
 
@@ -287,6 +322,58 @@
             var result = await Adapter.AdaptToOnHandAsync(r.Id);
             adaptNote = result.Message;
             await LoadAsync(); // pull in the new variant
+        }
+        finally
+        {
+            adaptingId = null;
+        }
+    }
+
+    // Open/close an ingredient's swap bubble-cloud. On first open, generate its alternate forms once and
+    // cache them on the ingredient (AlternativesJson) so re-opening costs no AI call.
+    private async Task ToggleAlternatives(RecipeIngredient i)
+    {
+        if (openAltFor == i.Id) { openAltFor = null; return; }
+        openAltFor = i.Id;
+        if (!string.IsNullOrEmpty(i.AlternativesJson)) return;
+
+        generatingAltFor = i.Id;
+        try
+        {
+            var alts = await AltAdvisor.SuggestAsync(i.Name);
+            var json = JsonSerializer.Serialize(alts);
+            await using var db = await DbFactory.CreateDbContextAsync();
+            if (await db.RecipeIngredients.FindAsync(i.Id) is { } row)
+            {
+                row.AlternativesJson = json;
+                await db.SaveChangesAsync();
+            }
+            i.AlternativesJson = json; // reflect immediately without a full reload
+        }
+        finally
+        {
+            generatingAltFor = null;
+        }
+    }
+
+    private static List<string> AlternativesOf(RecipeIngredient i) =>
+        string.IsNullOrEmpty(i.AlternativesJson) ? [] : JsonSerializer.Deserialize<List<string>>(i.AlternativesJson) ?? [];
+
+    // Green when an on-hand product covers this alternate form (same matcher the ingredients use).
+    private bool HaveForm(string form) => IngredientMatcher.IsSatisfied(form, null, onHand);
+
+    // Picking a bubble adapts the recipe to that specific form for this ingredient, saved as a variant.
+    private async Task AdaptToChoice(Recipe r, RecipeIngredient i, string form)
+    {
+        if (adaptingId is not null) return;
+        adaptingId = r.Id;
+        adaptNote = null;
+        try
+        {
+            var result = await Adapter.AdaptToOnHandAsync(r.Id, new IngredientSwap(i.Name, form));
+            adaptNote = result.Message;
+            openAltFor = null;
+            await LoadAsync();
         }
         finally
         {
@@ -390,9 +477,7 @@
         var products = await db.Products.Where(p => p.IsTracked)
             .Include(p => p.Purchases).Include(p => p.Signals).Include(p => p.Substitutes).ToListAsync();
         var today = DateOnly.FromDateTime(DateTime.Today);
-        onHand = products
-            .Where(p => p.Category.IsEdible())
-            .Where(p => ReplenishmentPredictor.Predict(p, today).Status != PredictionStatus.Overdue)
+        onHand = PantryOnHand.EdibleInStock(products, today)
             .Select(p => new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList()))
             .OrderBy(x => x.Name)
             .ToList();

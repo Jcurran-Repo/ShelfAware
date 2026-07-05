@@ -13,4 +13,8 @@ public class RecipeIngredient
     /// null if the user didn't have it. The makeability check re-tests this name against current on-hand
     /// products — plain code, no repeat LLM call.</summary>
     public string? MatchedProduct { get; set; }
+    /// <summary>Cached JSON array of interchangeable forms for this ingredient (e.g. chicken breast →
+    /// ["chicken thighs","chicken tenderloins",…]), generated once on demand for the swap bubble-cloud so
+    /// re-opening it costs no AI call. Null until first requested.</summary>
+    public string? AlternativesJson { get; set; }
 }

@@ -26,11 +26,13 @@ internal sealed class FakeRecipeAdapter(AdaptResult result) : IRecipeAdapter
 {
     public int Calls { get; private set; }
     public int? LastRecipeId { get; private set; }
+    public IngredientSwap? LastSwap { get; private set; }
 
-    public Task<AdaptResult> AdaptToOnHandAsync(int recipeId, CancellationToken cancellationToken = default)
+    public Task<AdaptResult> AdaptToOnHandAsync(int recipeId, IngredientSwap? swap = null, CancellationToken cancellationToken = default)
     {
         Calls++;
         LastRecipeId = recipeId;
+        LastSwap = swap;
         return Task.FromResult(result);
     }
 }

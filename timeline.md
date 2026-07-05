@@ -116,7 +116,7 @@ _Last updated: 7/4/2026_
 - [x] Recipes only match EDIBLE products (dog treats / cleaners can't masquerade as food) — 7/4/2026
 - [x] Cook-along greets with an intro line then waits, instead of silent (firstMessage override) — 7/4/2026
 - [x] Adapt: rewrite a recipe (swap missing mains + adjust cook times) to use what you have, saved as a variant — button + adapt_recipe voice/chat tool — 7/4/2026
-- [ ] Bubble-cloud alternate picker per ingredient (green/red, click to adapt to that choice) — Not built yet
+- [x] Bubble-cloud alternate picker per ingredient (AI-generated + cached forms, green/red, click to adapt to that choice, with an ignored-pick guard) — 7/4/2026
 
 ---
 
