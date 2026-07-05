@@ -154,8 +154,20 @@
     else
     {
         <ul class="saved-recipes">
-            @foreach (var (r, isVariant) in renderList)
+            @foreach (var (r, kind) in renderList)
             {
+                if (kind == RowKind.ParentReference)
+                {
+                    <li id="recipe-@r.Id" class="recipe-reference">
+                        <div class="saved-top">
+                            <strong>@r.Name</strong>
+                            <span class="chip variant-chip" title="Original recipe — the adapted version that uses this item is below">for reference</span>
+                        </div>
+                        <p class="muted small">You’ve adapted this to use what you have — the matching version is below.</p>
+                    </li>
+                    continue;
+                }
+                var isVariant = kind == RowKind.Variant;
                 var makeable = Makeable(r);
                 <li id="recipe-@r.Id" class="@(isVariant ? "recipe-variant" : null)">
                     <div class="saved-top">
@@ -280,8 +292,11 @@
 
     // The originals actually rendered — all of them, or just those using a product when ?uses is set.
     private List<Recipe> displayed = [];
-    // Flattened for rendering: each original followed by its adapted variants (grouped under it).
-    private List<(Recipe Recipe, bool IsVariant)> renderList = [];
+    // Flattened for rendering: originals and their adapted variants, grouped. Under a ?uses filter a
+    // variant can match on its own ingredients while its original doesn't (Adapt swaps the main), so a
+    // non-matching original may appear as a ParentReference — shown for context only, not as a result.
+    private enum RowKind { Original, Variant, ParentReference }
+    private List<(Recipe Recipe, RowKind Kind)> renderList = [];
     private Dictionary<int, string> productNamesById = [];
     private string? filterProductName;
     private int? adaptingId;      // the recipe currently being adapted (button shows a spinner)
@@ -436,25 +451,72 @@
     {
         filterProductName = UsesProductId is { } pid && productNamesById.TryGetValue(pid, out var n) ? n : null;
         var topLevel = savedRecipes.Where(r => r.ParentRecipeId is null);
-        displayed = (filterProductName is { } name
-            ? topLevel.Where(r => r.Ingredients.Any(i => string.Equals(i.MatchedProduct, name, StringComparison.OrdinalIgnoreCase)))
-            : topLevel).ToList();
-        // Each original followed by its adapted variants (most recent first) — grouped in the list.
-        renderList = displayed
-            .SelectMany(p => new[] { (p, false) }
-                .Concat(savedRecipes.Where(v => v.ParentRecipeId == p.Id).OrderByDescending(v => v.SavedAt).Select(v => (v, true))))
-            .ToList();
+
+        if (filterProductName is not { } name)
+        {
+            // No filter: every original followed by all its adapted variants (most recent first).
+            displayed = topLevel.ToList();
+            renderList = displayed
+                .SelectMany(p => new[] { (p, RowKind.Original) }
+                    .Concat(VariantsOf(p).Select(v => (v, RowKind.Variant))))
+                .ToList();
+            PublishScreenContext();
+            return;
+        }
+
+        // Filtered to a product: a recipe "uses" it when an ingredient is grounded to that product. Match
+        // each ADAPTED VARIANT on its OWN ingredients — Adapt swaps the main, so a variant usually uses a
+        // product its original never did. Only recipes that actually use the product are results; a
+        // non-matching original rides along solely as a muted reference so its matching variant isn't
+        // orphaned.
+        bool Uses(Recipe r) => r.Ingredients.Any(i => string.Equals(i.MatchedProduct, name, StringComparison.OrdinalIgnoreCase));
+
+        var rows = new List<(Recipe Recipe, RowKind Kind)>();
+        var results = new List<Recipe>();
+        foreach (var p in topLevel)
+        {
+            var matchingVariants = VariantsOf(p).Where(Uses).ToList();
+            if (Uses(p))
+            {
+                rows.Add((p, RowKind.Original));
+                results.Add(p);
+            }
+            else if (matchingVariants.Count > 0)
+            {
+                rows.Add((p, RowKind.ParentReference)); // context only — this original doesn't use the product
+            }
+            else
+            {
+                continue; // neither the original nor any variant uses the product
+            }
+            foreach (var v in matchingVariants)
+            {
+                rows.Add((v, RowKind.Variant));
+                results.Add(v);
+            }
+        }
+        displayed = results;
+        renderList = rows;
         PublishScreenContext();
     }
 
+    // A recipe's adapted variants, most recent first.
+    private IEnumerable<Recipe> VariantsOf(Recipe original) =>
+        savedRecipes.Where(v => v.ParentRecipeId == original.Id).OrderByDescending(v => v.SavedAt);
+
     // Tell the roaming voice agent what's on screen and in what order, so "read me the second one"
     // resolves to the right recipe. Cleared on navigate-away so it can't leak to another page.
-    private void PublishScreenContext() =>
-        Coordinator.ScreenContext = renderList.Count == 0
+    private void PublishScreenContext()
+    {
+        // Reference-only rows are context, not results — keep them out of the positional list the voice
+        // agent uses for "read me the second one".
+        var listed = renderList.Where(x => x.Kind != RowKind.ParentReference).Select(x => x.Recipe).ToList();
+        Coordinator.ScreenContext = listed.Count == 0
             ? null
             : (filterProductName is { } fn ? $"The user is viewing recipes that use {fn}. " : "The user is viewing the Recipes page. ")
               + "Recipes listed, in display order:\n"
-              + string.Join("\n", renderList.Select((x, i) => $"{i + 1}. {x.Recipe.Name}"));
+              + string.Join("\n", listed.Select((r, i) => $"{i + 1}. {r.Name}"));
+    }
 
     public void Dispose() => Coordinator.ScreenContext = null;
 

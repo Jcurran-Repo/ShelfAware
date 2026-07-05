@@ -1345,6 +1345,13 @@ button.tag-chip {
     color: var(--accent-ink);
 }
 
+/* A parent shown only as context for a matching variant under the ?uses filter — muted, no actions. */
+.saved-recipes li.recipe-reference {
+    opacity: 0.65;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px dashed var(--line);
+}
+
 .saved-top {
     display: flex;
     justify-content: space-between;
