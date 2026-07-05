@@ -1,0 +1,107 @@
+@inject ShelfAware.Web.Services.CircuitAiSettings AiSettings
+@inject ShelfAware.Web.Data.DemoDataSeeder Seeder
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject ILogger<OnboardingBanner> Logger
+
+@* First-run guide for a fresh / keyless visitor: how to bring your own key (LLM + voice) and a one-click
+   sample pantry so the app isn't a ghost town while they decide. Dismissible; an empty catalog always
+   offers the sample-data button regardless of dismissal. *@
+@if (Show)
+{
+    <section class="panel onboarding" role="region" aria-label="Getting started">
+        <button type="button" class="onboarding-x" @onclick="Dismiss" aria-label="Dismiss getting started">×</button>
+        <h2>Welcome to Shelf Aware 👋</h2>
+
+        @if (!AiSettings.HasKey)
+        {
+            <p>
+                This runs on <strong>your own API key</strong> — it stays in your browser, never on our server.
+                Add one in <a href="/settings">Settings</a> to use the assistant, recipe ideas, and receipt import.
+            </p>
+            <p class="muted small">
+                Cooking? Add an <strong>ElevenLabs</strong> key + agent id in Settings too — the hands-free
+                <strong>cook-along</strong> is how you drive it with your hands full.
+            </p>
+        }
+
+        @if (CatalogEmpty)
+        {
+            <p>New here? Load a sample pantry to explore the dashboard, recipes, and trends — nothing to set up first.</p>
+        }
+
+        <div class="onboarding-actions">
+            <button class="secondary" @onclick="OpenSettings">Open Settings</button>
+            @if (CatalogEmpty)
+            {
+                <button @onclick="LoadSample" disabled="@seeding">@(seeding ? "Loading…" : "Load sample data")</button>
+            }
+        </div>
+
+        @if (message is not null)
+        {
+            <p class="chat-reply" role="status">@message</p>
+        }
+    </section>
+}
+
+@code {
+    /// <summary>True when the product catalog is empty — then the sample-data button shows (and the banner
+    /// stays up regardless of dismissal, so a brand-new visitor can always get started).</summary>
+    [Parameter] public bool CatalogEmpty { get; set; }
+
+    /// <summary>Raised after sample data is seeded, so the dashboard can reload.</summary>
+    [Parameter] public EventCallback OnSeeded { get; set; }
+
+    private bool dismissed;
+    private bool seeding;
+    private string? message;
+
+    private bool Show => CatalogEmpty || (!AiSettings.HasKey && !dismissed);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            dismissed = await JS.InvokeAsync<bool>("shelfawareOnboarding.isDismissed");
+            if (dismissed) StateHasChanged();
+        }
+        catch (JSException ex)
+        {
+            Logger.LogWarning(ex, "Couldn't read the onboarding dismiss flag; showing the banner.");
+        }
+    }
+
+    private void OpenSettings() => Nav.NavigateTo("/settings");
+
+    private async Task LoadSample()
+    {
+        if (seeding) return;
+        seeding = true;
+        message = null;
+        try
+        {
+            var result = await Seeder.SeedAsync();
+            message = result.Message;
+            if (result.Seeded) await OnSeeded.InvokeAsync();
+        }
+        finally
+        {
+            seeding = false;
+        }
+    }
+
+    private async Task Dismiss()
+    {
+        dismissed = true;
+        try
+        {
+            await JS.InvokeVoidAsync("shelfawareOnboarding.dismiss");
+        }
+        catch (JSException ex)
+        {
+            Logger.LogWarning(ex, "Couldn't persist the onboarding dismissal.");
+        }
+    }
+}

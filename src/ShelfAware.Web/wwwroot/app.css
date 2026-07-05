@@ -359,6 +359,24 @@ input:focus, select:focus {
 .habit-name:hover { text-decoration: underline; }
 .habit-note { color: var(--ink-soft); font-size: 0.9rem; }
 
+/* First-run "getting started" banner (keyless / empty-catalog onboarding). */
+.onboarding { position: relative; border-left: 4px solid var(--accent); }
+.onboarding h2 { margin-top: 0; }
+.onboarding-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+.onboarding-x {
+    position: absolute;
+    top: 0.4rem;
+    right: 0.5rem;
+    background: none;
+    border: none;
+    font-size: 1.35rem;
+    line-height: 1;
+    color: var(--ink-soft);
+    cursor: pointer;
+    padding: 0.15rem 0.4rem;
+}
+.onboarding-x:hover { color: var(--accent-ink); }
+
 .card-top {
     display: flex;
     align-items: center;

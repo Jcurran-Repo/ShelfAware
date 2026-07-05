@@ -10,6 +10,8 @@
 
 <PageTitle>Shelf Aware</PageTitle>
 
+<OnboardingBanner CatalogEmpty="@(products is { Count: 0 })" OnSeeded="LoadAsync" />
+
 <header class="page-head">
     <h1>Running Low</h1>
     @if (products is not null)
