@@ -8,7 +8,7 @@ done yet — survives even if everything else is lost.
 **Terminology:** Phases 1–5 are the original v1 build milestones. v2 / v3 are later versions.
 `[x]` + date = shipped · `[ ]` = not done yet.
 
-_Last updated: 7/4/2026_
+_Last updated: 7/5/2026_
 
 ---
 
@@ -117,6 +117,29 @@ _Last updated: 7/4/2026_
 - [x] Cook-along greets with an intro line then waits, instead of silent (firstMessage override) — 7/4/2026
 - [x] Adapt: rewrite a recipe (swap missing mains + adjust cook times) to use what you have, saved as a variant — button + adapt_recipe voice/chat tool — 7/4/2026
 - [x] Bubble-cloud alternate picker per ingredient (AI-generated + cached forms, green/red, click to adapt to that choice, with an ignored-pick guard) — 7/4/2026
+
+---
+
+## v2.3 — Full-site audit, BYOK, and fixes (7/5/2026)
+
+### Audit hardening pass
+- [x] Query splitting + AsNoTracking on read loads (kills the cartesian-Include warning) — 7/5/2026
+- [x] Page error handling: log via ILogger, rethrow cancellation, stop leaking exception text — 7/5/2026
+- [x] Chat tool-handler exceptions become error results instead of blanking the box — 7/5/2026
+- [x] Product Detail refreshes on route change; NotFound/Error page + misc a11y/polish — 7/5/2026
+
+### BYOK — bring your own key (public / open-source posture: deployed demo ships no usable keys)
+- [x] Provider seam: IChatClientFactory (Anthropic + OpenAI) — 7/5/2026
+- [x] Per-circuit AI clients built from the visitor's browser settings (keyless boot preserved) — 7/5/2026
+- [x] Content-Security-Policy + security headers (script-src 'self'; strict in production) — 7/5/2026
+- [x] Settings UI: provider, masked keys, per-module models, forget-my-key, session-only — 7/5/2026
+- [x] Voice keyed per-circuit (server-side, per-request xi-api-key, rate-limited signed-url, pinned EL SDK) — 7/5/2026
+- [ ] Open-source README / BYOK setup docs — Not complete
+
+### Fixes
+- [x] Short-cadence items now clear Running Low after a restock (DueSoon window capped inside the cadence) — 7/5/2026
+- [x] "Recipes that use X" filter now finds adapted variants (non-matching original shown for reference) — 7/5/2026
+- [x] Dev CSP relaxed in Development only so VS Browser Link / hot reload work (production stays strict) — 7/5/2026
 
 ---
 

@@ -313,6 +313,13 @@ the same item bought across brands/sizes rolls up into one product.
   file and run `git commit -F <file>` from PowerShell. Multi-line `-m`/heredoc commits via the Bash
   tool silently no-op'd here (staging worked, commit never happened, no error). Commit per task/phase;
   the body explains what was verified + any deviations. **Don't push until asked.**
+- **Dev CSP vs. hot reload (2026-07-05).** The production Content-Security-Policy is strict
+  (`script-src 'self'`, locked `connect-src`) and blocks Visual Studio's Browser Link + browser-refresh
+  (they inject an inline bootstrap script and use ephemeral localhost websockets), which **silently kills
+  hot reload** in dev — edits stop applying to the running app with no error, and you debug a stale binary.
+  `Program.cs` relaxes exactly `script-src`/`connect-src` **in Development only**; production stays locked
+  down (a plain Kestrel run shows zero CSP violations). Don't re-tighten those for dev. Tell-tale: a
+  `Refused to execute inline script … script-src` console error on the host page under `dotnet watch`/VS.
 
 ## Conventions
 
