@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
@@ -178,6 +179,14 @@ static async Task ScanReceiptsAsync(WebApplication app)
             .CreateLogger("ReceiptAutoScan").LogError(ex, "Startup receipt auto-scan failed.");
     }
 }
+
+// Behind a TLS-terminating reverse proxy (Tailscale Serve for the private self-host, Azure later), honor
+// X-Forwarded-Proto/-For from the loopback proxy so HTTPS redirect, HSTS, and per-IP rate limiting see the
+// real scheme and client rather than the proxy's localhost hop. Defaults trust only loopback proxies.
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+});
 
 if (!app.Environment.IsDevelopment())
 {
