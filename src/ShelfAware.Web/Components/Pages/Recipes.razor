@@ -3,13 +3,11 @@
 @using System.Text.Json
 @using ShelfAware.Core.Prediction
 @using ShelfAware.Core.Recipes
-@using ShelfAware.Llm
-@using Microsoft.Extensions.Options
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
 @inject IRecipeAdvisor Advisor
 @inject IRecipeAdapter Adapter
 @inject IIngredientAlternativesAdvisor AltAdvisor
-@inject IOptions<ElevenLabsOptions> ElOptions
+@inject ShelfAware.Core.Speech.IVoiceCredentials Voice
 @inject VoiceCoordinator Coordinator
 @inject ILogger<Recipes> Logger
 
@@ -309,8 +307,8 @@
     /// saved list to recipes that use that product, the middle step of the hands-free navigation chain.</summary>
     [SupplyParameterFromQuery(Name = "uses")] public int? UsesProductId { get; set; }
 
-    // Hands-free cook-along only shows when an ElevenLabs agent is configured (empty id = hidden).
-    private bool CookAlongAvailable => !string.IsNullOrEmpty(ElOptions.Value.AgentId);
+    // Hands-free cook-along only shows when the visitor has set an ElevenLabs agent id (per circuit; empty = hidden).
+    private bool CookAlongAvailable => !string.IsNullOrEmpty(Voice.AgentId);
 
     // Adapt a recipe to what's on hand and save it as a variant (on-demand — one AI call per click).
     private async Task AdaptRecipe(Recipe r)

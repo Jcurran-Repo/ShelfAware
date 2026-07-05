@@ -1,16 +1,32 @@
-// Hands-free recipe cook-along via the ElevenLabs Agents realtime SDK (Phase 4b). The server mints a
-// short-lived signed URL (the API key stays server-side); we open a conversation, inject the recipe as
-// a dynamic variable, and let the agent handle turn-taking + barge-in natively. State is reported back
-// to .NET for the UI. The SDK is loaded from a CDN so the app keeps its no-build-step JS setup.
+// Hands-free recipe cook-along via the ElevenLabs Agents realtime SDK. The server mints a short-lived
+// signed URL from the VISITOR's own ElevenLabs key (sent as request headers) — BYOK, no server key on the
+// public deploy. We open a conversation, inject the recipe as a dynamic variable, and let the agent handle
+// turn-taking + barge-in natively; state is reported back to .NET.
+//
+// The SDK loads from esm.sh at a PINNED, immutable version — keeping the no-build JS setup. A multi-module
+// ESM SDK can't be practically self-hosted without a bundler, so instead the CSP restricts scripts to our
+// origin + esm.sh only, and the version pin means a later package change can't silently apply.
+const SDK_URL = 'https://esm.sh/@elevenlabs/client@1.14.0';
 
 let Conversation = null;
 let convo = null;
 
 async function ensureSdk() {
     if (!Conversation) {
-        ({ Conversation } = await import('https://esm.sh/@elevenlabs/client'));
+        ({ Conversation } = await import(SDK_URL));
     }
     return Conversation;
+}
+
+// The visitor's ElevenLabs credentials (their own key), read from their browser and sent to our signed-url
+// endpoint so it mints with their key — never ours.
+async function voiceCreds() {
+    try {
+        const m = await import('/js/ai-settings.js');
+        return m.voiceCreds();
+    } catch {
+        return { apiKey: '', agentId: '' };
+    }
 }
 
 export function isSupported() {
@@ -23,9 +39,12 @@ export async function start(recipe, dotnetRef) {
     await stop();
     dotnetRef.invokeMethodAsync('OnStatus', 'connecting');
 
+    const creds = await voiceCreds();
     let signedUrl;
     try {
-        const resp = await fetch('/api/cookalong/signed-url');
+        const resp = await fetch('/api/cookalong/signed-url', {
+            headers: creds.apiKey ? { 'X-EL-Key': creds.apiKey, 'X-EL-Agent': creds.agentId } : {},
+        });
         if (!resp.ok) { dotnetRef.invokeMethodAsync('OnStatus', resp.status === 503 ? 'unconfigured' : 'error'); return false; }
         signedUrl = (await resp.json()).signed_url;
     } catch {

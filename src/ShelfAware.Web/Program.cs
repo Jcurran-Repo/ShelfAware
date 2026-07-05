@@ -187,9 +187,9 @@ if (!app.Environment.IsDevelopment())
 // Security headers on every response. The CSP is the one that matters for BYOK: the visitor's key lives
 // in their browser's localStorage, so the realistic way it leaks is a script exfiltrating it. Restricting
 // script-src to our own origin (no arbitrary inline/eval), locking connect-src to only the endpoints we
-// actually talk to, denying framing, and dropping the referrer shrink that surface hard. (esm.sh is
-// allowed only for the opt-in cook-along SDK until B4 self-hosts it; media/data: is for the synthesized
-// speech-audio playback.)
+// actually talk to, denying framing, and dropping the referrer shrink that surface hard. (esm.sh — that
+// one origin only — serves the opt-in cook-along SDK at a pinned version; a multi-module ESM SDK can't be
+// practically self-hosted without a bundler. media/data: is for the synthesized speech-audio playback.)
 app.Use(async (context, next) =>
 {
     var h = context.Response.Headers;
