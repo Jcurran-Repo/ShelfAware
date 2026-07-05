@@ -88,8 +88,8 @@ else
                     </div>
                     <div class="card-actions">
                         <SplitButton PrimaryLabel="Bought today" OnPrimary="() => BoughtToday(p)"
-                                     PrimaryAriaLabel="@($"Mark {p.Name} bought today")">
-                            <button class="secondary" @onclick="() => Restocked(p)" aria-label="Mark @p.Name restocked">Restocked</button>
+                                     PrimaryAriaLabel="@($"Mark {p.Name} bought today")" Disabled="actionBusy">
+                            <button class="secondary" @onclick="() => Restocked(p)" disabled="@actionBusy" aria-label="Mark @p.Name restocked">Restocked</button>
                         </SplitButton>
                     </div>
                 </li>
@@ -205,31 +205,48 @@ else
             .ToList();
     }
 
+    // Guards the quick-buy buttons against a double-tap while the save is in flight (the buttons also
+    // disable via actionBusy). Note the cadence itself is already safe — the predictor collapses same-day
+    // purchases — so this is about not recording a stray duplicate row / showing a snappy disabled state.
+    private bool actionBusy;
+
     private async Task BoughtToday(Product p)
     {
-        await using var db = await DbFactory.CreateDbContextAsync();
-        db.PurchaseEvents.Add(new PurchaseEvent
+        if (actionBusy) return;
+        actionBusy = true;
+        try
         {
-            ProductId = p.Id,
-            PurchasedAt = DateOnly.FromDateTime(DateTime.Today),
-            Quantity = 1,
-            Source = PurchaseSource.Manual
-        });
-        await db.SaveChangesAsync();
-        await LoadAsync();
+            await using var db = await DbFactory.CreateDbContextAsync();
+            db.PurchaseEvents.Add(new PurchaseEvent
+            {
+                ProductId = p.Id,
+                PurchasedAt = DateOnly.FromDateTime(DateTime.Today),
+                Quantity = 1,
+                Source = PurchaseSource.Manual
+            });
+            await db.SaveChangesAsync();
+            await LoadAsync();
+        }
+        finally { actionBusy = false; }
     }
 
     private async Task Restocked(Product p)
     {
-        await using var db = await DbFactory.CreateDbContextAsync();
-        db.InventorySignals.Add(new InventorySignal
+        if (actionBusy) return;
+        actionBusy = true;
+        try
         {
-            ProductId = p.Id,
-            Kind = SignalKind.Restocked,
-            SignaledAt = DateTimeOffset.Now
-        });
-        await db.SaveChangesAsync();
-        await LoadAsync();
+            await using var db = await DbFactory.CreateDbContextAsync();
+            db.InventorySignals.Add(new InventorySignal
+            {
+                ProductId = p.Id,
+                Kind = SignalKind.Restocked,
+                SignaledAt = DateTimeOffset.Now
+            });
+            await db.SaveChangesAsync();
+            await LoadAsync();
+        }
+        finally { actionBusy = false; }
     }
 
     private async Task SendChat()

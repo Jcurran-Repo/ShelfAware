@@ -346,8 +346,12 @@ else
 
     private async Task Save(Product p)
     {
+        // Write only the product row. Update(p) would walk the loaded graph (Purchases/Signals/Tags) and
+        // mark every child Modified as well — needless UPDATEs. Attaching and marking just the root Modified
+        // writes the Products row alone.
         await using var db = await DbFactory.CreateDbContextAsync();
-        db.Products.Update(p);
+        db.Attach(p);
+        db.Entry(p).State = EntityState.Modified;
         await db.SaveChangesAsync();
     }
 

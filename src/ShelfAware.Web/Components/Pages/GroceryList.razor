@@ -165,6 +165,7 @@ else
     private RenderFragment ReportTable(List<ProductEstimate> items, decimal subtotal, int unknownCount) =>
         @<div class="table-scroll">
             <table>
+                <caption class="visually-hidden">Grocery items with category, replenishment status, next buy date, quantity, and estimated cost.</caption>
                 <thead>
                     <tr>
                         <th scope="col">Item</th>
@@ -226,6 +227,7 @@ else
     {
         var name = newExtra.Trim();
         if (name.Length == 0) return;
+        copied = false; // the copied list is now stale
         await using var db = await DbFactory.CreateDbContextAsync();
         var have = await db.GroceryExtras.Select(e => e.Name).ToListAsync();
         if (!have.Any(h => string.Equals(h, name, StringComparison.OrdinalIgnoreCase)))
@@ -239,6 +241,7 @@ else
 
     private async Task RemoveExtra(GroceryExtra e)
     {
+        copied = false; // the copied list is now stale
         await using var db = await DbFactory.CreateDbContextAsync();
         db.GroceryExtras.Remove(await db.GroceryExtras.FindAsync(e.Id) ?? e);
         await db.SaveChangesAsync();
