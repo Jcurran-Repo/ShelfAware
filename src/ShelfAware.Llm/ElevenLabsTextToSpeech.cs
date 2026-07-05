@@ -14,18 +14,22 @@ public class ElevenLabsTextToSpeech : ITextToSpeech
 {
     private readonly HttpClient _http;
     private readonly ElevenLabsOptions _options;
+    private readonly IVoiceCredentials _credentials;
     private readonly ILogger<ElevenLabsTextToSpeech> _logger;
 
-    public ElevenLabsTextToSpeech(HttpClient http, IOptions<ElevenLabsOptions> options, ILogger<ElevenLabsTextToSpeech> logger)
+    public ElevenLabsTextToSpeech(HttpClient http, IOptions<ElevenLabsOptions> options, IVoiceCredentials credentials, ILogger<ElevenLabsTextToSpeech> logger)
     {
         _http = http;
         _options = options.Value;
+        _credentials = credentials;
         _logger = logger;
     }
 
     public async Task<TextToSpeechResult> SynthesizeAsync(string text, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(text)) return TextToSpeechResult.Fail("Nothing to speak.");
+        if (string.IsNullOrWhiteSpace(_credentials.ApiKey))
+            return TextToSpeechResult.Fail("Add your ElevenLabs key in Settings to use voice.");
 
         _logger.LogInformation("Synthesizing {Chars} character(s) via ElevenLabs TTS ({Model}, voice {Voice}).",
             text.Length, _options.TextToSpeechModel, _options.VoiceId);
@@ -35,7 +39,10 @@ public class ElevenLabsTextToSpeech : ITextToSpeech
 
         try
         {
-            using var response = await _http.PostAsJsonAsync(url, payload, cancellationToken);
+            // Per-request key (the visitor's own, scoped to their circuit) rather than a baked default header.
+            using var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = JsonContent.Create(payload) };
+            request.Headers.Add("xi-api-key", _credentials.ApiKey);
+            using var response = await _http.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 var body = await response.Content.ReadAsStringAsync(cancellationToken);

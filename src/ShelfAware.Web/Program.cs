@@ -1,6 +1,8 @@
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
+using System.Threading.RateLimiting;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Extraction;
 using ShelfAware.Core.Ingest;
@@ -77,14 +79,28 @@ builder.Services.Configure<ElevenLabsOptions>(builder.Configuration.GetSection(E
 builder.Services.AddHttpClient<ISpeechToText, ElevenLabsSpeechToText>(ConfigureElevenLabs);
 builder.Services.AddHttpClient<ITextToSpeech, ElevenLabsTextToSpeech>(ConfigureElevenLabs);
 
+// Per-circuit ElevenLabs credentials: the visitor's own key from their browser (dev falls back to config).
+// Scoped, so concurrent visitors never share a voice key; the speech services read it per request.
+builder.Services.AddScoped<CircuitVoiceCredentials>();
+builder.Services.AddScoped<IVoiceCredentials>(sp => sp.GetRequiredService<CircuitVoiceCredentials>());
+
 static void ConfigureElevenLabs(IServiceProvider sp, HttpClient http)
 {
-    var opts = sp.GetRequiredService<IOptions<ElevenLabsOptions>>().Value;
+    // Base address only — the xi-api-key is attached PER REQUEST from the visitor's per-circuit credentials
+    // (CircuitVoiceCredentials), never baked in as a default header.
     http.BaseAddress = new Uri("https://api.elevenlabs.io");
-    // No key yet? Leave the header off and let the call 401 gracefully — the app still boots.
-    if (!string.IsNullOrEmpty(opts.ApiKey))
-        http.DefaultRequestHeaders.Add("xi-api-key", opts.ApiKey);
 }
+
+// Rate-limit the cook-along signed-url endpoint per IP, so nobody can spam a visitor's ElevenLabs key
+// through it. Built-in ASP.NET Core rate limiting — no package.
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    o.AddPolicy("cookalong", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = 12, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+});
 
 var app = builder.Build();
 
@@ -197,22 +213,28 @@ app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages:
 app.UseHttpsRedirection();
 
 app.UseAntiforgery();
+app.UseRateLimiter();
 
 app.MapStaticAssets();
 
-// Mints a short-lived signed URL so the browser can open a realtime ElevenLabs cook-along session
-// WITHOUT ever seeing the API key (the key stays here on the server). The agent handles turn-taking +
-// barge-in; the recipe is injected client-side as a dynamic variable.
-app.MapGet("/api/cookalong/signed-url", async (IHttpClientFactory httpFactory, IOptions<ElevenLabsOptions> opts, CancellationToken ct) =>
+// Mints a short-lived ElevenLabs signed URL for the cook-along realtime agent, using the VISITOR's own
+// key + agent id (sent from their browser over HTTPS) — the app ships with no voice key of its own. The
+// key is used only for this call and is never stored or logged; dev/self-host falls back to server config.
+// Rate-limited per IP so nobody can spam a visitor's key through it. A custom header is also a mild CSRF
+// guard (cross-site forms can't set one).
+app.MapGet("/api/cookalong/signed-url", async (HttpContext ctx, IHttpClientFactory httpFactory, IOptions<ElevenLabsOptions> opts, CancellationToken ct) =>
 {
-    var o = opts.Value;
-    if (string.IsNullOrEmpty(o.ApiKey) || string.IsNullOrEmpty(o.AgentId))
-        return Results.Problem("Hands-free cook-along isn't configured (needs ElevenLabs key + agent id).", statusCode: 503);
+    var apiKey = ctx.Request.Headers["X-EL-Key"].ToString();
+    var agentId = ctx.Request.Headers["X-EL-Agent"].ToString();
+    if (string.IsNullOrEmpty(apiKey)) apiKey = opts.Value.ApiKey;       // dev / self-host fallback
+    if (string.IsNullOrEmpty(agentId)) agentId = opts.Value.AgentId;
+    if (string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(agentId))
+        return Results.Problem("Hands-free cook-along needs your ElevenLabs key + agent id in Settings.", statusCode: 503);
 
     var http = httpFactory.CreateClient();
     using var request = new HttpRequestMessage(HttpMethod.Get,
-        $"https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id={Uri.EscapeDataString(o.AgentId)}");
-    request.Headers.Add("xi-api-key", o.ApiKey);
+        $"https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id={Uri.EscapeDataString(agentId)}");
+    request.Headers.Add("xi-api-key", apiKey);
 
     using var response = await http.SendAsync(request, ct);
     if (!response.IsSuccessStatusCode)
@@ -220,7 +242,7 @@ app.MapGet("/api/cookalong/signed-url", async (IHttpClientFactory httpFactory, I
 
     // ElevenLabs returns { "signed_url": "wss://..." }; pass it straight through to the client.
     return Results.Content(await response.Content.ReadAsStringAsync(ct), "application/json");
-});
+}).RequireRateLimiting("cookalong");
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();

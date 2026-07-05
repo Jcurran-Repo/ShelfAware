@@ -5,6 +5,7 @@
 @implements IAsyncDisposable
 @inject IJSRuntime JS
 @inject CircuitAiSettings Settings
+@inject CircuitVoiceCredentials Voice
 @inject ILogger<AiSettingsLoader> Log
 
 @code {
@@ -22,6 +23,12 @@
                 var provider = Enum.TryParse<AiProvider>(s.Provider, ignoreCase: true, out var p) ? p : AiProvider.Anthropic;
                 Settings.Apply(provider, s.ApiKey, s.ExtractionModel, s.ChatModel);
             }
+
+            // Voice credentials (used server-side, per circuit, to call ElevenLabs). Only override the dev
+            // fallback when the visitor actually has a key.
+            var voice = await _module.InvokeAsync<VoiceCreds?>("voiceCreds");
+            if (voice is { } v && !string.IsNullOrWhiteSpace(v.ApiKey))
+                Voice.Apply(v.ApiKey, v.AgentId);
         }
         catch (JSDisconnectedException)
         {
@@ -35,6 +42,7 @@
     }
 
     private sealed record StoredSettings(string Provider, string ApiKey, string? ExtractionModel, string? ChatModel);
+    private sealed record VoiceCreds(string ApiKey, string AgentId);
 
     public async ValueTask DisposeAsync()
     {

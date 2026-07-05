@@ -16,18 +16,22 @@ public class ElevenLabsSpeechToText : ISpeechToText
 {
     private readonly HttpClient _http;
     private readonly ElevenLabsOptions _options;
+    private readonly IVoiceCredentials _credentials;
     private readonly ILogger<ElevenLabsSpeechToText> _logger;
 
-    public ElevenLabsSpeechToText(HttpClient http, IOptions<ElevenLabsOptions> options, ILogger<ElevenLabsSpeechToText> logger)
+    public ElevenLabsSpeechToText(HttpClient http, IOptions<ElevenLabsOptions> options, IVoiceCredentials credentials, ILogger<ElevenLabsSpeechToText> logger)
     {
         _http = http;
         _options = options.Value;
+        _credentials = credentials;
         _logger = logger;
     }
 
     public async Task<SpeechToTextResult> TranscribeAsync(AudioClip audio, CancellationToken cancellationToken = default)
     {
         if (audio.Data.Length == 0) return SpeechToTextResult.Fail("No audio to transcribe.");
+        if (string.IsNullOrWhiteSpace(_credentials.ApiKey))
+            return SpeechToTextResult.Fail("Add your ElevenLabs key in Settings to use voice.");
 
         _logger.LogInformation("Transcribing {Bytes} bytes of {MediaType} via Scribe ({Model}).",
             audio.Data.Length, audio.MediaType, _options.SpeechToTextModel);
@@ -42,7 +46,11 @@ public class ElevenLabsSpeechToText : ISpeechToText
 
         try
         {
-            using var response = await _http.PostAsync("/v1/speech-to-text", form, cancellationToken);
+            // The key is attached per-request (the visitor's own, scoped to their circuit) rather than as
+            // a baked default header, so it only ever rides the actual ElevenLabs call.
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/speech-to-text") { Content = form };
+            request.Headers.Add("xi-api-key", _credentials.ApiKey);
+            using var response = await _http.SendAsync(request, cancellationToken);
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             if (!response.IsSuccessStatusCode)
             {

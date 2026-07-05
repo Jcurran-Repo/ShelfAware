@@ -14,16 +14,16 @@ public class SpeechServicesTests
 {
     private static readonly ElevenLabsOptions Defaults = new();
 
-    // Builds the HttpClient the same way Program.cs's typed-client registration does: base address +
-    // xi-api-key header, so the captured requests match what ships.
+    // Base address only — the service attaches the xi-api-key PER REQUEST from IVoiceCredentials now
+    // (matching Program.cs's ConfigureElevenLabs), so we no longer bake it onto the client.
     private static HttpClient Client(FakeHttpMessageHandler handler) =>
-        new(handler)
-        {
-            BaseAddress = new Uri("https://api.elevenlabs.io"),
-            DefaultRequestHeaders = { { "xi-api-key", "test-key" } },
-        };
+        new(handler) { BaseAddress = new Uri("https://api.elevenlabs.io") };
 
     private static IOptions<ElevenLabsOptions> Opts(ElevenLabsOptions? o = null) => Options.Create(o ?? new ElevenLabsOptions());
+
+    private static IVoiceCredentials Creds(string key = "test-key") => new FakeVoiceCredentials(key);
+
+    private sealed record FakeVoiceCredentials(string ApiKey, string AgentId = "") : IVoiceCredentials;
 
     // ---- Speech-to-text (Scribe) ---------------------------------------------------------------
 
@@ -32,7 +32,7 @@ public class SpeechServicesTests
     {
         var handler = FakeHttpMessageHandler.Returning(
             HttpResponses.Json("""{ "language_code": "en", "text": "mark shwarma and chipotle out" }"""));
-        var stt = new ElevenLabsSpeechToText(Client(handler), Opts(), NullLogger<ElevenLabsSpeechToText>.Instance);
+        var stt = new ElevenLabsSpeechToText(Client(handler), Opts(), Creds(), NullLogger<ElevenLabsSpeechToText>.Instance);
 
         var result = await stt.TranscribeAsync(new AudioClip(System.Text.Encoding.UTF8.GetBytes("FAKEAUDIO"), "audio/webm"));
 
@@ -53,7 +53,7 @@ public class SpeechServicesTests
     public async Task Transcribe_trims_whitespace_from_the_transcript()
     {
         var handler = FakeHttpMessageHandler.Returning(HttpResponses.Json("""{ "text": "  we're out of coffee\n" }"""));
-        var stt = new ElevenLabsSpeechToText(Client(handler), Opts(), NullLogger<ElevenLabsSpeechToText>.Instance);
+        var stt = new ElevenLabsSpeechToText(Client(handler), Opts(), Creds(), NullLogger<ElevenLabsSpeechToText>.Instance);
 
         var result = await stt.TranscribeAsync(new AudioClip([1, 2, 3], "audio/webm"));
 
@@ -64,7 +64,7 @@ public class SpeechServicesTests
     public async Task Transcribe_empty_audio_short_circuits_without_a_call()
     {
         var handler = FakeHttpMessageHandler.Returning(HttpResponses.Json("""{ "text": "unused" }"""));
-        var stt = new ElevenLabsSpeechToText(Client(handler), Opts(), NullLogger<ElevenLabsSpeechToText>.Instance);
+        var stt = new ElevenLabsSpeechToText(Client(handler), Opts(), Creds(), NullLogger<ElevenLabsSpeechToText>.Instance);
 
         var result = await stt.TranscribeAsync(new AudioClip([], "audio/webm"));
 
@@ -76,12 +76,25 @@ public class SpeechServicesTests
     public async Task Transcribe_maps_an_http_error_to_a_soft_failure()
     {
         var handler = FakeHttpMessageHandler.Returning(HttpResponses.Error(HttpStatusCode.Unauthorized, "bad key"));
-        var stt = new ElevenLabsSpeechToText(Client(handler), Opts(), NullLogger<ElevenLabsSpeechToText>.Instance);
+        var stt = new ElevenLabsSpeechToText(Client(handler), Opts(), Creds(), NullLogger<ElevenLabsSpeechToText>.Instance);
 
         var result = await stt.TranscribeAsync(new AudioClip([1, 2, 3], "audio/webm"));
 
         Assert.False(result.Success);
         Assert.NotNull(result.Error);
+    }
+
+    [Fact]
+    public async Task Transcribe_without_a_key_fails_softly_and_makes_no_call()
+    {
+        // BYOK: no ElevenLabs key configured for this circuit → fail soft, don't hit the API.
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Json("""{ "text": "unused" }"""));
+        var stt = new ElevenLabsSpeechToText(Client(handler), Opts(), Creds(""), NullLogger<ElevenLabsSpeechToText>.Instance);
+
+        var result = await stt.TranscribeAsync(new AudioClip([1, 2, 3], "audio/webm"));
+
+        Assert.False(result.Success);
+        Assert.Empty(handler.Requests);
     }
 
     // ---- Text-to-speech ------------------------------------------------------------------------
@@ -91,7 +104,7 @@ public class SpeechServicesTests
     {
         byte[] audioBytes = [0x49, 0x44, 0x33, 0x04]; // "ID3" mp3 header-ish
         var handler = FakeHttpMessageHandler.Returning(HttpResponses.Audio(audioBytes, "audio/mpeg"));
-        var tts = new ElevenLabsTextToSpeech(Client(handler), Opts(), NullLogger<ElevenLabsTextToSpeech>.Instance);
+        var tts = new ElevenLabsTextToSpeech(Client(handler), Opts(), Creds(), NullLogger<ElevenLabsTextToSpeech>.Instance);
 
         var result = await tts.SynthesizeAsync("Marked shwarma and chipotle out.");
 
@@ -112,7 +125,7 @@ public class SpeechServicesTests
     public async Task Synthesize_blank_text_short_circuits_without_a_call()
     {
         var handler = FakeHttpMessageHandler.Returning(HttpResponses.Audio([1, 2, 3]));
-        var tts = new ElevenLabsTextToSpeech(Client(handler), Opts(), NullLogger<ElevenLabsTextToSpeech>.Instance);
+        var tts = new ElevenLabsTextToSpeech(Client(handler), Opts(), Creds(), NullLogger<ElevenLabsTextToSpeech>.Instance);
 
         var result = await tts.SynthesizeAsync("   ");
 
@@ -124,7 +137,7 @@ public class SpeechServicesTests
     public async Task Synthesize_maps_an_http_error_to_a_soft_failure()
     {
         var handler = FakeHttpMessageHandler.Returning(HttpResponses.Error(HttpStatusCode.InternalServerError));
-        var tts = new ElevenLabsTextToSpeech(Client(handler), Opts(), NullLogger<ElevenLabsTextToSpeech>.Instance);
+        var tts = new ElevenLabsTextToSpeech(Client(handler), Opts(), Creds(), NullLogger<ElevenLabsTextToSpeech>.Instance);
 
         var result = await tts.SynthesizeAsync("hello");
 
