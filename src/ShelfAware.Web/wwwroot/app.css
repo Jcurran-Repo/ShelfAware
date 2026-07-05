@@ -1531,3 +1531,58 @@ tfoot td {
 .darker-border-checkbox.form-check-input {
     border-color: #929292;
 }
+
+/* ---- BYOK provider & keys (Settings) ---- */
+.ai-settings {
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    max-width: 34rem;
+}
+
+.ai-settings .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.ai-settings .field > span {
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.ai-settings input,
+.ai-settings select {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.ai-settings .model-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.7rem;
+}
+
+.ai-settings h3 {
+    margin: 0.4rem 0 0;
+}
+
+.ai-settings .checkbox-field {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.5rem;
+    align-items: start;
+    cursor: pointer;
+    font-size: 0.92rem;
+}
+
+.ai-settings .checkbox-field input {
+    width: auto;
+    margin-top: 0.2rem;
+}
+
+@media (max-width: 560px) {
+    .ai-settings .model-fields {
+        grid-template-columns: 1fr;
+    }
+}

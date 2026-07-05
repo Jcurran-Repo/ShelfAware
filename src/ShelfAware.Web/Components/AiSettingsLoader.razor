@@ -16,7 +16,7 @@
         try
         {
             _module = await JS.InvokeAsync<IJSObjectReference>("import", "/js/ai-settings.js");
-            var stored = await _module.InvokeAsync<StoredSettings?>("load");
+            var stored = await _module.InvokeAsync<StoredSettings?>("resolveActive");
             if (stored is { } s && !string.IsNullOrWhiteSpace(s.ApiKey))
             {
                 var provider = Enum.TryParse<AiProvider>(s.Provider, ignoreCase: true, out var p) ? p : AiProvider.Anthropic;

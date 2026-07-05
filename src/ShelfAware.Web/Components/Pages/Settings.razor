@@ -1,16 +1,93 @@
 @page "/settings"
 @using ShelfAware.Core.Settings
 @using ShelfAware.Core.Ingest
+@using ShelfAware.Llm
 @inject IAppSettings SettingsStore
 @inject IReceiptInbox Inbox
 @inject IReceiptImporter Importer
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
+@inject IJSRuntime JS
+@inject CircuitAiSettings AiSettings
+@inject ILogger<Settings> Logger
 
 <PageTitle>Settings — Shelf Aware</PageTitle>
 
 <div class="page-head">
     <h1>Settings</h1>
 </div>
+
+<section class="panel">
+    <h2>AI provider &amp; keys</h2>
+    <p class="muted">
+        Bring your own API keys. They're stored only in <strong>your browser</strong> — never on the server —
+        and used only to call the provider you pick. This app is open-source, so you can verify that yourself.
+    </p>
+
+    @if (!aiLoaded)
+    {
+        <p>Loading…</p>
+    }
+    else
+    {
+        <div class="ai-settings">
+            <label class="field">
+                <span>Provider</span>
+                <select @bind="provider" @bind:after="OnProviderChanged" aria-label="AI provider">
+                    <option value="Anthropic">Anthropic (Claude)</option>
+                    <option value="OpenAI">OpenAI (GPT)</option>
+                </select>
+            </label>
+
+            <label class="field">
+                <span>@ProviderLabel API key</span>
+                <input type="password" @bind="apiKey" autocomplete="off" spellcheck="false"
+                       placeholder="Paste your @ProviderLabel key" aria-label="@ProviderLabel API key" />
+            </label>
+
+            <div class="model-fields">
+                <label class="field">
+                    <span>Extraction model <span class="muted">— reads receipts (needs vision)</span></span>
+                    <input list="ai-models" @bind="extractionModel" aria-label="Extraction model" />
+                </label>
+                <label class="field">
+                    <span>Chat model <span class="muted">— the assistant (needs tools)</span></span>
+                    <input list="ai-models" @bind="chatModel" aria-label="Chat model" />
+                </label>
+            </div>
+            <datalist id="ai-models">
+                @foreach (var m in ModelsFor(provider))
+                {
+                    <option value="@m" />
+                }
+            </datalist>
+
+            <h3>Voice <span class="muted">— optional (ElevenLabs)</span></h3>
+            <label class="field">
+                <span>ElevenLabs API key</span>
+                <input type="password" @bind="elKey" autocomplete="off" spellcheck="false"
+                       placeholder="For push-to-talk and read-aloud" aria-label="ElevenLabs API key" />
+            </label>
+            <label class="field">
+                <span>Cook-along agent id <span class="muted">— optional, for hands-free cook-along</span></span>
+                <input @bind="elAgentId" aria-label="ElevenLabs cook-along agent id" />
+            </label>
+
+            <label class="checkbox-field">
+                <input type="checkbox" @bind="sessionOnly" />
+                <span>Forget my keys when I close this tab <span class="muted">— safer on a shared computer</span></span>
+            </label>
+
+            <div class="review-actions">
+                <button @onclick="SaveKeys" disabled="@savingKeys">@(savingKeys ? "Saving…" : "Save keys")</button>
+                <button class="secondary" @onclick="ForgetKeys" disabled="@savingKeys">Forget my keys</button>
+            </div>
+            @if (keyNote is not null)
+            {
+                <p class="chat-reply" role="status">@keyNote</p>
+            }
+        </div>
+    }
+</section>
 
 <section class="panel">
     <h2>Receipt auto-import</h2>
@@ -72,6 +149,147 @@
     private bool scanning;
     private string? savedNote;
     private string? scanResult;
+
+    // ---- BYOK: provider, keys, and models, held only in the visitor's browser ----
+    private bool aiLoaded;
+    private string provider = "Anthropic";
+    private string apiKey = "";
+    private string extractionModel = "";
+    private string chatModel = "";
+    private string elKey = "";
+    private string elAgentId = "";
+    private bool sessionOnly;
+    private bool savingKeys;
+    private string? keyNote;
+    private IJSObjectReference? aiModule;
+
+    // Each provider's config is remembered so switching providers doesn't wipe the other's key/models.
+    private readonly Dictionary<string, ProviderConfig> providerConfigs = new(StringComparer.OrdinalIgnoreCase);
+
+    private sealed class ProviderConfig
+    {
+        public string ApiKey { get; set; } = "";
+        public string ExtractionModel { get; set; } = "";
+        public string ChatModel { get; set; } = "";
+    }
+
+    // Curated defaults, but the fields are editable (datalist) so a stale list never boxes you in.
+    private static readonly string[] AnthropicModels = ["claude-haiku-4-5-20251001", "claude-sonnet-5", "claude-opus-4-8"];
+    private static readonly string[] OpenAiModels = ["gpt-4o-mini", "gpt-4o"];
+    private static string[] ModelsFor(string p) => string.Equals(p, "OpenAI", StringComparison.OrdinalIgnoreCase) ? OpenAiModels : AnthropicModels;
+    private string ProviderLabel => string.Equals(provider, "OpenAI", StringComparison.OrdinalIgnoreCase) ? "OpenAI" : "Anthropic";
+
+    // localStorage/interop shapes (mirror wwwroot/js/ai-settings.js).
+    private sealed record StoredAi(string Provider, Dictionary<string, StoredProvider>? Providers, StoredEleven? ElevenLabs);
+    private sealed record StoredProvider(string? ApiKey, string? ExtractionModel, string? ChatModel);
+    private sealed record StoredEleven(string? ApiKey, string? AgentId);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            aiModule = await JS.InvokeAsync<IJSObjectReference>("import", "/js/ai-settings.js");
+            var stored = await aiModule.InvokeAsync<StoredAi?>("load");
+            sessionOnly = await aiModule.InvokeAsync<bool>("isSessionOnly");
+            if (stored is not null)
+            {
+                if (!string.IsNullOrWhiteSpace(stored.Provider)) provider = stored.Provider;
+                if (stored.Providers is not null)
+                {
+                    foreach (var (name, cfg) in stored.Providers)
+                        providerConfigs[name] = new ProviderConfig
+                        {
+                            ApiKey = cfg.ApiKey ?? "",
+                            ExtractionModel = cfg.ExtractionModel ?? "",
+                            ChatModel = cfg.ChatModel ?? "",
+                        };
+                }
+                if (stored.ElevenLabs is not null)
+                {
+                    elKey = stored.ElevenLabs.ApiKey ?? "";
+                    elAgentId = stored.ElevenLabs.AgentId ?? "";
+                }
+            }
+            LoadProviderFields();
+        }
+        catch (JSDisconnectedException) { /* circuit gone mid-load */ }
+        catch (Exception ex) { Logger.LogWarning(ex, "Couldn't load BYOK settings on the Settings page."); }
+        aiLoaded = true;
+        StateHasChanged();
+    }
+
+    private void OnProviderChanged() => LoadProviderFields();
+
+    // Show the selected provider's remembered config (or its default model when nothing's saved yet).
+    private void LoadProviderFields()
+    {
+        var cfg = providerConfigs.GetValueOrDefault(provider) ?? new ProviderConfig();
+        apiKey = cfg.ApiKey;
+        extractionModel = string.IsNullOrWhiteSpace(cfg.ExtractionModel) ? ModelsFor(provider)[0] : cfg.ExtractionModel;
+        chatModel = string.IsNullOrWhiteSpace(cfg.ChatModel) ? ModelsFor(provider)[0] : cfg.ChatModel;
+    }
+
+    private async Task SaveKeys()
+    {
+        if (aiModule is null || savingKeys) return;
+        savingKeys = true;
+        keyNote = null;
+        try
+        {
+            // Snapshot the current provider's fields into the remembered map, then persist everything.
+            providerConfigs[provider] = new ProviderConfig
+            {
+                ApiKey = apiKey.Trim(),
+                ExtractionModel = extractionModel.Trim(),
+                ChatModel = chatModel.Trim(),
+            };
+            var payload = new StoredAi(
+                provider,
+                providerConfigs.ToDictionary(
+                    kv => kv.Key,
+                    kv => new StoredProvider(kv.Value.ApiKey, kv.Value.ExtractionModel, kv.Value.ChatModel),
+                    StringComparer.OrdinalIgnoreCase),
+                new StoredEleven(elKey.Trim(), elAgentId.Trim()));
+
+            var ok = await aiModule.InvokeAsync<bool>("save", payload, sessionOnly);
+            if (!ok) { keyNote = "Your browser wouldn't save the settings (storage may be disabled)."; return; }
+
+            // Apply to THIS circuit immediately so the assistant works without a reload.
+            var p = Enum.TryParse<AiProvider>(provider, ignoreCase: true, out var parsed) ? parsed : AiProvider.Anthropic;
+            AiSettings.Apply(p, apiKey.Trim(), extractionModel.Trim(), chatModel.Trim());
+            keyNote = string.IsNullOrWhiteSpace(apiKey)
+                ? "Saved. Add a key to start using the assistant."
+                : sessionOnly ? "Saved for this session — cleared when you close the tab." : "Saved in this browser.";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Saving BYOK settings failed.");
+            keyNote = "Couldn't save just now — please try again.";
+        }
+        finally { savingKeys = false; }
+    }
+
+    private async Task ForgetKeys()
+    {
+        if (aiModule is null || savingKeys) return;
+        savingKeys = true;
+        try
+        {
+            await aiModule.InvokeVoidAsync("clear");
+            providerConfigs.Clear();
+            apiKey = elKey = elAgentId = "";
+            LoadProviderFields();
+            AiSettings.Reset(); // this circuit falls back to the server config (empty on a public deploy)
+            keyNote = "Cleared — your keys are no longer stored in this browser.";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Forgetting BYOK settings failed.");
+            keyNote = "Couldn't clear just now — please try again.";
+        }
+        finally { savingKeys = false; }
+    }
 
     protected override async Task OnInitializedAsync()
     {
