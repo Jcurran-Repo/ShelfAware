@@ -1,4 +1,3 @@
-using Anthropic;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
@@ -39,42 +38,36 @@ builder.Services.AddSingleton(new AppPaths(dataDir, receiptsDir));
 
 builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection(LlmOptions.SectionName));
 
-// The provider seam: one IChatClient, built for the configured provider (Anthropic or OpenAI) via the
-// factory. The AI services depend only on IChatClient, so the provider is a swap and the logic stays
-// fakeable in tests. Model + token limits are set per call via ChatOptions. (BYOK replaces this singleton
-// with per-circuit clients built from the visitor's own key — this config path stays for local dev.)
+// The provider seam: the AI services depend only on IChatClient, so the provider is a swap and the logic
+// stays fakeable in tests. Under BYOK each circuit gets its own IChatClient built from that visitor's
+// browser-held settings (CircuitAiSettings), so concurrent visitors never share a key; local dev falls
+// back to the server config. ByokChatClient builds lazily at call time, so a keyless boot is fine — the
+// friendly "add a key" error only surfaces when someone actually makes a call.
 builder.Services.AddSingleton<IChatClientFactory, ChatClientFactory>();
-builder.Services.AddSingleton<IChatClient>(sp =>
-{
-    var opts = sp.GetRequiredService<IOptions<LlmOptions>>().Value;
-    var provider = Enum.TryParse<AiProvider>(opts.Provider, ignoreCase: true, out var p) ? p : AiProvider.Anthropic;
-    // A fresh open-source clone has no key yet: build a keyless Anthropic client so the app still boots
-    // (the AI services surface a friendly error on first use) instead of throwing at DI resolution.
-    if (string.IsNullOrWhiteSpace(opts.ApiKey))
-        return new AnthropicClient { ApiKey = "" }.AsIChatClient(opts.ChatModel);
-    return sp.GetRequiredService<IChatClientFactory>().Create(provider, opts.ApiKey, opts.ChatModel);
-});
+builder.Services.AddScoped<CircuitAiSettings>();
+builder.Services.AddScoped<IChatClient, ByokChatClient>();
 
 // Per-circuit bus wiring the layout voice agent to the pages (data-changed refresh + resume hand-off).
 builder.Services.AddScoped<VoiceCoordinator>();
 
-builder.Services.AddSingleton<IReceiptExtractor, AnthropicReceiptExtractor>();
+// The AI services depend (directly or transitively) on the per-circuit IChatClient, so they're scoped —
+// a singleton can't hold a scoped dependency. Their code is unchanged. EfPantryStore has no AI dependency
+// (just the DbContext factory), so it stays a singleton.
+builder.Services.AddScoped<IReceiptExtractor, AnthropicReceiptExtractor>();
 builder.Services.AddSingleton<IPantryStore, EfPantryStore>();
-builder.Services.AddSingleton<IPantryChat, AnthropicPantryChat>();
-builder.Services.AddSingleton<ITagAdvisor, AnthropicTagAdvisor>();
-builder.Services.AddSingleton<IRecipeAdvisor, AnthropicRecipeAdvisor>();
-builder.Services.AddSingleton<IProductSubstituteAdvisor, AnthropicProductSubstituteAdvisor>();
-builder.Services.AddSingleton<IIngredientAlternativesAdvisor, AnthropicIngredientAlternativesAdvisor>();
-// Adapt-a-recipe-to-what-you-have; singleton so the singleton IPantryChat can inject it (uses the
-// DbContext factory + advisor, both singleton-safe).
-builder.Services.AddSingleton<IRecipeAdapter, RecipeAdapter>();
+builder.Services.AddScoped<IPantryChat, AnthropicPantryChat>();
+builder.Services.AddScoped<ITagAdvisor, AnthropicTagAdvisor>();
+builder.Services.AddScoped<IRecipeAdvisor, AnthropicRecipeAdvisor>();
+builder.Services.AddScoped<IProductSubstituteAdvisor, AnthropicProductSubstituteAdvisor>();
+builder.Services.AddScoped<IIngredientAlternativesAdvisor, AnthropicIngredientAlternativesAdvisor>();
+builder.Services.AddScoped<IRecipeAdapter, RecipeAdapter>();
 
 // Receipt auto-import: a swappable inbox (local folder now, cloud later) + the importer the chat/voice
 // agent triggers, plus the runtime settings store behind the /settings page. Both the importer and the
 // manual Upload review confirm receipts through the ONE shared confirmation service.
 builder.Services.AddSingleton<IAppSettings, EfAppSettings>();
 builder.Services.AddSingleton<IReceiptInbox, LocalFolderReceiptInbox>();
-builder.Services.AddSingleton<IReceiptImporter, ReceiptImporter>();
+builder.Services.AddScoped<IReceiptImporter, ReceiptImporter>(); // depends on the scoped IReceiptExtractor
 builder.Services.AddSingleton<ReceiptConfirmationService>();
 
 // Voice I/O (ElevenLabs): Scribe = STT (ear), TTS = mouth. Speech is its own REST API, not an
@@ -150,9 +143,17 @@ app.Lifetime.ApplicationStarted.Register(() => _ = ScanReceiptsAsync(app));
 
 static async Task ScanReceiptsAsync(WebApplication app)
 {
+    // The background startup scan has no browser/circuit, so it can only run on the server-config key —
+    // a local-dev or self-hosted owner key. On the public BYOK deploy there's no owner key, so skip it;
+    // imports there happen per-visitor via the Settings "Scan now" button, under that visitor's own key.
+    var llm = app.Services.GetRequiredService<IOptions<LlmOptions>>().Value;
+    if (string.IsNullOrWhiteSpace(llm.ApiKey)) return;
     try
     {
-        await app.Services.GetRequiredService<IReceiptImporter>().ImportNewAsync();
+        // IReceiptImporter is scoped now (it depends on the per-circuit AI graph), so resolve it inside a
+        // scope. With no browser, CircuitAiSettings keeps its server-config fallback — the owner key.
+        using var scope = app.Services.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<IReceiptImporter>().ImportNewAsync();
     }
     catch (Exception ex)
     {

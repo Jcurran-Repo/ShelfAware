@@ -18,6 +18,9 @@
     @Body
 </main>
 
+@* Applies the visitor's own BYOK settings (from their browser) to this circuit's AI config. Headless. *@
+<AiSettingsLoader />
+
 @* Persistent, always-available voice assistant. In the layout (not a page) so it keeps listening
    across navigation — the key to hands-free command chaining. *@
 <VoiceAgent />
