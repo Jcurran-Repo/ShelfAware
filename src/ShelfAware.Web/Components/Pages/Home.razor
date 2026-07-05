@@ -97,6 +97,25 @@ else
         </ul>
     }
 
+    @if (runsOutEarly.Count > 0)
+    {
+        <section class="panel runs-out-early">
+            <h2>You keep running out of these</h2>
+            <p class="muted">You go through these faster than you rebuy them — worth buying sooner, or a bigger size.</p>
+            <ul class="habit-list">
+                @foreach (var p in runsOutEarly)
+                {
+                    var r = predictions[p.Id];
+                    var gap = (int)Math.Round(r.RebuyBurnGapDays ?? 0);
+                    <li>
+                        <a href="/product/@p.Id" class="habit-name">@p.Name</a>
+                        <span class="habit-note">lasts ~@Days(r.BurnRateDays) days but you rebuy ~every @Days(r.RebuyIntervalDays) — out ~@gap day@(gap == 1 ? "" : "s") each cycle</span>
+                    </li>
+                }
+            </ul>
+        </section>
+    }
+
     <section class="panel quick-update">
         <h2>Quick update</h2>
         <form @onsubmit="SendChat" @formname="quick-update">
@@ -150,6 +169,7 @@ else
     private Dictionary<int, PredictionResult> predictions = [];
     private List<Product> runningLow = [];
     private List<Product> everythingElse = [];
+    private List<Product> runsOutEarly = [];
 
     private DateOnly today;
 
@@ -202,6 +222,12 @@ else
 
         everythingElse = products
             .Where(p => predictions[p.Id].Status is PredictionStatus.Stocked or PredictionStatus.Unknown)
+            .ToList();
+
+        // Habit insight, independent of due status: items you burn through faster than you rebuy them.
+        runsOutEarly = products
+            .Where(p => predictions[p.Id].RunsOutEarly)
+            .OrderByDescending(p => predictions[p.Id].RebuyBurnGapDays)
             .ToList();
     }
 
@@ -273,6 +299,8 @@ else
             chatBusy = false;
         }
     }
+
+    private static string Days(double? d) => d is { } v ? ((int)Math.Round(v)).ToString() : "?";
 
     private static string ChipClass(PredictionStatus s) => s switch
     {

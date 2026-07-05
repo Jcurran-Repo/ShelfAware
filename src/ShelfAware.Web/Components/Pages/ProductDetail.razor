@@ -67,9 +67,9 @@ else
             <dd>@(estimate.ExpectedCost is { } c ? c.ToString("C") : "unknown")</dd>
         </dl>
         <p class="muted">@prediction.Basis@(prediction.SignalNote is { } note ? $" · {note}" : "")</p>
-        @if (prediction.RebuyIntervalDays is { } rbGap && prediction.BurnRateDays is { } burnGap)
+        @if (prediction.RebuyBurnGapDays is { } gapDays)
         {
-            var gap = (int)Math.Round(rbGap - burnGap);
+            var gap = (int)Math.Round(gapDays);
             if (gap > 0)
             {
                 <p class="rhythm-gap">⚠️ You typically run out about <strong>@gap day@(gap == 1 ? "" : "s")</strong> before you restock — worth buying it sooner.</p>

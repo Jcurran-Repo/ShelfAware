@@ -48,4 +48,19 @@ public record PredictionResult
 
     /// True when an active OutNow signal pins this item to the top of the list (§6.6 / §8).
     public bool Pinned { get; init; }
+
+    // ---- Derived: the two-stream gap (rebuy rhythm vs. burn rate) ----
+
+    /// <summary>Rebuy rhythm minus burn rate in days, when both are known. Positive means you run out this
+    /// many days before you typically rebuy (chronic shortage — buy sooner or a bigger size); negative means
+    /// you restock that many days before running out (comfortably ahead). Null unless both rhythms exist.</summary>
+    public double? RebuyBurnGapDays =>
+        RebuyIntervalDays is { } rebuy && BurnRateDays is { } burn ? rebuy - burn : null;
+
+    /// <summary>You chronically run out before rebuying by a margin worth surfacing (not a day of noise) —
+    /// the dashboard's "you keep running out of these" flag. Burn rate only exists after ≥2 real outage
+    /// cycles, so this never fires on thin data.</summary>
+    public bool RunsOutEarly => RebuyBurnGapDays >= RunsOutEarlyThresholdDays;
+
+    private const double RunsOutEarlyThresholdDays = 3;
 }

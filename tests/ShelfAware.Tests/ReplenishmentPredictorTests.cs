@@ -216,6 +216,31 @@ public class ReplenishmentPredictorTests
     }
 
     [Fact]
+    public void RunsOutEarly_WhenBurnRateIsShorterThanRebuyRhythm()
+    {
+        // Bought ~every 30 days but each one lasts only ~10 (two completed outage cycles) → you're out ~20
+        // days every cycle. The dashboard surfaces this as "you keep running out of these".
+        var product = ProductWith(
+            [D(0), D(30), D(60)],
+            [Signal(SignalKind.OutNow, D(10)), Signal(SignalKind.OutNow, D(40))]);
+
+        var r = ReplenishmentPredictor.Predict(product, D(65));
+
+        Assert.Equal(20, r.RebuyBurnGapDays); // rebuy 30 − burn 10
+        Assert.True(r.RunsOutEarly);
+    }
+
+    [Fact]
+    public void RunsOutEarly_IsFalse_WithoutTwoStreamData()
+    {
+        // Comfortably ahead: bought ~every 10 days, never marked out → no burn rate, so no gap to nag about.
+        var r = ReplenishmentPredictor.Predict(ProductWith([D(0), D(10), D(20)]), D(25));
+
+        Assert.Null(r.RebuyBurnGapDays);
+        Assert.False(r.RunsOutEarly);
+    }
+
+    [Fact]
     public void SameDayTie_PurchaseWins_OutNowSignalIsCleared()
     {
         // A signal dated the SAME day as the last purchase is not active — purchases carry no time of

@@ -336,6 +336,29 @@ input:focus, select:focus {
 .card.accent-overdue { border-left-color: var(--overdue-line); }
 .card.accent-duesoon { border-left-color: var(--duesoon-line); }
 
+/* "You keep running out of these" — the burn-rate-≪-rebuy habit insight promoted from Product Detail. */
+.runs-out-early .habit-list {
+    list-style: none;
+    padding: 0;
+    margin: 0.5rem 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.runs-out-early .habit-list li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+}
+.habit-name {
+    font-weight: 600;
+    color: var(--accent);
+    text-decoration: none;
+}
+.habit-name:hover { text-decoration: underline; }
+.habit-note { color: var(--ink-soft); font-size: 0.9rem; }
+
 .card-top {
     display: flex;
     align-items: center;
