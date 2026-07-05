@@ -284,6 +284,25 @@ public class ReplenishmentPredictorTests
         Assert.Null(r.IntervalSpreadDays); // one gap — a spread would be noise
     }
 
+    // --- Short cadence: the DueSoon window can't span the whole cycle -----------
+
+    [Fact]
+    public void ShortCadence_IsStockedTheDayItsRestocked_NotImmediatelyDueSoon()
+    {
+        // A milk-style item bought ~every 3 days. The flat 3-day DueSoon floor is as wide as the whole
+        // cycle, so before the window clamp a fresh buy re-anchored the due date but landed right back
+        // inside the warning window — the item read "due soon" the instant you bought it and could never
+        // leave Running Low, making [Bought today] / [Restocked] look broken. A fresh stock-back must earn
+        // at least one Stocked day. (Gaps {3,3} → median 3, due = D(6)+3 = D(9), window clamped to 2 days.)
+        var product = ProductWith([D(0), D(3), D(6)]);
+
+        Assert.Equal(3, ReplenishmentPredictor.Predict(product, D(6)).MedianIntervalDays);
+        Assert.Equal(PredictionStatus.Stocked, ReplenishmentPredictor.Predict(product, D(6)).Status); // buy day
+        Assert.Equal(PredictionStatus.DueSoon, ReplenishmentPredictor.Predict(product, D(7)).Status); // window opens
+        Assert.Equal(PredictionStatus.DueSoon, ReplenishmentPredictor.Predict(product, D(9)).Status); // due, not yet overdue
+        Assert.Equal(PredictionStatus.Overdue, ReplenishmentPredictor.Predict(product, D(10)).Status);
+    }
+
     // --- Stock-up factor: a big buy pushes the due date out --------------------
 
     private static Product ProductWithQuantities(params (int Day, decimal Qty)[] purchases) => new()

@@ -70,10 +70,16 @@ public static class ReplenishmentPredictor
             // A stock-up stretches the projection: buying ~3× the usual amount pushes the due date out
             // ~3× instead of nagging on the one-unit cadence.
             stockUp = StockUpFactor(product.Purchases, anchor);
-            dueDate = anchor.AddDays(Floor(median * stockUp));
+            var interval = Floor(median * stockUp);
+            dueDate = anchor.AddDays(interval);
             // The DueSoon window earns its width from the cadence's real variance: a noisy rhythm
-            // (IQR above the flat max(3, 20%) rule) warns earlier; a metronomic one stays tight.
+            // (IQR above the flat max(3, 20%) rule) warns earlier; a metronomic one stays tight. But it
+            // must never span the WHOLE cycle: for a short-cadence item (milk bought ~every 3 days) the
+            // flat 3-day floor would drop it straight back into "due soon" the instant you restock it, so
+            // it could never leave Running Low. Cap the window at one day inside the interval — a fresh
+            // restock always earns at least one "stocked" day before the countdown starts again.
             var threshold = Round(Math.Max(3.0, Math.Max(0.2 * median, spread ?? 0)));
+            threshold = Math.Min(threshold, Math.Max(0, interval - 1));
             var dueSoonStart = dueDate.Value.AddDays(-threshold);
 
             if (today > dueDate.Value) status = PredictionStatus.Overdue;
