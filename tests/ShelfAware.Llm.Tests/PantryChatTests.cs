@@ -188,6 +188,25 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task Suggest_substitutes_tool_generates_and_saves_them()
+    {
+        var store = new FakePantryStore(P(50, "Chicken Breast Tenderloins", Category.Meat));
+        var advisor = new FakeSubstituteAdvisor("chicken breast", "chicken cutlet");
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("suggest_substitutes", ("product_name", "chicken tenderloins"))),
+            () => Responses.Text("Added substitutes for Chicken Breast Tenderloins."));
+        var chat = new AnthropicPantryChat(client, Options.Create(new LlmOptions()), store,
+            NullLogger<AnthropicPantryChat>.Instance, importer: null, substituteAdvisor: advisor);
+
+        var result = await chat.HandleAsync("generate substitutes for the chicken tenderloins");
+
+        Assert.True(result.Success);
+        Assert.Equal(1, advisor.Calls);
+        Assert.Contains((50, "chicken breast"), store.Substitutes);
+        Assert.Contains((50, "chicken cutlet"), store.Substitutes);
+    }
+
+    [Fact]
     public async Task Open_page_carries_a_navigation_target_out()
     {
         var store = new FakePantryStore();

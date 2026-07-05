@@ -51,6 +51,7 @@ builder.Services.AddSingleton<IPantryStore, EfPantryStore>();
 builder.Services.AddSingleton<IPantryChat, AnthropicPantryChat>();
 builder.Services.AddSingleton<ITagAdvisor, AnthropicTagAdvisor>();
 builder.Services.AddSingleton<IRecipeAdvisor, AnthropicRecipeAdvisor>();
+builder.Services.AddSingleton<IProductSubstituteAdvisor, AnthropicProductSubstituteAdvisor>();
 
 // Receipt auto-import: a swappable inbox (local folder now, cloud later) + the importer the chat/voice
 // agent triggers, plus the runtime settings store behind the /settings page. Both the importer and the
@@ -92,6 +93,15 @@ using (var scope = app.Services.CreateScope())
     EnsureColumn(db, "ReceiptLines", "SuggestedProduct", "TEXT NULL");
     db.Database.ExecuteSqlRaw(
         "CREATE TABLE IF NOT EXISTS \"AppSettings\" (\"Key\" TEXT NOT NULL CONSTRAINT \"PK_AppSettings\" PRIMARY KEY, \"Value\" TEXT NOT NULL);");
+    // Additive child table for product substitutes ("also works as"). EnsureCreated builds it on a fresh
+    // DB; create it here so an existing single-user DB gets it too. Mirrors the ProductTags schema.
+    db.Database.ExecuteSqlRaw(
+        "CREATE TABLE IF NOT EXISTS \"ProductSubstitutes\" (" +
+        "\"Id\" INTEGER NOT NULL CONSTRAINT \"PK_ProductSubstitutes\" PRIMARY KEY AUTOINCREMENT, " +
+        "\"ProductId\" INTEGER NOT NULL, \"Value\" TEXT NOT NULL, " +
+        "CONSTRAINT \"FK_ProductSubstitutes_Products_ProductId\" FOREIGN KEY (\"ProductId\") REFERENCES \"Products\" (\"Id\") ON DELETE CASCADE);");
+    db.Database.ExecuteSqlRaw(
+        "CREATE INDEX IF NOT EXISTS \"IX_ProductSubstitutes_ProductId\" ON \"ProductSubstitutes\" (\"ProductId\");");
 }
 
 static void EnsureColumn(ShelfAwareDbContext db, string table, string column, string columnDef)

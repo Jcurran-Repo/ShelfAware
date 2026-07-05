@@ -12,6 +12,7 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
     public DbSet<ProductAlias> ProductAliases => Set<ProductAlias>();
     public DbSet<InventorySignal> InventorySignals => Set<InventorySignal>();
     public DbSet<ProductTag> ProductTags => Set<ProductTag>();
+    public DbSet<ProductSubstitute> ProductSubstitutes => Set<ProductSubstitute>();
     public DbSet<ExcludedFood> ExcludedFoods => Set<ExcludedFood>();
     public DbSet<Recipe> Recipes => Set<Recipe>();
     public DbSet<RecipeIngredient> RecipeIngredients => Set<RecipeIngredient>();

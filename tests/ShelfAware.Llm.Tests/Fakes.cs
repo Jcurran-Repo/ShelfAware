@@ -5,8 +5,21 @@ using Microsoft.Extensions.AI;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Ingest;
+using ShelfAware.Core.Recipes;
 
 namespace ShelfAware.Llm.Tests;
+
+/// <summary>Returns canned substitute suggestions and counts calls — drives the suggest_substitutes tool.</summary>
+internal sealed class FakeSubstituteAdvisor(params string[] suggestions) : IProductSubstituteAdvisor
+{
+    public int Calls { get; private set; }
+
+    public Task<IReadOnlyList<string>> SuggestAsync(string productName, string category, CancellationToken cancellationToken = default)
+    {
+        Calls++;
+        return Task.FromResult<IReadOnlyList<string>>(suggestions);
+    }
+}
 
 /// <summary>Records import calls and returns a canned summary — drives the import_receipts chat tool.</summary>
 internal sealed class FakeReceiptImporter(ImportSummary summary) : IReceiptImporter
@@ -75,6 +88,7 @@ internal sealed class FakePantryStore : IPantryStore
     public List<(int ProductId, DateOnly Date, decimal Qty)> Purchases { get; } = [];
     public List<(int ProductId, bool Tracked)> Tracking { get; } = [];
     public List<(string Name, Category Category)> Created { get; } = [];
+    public List<(int ProductId, string Value)> Substitutes { get; } = [];
 
     public FakePantryStore(params Product[] products) => Products = [.. products];
 
@@ -108,6 +122,18 @@ internal sealed class FakePantryStore : IPantryStore
     {
         Tracking.Add((productId, tracked));
         return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<string>> AddSubstitutesAsync(int productId, IReadOnlyList<string> values, CancellationToken cancellationToken = default)
+    {
+        var have = new HashSet<string>(
+            Substitutes.Where(s => s.ProductId == productId).Select(s => s.Value), StringComparer.OrdinalIgnoreCase);
+        var added = new List<string>();
+        foreach (var v in values)
+        {
+            if (have.Add(v)) { Substitutes.Add((productId, v)); added.Add(v); }
+        }
+        return Task.FromResult<IReadOnlyList<string>>(added);
     }
 }
 

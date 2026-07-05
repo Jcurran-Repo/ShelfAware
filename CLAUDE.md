@@ -148,6 +148,22 @@ also filled a real gap — the list had no manual-add before). A label-check dis
 allergy-safe medical advice). Entities: `ExcludedFood`, `Recipe`, `RecipeIngredient(IsMain,
 MatchedProduct)`, `GroceryExtra`.
 
+**Makeability by food family (v2.2).** Recipes stay SPECIFIC ("chicken breast", real cook times); the
+flexibility lives on products. Each product has an **"Also works as"** list (`ProductSubstitute` child
+rows, `Product.Substitutes`) — the recipe ingredients it can stand in for ("Chicken Breast Tenderloins"
+also works as "chicken breast", "chicken cutlet"). `IngredientMatcher` (Core, unit-tested, replaces the
+old exact-`MatchedProduct` check) covers a main ingredient when its core words (only trivial modifiers —
+fresh/frozen/boneless/size/unit — stripped; cut/form words KEPT) appear in an on-hand product's **name OR
+a substitute phrase** — so tenderloins cover "chicken breast" but "Whole Chicken" and "Chicken Broth" do
+NOT. Recipe on-hand is **edible only** (excludes Household/PetCare/PersonalCare, so "Chicken Jerky Dog
+Treats" can't count as chicken). Substitutes are **AI-seeded** (`IProductSubstituteAdvisor` →
+`AnthropicProductSubstituteAdvisor`, Haiku, fails soft) + user-curated: an ✨ Suggest button on Product
+Detail, and the **`suggest_substitutes` chat/voice tool** (`IPantryStore.AddSubstitutesAsync`) so the
+assistant fills them in from anywhere. `ProductSubstitutes` is an additive table (CREATE TABLE IF NOT
+EXISTS in Program.cs for existing DBs). **Planned next:** an **Adapt** action + assistant tool that
+regenerates a recipe to use what you have, saved as a `Recipe.ParentRecipeId` variant, with a bubble-cloud
+alternate picker per ingredient.
+
 ## Data model: brand-agnostic products, size as metadata (final, 2026-06-28)
 
 A product is a brand-agnostic **item**; brand and size are tracked **per purchase**, so

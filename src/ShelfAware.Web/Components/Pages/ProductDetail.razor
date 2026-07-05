@@ -1,7 +1,9 @@
 @page "/product/{Id:int}"
 @using ShelfAware.Core.Prediction
+@using ShelfAware.Core.Recipes
 @using ShelfAware.Core.Shopping
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
+@inject IProductSubstituteAdvisor SubAdvisor
 
 <PageTitle>@(product?.Name ?? "Product") — Shelf Aware</PageTitle>
 
@@ -77,6 +79,27 @@ else
                 <p class="rhythm-gap">You usually restock about <strong>@(-gap) day@(-gap == 1 ? "" : "s")</strong> before running out — comfortably ahead.</p>
             }
         }
+    </section>
+
+    <section class="panel">
+        <h2>Also works as</h2>
+        <p class="muted">Recipe ingredients this can stand in for — so a recipe stays specific (real cook times) but still counts what you have. Editable.</p>
+        <div class="tag-list">
+            @foreach (var s in product.Substitutes.OrderBy(s => s.Value))
+            {
+                <span class="tag-chip">@s.Value<button type="button" class="tag-x" @onclick="() => RemoveSubstitute(s)" aria-label="Remove @s.Value">×</button></span>
+            }
+            @if (product.Substitutes.Count == 0)
+            {
+                <span class="muted">None yet — add some, or let the assistant suggest.</span>
+            }
+        </div>
+        <div class="tag-add">
+            <input placeholder="e.g. chicken breast" @bind="newSubstitute" @bind:event="oninput"
+                   aria-label="Add a substitute this works as" @onkeydown="OnSubstituteKey" />
+            <button type="button" @onclick="AddSubstitute" disabled="@string.IsNullOrWhiteSpace(newSubstitute)">Add</button>
+            <button type="button" class="secondary" @onclick="SuggestSubstitutes" disabled="@suggesting">@(suggesting ? "Thinking…" : "✨ Suggest")</button>
+        </div>
     </section>
 
     @if (usedInRecipes.Count > 0)
@@ -168,6 +191,9 @@ else
     private List<BrandRow> brandBreakdown = [];
     private List<RecipeLink> usedInRecipes = [];
 
+    private string newSubstitute = "";
+    private bool suggesting;
+
     private const string Unbranded = "Unbranded";
 
     private record PurchaseRow(DateOnly Date, int? GapDays, decimal Quantity, string? Size, decimal? UnitPrice);
@@ -181,6 +207,7 @@ else
             .Include(p => p.Purchases)
             .Include(p => p.Signals)
             .Include(p => p.Tags)
+            .Include(p => p.Substitutes)
             .FirstOrDefaultAsync(p => p.Id == Id);
 
         if (product is null)
@@ -242,6 +269,68 @@ else
             .OrderBy(r => r.Name)
             .Select(r => new RecipeLink(r.Id, r.Name))
             .ToList();
+    }
+
+    // "Also works as" editing. Each change persists immediately and reloads the list (so removes have ids).
+    private async Task OnSubstituteKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await AddSubstitute();
+    }
+
+    private async Task AddSubstitute()
+    {
+        var value = newSubstitute.Trim();
+        newSubstitute = "";
+        if (value.Length == 0 || product is null) return;
+        if (product.Substitutes.Any(s => string.Equals(s.Value, value, StringComparison.OrdinalIgnoreCase))) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.ProductSubstitutes.Add(new ProductSubstitute { ProductId = product.Id, Value = value });
+        await db.SaveChangesAsync();
+        await ReloadSubstitutes(db);
+    }
+
+    private async Task RemoveSubstitute(ProductSubstitute s)
+    {
+        if (product is null) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        if (await db.ProductSubstitutes.FindAsync(s.Id) is { } row)
+        {
+            db.ProductSubstitutes.Remove(row);
+            await db.SaveChangesAsync();
+        }
+        await ReloadSubstitutes(db);
+    }
+
+    private async Task SuggestSubstitutes()
+    {
+        if (product is null || suggesting) return;
+        suggesting = true;
+        try
+        {
+            var ideas = await SubAdvisor.SuggestAsync(product.Name, product.Category.ToString());
+            var toAdd = ideas
+                .Where(v => !product.Substitutes.Any(s => string.Equals(s.Value, v, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+            if (toAdd.Count == 0) return;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            foreach (var v in toAdd)
+                db.ProductSubstitutes.Add(new ProductSubstitute { ProductId = product.Id, Value = v });
+            await db.SaveChangesAsync();
+            await ReloadSubstitutes(db);
+        }
+        finally
+        {
+            suggesting = false;
+        }
+    }
+
+    private async Task ReloadSubstitutes(ShelfAwareDbContext db)
+    {
+        if (product is null) return;
+        product.Substitutes = await db.ProductSubstitutes
+            .Where(s => s.ProductId == product.Id)
+            .OrderBy(s => s.Value)
+            .ToListAsync();
     }
 
     private static string SizeKey(string? size) => (size ?? "").Trim().ToLowerInvariant();

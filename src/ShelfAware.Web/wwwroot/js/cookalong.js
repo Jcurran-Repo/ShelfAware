@@ -39,6 +39,12 @@ export async function start(recipe, dotnetRef) {
         convo = await C.startSession({
             signedUrl,
             dynamicVariables: { recipe },
+            // Greet on connect, then wait — so it doesn't sit silent OR barrel into step one unasked.
+            // (Requires "First message" override enabled for the agent in the ElevenLabs dashboard; if it
+            // isn't, the agent falls back to its own configured first message.)
+            overrides: {
+                agent: { firstMessage: "I'm ready to read you the recipe. Say 'next' whenever you want the first step." },
+            },
             onConnect: () => dotnetRef.invokeMethodAsync('OnStatus', 'connected'),
             onDisconnect: () => dotnetRef.invokeMethodAsync('OnStatus', 'ended'),
             onError: () => dotnetRef.invokeMethodAsync('OnStatus', 'error'),

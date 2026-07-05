@@ -189,7 +189,7 @@
                     <ul class="ingredient-list">
                         @foreach (var i in r.Ingredients.Where(i => i.IsMain))
                         {
-                            var have = i.MatchedProduct is not null && onHandSet.Contains(i.MatchedProduct);
+                            var have = Have(i);
                             <li class="@(have ? "have" : "grab")">@(have ? "✓" : "🛒") @i.Name</li>
                         }
                         @{ var extras = r.Ingredients.Where(i => !i.IsMain).Select(i => i.Name).ToList(); }
@@ -237,8 +237,7 @@
     private Dictionary<int, string> productNamesById = [];
     private string? filterProductName;
 
-    private List<string> onHand = [];
-    private HashSet<string> onHandSet = new(StringComparer.OrdinalIgnoreCase);
+    private List<PantryProduct> onHand = [];
 
     private Recipe? picked;
     private string? extraNote;
@@ -273,13 +272,16 @@
         if (cookAutoStarted && cookingRecipe is { } r) StartReading(r);
     }
 
-    // A saved recipe is makeable when every MAIN ingredient mapped to a product you currently have on hand
-    // (seasonings/staples are ignored — plain-code check over the mapping captured at save time).
+    // A saved recipe is makeable when every MAIN ingredient is covered by something on hand — by food
+    // family, not exact product name, so a recipe calling for chicken breast counts when you have chicken
+    // tenderloins or any chicken (IngredientMatcher). Seasonings/staples are ignored.
     private bool Makeable(Recipe r)
     {
         var mains = r.Ingredients.Where(i => i.IsMain).ToList();
-        return mains.Count > 0 && mains.All(i => i.MatchedProduct is not null && onHandSet.Contains(i.MatchedProduct));
+        return mains.Count > 0 && mains.All(Have);
     }
+
+    private bool Have(RecipeIngredient i) => IngredientMatcher.IsSatisfied(i.Name, i.MatchedProduct, onHand);
 
     // "Pick for me" pool: saved recipes you've eaten before AND can make right now — the reliable
     // "I can definitely eat this, just tell me" set.
@@ -340,18 +342,25 @@
         // item that's since been untracked).
         productNamesById = await db.Products.Select(p => new { p.Id, p.Name }).ToDictionaryAsync(x => x.Id, x => x.Name);
 
-        // "Likely on hand" = tracked products the engine doesn't think you've run out of.
-        var products = await db.Products.Where(p => p.IsTracked).Include(p => p.Purchases).Include(p => p.Signals).ToListAsync();
+        // "Likely on hand" = tracked, EDIBLE products the engine doesn't think you've run out of. Edible
+        // only so a family match ("chicken") can't be satisfied by "Chicken Jerky Dog Treats" or a
+        // chicken-scented cleaner — recipes only reason over food.
+        var products = await db.Products.Where(p => p.IsTracked)
+            .Include(p => p.Purchases).Include(p => p.Signals).Include(p => p.Substitutes).ToListAsync();
         var today = DateOnly.FromDateTime(DateTime.Today);
         onHand = products
+            .Where(p => IsEdible(p.Category))
             .Where(p => ReplenishmentPredictor.Predict(p, today).Status != PredictionStatus.Overdue)
-            .Select(p => p.Name)
-            .OrderBy(n => n)
+            .Select(p => new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList()))
+            .OrderBy(x => x.Name)
             .ToList();
-        onHandSet = onHand.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         ApplyFilter(); // keep the ?uses view in sync after any reload
     }
+
+    // Recipes should only match against food. Everything but the household / pet / personal-care aisles.
+    private static bool IsEdible(Category c) =>
+        c is not (Category.Household or Category.PetCare or Category.PersonalCare);
 
     private async Task AddExcluded()
     {
@@ -386,7 +395,7 @@
             // onHand still grounds the suggestions in real catalog items. We deliberately DON'T display a
             // have/grab verdict here — the model's self-reported availability is unreliable and accurate
             // ingredient↔product matching is Phase 2 (captured as an ingredient→product map at save time).
-            suggestions = (await Advisor.SuggestAsync(request, onHand, excludedFoods.Select(f => f.Value).ToList())).ToList();
+            suggestions = (await Advisor.SuggestAsync(request, onHand.Select(p => p.Name).ToList(), excludedFoods.Select(f => f.Value).ToList())).ToList();
             if (suggestions.Count == 0) suggestError = "No ideas came back — try rephrasing.";
         }
         catch (Exception ex)
@@ -429,7 +438,7 @@
     private async Task AddMissingToList(Recipe r)
     {
         var missing = r.Ingredients
-            .Where(i => i.IsMain && (i.MatchedProduct is null || !onHandSet.Contains(i.MatchedProduct)))
+            .Where(i => i.IsMain && !Have(i))
             .Select(i => i.Name).ToList();
         if (missing.Count == 0) { extraNote = "You already have everything for this."; return; }
 

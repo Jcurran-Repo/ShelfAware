@@ -68,4 +68,25 @@ public class EfPantryStore(IDbContextFactory<ShelfAwareDbContext> dbFactory) : I
             .Select(r => new RecipeRef(r.Id, r.Name, r.Steps.Count > 0))
             .ToListAsync(cancellationToken);
     }
+
+    public async Task<IReadOnlyList<string>> AddSubstitutesAsync(int productId, IReadOnlyList<string> values, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var existing = await db.ProductSubstitutes
+            .Where(s => s.ProductId == productId)
+            .Select(s => s.Value)
+            .ToListAsync(cancellationToken);
+        var have = new HashSet<string>(existing, StringComparer.OrdinalIgnoreCase);
+
+        var added = new List<string>();
+        foreach (var value in values)
+        {
+            var v = value.Trim();
+            if (v.Length == 0 || !have.Add(v)) continue;
+            db.ProductSubstitutes.Add(new ProductSubstitute { ProductId = productId, Value = v });
+            added.Add(v);
+        }
+        if (added.Count > 0) await db.SaveChangesAsync(cancellationToken);
+        return added;
+    }
 }

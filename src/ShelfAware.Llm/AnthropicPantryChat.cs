@@ -8,6 +8,7 @@ using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Ingest;
 using ShelfAware.Core.Prediction;
+using ShelfAware.Core.Recipes;
 using Category = ShelfAware.Core.Domain.Category;
 
 namespace ShelfAware.Llm;
@@ -26,16 +27,18 @@ public class AnthropicPantryChat : IPantryChat
     private readonly LlmOptions _options;
     private readonly IPantryStore _store;
     private readonly IReceiptImporter? _importer;
+    private readonly IProductSubstituteAdvisor? _substituteAdvisor;
     private readonly ILogger<AnthropicPantryChat> _logger;
 
     public AnthropicPantryChat(
         IChatClient chat, IOptions<LlmOptions> options, IPantryStore store, ILogger<AnthropicPantryChat> logger,
-        IReceiptImporter? importer = null)
+        IReceiptImporter? importer = null, IProductSubstituteAdvisor? substituteAdvisor = null)
     {
         _chat = chat;
         _options = options.Value;
         _store = store;
         _importer = importer;
+        _substituteAdvisor = substituteAdvisor;
         _logger = logger;
     }
 
@@ -221,6 +224,24 @@ public class AnthropicPantryChat : IPantryChat
                 return (summary.Describe(), false);
             }
 
+            case "suggest_substitutes":
+            {
+                if (_substituteAdvisor is null)
+                    return ("Substitute suggestions aren't set up.", true);
+                var name = Str("product_name");
+                var product = ProductMatcher.Resolve(name, products);
+                if (product is null)
+                    return ($"No product matches \"{name}\".", true);
+                var ideas = await _substituteAdvisor.SuggestAsync(product.Name, product.Category.ToString(), ct);
+                if (ideas.Count == 0)
+                    return ($"Couldn't think of any substitutes for {product.Name}.", false);
+                var added = await _store.AddSubstitutesAsync(product.Id, ideas, ct);
+                if (added.Count > 0) actions.Add($"substitutes → {product.Name}");
+                return (added.Count > 0
+                    ? $"Added \"also works as\" for {product.Name}: {string.Join(", ", added)}."
+                    : $"{product.Name} already has those substitutes.", false);
+            }
+
             case "open_page":
             {
                 var page = Str("page")?.Trim().ToLowerInvariant();
@@ -371,6 +392,15 @@ public class AnthropicPantryChat : IPantryChat
                 }
                 """,
                 ["recipe_name"]),
+
+            MakeTool("suggest_substitutes",
+                "Generate and save \"also works as\" substitutes for a product — the recipe ingredients it can stand in for — so recipes recognize what the user has. Use when they ask to fill in, generate, or suggest substitutes / alternates / stand-ins for an item.",
+                """
+                {
+                  "product_name": { "type": "string", "description": "Canonical product name from the list." }
+                }
+                """,
+                ["product_name"]),
         ];
 
         return tools.Select(t => t.AsAITool()).ToList();

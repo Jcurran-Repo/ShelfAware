@@ -109,6 +109,15 @@ _Last updated: 7/4/2026_
 - [x] "Back to assistant" hand-back from the recipe reader (button on read-aloud + spoken on cook-along) — 7/4/2026
 - [x] Voice "read me the recipe" opens the listening cook-along agent, with graceful fallback to the plain reader — 7/4/2026
 
+### v2.2 — Smarter recipe makeability
+- [x] Recipe makeability by food family via per-product "Also works as" substitutes (recipes stay specific — real cook times) — 7/4/2026
+- [x] "Also works as" list editable on the product page + AI Suggest — 7/4/2026
+- [x] Assistant generates substitutes by voice/chat (suggest_substitutes tool, dashboard + product pages) — 7/4/2026
+- [x] Recipes only match EDIBLE products (dog treats / cleaners can't masquerade as food) — 7/4/2026
+- [x] Cook-along greets with an intro line then waits, instead of silent (firstMessage override) — 7/4/2026
+- [ ] Adapt: regenerate a recipe to use what you have, saved as a variant of the original — Not built yet
+- [ ] Bubble-cloud alternate picker per ingredient (green/red, click to adapt) — Not built yet
+
 ---
 
 ## v3 — Accounts & multi-user (prerequisite for selling)

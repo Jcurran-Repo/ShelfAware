@@ -14,4 +14,7 @@ public class Product
     public List<InventorySignal> Signals { get; set; } = [];
     /// <summary>Descriptive tags (Condiment, Canned, Snack, …) — the browsable second category layer.</summary>
     public List<ProductTag> Tags { get; set; } = [];
+    /// <summary>Recipe ingredients this product can stand in for ("also works as") — drives makeability
+    /// without genericizing recipes. AI-seeded, user-curated.</summary>
+    public List<ProductSubstitute> Substitutes { get; set; } = [];
 }

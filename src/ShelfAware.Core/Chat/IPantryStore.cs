@@ -26,6 +26,10 @@ public interface IPantryStore
     /// <summary>Saved recipes (id, name, whether cooking steps exist) — lets the read_recipe chat
     /// tool resolve a spoken name to something the Recipes page can read aloud.</summary>
     Task<IReadOnlyList<RecipeRef>> GetRecipesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Add "also works as" substitutes to a product (deduped against what it already has);
+    /// returns the values actually added. Lets the assistant fill in a product's substitutes by voice/chat.</summary>
+    Task<IReadOnlyList<string>> AddSubstitutesAsync(int productId, IReadOnlyList<string> values, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Lightweight saved-recipe reference for chat-tool resolution.</summary>
