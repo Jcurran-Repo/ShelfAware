@@ -48,9 +48,18 @@ export async function start(recipe, dotnetRef) {
                 const source = String(msg.source ?? 'ai');
                 const text = String(msg.message);
                 dotnetRef.invokeMethodAsync('OnTranscript', source, text);
+                if (source !== 'user') return;
+                // "Go to the assistant" hands control back to our own voice agent: end this session and
+                // ask it to resume listening. Detected client-side (it's not one of the EL agent's own
+                // step commands), same pattern as "stop listening" below.
+                if (/\b(go(?:\s+back)?\s+to|back\s+to|take\s+me\s+to|open|switch\s+to|talk\s+to)\s+(?:the\s+)?assistant\b/i.test(text)) {
+                    stop();
+                    dotnetRef.invokeMethodAsync('OnHandOff');
+                    return;
+                }
                 // Client-side guarantee for "stop listening": the agent's own prompt handles "stop",
                 // but the mic must close even if the agent misses or ignores the phrase.
-                if (source === 'user' && /\bstop listening\b/i.test(text)) {
+                if (/\bstop listening\b/i.test(text)) {
                     stop();
                     dotnetRef.invokeMethodAsync('OnStatus', 'ended');
                 }

@@ -660,6 +660,91 @@ button.mic-speaking {
     50% { opacity: 0.35; transform: scale(0.75); }
 }
 
+/* ---- Persistent voice assistant (floating, hosted in MainLayout) ---- */
+.voice-agent {
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.4rem;
+    max-width: min(360px, calc(100vw - 2rem));
+}
+
+.voice-agent-fab {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    border: 1px solid var(--accent-ink);
+    box-shadow: var(--shadow);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.voice-agent-fab:hover:not(:disabled) {
+    background: var(--accent-ink);
+}
+
+.voice-agent-fab:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.voice-agent-fab > span[aria-hidden] {
+    font-size: 1.1rem;
+    line-height: 1;
+}
+
+.voice-agent-note {
+    margin: 0;
+    font-size: 0.82rem;
+    background: var(--surface);
+    padding: 0.3rem 0.5rem;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+}
+
+.voice-agent-panel {
+    width: min(360px, calc(100vw - 2rem));
+    max-height: min(70vh, 30rem);
+    overflow-y: auto;
+    margin: 0;
+    box-shadow: 0 6px 24px rgba(16, 24, 40, 0.18);
+}
+
+@media (prefers-color-scheme: dark) {
+    .voice-agent-panel {
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+    }
+}
+
+/* Reader / cook-along header actions (Back to assistant + close) */
+.ra-head-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+/* Recipes "?uses" filter banner */
+.filter-banner {
+    margin: 0 0 0.6rem;
+    padding: 0.4rem 0.6rem;
+    border-radius: var(--radius);
+    background: var(--surface-alt);
+    border-left: 3px solid var(--accent);
+    font-size: 0.9rem;
+}
+
+.quick-update-hint {
+    margin: 0.4rem 0 0;
+}
+
 /* ---- Narrow screens ---- */
 @media (max-width: 560px) {
     .site-main {

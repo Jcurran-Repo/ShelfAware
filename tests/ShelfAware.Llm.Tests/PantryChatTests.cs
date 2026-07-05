@@ -199,6 +199,7 @@ public class PantryChatTests
 
         Assert.True(result.Success);
         Assert.Equal("/list", result.NavigateTo);
+        Assert.False(result.HandsOff); // plain navigation — the agent keeps listening to chain commands
     }
 
     [Fact]
@@ -212,6 +213,46 @@ public class PantryChatTests
         var result = await Chat(client, store).HandleAsync("show me the milk page");
 
         Assert.Equal("/product/7", result.NavigateTo);
+        Assert.False(result.HandsOff);
+    }
+
+    [Fact]
+    public async Task Open_recipes_for_a_product_navigates_to_the_filtered_view()
+    {
+        // The middle link of the hands-free chain: product -> recipes that use it -> read one.
+        var store = new FakePantryStore(P(7, "Chicken Breast", Category.Meat));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("open_page", ("page", "recipes"), ("product_name", "chicken"))),
+            () => Responses.Text("Showing recipes that use Chicken Breast."));
+
+        var result = await Chat(client, store).HandleAsync("show me recipes that use the chicken");
+
+        Assert.Equal("/recipes?uses=7", result.NavigateTo);
+        Assert.False(result.HandsOff); // still just navigation — keep listening
+    }
+
+    [Fact]
+    public async Task Screen_context_is_given_to_the_model_so_positional_references_resolve()
+    {
+        // "the second one" is meaningless without knowing what's on screen. The agent passes the on-screen
+        // list; the model maps position -> name and calls read_recipe with it. We can only own the
+        // plumbing (the list reaches the prompt); the position->name mapping is the model's job, faked here.
+        var store = new FakePantryStore();
+        store.Recipes.Add(new RecipeRef(1, "Chicken Parmesan", HasSteps: true));
+        store.Recipes.Add(new RecipeRef(2, "Chicken Tikka Masala", HasSteps: true));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("read_recipe", ("recipe_name", "Chicken Tikka Masala"))),
+            () => Responses.Text("Reading Chicken Tikka Masala."));
+        var screen = "The user is viewing recipes that use Chicken. Recipes listed, in display order:\n1. Chicken Parmesan\n2. Chicken Tikka Masala";
+
+        var result = await Chat(client, store).HandleAsync("read me the second one", history: null, screenContext: screen);
+
+        Assert.Equal("/recipes?read=2", result.NavigateTo);
+        Assert.True(result.HandsOff);
+        // The model could only resolve "the second one" because the on-screen list rode into its prompt.
+        var systemText = client.ReceivedMessages[0].Single(m => m.Role == ChatRole.System).Text;
+        Assert.Contains("Chicken Tikka Masala", systemText);
+        Assert.Contains("in display order", systemText);
     }
 
     [Fact]
@@ -228,6 +269,8 @@ public class PantryChatTests
         Assert.True(result.Success);
         Assert.Equal("/recipes?read=12", result.NavigateTo);
         Assert.Contains("reading Spaghetti Carbonara", result.Actions);
+        // read_recipe is a hand-off: the reader produces its own audio, so the listening agent stands down.
+        Assert.True(result.HandsOff);
     }
 
     [Fact]

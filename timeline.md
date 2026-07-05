@@ -101,6 +101,14 @@ _Last updated: 7/4/2026_
 - [x] "Stop listening" ends any voice surface (plain-code phrase detection) — 7/4/2026
 - [x] One-command recipe handoff: chat navigates pages + auto-starts read-aloud (open_page / read_recipe) — 7/4/2026
 
+### v2.2 — Hands-free navigation (persistent voice agent)
+- [x] Persistent voice agent in the layout (global interactive render mode) — keeps listening across navigation — 7/4/2026
+- [x] Hands-free chain: product → recipes that use it → read a recipe, without touching the screen — 7/4/2026
+- [x] open_page: recipes scoped to a product (`/recipes?uses={id}`) — 7/4/2026
+- [x] Screen-aware references — "read me the second one" resolves against the on-screen list — 7/4/2026
+- [x] "Back to assistant" hand-back from the recipe reader (button on read-aloud + spoken on cook-along) — 7/4/2026
+- [x] Voice "read me the recipe" opens the listening cook-along agent, with graceful fallback to the plain reader — 7/4/2026
+
 ---
 
 ## v3 — Accounts & multi-user (prerequisite for selling)

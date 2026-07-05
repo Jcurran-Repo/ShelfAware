@@ -84,12 +84,23 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
    - **`tests/ShelfAware.Web.Tests`** — real EF on in-memory SQLite (FKs + unique indexes enforced);
      covers the confirmation service, importer routing, and the product-delete FK regression.
    - **Chat can navigate the UI:** `ChatResult.NavigateTo` (a relative URL) is set by the `open_page`
-     and `read_recipe` tools; Home / PushToTalk / VoiceConversation apply it via NavigationManager
-     after showing/speaking the reply, and `/recipes?read={id}` auto-starts the read-aloud — one
-     dashboard voice command ends with a recipe being read out loud. Recipe names resolve exact →
-     substring → token containment ≥ 0.6 (unique winner). **"Stop listening"** (`VoiceCommands`,
-     Core, plain code — whole-utterance match, filler tolerated) ends the conversation BEFORE the
-     LLM is called; cookalong.js also force-closes the session on the phrase.
+     and `read_recipe` tools; the voice/chat surfaces apply it via NavigationManager after showing/speaking
+     the reply. `open_page` also handles `page="recipes"` + `product_name` → `/recipes?uses={id}` (recipes
+     that use a product). Recipe names resolve exact → substring → token containment ≥ 0.6 (unique winner).
+     **"Stop listening"** (`VoiceCommands`, Core, plain code — whole-utterance match, filler tolerated)
+     ends the conversation BEFORE the LLM is called; cookalong.js also force-closes the session on the phrase.
+   - **Hands-free navigation (v2.2):** the conversational agent moved out of the dashboard into
+     `Components/Layout/VoiceAgent.razor`, hosted in `MainLayout` so it **survives navigation and keeps
+     listening** — enabling a chain like "go to the chicken → recipes that use it → read me the second
+     one". This required going **global interactive** (see Decisions). It keeps listening after an
+     `open_page` nav but stands down on a hand-off (`ChatResult.HandsOff`, set by `read_recipe`) where the
+     reader makes its own audio. `read_recipe` navigation prefers the **listening cook-along agent** when
+     the ElevenLabs agent is configured (fully voice-controllable: next/back/stop + "go to the assistant"),
+     and **falls back to the button-controlled read-aloud** if cook-along can't connect. Both readers expose
+     a "🎤 Back to assistant" hand-back (a button; cook-along also takes the spoken phrase) that resumes the
+     agent via `VoiceCoordinator`. **Screen-aware references** ("the second one") work because the page on
+     screen publishes its list to `VoiceCoordinator.ScreenContext`, which the agent passes into
+     `IPantryChat.HandleAsync(screenContext)` for injection into the system prompt.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
@@ -177,6 +188,15 @@ the same item bought across brands/sizes rolls up into one product.
 - **Data dir is `app-data/`** (not `data/` — collides with the `Data/` source folder on
   case-insensitive FS). Resolves to `src/ShelfAware.Web/app-data/` locally (ContentRootPath);
   Azure uses `/home/data` via the `DataDir` config key.
+- **Global InteractiveServer render mode (v2.2).** `App.razor` sets `@rendermode="InteractiveServer"` on
+  `<Routes>` and `<HeadOutlet>`; pages **must not** re-declare a render mode (a page can't set one an
+  ancestor already set — it throws). This replaced per-page `@rendermode` directives so the layout, and
+  the `VoiceAgent` it hosts, is interactive and **persists across navigation** (the persistent listening
+  agent needs this; a static layout re-creates its interactive islands on every page change). No static-SSR
+  benefit was lost — every page was already interactive. Cross-component coordination goes through a
+  **scoped** `VoiceCoordinator` (Web/Services): `PantryChanged` (a voice data change refreshes the page on
+  screen, replacing the old per-page `OnApplied`), `ResumeRequested` ("Back to assistant" resumes the
+  agent), and `ScreenContext` (the page publishes what's on screen for positional references).
 - **Official Anthropic C# SDK (`Anthropic` NuGet) used directly** behind `IReceiptExtractor` /
   `IPantryChat`, not wrapped in `Microsoft.Extensions.AI` `IChatClient` (§2) and not Semantic
   Kernel (§7) — the interface seam already gives swappability + testability; revisit if a second

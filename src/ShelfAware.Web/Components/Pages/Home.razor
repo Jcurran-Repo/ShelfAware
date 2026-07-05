@@ -1,11 +1,12 @@
 @page "/"
-@rendermode InteractiveServer
+@implements IDisposable
 @using ShelfAware.Core.Chat
 @using ShelfAware.Core.Prediction
 @using ShelfAware.Core.Shopping
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
 @inject IPantryChat Chat
 @inject NavigationManager Nav
+@inject VoiceCoordinator Coordinator
 
 <PageTitle>Shelf Aware</PageTitle>
 
@@ -113,7 +114,7 @@ else
         </div>
         <div class="voice-divider"><span>or hold to talk</span></div>
         <PushToTalk OnApplied="LoadAsync" />
-        <VoiceConversation OnApplied="LoadAsync" />
+        <p class="muted small quick-update-hint">For a back-and-forth that keeps listening as you move around, use the 🎙 Assistant in the corner.</p>
     </section>
 
     <details class="everything-else">
@@ -160,7 +161,21 @@ else
     private int overdueCount => runningLow.Count(p => predictions[p.Id].Status == PredictionStatus.Overdue);
     private int dueSoonCount => runningLow.Count(p => predictions[p.Id].Status == PredictionStatus.DueSoon);
 
-    protected override async Task OnInitializedAsync() => await LoadAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        // The voice assistant now lives in the layout, so it can't call OnApplied directly. It pings the
+        // coordinator after a voice data change; the dashboard reloads to reflect it.
+        Coordinator.PantryChanged += OnPantryChangedAsync;
+        await LoadAsync();
+    }
+
+    private async Task OnPantryChangedAsync()
+    {
+        await LoadAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose() => Coordinator.PantryChanged -= OnPantryChangedAsync;
 
     private async Task LoadAsync()
     {

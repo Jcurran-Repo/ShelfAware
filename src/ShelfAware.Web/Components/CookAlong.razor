@@ -2,15 +2,20 @@
    server-minted signed URL) with the recipe injected as a dynamic variable. The agent reads steps and
    responds to spoken "next / back / repeat / stop" WHILE listening — native barge-in, no tap needed.
    This is the one surface where we hand the loop to ElevenLabs' agent on purpose; the pantry brain
-   stays ours (VoiceConversation). *@
+   stays ours (the VoiceAgent / IPantryChat loop). *@
 @using ShelfAware.Core.Domain
 @implements IAsyncDisposable
 @inject IJSRuntime JS
+@inject VoiceCoordinator Coordinator
 
 <div class="cookalong panel">
     <div class="ra-head">
         <h3>🎙 Cook-along: @Recipe.Name</h3>
-        <button class="icon-btn" @onclick="CloseAsync" aria-label="End cook-along" title="End cook-along">✕</button>
+        <div class="ra-head-actions">
+            <button class="secondary" @onclick="BackToAssistantAsync"
+                    aria-label="End cook-along and hand back to the voice assistant" title="End cook-along and talk to the assistant">🎤 Back to assistant</button>
+            <button class="icon-btn" @onclick="CloseAsync" aria-label="End cook-along" title="End cook-along">✕</button>
+        </div>
     </div>
 
     <p class="cookalong-status @StatusClass" role="status" aria-live="polite">@StatusText</p>
@@ -27,18 +32,22 @@
         </div>
     }
 
-    <p class="muted small">Say “next”, “back”, “repeat”, or “stop”. Just talk — it listens while it speaks.</p>
+    <p class="muted small">Say “next”, “back”, “repeat”, “stop”, or “go to the assistant”. Just talk — it listens while it speaks.</p>
 </div>
 
 @code {
     [Parameter, EditorRequired] public Recipe Recipe { get; set; } = null!;
     [Parameter] public EventCallback OnClosed { get; set; }
+    /// <summary>Raised when the live session can't start (misconfigured or couldn't connect), so the
+    /// parent can recover — the voice chain falls back to the plain reader instead of dead-ending.</summary>
+    [Parameter] public EventCallback OnUnavailable { get; set; }
 
     private IJSObjectReference? _module;
     private DotNetObjectReference<CookAlong>? _selfRef;
 
     private string status = "connecting";
     private string mode = "listening";
+    private bool _notifiedUnavailable;
     private readonly List<(string Source, string Text)> transcript = [];
 
     private string StatusText => status switch
@@ -77,10 +86,15 @@
     }
 
     [JSInvokable]
-    public Task OnStatus(string s)
+    public async Task OnStatus(string s)
     {
         status = s;
-        return InvokeAsync(StateHasChanged);
+        var couldNotStart = s is "error" or "unconfigured" && !_notifiedUnavailable;
+        if (couldNotStart) _notifiedUnavailable = true;
+        // Render the status first (so a manually-started cook-along still shows its error), then let the
+        // parent decide whether to fall back — that may swap this component out, so it comes last.
+        try { await InvokeAsync(StateHasChanged); } catch { /* may be mid-teardown */ }
+        if (couldNotStart) await OnUnavailable.InvokeAsync();
     }
 
     [JSInvokable]
@@ -98,6 +112,11 @@
         return InvokeAsync(StateHasChanged);
     }
 
+    // Spoken "go to the assistant" (detected in cookalong.js): same hand-back as the button — end this
+    // session and resume the persistent voice agent.
+    [JSInvokable]
+    public Task OnHandOff() => BackToAssistantAsync();
+
     private async Task CloseAsync()
     {
         if (_module is not null)
@@ -105,6 +124,14 @@
             try { await _module.InvokeVoidAsync("stop"); } catch { /* already closed */ }
         }
         await OnClosed.InvokeAsync();
+    }
+
+    // Close the ElevenLabs session first (so its audio stops), then hand control back to our own
+    // persistent voice assistant, which resumes listening.
+    private async Task BackToAssistantAsync()
+    {
+        await CloseAsync();
+        await Coordinator.RequestResumeAsync();
     }
 
     public async ValueTask DisposeAsync()

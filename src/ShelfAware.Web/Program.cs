@@ -13,6 +13,7 @@ using ShelfAware.Llm;
 using ShelfAware.Web.Components;
 using ShelfAware.Web.Data;
 using ShelfAware.Web.Ingest;
+using ShelfAware.Web.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -41,6 +42,9 @@ builder.Services.AddSingleton<IChatClient>(sp =>
     var opts = sp.GetRequiredService<IOptions<LlmOptions>>().Value;
     return new AnthropicClient { ApiKey = opts.ApiKey }.AsIChatClient(opts.ChatModel);
 });
+
+// Per-circuit bus wiring the layout voice agent to the pages (data-changed refresh + resume hand-off).
+builder.Services.AddScoped<VoiceCoordinator>();
 
 builder.Services.AddSingleton<IReceiptExtractor, AnthropicReceiptExtractor>();
 builder.Services.AddSingleton<IPantryStore, EfPantryStore>();

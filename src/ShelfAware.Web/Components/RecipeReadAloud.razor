@@ -6,11 +6,16 @@
 @implements IAsyncDisposable
 @inject ITextToSpeech Tts
 @inject IJSRuntime JS
+@inject VoiceCoordinator Coordinator
 
 <div class="read-aloud panel">
     <div class="ra-head">
         <h3>🔊 Reading: @Recipe.Name</h3>
-        <button class="icon-btn" @onclick="CloseAsync" aria-label="Stop reading @Recipe.Name" title="Stop reading">✕</button>
+        <div class="ra-head-actions">
+            <button class="secondary" @onclick="BackToAssistantAsync"
+                    aria-label="Stop reading and hand back to the voice assistant" title="Stop reading and talk to the assistant">🎤 Back to assistant</button>
+            <button class="icon-btn" @onclick="CloseAsync" aria-label="Stop reading @Recipe.Name" title="Stop reading">✕</button>
+        </div>
     </div>
 
     @if (error is not null)
@@ -151,6 +156,14 @@
             try { await _module.InvokeVoidAsync("stop"); } catch { /* circuit gone */ }
         }
         await OnClosed.InvokeAsync();
+    }
+
+    // Hand control back to the persistent voice assistant. Stop the narration FIRST so its tail doesn't
+    // bleed into the mic, then ping the coordinator, which resumes the layout agent's listening loop.
+    private async Task BackToAssistantAsync()
+    {
+        await CloseAsync();
+        await Coordinator.RequestResumeAsync();
     }
 
     [JSInvokable]

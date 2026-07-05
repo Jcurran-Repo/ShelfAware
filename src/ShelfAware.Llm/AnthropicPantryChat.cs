@@ -40,7 +40,8 @@ public class AnthropicPantryChat : IPantryChat
     }
 
     public async Task<ChatResult> HandleAsync(
-        string userText, IReadOnlyList<ChatTurn>? history = null, CancellationToken cancellationToken = default)
+        string userText, IReadOnlyList<ChatTurn>? history = null, string? screenContext = null,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(userText)) return ChatResult.Fail("Type something to update.");
 
@@ -48,6 +49,9 @@ public class AnthropicPantryChat : IPantryChat
         var system = SystemPrompt + "\n\nCurrent products:\n" + (products.Count == 0
             ? "(none yet)"
             : string.Join("\n", products.OrderBy(p => p.Name).Select(p => $"- {p.Name} ({p.Category})")));
+        // What the user is looking at right now, so on-screen references ("the second one") resolve.
+        if (!string.IsNullOrWhiteSpace(screenContext))
+            system += "\n\nOn screen right now:\n" + screenContext.Trim();
 
         var chatOptions = new ChatOptions
         {
@@ -93,7 +97,7 @@ public class AnthropicPantryChat : IPantryChat
             {
                 var text = response.Text.Trim();
                 _logger.LogInformation("Pantry chat completed on turn {Turn} with {ActionCount} action(s) applied.", turn + 1, actions.Count);
-                return ChatResult.Ok(text.Length > 0 ? text : "Done.", actions, nav.Url);
+                return ChatResult.Ok(text.Length > 0 ? text : "Done.", actions, nav.Url, nav.HandsOff);
             }
 
             // Carry the assistant's tool-call turn back into the history, then answer each call.
@@ -114,12 +118,14 @@ public class AnthropicPantryChat : IPantryChat
         _logger.LogWarning("Pantry chat hit the {MaxTurns}-turn limit without a final reply ({ActionCount} action(s) applied).", MaxTurns, actions.Count);
         return ChatResult.Ok(
             actions.Count > 0 ? $"Applied: {string.Join(", ", actions)}." : "Stopped after several steps without finishing.",
-            actions, nav.Url);
+            actions, nav.Url, nav.HandsOff);
     }
 
     /// <summary>Mutable navigation slot the tool handlers write into (last navigation wins) — the
-    /// service is a singleton, so per-request state rides through parameters, never fields.</summary>
-    private sealed class NavigationTarget { public string? Url; }
+    /// service is a singleton, so per-request state rides through parameters, never fields.
+    /// <see cref="HandsOff"/> marks a navigation that starts its own audio on the destination
+    /// (read_recipe), so a persistent listening agent knows to stop rather than talk over it.</summary>
+    private sealed class NavigationTarget { public string? Url; public bool HandsOff; }
 
     private async Task<(string text, bool isError)> ExecuteToolAsync(
         FunctionCallContent call, IReadOnlyList<Product> products, List<string> actions, NavigationTarget nav, CancellationToken ct)
@@ -228,6 +234,17 @@ public class AnthropicPantryChat : IPantryChat
                     actions.Add($"opened {product.Name}");
                     return ($"Opening {product.Name}.", false);
                 }
+                // "recipes that use the chicken" — the recipes page, scoped to one product. Same
+                // fuzzy product resolution as page="product"; the Recipes page does the filtering.
+                if (page == "recipes" && Str("product_name") is { Length: > 0 } forName)
+                {
+                    var product = ProductMatcher.Resolve(forName, products);
+                    if (product is null)
+                        return ($"No product matches \"{forName}\".", true);
+                    nav.Url = $"/recipes?uses={product.Id}";
+                    actions.Add($"opened recipes using {product.Name}");
+                    return ($"Showing recipes that use {product.Name}.", false);
+                }
                 string? url = page switch
                 {
                     "dashboard" or "home" => "/",
@@ -260,6 +277,7 @@ public class AnthropicPantryChat : IPantryChat
                 if (!match.HasSteps)
                     return ($"\"{match.Name}\" has no cooking steps saved, so there's nothing to read aloud.", true);
                 nav.Url = $"/recipes?read={match.Id}";
+                nav.HandsOff = true; // the reader produces its own audio — the listening agent stands down
                 actions.Add($"reading {match.Name}");
                 return ($"Opening {match.Name} and reading it aloud.", false);
             }
@@ -336,11 +354,11 @@ public class AnthropicPantryChat : IPantryChat
                 []),
 
             MakeTool("open_page",
-                "Navigate the user's screen to a page of the app. Use when they ask to see, open, go to, or show a page — or a specific product's detail (page='product' + product_name).",
+                "Navigate the user's screen to a page of the app. Use when they ask to see, open, go to, or show a page. For a specific product's detail page use page='product' + product_name. To show the recipes that use a specific product ('what can I make with the chicken', 'recipes using the salmon'), use page='recipes' + product_name.",
                 """
                 {
                   "page": { "type": "string", "enum": ["dashboard","grocery_list","recipes","trends","upload","products","accuracy","settings","product"] },
-                  "product_name": { "type": "string", "description": "Only with page='product': the product whose detail page to open." }
+                  "product_name": { "type": "string", "description": "With page='product', the product whose detail page to open. With page='recipes', scope the recipes list to those that use this product. Omit for a whole page." }
                 }
                 """,
                 ["page"]),
