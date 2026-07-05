@@ -11,6 +11,7 @@ public class EfPantryStore(IDbContextFactory<ShelfAwareDbContext> dbFactory) : I
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         return await db.Products
+            .AsNoTracking() // read-only: the chat resolves/reads these; mutations use their own contexts
             .Include(p => p.Purchases)
             .Include(p => p.Signals)
             .OrderBy(p => p.Name)

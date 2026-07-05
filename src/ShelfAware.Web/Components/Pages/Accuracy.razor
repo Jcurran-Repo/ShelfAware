@@ -157,6 +157,7 @@ else
         // pre-generate, no API key needed, and it updates itself as receipts land.
         await using var db = await DbFactory.CreateDbContextAsync();
         var products = await db.Products
+            .AsNoTracking() // read-only backtest
             .Where(p => p.IsTracked)
             .Include(p => p.Purchases)
             .Include(p => p.Signals)

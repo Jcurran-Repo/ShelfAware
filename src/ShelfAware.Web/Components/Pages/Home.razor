@@ -181,6 +181,7 @@ else
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         products = await db.Products
+            .AsNoTracking() // read-only view; Bought-today/Restocked write through their own contexts
             .Where(p => p.IsTracked)
             .Include(p => p.Purchases)
             .Include(p => p.Signals)

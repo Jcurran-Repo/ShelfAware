@@ -102,6 +102,7 @@ else
         await using var db = await DbFactory.CreateDbContextAsync();
         extras = await db.GroceryExtras.OrderBy(e => e.Name).ToListAsync();
         var products = await db.Products
+            .AsNoTracking() // read-only list
             .Where(p => p.IsTracked)
             .Include(p => p.Purchases)
             .Include(p => p.Signals)

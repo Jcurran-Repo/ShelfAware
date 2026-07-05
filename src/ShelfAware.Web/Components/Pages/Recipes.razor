@@ -464,7 +464,7 @@
         await using var db = await DbFactory.CreateDbContextAsync();
         excludedFoods = await db.ExcludedFoods.OrderBy(f => f.Value).ToListAsync();
         // SQLite can't ORDER BY a DateTimeOffset column — sort client-side.
-        savedRecipes = (await db.Recipes.Include(r => r.Ingredients).Include(r => r.Steps).ToListAsync())
+        savedRecipes = (await db.Recipes.AsNoTracking().Include(r => r.Ingredients).Include(r => r.Steps).ToListAsync())
             .OrderByDescending(r => r.SavedAt).ToList();
         savedNames = savedRecipes.Select(r => r.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         // Id → name for the ?uses filter (all products, tracked or not — a recipe may point at an
@@ -474,7 +474,7 @@
         // "Likely on hand" = tracked, EDIBLE products the engine doesn't think you've run out of. Edible
         // only so a family match ("chicken") can't be satisfied by "Chicken Jerky Dog Treats" or a
         // chicken-scented cleaner — recipes only reason over food.
-        var products = await db.Products.Where(p => p.IsTracked)
+        var products = await db.Products.AsNoTracking().Where(p => p.IsTracked)
             .Include(p => p.Purchases).Include(p => p.Signals).Include(p => p.Substitutes).ToListAsync();
         var today = DateOnly.FromDateTime(DateTime.Today);
         onHand = PantryOnHand.EdibleInStock(products, today)

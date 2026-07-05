@@ -232,6 +232,7 @@ else
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         products = await db.Products
+            .AsNoTracking() // display load; edits save through a fresh context (see Save)
             .Include(p => p.Purchases)
             .Include(p => p.Signals)
             .Include(p => p.Tags)

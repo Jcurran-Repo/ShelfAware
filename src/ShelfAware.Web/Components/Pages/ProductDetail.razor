@@ -204,6 +204,7 @@ else
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         product = await db.Products
+            .AsNoTracking() // read-only detail view; substitute edits reload via their own context
             .Include(p => p.Purchases)
             .Include(p => p.Signals)
             .Include(p => p.Tags)

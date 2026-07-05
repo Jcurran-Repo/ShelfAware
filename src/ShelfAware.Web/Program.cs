@@ -29,7 +29,12 @@ var dataDir = builder.Configuration["DataDir"] ?? Path.Combine(builder.Environme
 var receiptsDir = Path.Combine(dataDir, "receipts");
 Directory.CreateDirectory(receiptsDir);
 builder.Services.AddDbContextFactory<ShelfAwareDbContext>(options =>
-    options.UseSqlite($"Data Source={Path.Combine(dataDir, "shelfaware.db")}"));
+    // SplitQuery: several read paths Include two+ collections (Purchases + Signals + Tags/Substitutes).
+    // As a single query that's a cartesian join — row-multiplying and slow — which is what EF's [20504]
+    // startup warning flags. Splitting issues one query per collection instead: no row explosion, warning
+    // gone. Fine here because these are read-only display loads (no cross-collection write consistency need).
+    options.UseSqlite($"Data Source={Path.Combine(dataDir, "shelfaware.db")}",
+        sqlite => sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery)));
 builder.Services.AddSingleton(new AppPaths(dataDir, receiptsDir));
 
 builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection(LlmOptions.SectionName));
