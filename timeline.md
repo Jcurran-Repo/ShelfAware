@@ -143,6 +143,11 @@ _Last updated: 7/5/2026_
 - [x] "Recipes that use X" filter now finds adapted variants (non-matching original shown for reference) — 7/5/2026
 - [x] Dev CSP relaxed in Development only so VS Browser Link / hot reload work (production stays strict) — 7/5/2026
 
+### Demo data & onboarding (release-readiness)
+- [x] "You keep running out of these" dashboard insight — burn rate ≪ rebuy rhythm, promoted from Product Detail — 7/5/2026
+- [x] Synthetic demo-data seeder — messy + realistic, dates relative to "now", guarded to seed an empty DB only — 7/5/2026
+- [x] First-run onboarding banner — BYOK + voice-key guidance + one-click "Load sample data" — 7/5/2026
+
 ---
 
 ## v3 — Accounts & multi-user (prerequisite for selling)
