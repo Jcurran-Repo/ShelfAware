@@ -153,6 +153,21 @@ internal sealed class FakePantryStore : IPantryStore
     }
 }
 
+/// <summary>An <see cref="IPantryStore"/> whose write throws — exercises the chat loop's tool-error
+/// resilience (a DB failure inside a tool must come back as an error result, not escape HandleAsync).</summary>
+internal sealed class ThrowingPantryStore(params Product[] products) : IPantryStore
+{
+    public Task<IReadOnlyList<Product>> GetProductsAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<Product>>(products);
+    public Task AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("simulated DB write failure");
+    public Task<int> CreateProductAsync(string name, Category category, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<IReadOnlyList<RecipeRef>> GetRecipesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<IReadOnlyList<string>> AddSubstitutesAsync(int productId, IReadOnlyList<string> values, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+}
+
 /// <summary>
 /// A scripted <see cref="HttpMessageHandler"/>: returns queued responses in order and records each
 /// request it received (method, URI, xi-api-key header, content-type, and the buffered body). The

@@ -9,6 +9,7 @@
 @inject AppPaths Paths
 @inject IOptions<ShelfAware.Llm.LlmOptions> LlmOptions
 @inject ReceiptConfirmationService Confirmer
+@inject ILogger<Upload> Logger
 
 <PageTitle>Upload receipt — Shelf Aware</PageTitle>
 
@@ -401,9 +402,11 @@ else if (phase == Phase.Done)
 
             await LoadReviewAsync(r.Id); // straight into the normal review flow
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            pendingError = $"Retry failed: {ex.Message}";
+            Logger.LogError(ex, "Retry of pending receipt {ReceiptId} failed.", receiptId);
+            pendingError = "Retry failed — please try again, or discard the receipt.";
         }
         finally
         {
@@ -514,9 +517,11 @@ else if (phase == Phase.Done)
             // fresh-extraction path and the auto-import queue share one pre-fill.
             await LoadReviewAsync(receipt.Id);
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            errorMessage = $"Sorry — something went wrong while reading the receipt: {ex.Message}";
+            Logger.LogError(ex, "Receipt extraction failed.");
+            errorMessage = "Sorry — something went wrong while reading the receipt. Please try again.";
             phase = Phase.Error;
         }
         finally
@@ -551,11 +556,13 @@ else if (phase == Phase.Done)
             await LoadPendingAsync(); // a queued receipt just left the pending list
             phase = Phase.Done;
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             // One SaveChanges in a single transaction, so a failure persists nothing: keep the receipt in
             // review so the user can adjust a line and retry instead of losing the extraction to a crash.
-            confirmError = $"Couldn't save these purchases: {ex.Message}. Nothing was recorded — adjust a line and try again, or discard the receipt.";
+            Logger.LogError(ex, "Confirming receipt {ReceiptId} failed.", receipt.Id);
+            confirmError = "Couldn't save these purchases — nothing was recorded. Adjust a line and try again, or discard the receipt.";
         }
         finally
         {

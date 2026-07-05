@@ -143,6 +143,30 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task A_tool_that_throws_is_reported_back_to_the_model_not_escaped()
+    {
+        // A mutating tool (add_purchase) can throw at the DB layer. The loop must feed that back as an
+        // error tool-result so the chat still returns a reply — instead of the exception escaping
+        // HandleAsync and blanking the dashboard box / push-to-talk, which don't wrap the call.
+        var store = new ThrowingPantryStore(P(1, "Coffee", Category.Beverage));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("add_purchase", ("product_name", "coffee"))),
+            () => Responses.Text("Sorry — I couldn't log that just now."));
+        var chat = new AnthropicPantryChat(client, Options.Create(new LlmOptions()), store,
+            NullLogger<AnthropicPantryChat>.Instance);
+
+        var result = await chat.HandleAsync("i bought coffee"); // must not throw
+
+        Assert.True(result.Success);       // the loop recovered and produced a reply
+        Assert.Equal(2, client.CallCount); // tool turn, then the model saw the error and replied
+        // The failed tool's result must reach the model so it can explain rather than crash.
+        var toolResult = client.ReceivedMessages[1]
+            .Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result?.ToString();
+        Assert.Contains("add_purchase", toolResult);
+    }
+
+    [Fact]
     public async Task Replays_conversation_history_so_follow_ups_have_context()
     {
         // Turn 1 ("what am I low on?") already happened; now the follow-up references it. The prior

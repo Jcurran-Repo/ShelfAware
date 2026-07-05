@@ -112,7 +112,25 @@ public class AnthropicPantryChat : IPantryChat
             var results = new List<AIContent>();
             foreach (var call in calls)
             {
-                var (text, _) = await ExecuteToolAsync(call, products, actions, nav, cancellationToken);
+                string text;
+                try
+                {
+                    (text, _) = await ExecuteToolAsync(call, products, actions, nav, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw; // caller cancelled (e.g. circuit gone) — not a tool failure
+                }
+                catch (Exception ex)
+                {
+                    // A tool handler threw (e.g. a DB write failed). Feed the model an error result so the
+                    // loop stays resilient — it can retry or explain — instead of the exception escaping the
+                    // whole chat call and blanking whichever surface invoked it (the dashboard box / push-to-talk
+                    // don't wrap HandleAsync). Expected/validation problems already return as tuple text; this
+                    // is only for genuine throws.
+                    _logger.LogError(ex, "Pantry chat tool {Tool} threw.", call.Name);
+                    text = $"That step ({call.Name}) hit an error and couldn't be completed.";
+                }
                 results.Add(new FunctionResultContent(call.CallId, text));
             }
             messages.Add(new ChatMessage(ChatRole.Tool, results));

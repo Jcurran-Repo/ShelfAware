@@ -11,6 +11,7 @@
 @inject IIngredientAlternativesAdvisor AltAdvisor
 @inject IOptions<ElevenLabsOptions> ElOptions
 @inject VoiceCoordinator Coordinator
+@inject ILogger<Recipes> Logger
 
 <PageTitle>Recipes — Shelf Aware</PageTitle>
 
@@ -521,9 +522,11 @@
             suggestions = (await Advisor.SuggestAsync(request, onHand.Select(p => p.Name).ToList(), excludedFoods.Select(f => f.Value).ToList())).ToList();
             if (suggestions.Count == 0) suggestError = "No ideas came back — try rephrasing.";
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            suggestError = $"Couldn't get ideas just now: {ex.Message}";
+            Logger.LogError(ex, "Recipe suggestion failed for request \"{Request}\".", request);
+            suggestError = "Couldn't get ideas just now — please try again.";
         }
         finally
         {

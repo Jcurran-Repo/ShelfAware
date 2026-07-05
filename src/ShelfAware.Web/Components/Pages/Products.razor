@@ -3,6 +3,7 @@
 @using ShelfAware.Core.Shopping
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
 @inject IJSRuntime JS
+@inject ILogger<Products> Logger
 
 <PageTitle>Products — Shelf Aware</PageTitle>
 
@@ -387,9 +388,11 @@ else
             await db.SaveChangesAsync();
             await tx.CommitAsync();
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            deleteError = $"Couldn't delete {p.Name}: {ex.Message}";
+            Logger.LogError(ex, "Deleting product {ProductId} failed.", p.Id);
+            deleteError = $"Couldn't delete {p.Name} — it may still be referenced elsewhere. Nothing was removed.";
         }
         await LoadAsync();
     }

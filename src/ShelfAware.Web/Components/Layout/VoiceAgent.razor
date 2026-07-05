@@ -126,7 +126,7 @@
 
         bool ok;
         try { ok = await _module.InvokeAsync<bool>("start"); }
-        catch { ok = false; }
+        catch (Exception ex) { Log.LogWarning(ex, "Voice agent: microphone start failed."); ok = false; }
         if (!ok)
         {
             active = false;
@@ -153,7 +153,7 @@
 
                 VoiceCapture? capture;
                 try { capture = await _module.InvokeAsync<VoiceCapture?>("captureTurn"); }
-                catch { capture = null; }
+                catch (Exception ex) { Log.LogWarning(ex, "Voice agent: capture turn failed."); capture = null; }
 
                 if (!active) break;
                 if (capture is null || string.IsNullOrEmpty(capture.Audio))

@@ -9,6 +9,7 @@
 @inject ITextToSpeech Tts
 @inject IJSRuntime JS
 @inject NavigationManager Nav
+@inject ILogger<PushToTalk> Log
 
 <div class="voice">
     <button type="button"
@@ -93,8 +94,9 @@
         {
             await _module.InvokeVoidAsync("start");
         }
-        catch
+        catch (Exception ex)
         {
+            Log.LogWarning(ex, "Push-to-talk: microphone start failed.");
             Finish(error: true, reply: "Couldn't access the microphone — check the browser's mic permission.");
         }
     }
@@ -110,8 +112,9 @@
         {
             capture = await _module.InvokeAsync<VoiceCapture?>("stop");
         }
-        catch
+        catch (Exception ex)
         {
+            Log.LogWarning(ex, "Push-to-talk: capture stop failed.");
             capture = null;
         }
 

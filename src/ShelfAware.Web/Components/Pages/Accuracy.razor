@@ -4,6 +4,7 @@
 @using ShelfAware.Core.Prediction
 @inject IWebHostEnvironment Env
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
+@inject ILogger<Accuracy> Logger
 
 <PageTitle>Model Accuracy — Shelf Aware</PageTitle>
 
@@ -147,8 +148,9 @@ else
                     File.ReadAllText(path),
                     new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             }
-            catch
+            catch (Exception ex)
             {
+                Logger.LogWarning(ex, "Couldn't read or parse eval-results.json; showing no extraction results.");
                 results = null;
             }
         }
