@@ -200,8 +200,24 @@ else
     private record BrandRow(string Brand, int Count, decimal? AvgPrice);
     private record RecipeLink(int Id, string Name);
 
-    protected override async Task OnInitializedAsync()
+    private int? loadedId;
+
+    // Load in OnParametersSet (not OnInitialized) and reset per-product state, so navigating straight from
+    // /product/A to /product/B — where Blazor reuses this component instance — refreshes instead of showing
+    // A's data. history/priceSeries persist on the reused instance, so they're cleared here too (they used
+    // to just accumulate across navigations).
+    protected override async Task OnParametersSetAsync()
     {
+        if (loadedId == Id) return; // same product already loaded
+        loadedId = Id;
+
+        product = null;
+        notFound = false;
+        history.Clear();
+        priceSeries.Clear();
+        brandBreakdown = [];
+        usedInRecipes = [];
+
         await using var db = await DbFactory.CreateDbContextAsync();
         product = await db.Products
             .AsNoTracking() // read-only detail view; substitute edits reload via their own context
