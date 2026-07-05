@@ -125,8 +125,10 @@ _Last updated: 7/5/2026_
 ### Audit hardening pass
 - [x] Query splitting + AsNoTracking on read loads (kills the cartesian-Include warning) — 7/5/2026
 - [x] Page error handling: log via ILogger, rethrow cancellation, stop leaking exception text — 7/5/2026
-- [x] Chat tool-handler exceptions become error results instead of blanking the box — 7/5/2026
-- [x] Product Detail refreshes on route change; NotFound/Error page + misc a11y/polish — 7/5/2026
+- [x] Resilient chat tool loop: a thrown tool handler becomes an error result, not a blanked box — 7/5/2026
+- [x] Product Detail reloads when the route id changes — 7/5/2026
+- [x] NotFound / Error pages use the design system — 7/5/2026
+- [x] Quick-buy double-tap guard + SplitButton a11y + tidy EF write + table captions — 7/5/2026
 
 ### BYOK — bring your own key (public / open-source posture: deployed demo ships no usable keys)
 - [x] Provider seam: IChatClientFactory (Anthropic + OpenAI) — 7/5/2026

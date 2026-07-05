@@ -28,7 +28,7 @@ as overkill "because it's single-user."
   the existing code's — fix it or flag it, never leave it. Assume every line will be read by
   a prospective employer, because it will.
 
-## Build state (updated 2026-07-04)
+## Build state (updated 2026-07-05)
 
 | Phase (DESIGN.md §10) | Status |
 |---|---|
@@ -38,8 +38,8 @@ as overkill "because it's single-user."
 | 4 — Chat tools (IPantryChat) | ✅ Done, acceptance verified with a live tool-call |
 | 5 — Azure deploy + README | ◑ README ✅ done + pushed (`4757839`); **Azure still deferred** (pending Jordan's account) |
 
-Everything below is built, verified live, committed, and **pushed** (master, through the 2026-07-04
-v2.2 review-hardening + voice-handoff commits).
+Everything below is built, verified live, committed, and **pushed** (master, through the 2026-07-05
+v2.3 full-site-audit + BYOK arc — see item 8 below and timeline.md).
 Beyond the spec's 3 pages, the app now has Dashboard (`/`), Upload (`/receipt`),
 Products (`/products`), Grocery List (`/list`, by aisle + copy/print + a manual **Extras**
 section), Trends (`/trends`, price tickers + spend forecast — page component is
@@ -47,7 +47,7 @@ section), Trends (`/trends`, price tickers + spend forecast — page component i
 Accuracy (`/accuracy`, renders `eval-results.json`), and **Recipes (`/recipes`)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **135 green xUnit tests across three
++ unit tests; Evals excluded — needs a live key). **200 green xUnit tests across three
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
@@ -110,6 +110,43 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      agent via `VoiceCoordinator`. **Screen-aware references** ("the second one") work because the page on
      screen publishes its list to `VoiceCoordinator.ScreenContext`, which the agent passes into
      `IPantryChat.HandleAsync(screenContext)` for injection into the system prompt.
+
+8. **v2.3 — full-site audit, BYOK, and fixes (2026-07-05; all ✅ committed + pushed):**
+   - **Audit hardening** — `QuerySplittingBehavior.SplitQuery` + `AsNoTracking` on read loads (kills the EF
+     cartesian-`Include` [20504] warning) (`c526648`); page catch-alls log via `ILogger`, rethrow
+     `OperationCanceledException`, and stop leaking `ex.Message`, and `AnthropicPantryChat` wraps each
+     tool-handler call so a thrown tool exception becomes an error result instead of blanking the dashboard
+     box (`50b9e2b`); ProductDetail reloads on id change (`d1618ff`); NotFound/Error use the design system
+     (`d927f56`); dashboard double-tap guard + SplitButton a11y + tidy EF writes + table captions (`5739c3a`).
+   - **BYOK — bring your own key** — public/open-source posture: the deployed demo ships **no usable keys**;
+     visitors bring their own with minimal effort; Jordan's keys are never used live. The `IChatClient` seam
+     means service CODE didn't change — BYOK is a lifetime/wiring change (singleton→**scoped**), not per-call:
+     - **Provider seam** (`10a8fcb`): `AiProvider` enum + `IChatClientFactory`/`ChatClientFactory` (Anthropic
+       via the SDK adapter; OpenAI via `Microsoft.Extensions.AI.OpenAI`). Config-driven; keyless boot preserved.
+     - **Per-circuit clients** (`5ffa466`): `CircuitAiSettings` (scoped, defaults to `LlmOptions`, overlaid by
+       the browser) + `ByokChatClient` (scoped delegating `IChatClient` that builds the real client at CALL
+       time, robust to the browser settings loading late) + `AiSettingsLoader.razor` + `wwwroot/js/ai-settings.js`
+       (localStorage `shelfaware.ai`). AI services + importer are **scoped**; store/inbox/settings/confirmation
+       stay singleton; the startup receipt scan runs in its own scope, owner-key-only (skipped on a keyless deploy).
+     - **CSP + security headers** (`4a6cb0f`): `script-src 'self' https://esm.sh` (no unsafe-inline/eval),
+       `connect-src` locked to self + ElevenLabs, object/base/frame-ancestors/form-action locked, +
+       nosniff/Referrer-Policy/X-Frame-Options/Permissions-Policy(mic=self). Keys never persist/log; they transit
+       server RAM only during a call. (Dev relaxes script/connect-src — see the CSP-vs-hot-reload gotcha below.)
+     - **Settings UI** (`fba756f`): provider dropdown, masked key, editable per-module model datalists, optional
+       EL key + agent id, **Forget-my-key** (clears both stores) + **session-only** toggle.
+     - **Voice keyed per-circuit** (`b140b48`, `b959d4a`): `IVoiceCredentials`/`CircuitVoiceCredentials`; speech
+       services attach `xi-api-key` PER REQUEST from the scoped creds (fail soft without one); the signed-url
+       endpoint uses the visitor's key/agent, **rate-limited 12/min per IP**; cook-along sends the visitor's key
+       headers; EL SDK pinned `@elevenlabs/client@1.14.0` (kept on `esm.sh` — a multi-module ESM SDK can't be
+       vendored without a build step).
+     - **Still open:** open-source README / BYOK setup docs (Jordan's casual voice — draft or hand off).
+   - **Fixes** — (a) short-cadence items never left Running Low after a restock: the flat 3-day DueSoon floor
+     could span the whole cadence, so a fresh stock-back re-anchored straight back into the window; now capped
+     at `interval - 1`, regression-tested (`6b2c32b`). (b) `/recipes?uses=` only matched top-level recipes, so an
+     adapted variant that swapped in a product its original never used didn't show; variants now match on their
+     own ingredients, with the non-matching original shown as a muted "for reference" row (`7c805e5`). (c) The
+     strict CSP broke VS Browser Link + hot reload in dev — relaxed `script-src`/`connect-src` in Development
+     only (`fd580bd`; see the gotcha in Environment notes).
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
