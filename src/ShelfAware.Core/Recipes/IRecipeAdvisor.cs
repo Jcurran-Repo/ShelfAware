@@ -12,7 +12,21 @@ public interface IRecipeAdvisor
         IReadOnlyList<string> onHand,
         IReadOnlyList<string> excludedFoods,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Rewrite an existing recipe so it can be cooked with what's on hand — swap main ingredients
+    /// the user doesn't have for ones they do that fit the dish, and adjust the steps/cook times to match.
+    /// Returns the adapted recipe, or null if the model returned nothing usable.</summary>
+    Task<RecipeSuggestion?> AdaptAsync(
+        RecipeToAdapt recipe,
+        IReadOnlyList<string> onHand,
+        IReadOnlyList<string> excludedFoods,
+        CancellationToken cancellationToken = default);
 }
+
+/// <summary>The existing recipe handed to <see cref="IRecipeAdvisor.AdaptAsync"/>.</summary>
+public record RecipeToAdapt(string Name, string? Blurb, IReadOnlyList<AdaptIngredient> Ingredients, IReadOnlyList<string> Steps);
+
+public record AdaptIngredient(string Name, bool IsMain);
 
 public record RecipeSuggestion(
     string Name, string Blurb, IReadOnlyList<SuggestedIngredient> Ingredients, IReadOnlyList<string> Steps,

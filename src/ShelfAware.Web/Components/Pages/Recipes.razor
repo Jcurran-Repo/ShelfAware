@@ -6,6 +6,7 @@
 @using Microsoft.Extensions.Options
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
 @inject IRecipeAdvisor Advisor
+@inject IRecipeAdapter Adapter
 @inject IOptions<ElevenLabsOptions> ElOptions
 @inject VoiceCoordinator Coordinator
 
@@ -137,6 +138,10 @@
     {
         <p class="chat-reply" role="status">@extraNote</p>
     }
+    @if (adaptNote is not null)
+    {
+        <p class="chat-reply" role="status">@adaptNote</p>
+    }
     @if (displayed.Count == 0)
     {
         <p class="muted">
@@ -148,13 +153,17 @@
     else
     {
         <ul class="saved-recipes">
-            @foreach (var r in displayed)
+            @foreach (var (r, isVariant) in renderList)
             {
                 var makeable = Makeable(r);
-                <li id="recipe-@r.Id">
+                <li id="recipe-@r.Id" class="@(isVariant ? "recipe-variant" : null)">
                     <div class="saved-top">
                         <strong>@r.Name</strong>
                         <span class="chip chip-@(makeable ? "stocked" : "unknown")">@(makeable ? "Ready to make" : "Missing items")</span>
+                        @if (isVariant)
+                        {
+                            <span class="chip variant-chip" title="Adapted to use what you have">🔀 adapted</span>
+                        }
                         <span class="saved-actions">
                             @if (r.Steps.Count > 0)
                             {
@@ -174,6 +183,11 @@
                             @if (!makeable)
                             {
                                 <button class="secondary" @onclick="() => AddMissingToList(r)" aria-label="Add missing ingredients for @r.Name to the grocery list">Add missing to list</button>
+                            }
+                            @if (!isVariant)
+                            {
+                                <button class="secondary" @onclick="() => AdaptRecipe(r)" disabled="@(adaptingId == r.Id)"
+                                        aria-label="Adapt @r.Name to use what you have">@(adaptingId == r.Id ? "Adapting…" : "🔀 Adapt to what I have")</button>
                             }
                             <button class="icon-btn" @onclick="() => DeleteSaved(r)" aria-label="Delete @r.Name" title="Delete @r.Name"><span aria-hidden="true">🗑</span></button>
                         </span>
@@ -232,10 +246,14 @@
     private List<Recipe> savedRecipes = [];
     private HashSet<string> savedNames = new(StringComparer.OrdinalIgnoreCase);
 
-    // The saved recipes actually rendered — all of them, or just those using a product when ?uses is set.
+    // The originals actually rendered — all of them, or just those using a product when ?uses is set.
     private List<Recipe> displayed = [];
+    // Flattened for rendering: each original followed by its adapted variants (grouped under it).
+    private List<(Recipe Recipe, bool IsVariant)> renderList = [];
     private Dictionary<int, string> productNamesById = [];
     private string? filterProductName;
+    private int? adaptingId;   // the recipe currently being adapted (button shows a spinner)
+    private string? adaptNote; // result of the last Adapt
 
     private List<PantryProduct> onHand = [];
 
@@ -257,6 +275,24 @@
 
     // Hands-free cook-along only shows when an ElevenLabs agent is configured (empty id = hidden).
     private bool CookAlongAvailable => !string.IsNullOrEmpty(ElOptions.Value.AgentId);
+
+    // Adapt a recipe to what's on hand and save it as a variant (on-demand — one AI call per click).
+    private async Task AdaptRecipe(Recipe r)
+    {
+        if (adaptingId is not null) return;
+        adaptingId = r.Id;
+        adaptNote = null;
+        try
+        {
+            var result = await Adapter.AdaptToOnHandAsync(r.Id);
+            adaptNote = result.Message;
+            await LoadAsync(); // pull in the new variant
+        }
+        finally
+        {
+            adaptingId = null;
+        }
+    }
 
     // Only one voice surface at a time — starting one closes the other. cookAutoStarted resets on any
     // manual start; the deep-link path sets it true afterwards so only that case auto-falls-back.
@@ -313,20 +349,26 @@
     private void ApplyFilter()
     {
         filterProductName = UsesProductId is { } pid && productNamesById.TryGetValue(pid, out var n) ? n : null;
-        displayed = filterProductName is { } name
-            ? savedRecipes.Where(r => r.Ingredients.Any(i => string.Equals(i.MatchedProduct, name, StringComparison.OrdinalIgnoreCase))).ToList()
-            : savedRecipes;
+        var topLevel = savedRecipes.Where(r => r.ParentRecipeId is null);
+        displayed = (filterProductName is { } name
+            ? topLevel.Where(r => r.Ingredients.Any(i => string.Equals(i.MatchedProduct, name, StringComparison.OrdinalIgnoreCase)))
+            : topLevel).ToList();
+        // Each original followed by its adapted variants (most recent first) — grouped in the list.
+        renderList = displayed
+            .SelectMany(p => new[] { (p, false) }
+                .Concat(savedRecipes.Where(v => v.ParentRecipeId == p.Id).OrderByDescending(v => v.SavedAt).Select(v => (v, true))))
+            .ToList();
         PublishScreenContext();
     }
 
     // Tell the roaming voice agent what's on screen and in what order, so "read me the second one"
-    // resolves to the right saved recipe. Cleared on navigate-away so it can't leak to another page.
+    // resolves to the right recipe. Cleared on navigate-away so it can't leak to another page.
     private void PublishScreenContext() =>
-        Coordinator.ScreenContext = displayed.Count == 0
+        Coordinator.ScreenContext = renderList.Count == 0
             ? null
             : (filterProductName is { } fn ? $"The user is viewing recipes that use {fn}. " : "The user is viewing the Recipes page. ")
               + "Recipes listed, in display order:\n"
-              + string.Join("\n", displayed.Select((r, i) => $"{i + 1}. {r.Name}"));
+              + string.Join("\n", renderList.Select((x, i) => $"{i + 1}. {x.Recipe.Name}"));
 
     public void Dispose() => Coordinator.ScreenContext = null;
 
@@ -349,7 +391,7 @@
             .Include(p => p.Purchases).Include(p => p.Signals).Include(p => p.Substitutes).ToListAsync();
         var today = DateOnly.FromDateTime(DateTime.Today);
         onHand = products
-            .Where(p => IsEdible(p.Category))
+            .Where(p => p.Category.IsEdible())
             .Where(p => ReplenishmentPredictor.Predict(p, today).Status != PredictionStatus.Overdue)
             .Select(p => new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList()))
             .OrderBy(x => x.Name)
@@ -357,10 +399,6 @@
 
         ApplyFilter(); // keep the ?uses view in sync after any reload
     }
-
-    // Recipes should only match against food. Everything but the household / pet / personal-care aisles.
-    private static bool IsEdible(Category c) =>
-        c is not (Category.Household or Category.PetCare or Category.PersonalCare);
 
     private async Task AddExcluded()
     {

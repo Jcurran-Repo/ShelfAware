@@ -160,9 +160,17 @@ Treats" can't count as chicken). Substitutes are **AI-seeded** (`IProductSubstit
 `AnthropicProductSubstituteAdvisor`, Haiku, fails soft) + user-curated: an ✨ Suggest button on Product
 Detail, and the **`suggest_substitutes` chat/voice tool** (`IPantryStore.AddSubstitutesAsync`) so the
 assistant fills them in from anywhere. `ProductSubstitutes` is an additive table (CREATE TABLE IF NOT
-EXISTS in Program.cs for existing DBs). **Planned next:** an **Adapt** action + assistant tool that
-regenerates a recipe to use what you have, saved as a `Recipe.ParentRecipeId` variant, with a bubble-cloud
-alternate picker per ingredient.
+EXISTS in Program.cs for existing DBs).
+
+**Adapt to what you have (v2.2).** A saved recipe can be rewritten to use on-hand ingredients: the AI swaps
+missing main(s) for ones you have and **rewrites the steps + cook times** (thighs cook longer than breast),
+saved as a **variant** (`Recipe.ParentRecipeId`, additive column) grouped under the original on the Recipes
+page. On-demand only (no AI calls on load). One orchestration path — `IRecipeAdapter` (Core) →
+`RecipeAdapter` (Web, singleton; loads the recipe + edible/not-overdue on-hand + excluded, calls
+`IRecipeAdvisor.AdaptAsync`, saves the variant) — drives BOTH the "🔀 Adapt to what I have" button and the
+**`adapt_recipe` chat/voice tool**. Adapt prompt is `recipe-adapt-system.txt`; the "edible" rule is
+`CategoryExtensions.IsEdible` (Core, shared with the Recipes page). **Planned next:** a bubble-cloud
+alternate picker per ingredient (green/red) to adapt to a specific chosen form.
 
 ## Data model: brand-agnostic products, size as metadata (final, 2026-06-28)
 

@@ -28,17 +28,20 @@ public class AnthropicPantryChat : IPantryChat
     private readonly IPantryStore _store;
     private readonly IReceiptImporter? _importer;
     private readonly IProductSubstituteAdvisor? _substituteAdvisor;
+    private readonly IRecipeAdapter? _recipeAdapter;
     private readonly ILogger<AnthropicPantryChat> _logger;
 
     public AnthropicPantryChat(
         IChatClient chat, IOptions<LlmOptions> options, IPantryStore store, ILogger<AnthropicPantryChat> logger,
-        IReceiptImporter? importer = null, IProductSubstituteAdvisor? substituteAdvisor = null)
+        IReceiptImporter? importer = null, IProductSubstituteAdvisor? substituteAdvisor = null,
+        IRecipeAdapter? recipeAdapter = null)
     {
         _chat = chat;
         _options = options.Value;
         _store = store;
         _importer = importer;
         _substituteAdvisor = substituteAdvisor;
+        _recipeAdapter = recipeAdapter;
         _logger = logger;
     }
 
@@ -303,6 +306,27 @@ public class AnthropicPantryChat : IPantryChat
                 return ($"Opening {match.Name} and reading it aloud.", false);
             }
 
+            case "adapt_recipe":
+            {
+                if (_recipeAdapter is null)
+                    return ("Recipe adapting isn't set up.", true);
+                var name = Str("recipe_name")?.Trim();
+                if (string.IsNullOrWhiteSpace(name)) return ("A recipe name is required.", true);
+                var recipes = await _store.GetRecipesAsync(ct);
+                if (recipes.Count == 0)
+                    return ("There are no saved recipes to adapt yet.", true);
+                var match = ResolveRecipe(name, recipes);
+                if (match is null)
+                    return ($"No saved recipe matches \"{name}\". Saved recipes: {string.Join("; ", recipes.Select(r => r.Name))}.", true);
+                var adaptResult = await _recipeAdapter.AdaptToOnHandAsync(match.Id, ct);
+                if (adaptResult.Success)
+                {
+                    actions.Add($"adapted {match.Name}");
+                    nav.Url = "/recipes"; // show the new variant; keep listening (not a hand-off)
+                }
+                return (adaptResult.Message, !adaptResult.Success);
+            }
+
             default:
                 return ($"Unknown tool: {call.Name}.", true);
         }
@@ -401,6 +425,15 @@ public class AnthropicPantryChat : IPantryChat
                 }
                 """,
                 ["product_name"]),
+
+            MakeTool("adapt_recipe",
+                "Adapt a SAVED recipe to use what the user has on hand — swap the main ingredients they're missing for ones they do have and rewrite the steps/cook times — saving it as a new variant. Use when they ask to adapt, adjust, or remake a recipe with what they have.",
+                """
+                {
+                  "recipe_name": { "type": "string", "description": "Name of the saved recipe to adapt (close match is fine)." }
+                }
+                """,
+                ["recipe_name"]),
         ];
 
         return tools.Select(t => t.AsAITool()).ToList();

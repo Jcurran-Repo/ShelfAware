@@ -15,4 +15,7 @@ public class Recipe
     public List<RecipeStep> Steps { get; set; } = [];
     /// <summary>LLM's rough estimated calories per serving (ballpark, not precise nutrition); null if unknown.</summary>
     public int? EstimatedCaloriesPerServing { get; set; }
+    /// <summary>Set when this recipe is an "Adapt"-generated variant of another saved recipe (rewritten to
+    /// use what's on hand); null for an original. Variants group under their parent on the Recipes page.</summary>
+    public int? ParentRecipeId { get; set; }
 }

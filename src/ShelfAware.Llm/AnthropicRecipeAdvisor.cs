@@ -14,6 +14,7 @@ namespace ShelfAware.Llm;
 public class AnthropicRecipeAdvisor : IRecipeAdvisor
 {
     private static readonly string SystemPrompt = ReadEmbedded("Prompts.recipe-suggest-system.txt");
+    private static readonly string AdaptSystemPrompt = ReadEmbedded("Prompts.recipe-adapt-system.txt");
 
     private const string OutputSchemaJson = """
     {
@@ -97,6 +98,40 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
         var suggestions = Parse(response.Text);
         _logger.LogInformation("Recipe advisor returned {Count} suggestion(s) for {OnHand} on-hand item(s).", suggestions.Count, onHand.Count);
         return suggestions;
+    }
+
+    public async Task<RecipeSuggestion?> AdaptAsync(
+        RecipeToAdapt recipe, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods,
+        CancellationToken cancellationToken = default)
+    {
+        var ingredients = string.Join("\n", recipe.Ingredients.Select(i => $"- {i.Name}{(i.IsMain ? "" : " (seasoning)")}"));
+        var steps = recipe.Steps.Count > 0
+            ? string.Join("\n", recipe.Steps.Select((s, i) => $"{i + 1}. {s}"))
+            : "(none)";
+        var content =
+            $"Original recipe: {recipe.Name}\n" +
+            (string.IsNullOrWhiteSpace(recipe.Blurb) ? "" : $"Blurb: {recipe.Blurb}\n") +
+            $"Ingredients:\n{ingredients}\n\nSteps:\n{steps}\n\n" +
+            "Likely on hand:\n" + (onHand.Count > 0 ? "- " + string.Join("\n- ", onHand) : "(nothing recorded)") + "\n\n" +
+            "Will NOT eat (exclude entirely):\n" + (excludedFoods.Count > 0 ? "- " + string.Join("\n- ", excludedFoods) : "(none)");
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.System, AdaptSystemPrompt),
+            new(ChatRole.User, content),
+        };
+        var options = new ChatOptions
+        {
+            ModelId = _options.ChatModel,
+            MaxOutputTokens = 4096,
+            ResponseFormat = ChatResponseFormat.ForJsonSchema(
+                JsonSerializer.Deserialize<JsonElement>(OutputSchemaJson), schemaName: "recipe_adaptation"),
+        };
+
+        var response = await _chat.GetResponseAsync(messages, options, cancellationToken);
+        var adapted = Parse(response.Text).FirstOrDefault();
+        _logger.LogInformation("Recipe advisor adapted \"{Name}\" (produced result: {HasResult}).", recipe.Name, adapted is not null);
+        return adapted;
     }
 
     private static List<RecipeSuggestion> Parse(string json)

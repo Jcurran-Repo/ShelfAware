@@ -21,6 +21,20 @@ internal sealed class FakeSubstituteAdvisor(params string[] suggestions) : IProd
     }
 }
 
+/// <summary>Records the recipe id it was asked to adapt and returns a canned result — drives adapt_recipe.</summary>
+internal sealed class FakeRecipeAdapter(AdaptResult result) : IRecipeAdapter
+{
+    public int Calls { get; private set; }
+    public int? LastRecipeId { get; private set; }
+
+    public Task<AdaptResult> AdaptToOnHandAsync(int recipeId, CancellationToken cancellationToken = default)
+    {
+        Calls++;
+        LastRecipeId = recipeId;
+        return Task.FromResult(result);
+    }
+}
+
 /// <summary>Records import calls and returns a canned summary — drives the import_receipts chat tool.</summary>
 internal sealed class FakeReceiptImporter(ImportSummary summary) : IReceiptImporter
 {

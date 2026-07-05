@@ -52,6 +52,9 @@ builder.Services.AddSingleton<IPantryChat, AnthropicPantryChat>();
 builder.Services.AddSingleton<ITagAdvisor, AnthropicTagAdvisor>();
 builder.Services.AddSingleton<IRecipeAdvisor, AnthropicRecipeAdvisor>();
 builder.Services.AddSingleton<IProductSubstituteAdvisor, AnthropicProductSubstituteAdvisor>();
+// Adapt-a-recipe-to-what-you-have; singleton so the singleton IPantryChat can inject it (uses the
+// DbContext factory + advisor, both singleton-safe).
+builder.Services.AddSingleton<IRecipeAdapter, RecipeAdapter>();
 
 // Receipt auto-import: a swappable inbox (local folder now, cloud later) + the importer the chat/voice
 // agent triggers, plus the runtime settings store behind the /settings page. Both the importer and the
@@ -88,6 +91,7 @@ using (var scope = app.Services.CreateScope())
     // an existing one, so columns added after a single-user DB was first created must be backfilled or
     // the app breaks on load. Idempotent — only adds the column when it's missing.
     EnsureColumn(db, "Recipes", "EstimatedCaloriesPerServing", "INTEGER NULL");
+    EnsureColumn(db, "Recipes", "ParentRecipeId", "INTEGER NULL");
     EnsureColumn(db, "Receipts", "SourceFile", "TEXT NULL");
     EnsureColumn(db, "ReceiptLines", "TagsJson", "TEXT NULL");
     EnsureColumn(db, "ReceiptLines", "SuggestedProduct", "TEXT NULL");

@@ -1270,6 +1270,19 @@ button.tag-chip {
     padding-bottom: 0.5rem;
 }
 
+/* An adapted variant, grouped under its original. */
+.saved-recipes li.recipe-variant {
+    margin-left: 1.25rem;
+    padding-left: 0.75rem;
+    border-left: 3px solid var(--accent);
+    border-bottom: none;
+}
+
+.variant-chip {
+    background: var(--surface-alt);
+    color: var(--accent-ink);
+}
+
 .saved-top {
     display: flex;
     justify-content: space-between;

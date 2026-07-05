@@ -207,6 +207,27 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task Adapt_recipe_tool_adapts_the_resolved_recipe_and_navigates()
+    {
+        var store = new FakePantryStore();
+        store.Recipes.Add(new RecipeRef(7, "Spaghetti Carbonara", HasSteps: true));
+        var adapter = new FakeRecipeAdapter(new ShelfAware.Core.Recipes.AdaptResult(true, "Saved a version using what you have.", 42));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("adapt_recipe", ("recipe_name", "carbonara"))),
+            () => Responses.Text("Adapted it."));
+        var chat = new AnthropicPantryChat(client, Options.Create(new LlmOptions()), store,
+            NullLogger<AnthropicPantryChat>.Instance, recipeAdapter: adapter);
+
+        var result = await chat.HandleAsync("adapt the carbonara to what I have");
+
+        Assert.True(result.Success);
+        Assert.Equal(1, adapter.Calls);
+        Assert.Equal(7, adapter.LastRecipeId);
+        Assert.Equal("/recipes", result.NavigateTo);
+        Assert.False(result.HandsOff); // shows the variant but keeps listening
+    }
+
+    [Fact]
     public async Task Open_page_carries_a_navigation_target_out()
     {
         var store = new FakePantryStore();
