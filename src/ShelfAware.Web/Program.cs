@@ -71,6 +71,7 @@ builder.Services.AddSingleton<IAppSettings, EfAppSettings>();
 builder.Services.AddSingleton<IReceiptInbox, LocalFolderReceiptInbox>();
 builder.Services.AddScoped<IReceiptImporter, ReceiptImporter>(); // depends on the scoped IReceiptExtractor
 builder.Services.AddSingleton<ReceiptConfirmationService>();
+builder.Services.AddSingleton<DemoDataSeeder>(); // synthetic demo catalog for a fresh/public deploy (guarded: empty DB only)
 
 // Voice I/O (ElevenLabs): Scribe = STT (ear), TTS = mouth. Speech is its own REST API, not an
 // IChatClient workload, so each rides a typed HttpClient with the base address + xi-api-key header.
