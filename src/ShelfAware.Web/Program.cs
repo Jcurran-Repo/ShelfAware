@@ -190,17 +190,26 @@ if (!app.Environment.IsDevelopment())
 // actually talk to, denying framing, and dropping the referrer shrink that surface hard. (esm.sh — that
 // one origin only — serves the opt-in cook-along SDK at a pinned version; a multi-module ESM SDK can't be
 // practically self-hosted without a bundler. media/data: is for the synthesized speech-audio playback.)
+// In Development ONLY, loosen exactly two directives so Visual Studio's Browser Link + hot reload work —
+// they inject an inline bootstrap script and talk over ephemeral localhost websockets, which the strict
+// policy blocks (silently breaking hot reload). Production stays fully locked down.
+var cspScriptSrc = app.Environment.IsDevelopment()
+    ? "script-src 'self' https://esm.sh 'unsafe-inline'; "
+    : "script-src 'self' https://esm.sh; ";
+var cspConnectSrc = app.Environment.IsDevelopment()
+    ? "connect-src 'self' https://api.elevenlabs.io wss://api.elevenlabs.io ws://localhost:* wss://localhost:* http://localhost:* https://localhost:*; "
+    : "connect-src 'self' https://api.elevenlabs.io wss://api.elevenlabs.io; ";
 app.Use(async (context, next) =>
 {
     var h = context.Response.Headers;
     h["Content-Security-Policy"] =
         "default-src 'self'; " +
-        "script-src 'self' https://esm.sh; " +
+        cspScriptSrc +
         "style-src 'self' 'unsafe-inline'; " +
         "img-src 'self' data:; " +
         "font-src 'self'; " +
         "media-src 'self' data:; " +
-        "connect-src 'self' https://api.elevenlabs.io wss://api.elevenlabs.io; " +
+        cspConnectSrc +
         "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'";
     h["X-Content-Type-Options"] = "nosniff";
     h["Referrer-Policy"] = "no-referrer";
