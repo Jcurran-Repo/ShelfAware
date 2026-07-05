@@ -167,6 +167,32 @@ if (!app.Environment.IsDevelopment())
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
     app.UseHsts();
 }
+
+// Security headers on every response. The CSP is the one that matters for BYOK: the visitor's key lives
+// in their browser's localStorage, so the realistic way it leaks is a script exfiltrating it. Restricting
+// script-src to our own origin (no arbitrary inline/eval), locking connect-src to only the endpoints we
+// actually talk to, denying framing, and dropping the referrer shrink that surface hard. (esm.sh is
+// allowed only for the opt-in cook-along SDK until B4 self-hosts it; media/data: is for the synthesized
+// speech-audio playback.)
+app.Use(async (context, next) =>
+{
+    var h = context.Response.Headers;
+    h["Content-Security-Policy"] =
+        "default-src 'self'; " +
+        "script-src 'self' https://esm.sh; " +
+        "style-src 'self' 'unsafe-inline'; " +
+        "img-src 'self' data:; " +
+        "font-src 'self'; " +
+        "media-src 'self' data:; " +
+        "connect-src 'self' https://api.elevenlabs.io wss://api.elevenlabs.io; " +
+        "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'";
+    h["X-Content-Type-Options"] = "nosniff";
+    h["Referrer-Policy"] = "no-referrer";
+    h["X-Frame-Options"] = "DENY";
+    h["Permissions-Policy"] = "microphone=(self), camera=(), geolocation=()";
+    await next();
+});
+
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 app.UseHttpsRedirection();
 
