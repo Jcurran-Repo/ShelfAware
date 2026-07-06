@@ -66,13 +66,13 @@ else
     @if (buyNow.Count > 0)
     {
         <h2>Buy now <span class="muted">— @buyNow.Count item@(buyNow.Count == 1 ? "" : "s")</span></h2>
-        @ReportTable(buyNow, buyNowTotal, buyNowUnknownCount)
+        @ReportTable(buyNow, buyNowTotal, buyNowUnknownCount, canIgnore: true)
     }
 
     @if (comingUp.Count > 0)
     {
         <h2>Coming up</h2>
-        @ReportTable(comingUp, comingUpTotal, comingUpUnknownCount)
+        @ReportTable(comingUp, comingUpTotal, comingUpUnknownCount, canIgnore: false)
     }
 
     @if (buyNow.Count > 0 && comingUp.Count > 0)
@@ -100,7 +100,9 @@ else
     private List<GroceryExtra> extras = [];
     private string newExtra = "";
 
-    protected override async Task OnInitializedAsync()
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         extras = await db.GroceryExtras.OrderBy(e => e.Name).ToListAsync();
@@ -165,7 +167,7 @@ else
         loaded = true;
     }
 
-    private RenderFragment ReportTable(List<ProductEstimate> items, decimal subtotal, int unknownCount) =>
+    private RenderFragment ReportTable(List<ProductEstimate> items, decimal subtotal, int unknownCount, bool canIgnore) =>
         @<div class="table-scroll">
             <table>
                 <caption class="visually-hidden">Grocery items with category, replenishment status, next buy date, quantity, and estimated cost.</caption>
@@ -177,6 +179,10 @@ else
                         <th scope="col">Next buy</th>
                         <th scope="col">Qty</th>
                         <th scope="col">Est. cost</th>
+                        @if (canIgnore)
+                        {
+                            <th scope="col"><span class="visually-hidden">Actions</span></th>
+                        }
                     </tr>
                 </thead>
                 <tbody>
@@ -214,6 +220,15 @@ else
                             </td>
                             <td>@e.RecommendedQuantity.ToString("0.##")</td>
                             <td>@(e.ExpectedCost is { } c ? Money(c) : "—")</td>
+                            @if (canIgnore)
+                            {
+                                <td class="row-actions">
+                                    <button type="button" class="ignore-once" @onclick="() => IgnoreThisTime(e)"
+                                            disabled="@actionBusy"
+                                            title="Actually stocked — treat @e.Name as restocked and ask again next cycle"
+                                            aria-label="Ignore @e.Name this time — treat it as restocked">Ignore this time</button>
+                                </td>
+                            }
                         </tr>
                     }
                 </tbody>
@@ -221,10 +236,39 @@ else
                     <tr>
                         <td colspan="5" class="subtotal-label">Subtotal@(unknownCount > 0 ? $" ({unknownCount} without a price)" : "")</td>
                         <td class="subtotal">@Money(subtotal)</td>
+                        @if (canIgnore)
+                        {
+                            <td></td>
+                        }
                     </tr>
                 </tfoot>
             </table>
         </div>;
+
+    private bool actionBusy;
+
+    // "Actually, I've got enough" — records a Restocked signal (status-only: re-anchors the due date and
+    // clears any out/low flag, but feeds neither learned rhythm), so the item leaves Buy now until its
+    // next natural cycle. Same mechanism as the dashboard's Restocked button.
+    private async Task IgnoreThisTime(ProductEstimate e)
+    {
+        if (actionBusy) return;
+        actionBusy = true;
+        try
+        {
+            copied = false; // the copied list is now stale
+            await using var db = await DbFactory.CreateDbContextAsync();
+            db.InventorySignals.Add(new InventorySignal
+            {
+                ProductId = e.ProductId,
+                Kind = SignalKind.Restocked,
+                SignaledAt = DateTimeOffset.Now
+            });
+            await db.SaveChangesAsync();
+            await LoadAsync();
+        }
+        finally { actionBusy = false; }
+    }
 
     private async Task AddExtra()
     {

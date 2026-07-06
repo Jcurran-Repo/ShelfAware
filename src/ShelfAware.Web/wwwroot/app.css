@@ -1113,6 +1113,24 @@ button.tag-chip {
     background: var(--overdue-bg);
 }
 
+/* Grocery-list row action — "actually stocked, skip it this cycle": the green sibling of .mark-out. */
+.ignore-once {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--stocked-ink);
+    background: transparent;
+    border: 1px solid var(--stocked-line);
+    border-radius: 6px;
+    padding: 0.05rem 0.45rem;
+    cursor: pointer;
+    line-height: 1.5;
+    white-space: nowrap;
+}
+
+.ignore-once:hover:not(:disabled) {
+    background: var(--stocked-bg);
+}
+
 /* Grocery-list item name → product detail. */
 .item-name {
     font-weight: 600;
@@ -1577,7 +1595,8 @@ tfoot td {
     .site-header,
     .list-actions,
     details.everything-else,
-    .info-btn {
+    .info-btn,
+    .ignore-once {
         display: none !important;
     }
 
