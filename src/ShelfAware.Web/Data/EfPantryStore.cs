@@ -90,4 +90,28 @@ public class EfPantryStore(IDbContextFactory<ShelfAwareDbContext> dbFactory) : I
         if (added.Count > 0) await db.SaveChangesAsync(cancellationToken);
         return added;
     }
+
+    public async Task<IReadOnlyList<string>> GetExcludedFoodsAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.ExcludedFoods.Select(f => f.Value).ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<string>> AddGroceryExtrasAsync(IReadOnlyList<string> names, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var have = new HashSet<string>(
+            await db.GroceryExtras.Select(e => e.Name).ToListAsync(cancellationToken), StringComparer.OrdinalIgnoreCase);
+
+        var added = new List<string>();
+        foreach (var name in names)
+        {
+            var n = name.Trim();
+            if (n.Length == 0 || !have.Add(n)) continue;
+            db.GroceryExtras.Add(new GroceryExtra { Name = n });
+            added.Add(n);
+        }
+        if (added.Count > 0) await db.SaveChangesAsync(cancellationToken);
+        return added;
+    }
 }

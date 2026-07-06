@@ -30,6 +30,15 @@ public interface IPantryStore
     /// <summary>Add "also works as" substitutes to a product (deduped against what it already has);
     /// returns the values actually added. Lets the assistant fill in a product's substitutes by voice/chat.</summary>
     Task<IReadOnlyList<string>> AddSubstitutesAsync(int productId, IReadOnlyList<string> values, CancellationToken cancellationToken = default);
+
+    /// <summary>Foods the user won't eat (allergies/dislikes) — passed to the recipe advisor so a
+    /// generated recipe never includes them.</summary>
+    Task<IReadOnlyList<string>> GetExcludedFoodsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Add items to the grocery list's manual "extras", skipping any already on it (case-
+    /// insensitive); returns the names actually added. Deliberately NEVER records an inventory signal — a
+    /// shopping-list add is not an "I'm out" statement, so it must not feed the prediction engine.</summary>
+    Task<IReadOnlyList<string>> AddGroceryExtrasAsync(IReadOnlyList<string> names, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Lightweight saved-recipe reference for chat-tool resolution.</summary>

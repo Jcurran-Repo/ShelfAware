@@ -19,4 +19,9 @@ public static class SettingKeys
     /// <summary>LEGACY "true"/"false" from before the three-way <see cref="ImportMode"/> existed —
     /// still read as a fallback (true → Auto, false → Review) so an existing choice is honored.</summary>
     public const string AutoConfirmImports = "AutoConfirmImports";
+
+    /// <summary>"Confirm" (default — the assistant asks before adding a recipe's ingredients to the grocery
+    /// list) or "Auto" (add them straight away). The parallel-to-<see cref="ImportMode"/> setting for the
+    /// add-a-recipe's-ingredients-to-the-list voice/chat flow.</summary>
+    public const string RecipeAddConfirm = "RecipeAddConfirm";
 }

@@ -9,6 +9,7 @@ using ShelfAware.Core.Domain;
 using ShelfAware.Core.Ingest;
 using ShelfAware.Core.Prediction;
 using ShelfAware.Core.Recipes;
+using ShelfAware.Core.Settings;
 using Category = ShelfAware.Core.Domain.Category;
 
 namespace ShelfAware.Llm;
@@ -29,12 +30,14 @@ public class AnthropicPantryChat : IPantryChat
     private readonly IReceiptImporter? _importer;
     private readonly IProductSubstituteAdvisor? _substituteAdvisor;
     private readonly IRecipeAdapter? _recipeAdapter;
+    private readonly IRecipeAdvisor? _recipeAdvisor;
+    private readonly IAppSettings? _settings;
     private readonly ILogger<AnthropicPantryChat> _logger;
 
     public AnthropicPantryChat(
         IChatClient chat, IOptions<LlmOptions> options, IPantryStore store, ILogger<AnthropicPantryChat> logger,
         IReceiptImporter? importer = null, IProductSubstituteAdvisor? substituteAdvisor = null,
-        IRecipeAdapter? recipeAdapter = null)
+        IRecipeAdapter? recipeAdapter = null, IRecipeAdvisor? recipeAdvisor = null, IAppSettings? settings = null)
     {
         _chat = chat;
         _options = options.Value;
@@ -42,6 +45,8 @@ public class AnthropicPantryChat : IPantryChat
         _importer = importer;
         _substituteAdvisor = substituteAdvisor;
         _recipeAdapter = recipeAdapter;
+        _recipeAdvisor = recipeAdvisor;
+        _settings = settings;
         _logger = logger;
     }
 
@@ -263,6 +268,49 @@ public class AnthropicPantryChat : IPantryChat
                     : $"{product.Name} already has those substitutes.", false);
             }
 
+            case "add_recipe_to_list":
+            {
+                if (_recipeAdvisor is null)
+                    return ("Recipe ideas aren't set up.", true);
+                var request = Str("recipe")?.Trim();
+                if (string.IsNullOrWhiteSpace(request))
+                    return ("Which dish should I add the ingredients for?", true);
+                var includeSeasonings = Bool("include_seasonings") ?? false;
+                var confirmed = Bool("confirmed") ?? false;
+
+                // Generate the recipe grounded on what's on hand (prefers existing products) and hard-
+                // excluding won't-eat foods — both are the advisor's job, unchanged.
+                var today = DateOnly.FromDateTime(DateTime.Today);
+                var onHand = PantryOnHand.EdibleInStock(products, today).Select(p => p.Name).ToList();
+                var excluded = await _store.GetExcludedFoodsAsync(ct);
+                var recipe = (await _recipeAdvisor.SuggestAsync(request, onHand, excluded, ct)).FirstOrDefault();
+                if (recipe is null)
+                    return ($"I couldn't come up with a {request} recipe just now.", false);
+
+                // Buy only what they don't already have (Have = the model matched it to an on-hand product);
+                // mains always, seasonings only if asked. Prefer-existing is automatic — a matched item is skipped.
+                var missing = recipe.Ingredients
+                    .Where(i => !i.Have && (i.IsMain || includeSeasonings))
+                    .Select(i => i.Name)
+                    .ToList();
+                if (missing.Count == 0)
+                    return ($"You already have everything for {recipe.Name}.", false);
+
+                // Respect the setting: Confirm (default) proposes first and adds only once the user agrees
+                // (a follow-up call with confirmed=true); Auto adds straight away.
+                var mode = _settings is null ? "Confirm" : await _settings.GetAsync(SettingKeys.RecipeAddConfirm, ct) ?? "Confirm";
+                if (!string.Equals(mode, "Auto", StringComparison.OrdinalIgnoreCase) && !confirmed)
+                    return ($"For {recipe.Name} you'd need: {string.Join(", ", missing)}. Want me to add {(missing.Count == 1 ? "it" : "them")} to your grocery list?", false);
+
+                // A shopping-list add is NOT an "I'm out" signal — extras only, never RecordSignal (keeps the
+                // burn-rate/rebuy prediction honest).
+                var addedToList = await _store.AddGroceryExtrasAsync(missing, ct);
+                if (addedToList.Count > 0) actions.Add($"list += {addedToList.Count} for {recipe.Name}");
+                return (addedToList.Count > 0
+                    ? $"Added {string.Join(", ", addedToList)} to your grocery list for {recipe.Name}."
+                    : $"Everything for {recipe.Name} was already on your list.", false);
+            }
+
             case "open_page":
             {
                 var page = Str("page")?.Trim().ToLowerInvariant();
@@ -452,6 +500,17 @@ public class AnthropicPantryChat : IPantryChat
                 }
                 """,
                 ["recipe_name"]),
+
+            MakeTool("add_recipe_to_list",
+                "Generate a recipe for a dish the user names and add the ingredients they DON'T already have to their grocery list. Use when they ask to add the things/ingredients they need for a dish (e.g. \"add everything for steak hibachi\"). It prefers what they own and never includes foods they won't eat. Set include_seasonings=true to also add missing seasonings/spices. After adding the mains you MAY offer to include complementary vegetables (call again with an expanded 'recipe' like \"steak hibachi with vegetables\") or the missing seasonings. If the tool response asks you to confirm before adding, relay the item list to the user and add only after they agree (call again with confirmed=true).",
+                """
+                {
+                  "recipe": { "type": "string", "description": "The dish or recipe request, e.g. \"steak hibachi\" or \"steak hibachi with vegetables\"." },
+                  "include_seasonings": { "type": "boolean", "description": "Also add missing seasonings/spices/staples, not just mains. Default false." },
+                  "confirmed": { "type": "boolean", "description": "Set true ONLY after the user has agreed to add the proposed items (used when the setting asks to confirm first)." }
+                }
+                """,
+                ["recipe"]),
         ];
 
         return tools.Select(t => t.AsAITool()).ToList();

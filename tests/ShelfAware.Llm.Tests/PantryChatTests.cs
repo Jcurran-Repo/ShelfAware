@@ -4,6 +4,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
+using ShelfAware.Core.Recipes;
+using ShelfAware.Core.Settings;
 
 namespace ShelfAware.Llm.Tests;
 
@@ -14,6 +16,38 @@ public class PantryChatTests
 
     private static Product P(int id, string name, Category category = Category.Other) =>
         new() { Id = id, Name = name, Category = category };
+
+    private static AnthropicPantryChat ChatWithRecipe(
+        FakeChatClient client, FakePantryStore store, IRecipeAdvisor advisor, IAppSettings? settings = null) =>
+        new(client, Options.Create(new LlmOptions()), store, NullLogger<AnthropicPantryChat>.Instance,
+            recipeAdvisor: advisor, settings: settings);
+
+    // One on-hand main (steak), one missing main (zucchini), one missing seasoning (soy sauce).
+    private static RecipeSuggestion HibachiRecipe() => new("Steak Hibachi", "Teppanyaki at home.",
+        [
+            new SuggestedIngredient("Steak", true, "Ribeye Steak"),
+            new SuggestedIngredient("Zucchini", true, null),
+            new SuggestedIngredient("Soy sauce", false, null),
+        ],
+        ["Sear the steak.", "Grill the zucchini."]);
+
+    private sealed class StubRecipeAdvisor(RecipeSuggestion suggestion) : IRecipeAdvisor
+    {
+        public Task<IReadOnlyList<RecipeSuggestion>> SuggestAsync(
+            string request, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<RecipeSuggestion>>([suggestion]);
+
+        public Task<RecipeSuggestion?> AdaptAsync(
+            RecipeToAdapt recipe, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods,
+            string? preference = null, CancellationToken ct = default) => Task.FromResult<RecipeSuggestion?>(null);
+    }
+
+    private sealed class StubSettings(string? recipeAddConfirm) : IAppSettings
+    {
+        public Task<string?> GetAsync(string key, CancellationToken ct = default) =>
+            Task.FromResult(key == SettingKeys.RecipeAddConfirm ? recipeAddConfirm : null);
+        public Task SetAsync(string key, string? value, CancellationToken ct = default) => Task.CompletedTask;
+    }
 
     [Fact]
     public async Task Blank_input_is_rejected_without_calling_the_model()
@@ -89,6 +123,61 @@ public class PantryChatTests
         var purchase = Assert.Single(store.Purchases);
         Assert.Equal(5, purchase.ProductId);
         Assert.Equal(2m, purchase.Qty);
+    }
+
+    [Fact]
+    public async Task Add_recipe_to_list_adds_only_missing_mains_and_never_signals()
+    {
+        var store = new FakePantryStore(P(1, "Ribeye Steak"));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("add_recipe_to_list", ("recipe", "steak hibachi"))),
+            () => Responses.Text("Added zucchini to your list."));
+
+        var result = await ChatWithRecipe(client, store, new StubRecipeAdvisor(HibachiRecipe()), new StubSettings("Auto"))
+            .HandleAsync("add everything for steak hibachi");
+
+        Assert.True(result.Success);
+        Assert.Contains("Zucchini", store.GroceryExtras);        // missing main → added
+        Assert.DoesNotContain("Steak", store.GroceryExtras);     // already on hand → skipped
+        Assert.DoesNotContain("Soy sauce", store.GroceryExtras); // seasoning, not requested
+        Assert.Empty(store.Signals);                             // adding to the list is NOT an "I'm out"
+    }
+
+    [Fact]
+    public async Task Add_recipe_to_list_includes_seasonings_when_asked()
+    {
+        var store = new FakePantryStore(P(1, "Ribeye Steak"));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("add_recipe_to_list",
+                ("recipe", "steak hibachi"), ("include_seasonings", true))),
+            () => Responses.Text("Added zucchini and soy sauce."));
+
+        await ChatWithRecipe(client, store, new StubRecipeAdvisor(HibachiRecipe()), new StubSettings("Auto"))
+            .HandleAsync("add everything for steak hibachi, seasonings too");
+
+        Assert.Contains("Zucchini", store.GroceryExtras);
+        Assert.Contains("Soy sauce", store.GroceryExtras);
+    }
+
+    [Fact]
+    public async Task Add_recipe_to_list_confirms_first_then_adds_on_agreement()
+    {
+        var store = new FakePantryStore(P(1, "Ribeye Steak"));
+        var advisor = new StubRecipeAdvisor(HibachiRecipe());
+
+        // Default (Confirm) mode: the first call PROPOSES and adds nothing yet.
+        var propose = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("add_recipe_to_list", ("recipe", "steak hibachi"))),
+            () => Responses.Text("For Steak Hibachi you'd need zucchini. Add it?"));
+        await ChatWithRecipe(propose, store, advisor, new StubSettings(null)).HandleAsync("add everything for steak hibachi");
+        Assert.Empty(store.GroceryExtras);
+
+        // The user agrees → confirmed=true actually adds.
+        var confirm = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("add_recipe_to_list", ("recipe", "steak hibachi"), ("confirmed", true))),
+            () => Responses.Text("Added zucchini."));
+        await ChatWithRecipe(confirm, store, advisor, new StubSettings(null)).HandleAsync("yes please");
+        Assert.Contains("Zucchini", store.GroceryExtras);
     }
 
     [Fact]

@@ -106,6 +106,8 @@ internal sealed class FakePantryStore : IPantryStore
     public List<(int ProductId, bool Tracked)> Tracking { get; } = [];
     public List<(string Name, Category Category)> Created { get; } = [];
     public List<(int ProductId, string Value)> Substitutes { get; } = [];
+    public List<string> GroceryExtras { get; } = [];
+    public List<string> Excluded { get; } = [];
 
     public FakePantryStore(params Product[] products) => Products = [.. products];
 
@@ -152,6 +154,21 @@ internal sealed class FakePantryStore : IPantryStore
         }
         return Task.FromResult<IReadOnlyList<string>>(added);
     }
+
+    public Task<IReadOnlyList<string>> GetExcludedFoodsAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<string>>(Excluded);
+
+    public Task<IReadOnlyList<string>> AddGroceryExtrasAsync(IReadOnlyList<string> names, CancellationToken cancellationToken = default)
+    {
+        var have = new HashSet<string>(GroceryExtras, StringComparer.OrdinalIgnoreCase);
+        var added = new List<string>();
+        foreach (var n in names)
+        {
+            var t = n.Trim();
+            if (t.Length > 0 && have.Add(t)) { GroceryExtras.Add(t); added.Add(t); }
+        }
+        return Task.FromResult<IReadOnlyList<string>>(added);
+    }
 }
 
 /// <summary>An <see cref="IPantryStore"/> whose write throws — exercises the chat loop's tool-error
@@ -167,6 +184,8 @@ internal sealed class ThrowingPantryStore(params Product[] products) : IPantrySt
     public Task SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<RecipeRef>> GetRecipesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<string>> AddSubstitutesAsync(int productId, IReadOnlyList<string> values, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<IReadOnlyList<string>> GetExcludedFoodsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<string>>([]);
+    public Task<IReadOnlyList<string>> AddGroceryExtrasAsync(IReadOnlyList<string> names, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 }
 
 /// <summary>

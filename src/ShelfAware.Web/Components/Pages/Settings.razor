@@ -157,6 +157,22 @@
     }
 </section>
 
+<section class="panel">
+    <h2>Recipe ingredients → grocery list</h2>
+    <p class="muted">
+        When you ask the assistant to add a recipe's ingredients to your list (by voice or chat), it adds
+        only what you don't already have — and never touches your out/low signals.
+    </p>
+    <label class="field">
+        <span>Before adding</span>
+        <select @bind="recipeAddConfirm" @bind:after="SaveRecipeAddConfirm"
+                aria-label="Confirm before adding recipe ingredients to the list">
+            <option value="Confirm">Ask me to confirm first</option>
+            <option value="Auto">Add them automatically</option>
+        </select>
+    </label>
+</section>
+
 <section class="panel danger-zone">
     <h2>Your data</h2>
     <p class="muted">
@@ -200,6 +216,7 @@
 @code {
     private string folder = "";
     private ImportMode mode = ImportMode.Smart;
+    private string recipeAddConfirm = "Confirm";
     private bool configured;
     private int fileCount;
     private int newCount;
@@ -379,6 +396,7 @@
         mode = ImportModes.Parse(
             await SettingsStore.GetAsync(SettingKeys.ImportMode),
             await SettingsStore.GetAsync(SettingKeys.AutoConfirmImports)); // legacy toggle honored
+        recipeAddConfirm = await SettingsStore.GetAsync(SettingKeys.RecipeAddConfirm) ?? "Confirm";
         await RefreshStatus();
     }
 
@@ -387,6 +405,9 @@
         mode = m;
         await SettingsStore.SetAsync(SettingKeys.ImportMode, m.ToString());
     }
+
+    private async Task SaveRecipeAddConfirm() =>
+        await SettingsStore.SetAsync(SettingKeys.RecipeAddConfirm, recipeAddConfirm);
 
     private string FolderStatus => !configured
         ? (string.IsNullOrWhiteSpace(folder) ? "No folder set yet." : "That folder isn't set or doesn't exist yet.")
