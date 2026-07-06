@@ -21,7 +21,7 @@ public class RecipeAdapter(
         var recipe = await db.Recipes.Include(r => r.Ingredients).Include(r => r.Steps)
             .FirstOrDefaultAsync(r => r.Id == recipeId, cancellationToken);
         if (recipe is null) return new AdaptResult(false, "That recipe couldn't be found.");
-        if (recipe.ParentRecipeId is not null)
+        if (recipe.IsVariant)
             return new AdaptResult(false, "That's already an adapted version — adapt the original instead.");
 
         var products = await db.Products.Where(p => p.IsTracked)

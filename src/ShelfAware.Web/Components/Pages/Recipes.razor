@@ -214,7 +214,7 @@
                         <p class="recipe-cal">~@cal cal / serving <span class="muted">(est.)</span></p>
                     }
                     <ul class="ingredient-list">
-                        @foreach (var i in r.Ingredients.Where(i => i.IsMain))
+                        @foreach (var i in r.MainIngredients)
                         {
                             var have = Have(i);
                             <li class="@(have ? "have" : "grab")">
@@ -250,7 +250,7 @@
                                 }
                             </li>
                         }
-                        @{ var extras = r.Ingredients.Where(i => !i.IsMain).Select(i => i.Name).ToList(); }
+                        @{ var extras = r.Seasonings.Select(i => i.Name).ToList(); }
                         @if (extras.Count > 0)
                         {
                             <li class="muted">+ @string.Join(", ", extras)</li>
@@ -412,13 +412,9 @@
     // A saved recipe is makeable when every MAIN ingredient is covered by something on hand — by food
     // family, not exact product name, so a recipe calling for chicken breast counts when you have chicken
     // tenderloins or any chicken (IngredientMatcher). Seasonings/staples are ignored.
-    private bool Makeable(Recipe r)
-    {
-        var mains = r.Ingredients.Where(i => i.IsMain).ToList();
-        return mains.Count > 0 && mains.All(Have);
-    }
+    private bool Makeable(Recipe r) => r.IsMakeableWith(onHand);
 
-    private bool Have(RecipeIngredient i) => IngredientMatcher.IsSatisfied(i.Name, i.MatchedProduct, onHand);
+    private bool Have(RecipeIngredient i) => i.IsSatisfiedBy(onHand);
 
     // "Pick for me" pool: saved recipes you've eaten before AND can make right now — the reliable
     // "I can definitely eat this, just tell me" set.
@@ -450,7 +446,7 @@
     private void ApplyFilter()
     {
         filterProductName = UsesProductId is { } pid && productNamesById.TryGetValue(pid, out var n) ? n : null;
-        var topLevel = savedRecipes.Where(r => r.ParentRecipeId is null);
+        var topLevel = savedRecipes.Where(r => !r.IsVariant);
 
         if (filterProductName is not { } name)
         {
@@ -502,7 +498,7 @@
 
     // A recipe's adapted variants, most recent first.
     private IEnumerable<Recipe> VariantsOf(Recipe original) =>
-        savedRecipes.Where(v => v.ParentRecipeId == original.Id).OrderByDescending(v => v.SavedAt);
+        savedRecipes.Where(v => v.IsVariantOf(original)).OrderByDescending(v => v.SavedAt);
 
     // Tell the roaming voice agent what's on screen and in what order, so "read me the second one"
     // resolves to the right recipe. Cleared on navigate-away so it can't leak to another page.
@@ -623,9 +619,7 @@
     // Send the main ingredients you don't currently have to the grocery list's manual "extras" section.
     private async Task AddMissingToList(Recipe r)
     {
-        var missing = r.Ingredients
-            .Where(i => i.IsMain && !Have(i))
-            .Select(i => i.Name).ToList();
+        var missing = r.MissingMains(onHand).Select(i => i.Name).ToList();
         if (missing.Count == 0) { extraNote = "You already have everything for this."; return; }
 
         await using var db = await DbFactory.CreateDbContextAsync();

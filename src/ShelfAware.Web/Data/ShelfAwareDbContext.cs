@@ -22,6 +22,13 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        // Recipe exposes computed domain helpers (IsVariant, and the MainIngredients/Seasonings splits of
+        // its own Ingredients). They're behaviour, not stored state — tell EF not to treat them as columns
+        // or as rival navigations to RecipeIngredient. (The method-form helpers aren't mapped by convention.)
+        modelBuilder.Entity<Recipe>().Ignore(r => r.IsVariant);
+        modelBuilder.Entity<Recipe>().Ignore(r => r.MainIngredients);
+        modelBuilder.Entity<Recipe>().Ignore(r => r.Seasonings);
+
         modelBuilder.Entity<AppSetting>().HasKey(s => s.Key);
 
         modelBuilder.Entity<ProductAlias>()

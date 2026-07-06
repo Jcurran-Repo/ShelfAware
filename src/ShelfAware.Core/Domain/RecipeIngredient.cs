@@ -1,3 +1,5 @@
+using ShelfAware.Core.Recipes;
+
 namespace ShelfAware.Core.Domain;
 
 public class RecipeIngredient
@@ -17,4 +19,9 @@ public class RecipeIngredient
     /// ["chicken thighs","chicken tenderloins",…]), generated once on demand for the swap bubble-cloud so
     /// re-opening it costs no AI call. Null until first requested.</summary>
     public string? AlternativesJson { get; set; }
+
+    /// <summary>True when something on hand covers this ingredient — its exact matched product, an on-hand
+    /// product of the same specific food, or a product that lists it as a substitute (IngredientMatcher).</summary>
+    public bool IsSatisfiedBy(IReadOnlyCollection<PantryProduct> onHand) =>
+        IngredientMatcher.IsSatisfied(Name, MatchedProduct, onHand);
 }
