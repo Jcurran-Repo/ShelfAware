@@ -33,10 +33,14 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
                   "type": "object",
                   "properties": {
                     "name": { "type": "string" },
+                    "quantity": {
+                      "type": ["string", "null"],
+                      "description": "Amount as a recipe would write it, e.g. \"2 lbs\", \"3 cloves\", \"1 (14 oz) can\", \"to taste\". null only if truly not applicable."
+                    },
                     "main": { "type": "boolean" },
                     "matched_product": { "type": ["string", "null"] }
                   },
-                  "required": ["name", "main", "matched_product"],
+                  "required": ["name", "quantity", "main", "matched_product"],
                   "additionalProperties": false
                 }
               },
@@ -104,7 +108,8 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
         RecipeToAdapt recipe, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods,
         string? preference = null, CancellationToken cancellationToken = default)
     {
-        var ingredients = string.Join("\n", recipe.Ingredients.Select(i => $"- {i.Name}{(i.IsMain ? "" : " (seasoning)")}"));
+        var ingredients = string.Join("\n", recipe.Ingredients.Select(i =>
+            $"- {(string.IsNullOrWhiteSpace(i.Quantity) ? "" : i.Quantity + " ")}{i.Name}{(i.IsMain ? "" : " (seasoning)")}"));
         var steps = recipe.Steps.Count > 0
             ? string.Join("\n", recipe.Steps.Select((s, i) => $"{i + 1}. {s}"))
             : "(none)";
@@ -152,7 +157,8 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
                     ingredients.Add(new SuggestedIngredient(
                         i.GetProperty("name").GetString() ?? "",
                         i.TryGetProperty("main", out var m) && m.ValueKind == JsonValueKind.True,
-                        i.TryGetProperty("matched_product", out var mp) && mp.ValueKind == JsonValueKind.String ? mp.GetString() : null));
+                        i.TryGetProperty("matched_product", out var mp) && mp.ValueKind == JsonValueKind.String ? mp.GetString() : null,
+                        i.TryGetProperty("quantity", out var q) && q.ValueKind == JsonValueKind.String ? q.GetString() : null));
                 }
             }
             var steps = new List<string>();

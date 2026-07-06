@@ -76,7 +76,7 @@
                     <ul class="ingredient-list">
                         @foreach (var i in s.Ingredients.Where(i => i.IsMain))
                         {
-                            <li class="@(i.Have ? "have" : "grab")">@(i.Have ? "✓" : "🛒") @i.Name</li>
+                            <li class="@(i.Have ? "have" : "grab")">@(i.Have ? "✓" : "🛒") @Qty(i.Quantity, i.Name)</li>
                         }
                         @{ var seasonings = s.Ingredients.Where(i => !i.IsMain).Select(i => i.Name).ToList(); }
                         @if (seasonings.Count > 0)
@@ -218,7 +218,7 @@
                         {
                             var have = Have(i);
                             <li class="@(have ? "have" : "grab")">
-                                <span class="ingredient-name">@(have ? "✓" : "🛒") @i.Name</span>
+                                <span class="ingredient-name">@(have ? "✓" : "🛒") @Qty(i.Quantity, i.Name)</span>
                                 @if (!isVariant)
                                 {
                                     <button type="button" class="alt-swap" @onclick="() => ToggleAlternatives(i)"
@@ -416,6 +416,10 @@
 
     private bool Have(RecipeIngredient i) => i.IsSatisfiedBy(onHand);
 
+    // "2 lbs chicken breast" when the recipe gives a quantity, else just the name.
+    private static string Qty(string? quantity, string name) =>
+        string.IsNullOrWhiteSpace(quantity) ? name : $"{quantity} {name}";
+
     // "Pick for me" pool: saved recipes you've eaten before AND can make right now — the reliable
     // "I can definitely eat this, just tell me" set.
     private List<Recipe> PickPool => savedRecipes.Where(r => r.TimesEaten > 0 && Makeable(r)).ToList();
@@ -598,7 +602,7 @@
             Name = s.Name,
             Blurb = s.Blurb,
             SavedAt = DateTimeOffset.Now,
-            Ingredients = s.Ingredients.Select(i => new RecipeIngredient { Name = i.Name, IsMain = i.IsMain, MatchedProduct = i.MatchedProduct }).ToList(),
+            Ingredients = s.Ingredients.Select(i => new RecipeIngredient { Name = i.Name, IsMain = i.IsMain, MatchedProduct = i.MatchedProduct, Quantity = i.Quantity }).ToList(),
             Steps = s.Steps.Select((t, idx) => new RecipeStep { Order = idx + 1, Text = t }).ToList(),
             EstimatedCaloriesPerServing = s.CaloriesPerServing,
         });

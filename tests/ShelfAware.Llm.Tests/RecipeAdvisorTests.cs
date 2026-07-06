@@ -23,9 +23,9 @@ public class RecipeAdvisorTests
               "name": "Feta Avocado Toast",
               "blurb": "Creamy avocado with salty feta on toast.",
               "ingredients": [
-                { "name": "Avocado", "main": true, "matched_product": "Hass Avocados" },
-                { "name": "Feta", "main": true, "matched_product": null },
-                { "name": "Olive oil", "main": false, "matched_product": null }
+                { "name": "Avocado", "main": true, "matched_product": "Hass Avocados", "quantity": "1" },
+                { "name": "Feta", "main": true, "matched_product": null, "quantity": "1/4 cup" },
+                { "name": "Olive oil", "main": false, "matched_product": null, "quantity": "to taste" }
               ],
               "steps": [
                 "Toast the bread.",
@@ -50,6 +50,9 @@ public class RecipeAdvisorTests
         // Grounded match -> Have; unmatched main -> shows up in ToGrab.
         Assert.Contains(recipe.Ingredients, i => i.Name == "Avocado" && i.Have);
         Assert.Contains(recipe.ToGrab, g => g.Name == "Feta");
+        // Free-form quantities parse through (and a missing one would be null — see the no-steps test).
+        Assert.Equal("1", recipe.Ingredients.Single(i => i.Name == "Avocado").Quantity);
+        Assert.Equal("to taste", recipe.Ingredients.Single(i => i.Name == "Olive oil").Quantity);
     }
 
     [Fact]

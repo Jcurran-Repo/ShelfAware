@@ -9,13 +9,13 @@ namespace ShelfAware.Tests;
 public class RecipeTests
 {
     private static PantryProduct P(string name, params string[] alsoWorksAs) => new(name, alsoWorksAs);
-    private static RecipeIngredient Main(string name) => new() { Name = name, IsMain = true };
+    private static RecipeIngredient MainIng(string name) => new() { Name = name, IsMain = true };
     private static RecipeIngredient Seasoning(string name) => new() { Name = name, IsMain = false };
 
     private static Recipe ChickenAndPotatoes() => new()
     {
         Name = "Chicken & Potatoes",
-        Ingredients = [Main("chicken breast"), Main("potatoes"), Seasoning("salt"), Seasoning("black pepper")],
+        Ingredients = [MainIng("chicken breast"), MainIng("potatoes"), Seasoning("salt"), Seasoning("black pepper")],
     };
 
     [Fact]
@@ -46,7 +46,7 @@ public class RecipeTests
     [Fact]
     public void An_ingredient_is_satisfied_when_something_on_hand_covers_it()
     {
-        var ingredient = Main("chicken breast");
+        var ingredient = MainIng("chicken breast");
         Assert.True(ingredient.IsSatisfiedBy([P("Chicken Breast Tenderloins")]));
         Assert.False(ingredient.IsSatisfiedBy([P("Whole Chicken")]));
     }

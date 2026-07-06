@@ -33,7 +33,7 @@ public class RecipeAdapter(
         var input = new RecipeToAdapt(
             recipe.Name,
             recipe.Blurb,
-            recipe.Ingredients.Select(i => new AdaptIngredient(i.Name, i.IsMain)).ToList(),
+            recipe.Ingredients.Select(i => new AdaptIngredient(i.Name, i.IsMain, i.Quantity)).ToList(),
             recipe.Steps.OrderBy(s => s.Order).Select(s => s.Text).ToList());
         var preference = swap is null ? null : $"Use {swap.ChosenForm} in place of {swap.IngredientName}.";
 
@@ -81,7 +81,7 @@ public class RecipeAdapter(
             ParentRecipeId = recipe.Id,
             EstimatedCaloriesPerServing = adapted.CaloriesPerServing,
             Ingredients = adapted.Ingredients
-                .Select(i => new RecipeIngredient { Name = i.Name, IsMain = i.IsMain, MatchedProduct = i.MatchedProduct })
+                .Select(i => new RecipeIngredient { Name = i.Name, IsMain = i.IsMain, MatchedProduct = i.MatchedProduct, Quantity = i.Quantity })
                 .ToList(),
             Steps = adapted.Steps.Select((t, idx) => new RecipeStep { Order = idx + 1, Text = t }).ToList(),
         };

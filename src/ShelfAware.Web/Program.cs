@@ -119,6 +119,7 @@ using (var scope = app.Services.CreateScope())
     EnsureColumn(db, "Recipes", "EstimatedCaloriesPerServing", "INTEGER NULL");
     EnsureColumn(db, "Recipes", "ParentRecipeId", "INTEGER NULL");
     EnsureColumn(db, "RecipeIngredients", "AlternativesJson", "TEXT NULL");
+    EnsureColumn(db, "RecipeIngredients", "Quantity", "TEXT NULL");
     EnsureColumn(db, "Receipts", "SourceFile", "TEXT NULL");
     EnsureColumn(db, "ReceiptLines", "TagsJson", "TEXT NULL");
     EnsureColumn(db, "ReceiptLines", "SuggestedProduct", "TEXT NULL");

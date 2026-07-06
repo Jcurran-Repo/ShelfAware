@@ -29,7 +29,7 @@ public interface IRecipeAdvisor
 /// <summary>The existing recipe handed to <see cref="IRecipeAdvisor.AdaptAsync"/>.</summary>
 public record RecipeToAdapt(string Name, string? Blurb, IReadOnlyList<AdaptIngredient> Ingredients, IReadOnlyList<string> Steps);
 
-public record AdaptIngredient(string Name, bool IsMain);
+public record AdaptIngredient(string Name, bool IsMain, string? Quantity = null);
 
 public record RecipeSuggestion(
     string Name, string Blurb, IReadOnlyList<SuggestedIngredient> Ingredients, IReadOnlyList<string> Steps,
@@ -43,7 +43,9 @@ public record RecipeSuggestion(
 /// <param name="MatchedProduct">The existing on-hand product this ingredient maps to (the model picks it
 /// from the provided list), or null if the user doesn't have it. Grounded matching, not a self-reported
 /// guess — <see cref="Have"/> is derived from it, and it's persisted so the makeability check is plain code.</param>
-public record SuggestedIngredient(string Name, bool IsMain, string? MatchedProduct)
+/// <param name="Quantity">Free-form amount as the recipe calls for it ("2 lbs", "3 cloves", "to taste"),
+/// or null. Display/cooking guidance only — it doesn't affect makeability.</param>
+public record SuggestedIngredient(string Name, bool IsMain, string? MatchedProduct, string? Quantity = null)
 {
     public bool Have => MatchedProduct is not null;
 }

@@ -8,6 +8,10 @@ public class RecipeIngredient
     public int RecipeId { get; set; }
     public Recipe? Recipe { get; set; }
     public required string Name { get; set; }
+    /// <summary>Free-form amount as the recipe calls for it ("2 lbs", "3 cloves", "1 (14 oz) can", "a pinch"),
+    /// or null if unspecified. Display + read-aloud guidance only — it does NOT affect makeability (we don't
+    /// track how much of a product is on hand), matching the app's deliberate "no unit arithmetic" stance.</summary>
+    public string? Quantity { get; set; }
     /// <summary>True for real/main ingredients (protein, veg, starch) that decide makeability; false for
     /// seasonings, spices, oils, and pantry staples (suggestion-only, excluded from the makeable check).</summary>
     public bool IsMain { get; set; }

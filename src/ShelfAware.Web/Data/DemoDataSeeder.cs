@@ -180,9 +180,10 @@ public sealed class DemoDataSeeder(IDbContextFactory<ShelfAwareDbContext> dbFact
 
     // ---- Recipes ------------------------------------------------------------
 
-    private static RecipeIngredient MainIngredient(string name, string? matched) =>
-        new() { Name = name, IsMain = true, MatchedProduct = matched };
-    private static RecipeIngredient Season(string name) => new() { Name = name, IsMain = false };
+    private static RecipeIngredient MainIngredient(string name, string? matched, string? quantity = null) =>
+        new() { Name = name, IsMain = true, MatchedProduct = matched, Quantity = quantity };
+    private static RecipeIngredient Season(string name, string? quantity = null) =>
+        new() { Name = name, IsMain = false, Quantity = quantity };
     private static RecipeStep Step(int order, string text) => new() { Order = order, Text = text };
 
     private static List<Recipe> BuildOriginalRecipes() =>
@@ -196,10 +197,10 @@ public sealed class DemoDataSeeder(IDbContextFactory<ShelfAwareDbContext> dbFact
             EstimatedCaloriesPerServing = 540,
             Ingredients =
             [
-                MainIngredient("Chicken breast", "Chicken Breast"),
-                MainIngredient("White rice", "White Rice"),
-                MainIngredient("Broccoli", "Broccoli"),
-                Season("Garlic"), Season("Soy sauce"), Season("Olive oil"),
+                MainIngredient("Chicken breast", "Chicken Breast", "1 lb"),
+                MainIngredient("White rice", "White Rice", "1 cup"),
+                MainIngredient("Broccoli", "Broccoli", "2 cups"),
+                Season("Garlic", "2 cloves"), Season("Soy sauce", "2 tbsp"), Season("Olive oil"),
             ],
             Steps =
             [
@@ -218,11 +219,11 @@ public sealed class DemoDataSeeder(IDbContextFactory<ShelfAwareDbContext> dbFact
             EstimatedCaloriesPerServing = 610,
             Ingredients =
             [
-                MainIngredient("Ground beef", "Ground Beef"),
-                MainIngredient("Flour tortillas", "Flour Tortillas"),
-                MainIngredient("Bell peppers", "Bell Peppers"),
-                MainIngredient("Yellow onion", "Yellow Onion"),
-                Season("Taco seasoning"), Season("Shredded cheddar"),
+                MainIngredient("Ground beef", "Ground Beef", "1 lb"),
+                MainIngredient("Flour tortillas", "Flour Tortillas", "8"),
+                MainIngredient("Bell peppers", "Bell Peppers", "2"),
+                MainIngredient("Yellow onion", "Yellow Onion", "1"),
+                Season("Taco seasoning", "1 packet"), Season("Shredded cheddar", "1 cup"),
             ],
             Steps =
             [
@@ -241,9 +242,9 @@ public sealed class DemoDataSeeder(IDbContextFactory<ShelfAwareDbContext> dbFact
             EstimatedCaloriesPerServing = 480,
             Ingredients =
             [
-                MainIngredient("Spaghetti", "Spaghetti"),
-                MainIngredient("Marinara sauce", "Marinara Sauce"),
-                Season("Parmesan"), Season("Garlic"), Season("Olive oil"),
+                MainIngredient("Spaghetti", "Spaghetti", "12 oz"),
+                MainIngredient("Marinara sauce", "Marinara Sauce", "1 jar"),
+                Season("Parmesan"), Season("Garlic", "2 cloves"), Season("Olive oil"),
             ],
             Steps =
             [
@@ -265,10 +266,10 @@ public sealed class DemoDataSeeder(IDbContextFactory<ShelfAwareDbContext> dbFact
         EstimatedCaloriesPerServing = 600,
         Ingredients =
         [
-            MainIngredient("Chicken thighs", "Chicken Thighs"),
-            MainIngredient("White rice", "White Rice"),
-            MainIngredient("Broccoli", "Broccoli"),
-            Season("Garlic"), Season("Soy sauce"), Season("Olive oil"),
+            MainIngredient("Chicken thighs", "Chicken Thighs", "1.25 lb"),
+            MainIngredient("White rice", "White Rice", "1 cup"),
+            MainIngredient("Broccoli", "Broccoli", "2 cups"),
+            Season("Garlic", "2 cloves"), Season("Soy sauce", "2 tbsp"), Season("Olive oil"),
         ],
         Steps =
         [
