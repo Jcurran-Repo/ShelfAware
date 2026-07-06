@@ -9,6 +9,7 @@
 @inject IJSRuntime JS
 @inject CircuitAiSettings AiSettings
 @inject ILogger<Settings> Logger
+@inject UserDataService UserData
 
 <PageTitle>Settings — Shelf Aware</PageTitle>
 
@@ -143,6 +144,46 @@
     }
 </section>
 
+<section class="panel danger-zone">
+    <h2>Your data</h2>
+    <p class="muted">
+        Everything ShelfAware knows lives only on this server — nothing is shared. Take a copy any time,
+        or wipe the slate clean.
+    </p>
+
+    <p><a href="/api/data/export" download>⬇ Download my data (JSON)</a></p>
+
+    @if (!confirmingDelete)
+    {
+        <div class="review-actions">
+            <button class="danger" @onclick="StartDelete">Delete all my data…</button>
+        </div>
+    }
+    else
+    {
+        <div class="danger-confirm">
+            <p><strong>This permanently deletes</strong> your products, purchase history, out/low signals,
+               receipts, recipes, substitutes, avoided foods, and grocery list. Your app settings and saved
+               API keys are kept (use “Forget my key” above to clear a key).</p>
+            <p class="muted">Consider <a href="/api/data/export" download>downloading a backup</a> first — this can’t be undone.</p>
+            <label>
+                Type <code>DELETE</code> to confirm
+                <input type="text" @bind="deleteConfirmText" @bind:event="oninput" autocomplete="off" aria-label="Type DELETE to confirm" />
+            </label>
+            <div class="review-actions">
+                <button class="danger" disabled="@(!DeleteArmed || deleting)" @onclick="DeleteEverything">
+                    @(deleting ? "Deleting…" : "Permanently delete everything")
+                </button>
+                <button class="secondary" disabled="@deleting" @onclick="CancelDelete">Cancel</button>
+            </div>
+        </div>
+    }
+    @if (deleteResult is not null)
+    {
+        <p class="chat-reply" role="status">@deleteResult</p>
+    }
+</section>
+
 @code {
     private string folder = "";
     private ImportMode mode = ImportMode.Smart;
@@ -154,6 +195,12 @@
     private string? savedNote;
     private string? scanResult;
     private string? scanProgress;
+
+    private bool confirmingDelete;
+    private string deleteConfirmText = "";
+    private bool deleting;
+    private string? deleteResult;
+    private bool DeleteArmed => string.Equals(deleteConfirmText.Trim(), "DELETE", StringComparison.Ordinal);
 
     // ---- BYOK: provider, keys, and models, held only in the visitor's browser ----
     private bool aiLoaded;
@@ -370,6 +417,43 @@
         {
             scanning = false;
             scanProgress = null;
+        }
+    }
+
+    private void StartDelete()
+    {
+        confirmingDelete = true;
+        deleteResult = null;
+        deleteConfirmText = "";
+    }
+
+    private void CancelDelete()
+    {
+        confirmingDelete = false;
+        deleteConfirmText = "";
+    }
+
+    private async Task DeleteEverything()
+    {
+        if (!DeleteArmed || deleting) return;
+        deleting = true;
+        deleteResult = null;
+        try
+        {
+            await UserData.DeleteAllAsync();
+            deleteResult = "Done — all your pantry data has been deleted.";
+            confirmingDelete = false;
+            deleteConfirmText = "";
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Delete-my-data failed.");
+            deleteResult = "Something went wrong deleting your data — please try again.";
+        }
+        finally
+        {
+            deleting = false;
         }
     }
 }

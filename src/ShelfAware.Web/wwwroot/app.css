@@ -195,6 +195,31 @@ button.secondary:hover:not(:disabled) {
     border-color: var(--ink-soft);
 }
 
+/* Destructive action — reuses the "overdue" red so delete reads as a real warning. */
+button.danger {
+    background: var(--overdue-ink);
+    border-color: var(--overdue-ink);
+    color: #fff;
+}
+
+button.danger:hover:not(:disabled) {
+    background: var(--overdue-line);
+    border-color: var(--overdue-line);
+}
+
+.danger-zone { border-color: var(--overdue-line); }
+
+.danger-confirm {
+    margin-top: 0.75rem;
+    padding: 0.85rem 1rem;
+    background: var(--overdue-bg);
+    border: 1px solid var(--overdue-line);
+    border-radius: 8px;
+}
+
+.danger-confirm label { display: block; margin: 0.6rem 0 0; font-weight: 600; }
+.danger-confirm input { display: block; margin-top: 0.3rem; }
+
 /* ---- Split button (primary action + caret menu) ---- */
 .split-btn {
     position: relative;

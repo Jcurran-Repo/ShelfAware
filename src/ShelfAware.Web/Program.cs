@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using System.Threading.RateLimiting;
+using System.Text.Json;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Extraction;
 using ShelfAware.Core.Ingest;
@@ -73,6 +74,7 @@ builder.Services.AddSingleton<IReceiptInbox, LocalFolderReceiptInbox>();
 builder.Services.AddScoped<IReceiptImporter, ReceiptImporter>(); // depends on the scoped IReceiptExtractor
 builder.Services.AddSingleton<ReceiptConfirmationService>();
 builder.Services.AddSingleton<DemoDataSeeder>(); // synthetic demo catalog for a fresh/public deploy (guarded: empty DB only)
+builder.Services.AddScoped<UserDataService>();   // export + delete-my-data (one place for both)
 
 // Voice I/O (ElevenLabs): Scribe = STT (ear), TTS = mouth. Speech is its own REST API, not an
 // IChatClient workload, so each rides a typed HttpClient with the base address + xi-api-key header.
@@ -262,6 +264,15 @@ app.MapGet("/api/cookalong/signed-url", async (HttpContext ctx, IHttpClientFacto
     // ElevenLabs returns { "signed_url": "wss://..." }; pass it straight through to the client.
     return Results.Content(await response.Content.ReadAsStringAsync(ct), "application/json");
 }).RequireRateLimiting("cookalong");
+
+// Full data export ("Download my data") — a portable JSON snapshot; also the "export first" offered
+// before Delete my data. Reads the user's own content only (no keys, no app config).
+app.MapGet("/api/data/export", async (UserDataService data, CancellationToken ct) =>
+{
+    var snapshot = await data.ExportAsync(ct);
+    var json = JsonSerializer.SerializeToUtf8Bytes(snapshot, new JsonSerializerOptions { WriteIndented = true });
+    return Results.File(json, "application/json", $"shelfaware-data-{DateTime.Now:yyyy-MM-dd}.json");
+});
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
