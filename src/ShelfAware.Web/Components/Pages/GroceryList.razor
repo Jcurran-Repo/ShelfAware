@@ -1,6 +1,7 @@
 @page "/list"
 @using ShelfAware.Core.Prediction
 @using ShelfAware.Core.Shopping
+@implements IAsyncDisposable
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
 @inject IJSRuntime JS
 
@@ -43,6 +44,8 @@
     <div class="list-actions">
         <button class="secondary" @onclick="CopyList">Copy list</button>
         <button class="secondary" @onclick="PrintList">Print</button>
+        <button class="secondary" @onclick="DownloadList">Download</button>
+        <span class="muted kbd-hint">press <kbd>D</kbd> to download</span>
         @if (copied)
         {
             <span class="muted" role="status">Copied to clipboard</span>
@@ -250,6 +253,26 @@ else
 
     private bool copied;
 
+    private IJSObjectReference? downloadModule;
+    private DotNetObjectReference<GroceryList>? selfRef;
+
+    // Wire the "D" download shortcut once the page is interactive. The module + self-reference are cleaned
+    // up in DisposeAsync so the listener doesn't outlive the page.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            downloadModule = await JS.InvokeAsync<IJSObjectReference>("import", "/js/download.js");
+            selfRef = DotNetObjectReference.Create(this);
+            await downloadModule.InvokeVoidAsync("registerShortcut", selfRef, "d");
+        }
+        catch (JSDisconnectedException) { /* circuit gone before wiring — nothing to clean up yet */ }
+    }
+
+    [JSInvokable]
+    public Task OnDownloadShortcut() => DownloadList();
+
     private async Task CopyList()
     {
         await JS.InvokeVoidAsync("navigator.clipboard.writeText", BuildListText());
@@ -257,6 +280,27 @@ else
     }
 
     private async Task PrintList() => await JS.InvokeVoidAsync("window.print");
+
+    private async Task DownloadList()
+    {
+        downloadModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "/js/download.js");
+        var name = $"grocery-list-{DateOnly.FromDateTime(DateTime.Today):yyyy-MM-dd}.txt";
+        await downloadModule.InvokeVoidAsync("downloadText", name, BuildListText());
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (downloadModule is not null)
+        {
+            try
+            {
+                await downloadModule.InvokeVoidAsync("unregister");
+                await downloadModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException) { /* circuit already gone */ }
+        }
+        selfRef?.Dispose();
+    }
 
     private string BuildListText()
     {

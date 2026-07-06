@@ -275,6 +275,27 @@ app.MapGet("/api/data/export", async (UserDataService data, CancellationToken ct
     return Results.File(json, "application/json", $"shelfaware-data-{DateTime.Now:yyyy-MM-dd}.json");
 });
 
+// PWA manifest — makes the app installable ("Add to home screen"). Served explicitly so the content type
+// is right regardless of static-file MIME config; it loads under the same-origin CSP (manifest-src falls
+// back to default-src 'self'). No service worker: this is a server-rendered app, so there's no offline mode.
+app.MapGet("/manifest.webmanifest", () => Results.Content("""
+{
+  "name": "Shelf Aware",
+  "short_name": "ShelfAware",
+  "description": "Know what you're running low on before you run out.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f7f9",
+  "theme_color": "#2563eb",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
+""", "application/manifest+json"));
+
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
