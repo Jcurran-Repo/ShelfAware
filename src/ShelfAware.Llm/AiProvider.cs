@@ -6,4 +6,10 @@ public enum AiProvider
 {
     Anthropic,
     OpenAI,
+
+    /// <summary>Any OpenAI-compatible endpoint at a custom base URL — a locally run model (Ollama, LM Studio,
+    /// llama.cpp, vLLM) or a self-hosted gateway. The "run it fully local, zero token cost" path. On a hosted
+    /// deploy a browser-supplied base URL is honored ONLY when the server sets <c>Llm:AllowCustomEndpoint</c>,
+    /// so a visitor can't point the server at an arbitrary host (no SSRF).</summary>
+    OpenAICompatible,
 }

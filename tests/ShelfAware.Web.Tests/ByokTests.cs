@@ -56,7 +56,7 @@ public class ByokTests
         var client = new ByokChatClient(settings, factory);
 
         await client.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")]);
-        Assert.Equal((AiProvider.Anthropic, "k1", "m1"), Assert.Single(factory.Calls));
+        Assert.Equal((AiProvider.Anthropic, "k1", "m1", (string?)null), Assert.Single(factory.Calls));
 
         // Same settings → the cached client is reused, no rebuild.
         await client.GetResponseAsync([new ChatMessage(ChatRole.User, "again")]);
@@ -66,7 +66,37 @@ public class ByokTests
         settings.Apply(AiProvider.OpenAI, "k2", null, "m2");
         await client.GetResponseAsync([new ChatMessage(ChatRole.User, "third")]);
         Assert.Equal(2, factory.Calls.Count);
-        Assert.Equal((AiProvider.OpenAI, "k2", "m2"), factory.Calls[1]);
+        Assert.Equal((AiProvider.OpenAI, "k2", "m2", (string?)null), factory.Calls[1]);
+    }
+
+    [Fact]
+    public void A_browser_base_url_is_ignored_unless_the_server_allows_custom_endpoints()
+    {
+        // Public demo (default): custom endpoints off — a visitor's base URL must NOT take effect (no SSRF).
+        var locked = Settings();
+        locked.Apply(AiProvider.OpenAICompatible, "local", null, "llama3.1", "http://evil.internal/v1");
+        Assert.Null(locked.BaseUrl);
+
+        // Self-host opts in — now the base URL is honored.
+        var open = new CircuitAiSettings(Options.Create(
+            new LlmOptions { ApiKey = "dev-key", AllowCustomEndpoint = true }));
+        open.Apply(AiProvider.OpenAICompatible, "local", null, "llama3.1", "http://localhost:11434/v1");
+        Assert.Equal("http://localhost:11434/v1", open.BaseUrl);
+    }
+
+    [Fact]
+    public async Task Delegating_client_threads_the_base_url_for_a_local_provider()
+    {
+        var settings = new CircuitAiSettings(Options.Create(
+            new LlmOptions { ApiKey = "dev-key", ChatModel = "c", AllowCustomEndpoint = true }));
+        settings.Apply(AiProvider.OpenAICompatible, "local", null, "llama3.1", "http://localhost:11434/v1");
+        var factory = new RecordingFactory();
+        var client = new ByokChatClient(settings, factory);
+
+        await client.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")]);
+
+        Assert.Equal((AiProvider.OpenAICompatible, "local", "llama3.1", "http://localhost:11434/v1"),
+            Assert.Single(factory.Calls));
     }
 
     [Fact]
@@ -79,13 +109,13 @@ public class ByokTests
 
     private sealed class RecordingFactory : IChatClientFactory
     {
-        public List<(AiProvider Provider, string Key, string Model)> Calls { get; } = [];
+        public List<(AiProvider Provider, string Key, string Model, string? BaseUrl)> Calls { get; } = [];
 
-        public IChatClient Create(AiProvider provider, string apiKey, string model)
+        public IChatClient Create(AiProvider provider, string apiKey, string model, string? baseUrl = null)
         {
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new InvalidOperationException($"No API key configured for {provider}.");
-            Calls.Add((provider, apiKey, model));
+            Calls.Add((provider, apiKey, model, baseUrl));
             return new StubChatClient();
         }
     }

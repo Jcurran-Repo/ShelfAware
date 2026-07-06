@@ -15,6 +15,8 @@ public sealed class CircuitAiSettings
     private readonly string _fallbackKey;
     private readonly string _fallbackExtractionModel;
     private readonly string _fallbackChatModel;
+    private readonly string? _fallbackBaseUrl;
+    private readonly bool _allowCustomEndpoint;
 
     public CircuitAiSettings(IOptions<LlmOptions> fallback)
     {
@@ -23,6 +25,8 @@ public sealed class CircuitAiSettings
         _fallbackKey = o.ApiKey;
         _fallbackExtractionModel = o.ExtractionModel;
         _fallbackChatModel = o.ChatModel;
+        _fallbackBaseUrl = o.BaseUrl;
+        _allowCustomEndpoint = o.AllowCustomEndpoint;
         Reset();
     }
 
@@ -31,6 +35,9 @@ public sealed class CircuitAiSettings
     public string ExtractionModel { get; private set; } = "";
     public string ChatModel { get; private set; } = "";
 
+    /// <summary>Base URL for an OpenAI-compatible provider (local model / self-hosted gateway), or null.</summary>
+    public string? BaseUrl { get; private set; }
+
     /// <summary>True once the visitor's browser settings have been applied (vs the dev/config fallback).</summary>
     public bool FromBrowser { get; private set; }
 
@@ -38,12 +45,18 @@ public sealed class CircuitAiSettings
     public bool HasKey => !string.IsNullOrWhiteSpace(ApiKey);
 
     /// <summary>Overlay the visitor's own settings (from their browser). Blank models keep the defaults.</summary>
-    public void Apply(AiProvider provider, string apiKey, string? extractionModel, string? chatModel)
+    public void Apply(AiProvider provider, string apiKey, string? extractionModel, string? chatModel, string? baseUrl = null)
     {
         Provider = provider;
         ApiKey = apiKey ?? "";
         if (!string.IsNullOrWhiteSpace(extractionModel)) ExtractionModel = extractionModel;
         if (!string.IsNullOrWhiteSpace(chatModel)) ChatModel = chatModel;
+        // The SSRF guard: a browser-supplied base URL is honored ONLY if the server opted in (self-host).
+        // On the public demo _allowCustomEndpoint is false, so the base URL stays whatever the server
+        // configured (usually none) and a visitor can never steer the server's requests at an arbitrary host.
+        BaseUrl = _allowCustomEndpoint
+            ? (string.IsNullOrWhiteSpace(baseUrl) ? _fallbackBaseUrl : baseUrl)
+            : _fallbackBaseUrl;
         FromBrowser = true;
     }
 
@@ -55,6 +68,7 @@ public sealed class CircuitAiSettings
         ApiKey = _fallbackKey;
         ExtractionModel = _fallbackExtractionModel;
         ChatModel = _fallbackChatModel;
+        BaseUrl = _fallbackBaseUrl;
         FromBrowser = false;
     }
 }

@@ -58,6 +58,7 @@ export function resolveActive() {
         apiKey: p.apiKey ?? '',
         extractionModel: p.extractionModel ?? '',
         chatModel: p.chatModel ?? '',
+        baseUrl: p.baseUrl ?? '', // OpenAI-compatible/local only; honored server-side per AllowCustomEndpoint
     };
 }
 

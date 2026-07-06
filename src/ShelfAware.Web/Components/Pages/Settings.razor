@@ -36,14 +36,27 @@
                 <select @bind="provider" @bind:after="OnProviderChanged" aria-label="AI provider">
                     <option value="Anthropic">Anthropic (Claude)</option>
                     <option value="OpenAI">OpenAI (GPT)</option>
+                    <option value="OpenAICompatible">Local / custom (OpenAI-compatible)</option>
                 </select>
             </label>
 
             <label class="field">
                 <span>@ProviderLabel API key</span>
                 <input type="password" @bind="apiKey" autocomplete="off" spellcheck="false"
-                       placeholder="Paste your @ProviderLabel key" aria-label="@ProviderLabel API key" />
+                       placeholder="@(IsLocal ? "Often unused — put anything, e.g. local" : $"Paste your {ProviderLabel} key")"
+                       aria-label="@ProviderLabel API key" />
             </label>
+
+            @if (IsLocal)
+            {
+                <label class="field">
+                    <span>Base URL <span class="muted">— your local server's OpenAI endpoint</span></span>
+                    <input @bind="baseUrl" autocomplete="off" spellcheck="false"
+                           placeholder="http://localhost:11434/v1" aria-label="OpenAI-compatible base URL" />
+                </label>
+                <p class="muted">Runs a model on your own machine (Ollama, LM Studio, llama.cpp, …) — zero token
+                    cost. Available when you self-host ShelfAware.</p>
+            }
 
             <div class="model-fields">
                 <label class="field">
@@ -206,6 +219,7 @@
     private bool aiLoaded;
     private string provider = "Anthropic";
     private string apiKey = "";
+    private string baseUrl = "";
     private string extractionModel = "";
     private string chatModel = "";
     private string elKey = "";
@@ -221,6 +235,7 @@
     private sealed class ProviderConfig
     {
         public string ApiKey { get; set; } = "";
+        public string BaseUrl { get; set; } = "";
         public string ExtractionModel { get; set; } = "";
         public string ChatModel { get; set; } = "";
     }
@@ -228,12 +243,24 @@
     // Curated defaults, but the fields are editable (datalist) so a stale list never boxes you in.
     private static readonly string[] AnthropicModels = ["claude-haiku-4-5-20251001", "claude-sonnet-5", "claude-opus-4-8"];
     private static readonly string[] OpenAiModels = ["gpt-4o-mini", "gpt-4o"];
-    private static string[] ModelsFor(string p) => string.Equals(p, "OpenAI", StringComparison.OrdinalIgnoreCase) ? OpenAiModels : AnthropicModels;
-    private string ProviderLabel => string.Equals(provider, "OpenAI", StringComparison.OrdinalIgnoreCase) ? "OpenAI" : "Anthropic";
+    private static readonly string[] LocalModels = ["llama3.1", "qwen2.5", "mistral", "phi3"];
+    private static string[] ModelsFor(string p) => p switch
+    {
+        _ when string.Equals(p, "OpenAI", StringComparison.OrdinalIgnoreCase) => OpenAiModels,
+        _ when string.Equals(p, "OpenAICompatible", StringComparison.OrdinalIgnoreCase) => LocalModels,
+        _ => AnthropicModels,
+    };
+    private bool IsLocal => string.Equals(provider, "OpenAICompatible", StringComparison.OrdinalIgnoreCase);
+    private string ProviderLabel => provider switch
+    {
+        _ when string.Equals(provider, "OpenAI", StringComparison.OrdinalIgnoreCase) => "OpenAI",
+        _ when IsLocal => "Local",
+        _ => "Anthropic",
+    };
 
     // localStorage/interop shapes (mirror wwwroot/js/ai-settings.js).
     private sealed record StoredAi(string Provider, Dictionary<string, StoredProvider>? Providers, StoredEleven? ElevenLabs);
-    private sealed record StoredProvider(string? ApiKey, string? ExtractionModel, string? ChatModel);
+    private sealed record StoredProvider(string? ApiKey, string? ExtractionModel, string? ChatModel, string? BaseUrl);
     private sealed record StoredEleven(string? ApiKey, string? AgentId);
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -253,6 +280,7 @@
                         providerConfigs[name] = new ProviderConfig
                         {
                             ApiKey = cfg.ApiKey ?? "",
+                            BaseUrl = cfg.BaseUrl ?? "",
                             ExtractionModel = cfg.ExtractionModel ?? "",
                             ChatModel = cfg.ChatModel ?? "",
                         };
@@ -278,6 +306,7 @@
     {
         var cfg = providerConfigs.GetValueOrDefault(provider) ?? new ProviderConfig();
         apiKey = cfg.ApiKey;
+        baseUrl = cfg.BaseUrl;
         extractionModel = string.IsNullOrWhiteSpace(cfg.ExtractionModel) ? ModelsFor(provider)[0] : cfg.ExtractionModel;
         chatModel = string.IsNullOrWhiteSpace(cfg.ChatModel) ? ModelsFor(provider)[0] : cfg.ChatModel;
     }
@@ -293,6 +322,7 @@
             providerConfigs[provider] = new ProviderConfig
             {
                 ApiKey = apiKey.Trim(),
+                BaseUrl = baseUrl.Trim(),
                 ExtractionModel = extractionModel.Trim(),
                 ChatModel = chatModel.Trim(),
             };
@@ -300,7 +330,7 @@
                 provider,
                 providerConfigs.ToDictionary(
                     kv => kv.Key,
-                    kv => new StoredProvider(kv.Value.ApiKey, kv.Value.ExtractionModel, kv.Value.ChatModel),
+                    kv => new StoredProvider(kv.Value.ApiKey, kv.Value.ExtractionModel, kv.Value.ChatModel, kv.Value.BaseUrl),
                     StringComparer.OrdinalIgnoreCase),
                 new StoredEleven(elKey.Trim(), elAgentId.Trim()));
 
@@ -309,7 +339,7 @@
 
             // Apply to THIS circuit immediately so the assistant works without a reload.
             var p = Enum.TryParse<AiProvider>(provider, ignoreCase: true, out var parsed) ? parsed : AiProvider.Anthropic;
-            AiSettings.Apply(p, apiKey.Trim(), extractionModel.Trim(), chatModel.Trim());
+            AiSettings.Apply(p, apiKey.Trim(), extractionModel.Trim(), chatModel.Trim(), baseUrl.Trim());
             keyNote = string.IsNullOrWhiteSpace(apiKey)
                 ? "Saved. Add a key to start using the assistant."
                 : sessionOnly ? "Saved for this session — cleared when you close the tab." : "Saved in this browser.";

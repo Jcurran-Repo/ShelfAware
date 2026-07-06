@@ -14,17 +14,17 @@ namespace ShelfAware.Web.Services;
 public sealed class ByokChatClient(CircuitAiSettings settings, IChatClientFactory factory) : IChatClient
 {
     private IChatClient? _inner;
-    private (AiProvider Provider, string Key, string Model) _builtFor;
+    private (AiProvider Provider, string Key, string Model, string? BaseUrl) _builtFor;
 
     private IChatClient Inner()
     {
-        var current = (settings.Provider, settings.ApiKey, settings.ChatModel);
+        var current = (settings.Provider, settings.ApiKey, settings.ChatModel, settings.BaseUrl);
         if (_inner is null || _builtFor != current)
         {
             _inner?.Dispose();
             // Throws a friendly "add a key in Settings" if none is set — surfaced by the AI service's
             // own try/catch as a normal error, not a crash.
-            _inner = factory.Create(settings.Provider, settings.ApiKey, settings.ChatModel);
+            _inner = factory.Create(settings.Provider, settings.ApiKey, settings.ChatModel, settings.BaseUrl);
             _builtFor = current;
         }
         return _inner;

@@ -28,4 +28,19 @@ public class ChatClientFactoryTests
     {
         Assert.Throws<InvalidOperationException>(() => _factory.Create(AiProvider.Anthropic, key, "m"));
     }
+
+    [Fact]
+    public void A_local_provider_requires_a_valid_base_url()
+    {
+        // A locally run model (Ollama, LM Studio, …) needs an endpoint; a missing or malformed one is rejected.
+        Assert.Throws<InvalidOperationException>(() => _factory.Create(AiProvider.OpenAICompatible, "local", "llama3.1"));
+        Assert.Throws<InvalidOperationException>(() => _factory.Create(AiProvider.OpenAICompatible, "local", "llama3.1", "not-a-url"));
+    }
+
+    [Fact]
+    public void A_local_provider_builds_a_client_from_a_base_url()
+    {
+        var client = _factory.Create(AiProvider.OpenAICompatible, "local", "llama3.1", "http://localhost:11434/v1");
+        Assert.NotNull(client);
+    }
 }

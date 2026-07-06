@@ -21,7 +21,7 @@
             if (stored is { } s && !string.IsNullOrWhiteSpace(s.ApiKey))
             {
                 var provider = Enum.TryParse<AiProvider>(s.Provider, ignoreCase: true, out var p) ? p : AiProvider.Anthropic;
-                Settings.Apply(provider, s.ApiKey, s.ExtractionModel, s.ChatModel);
+                Settings.Apply(provider, s.ApiKey, s.ExtractionModel, s.ChatModel, s.BaseUrl);
             }
 
             // Voice credentials (used server-side, per circuit, to call ElevenLabs). Only override the dev
@@ -41,7 +41,7 @@
         }
     }
 
-    private sealed record StoredSettings(string Provider, string ApiKey, string? ExtractionModel, string? ChatModel);
+    private sealed record StoredSettings(string Provider, string ApiKey, string? ExtractionModel, string? ChatModel, string? BaseUrl);
     private sealed record VoiceCreds(string ApiKey, string AgentId);
 
     public async ValueTask DisposeAsync()
