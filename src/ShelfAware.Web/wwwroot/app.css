@@ -1090,11 +1090,19 @@ button.tag-chip {
 }
 
 /* Products grid row actions: a tiny "Out" button (always-available mark-out) + delete. */
+/* Per-row action cell (Products grid, Grocery List). Must stay a real table-cell — display:flex on a
+   <td> pulls it out of table layout, so the cell stops stretching to the row height and its bottom
+   border floats mid-row instead of joining the grid line. Space buttons with margins instead. */
 .row-actions {
-    display: flex;
-    gap: 0.3rem;
-    align-items: center;
     white-space: nowrap;
+}
+
+.row-actions > * {
+    vertical-align: middle;
+}
+
+.row-actions > * + * {
+    margin-left: 0.3rem;
 }
 
 .mark-out {
