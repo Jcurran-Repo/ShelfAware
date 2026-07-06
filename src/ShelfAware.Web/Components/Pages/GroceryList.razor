@@ -223,10 +223,10 @@ else
                             @if (canIgnore)
                             {
                                 <td class="row-actions">
-                                    <button type="button" class="ignore-for-now" @onclick="() => IgnoreForNow(e)"
+                                    <button type="button" class="untrack-btn" @onclick="() => Untrack(e)"
                                             disabled="@actionBusy"
                                             title="Don't want @e.Name for a while — stops suggesting it until you buy it again (history kept)"
-                                            aria-label="Ignore @e.Name for now — stop tracking it until it's bought again">Ignore for now</button>
+                                            aria-label="Untrack @e.Name — stop suggesting it until it's bought again">Untrack</button>
                                 </td>
                             }
                         </tr>
@@ -248,11 +248,11 @@ else
     private bool actionBusy;
 
     // "Don't want it for a while" — stops tracking, so the item leaves the list and dashboard until a
-    // purchase brings it back (confirming a receipt with it re-tracks automatically; the Products page
-    // checkbox and the set_tracking voice tool also work). Deliberately NOT a Restocked signal: "I have
-    // some" corrections happen at home before the trip, but skipping an item AT the store means "stop
-    // suggesting it", and a restock-based snooze would just re-nag next cycle. Product + history are kept.
-    private async Task IgnoreForNow(ProductEstimate e)
+    // purchase brings it back (any recorded purchase — receipt confirm or chat/voice — re-tracks
+    // automatically; the Products checkbox and set_tracking tool also work). Deliberately NOT a Restocked
+    // signal: "I have some" corrections happen at home before the trip, but skipping an item AT the store
+    // means "stop suggesting it", and a restock-based snooze would just re-nag next cycle. History is kept.
+    private async Task Untrack(ProductEstimate e)
     {
         if (actionBusy) return;
         actionBusy = true;

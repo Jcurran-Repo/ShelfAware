@@ -125,10 +125,16 @@ internal sealed class FakePantryStore : IPantryStore
         return Task.FromResult(product.Id);
     }
 
-    public Task AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default)
+    public Task<bool> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default)
     {
         Purchases.Add((productId, purchasedAt, quantity));
-        return Task.CompletedTask;
+        // Mirror the real store: a purchase re-tracks an untracked product and reports it.
+        if (Products.FirstOrDefault(p => p.Id == productId) is { IsTracked: false } product)
+        {
+            product.IsTracked = true;
+            return Task.FromResult(true);
+        }
+        return Task.FromResult(false);
     }
 
     public Task RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default)
@@ -177,7 +183,7 @@ internal sealed class ThrowingPantryStore(params Product[] products) : IPantrySt
 {
     public Task<IReadOnlyList<Product>> GetProductsAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<Product>>(products);
-    public Task AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default) =>
+    public Task<bool> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("simulated DB write failure");
     public Task<int> CreateProductAsync(string name, Category category, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default) => throw new NotSupportedException();

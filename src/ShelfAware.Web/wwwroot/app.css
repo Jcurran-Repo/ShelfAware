@@ -1113,23 +1113,24 @@ button.tag-chip {
     background: var(--overdue-bg);
 }
 
-/* Grocery-list row action — "don't want it for a while": untracks until the next purchase, so it's a
-   quiet neutral action (compact sibling of .mark-out), not a green "I'm stocked" statement. */
-.ignore-for-now {
+/* Grocery-list row action — "don't want it for a while": untracks until the next purchase. A quiet
+   neutral chip: borderless with a soft fill (an outline in --line was too faint on dark and read as a
+   broken border), not a green "I'm stocked" statement. */
+.untrack-btn {
     font-size: 0.7rem;
     font-weight: 600;
     color: var(--ink-soft);
-    background: transparent;
-    border: 1px solid var(--line);
+    background: var(--surface-alt);
+    border: none;
     border-radius: 6px;
-    padding: 0.05rem 0.45rem;
+    padding: 0.15rem 0.5rem;
     cursor: pointer;
     line-height: 1.5;
     white-space: nowrap;
 }
 
-.ignore-for-now:hover:not(:disabled) {
-    background: var(--surface-alt);
+.untrack-btn:hover:not(:disabled) {
+    background: var(--line);
     color: var(--ink);
 }
 
@@ -1598,7 +1599,7 @@ tfoot td {
     .list-actions,
     details.everything-else,
     .info-btn,
-    .ignore-for-now {
+    .untrack-btn {
         display: none !important;
     }
 

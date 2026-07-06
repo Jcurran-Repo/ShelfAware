@@ -186,9 +186,10 @@ public class AnthropicPantryChat : IPantryChat
                     return ($"No product matches \"{name}\". Call create_product first if it's new.", true);
                 var date = DateOnly.TryParse(Str("date"), out var d) ? d : DateOnly.FromDateTime(DateTime.Today);
                 var qty = Dec("quantity") is { } q && q > 0 ? q : 1m;
-                await _store.AddPurchaseAsync(product.Id, date, qty, ct);
+                var retracked = await _store.AddPurchaseAsync(product.Id, date, qty, ct);
                 actions.Add($"purchase → {product.Name}");
-                return ($"Logged {qty:0.##} × {product.Name} on {date:yyyy-MM-dd}.", false);
+                return ($"Logged {qty:0.##} × {product.Name} on {date:yyyy-MM-dd}." +
+                    (retracked ? " It was untracked; this purchase resumed tracking — mention that to the user." : ""), false);
             }
 
             case "query_status":

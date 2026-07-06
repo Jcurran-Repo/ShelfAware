@@ -27,9 +27,17 @@ public class EfPantryStore(IDbContextFactory<ShelfAwareDbContext> dbFactory) : I
         return product.Id;
     }
 
-    public async Task AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default)
+    public async Task<bool> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        // Buying an item again ends its "don't want it for a while" (the grocery list's Untrack) —
+        // resume predictions on every purchase path; receipts do the same in ReceiptConfirmationService.
+        var retracked = false;
+        if (await db.Products.FindAsync([productId], cancellationToken) is { IsTracked: false } product)
+        {
+            product.IsTracked = true;
+            retracked = true;
+        }
         db.PurchaseEvents.Add(new PurchaseEvent
         {
             ProductId = productId,
@@ -38,6 +46,7 @@ public class EfPantryStore(IDbContextFactory<ShelfAwareDbContext> dbFactory) : I
             Source = PurchaseSource.Chat,
         });
         await db.SaveChangesAsync(cancellationToken);
+        return retracked;
     }
 
     public async Task RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default)

@@ -126,6 +126,27 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task A_purchase_on_an_untracked_product_resumes_tracking_and_tells_the_model()
+    {
+        // "Bought milk" by voice must end an "ignore for a while" (grocery-list Untrack) exactly like a
+        // receipt confirm does — and the tool result must say so, so the assistant can tell the user.
+        var milk = P(5, "Whole Milk", Category.Dairy);
+        milk.IsTracked = false;
+        var store = new FakePantryStore(milk);
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("add_purchase", ("product_name", "whole milk"))),
+            () => Responses.Text("Logged — and I'm tracking milk again."));
+
+        await Chat(client, store).HandleAsync("bought milk");
+
+        Assert.True(milk.IsTracked);
+        var toolResult = client.ReceivedMessages[1]
+            .Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result?.ToString();
+        Assert.Contains("resumed tracking", toolResult);
+    }
+
+    [Fact]
     public async Task Add_recipe_to_list_adds_only_missing_mains_and_never_signals()
     {
         var store = new FakePantryStore(P(1, "Ribeye Steak"));
