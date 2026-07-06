@@ -1113,13 +1113,14 @@ button.tag-chip {
     background: var(--overdue-bg);
 }
 
-/* Grocery-list row action — "actually stocked, skip it this cycle": the green sibling of .mark-out. */
-.ignore-once {
+/* Grocery-list row action — "don't want it for a while": untracks until the next purchase, so it's a
+   quiet neutral action (compact sibling of .mark-out), not a green "I'm stocked" statement. */
+.ignore-for-now {
     font-size: 0.7rem;
     font-weight: 600;
-    color: var(--stocked-ink);
+    color: var(--ink-soft);
     background: transparent;
-    border: 1px solid var(--stocked-line);
+    border: 1px solid var(--line);
     border-radius: 6px;
     padding: 0.05rem 0.45rem;
     cursor: pointer;
@@ -1127,8 +1128,9 @@ button.tag-chip {
     white-space: nowrap;
 }
 
-.ignore-once:hover:not(:disabled) {
-    background: var(--stocked-bg);
+.ignore-for-now:hover:not(:disabled) {
+    background: var(--surface-alt);
+    color: var(--ink);
 }
 
 /* Grocery-list item name → product detail. */
@@ -1596,7 +1598,7 @@ tfoot td {
     .list-actions,
     details.everything-else,
     .info-btn,
-    .ignore-once {
+    .ignore-for-now {
         display: none !important;
     }
 

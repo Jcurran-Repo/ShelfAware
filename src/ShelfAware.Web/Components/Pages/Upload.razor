@@ -181,6 +181,10 @@ else if (phase == Phase.Review && receipt is not null)
                             {
                                 <span role="img" aria-label="Matched a previous receipt line from this merchant" title="Matched a previous receipt line from this merchant">🔗</span>
                             }
+                            @if (line.ProductId > 0 && products.FirstOrDefault(p => p.Id == line.ProductId) is { IsTracked: false })
+                            {
+                                <div class="muted small" role="status">Currently ignored — this purchase starts tracking it again.</div>
+                            }
                         </td>
                         <td><button class="secondary" @onclick="() => reviewLines.Remove(line)" aria-label="Remove line @line.RawText"><span aria-hidden="true">✕</span></button></td>
                     </tr>
@@ -552,7 +556,8 @@ else if (phase == Phase.Done)
                 ? "These purchases were already recorded."
                 : $"Recorded {outcome.Purchases} purchases" +
                   (outcome.NewProducts > 0 ? $" ({outcome.NewProducts} new product{(outcome.NewProducts == 1 ? "" : "s")})" : "") +
-                  $" from {(merchant.Length > 0 ? merchant : "unknown merchant")} on {reviewDate:yyyy-MM-dd}.";
+                  $" from {(merchant.Length > 0 ? merchant : "unknown merchant")} on {reviewDate:yyyy-MM-dd}." +
+                  (outcome.Retracked > 0 ? $" Started tracking {outcome.Retracked} previously ignored item{(outcome.Retracked == 1 ? "" : "s")} again." : "");
             await LoadPendingAsync(); // a queued receipt just left the pending list
             phase = Phase.Done;
         }

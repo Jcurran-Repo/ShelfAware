@@ -98,6 +98,33 @@ public class ReceiptConfirmationServiceTests : IDisposable
         Assert.Equal(1, await db.Products.CountAsync());
     }
 
+    // --- retracking: a purchase ends "don't want it for a while" ---------------
+
+    [Fact]
+    public async Task Confirming_a_purchase_retracks_an_ignored_product()
+    {
+        // The grocery list's "Ignore for now" untracks a product; buying it again is the signal
+        // to resume predictions — on any confirm path, without the user having to remember.
+        int cocoaId;
+        await using (var db = _db.CreateDbContext())
+        {
+            var cocoa = new Product { Name = "Cocoa Powder", IsTracked = false };
+            db.Products.Add(cocoa);
+            await db.SaveChangesAsync();
+            cocoaId = cocoa.Id;
+        }
+        var milk = await SeedProduct("Whole Milk"); // stays tracked — must not count as retracked
+        var receipt = await SeedPending("Walmart", L("COCOA PWDR", "Cocoa Powder"), L("GV WHL MLK", "Whole Milk"));
+
+        var outcome = await _service.ConfirmAsync(receipt.Id, new DateOnly(2026, 7, 1),
+            [C("COCOA PWDR", "Cocoa Powder", cocoaId), C("GV WHL MLK", "Whole Milk", milk.Id)],
+            writeAliases: false);
+
+        Assert.Equal(1, outcome.Retracked);
+        await using var read = _db.CreateDbContext();
+        Assert.True((await read.Products.SingleAsync(p => p.Id == cocoaId)).IsTracked);
+    }
+
     // --- alias trust boundary -------------------------------------------------
 
     [Fact]

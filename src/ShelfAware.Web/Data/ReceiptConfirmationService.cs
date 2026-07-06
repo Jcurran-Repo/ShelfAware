@@ -18,7 +18,9 @@ public class ReceiptConfirmationService(IDbContextFactory<ShelfAwareDbContext> d
         string RawText, string NormalizedName, string? Brand, string? Size,
         decimal Quantity, Category Category, IReadOnlyList<string> Tags, int ProductId);
 
-    public record ConfirmOutcome(bool AlreadyConfirmed, int Purchases, int NewProducts);
+    /// <param name="Retracked">How many untracked products this receipt turned back on — buying an
+    /// item again ends its "don't want it for a while" (the grocery list's Ignore-for-now untracks).</param>
+    public record ConfirmOutcome(bool AlreadyConfirmed, int Purchases, int NewProducts, int Retracked = 0);
 
     /// <summary>
     /// Record the reviewed lines as purchases and mark the receipt confirmed — one SaveChanges, one
@@ -64,6 +66,7 @@ public class ReceiptConfirmationService(IDbContextFactory<ShelfAwareDbContext> d
         // One trip can list a single NEW item on two lines — map both to one new product, keyed by
         // item name; each line still records its own purchase.
         var createdByName = new Dictionary<string, Product>(StringComparer.OrdinalIgnoreCase);
+        var retracked = new HashSet<Product>(); // distinct — two lines of one item re-track it once
         int purchases = 0, created = 0;
 
         foreach (var line in lines)
@@ -90,6 +93,15 @@ public class ReceiptConfirmationService(IDbContextFactory<ShelfAwareDbContext> d
                 products.Add(product); // later lines in this receipt can resolve to it
                 createdByName[name] = product;
                 created++;
+            }
+
+            // Buying an item again ends its "don't want it for a while": the grocery list's
+            // Ignore-for-now untracks a product, and a real purchase is the signal to resume
+            // predictions. Applies on every confirm path (manual review and auto-import alike).
+            if (!product.IsTracked)
+            {
+                product.IsTracked = true;
+                retracked.Add(product);
             }
 
             db.PurchaseEvents.Add(new PurchaseEvent
@@ -136,7 +148,7 @@ public class ReceiptConfirmationService(IDbContextFactory<ShelfAwareDbContext> d
 
         receipt.Status = ReceiptStatus.Confirmed;
         await db.SaveChangesAsync(cancellationToken);
-        return new(AlreadyConfirmed: false, purchases, created);
+        return new(AlreadyConfirmed: false, purchases, created, retracked.Count);
     }
 
     // Canonicalize each tag against the global vocabulary (exact match → near-duplicate → genuinely
