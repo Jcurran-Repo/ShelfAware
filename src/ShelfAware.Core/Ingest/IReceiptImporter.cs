@@ -7,8 +7,13 @@ namespace ShelfAware.Core.Ingest;
 /// </summary>
 public interface IReceiptImporter
 {
-    Task<ImportSummary> ImportNewAsync(CancellationToken cancellationToken = default);
+    Task<ImportSummary> ImportNewAsync(
+        IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default);
 }
+
+/// <summary>Reported once per receipt as a scan works through the inbox, so a UI can show live progress
+/// ("Reading receipt 2 of 5…") during a multi-receipt import instead of a blank spinner.</summary>
+public record ImportProgress(int Current, int Total, string CurrentFile);
 
 public record ImportSummary(bool Configured, int Imported, int Purchases, int NewProducts, int AwaitingReview, int Failed)
 {

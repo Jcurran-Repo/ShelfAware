@@ -133,6 +133,10 @@
     <div class="review-actions">
         <button @onclick="ScanNow" disabled="@(scanning || !configured)">@(scanning ? "Scanning…" : "Scan now")</button>
     </div>
+    @if (scanning && scanProgress is not null)
+    {
+        <p class="muted" role="status" aria-live="polite">@scanProgress</p>
+    }
     @if (scanResult is not null)
     {
         <p class="chat-reply" role="status">@scanResult</p>
@@ -149,6 +153,7 @@
     private bool scanning;
     private string? savedNote;
     private string? scanResult;
+    private string? scanProgress;
 
     // ---- BYOK: provider, keys, and models, held only in the visitor's browser ----
     private bool aiLoaded;
@@ -344,15 +349,27 @@
     {
         scanning = true;
         scanResult = null;
+        scanProgress = null;
         try
         {
-            var summary = await Importer.ImportNewAsync();
+            // Blazor Server: Progress<T> marshals each report back onto the circuit's sync context, so the
+            // live per-receipt line updates as the scan works through the folder rather than jumping from a
+            // blank spinner straight to the summary.
+            var progress = new Progress<ImportProgress>(p =>
+            {
+                scanProgress = p.Total > 1
+                    ? $"Reading {p.CurrentFile} — {p.Current} of {p.Total}…"
+                    : $"Reading {p.CurrentFile}…";
+                InvokeAsync(StateHasChanged);
+            });
+            var summary = await Importer.ImportNewAsync(progress);
             scanResult = summary.Describe();
             await RefreshStatus();
         }
         finally
         {
             scanning = false;
+            scanProgress = null;
         }
     }
 }

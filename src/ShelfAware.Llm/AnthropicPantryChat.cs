@@ -240,7 +240,7 @@ public class AnthropicPantryChat : IPantryChat
             {
                 if (_importer is null)
                     return ("Receipt import isn't set up.", true);
-                var summary = await _importer.ImportNewAsync(ct);
+                var summary = await _importer.ImportNewAsync(cancellationToken: ct);
                 if (summary.Imported > 0) actions.Add($"imported {summary.Imported} receipt(s)");
                 return (summary.Describe(), false);
             }

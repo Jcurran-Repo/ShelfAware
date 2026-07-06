@@ -42,7 +42,8 @@ internal sealed class FakeReceiptImporter(ImportSummary summary) : IReceiptImpor
 {
     public int Calls { get; private set; }
 
-    public Task<ImportSummary> ImportNewAsync(CancellationToken cancellationToken = default)
+    public Task<ImportSummary> ImportNewAsync(
+        IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         Calls++;
         return Task.FromResult(summary);

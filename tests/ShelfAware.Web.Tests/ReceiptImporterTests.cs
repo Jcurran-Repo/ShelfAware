@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Extraction;
+using ShelfAware.Core.Ingest;
 using ShelfAware.Core.Settings;
 using ShelfAware.Web.Data;
 using ShelfAware.Web.Ingest;
@@ -106,6 +107,31 @@ public class ReceiptImporterTests : IDisposable
         var summary = await Importer(extractor).ImportNewAsync();
 
         Assert.Equal(1, summary.AwaitingReview);
+    }
+
+    [Fact]
+    public async Task Progress_is_reported_once_per_receipt_as_a_scan_runs()
+    {
+        _inbox.Files["a.jpg"] = [1];
+        _inbox.Files["b.jpg"] = [2];
+        _inbox.Files["c.jpg"] = [3];
+        var extractor = new FakeExtractor(Extracted(Line("X", "Widget", 0.95m)));
+
+        var progress = new CapturingProgress<ImportProgress>();
+        await Importer(extractor).ImportNewAsync(progress);
+
+        // One report per file, counting up, with the batch size fixed — what the Settings scan renders live.
+        Assert.Equal(3, progress.Reports.Count);
+        Assert.Equal([1, 2, 3], progress.Reports.Select(r => r.Current));
+        Assert.All(progress.Reports, r => Assert.Equal(3, r.Total));
+    }
+
+    // Synchronous IProgress so reports land in order on the calling thread (a real Progress<T> would post
+    // to the thread pool here — there's no sync context in tests — and race the assertions).
+    private sealed class CapturingProgress<T> : IProgress<T>
+    {
+        public List<T> Reports { get; } = [];
+        public void Report(T value) => Reports.Add(value);
     }
 
     // --- explicit modes ----------------------------------------------------------

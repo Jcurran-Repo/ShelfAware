@@ -34,14 +34,15 @@ public class ReceiptImporter(
     // other saves, and import the same file twice.
     private static readonly SemaphoreSlim ScanLock = new(1, 1);
 
-    public async Task<ImportSummary> ImportNewAsync(CancellationToken cancellationToken = default)
+    public async Task<ImportSummary> ImportNewAsync(
+        IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         if (!await inbox.IsConfiguredAsync(cancellationToken)) return ImportSummary.NotConfigured;
 
         await ScanLock.WaitAsync(cancellationToken);
         try
         {
-            return await ScanAsync(cancellationToken);
+            return await ScanAsync(progress, cancellationToken);
         }
         finally
         {
@@ -49,7 +50,7 @@ public class ReceiptImporter(
         }
     }
 
-    private async Task<ImportSummary> ScanAsync(CancellationToken cancellationToken)
+    private async Task<ImportSummary> ScanAsync(IProgress<ImportProgress>? progress, CancellationToken cancellationToken)
     {
         var items = await inbox.ListAsync(cancellationToken);
         HashSet<string> alreadyImported;
@@ -71,9 +72,11 @@ public class ReceiptImporter(
             newItems.Count, items.Count, mode);
 
         int imported = 0, purchases = 0, newProducts = 0, awaitingReview = 0, failed = 0;
+        var index = 0;
         foreach (var item in newItems)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            progress?.Report(new ImportProgress(++index, newItems.Count, item.Name));
             try
             {
                 var (p, np, queued) = await ImportOneAsync(item, mode, cancellationToken);
