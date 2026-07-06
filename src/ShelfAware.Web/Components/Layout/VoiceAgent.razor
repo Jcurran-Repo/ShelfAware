@@ -187,9 +187,15 @@
                 var result = await Chat.HandleAsync(heard.Text, history, Coordinator.ScreenContext);
                 history.Add(new ChatTurn(heard.Text, result.Reply));
                 pendingUser = null;
-                // A data change (mark out, add purchase) with no navigation: refresh whatever page is on
-                // screen. On a navigation the destination page loads fresh, so no ping is needed.
-                if (result.Success && result.NavigateTo is null)
+
+                // Reroute BEFORE speaking, so a "taking you there" confirmation lands as the destination
+                // comes up rather than while you're still on the old page (the TTS synth round-trip covers
+                // the render). Exception: a hand-off (read_recipe) keeps the old order so its short
+                // confirmation finishes before we move to the reader that makes its own audio. A
+                // non-navigating data change just refreshes whatever page is on screen.
+                if (result.Success && result.NavigateTo is { } navUrl && !result.HandsOff)
+                    Nav.NavigateTo(navUrl);
+                else if (result.Success && result.NavigateTo is null)
                     await Coordinator.NotifyPantryChangedAsync();
                 await InvokeAsync(StateHasChanged);
                 if (!active) break;
@@ -201,12 +207,11 @@
                 if (speech.Success)
                     await _module.InvokeVoidAsync("play", Convert.ToBase64String(speech.Audio), speech.MediaType);
 
-                if (result.Success && result.NavigateTo is { } url)
+                // Hand-off (read_recipe): move to the reader now and stand down so we don't echo its audio.
+                if (result.Success && result.HandsOff && result.NavigateTo is { } handoffUrl)
                 {
-                    Nav.NavigateTo(url);
-                    // Hand-off (read_recipe): the reader speaks the recipe, so we stand down to avoid
-                    // echoing it. Plain navigation (open_page): keep listening on the new page to chain.
-                    if (result.HandsOff) break;
+                    Nav.NavigateTo(handoffUrl);
+                    break;
                 }
             }
         }
