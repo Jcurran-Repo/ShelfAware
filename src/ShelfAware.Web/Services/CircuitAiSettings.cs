@@ -27,8 +27,13 @@ public sealed class CircuitAiSettings
         _fallbackChatModel = o.ChatModel;
         _fallbackBaseUrl = o.BaseUrl;
         _allowCustomEndpoint = o.AllowCustomEndpoint;
+        Managed = o.IsManaged;
         Reset();
     }
+
+    /// <summary>Managed-key deployment: the host's server config is authoritative, the browser can't
+    /// override it, and the Settings key panel is hidden (tailnet / Azure). See <see cref="LlmOptions.KeyMode"/>.</summary>
+    public bool Managed { get; }
 
     public AiProvider Provider { get; private set; }
     public string ApiKey { get; private set; } = "";
@@ -44,9 +49,12 @@ public sealed class CircuitAiSettings
     /// <summary>Whether an AI call can be attempted (a key is present for the chosen provider).</summary>
     public bool HasKey => !string.IsNullOrWhiteSpace(ApiKey);
 
-    /// <summary>Overlay the visitor's own settings (from their browser). Blank models keep the defaults.</summary>
+    /// <summary>Overlay the visitor's own settings (from their browser). Blank models keep the defaults.
+    /// On a managed deployment this is a NO-OP — the host's keys are authoritative, so a stale browser value
+    /// (or a devtools injection) can never take over. Hiding the panel is only cosmetic; this is the real guard.</summary>
     public void Apply(AiProvider provider, string apiKey, string? extractionModel, string? chatModel, string? baseUrl = null)
     {
+        if (Managed) return;
         Provider = provider;
         ApiKey = apiKey ?? "";
         if (!string.IsNullOrWhiteSpace(extractionModel)) ExtractionModel = extractionModel;

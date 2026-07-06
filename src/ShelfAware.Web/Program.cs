@@ -244,10 +244,12 @@ app.MapStaticAssets();
 // key is used only for this call and is never stored or logged; dev/self-host falls back to server config.
 // Rate-limited per IP so nobody can spam a visitor's key through it. A custom header is also a mild CSRF
 // guard (cross-site forms can't set one).
-app.MapGet("/api/cookalong/signed-url", async (HttpContext ctx, IHttpClientFactory httpFactory, IOptions<ElevenLabsOptions> opts, CancellationToken ct) =>
+app.MapGet("/api/cookalong/signed-url", async (HttpContext ctx, IHttpClientFactory httpFactory, IOptions<ElevenLabsOptions> opts, IOptions<LlmOptions> deployment, CancellationToken ct) =>
 {
-    var apiKey = ctx.Request.Headers["X-EL-Key"].ToString();
-    var agentId = ctx.Request.Headers["X-EL-Agent"].ToString();
+    // Managed deployment: the host's voice key is authoritative — ignore any header a browser sends.
+    var managed = deployment.Value.IsManaged;
+    var apiKey = managed ? opts.Value.ApiKey : ctx.Request.Headers["X-EL-Key"].ToString();
+    var agentId = managed ? opts.Value.AgentId : ctx.Request.Headers["X-EL-Agent"].ToString();
     if (string.IsNullOrEmpty(apiKey)) apiKey = opts.Value.ApiKey;       // dev / self-host fallback
     if (string.IsNullOrEmpty(agentId)) agentId = opts.Value.AgentId;
     if (string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(agentId))

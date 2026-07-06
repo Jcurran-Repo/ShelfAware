@@ -14,11 +14,13 @@ public sealed class CircuitVoiceCredentials : IVoiceCredentials
 {
     private readonly string _fallbackKey;
     private readonly string _fallbackAgentId;
+    private readonly bool _managed;
 
-    public CircuitVoiceCredentials(IOptions<ElevenLabsOptions> fallback)
+    public CircuitVoiceCredentials(IOptions<ElevenLabsOptions> fallback, IOptions<LlmOptions> deployment)
     {
         _fallbackKey = fallback.Value.ApiKey;
         _fallbackAgentId = fallback.Value.AgentId;
+        _managed = deployment.Value.IsManaged; // managed = the host's voice key too; ignore browser creds
         Reset();
     }
 
@@ -30,6 +32,7 @@ public sealed class CircuitVoiceCredentials : IVoiceCredentials
 
     public void Apply(string? apiKey, string? agentId)
     {
+        if (_managed) return; // host's key is authoritative on a managed deployment
         ApiKey = apiKey ?? "";
         AgentId = agentId ?? "";
         FromBrowser = true;

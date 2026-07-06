@@ -19,4 +19,20 @@ public class LlmOptions
     /// their browser. Default false: on the public demo the server never issues requests to a user-supplied
     /// URL. A self-hoster sets this true to point ShelfAware at their own local model.</summary>
     public bool AllowCustomEndpoint { get; set; }
+
+    /// <summary>Deployment key policy: "Managed" / "Byok", or "Auto" (default when unset). Managed = the
+    /// host provides ALL keys (LLM + voice) and visitors use them without editing (a tailnet / Azure
+    /// deploy); BYOK = visitors bring their own in the browser (the open-source self-host / public demo).
+    /// Auto infers it — managed when a server key is configured, BYOK otherwise — so just dropping keys in
+    /// secrets/appsettings flips a deployment to managed.</summary>
+    public string? KeyMode { get; set; }
+
+    /// <summary>True when this is a managed-key deployment: server-provided keys are authoritative and the
+    /// Settings key panel is hidden. See <see cref="KeyMode"/>.</summary>
+    public bool IsManaged => (KeyMode ?? "").Trim().ToLowerInvariant() switch
+    {
+        "managed" => true,
+        "byok" => false,
+        _ => !string.IsNullOrWhiteSpace(ApiKey), // Auto
+    };
 }

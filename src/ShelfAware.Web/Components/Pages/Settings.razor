@@ -19,6 +19,15 @@
 
 <section class="panel">
     <h2>AI provider &amp; keys</h2>
+    @if (AiSettings.Managed)
+    {
+        <p class="muted">
+            AI on this deployment runs on the host's own keys — there's nothing to set up here. (Your pantry
+            data still lives only on this server.)
+        </p>
+    }
+    else
+    {
     <p class="muted">
         Bring your own API keys. They're stored only in <strong>your browser</strong> — never on the server —
         and used only to call the provider you pick. This app is open-source, so you can verify that yourself.
@@ -100,6 +109,7 @@
                 <p class="chat-reply" role="status">@keyNote</p>
             }
         </div>
+    }
     }
 </section>
 

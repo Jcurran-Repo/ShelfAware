@@ -9,9 +9,11 @@ namespace ShelfAware.Web.Tests;
 /// them, and the delegating client builds each visitor's own provider client from those settings.</summary>
 public class ByokTests
 {
+    // These exercise the BYOK path (browser overrides), so pin KeyMode=Byok — otherwise a configured
+    // server key would auto-flip the deployment to managed and (correctly) ignore the overrides.
     private static CircuitAiSettings Settings(string apiKey = "dev-key", string provider = "Anthropic",
         string extraction = "ex-model", string chat = "chat-model") =>
-        new(Options.Create(new LlmOptions { Provider = provider, ApiKey = apiKey, ExtractionModel = extraction, ChatModel = chat }));
+        new(Options.Create(new LlmOptions { Provider = provider, ApiKey = apiKey, ExtractionModel = extraction, ChatModel = chat, KeyMode = "Byok" }));
 
     [Fact]
     public void Settings_default_to_the_server_config()
@@ -49,6 +51,32 @@ public class ByokTests
     }
 
     [Fact]
+    public void Auto_mode_is_managed_only_when_the_server_configured_a_key()
+    {
+        // Managed deploy (tailnet/Azure): a server key is set → the host's key is used, panel hidden.
+        Assert.True(new CircuitAiSettings(Options.Create(new LlmOptions { ApiKey = "host-key" })).Managed);
+        // Public demo / self-host BYOK: no server key → the visitor brings their own.
+        Assert.False(new CircuitAiSettings(Options.Create(new LlmOptions { ApiKey = "" })).Managed);
+    }
+
+    [Fact]
+    public void A_managed_deployment_ignores_browser_overrides()
+    {
+        var s = new CircuitAiSettings(Options.Create(
+            new LlmOptions { ApiKey = "host-key", ChatModel = "host-model", KeyMode = "Managed" }));
+        Assert.True(s.Managed);
+
+        // A stale localStorage value or a devtools injection tries to take over — it must NOT.
+        s.Apply(AiProvider.OpenAI, "sneaky-visitor-key", "x", "y", "http://evil/v1");
+
+        Assert.Equal("host-key", s.ApiKey);
+        Assert.Equal("host-model", s.ChatModel);
+        Assert.Equal(AiProvider.Anthropic, s.Provider);
+        Assert.Null(s.BaseUrl);
+        Assert.False(s.FromBrowser);
+    }
+
+    [Fact]
     public async Task Delegating_client_builds_from_settings_and_rebuilds_only_on_change()
     {
         var settings = Settings(apiKey: "k1", chat: "m1");
@@ -79,7 +107,7 @@ public class ByokTests
 
         // Self-host opts in — now the base URL is honored.
         var open = new CircuitAiSettings(Options.Create(
-            new LlmOptions { ApiKey = "dev-key", AllowCustomEndpoint = true }));
+            new LlmOptions { ApiKey = "dev-key", AllowCustomEndpoint = true, KeyMode = "Byok" }));
         open.Apply(AiProvider.OpenAICompatible, "local", null, "llama3.1", "http://localhost:11434/v1");
         Assert.Equal("http://localhost:11434/v1", open.BaseUrl);
     }
@@ -88,7 +116,7 @@ public class ByokTests
     public async Task Delegating_client_threads_the_base_url_for_a_local_provider()
     {
         var settings = new CircuitAiSettings(Options.Create(
-            new LlmOptions { ApiKey = "dev-key", ChatModel = "c", AllowCustomEndpoint = true }));
+            new LlmOptions { ApiKey = "dev-key", ChatModel = "c", AllowCustomEndpoint = true, KeyMode = "Byok" }));
         settings.Apply(AiProvider.OpenAICompatible, "local", null, "llama3.1", "http://localhost:11434/v1");
         var factory = new RecordingFactory();
         var client = new ByokChatClient(settings, factory);
