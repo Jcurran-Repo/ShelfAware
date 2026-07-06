@@ -14,6 +14,11 @@ namespace ShelfAware.Web.Data;
 /// trims as an outlier. Clean, metronomic data would make the predictor look like a calendar; each of these
 /// "hero" cases puts a real engine behaviour on stage (see the comments on each).
 ///
+/// Every purchase also rides on a synthetic CONFIRMED "trip" receipt with a priced line, because all cost
+/// surfaces (grocery-list estimates, Trends, price history) read prices from confirmed receipt lines —
+/// purchases alone would show $0 everywhere. Two items carry a deliberate price trend for the Trends page:
+/// coffee has been creeping UP, eggs are easing back down.
+///
 /// Guarded: it only seeds an EMPTY catalog, so it can never clobber real data.
 /// </summary>
 public sealed class DemoDataSeeder(IDbContextFactory<ShelfAwareDbContext> dbFactory)
@@ -26,8 +31,9 @@ public sealed class DemoDataSeeder(IDbContextFactory<ShelfAwareDbContext> dbFact
         if (await db.Products.AnyAsync(ct))
             return new Result(false, 0, 0, 0, "Sample data skipped — the catalog already has items.");
 
-        var products = BuildProducts(DateOnly.FromDateTime(DateTime.Today));
+        var (products, receipts) = BuildCatalog(DateOnly.FromDateTime(DateTime.Today));
         db.Products.AddRange(products);
+        db.Receipts.AddRange(receipts);
 
         db.ExcludedFoods.AddRange(
             new ExcludedFood { Value = "mushrooms" },
@@ -52,18 +58,22 @@ public sealed class DemoDataSeeder(IDbContextFactory<ShelfAwareDbContext> dbFact
 
     // ---- Products -----------------------------------------------------------
 
-    // One seeded product: its aisle + descriptive tags, and the trips that bought it (each as days-ago +
-    // quantity), plus any live signals and "also works as" substitutes.
+    // One seeded product: its aisle, current shelf price + descriptive tags, and the trips that bought it
+    // (each as days-ago + quantity), plus any live signals and "also works as" substitutes.
+    // DriftPerDayAgo is the signed fraction of the price added per day in the past — NEGATIVE means it
+    // used to be cheaper (the price is rising), positive means it's coming down.
     private sealed record Seed(
-        string Name, Category Category, string? Brand, string Size, string[] Tags,
+        string Name, Category Category, string? Brand, string Size, decimal Price, string[] Tags,
         (int DaysAgo, decimal Qty)[] Buys,
         (int DaysAgo, SignalKind Kind)[]? Signals = null,
-        string[]? AlsoWorksAs = null);
+        string[]? AlsoWorksAs = null,
+        double DriftPerDayAgo = 0);
 
-    private static List<Product> BuildProducts(DateOnly today)
+    private static (List<Product> Products, List<Receipt> Receipts) BuildCatalog(DateOnly today)
     {
-        // Fixed seed → the "messy" jitter is identical every run (reproducible demo + testable).
+        // Fixed seeds → the "messy" jitter is identical every run (reproducible demo + testable).
         var rng = new Random(20260705);
+        var priceRng = new Random(20260706); // separate stream so price jitter can't shift the trip dates
 
         // Jittered trips: `count` buys ending `lastAgo` days ago, each gap = baseGap ± spread. This is the
         // messy real-world rhythm the median/IQR has to see through.
@@ -85,97 +95,156 @@ public sealed class DemoDataSeeder(IDbContextFactory<ShelfAwareDbContext> dbFact
 
             // Cereal-week milk: jumpy intervals. Median stays sane but the IQR spread WIDENS the DueSoon
             // window, so a noisy staple warns earlier than a metronomic one.
-            new("Whole Milk", Category.Dairy, "Great Value", "1 gal", ["Breakfast"],
+            new("Whole Milk", Category.Dairy, "Great Value", "1 gal", 3.86m, ["Breakfast"],
                 [(7, 1), (13, 1), (18, 1), (27, 1), (33, 1), (40, 1), (51, 1)]),
 
             // Dogs eat faster than we rebuy: OutNow keeps landing ~14 days after each 26-day rebuy, so BURN
             // RATE (14d) diverges from the rebuy rhythm (26d) and takes over the prediction.
-            new("Dry Dog Food", Category.PetCare, "Pedigree", "30 lb", ["Dog"],
+            new("Dry Dog Food", Category.PetCare, "Pedigree", "30 lb", 24.98m, ["Dog"],
                 [(8, 1), (34, 1), (62, 1), (88, 1)],
                 Signals: [(20, SignalKind.OutNow), (46, SignalKind.OutNow), (74, SignalKind.OutNow)]),
 
             // Stock-up: the last trip bought 3× the usual, so StockUpFactor stretches the due date out
             // instead of nagging on the one-pack cadence.
-            new("Paper Towels", Category.Household, "Bounty", "6 rolls", ["Paper"],
+            new("Paper Towels", Category.Household, "Bounty", "6 rolls", 15.97m, ["Paper"],
                 [(5, 3), (26, 1), (48, 1), (70, 1)]),
 
             // Vacation gap: one 45-day interval among ~12-day ones. MedianWithTrim drops it (> 3× median) so
-            // the cadence stays honest at ~12 days.
-            new("Ground Coffee", Category.Beverage, "Folgers", "30.5 oz", ["Breakfast"],
-                [(7, 1), (19, 1), (31, 1), (76, 1), (88, 1), (100, 1)]),
+            // the cadence stays honest at ~12 days. Also the Trends "price is climbing" hero: ~15% cheaper
+            // 100 days ago, so its ticker shows a steady red ▲.
+            new("Ground Coffee", Category.Beverage, "Folgers", "30.5 oz", 13.98m, ["Breakfast"],
+                [(7, 1), (19, 1), (31, 1), (76, 1), (88, 1), (100, 1)], DriftPerDayAgo: -0.0015),
 
             // Marked out right now → pinned Overdue with a "Marked out of stock" note (signal override).
-            new("Dish Soap", Category.Household, "Dawn", "19 oz", ["Cleaning"],
+            new("Dish Soap", Category.Household, "Dawn", "19 oz", 4.79m, ["Cleaning"],
                 [(30, 1), (58, 1)], Signals: [(2, SignalKind.OutNow)]),
 
             // Flagged running low by hand → floored to DueSoon even though the stats say Stocked.
-            new("Paper Napkins", Category.Household, "Vanity Fair", "100 ct", ["Paper"],
+            new("Paper Napkins", Category.Household, "Vanity Fair", "100 ct", 3.42m, ["Paper"],
                 Trips(3, 40, 5, 6), Signals: [(1, SignalKind.RunningLow)]),
 
             // ---- Overdue by the stats (populate the dashboard's "overdue") ----
-            new("Sandwich Bread", Category.Pantry, "Nature's Own", "20 oz", ["Bakery"],
+            new("Sandwich Bread", Category.Pantry, "Nature's Own", "20 oz", 2.98m, ["Bakery"],
                 [(11, 1), (18, 1), (26, 1), (33, 1), (40, 1)]),
-            new("Bananas", Category.Produce, null, "bunch", ["Fruit", "Snack"],
+            new("Bananas", Category.Produce, null, "bunch", 1.52m, ["Fruit", "Snack"],
                 [(6, 1), (11, 1), (17, 1), (22, 1), (28, 1)]),
 
             // ---- Recipe-backing staples, kept in stock so the saved recipes read "Ready to make" ----
-            new("Chicken Breast", Category.Meat, "Tyson", "2.5 lb", ["Protein"], Trips(5, 12, 3, 3),
+            new("Chicken Breast", Category.Meat, "Tyson", "2.5 lb", 12.97m, ["Protein"], Trips(5, 12, 3, 3),
                 AlsoWorksAs: ["chicken", "chicken cutlet"]),
-            new("White Rice", Category.Pantry, "Great Value", "5 lb", ["Grain"], Trips(4, 30, 6, 8)),
-            new("Broccoli", Category.Produce, null, "12 oz", ["Vegetable"], Trips(5, 9, 2, 2)),
-            new("Ground Beef", Category.Meat, null, "1 lb", ["Protein"], Trips(6, 10, 3, 4),
+            new("White Rice", Category.Pantry, "Great Value", "5 lb", 3.98m, ["Grain"], Trips(4, 30, 6, 8)),
+            new("Broccoli", Category.Produce, null, "12 oz", 2.18m, ["Vegetable"], Trips(5, 9, 2, 2)),
+            new("Ground Beef", Category.Meat, null, "1 lb", 5.48m, ["Protein"], Trips(6, 10, 3, 4),
                 AlsoWorksAs: ["ground meat"]),
-            new("Yellow Onion", Category.Produce, null, "3 lb bag", ["Vegetable"], Trips(4, 24, 5, 5)),
-            new("Bell Peppers", Category.Produce, null, "3 ct", ["Vegetable"], Trips(5, 11, 3, 4)),
-            new("Flour Tortillas", Category.Pantry, "Mission", "8 ct", ["Bakery"], Trips(4, 16, 4, 6)),
-            new("Shredded Cheddar", Category.Dairy, "Great Value", "8 oz", ["Cheese"], Trips(5, 13, 3, 5)),
+            new("Yellow Onion", Category.Produce, null, "3 lb bag", 2.68m, ["Vegetable"], Trips(4, 24, 5, 5)),
+            new("Bell Peppers", Category.Produce, null, "3 ct", 3.24m, ["Vegetable"], Trips(5, 11, 3, 4)),
+            new("Flour Tortillas", Category.Pantry, "Mission", "8 ct", 2.78m, ["Bakery"], Trips(4, 16, 4, 6)),
+            new("Shredded Cheddar", Category.Dairy, "Great Value", "8 oz", 2.42m, ["Cheese"], Trips(5, 13, 3, 5)),
 
             // ---- Background catalog: varied cadences + jitter for a healthy status spread ----
-            new("Large Eggs", Category.Dairy, "Great Value", "18 ct", ["Breakfast", "Protein"], Trips(6, 9, 2, 8)),
-            new("Greek Yogurt", Category.Dairy, "Chobani", "32 oz", ["Breakfast"], Trips(5, 11, 3, 9)),
-            new("Salted Butter", Category.Dairy, "Land O'Lakes", "1 lb", ["Baking"], Trips(4, 26, 5, 4)),
-            new("Bacon", Category.Meat, "Oscar Mayer", "16 oz", ["Protein", "Breakfast"], Trips(4, 18, 4, 15)),
-            new("Baby Spinach", Category.Produce, null, "10 oz", ["Vegetable", "Salad"], Trips(5, 8, 2, 7)),
-            new("Roma Tomatoes", Category.Produce, null, "1 lb", ["Vegetable"], Trips(5, 9, 3, 3)),
-            new("Spaghetti", Category.Pantry, "Barilla", "16 oz", ["Grain"], Trips(4, 21, 5, 6)),
-            new("Marinara Sauce", Category.Pantry, "Rao's", "24 oz", ["Canned"], Trips(4, 22, 5, 4)),
-            new("Peanut Butter", Category.Pantry, "Jif", "40 oz", ["Snack"], Trips(3, 34, 6, 12)),
-            new("Breakfast Cereal", Category.Pantry, "General Mills", "18 oz", ["Breakfast"], Trips(6, 7, 2, 5)),
-            new("Tortilla Chips", Category.Pantry, "Tostitos", "13 oz", ["Snack"], Trips(5, 10, 3, 9)),
-            new("Orange Juice", Category.Beverage, "Simply", "52 oz", ["Breakfast"], Trips(5, 12, 3, 11)),
-            new("Frozen Pizza", Category.Frozen, "DiGiorno", "1 ct", ["Dinner"], Trips(4, 15, 4, 3)),
-            new("Frozen Blueberries", Category.Frozen, "Great Value", "16 oz", ["Fruit", "Breakfast"], Trips(3, 24, 6, 20)),
-            new("Toilet Paper", Category.Household, "Charmin", "12 rolls", ["Paper"], Trips(4, 24, 4, 18)),
-            new("Hand Soap", Category.PersonalCare, "Softsoap", "11 oz", ["Bath"], Trips(3, 30, 6, 10)),
-            new("Toothpaste", Category.PersonalCare, "Colgate", "6 oz", ["Bath"], Trips(3, 40, 7, 26)),
-            new("Cat Litter", Category.PetCare, "Fresh Step", "20 lb", ["Cat"], Trips(4, 17, 4, 12)),
+            // Eggs are the "price is easing" counter-hero: pricier in the past, drifting down (green ▼).
+            new("Large Eggs", Category.Dairy, "Great Value", "18 ct", 4.86m, ["Breakfast", "Protein"],
+                Trips(6, 9, 2, 8), DriftPerDayAgo: 0.002),
+            new("Greek Yogurt", Category.Dairy, "Chobani", "32 oz", 5.94m, ["Breakfast"], Trips(5, 11, 3, 9)),
+            new("Salted Butter", Category.Dairy, "Land O'Lakes", "1 lb", 4.48m, ["Baking"], Trips(4, 26, 5, 4)),
+            new("Bacon", Category.Meat, "Oscar Mayer", "16 oz", 6.48m, ["Protein", "Breakfast"], Trips(4, 18, 4, 15)),
+            new("Baby Spinach", Category.Produce, null, "10 oz", 2.98m, ["Vegetable", "Salad"], Trips(5, 8, 2, 7)),
+            new("Roma Tomatoes", Category.Produce, null, "1 lb", 1.86m, ["Vegetable"], Trips(5, 9, 3, 3)),
+            new("Spaghetti", Category.Pantry, "Barilla", "16 oz", 1.92m, ["Grain"], Trips(4, 21, 5, 6)),
+            new("Marinara Sauce", Category.Pantry, "Rao's", "24 oz", 7.48m, ["Canned"], Trips(4, 22, 5, 4)),
+            new("Peanut Butter", Category.Pantry, "Jif", "40 oz", 6.72m, ["Snack"], Trips(3, 34, 6, 12)),
+            new("Breakfast Cereal", Category.Pantry, "General Mills", "18 oz", 4.12m, ["Breakfast"], Trips(6, 7, 2, 5)),
+            new("Tortilla Chips", Category.Pantry, "Tostitos", "13 oz", 3.98m, ["Snack"], Trips(5, 10, 3, 9)),
+            new("Orange Juice", Category.Beverage, "Simply", "52 oz", 3.68m, ["Breakfast"], Trips(5, 12, 3, 11)),
+            new("Frozen Pizza", Category.Frozen, "DiGiorno", "1 ct", 6.86m, ["Dinner"], Trips(4, 15, 4, 3)),
+            new("Frozen Blueberries", Category.Frozen, "Great Value", "16 oz", 3.24m, ["Fruit", "Breakfast"], Trips(3, 24, 6, 20)),
+            new("Toilet Paper", Category.Household, "Charmin", "12 rolls", 12.28m, ["Paper"], Trips(4, 24, 4, 18)),
+            new("Hand Soap", Category.PersonalCare, "Softsoap", "11 oz", 1.98m, ["Bath"], Trips(3, 30, 6, 10)),
+            new("Toothpaste", Category.PersonalCare, "Colgate", "6 oz", 3.48m, ["Bath"], Trips(3, 40, 7, 26)),
+            new("Cat Litter", Category.PetCare, "Fresh Step", "20 lb", 9.48m, ["Cat"], Trips(4, 17, 4, 12)),
 
             // ---- "Still learning": one buy, so cadence is honestly Unknown ----
-            new("Sriracha Sauce", Category.Pantry, "Huy Fong", "17 oz", ["Condiment"], [(14, 1)]),
-            new("Olive Oil", Category.Pantry, "Bertolli", "25 oz", ["Oil"], [(9, 1)]),
+            new("Sriracha Sauce", Category.Pantry, "Huy Fong", "17 oz", 4.28m, ["Condiment"], [(14, 1)]),
+            new("Olive Oil", Category.Pantry, "Bertolli", "25 oz", 8.97m, ["Oil"], [(9, 1)]),
         };
 
-        return seeds.Select(s => new Product
+        // Per-buy price: the current shelf price drifted back in time (see Seed.DriftPerDayAgo), plus a
+        // ±3% trip-to-trip wiggle so the tickers and price-history charts look like real shelves.
+        decimal PriceOn(Seed s, int daysAgo)
         {
-            Name = s.Name,
-            Category = s.Category,
-            IsTracked = true,
-            Tags = [.. s.Tags.Select(t => new ProductTag { Value = t })],
-            Substitutes = [.. (s.AlsoWorksAs ?? []).Select(v => new ProductSubstitute { Value = v })],
-            Purchases = [.. s.Buys.Select(b => new PurchaseEvent
+            var drifted = (double)s.Price * (1 + s.DriftPerDayAgo * daysAgo);
+            var jittered = drifted * (1 + (priceRng.NextDouble() * 2 - 1) * 0.03);
+            return Math.Round((decimal)jittered, 2);
+        }
+
+        // One synthetic "shopping trip" receipt per calendar day with a purchase. Every cost surface —
+        // grocery-list estimates, Trends, the price-history chart — prices from confirmed ReceiptLines,
+        // so purchases without lines would show $0 everywhere. Confirmed receipts are never rendered or
+        // re-extracted (only PendingReview ones are), so the placeholder ImagePath — required by the
+        // entity, backed by no file — is never resolved.
+        var trips = new Dictionary<DateOnly, Receipt>();
+        Receipt TripOn(DateOnly date)
+        {
+            if (!trips.TryGetValue(date, out var receipt))
+                trips[date] = receipt = new Receipt
+                {
+                    Merchant = "Sample Market",
+                    PurchasedAt = date,
+                    ImagePath = "demo/no-image",
+                    Status = ReceiptStatus.Confirmed,
+                };
+            return receipt;
+        }
+
+        var products = new List<Product>();
+        foreach (var s in seeds)
+        {
+            var product = new Product
             {
-                PurchasedAt = today.AddDays(-b.DaysAgo),
-                Quantity = b.Qty,
-                Brand = s.Brand,
-                Size = s.Size,
-                Source = PurchaseSource.Receipt,
-            })],
-            Signals = [.. (s.Signals ?? []).Select(x => new InventorySignal
+                Name = s.Name,
+                Category = s.Category,
+                IsTracked = true,
+                Tags = [.. s.Tags.Select(t => new ProductTag { Value = t })],
+                Substitutes = [.. (s.AlsoWorksAs ?? []).Select(v => new ProductSubstitute { Value = v })],
+                Signals = [.. (s.Signals ?? []).Select(x => new InventorySignal
+                {
+                    Kind = x.Kind,
+                    SignaledAt = new DateTimeOffset(today.AddDays(-x.DaysAgo).ToDateTime(TimeOnly.MinValue)),
+                })],
+            };
+
+            foreach (var (daysAgo, qty) in s.Buys)
             {
-                Kind = x.Kind,
-                SignaledAt = new DateTimeOffset(today.AddDays(-x.DaysAgo).ToDateTime(TimeOnly.MinValue)),
-            })],
-        }).ToList();
+                var date = today.AddDays(-daysAgo);
+                var trip = TripOn(date);
+                trip.Lines.Add(new ReceiptLine
+                {
+                    RawText = string.Join(' ',
+                        new[] { s.Brand, s.Name, s.Size }.Where(v => !string.IsNullOrEmpty(v))).ToUpperInvariant(),
+                    NormalizedName = s.Name,
+                    Brand = s.Brand,
+                    Size = s.Size,
+                    Quantity = qty,
+                    UnitPrice = PriceOn(s, daysAgo),
+                    Category = s.Category,
+                    Confidence = 1,
+                    Product = product,
+                });
+                product.Purchases.Add(new PurchaseEvent
+                {
+                    PurchasedAt = date,
+                    Quantity = qty,
+                    Brand = s.Brand,
+                    Size = s.Size,
+                    Source = PurchaseSource.Receipt,
+                    Receipt = trip, // tie the buy to its trip so per-purchase price lookups hit exactly
+                });
+            }
+
+            products.Add(product);
+        }
+
+        return (products, [.. trips.Values.OrderBy(r => r.PurchasedAt)]);
     }
 
     // ---- Recipes ------------------------------------------------------------
