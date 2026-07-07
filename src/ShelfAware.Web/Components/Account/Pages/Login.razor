@@ -27,10 +27,29 @@
     <button type="submit" class="auth-submit">Sign in</button>
 </EditForm>
 
+@if (externalSchemes.Length > 0)
+{
+    <div class="auth-external">
+        @foreach (var scheme in externalSchemes)
+        {
+            <form method="post" action="Account/PerformExternalLogin" data-enhance="false">
+                <AntiforgeryToken />
+                <input type="hidden" name="provider" value="@scheme.Name" />
+                <input type="hidden" name="returnUrl" value="@ReturnUrl" />
+                <button type="submit" class="auth-external-btn">Continue with @(scheme.DisplayName ?? scheme.Name)</button>
+            </form>
+        }
+    </div>
+}
+
 <p class="muted auth-alt">New here? <a href="Account/Register">Create an account</a> — or join your household with its invite code.</p>
 
 @code {
     private string? errorMessage;
+
+    // External providers are config-gated (registered only when credentials exist), so on most
+    // deployments this is empty and the section renders nothing.
+    private AuthenticationScheme[] externalSchemes = [];
 
     [CascadingParameter]
     private HttpContext HttpContext { get; set; } = default!;
@@ -46,6 +65,7 @@
         // Form binding runs before OnInitialized: a POST arrives bound, a GET gets a fresh model.
         // (An eager property initializer would be overwritten with null on posts — BL0008.)
         Input ??= new();
+        externalSchemes = (await SignInManager.GetExternalAuthenticationSchemesAsync()).ToArray();
         if (HttpMethods.IsGet(HttpContext.Request.Method))
         {
             // Clear a stale external-provider cookie so a fresh sign-in starts clean.

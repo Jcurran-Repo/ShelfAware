@@ -1,0 +1,177 @@
+@page "/Account/ExternalLogin"
+@attribute [AllowAnonymous]
+@using Microsoft.Extensions.Options
+@using System.Security.Claims
+@inject SignInManager<AppUser> SignInManager
+@inject UserManager<AppUser> UserManager
+@inject HouseholdService Households
+@inject AuthDbContext Db
+@inject IOptions<AuthOptions> Auth
+@inject IdentityRedirectManager RedirectManager
+@inject ILogger<ExternalLogin> Logger
+
+<PageTitle>Sign in — Shelf Aware</PageTitle>
+
+<h1>Almost there</h1>
+<StatusMessage Message="@message" />
+
+@if (externalLoginInfo is not null)
+{
+    <p class="muted">
+        You've signed in with <strong>@externalLoginInfo.ProviderDisplayName</strong> as
+        <strong>@Email</strong>. One last thing — whose pantry is this?
+    </p>
+
+    <EditForm Model="Input" method="post" OnValidSubmit="CreateAccountAsync" FormName="external-confirm">
+        <DataAnnotationsValidator />
+        <fieldset class="auth-household">
+            <legend>Your household</legend>
+            <div class="auth-field">
+                <label for="invite-code">Joining someone? Enter their invite code</label>
+                <InputText @bind-Value="Input.InviteCode" id="invite-code" autocomplete="off"
+                           placeholder="e.g. K7MPQ2XW4A" />
+            </div>
+            <div class="auth-field">
+                <label for="household-name">…or name a new household</label>
+                <InputText @bind-Value="Input.HouseholdName" id="household-name" autocomplete="off"
+                           placeholder="e.g. The Currans" />
+            </div>
+        </fieldset>
+        <button type="submit" class="auth-submit">Finish creating my account</button>
+    </EditForm>
+}
+
+<p class="muted auth-alt"><a href="Account/Login">Back to sign in</a></p>
+
+@code {
+    public const string LoginCallbackAction = "LoginCallback";
+
+    private string? message;
+    private ExternalLoginInfo? externalLoginInfo;
+
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = default!;
+
+    [SupplyParameterFromQuery]
+    private string? RemoteError { get; set; }
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    [SupplyParameterFromQuery]
+    private string? Action { get; set; }
+
+    private string Email =>
+        externalLoginInfo?.Principal.FindFirstValue(ClaimTypes.Email) ?? "(no email shared)";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Input ??= new();
+        if (RemoteError is not null)
+        {
+            // The provider's error text isn't ours to relay verbatim — keep it generic and logged.
+            Logger.LogWarning("External login failed at the provider: {RemoteError}", RemoteError);
+            RedirectManager.RedirectToWithStatus("Account/Login", "Error: the external sign-in didn't complete.", HttpContext);
+            return;
+        }
+
+        externalLoginInfo = await SignInManager.GetExternalLoginInfoAsync();
+        if (externalLoginInfo is null)
+        {
+            RedirectManager.RedirectToWithStatus("Account/Login", "Error: the external sign-in didn't complete.", HttpContext);
+            return;
+        }
+
+        if (HttpMethods.IsGet(HttpContext.Request.Method) && Action == LoginCallbackAction)
+        {
+            // Known account (this Google login is already linked)? Straight in.
+            var result = await SignInManager.ExternalLoginSignInAsync(
+                externalLoginInfo.LoginProvider, externalLoginInfo.ProviderKey,
+                isPersistent: false, bypassTwoFactor: true);
+            if (result.Succeeded)
+            {
+                Logger.LogInformation("User signed in with {Provider}.", externalLoginInfo.LoginProvider);
+                RedirectManager.RedirectTo(ReturnUrl);
+            }
+            else if (result.IsLockedOut)
+            {
+                RedirectManager.RedirectToWithStatus("Account/Login",
+                    "Error: this account is temporarily locked. Try again in a few minutes.", HttpContext);
+            }
+            // Otherwise: first time here — fall through and render the household chooser above.
+        }
+    }
+
+    private async Task CreateAccountAsync()
+    {
+        if (externalLoginInfo is null) return;
+        var email = externalLoginInfo.Principal.FindFirstValue(ClaimTypes.Email);
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            message = "Error: your provider didn't share an email address, which this app needs as the account name.";
+            return;
+        }
+
+        // The SAME registration gate as the password path: a new household needs the flag (or
+        // first-user bootstrap); joining an existing one only needs the invite code.
+        var joining = !string.IsNullOrWhiteSpace(Input.InviteCode);
+        if (!joining && !HouseholdService.MayCreateHousehold(Auth.Value.AllowRegistration, await Households.AnyUsersAsync()))
+        {
+            message = "Error: this deployment isn't accepting new sign-ups. Joining an existing household still works with its invite code.";
+            return;
+        }
+        if (!joining && string.IsNullOrWhiteSpace(Input.HouseholdName))
+        {
+            message = "Error: name your new household, or enter an invite code to join an existing one.";
+            return;
+        }
+
+        // One transaction across user + login link + household — no orphaned half-registrations.
+        await using var tx = await Db.Database.BeginTransactionAsync();
+
+        var user = new AppUser { UserName = email, Email = email, EmailConfirmed = true }; // the provider asserted it
+        var createResult = await UserManager.CreateAsync(user);
+        if (!createResult.Succeeded)
+        {
+            message = "Error: " + string.Join(" ", createResult.Errors.Select(e => e.Description));
+            return;
+        }
+        var linkResult = await UserManager.AddLoginAsync(user, externalLoginInfo);
+        if (!linkResult.Succeeded)
+        {
+            message = "Error: " + string.Join(" ", linkResult.Errors.Select(e => e.Description));
+            return;
+        }
+
+        if (joining)
+        {
+            if (await Households.JoinAsync(Input.InviteCode!, user) is null)
+            {
+                message = "Error: that invite code doesn't match any household. Check it and try again.";
+                return; // transaction disposes without commit
+            }
+        }
+        else
+        {
+            await Households.CreateForAsync(Input.HouseholdName!, user);
+        }
+
+        await tx.CommitAsync();
+        Logger.LogInformation("New account registered via {Provider} ({Mode}).",
+            externalLoginInfo.LoginProvider, joining ? "joined household" : "new household");
+
+        await SignInManager.SignInAsync(user, isPersistent: false);
+        RedirectManager.RedirectTo(ReturnUrl);
+    }
+
+    private sealed class InputModel
+    {
+        public string? InviteCode { get; set; }
+
+        [StringLength(60)]
+        public string? HouseholdName { get; set; }
+    }
+}

@@ -1,6 +1,8 @@
+using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Primitives;
 using ShelfAware.Web.Auth;
 
 namespace ShelfAware.Web.Components.Account;
@@ -31,6 +33,25 @@ public static class IdentityComponentsEndpointRouteBuilderExtensions
             await signInManager.SignOutAsync();
             return TypedResults.LocalRedirect("~/Account/Login");
         });
+
+        // Kicks off the OAuth handshake (the Google button's form POST — pre-auth, hence anonymous).
+        // The provider bounces back to /Account/ExternalLogin, which signs in or provisions the account.
+        accountGroup.MapPost("/PerformExternalLogin", (
+            HttpContext context,
+            [FromServices] SignInManager<AppUser> signInManager,
+            [FromForm] string provider,
+            [FromForm] string? returnUrl) =>
+        {
+            IEnumerable<KeyValuePair<string, StringValues>> query =
+            [
+                new("ReturnUrl", returnUrl),
+                new("Action", Pages.ExternalLogin.LoginCallbackAction),
+            ];
+            var redirectUrl = UriHelper.BuildRelative(
+                context.Request.PathBase, "/Account/ExternalLogin", QueryString.Create(query));
+            var properties = signInManager.ConfigureExternalAuthenticationProperties(provider, redirectUrl);
+            return TypedResults.Challenge(properties, [provider]);
+        }).AllowAnonymous();
 
         return accountGroup;
     }

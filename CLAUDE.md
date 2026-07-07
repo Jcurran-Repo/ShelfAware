@@ -179,7 +179,15 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      receipts). The old EnsureColumn/CREATE-IF-NOT-EXISTS additive block is REMOVED (it only served pre-v3
      DBs); `PantryDbGuard` fails fast on an old file with delete-and-restart instructions.
    - Managed (non-BYOK) keys stay **server-wide** — exactly as before; BYOK stays per-circuit/browser.
-     Metering + quotas for managed keys and config-gated OAuth are the remaining v3 items (see timeline.md).
+   - **Metering (managed mode only):** `AiUsage` (one row per household/day) + `AiUsageMeter` +
+     `MeteredChatClient` atop `ByokChatClient` — every IChatClient call quota-checked/recorded; the
+     cook-along endpoint gets a per-household mint quota. Config: `Llm:DailyCallLimit`,
+     `Llm:DailyTokenLimit`, `ElevenLabs:DailySignedUrlLimit` (all null = unlimited, the self-host
+     default). BYOK circuits are NEVER metered. Billing/pricing = Jordan's separate workstream.
+   - **OAuth (config-gated):** Google login registers only when `Authentication:Google:ClientId` (+
+     `:ClientSecret`) is configured — put them in user-secrets, never committed. Unconfigured = zero
+     OAuth surface. First external sign-in runs the SAME registration gate + household chooser
+     (`Components/Account/Pages/ExternalLogin.razor`).
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

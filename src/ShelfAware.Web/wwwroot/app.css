@@ -1845,6 +1845,30 @@ tfoot td {
     margin-bottom: 0;
 }
 
+.auth-external {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.auth-external-btn {
+    width: 100%;
+    padding: 0.5rem 1.1rem;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--ink);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.auth-external-btn:hover {
+    border-color: var(--accent);
+}
+
 .auth-status {
     padding: 0.6rem 0.9rem;
     border-radius: 6px;

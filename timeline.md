@@ -157,8 +157,8 @@ _Last updated: 7/7/2026_
 - [x] Logout kills every tab/device (security-stamp bump + 5-min circuit revalidation) — 7/7/2026
 - [x] Per-household settings, receipt auto-scan, demo seeding, export/delete-my-data — 7/7/2026
 - [x] Household panel in Settings (rename, invite code copy/regenerate, members) — 7/7/2026
-- [ ] Managed-key usage metering + daily quotas (the public-Azure gate) — Not complete
-- [ ] OAuth external login (Google; config-gated) — Not complete
+- [x] Managed-key usage metering + daily quotas per household (the public-Azure gate) — 7/7/2026
+- [x] OAuth external login (Google; config-gated, ships dark without credentials) — 7/7/2026
 - [ ] Email: confirmation + password reset (needs an email sender) — Deferred (no email server)
 - [ ] Household switching — Deferred
 
