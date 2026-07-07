@@ -13,7 +13,17 @@ public interface IPantryStore
     /// matching and for running the prediction engine on a status query).</summary>
     Task<IReadOnlyList<Product>> GetProductsAsync(CancellationToken cancellationToken = default);
 
-    Task<int> CreateProductAsync(string name, Category category, CancellationToken cancellationToken = default);
+    /// <summary>Create a product with optional descriptive tags (canonicalized against the global
+    /// vocabulary, same dedup as receipt confirmation). Pass an empty list for no tags.</summary>
+    Task<int> CreateProductAsync(string name, Category category, IReadOnlyList<string> tags, CancellationToken cancellationToken = default);
+
+    /// <summary>Add descriptive tags to an existing product (canonicalized + deduped like receipt
+    /// confirmation); returns the tag values actually added.</summary>
+    Task<IReadOnlyList<string>> AddTagsAsync(int productId, IReadOnlyList<string> tags, CancellationToken cancellationToken = default);
+
+    /// <summary>The live tag vocabulary (seed ∪ every stored tag) — fed to the assistant so it reuses
+    /// existing tags instead of coining near-duplicates (same dedup-at-source idea as extraction).</summary>
+    Task<IReadOnlyList<string>> GetKnownTagsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Record a purchase. Returns true when it re-tracked an untracked product — buying an
     /// item again ends its "don't want it for a while" (the grocery list's Untrack), same as receipt

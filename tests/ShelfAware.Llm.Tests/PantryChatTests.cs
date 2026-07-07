@@ -126,6 +126,55 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task Creates_a_product_with_tags()
+    {
+        var store = new FakePantryStore();
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("create_product",
+                ("name", "Wagyu Beef Tips"), ("category", "Meat"), ("tags", new[] { "Beef", "Protein" }))),
+            () => Responses.Text("Created."));
+
+        await Chat(client, store).HandleAsync("add a new product, wagyu beef tips");
+
+        var created = Assert.Single(store.Products);
+        Assert.Equal("Wagyu Beef Tips", created.Name);
+        Assert.Equal(Category.Meat, created.Category);
+        Assert.Equal(new[] { "Beef", "Protein" }, created.Tags.Select(t => t.Value));
+    }
+
+    [Fact]
+    public async Task Explicit_substitutes_are_saved_verbatim_without_the_advisor()
+    {
+        // "Add it as a variant for ground beef" — the user SAID the phrase, so it is saved exactly as
+        // stated. No substitute advisor is wired here on purpose: the explicit path must not need one
+        // (the original bug — the tool could only auto-generate, so the user's phrase was ignored).
+        var store = new FakePantryStore(P(7, "Wagyu Beef Tips", Category.Meat));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("suggest_substitutes",
+                ("product_name", "wagyu beef tips"), ("substitutes", new[] { "ground beef" }))),
+            () => Responses.Text("Saved."));
+
+        var result = await Chat(client, store).HandleAsync("add wagyu beef tips as a variant for ground beef");
+
+        Assert.True(result.Success);
+        Assert.Contains((7, "ground beef"), store.Substitutes);
+    }
+
+    [Fact]
+    public async Task Tags_an_existing_product()
+    {
+        var store = new FakePantryStore(P(7, "Wagyu Beef Tips", Category.Meat));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("add_tags",
+                ("product_name", "wagyu"), ("tags", new[] { "Beef" }))),
+            () => Responses.Text("Tagged."));
+
+        await Chat(client, store).HandleAsync("tag the wagyu as beef");
+
+        Assert.Contains(store.Products.Single().Tags, t => t.Value == "Beef");
+    }
+
+    [Fact]
     public async Task A_purchase_on_an_untracked_product_resumes_tracking_and_tells_the_model()
     {
         // "Bought milk" by voice must end an "ignore for a while" (grocery-list Untrack) exactly like a

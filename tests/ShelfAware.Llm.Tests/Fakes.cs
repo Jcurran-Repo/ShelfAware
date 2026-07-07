@@ -117,13 +117,38 @@ internal sealed class FakePantryStore : IPantryStore
     public Task<IReadOnlyList<Product>> GetProductsAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<Product>>(Products);
 
-    public Task<int> CreateProductAsync(string name, Category category, CancellationToken cancellationToken = default)
+    public List<string> KnownTags { get; } = [];
+
+    public Task<int> CreateProductAsync(string name, Category category, IReadOnlyList<string> tags, CancellationToken cancellationToken = default)
     {
         Created.Add((name, category));
-        var product = new Product { Id = 1000 + Products.Count, Name = name, Category = category };
+        var product = new Product
+        {
+            Id = 1000 + Products.Count,
+            Name = name,
+            Category = category,
+            Tags = [.. tags.Select(t => new ProductTag { Value = t })],
+        };
         Products.Add(product);
         return Task.FromResult(product.Id);
     }
+
+    public Task<IReadOnlyList<string>> AddTagsAsync(int productId, IReadOnlyList<string> tags, CancellationToken cancellationToken = default)
+    {
+        var product = Products.FirstOrDefault(p => p.Id == productId);
+        if (product is null) return Task.FromResult<IReadOnlyList<string>>([]);
+        var added = new List<string>();
+        foreach (var tag in tags)
+        {
+            if (product.Tags.Any(t => string.Equals(t.Value, tag, StringComparison.OrdinalIgnoreCase))) continue;
+            product.Tags.Add(new ProductTag { Value = tag });
+            added.Add(tag);
+        }
+        return Task.FromResult<IReadOnlyList<string>>(added);
+    }
+
+    public Task<IReadOnlyList<string>> GetKnownTagsAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<string>>(KnownTags);
 
     public Task<bool> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default)
     {
@@ -185,7 +210,10 @@ internal sealed class ThrowingPantryStore(params Product[] products) : IPantrySt
         Task.FromResult<IReadOnlyList<Product>>(products);
     public Task<bool> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("simulated DB write failure");
-    public Task<int> CreateProductAsync(string name, Category category, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<int> CreateProductAsync(string name, Category category, IReadOnlyList<string> tags, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<IReadOnlyList<string>> AddTagsAsync(int productId, IReadOnlyList<string> tags, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    // Prompt composition reads the vocabulary before any tool runs — must succeed even in this fake.
+    public Task<IReadOnlyList<string>> GetKnownTagsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<string>>([]);
     public Task RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<RecipeRef>> GetRecipesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();

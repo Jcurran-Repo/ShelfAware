@@ -57,9 +57,13 @@ public class AnthropicPantryChat : IPantryChat
         if (string.IsNullOrWhiteSpace(userText)) return ChatResult.Fail("Type something to update.");
 
         var products = await _store.GetProductsAsync(cancellationToken);
+        var knownTags = await _store.GetKnownTagsAsync(cancellationToken);
         var system = SystemPrompt + "\n\nCurrent products:\n" + (products.Count == 0
             ? "(none yet)"
             : string.Join("\n", products.OrderBy(p => p.Name).Select(p => $"- {p.Name} ({p.Category})")));
+        if (knownTags.Count > 0)
+            system += "\n\nKnown tags (reuse one of these when tagging; coin a new tag only when none fits):\n"
+                + string.Join(", ", knownTags);
         // What the user is looking at right now, so on-screen references ("the second one") resolve.
         if (!string.IsNullOrWhiteSpace(screenContext))
             system += "\n\nOn screen right now:\n" + screenContext.Trim();
@@ -162,6 +166,7 @@ public class AnthropicPantryChat : IPantryChat
         string? Str(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsString(v) : null;
         decimal? Dec(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsDecimal(v) : null;
         bool? Bool(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsBool(v) : null;
+        List<string>? StrList(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsStringList(v) : null;
 
         switch (call.Name)
         {
@@ -237,9 +242,10 @@ public class AnthropicPantryChat : IPantryChat
                     category = Category.Other;
                 var existing = products.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
                 if (existing is not null) return ($"\"{existing.Name}\" already exists — use it instead.", false);
-                await _store.CreateProductAsync(name, category, ct);
+                var tags = StrList("tags") ?? [];
+                await _store.CreateProductAsync(name, category, tags, ct);
                 actions.Add($"created {name}");
-                return ($"Created {name} ({category}).", false);
+                return ($"Created {name} ({category}){(tags.Count > 0 ? $", tagged {string.Join(", ", tags)}" : "")}.", false);
             }
 
             case "import_receipts":
@@ -253,20 +259,45 @@ public class AnthropicPantryChat : IPantryChat
 
             case "suggest_substitutes":
             {
-                if (_substituteAdvisor is null)
-                    return ("Substitute suggestions aren't set up.", true);
                 var name = Str("product_name");
                 var product = ProductMatcher.Resolve(name, products);
                 if (product is null)
                     return ($"No product matches \"{name}\".", true);
-                var ideas = await _substituteAdvisor.SuggestAsync(product.Name, product.Category.ToString(), ct);
-                if (ideas.Count == 0)
-                    return ($"Couldn't think of any substitutes for {product.Name}.", false);
+                // User-stated phrases ("the wagyu works as ground beef") are saved verbatim — the whole
+                // point is honoring what THEY said; the advisor only fills in when nothing was stated.
+                IReadOnlyList<string> ideas;
+                if (StrList("substitutes") is { Count: > 0 } stated)
+                {
+                    ideas = stated;
+                }
+                else
+                {
+                    if (_substituteAdvisor is null)
+                        return ("Substitute suggestions aren't set up.", true);
+                    ideas = await _substituteAdvisor.SuggestAsync(product.Name, product.Category.ToString(), ct);
+                    if (ideas.Count == 0)
+                        return ($"Couldn't think of any substitutes for {product.Name}.", false);
+                }
                 var added = await _store.AddSubstitutesAsync(product.Id, ideas, ct);
                 if (added.Count > 0) actions.Add($"substitutes → {product.Name}");
                 return (added.Count > 0
                     ? $"Added \"also works as\" for {product.Name}: {string.Join(", ", added)}."
                     : $"{product.Name} already has those substitutes.", false);
+            }
+
+            case "add_tags":
+            {
+                var name = Str("product_name");
+                var product = ProductMatcher.Resolve(name, products);
+                if (product is null)
+                    return ($"No product matches \"{name}\".", true);
+                var tags = StrList("tags") ?? [];
+                if (tags.Count == 0) return ("Pass at least one tag.", true);
+                var added = await _store.AddTagsAsync(product.Id, tags, ct);
+                if (added.Count > 0) actions.Add($"tags → {product.Name}");
+                return (added.Count > 0
+                    ? $"Tagged {product.Name}: {string.Join(", ", added)}."
+                    : $"{product.Name} already has those tags (or near-duplicates of them).", false);
             }
 
             case "add_recipe_to_list":
@@ -452,10 +483,21 @@ public class AnthropicPantryChat : IPantryChat
                 $$"""
                 {
                   "name": { "type": "string" },
-                  "category": { "type": "string", "enum": {{categoryEnum}} }
+                  "category": { "type": "string", "enum": {{categoryEnum}} },
+                  "tags": { "type": "array", "items": { "type": "string" }, "description": "1-3 descriptive tags (e.g. Protein, Snack). Reuse the Known tags list when one fits; coin a new tag only when none does." }
                 }
                 """,
                 ["name", "category"]),
+
+            MakeTool("add_tags",
+                "Add descriptive tags to an EXISTING product ('tag the wagyu as beef'). Reuse the Known tags list when one fits.",
+                """
+                {
+                  "product_name": { "type": "string", "description": "Canonical product name from the list." },
+                  "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags to add." }
+                }
+                """,
+                ["product_name", "tags"]),
 
             MakeTool("import_receipts",
                 "Scan the configured receipt folder and process any NEW receipt files — depending on the import-mode setting each is recorded directly or queued for review. Use when the user asks to import, upload, scan, or process their receipts.",
@@ -485,10 +527,11 @@ public class AnthropicPantryChat : IPantryChat
                 ["recipe_name"]),
 
             MakeTool("suggest_substitutes",
-                "Generate and save \"also works as\" substitutes for a product — the recipe ingredients it can stand in for — so recipes recognize what the user has. Use when they ask to fill in, generate, or suggest substitutes / alternates / stand-ins for an item.",
+                "Save \"also works as\" substitutes for a product — the recipe ingredients it can stand in for — so recipes recognize what the user has. When the user SAYS what it works as ('add X as a substitute/variant for Y'), pass those phrases in 'substitutes' (saved verbatim on X). Omit 'substitutes' to auto-generate ideas.",
                 """
                 {
-                  "product_name": { "type": "string", "description": "Canonical product name from the list." }
+                  "product_name": { "type": "string", "description": "Canonical name of the product the user HAS — the substitute phrases are saved on it." },
+                  "substitutes": { "type": "array", "items": { "type": "string" }, "description": "The exact ingredient phrases the user stated it works as (e.g. 'ground beef'). Omit to auto-generate." }
                 }
                 """,
                 ["product_name"]),
@@ -602,6 +645,15 @@ public class AnthropicPantryChat : IPantryChat
         JsonElement { ValueKind: JsonValueKind.True } => true,
         JsonElement { ValueKind: JsonValueKind.False } => false,
         string s when bool.TryParse(s, out var b) => b,
+        _ => null,
+    };
+
+    private static List<string>? AsStringList(object? v) => v switch
+    {
+        null => null,
+        JsonElement { ValueKind: JsonValueKind.Array } e =>
+            [.. e.EnumerateArray().Select(x => AsString(x)).OfType<string>()],
+        IEnumerable<object?> list => [.. list.Select(AsString).OfType<string>()],
         _ => null,
     };
 }

@@ -36,6 +36,35 @@ public class EfPantryStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Creating_with_tags_canonicalizes_against_the_vocabulary()
+    {
+        // Chat-applied tags go through the same dedup as receipt confirmation: "proteins" is a
+        // near-duplicate of the seed tag "Protein" and must map to it, not fragment the cloud.
+        var id = await _store.CreateProductAsync("Wagyu Beef Tips", Category.Meat, ["proteins", "Beef"]);
+
+        await using var read = _db.CreateDbContext();
+        var tags = (await read.Products.Include(p => p.Tags).SingleAsync(p => p.Id == id))
+            .Tags.Select(t => t.Value).ToList();
+        Assert.Contains("Protein", tags);
+        Assert.Contains("Beef", tags); // genuinely new — kept as coined
+        Assert.DoesNotContain("proteins", tags);
+    }
+
+    [Fact]
+    public async Task Adding_tags_skips_duplicates_and_reports_what_was_added()
+    {
+        var id = await _store.CreateProductAsync("Wagyu Beef Tips", Category.Meat, ["Beef"]);
+
+        var added = await _store.AddTagsAsync(id, ["beef", "Steak"]); // "beef" already there as "Beef"
+
+        Assert.Equal(new[] { "Steak" }, added);
+        await using var read = _db.CreateDbContext();
+        var tags = (await read.Products.Include(p => p.Tags).SingleAsync(p => p.Id == id))
+            .Tags.Select(t => t.Value).ToList();
+        Assert.Equal(2, tags.Count);
+    }
+
+    [Fact]
     public async Task Adding_a_purchase_to_a_tracked_product_reports_no_retrack()
     {
         int milkId;

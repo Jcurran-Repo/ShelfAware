@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
+using ShelfAware.Core.Tagging;
 
 namespace ShelfAware.Web.Data;
 
@@ -18,13 +19,43 @@ public class EfPantryStore(IDbContextFactory<ShelfAwareDbContext> dbFactory) : I
             .ToListAsync(cancellationToken);
     }
 
-    public async Task<int> CreateProductAsync(string name, Category category, CancellationToken cancellationToken = default)
+    public async Task<int> CreateProductAsync(string name, Category category, IReadOnlyList<string> tags, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var product = new Product { Name = name, Category = category };
+        if (tags.Count > 0)
+            TagVocabulary.ApplyTags(product, tags, await LoadVocabularyAsync(db, cancellationToken));
         db.Products.Add(product);
         await db.SaveChangesAsync(cancellationToken);
         return product.Id;
+    }
+
+    public async Task<IReadOnlyList<string>> AddTagsAsync(int productId, IReadOnlyList<string> tags, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var product = await db.Products.Include(p => p.Tags)
+            .FirstOrDefaultAsync(p => p.Id == productId, cancellationToken);
+        if (product is null) return [];
+
+        var before = product.Tags.Select(t => t.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        TagVocabulary.ApplyTags(product, tags, await LoadVocabularyAsync(db, cancellationToken));
+        var added = product.Tags.Select(t => t.Value).Where(v => !before.Contains(v)).ToList();
+        if (added.Count > 0) await db.SaveChangesAsync(cancellationToken);
+        return added;
+    }
+
+    public async Task<IReadOnlyList<string>> GetKnownTagsAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        return (await LoadVocabularyAsync(db, cancellationToken)).OrderBy(t => t).ToList();
+    }
+
+    // The global tag universe (seed ∪ every stored tag) — the same vocabulary receipt confirmation
+    // canonicalizes against, so chat-applied tags dedup identically.
+    private static async Task<List<string>> LoadVocabularyAsync(ShelfAwareDbContext db, CancellationToken cancellationToken)
+    {
+        var stored = await db.ProductTags.Select(t => t.Value).Distinct().ToListAsync(cancellationToken);
+        return TagVocabulary.Seed.Concat(stored).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     public async Task<bool> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default)

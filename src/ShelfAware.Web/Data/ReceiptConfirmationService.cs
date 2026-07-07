@@ -116,7 +116,7 @@ public class ReceiptConfirmationService(IDbContextFactory<ShelfAwareDbContext> d
             });
             purchases++;
 
-            ApplyTags(product, line.Tags, vocabulary);
+            TagVocabulary.ApplyTags(product, line.Tags, vocabulary);
 
             var dbLine = unmatchedLines.FirstOrDefault(l => l.RawText == line.RawText);
             if (dbLine is not null)
@@ -149,26 +149,6 @@ public class ReceiptConfirmationService(IDbContextFactory<ShelfAwareDbContext> d
         receipt.Status = ReceiptStatus.Confirmed;
         await db.SaveChangesAsync(cancellationToken);
         return new(AlreadyConfirmed: false, purchases, created, retracked.Count);
-    }
-
-    // Canonicalize each tag against the global vocabulary (exact match → near-duplicate → genuinely
-    // new), then apply it to the product unless it already carries the tag or a near-duplicate of it.
-    private static void ApplyTags(Product product, IReadOnlyList<string> tags, List<string> vocabulary)
-    {
-        foreach (var raw in tags)
-        {
-            var tag = raw.Trim();
-            if (tag.Length == 0) continue;
-            var canonical = vocabulary.FirstOrDefault(v => string.Equals(v, tag, StringComparison.OrdinalIgnoreCase))
-                ?? TagVocabulary.FindNearDuplicate(tag, vocabulary)
-                ?? tag;
-            var existing = product.Tags.Select(t => t.Value).ToList();
-            if (existing.Any(v => string.Equals(v, canonical, StringComparison.OrdinalIgnoreCase))) continue;
-            if (TagVocabulary.FindNearDuplicate(canonical, existing) is not null) continue;
-            product.Tags.Add(new ProductTag { Value = canonical });
-            if (!vocabulary.Any(v => string.Equals(v, canonical, StringComparison.OrdinalIgnoreCase)))
-                vocabulary.Add(canonical);
-        }
     }
 
     /// <summary>Tags ride on <see cref="ReceiptLine.TagsJson"/> as a JSON array (null when empty).</summary>

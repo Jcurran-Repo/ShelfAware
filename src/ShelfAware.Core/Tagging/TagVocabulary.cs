@@ -1,3 +1,5 @@
+using ShelfAware.Core.Domain;
+
 namespace ShelfAware.Core.Tagging;
 
 /// <summary>
@@ -31,6 +33,31 @@ public static class TagVocabulary
             if (Math.Abs(other.Length - key.Length) <= 1 && LevenshteinAtMost1(key, other)) return tag;
         }
         return null;
+    }
+
+    /// <summary>
+    /// Canonicalize each tag against the vocabulary (exact match → near-duplicate → genuinely new) and
+    /// apply it to the product unless it already carries the tag or a near-duplicate of it; newly coined
+    /// tags are added to <paramref name="vocabulary"/> so later tags in the same batch dedup against them.
+    /// The ONE tag-apply path — shared by receipt confirmation and the chat/voice tools so they can't
+    /// drift on dedup policy.
+    /// </summary>
+    public static void ApplyTags(Product product, IReadOnlyList<string> tags, List<string> vocabulary)
+    {
+        foreach (var raw in tags)
+        {
+            var tag = raw.Trim();
+            if (tag.Length == 0) continue;
+            var canonical = vocabulary.FirstOrDefault(v => string.Equals(v, tag, StringComparison.OrdinalIgnoreCase))
+                ?? FindNearDuplicate(tag, vocabulary)
+                ?? tag;
+            var existing = product.Tags.Select(t => t.Value).ToList();
+            if (existing.Any(v => string.Equals(v, canonical, StringComparison.OrdinalIgnoreCase))) continue;
+            if (FindNearDuplicate(canonical, existing) is not null) continue;
+            product.Tags.Add(new ProductTag { Value = canonical });
+            if (!vocabulary.Any(v => string.Equals(v, canonical, StringComparison.OrdinalIgnoreCase)))
+                vocabulary.Add(canonical);
+        }
     }
 
     // Lowercase, collapse whitespace, drop a trailing plural 's' so "Condiments" ≈ "condiment".
