@@ -300,6 +300,10 @@ app.MapGet("/manifest.webmanifest", () => Results.Content("""
 """, "application/manifest+json"));
 
 app.MapRazorComponents<App>()
-    .AddInteractiveServerRenderMode();
+    // The framework appends its own "frame-ancestors 'self'" CSP (its clickjacking mitigation for
+    // compressed WebSockets), comma-joining a SECOND policy onto the strict one our security-headers
+    // middleware already sends. Ours says frame-ancestors 'none' on every response — strictly
+    // stronger — so suppress the framework copy for one clean policy. Compression stays enabled.
+    .AddInteractiveServerRenderMode(options => options.ContentSecurityFrameAncestorsPolicy = null);
 
 app.Run();
