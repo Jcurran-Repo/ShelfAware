@@ -6,6 +6,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.9" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.9" />
     <!-- Override the vulnerable SQLitePCLRaw 2.1.11 that EF Core 10.0.9 pulls in transitively
          (GHSA-2m69-gcr7-jv3q, high severity). The 2.1.x line was never patched; the fix ships

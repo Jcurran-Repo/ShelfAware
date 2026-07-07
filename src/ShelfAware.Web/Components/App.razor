@@ -20,14 +20,26 @@
        cookalong's esm.sh dynamic import, ReconnectModal's direct fingerprinted src); no bare or
        relative module specifiers exist. If fingerprinted cross-module imports ever appear, restore it
        WITH a CSP hash/nonce rather than relaxing script-src. *@
-    <HeadOutlet @rendermode="InteractiveServer" />
+    <HeadOutlet @rendermode="PageRenderMode" />
 </head>
 
 <body>
-    <Routes @rendermode="InteractiveServer" />
+    <Routes @rendermode="PageRenderMode" />
     <ReconnectModal />
     <script src="@Assets["js/onboarding.js"]"></script>
     <script src="@Assets["_framework/blazor.web.js"]"></script>
 </body>
 
 </html>
+
+@code {
+    [CascadingParameter]
+    private HttpContext? HttpContext { get; set; }
+
+    // Global InteractiveServer EXCEPT the [ExcludeFromInteractiveRouting] Account pages, which must
+    // render via static SSR: auth cookies can only be set on a real HTTP request, never over a
+    // circuit. Both outlets must use the same mode. HttpContext is present here because App only
+    // renders on the initial document request; the null guard is safety, not an expected path.
+    private IComponentRenderMode? PageRenderMode =>
+        HttpContext is null || HttpContext.AcceptsInteractiveRouting() ? InteractiveServer : null;
+}

@@ -1,5 +1,7 @@
 @page "/not-found"
 @layout MainLayout
+@* Anonymous: the status-code re-execute must not bounce a signed-out visitor's 404 into a login loop. *@
+@attribute [AllowAnonymous]
 
 <PageTitle>Not found — Shelf Aware</PageTitle>
 

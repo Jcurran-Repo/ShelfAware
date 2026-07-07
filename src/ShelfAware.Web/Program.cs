@@ -1,4 +1,7 @@
+using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
@@ -13,7 +16,9 @@ using ShelfAware.Core.Settings;
 using ShelfAware.Core.Speech;
 using ShelfAware.Core.Tagging;
 using ShelfAware.Llm;
+using ShelfAware.Web.Auth;
 using ShelfAware.Web.Components;
+using ShelfAware.Web.Components.Account;
 using ShelfAware.Web.Data;
 using ShelfAware.Web.Ingest;
 using ShelfAware.Web.Services;
@@ -39,6 +44,98 @@ builder.Services.AddDbContextFactory<ShelfAwareDbContext>(options =>
     options.UseSqlite($"Data Source={Path.Combine(dataDir, "shelfaware.db")}",
         sqlite => sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery)));
 builder.Services.AddSingleton(new AppPaths(dataDir, receiptsDir));
+
+// ---- Authentication & households (v3) ----
+// Identity + households live in their OWN SQLite file: a fresh auth.db gets its full schema from
+// EnsureCreated on every deployment (the no-migrations rule), and the pantry context stays free of
+// Identity noise. Pantry rows reference households by plain id — no cross-file FK.
+builder.Services.AddDbContextFactory<AuthDbContext>(options =>
+    options.UseSqlite($"Data Source={Path.Combine(dataDir, "auth.db")}"));
+
+builder.Services.AddCascadingAuthenticationState();
+builder.Services.AddScoped<IdentityUserAccessor>();
+builder.Services.AddScoped<IdentityRedirectManager>();
+// Live circuits re-check the security stamp every 5 minutes, so a logout (which bumps the stamp)
+// kills every other tab/device within one interval — not just the browser that clicked Sign out.
+builder.Services.AddScoped<AuthenticationStateProvider, IdentityRevalidatingAuthenticationStateProvider>();
+builder.Services.AddHttpContextAccessor();
+
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultScheme = IdentityConstants.ApplicationScheme;
+    options.DefaultSignInScheme = IdentityConstants.ExternalScheme;
+}).AddIdentityCookies();
+builder.Services.ConfigureApplicationCookie(options =>
+{
+    options.LoginPath = "/Account/Login";
+    options.AccessDeniedPath = "/Account/Login";
+    options.ExpireTimeSpan = TimeSpan.FromDays(30);
+    options.SlidingExpiration = true;
+    // HttpOnly + SameSite=Lax are the defaults; Secure is enforced in production (the tailnet/Azure
+    // deploys are HTTPS), relaxed only for the plain-HTTP localhost dev server.
+    options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
+        ? CookieSecurePolicy.SameAsRequest
+        : CookieSecurePolicy.Always;
+    // API callers get a plain 401/403 instead of the human login-page redirect.
+    options.Events.OnRedirectToLogin = ctx =>
+    {
+        if (ctx.Request.Path.StartsWithSegments("/api"))
+        {
+            ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        }
+        else
+        {
+            ctx.Response.Redirect(ctx.RedirectUri);
+        }
+        return Task.CompletedTask;
+    };
+    options.Events.OnRedirectToAccessDenied = ctx =>
+    {
+        if (ctx.Request.Path.StartsWithSegments("/api"))
+        {
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+        }
+        else
+        {
+            ctx.Response.Redirect(ctx.RedirectUri);
+        }
+        return Task.CompletedTask;
+    };
+});
+
+builder.Services.AddIdentityCore<AppUser>(options =>
+{
+    // No email infrastructure yet (deliberate — see CLAUDE.md), so nothing to confirm.
+    options.SignIn.RequireConfirmedAccount = false;
+    options.User.RequireUniqueEmail = true;
+    // Length beats composition rules (NIST 800-63B): 10+ characters, no forced symbol soup.
+    options.Password.RequiredLength = 10;
+    options.Password.RequireNonAlphanumeric = false;
+    options.Password.RequireUppercase = false;
+    options.Password.RequireLowercase = false;
+    options.Password.RequireDigit = false;
+})
+    .AddEntityFrameworkStores<AuthDbContext>()
+    .AddSignInManager()
+    .AddDefaultTokenProviders()
+    .AddClaimsPrincipalFactory<HouseholdClaimsPrincipalFactory>();
+
+builder.Services.AddAuthorization();
+builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection(AuthOptions.SectionName));
+builder.Services.AddScoped<HouseholdService>();
+
+// Auth cookies + antiforgery tokens are encrypted with DataProtection keys. Persist them next to the
+// DBs (app-data is gitignored and survives republish) — otherwise every restart/redeploy would sign
+// the whole household out and invalidate in-flight forms.
+var dataProtection = builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(dataDir, "keys")))
+    .SetApplicationName("ShelfAware");
+if (OperatingSystem.IsWindows())
+{
+    // Encrypt the key ring at rest with the Windows user's DPAPI (the tailnet self-host). On Linux
+    // (Azure) the keys stay plain files under app-data — same trust boundary as the SQLite DBs.
+    dataProtection.ProtectKeysWithDpapi();
+}
 
 builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection(LlmOptions.SectionName));
 
@@ -105,12 +202,30 @@ builder.Services.AddRateLimiter(o =>
         RateLimitPartition.GetFixedWindowLimiter(
             ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions { PermitLimit = 12, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+    // Credential endpoints get a per-IP brake on top of Identity's per-account lockout: lockout
+    // protects one account from many guesses, this protects all accounts from one hammering IP.
+    // Razor-component form posts aren't attachable endpoints for a named policy, so the global
+    // limiter matches them by path; everything else passes through unlimited.
+    o.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(ctx =>
+        HttpMethods.IsPost(ctx.Request.Method) && ctx.Request.Path.StartsWithSegments("/Account")
+            ? RateLimitPartition.GetFixedWindowLimiter(
+                "account:" + (ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown"),
+                _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 })
+            : RateLimitPartition.GetNoLimiter("unlimited"));
 });
 
 var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
 {
+    // Accounts + households (auth.db) — always a from-scratch EnsureCreated (the file is new per
+    // deployment site; v3 shipped with no upgrade path for pre-auth pantry DBs — see CLAUDE.md).
+    var authFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<AuthDbContext>>();
+    using (var authDb = authFactory.CreateDbContext())
+    {
+        authDb.Database.EnsureCreated();
+    }
+
     var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<ShelfAwareDbContext>>();
     using var db = factory.CreateDbContext();
     db.Database.EnsureCreated();
@@ -235,6 +350,10 @@ app.Use(async (context, next) =>
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 app.UseHttpsRedirection();
 
+// Order matters: antiforgery tokens are bound to the signed-in user, so authentication must have
+// resolved the principal before UseAntiforgery sees the request.
+app.UseAuthentication();
+app.UseAuthorization();
 app.UseAntiforgery();
 app.UseRateLimiter();
 
@@ -267,7 +386,7 @@ app.MapGet("/api/cookalong/signed-url", async (HttpContext ctx, IHttpClientFacto
 
     // ElevenLabs returns { "signed_url": "wss://..." }; pass it straight through to the client.
     return Results.Content(await response.Content.ReadAsStringAsync(ct), "application/json");
-}).RequireRateLimiting("cookalong");
+}).RequireRateLimiting("cookalong").RequireAuthorization();
 
 // Full data export ("Download my data") — a portable JSON snapshot; also the "export first" offered
 // before Delete my data. Reads the user's own content only (no keys, no app config).
@@ -276,7 +395,7 @@ app.MapGet("/api/data/export", async (UserDataService data, CancellationToken ct
     var snapshot = await data.ExportAsync(ct);
     var json = JsonSerializer.SerializeToUtf8Bytes(snapshot, new JsonSerializerOptions { WriteIndented = true });
     return Results.File(json, "application/json", $"shelfaware-data-{DateTime.Now:yyyy-MM-dd}.json");
-});
+}).RequireAuthorization();
 
 // PWA manifest — makes the app installable ("Add to home screen"). Served explicitly so the content type
 // is right regardless of static-file MIME config; it loads under the same-origin CSP (manifest-src falls
@@ -305,5 +424,8 @@ app.MapRazorComponents<App>()
     // middleware already sends. Ours says frame-ancestors 'none' on every response — strictly
     // stronger — so suppress the framework copy for one clean policy. Compression stays enabled.
     .AddInteractiveServerRenderMode(options => options.ContentSecurityFrameAncestorsPolicy = null);
+
+// The logout POST (auth cookies can't be cleared over a circuit).
+app.MapAdditionalIdentityEndpoints();
 
 app.Run();

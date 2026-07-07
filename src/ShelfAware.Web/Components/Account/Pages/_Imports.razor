@@ -1,0 +1,5 @@
+@* Every Account page renders via static SSR (excluded from interactive routing): auth cookies can
+   only be set on a real HTTP request, never over a circuit. AccountLayout keeps the interactive
+   voice/AI islands of MainLayout off these pre-auth pages. *@
+@layout AccountLayout
+@attribute [ExcludeFromInteractiveRouting]

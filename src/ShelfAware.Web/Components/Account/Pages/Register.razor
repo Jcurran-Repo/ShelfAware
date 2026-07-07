@@ -1,0 +1,139 @@
+@page "/Account/Register"
+@attribute [AllowAnonymous]
+@using Microsoft.Extensions.Options
+@inject UserManager<AppUser> UserManager
+@inject SignInManager<AppUser> SignInManager
+@inject HouseholdService Households
+@inject AuthDbContext Db
+@inject IOptions<AuthOptions> Auth
+@inject IdentityRedirectManager RedirectManager
+@inject ILogger<Register> Logger
+
+<PageTitle>Create account — Shelf Aware</PageTitle>
+
+<h1>Create an account</h1>
+<StatusMessage Message="@errorMessage" />
+
+<EditForm Model="Input" method="post" OnValidSubmit="RegisterUserAsync" FormName="register">
+    <DataAnnotationsValidator />
+    <div class="auth-field">
+        <label for="email">Email</label>
+        <InputText @bind-Value="Input.Email" id="email" type="email" autocomplete="username" required />
+        <ValidationMessage For="() => Input.Email" />
+    </div>
+    <div class="auth-field">
+        <label for="password">Password <span class="muted small">(at least 10 characters)</span></label>
+        <InputText @bind-Value="Input.Password" id="password" type="password" autocomplete="new-password" required />
+        <ValidationMessage For="() => Input.Password" />
+    </div>
+    <div class="auth-field">
+        <label for="confirm-password">Confirm password</label>
+        <InputText @bind-Value="Input.ConfirmPassword" id="confirm-password" type="password" autocomplete="new-password" required />
+        <ValidationMessage For="() => Input.ConfirmPassword" />
+    </div>
+    <fieldset class="auth-household">
+        <legend>Your household</legend>
+        <div class="auth-field">
+            <label for="invite-code">Joining someone? Enter their invite code</label>
+            <InputText @bind-Value="Input.InviteCode" id="invite-code" autocomplete="off"
+                       placeholder="e.g. K7MPQ2XW4A" />
+        </div>
+        <div class="auth-field">
+            <label for="household-name">…or name a new household</label>
+            <InputText @bind-Value="Input.HouseholdName" id="household-name" autocomplete="off"
+                       placeholder="e.g. The Currans" />
+            <ValidationMessage For="() => Input.HouseholdName" />
+        </div>
+    </fieldset>
+    <button type="submit" class="auth-submit">Create account</button>
+</EditForm>
+
+<p class="muted auth-alt">Already have an account? <a href="Account/Login">Sign in</a></p>
+
+@code {
+    private string? errorMessage;
+
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = default!;
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    // Form binding runs before OnInitialized: a POST arrives bound, a GET gets a fresh model.
+    protected override void OnInitialized() => Input ??= new();
+
+    private async Task RegisterUserAsync()
+    {
+        var joining = !string.IsNullOrWhiteSpace(Input.InviteCode);
+
+        // The gate is enforced HERE, server-side, not by hiding UI: creating a NEW household needs the
+        // AllowRegistration flag (or first-user bootstrap); joining an existing one only needs the code.
+        if (!joining && !HouseholdService.MayCreateHousehold(Auth.Value.AllowRegistration, await Households.AnyUsersAsync()))
+        {
+            errorMessage = "Error: this deployment isn't accepting new sign-ups. Joining an existing household still works with its invite code.";
+            return;
+        }
+        if (!joining && string.IsNullOrWhiteSpace(Input.HouseholdName))
+        {
+            errorMessage = "Error: name your new household, or enter an invite code to join an existing one.";
+            return;
+        }
+
+        // One transaction across user + household: UserManager's store rides the same scoped
+        // AuthDbContext, so a bad invite code (or any failure) leaves no orphaned half-registration.
+        await using var tx = await Db.Database.BeginTransactionAsync();
+
+        var user = new AppUser { UserName = Input.Email, Email = Input.Email };
+        var result = await UserManager.CreateAsync(user, Input.Password);
+        if (!result.Succeeded)
+        {
+            errorMessage = "Error: " + string.Join(" ", result.Errors.Select(e => e.Description));
+            return;
+        }
+
+        if (joining)
+        {
+            var household = await Households.JoinAsync(Input.InviteCode!, user);
+            if (household is null)
+            {
+                errorMessage = "Error: that invite code doesn't match any household. Check it and try again.";
+                return; // transaction disposes without commit → the created user rolls back too
+            }
+        }
+        else
+        {
+            await Households.CreateForAsync(Input.HouseholdName!, user);
+        }
+
+        await tx.CommitAsync();
+        Logger.LogInformation("New account registered ({Mode}).", joining ? "joined household" : "new household");
+
+        // Sign in AFTER the commit, so the issued cookie always carries a real household claim.
+        await SignInManager.SignInAsync(user, isPersistent: false);
+        RedirectManager.RedirectTo(ReturnUrl);
+    }
+
+    private sealed class InputModel
+    {
+        [Required]
+        [EmailAddress]
+        public string Email { get; set; } = "";
+
+        [Required]
+        [StringLength(100, ErrorMessage = "The password must be at least {2} characters long.", MinimumLength = 10)]
+        [DataType(DataType.Password)]
+        public string Password { get; set; } = "";
+
+        [DataType(DataType.Password)]
+        [Compare(nameof(Password), ErrorMessage = "The passwords don't match.")]
+        public string ConfirmPassword { get; set; } = "";
+
+        public string? InviteCode { get; set; }
+
+        [StringLength(60)]
+        public string? HouseholdName { get; set; }
+    }
+}

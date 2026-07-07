@@ -1,0 +1,89 @@
+@page "/Account/Login"
+@attribute [AllowAnonymous]
+@inject SignInManager<AppUser> SignInManager
+@inject IdentityRedirectManager RedirectManager
+@inject ILogger<Login> Logger
+
+<PageTitle>Sign in — Shelf Aware</PageTitle>
+
+<h1>Sign in</h1>
+<StatusMessage Message="@errorMessage" />
+
+<EditForm Model="Input" method="post" OnValidSubmit="LoginUserAsync" FormName="login">
+    <DataAnnotationsValidator />
+    <div class="auth-field">
+        <label for="email">Email</label>
+        <InputText @bind-Value="Input.Email" id="email" type="email" autocomplete="username" required />
+        <ValidationMessage For="() => Input.Email" />
+    </div>
+    <div class="auth-field">
+        <label for="password">Password</label>
+        <InputText @bind-Value="Input.Password" id="password" type="password" autocomplete="current-password" required />
+        <ValidationMessage For="() => Input.Password" />
+    </div>
+    <label class="auth-remember">
+        <InputCheckbox @bind-Value="Input.RememberMe" /> Keep me signed in
+    </label>
+    <button type="submit" class="auth-submit">Sign in</button>
+</EditForm>
+
+<p class="muted auth-alt">New here? <a href="Account/Register">Create an account</a> — or join your household with its invite code.</p>
+
+@code {
+    private string? errorMessage;
+
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = default!;
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Form binding runs before OnInitialized: a POST arrives bound, a GET gets a fresh model.
+        // (An eager property initializer would be overwritten with null on posts — BL0008.)
+        Input ??= new();
+        if (HttpMethods.IsGet(HttpContext.Request.Method))
+        {
+            // Clear a stale external-provider cookie so a fresh sign-in starts clean.
+            await HttpContext.SignOutAsync(IdentityConstants.ExternalScheme);
+        }
+    }
+
+    private async Task LoginUserAsync()
+    {
+        // lockoutOnFailure: repeated bad passwords lock the account briefly (on top of the per-IP
+        // rate limit on /Account POSTs). Outcomes are logged without the email or password.
+        var result = await SignInManager.PasswordSignInAsync(Input.Email, Input.Password, Input.RememberMe, lockoutOnFailure: true);
+        if (result.Succeeded)
+        {
+            Logger.LogInformation("User signed in.");
+            RedirectManager.RedirectTo(ReturnUrl);
+        }
+        else if (result.IsLockedOut)
+        {
+            Logger.LogWarning("Sign-in blocked: account temporarily locked out.");
+            errorMessage = "Error: this account is temporarily locked after repeated failed attempts. Try again in a few minutes.";
+        }
+        else
+        {
+            errorMessage = "Error: invalid email or password.";
+        }
+    }
+
+    private sealed class InputModel
+    {
+        [Required]
+        [EmailAddress]
+        public string Email { get; set; } = "";
+
+        [Required]
+        [DataType(DataType.Password)]
+        public string Password { get; set; } = "";
+
+        public bool RememberMe { get; set; }
+    }
+}

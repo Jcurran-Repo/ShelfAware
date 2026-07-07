@@ -1,5 +1,7 @@
 @using System.Net.Http
 @using System.Net.Http.Json
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.Forms
 @using Microsoft.AspNetCore.Components.Routing
 @using Microsoft.AspNetCore.Components.Web
@@ -13,3 +15,7 @@
 @using ShelfAware.Web.Components.Layout
 @using ShelfAware.Web.Data
 @using ShelfAware.Web.Services
+
+@* Secure by default: every routable page requires a signed-in user unless it opts out with
+   [AllowAnonymous] (the Account pages, Error, NotFound). Harmless on non-page components. *@
+@attribute [Authorize]

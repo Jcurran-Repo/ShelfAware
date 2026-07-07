@@ -6,6 +6,12 @@
       "runtimeExecutable": "dotnet",
       "runtimeArgs": ["run", "--project", "src/ShelfAware.Web", "--urls", "http://localhost:5179"],
       "port": 5179
+    },
+    {
+      "name": "shelfaware-web-alt",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "src/ShelfAware.Web", "--urls", "http://localhost:5180"],
+      "port": 5180
     }
   ]
 }

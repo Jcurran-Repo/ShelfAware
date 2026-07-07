@@ -1,0 +1,30 @@
+@if (!string.IsNullOrEmpty(DisplayMessage))
+{
+    var isError = DisplayMessage.StartsWith("Error", StringComparison.Ordinal);
+    <div class="auth-status @(isError ? "auth-status-error" : "auth-status-ok")" role="alert">
+        @DisplayMessage
+    </div>
+}
+
+@code {
+    private string? messageFromCookie;
+
+    [Parameter]
+    public string? Message { get; set; }
+
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    private string? DisplayMessage => Message ?? messageFromCookie;
+
+    protected override void OnInitialized()
+    {
+        // Static pages have no state across a redirect, so IdentityRedirectManager passes one-shot
+        // status text via a short-lived cookie; consume and delete it.
+        messageFromCookie = HttpContext.Request.Cookies[IdentityRedirectManager.StatusCookieName];
+        if (messageFromCookie is not null)
+        {
+            HttpContext.Response.Cookies.Delete(IdentityRedirectManager.StatusCookieName);
+        }
+    }
+}

@@ -1,0 +1,14 @@
+@inherits LayoutComponentBase
+
+@* Minimal static layout for the Account pages. Deliberately NOT MainLayout: that hosts the
+   persistent VoiceAgent + AiSettingsLoader interactive islands, which would try to open a circuit
+   on the (pre-auth, statically rendered) login page. *@
+
+<div class="auth-shell">
+    <header class="auth-brand">
+        <span class="brand">Shelf Aware</span>
+    </header>
+    <main class="auth-card">
+        @Body
+    </main>
+</div>

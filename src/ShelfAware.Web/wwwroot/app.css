@@ -1714,3 +1714,150 @@ tfoot td {
         grid-template-columns: 1fr;
     }
 }
+
+/* ---- Accounts: header sign-out + the static Account pages ---- */
+.site-header .account-box {
+    margin-left: auto;
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+}
+
+.site-header .account-email {
+    color: var(--ink-soft);
+    text-decoration: none;
+    font-size: 0.9rem;
+    max-width: 14rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.site-header .account-email:hover {
+    color: var(--accent-ink);
+}
+
+.account-signout {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--ink-soft);
+    font: inherit;
+    font-size: 0.9rem;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.account-signout:hover {
+    color: var(--accent-ink);
+}
+
+.auth-shell {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 3rem 1rem;
+    gap: 1.25rem;
+}
+
+.auth-brand .brand {
+    font-weight: 700;
+    font-size: 1.3rem;
+    letter-spacing: -0.01em;
+}
+
+.auth-card {
+    width: 100%;
+    max-width: 26rem;
+    padding: 1.5rem 1.75rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+}
+
+.auth-card h1 {
+    margin-top: 0;
+    font-size: 1.3rem;
+}
+
+.auth-card form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+}
+
+.auth-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.auth-field label {
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.auth-field input {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.auth-remember {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.92rem;
+}
+
+.auth-household {
+    border: 1px dashed var(--line);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+}
+
+.auth-household legend {
+    font-weight: 600;
+    font-size: 0.9rem;
+    padding: 0 0.35rem;
+}
+
+.auth-submit {
+    align-self: flex-start;
+    padding: 0.5rem 1.1rem;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.auth-submit:hover {
+    filter: brightness(1.08);
+}
+
+.auth-alt {
+    margin-bottom: 0;
+}
+
+.auth-status {
+    padding: 0.6rem 0.9rem;
+    border-radius: 6px;
+    margin: 0.5rem 0 0.9rem;
+    font-size: 0.95rem;
+}
+
+.auth-status-ok {
+    background: color-mix(in srgb, var(--stocked-ink) 12%, transparent);
+    color: var(--stocked-ink);
+}
+
+.auth-status-error {
+    background: color-mix(in srgb, #e50000 10%, transparent);
+    color: #c62828;
+}

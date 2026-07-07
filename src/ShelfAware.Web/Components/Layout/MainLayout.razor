@@ -12,6 +12,19 @@
         <NavLink href="/accuracy">Accuracy</NavLink>
         <NavLink href="/settings">Settings</NavLink>
     </nav>
+    <AuthorizeView>
+        <div class="account-box">
+            <a href="Account/Manage/ChangePassword" class="account-email" title="Signed in as @context.User.Identity?.Name">
+                @context.User.Identity?.Name
+            </a>
+            @* A plain HTML POST, not an EditForm: signing out must clear the auth cookie, which only a
+               real HTTP request (escaping the circuit) can do. *@
+            <form method="post" action="Account/Logout" data-enhance="false">
+                <AntiforgeryToken />
+                <button type="submit" class="account-signout">Sign out</button>
+            </form>
+        </div>
+    </AuthorizeView>
 </header>
 
 <main class="site-main">
