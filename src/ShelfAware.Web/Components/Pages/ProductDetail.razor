@@ -4,6 +4,7 @@
 @using ShelfAware.Core.Shopping
 @inject IDbContextFactory<ShelfAwareDbContext> DbFactory
 @inject IProductSubstituteAdvisor SubAdvisor
+@inject ProductRenameService Renamer
 
 <PageTitle>@(product?.Name ?? "Product") — Shelf Aware</PageTitle>
 
@@ -18,9 +19,24 @@ else if (product is null)
 else
 {
     <div class="page-head">
-        <h1>@product.Name</h1>
+        @if (renaming)
+        {
+            <input class="rename-input" @bind="renameValue" @bind:event="oninput" @onkeydown="OnRenameKey"
+                   aria-label="New name for @product.Name" />
+            <button type="button" @onclick="SaveRename" disabled="@(string.IsNullOrWhiteSpace(renameValue) || renameBusy)">Save</button>
+            <button type="button" class="secondary" @onclick="CancelRename" disabled="@renameBusy">Cancel</button>
+        }
+        else
+        {
+            <h1>@product.Name</h1>
+            <button type="button" class="icon-btn" @onclick="StartRename" aria-label="Rename @product.Name" title="Rename @product.Name"><span aria-hidden="true">✏️</span></button>
+        }
         <span class="chip chip-@ChipClass(prediction.Status)">@StatusLabel(prediction.Status)</span>
     </div>
+    @if (renameError is not null)
+    {
+        <p class="error" role="alert">@renameError</p>
+    }
     <p class="muted">@product.Category@(product.DefaultUnit is { } u ? $" · {u}" : "") · <a href="/products">All products</a></p>
     @if (product.Tags.Count > 0)
     {
@@ -286,6 +302,52 @@ else
             .OrderBy(r => r.Name)
             .Select(r => new RecipeLink(r.Id, r.Name))
             .ToList();
+    }
+
+    // Renaming. The service re-points the name-keyed recipe links (RecipeIngredient.MatchedProduct),
+    // so "recipes that use this" and the ?uses filter survive the new name; membership doesn't change,
+    // so updating the loaded product in place is enough — no full reload.
+    private bool renaming;
+    private bool renameBusy;
+    private string renameValue = "";
+    private string? renameError;
+
+    private void StartRename()
+    {
+        renameValue = product?.Name ?? "";
+        renameError = null;
+        renaming = true;
+    }
+
+    private void CancelRename()
+    {
+        renaming = false;
+        renameError = null;
+    }
+
+    private async Task OnRenameKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await SaveRename();
+        else if (e.Key == "Escape") CancelRename();
+    }
+
+    private async Task SaveRename()
+    {
+        if (product is null || renameBusy || string.IsNullOrWhiteSpace(renameValue)) return;
+        renameBusy = true;
+        try
+        {
+            var result = await Renamer.RenameAsync(product.Id, renameValue);
+            if (!result.Ok)
+            {
+                renameError = result.Message;
+                return;
+            }
+            product.Name = renameValue.Trim();
+            renaming = false;
+            renameError = null;
+        }
+        finally { renameBusy = false; }
     }
 
     // "Also works as" editing. Each change persists immediately and reloads the list (so removes have ids).

@@ -111,7 +111,7 @@ else
                 var e = estimates[p.Id];
                 <tr>
                     <td>
-                        <input value="@p.Name" aria-label="Product name" @onchange="ev => Rename(p, (string?)ev.Value)" />
+                        <a class="item-name" href="/product/@p.Id">@p.Name</a>
                         @{ var ub = e.UsualBrand; var rs = e.RecommendedSize; }
                         @if (rs is { Length: > 0 } || ub is not null || p.Tags.Count > 0)
                         {
@@ -321,14 +321,6 @@ else
         newName = "";
         newUnit = "";
         await LoadAsync();
-    }
-
-    private async Task Rename(Product p, string? value)
-    {
-        var name = value?.Trim();
-        if (string.IsNullOrEmpty(name) || name == p.Name) return;
-        p.Name = name;
-        await Save(p);
     }
 
     private async Task SetCategory(Product p, string? value)

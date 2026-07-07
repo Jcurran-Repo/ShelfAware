@@ -73,6 +73,7 @@ builder.Services.AddSingleton<IAppSettings, EfAppSettings>();
 builder.Services.AddSingleton<IReceiptInbox, LocalFolderReceiptInbox>();
 builder.Services.AddScoped<IReceiptImporter, ReceiptImporter>(); // depends on the scoped IReceiptExtractor
 builder.Services.AddSingleton<ReceiptConfirmationService>();
+builder.Services.AddSingleton<ProductRenameService>(); // rename + re-point the name-keyed recipe links
 builder.Services.AddSingleton<DemoDataSeeder>(); // synthetic demo catalog for a fresh/public deploy (guarded: empty DB only)
 builder.Services.AddScoped<UserDataService>();   // export + delete-my-data (one place for both)
 

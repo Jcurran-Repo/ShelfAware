@@ -1142,11 +1142,23 @@ button.tag-chip {
     color: var(--ink);
 }
 
-/* Grocery-list item name → product detail. */
+/* Item name → product detail (grocery list + products grid). */
 .item-name {
     font-weight: 600;
     color: var(--accent);
     text-decoration: none;
+}
+
+/* Product-detail rename: the h1 swaps to this input, so size it to feel like the title it replaces. */
+.rename-input {
+    font-size: 1.3rem;
+    font-weight: 700;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--ink);
+    min-width: 16rem;
 }
 
 .item-name:hover {
