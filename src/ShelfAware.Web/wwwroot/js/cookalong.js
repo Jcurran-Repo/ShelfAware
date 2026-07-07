@@ -48,79 +48,131 @@ export function isSupported() {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.WebSocket);
 }
 
-// Fetch a signed URL from our server, then open the realtime conversation with the recipe injected.
-// dotnetRef receives: OnStatus(string), OnMode(string 'speaking'|'listening'), OnTranscript(source, text).
+// Greet-then-wait opening line, sent as a firstMessage override so the agent doesn't sit silent OR
+// barrel into step one unasked. IMPORTANT: agents only honor overrides that are explicitly enabled
+// (ElevenLabs dashboard → agent → Security). A disallowed override is NOT gracefully ignored — the
+// server accepts the socket and then terminates the conversation with WS close 1008 ("Override for
+// field 'first_message' is not allowed by config"), which presents as the session ending itself right
+// after starting. When that rejection comes back we reconnect once WITHOUT overrides and let the agent
+// open with its own configured first message — BYOK visitors' agents rarely have overrides enabled.
+const GREETING = "I'm ready to read you the recipe. Say 'next' whenever you want the first step.";
+
+// Bumped by every start/stop; async callbacks compare against it so a stale session's disconnect or a
+// pending fallback reconnect can't fight a newer session (or resurrect one the user just stopped).
+let generation = 0;
+
+// Open the realtime conversation with the recipe injected. dotnetRef receives: OnStatus(string),
+// OnMode(string 'speaking'|'listening'), OnTranscript(source, text).
 export async function start(recipe, dotnetRef) {
     await stop();
+    const gen = generation;
     dotnetRef.invokeMethodAsync('OnStatus', 'connecting');
+    try {
+        await open(recipe, dotnetRef, gen, true);
+        return true;
+    } catch (e) {
+        if (gen === generation && isOverrideRejection(e)) {
+            // Rejected before the session was established — same policy close, earlier timing.
+            try { await open(recipe, dotnetRef, gen, false); return true; } catch { /* report below */ }
+        }
+        if (gen === generation && !e?.statusReported) dotnetRef.invokeMethodAsync('OnStatus', 'error');
+        return false;
+    }
+}
 
+async function open(recipe, dotnetRef, gen, withOverrides) {
+    const C = await ensureSdk();
+
+    // A fresh signed URL per attempt — they're short-lived and consumed by the connection.
     const creds = await voiceCreds();
     let signedUrl;
     try {
         const resp = await fetch('/api/cookalong/signed-url', {
             headers: creds.apiKey ? { 'X-EL-Key': creds.apiKey, 'X-EL-Agent': creds.agentId } : {},
         });
-        if (!resp.ok) { dotnetRef.invokeMethodAsync('OnStatus', resp.status === 503 ? 'unconfigured' : 'error'); return false; }
+        if (!resp.ok) {
+            dotnetRef.invokeMethodAsync('OnStatus', resp.status === 503 ? 'unconfigured' : 'error');
+            throw Object.assign(new Error('signed-url refused'), { statusReported: true });
+        }
         signedUrl = (await resp.json()).signed_url;
-    } catch {
+    } catch (e) {
+        if (e?.statusReported) throw e;
         dotnetRef.invokeMethodAsync('OnStatus', 'error');
-        return false;
+        throw Object.assign(new Error('signed-url fetch failed'), { statusReported: true });
     }
-    if (!signedUrl) { dotnetRef.invokeMethodAsync('OnStatus', 'error'); return false; }
+    if (!signedUrl) {
+        dotnetRef.invokeMethodAsync('OnStatus', 'error');
+        throw Object.assign(new Error('signed-url missing'), { statusReported: true });
+    }
 
-    try {
-        const C = await ensureSdk();
-        convo = await C.startSession({
-            signedUrl,
-            dynamicVariables: { recipe },
-            // Self-hosted audio worklets: the SDK's defaults (a jsdelivr CDN URL for the resampler,
-            // blob:/data: fallbacks for its own processors) are all blocked by the strict CSP
-            // (script-src 'self' + esm.sh). Vendored at the SDK's pinned version — see js/vendor/README.md.
-            workletPaths: {
-                rawAudioProcessor: '/js/vendor/raw-audio-processor.worklet.js',
-                audioConcatProcessor: '/js/vendor/audio-concat-processor.worklet.js',
-            },
-            libsampleratePath: '/js/vendor/libsamplerate.worklet.js',
-            // Greet on connect, then wait — so it doesn't sit silent OR barrel into step one unasked.
-            // (Requires "First message" override enabled for the agent in the ElevenLabs dashboard; if it
-            // isn't, the agent falls back to its own configured first message.)
-            overrides: {
-                agent: { firstMessage: "I'm ready to read you the recipe. Say 'next' whenever you want the first step." },
-            },
-            onConnect: () => dotnetRef.invokeMethodAsync('OnStatus', 'connected'),
-            onDisconnect: () => dotnetRef.invokeMethodAsync('OnStatus', 'ended'),
-            onError: () => dotnetRef.invokeMethodAsync('OnStatus', 'error'),
-            onModeChange: (m) => dotnetRef.invokeMethodAsync('OnMode', modeOf(m)),
-            onMessage: (msg) => {
-                if (!msg || !msg.message) return;
-                const source = String(msg.source ?? 'ai');
-                const text = String(msg.message);
-                dotnetRef.invokeMethodAsync('OnTranscript', source, text);
-                if (source !== 'user') return;
-                // "Go to the assistant" hands control back to our own voice agent: end this session and
-                // ask it to resume listening. Detected client-side (it's not one of the EL agent's own
-                // step commands), same pattern as "stop listening" below.
-                if (/\b(go(?:\s+back)?\s+to|back\s+to|take\s+me\s+to|open|switch\s+to|talk\s+to)\s+(?:the\s+)?assistant\b/i.test(text)) {
-                    stop();
-                    dotnetRef.invokeMethodAsync('OnHandOff');
-                    return;
-                }
-                // Client-side guarantee for "stop listening": the agent's own prompt handles "stop",
-                // but the mic must close even if the agent misses or ignores the phrase.
-                if (/\bstop listening\b/i.test(text)) {
-                    stop();
-                    dotnetRef.invokeMethodAsync('OnStatus', 'ended');
-                }
-            },
-        });
-        return true;
-    } catch {
-        dotnetRef.invokeMethodAsync('OnStatus', 'error');
-        return false;
-    }
+    convo = await C.startSession({
+        signedUrl,
+        dynamicVariables: { recipe },
+        ...(withOverrides ? { overrides: { agent: { firstMessage: GREETING } } } : {}),
+        // Self-hosted audio worklets: the SDK's defaults (a jsdelivr CDN URL for the resampler,
+        // blob:/data: fallbacks for its own processors) are all blocked by the strict CSP
+        // (script-src 'self' + esm.sh). Vendored at the SDK's pinned version — see js/vendor/README.md.
+        workletPaths: {
+            rawAudioProcessor: '/js/vendor/raw-audio-processor.worklet.js',
+            audioConcatProcessor: '/js/vendor/audio-concat-processor.worklet.js',
+        },
+        libsampleratePath: '/js/vendor/libsamplerate.worklet.js',
+        onConnect: () => { if (gen === generation) dotnetRef.invokeMethodAsync('OnStatus', 'connected'); },
+        onDisconnect: (details) => {
+            if (gen !== generation) return; // stale session — a newer start/stop owns the UI now
+            if (withOverrides && isOverrideRejection(details)) {
+                // The agent's config forbids overrides — reconnect without them (see GREETING note).
+                console.warn("[cook-along] agent config doesn't allow the first-message override; reconnecting without it.");
+                convo = null;
+                dotnetRef.invokeMethodAsync('OnStatus', 'connecting');
+                open(recipe, dotnetRef, gen, false).catch(() => {
+                    if (gen === generation) dotnetRef.invokeMethodAsync('OnStatus', 'error');
+                });
+                return; // suppress 'ended' — the retry owns the status from here
+            }
+            // Surface abnormal close reasons — an opaque "ended" cost a whole debugging round once.
+            if (details?.reason === 'error') {
+                console.warn('[cook-along] disconnected:', details?.message ?? details?.closeReason ?? '(no reason given)');
+            }
+            dotnetRef.invokeMethodAsync('OnStatus', 'ended');
+        },
+        onError: () => { if (gen === generation) dotnetRef.invokeMethodAsync('OnStatus', 'error'); },
+        onModeChange: (m) => { if (gen === generation) dotnetRef.invokeMethodAsync('OnMode', modeOf(m)); },
+        onMessage: (msg) => {
+            if (gen !== generation || !msg || !msg.message) return;
+            const source = String(msg.source ?? 'ai');
+            const text = String(msg.message);
+            dotnetRef.invokeMethodAsync('OnTranscript', source, text);
+            if (source !== 'user') return;
+            // "Go to the assistant" hands control back to our own voice agent: end this session and
+            // ask it to resume listening. Detected client-side (it's not one of the EL agent's own
+            // step commands), same pattern as "stop listening" below.
+            if (/\b(go(?:\s+back)?\s+to|back\s+to|take\s+me\s+to|open|switch\s+to|talk\s+to)\s+(?:the\s+)?assistant\b/i.test(text)) {
+                stop();
+                dotnetRef.invokeMethodAsync('OnHandOff');
+                return;
+            }
+            // Client-side guarantee for "stop listening": the agent's own prompt handles "stop",
+            // but the mic must close even if the agent misses or ignores the phrase.
+            if (/\bstop listening\b/i.test(text)) {
+                stop();
+                dotnetRef.invokeMethodAsync('OnStatus', 'ended');
+            }
+        },
+    });
+}
+
+// The server's override-policy rejection, whichever shape it arrives in: a pre-establishment throw
+// from startSession, or the disconnect details of an established-then-terminated session. WS close
+// 1008 = policy violation; the reason text names the disallowed field.
+function isOverrideRejection(x) {
+    if (!x) return false;
+    const text = `${x.closeReason ?? ''} ${x.message ?? ''}`;
+    return x.closeCode === 1008 || /override/i.test(text);
 }
 
 export async function stop() {
+    generation++; // invalidate any in-flight callbacks/retries for the old session
     if (convo) {
         try { await convo.endSession(); } catch { /* already closed */ }
         convo = null;
