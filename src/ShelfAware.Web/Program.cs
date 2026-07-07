@@ -228,50 +228,10 @@ using (var scope = app.Services.CreateScope())
 
     var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<ShelfAwareDbContext>>();
     using var db = factory.CreateDbContext();
+    // v3's breaking schema change: no in-place upgrade for pre-household DBs — fail fast with
+    // instructions instead of a confusing "no such column" on the first query.
+    PantryDbGuard.ThrowIfPreHouseholdDb(db);
     db.Database.EnsureCreated();
-    // Lightweight additive "migration": EnsureCreated builds a fresh DB's full schema but never ALTERs
-    // an existing one, so columns added after a single-user DB was first created must be backfilled or
-    // the app breaks on load. Idempotent — only adds the column when it's missing.
-    EnsureColumn(db, "Recipes", "EstimatedCaloriesPerServing", "INTEGER NULL");
-    EnsureColumn(db, "Recipes", "ParentRecipeId", "INTEGER NULL");
-    EnsureColumn(db, "RecipeIngredients", "AlternativesJson", "TEXT NULL");
-    EnsureColumn(db, "RecipeIngredients", "Quantity", "TEXT NULL");
-    EnsureColumn(db, "Receipts", "SourceFile", "TEXT NULL");
-    EnsureColumn(db, "ReceiptLines", "TagsJson", "TEXT NULL");
-    EnsureColumn(db, "ReceiptLines", "SuggestedProduct", "TEXT NULL");
-    db.Database.ExecuteSqlRaw(
-        "CREATE TABLE IF NOT EXISTS \"AppSettings\" (\"Key\" TEXT NOT NULL CONSTRAINT \"PK_AppSettings\" PRIMARY KEY, \"Value\" TEXT NOT NULL);");
-    // Additive child table for product substitutes ("also works as"). EnsureCreated builds it on a fresh
-    // DB; create it here so an existing single-user DB gets it too. Mirrors the ProductTags schema.
-    db.Database.ExecuteSqlRaw(
-        "CREATE TABLE IF NOT EXISTS \"ProductSubstitutes\" (" +
-        "\"Id\" INTEGER NOT NULL CONSTRAINT \"PK_ProductSubstitutes\" PRIMARY KEY AUTOINCREMENT, " +
-        "\"ProductId\" INTEGER NOT NULL, \"Value\" TEXT NOT NULL, " +
-        "CONSTRAINT \"FK_ProductSubstitutes_Products_ProductId\" FOREIGN KEY (\"ProductId\") REFERENCES \"Products\" (\"Id\") ON DELETE CASCADE);");
-    db.Database.ExecuteSqlRaw(
-        "CREATE INDEX IF NOT EXISTS \"IX_ProductSubstitutes_ProductId\" ON \"ProductSubstitutes\" (\"ProductId\");");
-}
-
-static void EnsureColumn(ShelfAwareDbContext db, string table, string column, string columnDef)
-{
-    var conn = db.Database.GetDbConnection();
-    var wasClosed = conn.State != System.Data.ConnectionState.Open;
-    if (wasClosed) conn.Open();
-    try
-    {
-        using (var check = conn.CreateCommand())
-        {
-            check.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = '{column}';";
-            if (Convert.ToInt64(check.ExecuteScalar()) > 0) return;
-        }
-        using var alter = conn.CreateCommand();
-        alter.CommandText = $"ALTER TABLE \"{table}\" ADD COLUMN \"{column}\" {columnDef};";
-        alter.ExecuteNonQuery();
-    }
-    finally
-    {
-        if (wasClosed) conn.Close();
-    }
 }
 
 // Auto-scan the receipt inbox on startup (in the background; a no-op when no folder is configured), so

@@ -1,8 +1,9 @@
 namespace ShelfAware.Core.Domain;
 
-public class Receipt
+public class Receipt : IHouseholdOwned
 {
     public int Id { get; set; }
+    public string? HouseholdId { get; set; }
     public string? Merchant { get; set; }
     public DateOnly? PurchasedAt { get; set; }
     public required string ImagePath { get; set; }

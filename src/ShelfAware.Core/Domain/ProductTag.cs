@@ -5,9 +5,10 @@ namespace ShelfAware.Core.Domain;
 /// <see cref="Product.Category"/> is the single store-aisle (drives grocery-list order); tags are
 /// many-per-product and power the browsable tag cloud + filtering. One row per product/tag pairing.
 /// </summary>
-public class ProductTag
+public class ProductTag : IHouseholdOwned
 {
     public int Id { get; set; }
+    public string? HouseholdId { get; set; }
     public int ProductId { get; set; }
     public Product? Product { get; set; }
     public required string Value { get; set; }

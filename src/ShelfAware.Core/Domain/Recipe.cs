@@ -4,9 +4,10 @@ namespace ShelfAware.Core.Domain;
 
 /// <summary>A recipe the user saved (from an AI suggestion). Its ingredients carry a main/seasoning flag
 /// so the "can I make this?" check (Phase 2) judges only real ingredients, never spices/staples.</summary>
-public class Recipe
+public class Recipe : IHouseholdOwned
 {
     public int Id { get; set; }
+    public string? HouseholdId { get; set; }
     public required string Name { get; set; }
     public string? Blurb { get; set; }
     public DateTimeOffset SavedAt { get; set; }

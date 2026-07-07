@@ -1,8 +1,9 @@
 namespace ShelfAware.Core.Domain;
 
-public class Product
+public class Product : IHouseholdOwned
 {
     public int Id { get; set; }
+    public string? HouseholdId { get; set; }
     public required string Name { get; set; }
     /// <summary>The store aisle where you'd grab this item — drives grocery-list ordering. The single
     /// primary axis; finer descriptors live in <see cref="Tags"/>.</summary>

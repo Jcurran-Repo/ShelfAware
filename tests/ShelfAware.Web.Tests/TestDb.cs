@@ -20,14 +20,23 @@ internal sealed class TestDb : IDbContextFactory<ShelfAwareDbContext>, IDisposab
         _connection = new SqliteConnection("DataSource=:memory:");
         _connection.Open();
         _options = new DbContextOptionsBuilder<ShelfAwareDbContext>().UseSqlite(_connection).Options;
-        using var db = CreateDbContext();
+        using var db = CreateUnscopedContext();
         db.Database.EnsureCreated();
     }
 
-    public ShelfAwareDbContext CreateDbContext() => new(_options);
+    /// <summary>The household every context from this factory is scoped to. Defaults to one test
+    /// household so existing suites run under the real v3 query filters + insert stamping without any
+    /// call-site changes; isolation tests re-point it to simulate a second household.</summary>
+    public string? HouseholdId { get; set; } = "hh-test";
+
+    public ShelfAwareDbContext CreateDbContext() => new(_options) { HouseholdId = HouseholdId };
 
     public Task<ShelfAwareDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(CreateDbContext());
+
+    /// <summary>A context with NO household — sees only ownerless rows, stamps nothing. For asserting
+    /// what's physically in the tables regardless of tenancy.</summary>
+    public ShelfAwareDbContext CreateUnscopedContext() => new(_options);
 
     public void Dispose() => _connection.Dispose();
 }

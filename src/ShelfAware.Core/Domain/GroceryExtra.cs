@@ -4,8 +4,9 @@ namespace ShelfAware.Core.Domain;
 /// A one-off item on the grocery list that isn't a tracked product — added manually or pulled from a
 /// recipe's missing ingredients. The prediction-driven list covers staples; this covers everything else.
 /// </summary>
-public class GroceryExtra
+public class GroceryExtra : IHouseholdOwned
 {
     public int Id { get; set; }
+    public string? HouseholdId { get; set; }
     public required string Name { get; set; }
 }
