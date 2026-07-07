@@ -8,7 +8,7 @@ done yet — survives even if everything else is lost.
 **Terminology:** Phases 1–5 are the original v1 build milestones. v2 / v3 are later versions.
 `[x]` + date = shipped · `[ ]` = not done yet.
 
-_Last updated: 7/5/2026_
+_Last updated: 7/7/2026_
 
 ---
 
@@ -151,8 +151,16 @@ _Last updated: 7/5/2026_
 ---
 
 ## v3 — Accounts & multi-user (prerequisite for selling)
-- [ ] Authentication + accounts — Not complete
-- [ ] Multi-user data isolation — Not complete
+- [x] Authentication + accounts (ASP.NET Identity, static-SSR account pages, invite-code households) — 7/7/2026
+- [x] Multi-user data isolation (household query filters + insert stamping on every pantry table) — 7/7/2026
+- [x] Registration gate: `Auth:AllowRegistration` flag (first-user bootstrap + invite-join always open) — 7/7/2026
+- [x] Logout kills every tab/device (security-stamp bump + 5-min circuit revalidation) — 7/7/2026
+- [x] Per-household settings, receipt auto-scan, demo seeding, export/delete-my-data — 7/7/2026
+- [x] Household panel in Settings (rename, invite code copy/regenerate, members) — 7/7/2026
+- [ ] Managed-key usage metering + daily quotas (the public-Azure gate) — Not complete
+- [ ] OAuth external login (Google; config-gated) — Not complete
+- [ ] Email: confirmation + password reset (needs an email sender) — Deferred (no email server)
+- [ ] Household switching — Deferred
 
 ---
 

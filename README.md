@@ -48,6 +48,11 @@ recipes from what's actually in the house and one-taps the missing bits onto the
 
 **And I can see where the money's going** — spend by month, and how each item's price drifts.
 
+**It's our pantry, not the internet's.** Everyone signs in, and everything — products, receipts,
+recipes, settings — belongs to a *household*. My wife and I each have our own login and see the same
+pantry (she joined with an invite code from Settings); anyone else who registers gets a completely
+separate one. A deployment can also close sign-ups with one config flag and stay invite-only.
+
 ---
 
 ## The idea behind it
@@ -197,10 +202,16 @@ dotnet user-secrets --project src/ShelfAware.Web set "Llm:ApiKey" "sk-ant-..."
 # Optional — voice (push-to-talk, conversation, recipe read-aloud):
 dotnet user-secrets --project src/ShelfAware.Web set "ElevenLabs:ApiKey" "..."
 
-# Run (creates the SQLite DB under src/ShelfAware.Web/app-data on first launch)
+# Run (creates the SQLite DBs under src/ShelfAware.Web/app-data on first launch)
 dotnet run --project src/ShelfAware.Web
-# → open the printed http://localhost:<port>, then upload a receipt at /receipt
+# → open the printed http://localhost:<port>, create your account (that makes your household),
+#   then upload a receipt at /receipt. A partner joins your household with the invite code
+#   shown in Settings.
 ```
+
+> **Upgrading from a pre-accounts version?** v3 changed the database schema (everything is
+> per-household now) with no in-place upgrade: delete `app-data/shelfaware.db*` and let your
+> receipts re-import. The app refuses to start on an old file and tells you exactly this.
 
 ```bash
 # All tests, no API key needed: the engine is pure, the AI layer runs on a faked IChatClient,

@@ -28,7 +28,7 @@ as overkill "because it's single-user."
   the existing code's — fix it or flag it, never leave it. Assume every line will be read by
   a prospective employer, because it will.
 
-## Build state (updated 2026-07-05)
+## Build state (updated 2026-07-07)
 
 | Phase (DESIGN.md §10) | Status |
 |---|---|
@@ -148,6 +148,39 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      strict CSP broke VS Browser Link + hot reload in dev — relaxed `script-src`/`connect-src` in Development
      only (`fd580bd`; see the gotcha in Environment notes).
 
+9. **v3 — Accounts & households (2026-07-07, branch `feature/auth-households`):**
+   - **Every page requires a signed-in user.** ASP.NET Core Identity, cookie auth, local email+password.
+     **Identity lives in its OWN SQLite file (`app-data/auth.db`,** `AuthDbContext : IdentityDbContext<AppUser>`)
+     so `EnsureCreated` builds the auth schema everywhere with no migrations and the pantry context stays
+     free of Identity noise. `Auth/` holds the domain (`AppUser`, `Household`, `HouseholdService`,
+     `HouseholdClaimsPrincipalFactory`, `AuthOptions`).
+   - **Households are the tenancy unit** — accounts belong to exactly one (created at registration, or
+     joined via a CSPRNG **invite code**); ALL pantry data is household-scoped. Every pantry entity
+     implements `IHouseholdOwned`; `ShelfAwareDbContext` has a per-instance `HouseholdId` driving a global
+     query filter on every table + SaveChanges stamping on inserts. `AppSettings` = composite PK
+     `(HouseholdId, Key)`; alias uniqueness = `(HouseholdId, Merchant, RawText)`.
+   - **`IHouseholdDbFactory` is THE way to a pantry context** (scoped; pre-sets `HouseholdId` from the
+     scoped `ICurrentHousehold`: `UseFixed` pin → HttpContext claim → circuit auth state). The raw
+     `IDbContextFactory` is bootstrap-only. Formerly-singleton data services (store, settings, inbox,
+     confirmation, rename, seeder) are **scoped** now. The startup receipt scan runs once per household
+     that configured a folder (`IgnoreQueryFilters` enumeration + `UseFixed` per scope).
+   - **Account pages are Blazor components on static SSR** (`Components/Account/`): auth cookies can't be
+     set over a circuit, so they carry `[ExcludeFromInteractiveRouting]` and `App.razor` picks the render
+     mode per page (`HttpContext.AcceptsInteractiveRouting() ? InteractiveServer : null` — BOTH outlets).
+     They use `AccountLayout`, NOT MainLayout (whose VoiceAgent/AiSettingsLoader islands must not spin up
+     circuits pre-auth). Zero scripts beyond `js/account.js` (progressive enhancement) — strict CSP holds.
+   - **Security posture:** registration gate is server-side (`Auth:AllowRegistration`; first-user bootstrap
+     + invite-join always open); logout bumps the security stamp (all circuits/devices die within the
+     5-minute revalidation) then clears the cookie; per-IP rate limit on `/Account` POSTs atop Identity
+     lockout; `/api/data/export` + `/api/cookalong/signed-url` require auth (401/403 for API callers);
+     DataProtection keys persist to `app-data/keys` (DPAPI-encrypted on Windows) so republish doesn't log
+     everyone out. **Backup set is now `shelfaware.db` + `auth.db` + `keys/`.**
+   - **BREAKING SCHEMA — v3 needs a fresh pantry DB.** No in-place upgrade (Jordan's call: wipe + re-import
+     receipts). The old EnsureColumn/CREATE-IF-NOT-EXISTS additive block is REMOVED (it only served pre-v3
+     DBs); `PantryDbGuard` fails fast on an old file with delete-and-restart instructions.
+   - Managed (non-BYOK) keys stay **server-wide** — exactly as before; BYOK stays per-circuit/browser.
+     Metering + quotas for managed keys and config-gated OAuth are the remaining v3 items (see timeline.md).
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active
@@ -212,7 +245,7 @@ EXISTS in Program.cs for existing DBs).
 missing main(s) for ones you have and **rewrites the steps + cook times** (thighs cook longer than breast),
 saved as a **variant** (`Recipe.ParentRecipeId`, additive column) grouped under the original on the Recipes
 page. On-demand only (no AI calls on load). One orchestration path — `IRecipeAdapter` (Core) →
-`RecipeAdapter` (Web, singleton; loads the recipe + on-hand + excluded, calls `IRecipeAdvisor.AdaptAsync`,
+`RecipeAdapter` (Web, scoped; loads the recipe + on-hand + excluded, calls `IRecipeAdvisor.AdaptAsync`,
 saves the variant) — drives the "🔀 Adapt to what I have" button, the **`adapt_recipe` chat/voice tool**,
 AND the per-ingredient bubble cloud. Adapt prompt is `recipe-adapt-system.txt`. On-hand = the shared
 `PantryOnHand.EdibleInStock` (Core; `CategoryExtensions.IsEdible` + not-overdue). **Robustness:** re-adapting
@@ -315,7 +348,13 @@ the same item bought across brands/sizes rolls up into one product.
   10 retries). Started outside the preview tooling it won't show in `preview_list`; find/kill the
   `ShelfAware.Web` process (it names itself in the lock error).
 - Dev server runs via the preview tooling: config `shelfaware-web` in `.claude/launch.json`
-  (repo root + parent folder), port 5179.
+  (repo root + parent folder), port 5179. **When Jordan's tailnet publish occupies 5179** (it's the
+  same exe name — match on path, not name), use the `shelfaware-web-alt` config (port 5180) instead
+  of killing his live app.
+- **v3 auth gotchas:** don't re-declare a render mode on a page (`App.razor` decides per page now —
+  static for `/Account/*`, InteractiveServer otherwise). Live-testing login flows: register a
+  throwaway account (e.g. `jordan@test.local`) — `auth.db` is dev-local and gitignored. A pre-v3
+  pantry DB makes startup fail fast by design (delete `app-data/shelfaware.db*` and re-import).
 - **API key** is in dotnet user-secrets, id `3d6755e6-9881-43a6-813c-fe3ebd974cd9`, key `Llm:ApiKey`.
   Editing that file by hand repeatedly failed for Jordan. To change it: have him save the bare key
   to a gitignored repo file (see the sandbox gotcha below), move it into secrets.json programmatically,

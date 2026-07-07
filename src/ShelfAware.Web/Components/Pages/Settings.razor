@@ -2,10 +2,12 @@
 @using ShelfAware.Core.Settings
 @using ShelfAware.Core.Ingest
 @using ShelfAware.Llm
+@using ShelfAware.Web.Auth
 @inject IAppSettings SettingsStore
 @inject IReceiptInbox Inbox
 @inject IReceiptImporter Importer
 @inject IHouseholdDbFactory DbFactory
+@inject HouseholdService Households
 @inject IJSRuntime JS
 @inject CircuitAiSettings AiSettings
 @inject ILogger<Settings> Logger
@@ -16,6 +18,58 @@
 <div class="page-head">
     <h1>Settings</h1>
 </div>
+
+<section class="panel">
+    <h2>Household</h2>
+    @if (household is null)
+    {
+        <p class="muted">Loading…</p>
+    }
+    else
+    {
+        <p class="muted">
+            Everyone in your household shares this pantry — products, receipts, recipes, and these settings.
+            To bring someone in, give them the <strong>invite code</strong>; they enter it when creating
+            their account.
+        </p>
+
+        <label class="field"><span>Household name</span></label>
+        <div class="tag-add">
+            <input @bind="householdName" @bind:event="oninput" aria-label="Household name" size="30" />
+            <button @onclick="RenameHousehold" disabled="@(renaming || !HouseholdNameChanged)">
+                @(renaming ? "Saving…" : "Rename")
+            </button>
+        </div>
+
+        <label class="field"><span>Invite code</span></label>
+        <div class="review-actions invite-row">
+            <code class="invite-code">@household.InviteCode</code>
+            <button @onclick="CopyInvite">Copy</button>
+            <button class="secondary" @onclick="RegenerateInvite" disabled="@regenerating">
+                @(regenerating ? "Regenerating…" : "Regenerate")
+            </button>
+        </div>
+        @if (inviteNote is not null)
+        {
+            <p class="chat-reply" role="status">@inviteNote</p>
+        }
+        <p class="muted small">
+            Regenerating invalidates the old code — anyone you already gave it to needs the new one.
+        </p>
+
+        <h3>Members</h3>
+        <ul class="member-list">
+            @foreach (var member in members)
+            {
+                <li>@member</li>
+            }
+        </ul>
+        <p class="muted small">
+            Forgot a password? There's no email reset yet — whoever runs this server can recreate the
+            account. The pantry is untouched either way: it belongs to the household, not the account.
+        </p>
+    }
+</section>
 
 <section class="panel">
     <h2>AI provider &amp; keys</h2>
@@ -117,7 +171,8 @@
     <h2>Receipt auto-import</h2>
     <p class="muted">
         Point this at a folder of receipt images or PDFs. The assistant imports new ones — on startup,
-        when you press “Scan now”, or when you tell it <em>“import my receipts”</em>.
+        when you press “Scan now”, or when you tell it <em>“import my receipts”</em>. The folder is a
+        per-household setting; if two households point at the same folder, each imports its own copy.
     </p>
 
     <fieldset class="import-mode">
@@ -224,6 +279,19 @@
 </section>
 
 @code {
+    // ---- Household panel ----
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthState { get; set; }
+
+    private Household? household;
+    private IReadOnlyList<string> members = [];
+    private string householdName = "";
+    private bool renaming;
+    private bool regenerating;
+    private string? inviteNote;
+    private bool HouseholdNameChanged =>
+        household is not null && householdName.Trim().Length > 0 && householdName.Trim() != household.Name;
+
     private string folder = "";
     private ImportMode mode = ImportMode.Smart;
     private string recipeAddConfirm = "Confirm";
@@ -402,12 +470,74 @@
 
     protected override async Task OnInitializedAsync()
     {
+        await LoadHouseholdAsync();
         folder = await SettingsStore.GetAsync(SettingKeys.ReceiptFolder) ?? "";
         mode = ImportModes.Parse(
             await SettingsStore.GetAsync(SettingKeys.ImportMode),
             await SettingsStore.GetAsync(SettingKeys.AutoConfirmImports)); // legacy toggle honored
         recipeAddConfirm = await SettingsStore.GetAsync(SettingKeys.RecipeAddConfirm) ?? "Confirm";
         await RefreshStatus();
+    }
+
+    private async Task LoadHouseholdAsync()
+    {
+        if (AuthState is null) return;
+        var user = (await AuthState).User;
+        var householdId = user.FindFirst(HouseholdClaimsPrincipalFactory.HouseholdClaim)?.Value;
+        if (householdId is null) return;
+        household = await Households.GetAsync(householdId);
+        members = await Households.GetMemberEmailsAsync(householdId);
+        householdName = household?.Name ?? "";
+    }
+
+    private async Task RenameHousehold()
+    {
+        if (household is null || !HouseholdNameChanged || renaming) return;
+        renaming = true;
+        try
+        {
+            await Households.RenameAsync(household.Id, householdName);
+            household.Name = householdName.Trim();
+            inviteNote = "Household renamed.";
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Renaming the household failed.");
+            inviteNote = "Couldn't rename just now — please try again.";
+        }
+        finally
+        {
+            renaming = false;
+        }
+    }
+
+    private async Task CopyInvite()
+    {
+        if (household is null) return;
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", household.InviteCode);
+        inviteNote = "Invite code copied to the clipboard.";
+    }
+
+    private async Task RegenerateInvite()
+    {
+        if (household is null || regenerating) return;
+        regenerating = true;
+        try
+        {
+            household.InviteCode = await Households.RegenerateInviteCodeAsync(household.Id);
+            inviteNote = "New invite code generated — the old one no longer works.";
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Regenerating the invite code failed.");
+            inviteNote = "Couldn't regenerate just now — please try again.";
+        }
+        finally
+        {
+            regenerating = false;
+        }
     }
 
     private async Task SetMode(ImportMode m)

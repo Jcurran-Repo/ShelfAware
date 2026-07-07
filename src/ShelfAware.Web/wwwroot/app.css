@@ -1861,3 +1861,27 @@ tfoot td {
     background: color-mix(in srgb, #e50000 10%, transparent);
     color: #c62828;
 }
+
+/* ---- Household panel (Settings) ---- */
+.invite-row {
+    align-items: center;
+}
+
+.invite-code {
+    font-size: 1.05rem;
+    letter-spacing: 0.12em;
+    padding: 0.35rem 0.7rem;
+    border: 1px dashed var(--line);
+    border-radius: 6px;
+    background: var(--surface-alt, transparent);
+    user-select: all;
+}
+
+.member-list {
+    margin: 0.25rem 0 0.75rem;
+    padding-left: 1.25rem;
+}
+
+.member-list li {
+    margin: 0.15rem 0;
+}
