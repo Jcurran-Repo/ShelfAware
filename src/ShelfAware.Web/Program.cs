@@ -45,6 +45,13 @@ builder.Services.AddDbContextFactory<ShelfAwareDbContext>(options =>
         sqlite => sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery)));
 builder.Services.AddSingleton(new AppPaths(dataDir, receiptsDir));
 
+// Tenancy plumbing (v3): the current household comes from the signed-in user's cookie claim (or an
+// explicit pin for background work), and IHouseholdDbFactory hands out contexts pre-scoped to it —
+// query filters + insert stamping included. Everything that touches pantry data goes through it;
+// only the Program.cs bootstrap uses the raw factory.
+builder.Services.AddScoped<ICurrentHousehold, CurrentHousehold>();
+builder.Services.AddScoped<IHouseholdDbFactory, HouseholdDbFactory>();
+
 // ---- Authentication & households (v3) ----
 // Identity + households live in their OWN SQLite file: a fresh auth.db gets its full schema from
 // EnsureCreated on every deployment (the no-migrations rule), and the pantry context stays free of
@@ -152,10 +159,10 @@ builder.Services.AddScoped<IChatClient, ByokChatClient>();
 builder.Services.AddScoped<VoiceCoordinator>();
 
 // The AI services depend (directly or transitively) on the per-circuit IChatClient, so they're scoped —
-// a singleton can't hold a scoped dependency. Their code is unchanged. EfPantryStore has no AI dependency
-// (just the DbContext factory), so it stays a singleton.
+// a singleton can't hold a scoped dependency. Since v3 the data services are scoped too: they read
+// through IHouseholdDbFactory, which needs the scope's signed-in user to know whose pantry it is.
 builder.Services.AddScoped<IReceiptExtractor, AnthropicReceiptExtractor>();
-builder.Services.AddSingleton<IPantryStore, EfPantryStore>();
+builder.Services.AddScoped<IPantryStore, EfPantryStore>();
 builder.Services.AddScoped<IPantryChat, AnthropicPantryChat>();
 builder.Services.AddScoped<ITagAdvisor, AnthropicTagAdvisor>();
 builder.Services.AddScoped<IRecipeAdvisor, AnthropicRecipeAdvisor>();
@@ -166,12 +173,12 @@ builder.Services.AddScoped<IRecipeAdapter, RecipeAdapter>();
 // Receipt auto-import: a swappable inbox (local folder now, cloud later) + the importer the chat/voice
 // agent triggers, plus the runtime settings store behind the /settings page. Both the importer and the
 // manual Upload review confirm receipts through the ONE shared confirmation service.
-builder.Services.AddSingleton<IAppSettings, EfAppSettings>();
-builder.Services.AddSingleton<IReceiptInbox, LocalFolderReceiptInbox>();
+builder.Services.AddScoped<IAppSettings, EfAppSettings>();          // settings are per household now
+builder.Services.AddScoped<IReceiptInbox, LocalFolderReceiptInbox>(); // reads the household's folder setting
 builder.Services.AddScoped<IReceiptImporter, ReceiptImporter>(); // depends on the scoped IReceiptExtractor
-builder.Services.AddSingleton<ReceiptConfirmationService>();
-builder.Services.AddSingleton<ProductRenameService>(); // rename + re-point the name-keyed recipe links
-builder.Services.AddSingleton<DemoDataSeeder>(); // synthetic demo catalog for a fresh/public deploy (guarded: empty DB only)
+builder.Services.AddScoped<ReceiptConfirmationService>();
+builder.Services.AddScoped<ProductRenameService>(); // rename + re-point the name-keyed recipe links
+builder.Services.AddScoped<DemoDataSeeder>(); // synthetic demo catalog (guarded: this household's pantry is empty)
 builder.Services.AddScoped<UserDataService>();   // export + delete-my-data (one place for both)
 
 // Voice I/O (ElevenLabs): Scribe = STT (ear), TTS = mouth. Speech is its own REST API, not an

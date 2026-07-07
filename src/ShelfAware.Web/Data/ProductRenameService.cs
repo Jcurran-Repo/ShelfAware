@@ -8,7 +8,7 @@ namespace ShelfAware.Web.Data;
 /// <c>?uses=</c> filter, and the makeability check — so a rename must re-point those strings or the
 /// recipe links silently go stale (the old Products-grid inline rename had exactly that hole).
 /// </summary>
-public class ProductRenameService(IDbContextFactory<ShelfAwareDbContext> dbFactory)
+public class ProductRenameService(IHouseholdDbFactory dbFactory)
 {
     public sealed record Result(bool Ok, string Message, int RelinkedIngredients = 0);
 

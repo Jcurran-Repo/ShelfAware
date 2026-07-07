@@ -17,7 +17,7 @@ namespace ShelfAware.Web.Ingest;
 /// human. Each file is its own unit of work, so one bad receipt doesn't sink the batch.
 /// </summary>
 public class ReceiptImporter(
-    IDbContextFactory<ShelfAwareDbContext> dbFactory,
+    IHouseholdDbFactory dbFactory,
     IReceiptExtractor extractor,
     IReceiptInbox inbox,
     IAppSettings settings,

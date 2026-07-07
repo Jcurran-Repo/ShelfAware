@@ -11,7 +11,7 @@ namespace ShelfAware.Web.Data;
 /// on tag handling, quantity clamping, and alias policy). Idempotent: confirming an already-confirmed
 /// receipt is a no-op, so a double-click or a queued duplicate event can't double-record purchases.
 /// </summary>
-public class ReceiptConfirmationService(IDbContextFactory<ShelfAwareDbContext> dbFactory)
+public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
 {
     /// <param name="ProductId">Resolved product id; 0 means "create a new product" from this line.</param>
     public record ConfirmLine(

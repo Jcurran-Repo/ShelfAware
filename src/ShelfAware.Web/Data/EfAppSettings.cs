@@ -4,8 +4,9 @@ using ShelfAware.Core.Settings;
 
 namespace ShelfAware.Web.Data;
 
-/// <summary><see cref="IAppSettings"/> over the app's own SQLite DB (a tiny key/value table).</summary>
-public class EfAppSettings(IDbContextFactory<ShelfAwareDbContext> dbFactory) : IAppSettings
+/// <summary><see cref="IAppSettings"/> over the app's own SQLite DB (a tiny key/value table).
+/// Per household since v3 — an implementation detail of the scoped factory; the interface is unchanged.</summary>
+public class EfAppSettings(IHouseholdDbFactory dbFactory) : IAppSettings
 {
     public async Task<string?> GetAsync(string key, CancellationToken cancellationToken = default)
     {

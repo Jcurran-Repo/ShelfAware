@@ -10,7 +10,7 @@ namespace ShelfAware.Web.Tests;
 /// behavior are exactly what production sees, which is the point: the persistence bugs this project
 /// had (FK violation on delete, unique-alias-index blowups) don't reproduce on fakes.
 /// </summary>
-internal sealed class TestDb : IDbContextFactory<ShelfAwareDbContext>, IDisposable
+internal sealed class TestDb : IDbContextFactory<ShelfAwareDbContext>, IHouseholdDbFactory, IDisposable
 {
     private readonly SqliteConnection _connection;
     private readonly DbContextOptions<ShelfAwareDbContext> _options;

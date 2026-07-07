@@ -6,7 +6,7 @@ using ShelfAware.Core.Tagging;
 namespace ShelfAware.Web.Data;
 
 /// <summary>EF Core implementation of the chat data port (DESIGN.md §3/§7).</summary>
-public class EfPantryStore(IDbContextFactory<ShelfAwareDbContext> dbFactory) : IPantryStore
+public class EfPantryStore(IHouseholdDbFactory dbFactory) : IPantryStore
 {
     public async Task<IReadOnlyList<Product>> GetProductsAsync(CancellationToken cancellationToken = default)
     {
@@ -61,10 +61,16 @@ public class EfPantryStore(IDbContextFactory<ShelfAwareDbContext> dbFactory) : I
     public async Task<bool> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        // The product must exist IN THIS HOUSEHOLD (the filtered lookup enforces it) — a raw id for
+        // someone else's product must not become a cross-tenant insert; child rows aren't filtered
+        // into existence, only queries are.
+        var product = await db.Products.FindAsync([productId], cancellationToken);
+        if (product is null) return false;
+
         // Buying an item again ends its "don't want it for a while" (the grocery list's Untrack) —
         // resume predictions on every purchase path; receipts do the same in ReceiptConfirmationService.
         var retracked = false;
-        if (await db.Products.FindAsync([productId], cancellationToken) is { IsTracked: false } product)
+        if (!product.IsTracked)
         {
             product.IsTracked = true;
             retracked = true;
@@ -83,6 +89,8 @@ public class EfPantryStore(IDbContextFactory<ShelfAwareDbContext> dbFactory) : I
     public async Task RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        // Same in-household existence check as AddPurchaseAsync — no signals onto foreign products.
+        if (await db.Products.FindAsync([productId], cancellationToken) is null) return;
         db.InventorySignals.Add(new InventorySignal
         {
             ProductId = productId,

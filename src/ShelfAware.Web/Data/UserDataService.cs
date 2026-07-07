@@ -12,7 +12,7 @@ namespace ShelfAware.Web.Data;
 /// NOT touch <c>AppSettings</c> (app configuration) or the visitor's BYOK keys — those are held in the
 /// browser and cleared separately by "Forget my key".
 /// </summary>
-public sealed class UserDataService(IDbContextFactory<ShelfAwareDbContext> dbFactory)
+public sealed class UserDataService(IHouseholdDbFactory dbFactory)
 {
     /// <summary>Everything, flattened (loaded without navigations so there are no serialization cycles) —
     /// a portable JSON snapshot the user can keep before deleting, or just as a backup.</summary>

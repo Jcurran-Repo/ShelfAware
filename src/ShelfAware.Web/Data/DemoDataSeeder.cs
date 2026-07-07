@@ -21,7 +21,7 @@ namespace ShelfAware.Web.Data;
 ///
 /// Guarded: it only seeds an EMPTY catalog, so it can never clobber real data.
 /// </summary>
-public sealed class DemoDataSeeder(IDbContextFactory<ShelfAwareDbContext> dbFactory)
+public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
 {
     public sealed record Result(bool Seeded, int Products, int Purchases, int Recipes, string Message);
 

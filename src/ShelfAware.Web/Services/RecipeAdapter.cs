@@ -13,7 +13,7 @@ namespace ShelfAware.Web.Services;
 /// adapt_recipe chat/voice tool. Re-adapting to the same result updates in place instead of duplicating.
 /// </summary>
 public class RecipeAdapter(
-    IDbContextFactory<ShelfAwareDbContext> dbFactory, IRecipeAdvisor advisor, ILogger<RecipeAdapter> logger) : IRecipeAdapter
+    IHouseholdDbFactory dbFactory, IRecipeAdvisor advisor, ILogger<RecipeAdapter> logger) : IRecipeAdapter
 {
     public async Task<AdaptResult> AdaptToOnHandAsync(int recipeId, IngredientSwap? swap = null, CancellationToken cancellationToken = default)
     {
