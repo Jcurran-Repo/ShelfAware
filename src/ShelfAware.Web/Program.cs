@@ -252,17 +252,45 @@ static async Task ScanReceiptsAsync(WebApplication app)
     // imports there happen per-visitor via the Settings "Scan now" button, under that visitor's own key.
     var llm = app.Services.GetRequiredService<IOptions<LlmOptions>>().Value;
     if (string.IsNullOrWhiteSpace(llm.ApiKey)) return;
+    var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("ReceiptAutoScan");
+
+    // Since v3 the receipt folder is a per-HOUSEHOLD setting, so the scan runs once per household that
+    // configured one. Enumerating them needs the raw (unscoped) factory + IgnoreQueryFilters — the one
+    // legitimate cross-tenant read here, and it only reads which households to serve, not their data.
+    List<string> households;
     try
     {
-        // IReceiptImporter is scoped now (it depends on the per-circuit AI graph), so resolve it inside a
-        // scope. With no browser, CircuitAiSettings keeps its server-config fallback — the owner key.
         using var scope = app.Services.CreateScope();
-        await scope.ServiceProvider.GetRequiredService<IReceiptImporter>().ImportNewAsync();
+        var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<ShelfAwareDbContext>>();
+        await using var db = await factory.CreateDbContextAsync();
+        households = await db.AppSettings.IgnoreQueryFilters()
+            .Where(s => s.Key == SettingKeys.ReceiptFolder && s.Value != "" && s.HouseholdId != "")
+            .Select(s => s.HouseholdId)
+            .Distinct()
+            .ToListAsync();
     }
     catch (Exception ex)
     {
-        app.Services.GetRequiredService<ILoggerFactory>()
-            .CreateLogger("ReceiptAutoScan").LogError(ex, "Startup receipt auto-scan failed.");
+        logger.LogError(ex, "Startup receipt auto-scan failed while listing households.");
+        return;
+    }
+
+    foreach (var householdId in households)
+    {
+        try
+        {
+            // Each household gets its own scope, pinned via UseFixed so the whole import pipeline
+            // (settings → inbox → extractor → confirmation) reads and writes only that pantry. With no
+            // browser attached, CircuitAiSettings keeps its server-config fallback — the owner key.
+            using var scope = app.Services.CreateScope();
+            scope.ServiceProvider.GetRequiredService<ICurrentHousehold>().UseFixed(householdId);
+            await scope.ServiceProvider.GetRequiredService<IReceiptImporter>().ImportNewAsync();
+        }
+        catch (Exception ex)
+        {
+            // Per household, so one bad folder or receipt doesn't sink the other households' scans.
+            logger.LogError(ex, "Startup receipt auto-scan failed for household {HouseholdId}.", householdId);
+        }
     }
 }
 
