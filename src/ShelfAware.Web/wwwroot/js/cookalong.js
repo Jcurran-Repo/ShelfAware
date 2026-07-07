@@ -58,6 +58,14 @@ export async function start(recipe, dotnetRef) {
         convo = await C.startSession({
             signedUrl,
             dynamicVariables: { recipe },
+            // Self-hosted audio worklets: the SDK's defaults (a jsdelivr CDN URL for the resampler,
+            // blob:/data: fallbacks for its own processors) are all blocked by the strict CSP
+            // (script-src 'self' + esm.sh). Vendored at the SDK's pinned version — see js/vendor/README.md.
+            workletPaths: {
+                rawAudioProcessor: '/js/vendor/raw-audio-processor.worklet.js',
+                audioConcatProcessor: '/js/vendor/audio-concat-processor.worklet.js',
+            },
+            libsampleratePath: '/js/vendor/libsamplerate.worklet.js',
             // Greet on connect, then wait — so it doesn't sit silent OR barrel into step one unasked.
             // (Requires "First message" override enabled for the agent in the ElevenLabs dashboard; if it
             // isn't, the agent falls back to its own configured first message.)
