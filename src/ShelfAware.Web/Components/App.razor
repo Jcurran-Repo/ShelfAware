@@ -14,7 +14,12 @@
     <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Shelf Aware" />
-    <ImportMap />
+    @* No <ImportMap /> (template scaffolding): it renders an INLINE <script type="importmap"> that the
+       strict production CSP (script-src 'self' https://esm.sh, no hashes/nonces) blocks on every page.
+       Nothing here needs it — every JS module is loaded by explicit URL (JS-interop `import "/js/…"`,
+       cookalong's esm.sh dynamic import, ReconnectModal's direct fingerprinted src); no bare or
+       relative module specifiers exist. If fingerprinted cross-module imports ever appear, restore it
+       WITH a CSP hash/nonce rather than relaxing script-src. *@
     <HeadOutlet @rendermode="InteractiveServer" />
 </head>
 
