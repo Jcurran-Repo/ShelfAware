@@ -8,6 +8,21 @@
 // origin + esm.sh only, and the version pin means a later package change can't silently apply.
 const SDK_URL = 'https://esm.sh/@elevenlabs/client@1.14.0';
 
+// SDK-bug shim (remove when upstream fixes it): startSession's libsampleratePath override IS honored on
+// the input side, but @elevenlabs/client@1.14.0 forgets to pass it to Output.create, so the OUTPUT
+// resampler always falls back to the jsdelivr CDN URL — which our strict CSP blocks (and on Firefox the
+// output resampler always loads, since sampleRate constraints aren't supported there). Rather than open
+// script-src to a third-party CDN, rewrite exactly that one known URL to our vendored copy of the same
+// file. Match the full pinned URL — a version drift should fail visibly, not silently load a mismatch.
+const JSDELIVR_LIBSAMPLERATE = 'https://cdn.jsdelivr.net/npm/@alexanderolsen/libsamplerate-js@2.1.2/dist/libsamplerate.worklet.js';
+if (typeof AudioWorklet !== 'undefined' && AudioWorklet.prototype.addModule) {
+    const origAddModule = AudioWorklet.prototype.addModule;
+    AudioWorklet.prototype.addModule = function (url, options) {
+        if (url === JSDELIVR_LIBSAMPLERATE) url = '/js/vendor/libsamplerate.worklet.js';
+        return origAddModule.call(this, url, options);
+    };
+}
+
 let Conversation = null;
 let convo = null;
 

@@ -19,3 +19,9 @@ JavaScript, so it needs no `wasm-unsafe-eval` allowance.
 **If the SDK pin in `js/cookalong.js` is ever bumped, re-extract the two SDK worklets from the new
 version** (the processor sources live inline in the modules above) and re-check the libsamplerate
 version the SDK's `addLibsamplerateModule` default points at.
+
+**Known SDK bug (1.14.0) + shim:** `startSession` threads `libsampleratePath` into `Input.create` but
+NOT `Output.create`, so the output resampler ignores the override and requests the jsdelivr URL anyway.
+`cookalong.js` therefore installs a small `AudioWorklet.prototype.addModule` shim that rewrites exactly
+that one pinned URL to the vendored copy. When a fixed SDK version ships (Output.create receiving
+`libsampleratePath`), bump the pin and delete the shim.
