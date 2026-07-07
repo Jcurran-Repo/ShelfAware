@@ -20,6 +20,14 @@ public class LlmOptions
     /// URL. A self-hoster sets this true to point ShelfAware at their own local model.</summary>
     public bool AllowCustomEndpoint { get; set; }
 
+    /// <summary>Daily LLM-call quota per household on a MANAGED deployment (the host's wallet), or null =
+    /// unlimited (the self-host default). BYOK circuits are never metered — their key, their wallet.</summary>
+    public int? DailyCallLimit { get; set; }
+
+    /// <summary>Daily token quota (input + output combined) per household on a managed deployment, or
+    /// null = unlimited. Whichever of the two limits trips first wins.</summary>
+    public long? DailyTokenLimit { get; set; }
+
     /// <summary>Deployment key policy: "Managed" / "Byok", or "Auto" (default when unset). Managed = the
     /// host provides ALL keys (LLM + voice) and visitors use them without editing (a tailnet / Azure
     /// deploy); BYOK = visitors bring their own in the browser (the open-source self-host / public demo).

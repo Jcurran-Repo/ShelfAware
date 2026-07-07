@@ -153,7 +153,11 @@ builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection(LlmOptio
 // friendly "add a key" error only surfaces when someone actually makes a call.
 builder.Services.AddSingleton<IChatClientFactory, ChatClientFactory>();
 builder.Services.AddScoped<CircuitAiSettings>();
-builder.Services.AddScoped<IChatClient, ByokChatClient>();
+// The chain every AI service sees: MeteredChatClient (daily per-household quotas, managed mode only)
+// over ByokChatClient (builds the real provider client from the circuit's settings at call time).
+builder.Services.AddScoped<ByokChatClient>();
+builder.Services.AddScoped<AiUsageMeter>();
+builder.Services.AddScoped<IChatClient, MeteredChatClient>();
 
 // Per-circuit bus wiring the layout voice agent to the pages (data-changed refresh + resume hand-off).
 builder.Services.AddScoped<VoiceCoordinator>();
@@ -359,10 +363,17 @@ app.MapStaticAssets();
 // key is used only for this call and is never stored or logged; dev/self-host falls back to server config.
 // Rate-limited per IP so nobody can spam a visitor's key through it. A custom header is also a mild CSRF
 // guard (cross-site forms can't set one).
-app.MapGet("/api/cookalong/signed-url", async (HttpContext ctx, IHttpClientFactory httpFactory, IOptions<ElevenLabsOptions> opts, IOptions<LlmOptions> deployment, CancellationToken ct) =>
+app.MapGet("/api/cookalong/signed-url", async (HttpContext ctx, IHttpClientFactory httpFactory, IOptions<ElevenLabsOptions> opts, IOptions<LlmOptions> deployment, AiUsageMeter meter, CancellationToken ct) =>
 {
     // Managed deployment: the host's voice key is authoritative — ignore any header a browser sends.
     var managed = deployment.Value.IsManaged;
+
+    // Each mint opens a realtime session on the HOST's ElevenLabs key, so managed deployments get a
+    // per-household daily quota on top of the per-IP rate limit (unlimited unless configured).
+    if (managed && !await meter.MayMintVoiceSessionAsync(ct))
+        return Results.Problem("Today's cook-along allowance on this server is used up — it resets tomorrow.",
+            statusCode: StatusCodes.Status429TooManyRequests);
+
     var apiKey = managed ? opts.Value.ApiKey : ctx.Request.Headers["X-EL-Key"].ToString();
     var agentId = managed ? opts.Value.AgentId : ctx.Request.Headers["X-EL-Agent"].ToString();
     if (string.IsNullOrEmpty(apiKey)) apiKey = opts.Value.ApiKey;       // dev / self-host fallback
@@ -378,6 +389,8 @@ app.MapGet("/api/cookalong/signed-url", async (HttpContext ctx, IHttpClientFacto
     using var response = await http.SendAsync(request, ct);
     if (!response.IsSuccessStatusCode)
         return Results.Problem($"Couldn't start the cook-along session ({(int)response.StatusCode}).", statusCode: 502);
+
+    if (managed) await meter.RecordVoiceSessionMintAsync(ct);
 
     // ElevenLabs returns { "signed_url": "wss://..." }; pass it straight through to the client.
     return Results.Content(await response.Content.ReadAsStringAsync(ct), "application/json");

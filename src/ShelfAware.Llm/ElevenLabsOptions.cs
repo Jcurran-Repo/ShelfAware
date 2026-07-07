@@ -28,4 +28,8 @@ public class ElevenLabsOptions
     /// cook-along button is hidden. Not a secret (it's referenced client-side), but account-specific,
     /// so it's configured rather than hard-coded.</summary>
     public string AgentId { get; set; } = "";
+
+    /// <summary>Daily cook-along signed-URL quota per household on a MANAGED deployment (each mint opens
+    /// a realtime session on the host's ElevenLabs key), or null = unlimited (the self-host default).</summary>
+    public int? DailySignedUrlLimit { get; set; }
 }

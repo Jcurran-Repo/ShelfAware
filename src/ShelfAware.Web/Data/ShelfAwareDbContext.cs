@@ -25,6 +25,7 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
     public DbSet<RecipeStep> RecipeSteps => Set<RecipeStep>();
     public DbSet<GroceryExtra> GroceryExtras => Set<GroceryExtra>();
     public DbSet<AppSetting> AppSettings => Set<AppSetting>();
+    public DbSet<AiUsage> AiUsages => Set<AiUsage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -51,6 +52,12 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
         ApplyHousehold<RecipeIngredient>(modelBuilder);
         ApplyHousehold<RecipeStep>(modelBuilder);
         ApplyHousehold<GroceryExtra>(modelBuilder);
+        ApplyHousehold<AiUsage>(modelBuilder);
+
+        // One usage row per household per day (the upsert's race-safety anchor).
+        modelBuilder.Entity<AiUsage>()
+            .HasIndex(u => new { u.HouseholdId, u.Day })
+            .IsUnique();
 
         // AppSettings are per household too, keyed (HouseholdId, Key). HouseholdId is non-nullable
         // here (PK member; the CLR default "" only exists so an Added row has a stampable value).

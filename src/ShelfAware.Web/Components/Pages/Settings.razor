@@ -3,6 +3,7 @@
 @using ShelfAware.Core.Ingest
 @using ShelfAware.Llm
 @using ShelfAware.Web.Auth
+@using Microsoft.Extensions.Options
 @inject IAppSettings SettingsStore
 @inject IReceiptInbox Inbox
 @inject IReceiptImporter Importer
@@ -10,6 +11,8 @@
 @inject HouseholdService Households
 @inject IJSRuntime JS
 @inject CircuitAiSettings AiSettings
+@inject AiUsageMeter UsageMeter
+@inject IOptions<LlmOptions> LlmConfig
 @inject ILogger<Settings> Logger
 @inject UserDataService UserData
 
@@ -79,6 +82,14 @@
             AI on this deployment runs on the host's own keys — there's nothing to set up here. (Your pantry
             data still lives only on this server.)
         </p>
+        @if (todayUsage is not null)
+        {
+            <p class="muted small">
+                Your household today: <strong>@todayUsage.Calls</strong> AI call(s)
+                · <strong>@todayUsage.Tokens.ToString("N0")</strong> tokens@(todayUsage.VoiceSessionMints > 0
+                    ? $" · {todayUsage.VoiceSessionMints} cook-along session(s)" : "")@UsageLimitSuffix
+            </p>
+        }
     }
     else
     {
@@ -471,6 +482,10 @@
     protected override async Task OnInitializedAsync()
     {
         await LoadHouseholdAsync();
+        if (AiSettings.Managed)
+        {
+            todayUsage = await UsageMeter.GetTodayAsync();
+        }
         folder = await SettingsStore.GetAsync(SettingKeys.ReceiptFolder) ?? "";
         mode = ImportModes.Parse(
             await SettingsStore.GetAsync(SettingKeys.ImportMode),
@@ -478,6 +493,12 @@
         recipeAddConfirm = await SettingsStore.GetAsync(SettingKeys.RecipeAddConfirm) ?? "Confirm";
         await RefreshStatus();
     }
+
+    // ---- Managed-mode usage readout ----
+    private AiUsageMeter.TodayUsage? todayUsage;
+    private string UsageLimitSuffix => LlmConfig.Value.DailyCallLimit is int limit
+        ? $" (daily allowance: {limit} calls)"
+        : "";
 
     private async Task LoadHouseholdAsync()
     {
