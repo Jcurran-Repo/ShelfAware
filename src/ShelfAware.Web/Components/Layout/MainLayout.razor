@@ -31,6 +31,10 @@
     @Body
 </main>
 
+@* Pins this circuit's household so detached background work (the voice loop) resolves it without
+   an out-of-context auth-state call. Headless; must run inside the authenticated layout. *@
+<HouseholdInitializer />
+
 @* Applies the visitor's own BYOK settings (from their browser) to this circuit's AI config. Headless. *@
 <AiSettingsLoader />
 

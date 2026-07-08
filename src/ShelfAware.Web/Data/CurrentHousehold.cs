@@ -18,11 +18,18 @@ public interface ICurrentHousehold
     void UseFixed(string householdId);
 }
 
-/// <summary>Scoped. Resolution order: an explicit <see cref="UseFixed"/> pin (background jobs) →
-/// the <c>HttpContext</c> principal's household claim (minimal APIs, static SSR) → the circuit's
-/// <see cref="AuthenticationStateProvider"/> (interactive pages, where there is no HttpContext).
-/// The claim is baked into the cookie at sign-in, so no DB lookup happens here. Cached per scope —
-/// a user's household never changes mid-session by design (switching is future work).</summary>
+/// <summary>Scoped. Resolution order: an explicit <see cref="UseFixed"/> pin → the <c>HttpContext</c>
+/// principal's household claim (minimal APIs, static SSR) → the circuit's
+/// <see cref="AuthenticationStateProvider"/> (interactive pages). The claim is baked into the cookie at
+/// sign-in, so no DB lookup happens here. Cached per scope — a user's household never changes mid-session
+/// by design (switching is future work).
+///
+/// The <see cref="AuthenticationStateProvider"/> step only works INSIDE a component's synchronization
+/// context; a detached background task (e.g. the persistent voice agent's turn loop) calling it throws.
+/// So in a circuit the household is pinned up-front via <see cref="UseFixed"/> by
+/// <c>HouseholdInitializer</c> (in the layout, in-context), and every later out-of-context resolution
+/// then uses the cached pin. If it were somehow never pinned, <see cref="GetRequiredIdAsync"/> throwing
+/// is the correct failsafe — better to fail than guess a tenant.</summary>
 public sealed class CurrentHousehold(IServiceProvider services) : ICurrentHousehold
 {
     private string? _id;

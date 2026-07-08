@@ -1,0 +1,30 @@
+@* Pins this circuit's household id into the scoped ICurrentHousehold on start, reading it from the
+   signed-in user's cascading auth state — which is only safe to read here, IN a component's
+   synchronization context. Renders nothing.
+
+   Why it exists: some flows resolve the household from a DETACHED background task (e.g. the persistent
+   VoiceAgent's turn loop), where calling AuthenticationStateProvider.GetAuthenticationStateAsync()
+   throws ("outside a Razor component's DI scope"). By pinning the id up-front, those later out-of-context
+   resolutions use the cached value instead of the throwing provider call. Endpoints/static SSR resolve
+   from HttpContext and don't need this. Household is fixed for a session (switching is future work), so
+   a one-time pin is correct. *@
+@using Microsoft.AspNetCore.Components.Authorization
+@using ShelfAware.Web.Auth
+@using ShelfAware.Web.Data
+@inject ICurrentHousehold Household
+
+@code {
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthState { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthState is null) return;
+        var user = (await AuthState).User;
+        var householdId = user.FindFirst(HouseholdClaimsPrincipalFactory.HouseholdClaim)?.Value;
+        if (!string.IsNullOrEmpty(householdId))
+        {
+            Household.UseFixed(householdId);
+        }
+    }
+}
