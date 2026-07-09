@@ -169,6 +169,8 @@ _Last updated: 7/7/2026_
 - [x] read_recipe deep link auto-starts from any page — `?read` consumed in OnParametersSet (a query-only nav never re-ran OnInitializedAsync) and stripped one-shot; the voice agent releases the mic before the hand-off — 7/8/2026
 - [x] "Read the second recipe" from ANY page — read_recipe takes a 1-based `position`; the store's recipe list now matches the Recipes-page display order (newest first, variants under their original) — 7/8/2026
 - [x] Multi-receipt upload — each image is its OWN receipt (sequential extraction, live per-receipt progress, results land in the review queue); "these are all one receipt" checkbox restores the merge for one long receipt — 7/8/2026
+- [x] Grocery list "Restocked" beside Untrack — "already have it" clears the reminder (status-only signal, same write as the dashboard via one shared IPantryStore path) — 7/8/2026
+- [x] Per-size price trends (the 3,000%-limes fix) — Trends ticker + Product Detail chart plot only the dominant size bucket (PriceSeries, Core, tested); loose/"each" spellings collapse into one bucket so quantity never splits a series; mixed-size items get a size label — 7/8/2026
 
 ---
 
@@ -176,5 +178,5 @@ _Last updated: 7/7/2026_
 - [x] Double-scroll fix (Grocery List + Upload review) — 7/2/2026
 - [ ] CSV history importer — Parked (blocked on an itemized data export)
 - [ ] More eval fixtures (paper / Edwards receipts) — Not complete
-- [ ] Per-size Trends price chart — Not complete
+- [x] Per-size Trends price chart — 7/8/2026 (dominant-size ticker/chart; see v3.1)
 - [ ] "Dapper blob" mascot / branding — Not complete

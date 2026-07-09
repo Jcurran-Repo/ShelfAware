@@ -1,8 +1,10 @@
 @page "/list"
+@using ShelfAware.Core.Chat
 @using ShelfAware.Core.Prediction
 @using ShelfAware.Core.Shopping
 @implements IAsyncDisposable
 @inject IHouseholdDbFactory DbFactory
+@inject IPantryStore Store
 @inject IJSRuntime JS
 
 <PageTitle>Grocery List — Shelf Aware</PageTitle>
@@ -224,6 +226,10 @@ else
                             @if (canIgnore)
                             {
                                 <td class="row-actions">
+                                    <button type="button" class="restock-btn" @onclick="() => Restocked(e)"
+                                            disabled="@actionBusy"
+                                            title="Already have @e.Name at home — clears the reminder and re-anchors its next due date"
+                                            aria-label="Mark @e.Name restocked — you already have it">Restocked</button>
                                     <button type="button" class="untrack-btn" @onclick="() => Untrack(e)"
                                             disabled="@actionBusy"
                                             title="Don't want @e.Name for a while — stops suggesting it until you buy it again (history kept)"
@@ -248,10 +254,27 @@ else
 
     private bool actionBusy;
 
-    // "Don't want it for a while" — stops tracking, so the item leaves the list and dashboard until a
-    // purchase brings it back (any recorded purchase — receipt confirm or chat/voice — re-tracks
-    // automatically; the Products checkbox and set_tracking tool also work). A restock-based snooze
-    // would just re-nag next cycle, hence untrack. History is kept.
+    // Two row actions with genuinely different meanings, both real while staring at the list:
+    // • Restocked = "I actually have some" — a status-only signal that clears an OutNow and re-anchors
+    //   the due date (§6 two-stream model: it never feeds the cadence), so the item settles into
+    //   "Coming up" instead of nagging. Same write as the dashboard's Restocked, via IPantryStore.
+    // • Untrack = "don't want it for a while" — stops tracking, so the item leaves the list and
+    //   dashboard until a purchase brings it back (any recorded purchase — receipt confirm or
+    //   chat/voice — re-tracks automatically; the Products checkbox and set_tracking tool also work).
+    //   A restock-based snooze would just re-nag next cycle, hence untrack. History is kept.
+    private async Task Restocked(ProductEstimate e)
+    {
+        if (actionBusy) return;
+        actionBusy = true;
+        try
+        {
+            copied = false; // the copied list is now stale
+            await Store.RecordSignalAsync(e.ProductId, SignalKind.Restocked);
+            await LoadAsync();
+        }
+        finally { actionBusy = false; }
+    }
+
     private async Task Untrack(ProductEstimate e)
     {
         if (actionBusy) return;

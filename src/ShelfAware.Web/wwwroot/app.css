@@ -1142,6 +1142,26 @@ button.tag-chip {
     color: var(--ink);
 }
 
+/* "Already have it" — a Restocked signal (status-only: clears an OutNow and re-anchors the due date;
+   it never feeds the cadence, §6 two-stream model). Green because it IS an "I'm stocked" statement,
+   unlike Untrack's neutral chip beside it. */
+.restock-btn {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--stocked-ink);
+    background: var(--stocked-bg);
+    border: none;
+    border-radius: 6px;
+    padding: 0.15rem 0.5rem;
+    cursor: pointer;
+    line-height: 1.5;
+    white-space: nowrap;
+}
+
+.restock-btn:hover:not(:disabled) {
+    box-shadow: inset 0 0 0 1px var(--stocked-line);
+}
+
 /* Item name → product detail (grocery list + products grid). */
 .item-name {
     font-weight: 600;
@@ -1652,7 +1672,8 @@ tfoot td {
     .list-actions,
     details.everything-else,
     .info-btn,
-    .untrack-btn {
+    .untrack-btn,
+    .restock-btn {
         display: none !important;
     }
 

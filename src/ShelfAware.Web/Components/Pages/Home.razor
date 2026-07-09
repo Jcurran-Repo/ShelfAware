@@ -5,6 +5,7 @@
 @using ShelfAware.Core.Shopping
 @inject IHouseholdDbFactory DbFactory
 @inject IPantryChat Chat
+@inject IPantryStore Store
 @inject NavigationManager Nav
 @inject VoiceCoordinator Coordinator
 
@@ -258,20 +259,14 @@ else
         finally { actionBusy = false; }
     }
 
+    // One restock write path for every surface (dashboard, grocery list, chat) — IPantryStore.
     private async Task Restocked(Product p)
     {
         if (actionBusy) return;
         actionBusy = true;
         try
         {
-            await using var db = await DbFactory.CreateDbContextAsync();
-            db.InventorySignals.Add(new InventorySignal
-            {
-                ProductId = p.Id,
-                Kind = SignalKind.Restocked,
-                SignaledAt = DateTimeOffset.Now
-            });
-            await db.SaveChangesAsync();
+            await Store.RecordSignalAsync(p.Id, SignalKind.Restocked);
             await LoadAsync();
         }
         finally { actionBusy = false; }
