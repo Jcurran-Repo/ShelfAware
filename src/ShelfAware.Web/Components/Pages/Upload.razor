@@ -21,20 +21,45 @@
        through the DOM element, and unmounting it breaks them mid-read. *@
     <section class="panel">
         <p>
-            Photograph a paper receipt, or screenshot a digital order page (multiple screenshots of one
-            long order are fine — they're merged). Print-to-PDF order pages also work.
+            Photograph paper receipts — several at once is fine, each image is read as its own receipt.
+            Screenshots and print-to-PDF order pages also work. For one long receipt split across
+            several photos, tick the box below and they'll be merged.
         </p>
         <div hidden="@(phase == Phase.Extracting)">
             <InputFile OnChange="OnFilesSelected" multiple accept="image/jpeg,image/png,image/gif,image/webp,application/pdf" aria-label="Upload receipt images or PDF" />
             @if (selectedFiles.Count > 0)
             {
-                <p>@selectedFiles.Count file(s) selected.</p>
+                <p>@selectedFiles.Count file(s) selected@(selectedFiles.Count > 1 && !combineAsOne ? $" — {selectedFiles.Count} receipts" : "").</p>
+                @if (selectedFiles.Count > 1)
+                {
+                    <label class="combine-check">
+                        <input type="checkbox" @bind="combineAsOne" />
+                        These are all <strong>one receipt</strong> (multiple photos/pages of a single long receipt)
+                    </label>
+                }
                 <button @onclick="Extract">Extract</button>
             }
         </div>
+        @if (batch.Count > 0)
+        {
+            <ul class="batch-progress" aria-label="Receipt extraction progress">
+                @foreach (var b in batch)
+                {
+                    <li>
+                        <span class="batch-icon" aria-hidden="true">@BatchIcon(b.Status)</span>
+                        <span class="batch-name">@b.FileName</span>
+                        <span class="@(b.Status == BatchStatus.Failed ? "error" : "muted")" role="status">@BatchNote(b)</span>
+                    </li>
+                }
+            </ul>
+        }
         @if (phase == Phase.Extracting)
         {
-            <p class="spinner">Reading your receipt… this usually takes a few seconds.</p>
+            <p class="spinner">
+                @(batch.Count > 0
+                    ? $"Reading receipt {Math.Min(batch.Count(x => x.Status is BatchStatus.Done or BatchStatus.Failed) + 1, batch.Count)} of {batch.Count}…"
+                    : "Reading your receipt… this usually takes a few seconds.")
+            </p>
         }
         @if (phase == Phase.Error)
         {
@@ -389,19 +414,7 @@ else if (phase == Phase.Done)
             r.Merchant = result.Receipt.Merchant;
             r.PurchasedAt = result.Receipt.PurchaseDate;
             db.ReceiptLines.RemoveRange(r.Lines);
-            r.Lines = result.Receipt.Lines.Select(l => new ReceiptLine
-            {
-                RawText = l.RawText,
-                NormalizedName = l.NormalizedName,
-                Brand = l.Brand,
-                Size = l.Size,
-                Quantity = l.Quantity,
-                UnitPrice = l.UnitPrice,
-                Category = l.Category,
-                Confidence = l.Confidence,
-                TagsJson = ReceiptConfirmationService.SerializeTags(l.Tags),
-                SuggestedProduct = l.SuggestedProductName,
-            }).ToList();
+            r.Lines = MapLines(result.Receipt);
             await db.SaveChangesAsync();
 
             await LoadReviewAsync(r.Id); // straight into the normal review flow
@@ -427,97 +440,99 @@ else if (phase == Phase.Done)
         _ => "image/jpeg",
     };
 
+    private const int MaxFiles = 20;
+
+    private bool combineAsOne;
+
+    private enum BatchStatus { Waiting, Reading, Done, Failed }
+
+    private sealed class BatchItem
+    {
+        public required string FileName { get; init; }
+        public BatchStatus Status { get; set; } = BatchStatus.Waiting;
+        public string? Merchant { get; set; }
+        public DateOnly? PurchasedAt { get; set; }
+        public int LineCount { get; set; }
+        public bool InQueue { get; set; } // a receipt row exists, so the pending list's Retry applies
+    }
+
+    private List<BatchItem> batch = [];
+
+    private static string BatchIcon(BatchStatus s) => s switch
+    {
+        BatchStatus.Reading => "📖",
+        BatchStatus.Done => "✅",
+        BatchStatus.Failed => "⚠️",
+        _ => "⏳",
+    };
+
+    private static string BatchNote(BatchItem b) => b.Status switch
+    {
+        BatchStatus.Waiting => "waiting…",
+        BatchStatus.Reading => "reading…",
+        BatchStatus.Done => $"{b.Merchant ?? "Unknown merchant"} · {(b.PurchasedAt is { } d ? d.ToString("MMM d, yyyy") : "no date")} · {b.LineCount} item{(b.LineCount == 1 ? "" : "s")} — in the review queue below",
+        _ => b.InQueue
+            ? "couldn't be read — retry it from the queue below"
+            : "something went wrong reading this file — try selecting it again",
+    };
+
     private void OnFilesSelected(InputFileChangeEventArgs e)
     {
-        selectedFiles = e.GetMultipleFiles(10).ToList();
+        try
+        {
+            selectedFiles = e.GetMultipleFiles(MaxFiles).ToList();
+        }
+        catch (InvalidOperationException)
+        {
+            selectedFiles = [];
+            errorMessage = $"Please select up to {MaxFiles} files at a time.";
+            phase = Phase.Error;
+            return;
+        }
+        batch = []; // a fresh selection supersedes the last batch's progress readout
+        combineAsOne = false;
         errorMessage = null;
         if (phase == Phase.Error) phase = Phase.Idle;
     }
 
-    private async Task Extract()
+    // Several files are several receipts (the stack-of-paper-receipts case) unless the user said
+    // they're pages of ONE long receipt. A single file keeps today's flow: straight into review.
+    private Task Extract() => selectedFiles.Count > 1 && !combineAsOne ? ExtractBatchAsync() : ExtractCombinedAsync();
+
+    private async Task ExtractCombinedAsync()
     {
         phase = Phase.Extracting;
         errorMessage = null;
         StateHasChanged();
 
-        var folderName = $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}"[..40];
+        var folderName = NewReceiptFolderName();
         var folder = Path.Combine(Paths.ReceiptsDir, folderName);
 
         try
         {
             Directory.CreateDirectory(folder);
             var attachments = new List<ReceiptAttachment>();
-            var maxEdge = LlmOptions.Value.MaxImageEdgePx;
             var index = 0;
-
             foreach (var file in selectedFiles)
             {
-                byte[] bytes;
-                string mediaType;
-                if (file.ContentType == "application/pdf")
-                {
-                    bytes = await ReadAllAsync(file.OpenReadStream(MaxUploadBytes));
-                    mediaType = "application/pdf";
-                }
-                else
-                {
-                    // Browser-side resize: longest edge capped per Llm:MaxImageEdgePx (DESIGN.md §5).
-                    var resized = await file.RequestImageFileAsync("image/jpeg", maxEdge, maxEdge);
-                    bytes = await ReadAllAsync(resized.OpenReadStream(MaxUploadBytes));
-                    mediaType = "image/jpeg";
-                }
-                attachments.Add(new ReceiptAttachment(bytes, mediaType));
-
-                var ext = mediaType == "application/pdf" ? "pdf" : "jpg";
-                await File.WriteAllBytesAsync(Path.Combine(folder, $"page-{index++}.{ext}"), bytes);
+                var attachment = await ReadForExtractionAsync(file);
+                attachments.Add(attachment);
+                await File.WriteAllBytesAsync(Path.Combine(folder, $"page-{index++}.{ExtFor(attachment.MediaType)}"), attachment.Data);
             }
 
             // Load existing products first so the model can match lines against them (LLM-assisted matching).
-            await using (var pdb = await DbFactory.CreateDbContextAsync())
-            {
-                products = await pdb.Products.OrderBy(p => p.Name).ToListAsync();
-                var stored = await pdb.ProductTags.Select(t => t.Value).Distinct().ToListAsync();
-                allKnownTags = TagVocabulary.Seed.Concat(stored)
-                    .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t).ToList();
-            }
+            await LoadCatalogAsync();
             var result = await Extractor.ExtractAsync(attachments, products.Select(p => p.Name).Distinct().ToList(), allKnownTags);
-
-            await using var db = await DbFactory.CreateDbContextAsync();
-            receipt = new Receipt
-            {
-                ImagePath = Path.Combine("receipts", folderName),
-                RawModelJson = result.RawModelJson,
-                Status = ReceiptStatus.PendingReview,
-            };
+            receipt = await PersistExtractionAsync(folderName, result);
 
             if (!result.Success || result.Receipt is null)
             {
-                db.Receipts.Add(receipt);
-                await db.SaveChangesAsync();
                 errorMessage = $"Sorry — that receipt couldn't be read. The image was kept for review. ({result.Error})";
                 phase = Phase.Error;
                 return;
             }
 
-            receipt.Merchant = result.Receipt.Merchant;
-            receipt.PurchasedAt = result.Receipt.PurchaseDate;
-            receipt.Lines = result.Receipt.Lines.Select(l => new ReceiptLine
-            {
-                RawText = l.RawText,
-                NormalizedName = l.NormalizedName,
-                Brand = l.Brand,
-                Size = l.Size,
-                Quantity = l.Quantity,
-                UnitPrice = l.UnitPrice,
-                Category = l.Category,
-                Confidence = l.Confidence,
-                TagsJson = ReceiptConfirmationService.SerializeTags(l.Tags),
-                SuggestedProduct = l.SuggestedProductName,
-            }).ToList();
-            db.Receipts.Add(receipt);
-            await db.SaveChangesAsync();
-
-            // The stored lines now carry everything review needs (tags + suggestion included), so the
+            // The stored lines carry everything review needs (tags + suggestion included), so the
             // fresh-extraction path and the auto-import queue share one pre-fill.
             await LoadReviewAsync(receipt.Id);
         }
@@ -531,8 +546,133 @@ else if (phase == Phase.Done)
         finally
         {
             selectedFiles = [];
+            combineAsOne = false;
         }
     }
+
+    // Each image is its OWN receipt, extracted one at a time so the user sees progress per receipt
+    // rather than one long silence. Every read lands in the PendingReview queue below, exactly like
+    // auto-imports — review each when the batch finishes. Failures are non-fatal: the audit copy and
+    // raw model output are kept, and the row gets the usual Retry.
+    private async Task ExtractBatchAsync()
+    {
+        phase = Phase.Extracting;
+        errorMessage = null;
+        batch = selectedFiles.Select(f => new BatchItem { FileName = f.Name }).ToList();
+        StateHasChanged();
+
+        try
+        {
+            await LoadCatalogAsync();
+            var productNames = products.Select(p => p.Name).Distinct().ToList();
+
+            for (var i = 0; i < selectedFiles.Count; i++)
+            {
+                var item = batch[i];
+                item.Status = BatchStatus.Reading;
+                StateHasChanged();
+                try
+                {
+                    var folderName = NewReceiptFolderName();
+                    Directory.CreateDirectory(Path.Combine(Paths.ReceiptsDir, folderName));
+                    var attachment = await ReadForExtractionAsync(selectedFiles[i]);
+                    await File.WriteAllBytesAsync(
+                        Path.Combine(Paths.ReceiptsDir, folderName, $"page-0.{ExtFor(attachment.MediaType)}"), attachment.Data);
+
+                    var result = await Extractor.ExtractAsync([attachment], productNames, allKnownTags);
+                    var saved = await PersistExtractionAsync(folderName, result);
+                    item.InQueue = true;
+
+                    if (result.Success && result.Receipt is not null)
+                    {
+                        item.Status = BatchStatus.Done;
+                        item.Merchant = saved.Merchant;
+                        item.PurchasedAt = saved.PurchasedAt;
+                        item.LineCount = saved.Lines.Count;
+                    }
+                    else
+                    {
+                        item.Status = BatchStatus.Failed;
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    // One bad file must not sink the rest of the stack — mark it and keep going.
+                    Logger.LogError(ex, "Batch extraction failed for {FileName}.", item.FileName);
+                    item.Status = BatchStatus.Failed;
+                }
+                StateHasChanged();
+            }
+        }
+        finally
+        {
+            selectedFiles = [];
+            await LoadPendingAsync(); // the batch just filled the review queue
+            phase = Phase.Idle;
+        }
+    }
+
+    /// <summary>Persist ANY extraction outcome as a PendingReview receipt — a successful read keeps its
+    /// lines; a failed one keeps the audit copy + raw model output so the queue's Retry can re-extract.</summary>
+    private async Task<Receipt> PersistExtractionAsync(string folderName, ExtractionResult result)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var r = new Receipt
+        {
+            ImagePath = Path.Combine("receipts", folderName),
+            RawModelJson = result.RawModelJson,
+            Status = ReceiptStatus.PendingReview,
+        };
+        if (result.Success && result.Receipt is not null)
+        {
+            r.Merchant = result.Receipt.Merchant;
+            r.PurchasedAt = result.Receipt.PurchaseDate;
+            r.Lines = MapLines(result.Receipt);
+        }
+        db.Receipts.Add(r);
+        await db.SaveChangesAsync();
+        return r;
+    }
+
+    private static List<ReceiptLine> MapLines(ExtractedReceipt extracted) => extracted.Lines.Select(l => new ReceiptLine
+    {
+        RawText = l.RawText,
+        NormalizedName = l.NormalizedName,
+        Brand = l.Brand,
+        Size = l.Size,
+        Quantity = l.Quantity,
+        UnitPrice = l.UnitPrice,
+        Category = l.Category,
+        Confidence = l.Confidence,
+        TagsJson = ReceiptConfirmationService.SerializeTags(l.Tags),
+        SuggestedProduct = l.SuggestedProductName,
+    }).ToList();
+
+    // Products + tag vocabulary for LLM-assisted matching and tag reuse during extraction.
+    private async Task LoadCatalogAsync()
+    {
+        await using var pdb = await DbFactory.CreateDbContextAsync();
+        products = await pdb.Products.OrderBy(p => p.Name).ToListAsync();
+        var stored = await pdb.ProductTags.Select(t => t.Value).Distinct().ToListAsync();
+        allKnownTags = TagVocabulary.Seed.Concat(stored)
+            .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t).ToList();
+    }
+
+    private static string NewReceiptFolderName() => $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}"[..40];
+
+    // Browser-side resize for images (longest edge capped per Llm:MaxImageEdgePx, DESIGN.md §5);
+    // PDFs pass through as-is.
+    private async Task<ReceiptAttachment> ReadForExtractionAsync(IBrowserFile file)
+    {
+        if (file.ContentType == "application/pdf")
+            return new ReceiptAttachment(await ReadAllAsync(file.OpenReadStream(MaxUploadBytes)), "application/pdf");
+        var maxEdge = LlmOptions.Value.MaxImageEdgePx;
+        var resized = await file.RequestImageFileAsync("image/jpeg", maxEdge, maxEdge);
+        return new ReceiptAttachment(await ReadAllAsync(resized.OpenReadStream(MaxUploadBytes)), "image/jpeg");
+    }
+
+    private static string ExtFor(string mediaType) => mediaType == "application/pdf" ? "pdf" : "jpg";
 
     // Persistence lives in ReceiptConfirmationService — the ONE confirm path shared with the
     // auto-importer. The service is idempotent (an already-confirmed receipt is a no-op) and the
@@ -658,6 +798,8 @@ else if (phase == Phase.Done)
         receipt = null;
         reviewLines = [];
         selectedFiles = [];
+        batch = [];
+        combineAsOne = false;
         errorMessage = null;
         confirmError = null;
     }

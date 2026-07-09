@@ -1351,6 +1351,39 @@ button.tag-chip {
     gap: 0.4rem;
 }
 
+/* ---- Multi-receipt upload: the "one receipt per image" batch ---- */
+.combine-check {
+    display: block;
+    margin: 0.4rem 0 0.6rem;
+    color: var(--ink-soft);
+}
+
+.combine-check input {
+    margin-right: 0.35rem;
+}
+
+.batch-progress {
+    list-style: none;
+    padding: 0;
+    margin: 0.75rem 0 0;
+    display: grid;
+    gap: 0.4rem;
+}
+
+.batch-progress li {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 0.4rem;
+}
+
+.batch-progress .batch-name {
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
 .recipe-steps {
     margin-top: 0.45rem;
     font-size: 0.88rem;
