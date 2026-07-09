@@ -165,6 +165,7 @@ public class AnthropicPantryChat : IPantryChat
     {
         string? Str(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsString(v) : null;
         decimal? Dec(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsDecimal(v) : null;
+        int? Int(string key) => Dec(key) is { } d ? (int)d : null;
         bool? Bool(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsBool(v) : null;
         List<string>? StrList(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsStringList(v) : null;
 
@@ -388,11 +389,25 @@ public class AnthropicPantryChat : IPantryChat
             case "read_recipe":
             {
                 var name = Str("recipe_name")?.Trim();
-                if (string.IsNullOrWhiteSpace(name)) return ("A recipe name is required.", true);
+                var position = Int("position");
+                if (string.IsNullOrWhiteSpace(name) && position is null)
+                    return ("A recipe name or position is required.", true);
                 var recipes = await _store.GetRecipesAsync(ct);
                 if (recipes.Count == 0)
                     return ("There are no saved recipes yet — save one on the Recipes page first.", true);
-                var match = ResolveRecipe(name, recipes);
+                // Position wins when given: it's the explicit "the second one" case, and the store's
+                // list is in the exact order the Recipes page displays (newest saved first).
+                RecipeRef? match;
+                if (position is { } pos)
+                {
+                    if (pos < 1 || pos > recipes.Count)
+                        return ($"There {(recipes.Count == 1 ? "is only 1 saved recipe" : $"are only {recipes.Count} saved recipes")} — position {pos} doesn't exist. In order: {string.Join("; ", recipes.Select(r => r.Name))}.", true);
+                    match = recipes[pos - 1];
+                }
+                else
+                {
+                    match = ResolveRecipe(name!, recipes);
+                }
                 if (match is null)
                     // Feed the real names back so the model can self-correct or ask which one was meant.
                     return ($"No saved recipe matches \"{name}\". Saved recipes: {string.Join("; ", recipes.Select(r => r.Name))}.", true);
@@ -518,13 +533,13 @@ public class AnthropicPantryChat : IPantryChat
                 ["page"]),
 
             MakeTool("read_recipe",
-                "Open a SAVED recipe on screen and read it aloud step-by-step. Use when the user asks to hear, read, or be walked through a recipe.",
+                "Open a SAVED recipe on screen and read it aloud step-by-step. Use when the user asks to hear, read, or be walked through a recipe — by name, or by position ('read the second recipe') even when no on-screen list is provided.",
                 """
                 {
-                  "recipe_name": { "type": "string", "description": "Name of the saved recipe (close match is fine)." }
+                  "recipe_name": { "type": "string", "description": "Name of the saved recipe (close match is fine). Give this OR position." },
+                  "position": { "type": "integer", "description": "1-based position in the saved-recipes list, counted the way the Recipes page shows it: newest saved first, adapted variants right after their original. Use when the user refers to a recipe by position rather than name and no on-screen list says otherwise." }
                 }
-                """,
-                ["recipe_name"]),
+                """),
 
             MakeTool("suggest_substitutes",
                 "Save \"also works as\" substitutes for a product — the recipe ingredients it can stand in for — so recipes recognize what the user has. When the user SAYS what it works as ('add X as a substitute/variant for Y'), pass those phrases in 'substitutes' (saved verbatim on X). Omit 'substitutes' to auto-generate ideas.",
@@ -596,7 +611,7 @@ public class AnthropicPantryChat : IPantryChat
             .Where(t => t is not ("the" or "a" or "an" or "and" or "with" or "of" or "recipe"))
             .ToHashSet();
 
-    private static ToolUnion MakeTool(string name, string description, string propertiesJson, string[] required) =>
+    private static ToolUnion MakeTool(string name, string description, string propertiesJson, string[]? required = null) =>
         new Tool
         {
             Name = name,
@@ -605,7 +620,7 @@ public class AnthropicPantryChat : IPantryChat
             {
                 Type = JsonSerializer.SerializeToElement("object"),
                 Properties = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(propertiesJson)!,
-                Required = required,
+                Required = required ?? [],
             },
         };
 

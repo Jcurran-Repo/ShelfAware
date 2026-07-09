@@ -547,6 +547,43 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task Read_recipe_by_position_indexes_the_display_ordered_list()
+    {
+        // No on-screen list needed: "read the second recipe" works from ANY page because the store's
+        // list is in Recipes-page display order and the tool takes a 1-based position into it.
+        var store = new FakePantryStore();
+        store.Recipes.Add(new RecipeRef(9, "Skillet Beef Tacos", HasSteps: true));
+        store.Recipes.Add(new RecipeRef(4, "Spaghetti Carbonara", HasSteps: true));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("read_recipe", ("position", 2))),
+            () => Responses.Text("Opening Spaghetti Carbonara and reading it aloud."));
+
+        var result = await Chat(client, store).HandleAsync("read me the second recipe");
+
+        Assert.Equal("/recipes?read=4", result.NavigateTo);
+        Assert.True(result.HandsOff);
+    }
+
+    [Fact]
+    public async Task Read_recipe_position_out_of_range_reports_the_list_and_does_not_navigate()
+    {
+        var store = new FakePantryStore();
+        store.Recipes.Add(new RecipeRef(9, "Skillet Beef Tacos", HasSteps: true));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("read_recipe", ("position", 3))),
+            () => Responses.Text("There's only one saved recipe — Skillet Beef Tacos."));
+
+        var result = await Chat(client, store).HandleAsync("read the third recipe");
+
+        Assert.Null(result.NavigateTo);
+        // The tool result must list what IS saved (in order), so the model can self-correct.
+        var toolResult = client.ReceivedMessages[1]
+            .Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result?.ToString();
+        Assert.Contains("Skillet Beef Tacos", toolResult);
+    }
+
+    [Fact]
     public async Task Stops_after_the_turn_limit()
     {
         // The model keeps calling a tool and never gives a final answer → the loop must bail out.

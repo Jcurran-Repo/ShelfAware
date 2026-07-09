@@ -65,6 +65,34 @@ public class EfPantryStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Recipes_list_in_page_display_order_so_positional_references_land_right()
+    {
+        // "Read the second recipe" indexes into this list, so its order must be exactly what the
+        // Recipes page shows: newest ORIGINAL first, each followed by its adapted variants — a variant
+        // saved yesterday still nests under its original, it doesn't jump to the top of the count.
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Recipes.Add(new Recipe { Name = "Oldest Original", SavedAt = new DateTimeOffset(2026, 7, 1, 0, 0, 0, TimeSpan.Zero) });
+            db.Recipes.Add(new Recipe { Name = "Newest Original", SavedAt = new DateTimeOffset(2026, 7, 5, 0, 0, 0, TimeSpan.Zero) });
+            await db.SaveChangesAsync();
+            var parent = await db.Recipes.SingleAsync(r => r.Name == "Oldest Original");
+            db.Recipes.Add(new Recipe
+            {
+                Name = "Oldest's Adapted Variant",
+                SavedAt = new DateTimeOffset(2026, 7, 6, 0, 0, 0, TimeSpan.Zero),
+                ParentRecipeId = parent.Id,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var refs = await _store.GetRecipesAsync();
+
+        Assert.Equal(
+            new[] { "Newest Original", "Oldest Original", "Oldest's Adapted Variant" },
+            refs.Select(r => r.Name).ToArray());
+    }
+
+    [Fact]
     public async Task Adding_a_purchase_to_a_tracked_product_reports_no_retrack()
     {
         int milkId;

@@ -112,10 +112,21 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory) : IPantryStore
     public async Task<IReadOnlyList<RecipeRef>> GetRecipesAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return await db.Recipes
-            .OrderBy(r => r.Name)
-            .Select(r => new RecipeRef(r.Id, r.Name, r.Steps.Count > 0))
+        // DISPLAY order — the same order the Recipes page lists them (newest saved first, each original
+        // followed by its adapted variants, also newest first) — so a positional reference the chat
+        // resolves ("read the second recipe") lands on the recipe the user would count to on screen.
+        var all = await db.Recipes
+            .Select(r => new { r.Id, r.Name, HasSteps = r.Steps.Count > 0, r.SavedAt, r.ParentRecipeId })
             .ToListAsync(cancellationToken);
+        return all
+            .Where(r => r.ParentRecipeId is null)
+            .OrderByDescending(r => r.SavedAt)
+            .SelectMany(o => all
+                .Where(v => v.ParentRecipeId == o.Id)
+                .OrderByDescending(v => v.SavedAt)
+                .Prepend(o))
+            .Select(r => new RecipeRef(r.Id, r.Name, r.HasSteps))
+            .ToList();
     }
 
     public async Task<IReadOnlyList<string>> AddSubstitutesAsync(int productId, IReadOnlyList<string> values, CancellationToken cancellationToken = default)
