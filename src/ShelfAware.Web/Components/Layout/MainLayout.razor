@@ -1,8 +1,16 @@
 @inherits LayoutComponentBase
 
-<header class="site-header">
+<header class="site-header @(navOpen ? "nav-open" : null)">
     <span class="brand">Shelf Aware</span>
-    <nav aria-label="Primary">
+    @* Mobile-only disclosure for the nav — eight links swamp a phone. display:none on desktop, so
+       navOpen (and the nav-open class) can only take effect under the small-screen media query. *@
+    <button type="button" class="nav-toggle" @onclick="() => navOpen = !navOpen"
+            aria-expanded="@(navOpen ? "true" : "false")" aria-controls="primary-nav"
+            aria-label="@(navOpen ? "Close menu" : "Open menu")">
+        <span aria-hidden="true">@(navOpen ? "✕" : "☰")</span>
+    </button>
+    @* A tap on any link both navigates and (via bubbling) folds the mobile menu. *@
+    <nav id="primary-nav" aria-label="Primary" @onclick="() => navOpen = false">
         <NavLink href="/" Match="NavLinkMatch.All">Dashboard</NavLink>
         <NavLink href="/list">Grocery List</NavLink>
         <NavLink href="/recipes">Recipes</NavLink>
@@ -47,3 +55,7 @@
     <a href="." class="reload">Reload</a>
     <span class="dismiss">🗙</span>
 </div>
+
+@code {
+    private bool navOpen;
+}

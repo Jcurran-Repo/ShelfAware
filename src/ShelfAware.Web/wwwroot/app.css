@@ -77,6 +77,62 @@ body {
     font-weight: 700;
 }
 
+/* Mobile-only nav disclosure (☰). Hidden on desktop, where the full link row renders as always. */
+.nav-toggle {
+    display: none;
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--ink);
+    font-size: 1.1rem;
+    line-height: 1;
+    padding: 0.35rem 0.6rem;
+    cursor: pointer;
+}
+
+/* Small screens: eight links swamp a phone, so the nav collapses behind the toggle and opens as a
+   full-width column under the bar. Desktop (above the breakpoint) is untouched. */
+@media (max-width: 768px) {
+    .site-header {
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.7rem 1rem;
+    }
+
+    .nav-toggle {
+        display: block;
+        order: 5; /* visual right edge; DOM (tab) order stays brand → toggle → nav → account */
+    }
+
+    .site-header nav {
+        display: none;
+        order: 6;
+        width: 100%;
+        flex-direction: column;
+        border-top: 1px solid var(--line);
+        padding-top: 0.25rem;
+    }
+
+    .site-header.nav-open nav {
+        display: flex;
+    }
+
+    .site-header nav a {
+        margin-right: 0;
+        padding: 0.55rem 0.25rem;
+        border-bottom: 1px solid var(--line);
+    }
+
+    .site-header nav a:last-child {
+        border-bottom: none;
+    }
+
+    .site-header .account-email {
+        max-width: 9rem;
+    }
+}
+
 .site-main {
     padding: 1.5rem;
     max-width: 56rem;
