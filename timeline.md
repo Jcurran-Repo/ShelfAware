@@ -164,6 +164,12 @@ _Last updated: 7/7/2026_
 
 ---
 
+## v3.1 — Voice fixes & usability batch
+- [x] Cook-along opens without config overrides — dropped the fragile `first_message` override (the WS-1008 arc); the agent greets from its own config — 7/8/2026
+- [x] read_recipe deep link auto-starts from any page — `?read` consumed in OnParametersSet (a query-only nav never re-ran OnInitializedAsync) and stripped one-shot; the voice agent releases the mic before the hand-off — 7/8/2026
+
+---
+
 ## Backlog (unscheduled)
 - [x] Double-scroll fix (Grocery List + Upload review) — 7/2/2026
 - [ ] CSV history importer — Parked (blocked on an itemized data export)

@@ -48,17 +48,14 @@ export function isSupported() {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.WebSocket);
 }
 
-// Greet-then-wait opening line, sent as a firstMessage override so the agent doesn't sit silent OR
-// barrel into step one unasked. IMPORTANT: agents only honor overrides that are explicitly enabled
-// (ElevenLabs dashboard → agent → Security). A disallowed override is NOT gracefully ignored — the
-// server accepts the socket and then terminates the conversation with WS close 1008 ("Override for
-// field 'first_message' is not allowed by config"), which presents as the session ending itself right
-// after starting. When that rejection comes back we reconnect once WITHOUT overrides and let the agent
-// open with its own configured first message — BYOK visitors' agents rarely have overrides enabled.
-const GREETING = "I'm ready to read you the recipe. Say 'next' whenever you want the first step.";
+// No config overrides are sent when the session opens — the agent greets with whatever first message
+// is configured on it (or just listens). We used to override first_message for a tailored greeting, but
+// ElevenLabs hard-terminates the conversation (WS close 1008) unless the override is explicitly allowed
+// in the agent's dashboard config, which proved flaky to keep enabled and is never enabled on BYOK
+// visitors' agents. The greeting wasn't worth that failure mode.
 
-// Bumped by every start/stop; async callbacks compare against it so a stale session's disconnect or a
-// pending fallback reconnect can't fight a newer session (or resurrect one the user just stopped).
+// Bumped by every start/stop; async callbacks compare against it so a stale session's disconnect can't
+// fight a newer session (or resurrect one the user just stopped).
 let generation = 0;
 
 // Open the realtime conversation with the recipe injected. dotnetRef receives: OnStatus(string),
@@ -68,19 +65,15 @@ export async function start(recipe, dotnetRef) {
     const gen = generation;
     dotnetRef.invokeMethodAsync('OnStatus', 'connecting');
     try {
-        await open(recipe, dotnetRef, gen, true);
+        await open(recipe, dotnetRef, gen);
         return true;
     } catch (e) {
-        if (gen === generation && isOverrideRejection(e)) {
-            // Rejected before the session was established — same policy close, earlier timing.
-            try { await open(recipe, dotnetRef, gen, false); return true; } catch { /* report below */ }
-        }
         if (gen === generation && !e?.statusReported) dotnetRef.invokeMethodAsync('OnStatus', 'error');
         return false;
     }
 }
 
-async function open(recipe, dotnetRef, gen, withOverrides) {
+async function open(recipe, dotnetRef, gen) {
     const C = await ensureSdk();
 
     // A fresh signed URL per attempt — they're short-lived and consumed by the connection.
@@ -108,7 +101,6 @@ async function open(recipe, dotnetRef, gen, withOverrides) {
     convo = await C.startSession({
         signedUrl,
         dynamicVariables: { recipe },
-        ...(withOverrides ? { overrides: { agent: { firstMessage: GREETING } } } : {}),
         // Self-hosted audio worklets: the SDK's defaults (a jsdelivr CDN URL for the resampler,
         // blob:/data: fallbacks for its own processors) are all blocked by the strict CSP
         // (script-src 'self' + esm.sh). Vendored at the SDK's pinned version — see js/vendor/README.md.
@@ -120,16 +112,6 @@ async function open(recipe, dotnetRef, gen, withOverrides) {
         onConnect: () => { if (gen === generation) dotnetRef.invokeMethodAsync('OnStatus', 'connected'); },
         onDisconnect: (details) => {
             if (gen !== generation) return; // stale session — a newer start/stop owns the UI now
-            if (withOverrides && isOverrideRejection(details)) {
-                // The agent's config forbids overrides — reconnect without them (see GREETING note).
-                console.warn("[cook-along] agent config doesn't allow the first-message override; reconnecting without it.");
-                convo = null;
-                dotnetRef.invokeMethodAsync('OnStatus', 'connecting');
-                open(recipe, dotnetRef, gen, false).catch(() => {
-                    if (gen === generation) dotnetRef.invokeMethodAsync('OnStatus', 'error');
-                });
-                return; // suppress 'ended' — the retry owns the status from here
-            }
             // Surface abnormal close reasons — an opaque "ended" cost a whole debugging round once.
             if (details?.reason === 'error') {
                 console.warn('[cook-along] disconnected:', details?.message ?? details?.closeReason ?? '(no reason given)');
@@ -162,17 +144,8 @@ async function open(recipe, dotnetRef, gen, withOverrides) {
     });
 }
 
-// The server's override-policy rejection, whichever shape it arrives in: a pre-establishment throw
-// from startSession, or the disconnect details of an established-then-terminated session. WS close
-// 1008 = policy violation; the reason text names the disallowed field.
-function isOverrideRejection(x) {
-    if (!x) return false;
-    const text = `${x.closeReason ?? ''} ${x.message ?? ''}`;
-    return x.closeCode === 1008 || /override/i.test(text);
-}
-
 export async function stop() {
-    generation++; // invalidate any in-flight callbacks/retries for the old session
+    generation++; // invalidate any in-flight callbacks for the old session
     if (convo) {
         try { await convo.endSession(); } catch { /* already closed */ }
         convo = null;

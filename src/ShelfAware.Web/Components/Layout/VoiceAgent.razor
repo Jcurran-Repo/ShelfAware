@@ -207,9 +207,12 @@
                 if (speech.Success)
                     await _module.InvokeVoidAsync("play", Convert.ToBase64String(speech.Audio), speech.MediaType);
 
-                // Hand-off (read_recipe): move to the reader now and stand down so we don't echo its audio.
+                // Hand-off (read_recipe): stand down BEFORE moving to the reader — cook-along opens its
+                // own microphone session as soon as the destination renders, so our recorder must be
+                // fully released first or the two contend for the device while it's connecting.
                 if (result.Success && result.HandsOff && result.NavigateTo is { } handoffUrl)
                 {
+                    await EndInternal();
                     Nav.NavigateTo(handoffUrl);
                     break;
                 }

@@ -9,6 +9,7 @@
 @inject IIngredientAlternativesAdvisor AltAdvisor
 @inject ShelfAware.Core.Speech.IVoiceCredentials Voice
 @inject VoiceCoordinator Coordinator
+@inject NavigationManager Nav
 @inject ILogger<Recipes> Logger
 
 <PageTitle>Recipes — Shelf Aware</PageTitle>
@@ -430,22 +431,38 @@
         picked = pool.Count > 0 ? pool[rng.Next(pool.Count)] : null;
     }
 
-    protected override async Task OnInitializedAsync()
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    // Re-derive the ?uses filter and consume any ?read command whenever the query changes. This runs
+    // after OnInitializedAsync has loaded the data AND on every later query-only navigation — the
+    // read_recipe deep link usually arrives as the latter: the voice chain is often already ON /recipes
+    // ("recipes that use chicken" → "read the second one"), and a same-component navigation never
+    // re-runs OnInitializedAsync, which is where this handling used to live (the auto-start silently
+    // never fired).
+    protected override void OnParametersSet()
     {
-        await LoadAsync();
-        if (ReadId is { } id && savedRecipes.FirstOrDefault(r => r.Id == id) is { Steps.Count: > 0 } target)
+        ApplyFilter();
+        ConsumeReadDeepLink();
+    }
+
+    /// <summary>Deep link from the chat's read_recipe tool (/recipes?read={id}) — auto-starts a hands-free
+    /// read: the listening cook-along agent when it's configured (voice "next"/"back"/"stop"/"go to the
+    /// assistant", so the whole chain stays hands-free), else the button-controlled read-aloud (also the
+    /// later fallback if cook-along can't connect — HandleCookUnavailable). ?read is a one-shot command,
+    /// not view state, so it's stripped from the URL once consumed: a repeat of the same request still
+    /// changes the query (null → id), and a refresh doesn't surprise-relaunch a mic session. Interactive
+    /// only — during prerender there's no circuit to run a voice surface on, and navigating would turn
+    /// into a redirect that eats the parameter before the interactive run could see it.</summary>
+    private void ConsumeReadDeepLink()
+    {
+        if (!RendererInfo.IsInteractive || ReadId is not { } id) return;
+        if (savedRecipes.FirstOrDefault(r => r.Id == id) is { Steps.Count: > 0 } target)
         {
-            // The voice chain wants this read hands-free. Prefer the listening cook-along agent (voice
-            // "next"/"back"/"stop"/"go to the assistant"); fall back to the button-controlled reader when
-            // the ElevenLabs agent isn't configured (or, later, if it can't connect — HandleCookUnavailable).
             if (CookAlongAvailable) { StartCooking(target); cookAutoStarted = true; }
             else StartReading(target);
         }
+        Nav.NavigateTo(UsesProductId is { } u ? $"/recipes?uses={u}" : "/recipes", replace: true);
     }
-
-    // Re-derive the ?uses filter whenever the query changes (navigating between filtered views without a
-    // full page reload); the first run happens after OnInitializedAsync has loaded the data.
-    protected override void OnParametersSet() => ApplyFilter();
 
     private void ApplyFilter()
     {
