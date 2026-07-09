@@ -150,12 +150,16 @@ else
     @if (priceSeries.Count >= 2)
     {
         <section class="panel">
-            <h2>Price history</h2>
+            <h2>Price history @(chartSizeLabel is { } cs ? $"— {cs}" : null)</h2>
             <LineChart Values="priceSeries" W="520" H="140" ShowDots="true"
-                       AriaLabel="@($"{product.Name} price per purchase over time")" />
+                       AriaLabel="@($"{product.Name} price per purchase over time{(chartSizeLabel is { } chartSize ? $", {chartSize} size" : "")}")" />
             <p class="muted">
                 @priceSeries.Count price points · low @Money(priceSeries.Min()) ·
                 high @Money(priceSeries.Max()) · latest @Money(priceSeries[^1])
+                @if (chartSizeLabel is not null)
+                {
+                    <text> · charting the most-bought size — other sizes appear in the purchase list below</text>
+                }
             </p>
         </section>
     }
@@ -204,6 +208,7 @@ else
     private ProductEstimate estimate = null!;
     private readonly List<PurchaseRow> history = [];
     private readonly List<decimal> priceSeries = [];
+    private string? chartSizeLabel; // the charted size bucket, shown only when the product mixes sizes
     private List<BrandRow> brandBreakdown = [];
     private List<RecipeLink> usedInRecipes = [];
 
@@ -231,6 +236,7 @@ else
         notFound = false;
         history.Clear();
         priceSeries.Clear();
+        chartSizeLabel = null;
         brandBreakdown = [];
         usedInRecipes = [];
 
@@ -263,23 +269,35 @@ else
         prediction = ReplenishmentPredictor.Predict(product, today);
 
         // Price the recommended (dominant) size specifically; fall back to the overall average.
-        var recommendedKey = SizeKey(prediction.RecommendedSize);
-        var recommendedSizePrices = priceByReceipt.Where(x => SizeKey(x.Size) == recommendedKey).Select(x => x.Price).ToList();
+        // PriceSeries.Bucket also folds the loose/"each" spellings together, so per-each produce
+        // prices match a null recommended size.
+        var recommendedKey = PriceSeries.Bucket(prediction.RecommendedSize);
+        var recommendedSizePrices = priceByReceipt.Where(x => PriceSeries.Bucket(x.Size) == recommendedKey).Select(x => x.Price).ToList();
         decimal? estPrice = recommendedSizePrices.Count > 0
             ? recommendedSizePrices.Average()
             : priceByReceipt.Count > 0 ? priceByReceipt.Average(x => x.Price) : null;
         estimate = ShoppingEstimator.For(product, prediction, today, estPrice);
 
+        var pricePoints = new List<PricePoint>();
         var ordered = product.Purchases.OrderBy(p => p.PurchasedAt).ToList();
         for (var i = 0; i < ordered.Count; i++)
         {
             var pe = ordered[i];
             int? gap = i > 0 ? pe.PurchasedAt.DayNumber - ordered[i - 1].PurchasedAt.DayNumber : null;
             decimal? price = pe.ReceiptId is { } rid && priceLookup.TryGetValue(rid, out var pr) ? pr : null;
-            if (price is { } pv) priceSeries.Add(pv); // ascending, for the chart
+            if (price is { } pv) pricePoints.Add(new PricePoint(pe.Size, pe.PurchasedAt, pv));
             history.Add(new PurchaseRow(pe.PurchasedAt, gap, pe.Quantity, pe.Size, price));
         }
         history.Reverse(); // most recent first
+
+        // The chart plots ONE size's prices (the dominant bucket) so it shows a real trend — $/bag next
+        // to $/each is a cliff, not a price move. The purchase table below still shows every size's
+        // actual price; the caption names the charted size when the product mixes sizes.
+        if (PriceSeries.Dominant(pricePoints) is { } series)
+        {
+            priceSeries.AddRange(series.Points.Select(pt => pt.UnitPrice));
+            chartSizeLabel = series.BucketCount > 1 ? series.SizeKey : null;
+        }
 
         // Brand-agnostic product: which brands of this item have been bought, and how often.
         decimal? PriceOf(PurchaseEvent pe) =>
@@ -412,7 +430,6 @@ else
             .ToListAsync();
     }
 
-    private static string SizeKey(string? size) => (size ?? "").Trim().ToLowerInvariant();
 
     private static string Money(decimal amount) => amount.ToString("C");
 

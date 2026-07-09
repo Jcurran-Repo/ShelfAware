@@ -48,7 +48,13 @@ else
                     @foreach (var t in tickers)
                     {
                         <tr>
-                            <td><a href="/product/@t.ProductId">@t.Name</a></td>
+                            <td>
+                                <a href="/product/@t.ProductId">@t.Name</a>
+                                @if (t.SizeLabel is { } sz)
+                                {
+                                    <span class="size-chip" title="This item is bought in more than one size — the chart and change track the size bought most often">@sz</span>
+                                }
+                            </td>
                             <td>@t.Category</td>
                             <td><LineChart Values="t.Prices" Stroke="@TrendColor(t)" AriaLabel="@($"{t.Name} price history")" /></td>
                             <td>@Money(t.Current)</td>
@@ -68,7 +74,7 @@ else
                 </tbody>
             </table>
         </div>
-        <p class="muted">▲ = price went up since the previous purchase (costs more); ▼ = down. Spend is valued from receipt prices.</p>
+        <p class="muted">▲ = price went up since the previous purchase (costs more); ▼ = down. Spend is valued from receipt prices. Items bought in mixed sizes chart their most-bought size (labelled), so a bag is never compared against a single.</p>
     }
 }
 
@@ -77,7 +83,7 @@ else
     private decimal thisMonth, lastMonth, thisYear, nextMonthForecast;
     private List<Ticker> tickers = [];
 
-    private record Ticker(int ProductId, string Name, Category Category, List<decimal> Prices,
+    private record Ticker(int ProductId, string Name, Category Category, string? SizeLabel, List<decimal> Prices,
         decimal Current, decimal? PrevDelta, decimal? PrevPct, decimal SpendThisYear);
 
     protected override async Task OnInitializedAsync()
@@ -91,14 +97,25 @@ else
 
         var lineData = await db.ReceiptLines
             .Where(l => l.ProductId != null && l.UnitPrice != null)
-            .Select(l => new { ProductId = l.ProductId!.Value, l.ReceiptId, Price = l.UnitPrice!.Value, Date = l.Receipt!.PurchasedAt })
+            .Select(l => new { ProductId = l.ProductId!.Value, l.ReceiptId, l.Size, Price = l.UnitPrice!.Value, Date = l.Receipt!.PurchasedAt })
             .ToListAsync();
 
-        var pricesByProduct = lineData
+        // The ticker compares like with like: only the DOMINANT size bucket's prices form the series
+        // ($/bag never sits next to $/lime — that read as a 3,100% "price increase"). Loose/"each"
+        // purchases share one bucket regardless of how many were bought (PriceSeries.Bucket).
+        var dominantByProduct = lineData
             .GroupBy(x => x.ProductId)
-            .ToDictionary(g => g.Key, g => g.OrderBy(x => x.Date ?? DateOnly.MinValue).Select(x => x.Price).ToList());
+            .ToDictionary(
+                g => g.Key,
+                g => PriceSeries.Dominant(g.Select(x => new PricePoint(x.Size, x.Date, x.Price)).ToList())!);
+
         var avgByProduct = lineData
             .GroupBy(x => x.ProductId)
+            .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
+        // Per size bucket, for valuing a purchase of a KNOWN size and for pricing the forecast's
+        // recommended size — an $8 bag purchase shouldn't be valued at the loose-lime average.
+        var avgBySize = lineData
+            .GroupBy(x => (x.ProductId, Key: PriceSeries.Bucket(x.Size)))
             .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
         var byReceiptProduct = lineData
             .GroupBy(x => (x.ReceiptId, x.ProductId))
@@ -107,6 +124,7 @@ else
         decimal? PriceFor(PurchaseEvent pe)
         {
             if (pe.ReceiptId is { } rid && byReceiptProduct.TryGetValue((rid, pe.ProductId), out var p)) return p;
+            if (avgBySize.TryGetValue((pe.ProductId, PriceSeries.Bucket(pe.Size)), out var s)) return s;
             return avgByProduct.TryGetValue(pe.ProductId, out var a) ? a : null;
         }
 
@@ -138,7 +156,10 @@ else
         {
             var prediction = ReplenishmentPredictor.Predict(p, today);
             if (prediction.MedianIntervalDays is not { } m || prediction.DueDate is not { } due) continue;
-            if (!avgByProduct.TryGetValue(p.Id, out var price)) continue;
+            // Price the size we'd actually tell the user to buy (same idea as the grocery list),
+            // falling back to the all-sizes average when that size has no priced line.
+            if (!avgBySize.TryGetValue((p.Id, PriceSeries.Bucket(prediction.RecommendedSize)), out var price) &&
+                !avgByProduct.TryGetValue(p.Id, out price)) continue;
 
             var typicalQty = ShoppingEstimator.For(p, prediction, today, price).TypicalQuantity;
             var interval = Math.Max(1, (int)Math.Round(m));
@@ -153,11 +174,15 @@ else
 
         foreach (var p in products)
         {
-            if (!pricesByProduct.TryGetValue(p.Id, out var prices) || prices.Count == 0) continue;
+            if (!dominantByProduct.TryGetValue(p.Id, out var series) || series.Points.Count == 0) continue;
+            var prices = series.Points.Select(pt => pt.UnitPrice).ToList();
             var current = prices[^1];
             decimal? delta = prices.Count >= 2 ? current - prices[^2] : null;
             decimal? pct = delta is { } dl && prices[^2] != 0 ? dl / prices[^2] * 100 : null;
-            tickers.Add(new Ticker(p.Id, p.Name, p.Category, prices, current, delta, pct,
+            // Label the series only when the product actually mixes sizes, so the reader can see
+            // WHICH price is trending ("Limes · each") without noise on single-size products.
+            var sizeLabel = series.BucketCount > 1 ? series.SizeKey : null;
+            tickers.Add(new Ticker(p.Id, p.Name, p.Category, sizeLabel, prices, current, delta, pct,
                 spendThisYearByProduct.GetValueOrDefault(p.Id)));
         }
         tickers = tickers.OrderByDescending(t => t.SpendThisYear).ThenBy(t => t.Name).ToList();
