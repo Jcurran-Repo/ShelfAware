@@ -11,8 +11,8 @@ there's no coffee.
 
 > **Live demo:** _coming soon_ — `<!-- LIVE_DEMO_URL -->` (Azure App Service; one-line swap once deployed)
 
-<!-- TODO: drop a short screen capture here → docs/demo.gif -->
-<!-- ![Shelf Aware demo](docs/demo.gif) -->
+<!-- TODO: record docs/demo.gif — the scene-by-scene plan lives in docs/demo-gif-storyboard.md -->
+<!-- ![30-second tour: a receipt imports itself, the dashboard says what's low, "we're out of dog food" updates it, and the grocery list is ready by aisle](docs/demo.gif) -->
 
 ---
 
@@ -43,7 +43,8 @@ step-by-step while you cook — including a barge-in cook-along that listens for
 while it talks.
 
 **When it's time to shop,** the grocery list is already there — sorted by aisle, with the size and
-brand we usually buy and a rough cost. Stuck on dinner? *"What can I make tonight?"* suggests
+brand we usually buy and a rough cost. The whole app installs to a phone's home screen, so the
+list rides along to the store. Stuck on dinner? *"What can I make tonight?"* suggests
 recipes from what's actually in the house and one-taps the missing bits onto the list.
 
 **And I can see where the money's going** — spend by month, and how each item's price drifts.
@@ -52,6 +53,8 @@ recipes from what's actually in the house and one-taps the missing bits onto the
 recipes, settings — belongs to a *household*. My wife and I each have our own login and see the same
 pantry (she joined with an invite code from Settings); anyone else who registers gets a completely
 separate one. A deployment can also close sign-ups with one config flag and stay invite-only.
+And because it's your data, Settings will hand you all of it as a JSON download — or delete every
+trace — any time.
 
 ---
 
@@ -229,6 +232,38 @@ existing data (dashboard, prediction, backtest, grocery list, tags) keeps workin
 
 ---
 
+## Whose keys? (running it for other people)
+
+Everything above is the simple case: your server, your keys (user-secrets, server-wide, shared by
+the household). The moment other people can reach a deployment, `Llm:KeyMode` decides whose keys
+do the work:
+
+**`byok` — visitors bring their own.** The deployment ships **no usable keys**. Each visitor opens
+**Settings → AI provider & keys**, picks Anthropic, OpenAI, or a local OpenAI-compatible server
+(Ollama, LM Studio, llama.cpp — self-hosted runs only), pastes a key, and can tweak which model
+does which job (receipt-reading needs vision; the assistant needs tool calling). An ElevenLabs key
++ agent id switch on voice the same way. This is how the live demo will run — I'm not paying for
+the internet's tokens, and nobody has to trust me with theirs.
+
+**`managed` — the host's keys, on a meter.** The server's keys are authoritative, the key panel
+disappears from Settings, and each household gets a daily allowance — `Llm:DailyCallLimit`,
+`Llm:DailyTokenLimit`, `ElevenLabs:DailySignedUrlLimit` (unset = unlimited, the self-host
+default). Settings shows every household its own usage for the day.
+
+Leave `KeyMode` unset and it guesses right: server key configured → managed, none → BYOK.
+
+**Where a visitor's key actually lives** — the honest part, because "bring your own key" deserves
+some skepticism: it stays in the browser (localStorage, or session-only with the *"forget my keys
+when I close this tab"* toggle) and is never written to a database or a log. It does ride each
+request to the server, which holds it in memory just long enough to make the LLM call — that's
+inherent to any server-side app, not a design slip. Backing that up: a strict
+Content-Security-Policy (`script-src 'self'` plus one pinned SDK host — the real defense against a
+rogue script reading localStorage), per-visitor key isolation, HTTPS/HSTS, rate-limited endpoints,
+and a **Forget my keys** button that wipes everything. And it's all open source — don't take my
+word for it.
+
+---
+
 ## Project layout
 
 ```
@@ -248,7 +283,8 @@ ShelfAware.slnx
 
 Up next is the **Azure deploy** (SQLite under `/home/data`) — the live-demo link at the top is a
 one-line swap once it's live. After that: a cloud/email receipt inbox (the `IReceiptInbox` seam is
-already there), more eval fixtures beyond one merchant, and a per-size price trend.
+already there), more eval fixtures beyond one merchant, and password-reset emails (there's no mail
+server behind it yet — Settings admits as much).
 
 ---
 

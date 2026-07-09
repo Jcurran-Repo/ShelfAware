@@ -139,7 +139,9 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
        endpoint uses the visitor's key/agent, **rate-limited 12/min per IP**; cook-along sends the visitor's key
        headers; EL SDK pinned `@elevenlabs/client@1.14.0` (kept on `esm.sh` — a multi-module ESM SDK can't be
        vendored without a build step).
-     - **Still open:** open-source README / BYOK setup docs (Jordan's casual voice — draft or hand off).
+     - **README/BYOK docs DONE (2026-07-09):** "Whose keys?" section in the README (byok/managed/`Llm:KeyMode`,
+       quota keys, the honest key-custody story). The remaining README placeholders are the two captures —
+       capture plan in `docs/demo-gif-storyboard.md` (delete that file when `docs/demo.gif` lands).
    - **Fixes** — (a) short-cadence items never left Running Low after a restock: the flat 3-day DueSoon floor
      could span the whole cadence, so a fresh stock-back re-anchored straight back into the window; now capped
      at `interval - 1`, regression-tested (`6b2c32b`). (b) `/recipes?uses=` only matched top-level recipes, so an
