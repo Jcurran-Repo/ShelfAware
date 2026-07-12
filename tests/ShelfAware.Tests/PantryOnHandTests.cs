@@ -49,4 +49,30 @@ public class PantryOnHandTests
 
         Assert.Empty(PantryOnHand.EdibleInStock([coffee], Today));
     }
+
+    [Fact]
+    public void Out_of_stock_is_the_exact_complement_for_edible_tracked_items()
+    {
+        // Long-overdue coffee (the EdibleInStock drop case) is exactly what EdibleOutOfStock surfaces —
+        // while non-food, untracked, and in-stock items stay out of BOTH lists / the in-stock list only.
+        var coffee = new Product
+        {
+            Name = "Coffee",
+            Category = Category.Beverage,
+            Purchases =
+            [
+                new PurchaseEvent { PurchasedAt = new DateOnly(2020, 1, 1) },
+                new PurchaseEvent { PurchasedAt = new DateOnly(2020, 1, 10) },
+            ],
+        };
+        var products = new[]
+        {
+            coffee,
+            P("Whole Milk", Category.Dairy),                    // in stock → not "out"
+            P("Dish Soap", Category.Household),                 // non-food → never surfaced
+            P("Old Cereal", Category.Pantry, tracked: false),   // untracked → never surfaced
+        };
+
+        Assert.Equal(["Coffee"], PantryOnHand.EdibleOutOfStock(products, Today).Select(p => p.Name).ToList());
+    }
 }

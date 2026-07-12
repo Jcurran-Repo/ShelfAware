@@ -1,9 +1,11 @@
 @page "/recipes"
 @implements IDisposable
 @using System.Text.Json
+@using ShelfAware.Core.Chat
 @using ShelfAware.Core.Prediction
 @using ShelfAware.Core.Recipes
 @inject IHouseholdDbFactory DbFactory
+@inject IPantryStore Store
 @inject IRecipeAdvisor Advisor
 @inject IRecipeAdapter Adapter
 @inject IIngredientAlternativesAdvisor AltAdvisor
@@ -77,7 +79,18 @@
                     <ul class="ingredient-list">
                         @foreach (var i in s.Ingredients.Where(i => i.IsMain))
                         {
-                            <li class="@(i.Have ? "have" : "grab")">@(i.Have ? "✓" : "🛒") @Qty(i.Quantity, i.Name)</li>
+                            var haveIt = HaveSuggested(i);
+                            <li class="@(haveIt ? "have" : "grab")">
+                                @(haveIt ? "✓" : "🛒") @Qty(i.Quantity, i.Name)
+                                @if (!haveIt && MaybeHave(i.Name, i.MatchedProduct) is { } outItem)
+                                {
+                                    <span class="maybe-have">you may still have <strong>@outItem.Name</strong> — it just looks run-out</span>
+                                    <button type="button" class="restock-btn" @onclick="() => Restocked(outItem.Id)"
+                                            disabled="@restockBusy"
+                                            title="Still have @outItem.Name at home — clears the run-out and this goes green"
+                                            aria-label="Mark @outItem.Name restocked — you still have it">Restocked</button>
+                                }
+                            </li>
                         }
                         @{ var seasonings = s.Ingredients.Where(i => !i.IsMain).Select(i => i.Name).ToList(); }
                         @if (seasonings.Count > 0)
@@ -85,7 +98,7 @@
                             <li class="muted">+ @string.Join(", ", seasonings)</li>
                         }
                     </ul>
-                    @{ var grab = s.ToGrab.ToList(); }
+                    @{ var grab = s.Ingredients.Where(i => i.IsMain && !HaveSuggested(i)).ToList(); }
                     @if (grab.Count > 0)
                     {
                         <p class="recipe-grab">Grab: <strong>@string.Join(", ", grab.Select(g => g.Name))</strong></p>
@@ -219,6 +232,14 @@
                                 <span class="ingredient-name">@(have ? "✓" : "🛒") @Qty(i.Quantity, i.Name)</span>
                                 <button type="button" class="alt-swap" @onclick="() => ToggleAlternatives(i)"
                                         aria-label="Swap @i.Name for something else" title="Swap this ingredient">⇄</button>
+                                @if (!have && MaybeHave(i.Name, i.MatchedProduct) is { } outItem)
+                                {
+                                    <span class="maybe-have">you may still have <strong>@outItem.Name</strong> — it just looks run-out</span>
+                                    <button type="button" class="restock-btn" @onclick="() => Restocked(outItem.Id)"
+                                            disabled="@restockBusy"
+                                            title="Still have @outItem.Name at home — clears the run-out and this goes green"
+                                            aria-label="Mark @outItem.Name restocked — you still have it">Restocked</button>
+                                }
                                 @if (openAltFor == i.Id)
                                 {
                                     var cloud = CloudFor(i);
@@ -304,6 +325,11 @@
     // Every tracked edible product with its curated substitutes — the swap clouds draw stand-ins from
     // the whole matrix, including out-of-stock items (they render as "grab" bubbles).
     private List<PantryProduct> cloudProducts = [];
+    // Tracked edible products the engine thinks you've RUN OUT of — the exact items the on-hand list
+    // silently drops. Surfaced on red ingredient rows so "why is this red?" answers itself, with a
+    // one-tap Restocked to correct the engine when the shelf disagrees.
+    private List<(int Id, PantryProduct Product)> outOfStock = [];
+    private bool restockBusy;
 
     private Recipe? picked;
     private string? extraNote;
@@ -419,6 +445,38 @@
     private bool Makeable(Recipe r) => r.IsMakeableWith(onHand);
 
     private bool Have(RecipeIngredient i) => i.IsSatisfiedBy(onHand);
+
+    // Pre-save cards: the model's grounding is trusted only when POSITIVE — it misses spelling gaps a
+    // human wouldn't ("lean ground beef" vs "93% Lean Ground Beef"), so a null matched_product falls
+    // back to the same plain-code matcher the saved list uses. The two views can never disagree.
+    private bool HaveSuggested(SuggestedIngredient i) =>
+        i.Have || IngredientMatcher.IsSatisfied(i.Name, null, onHand);
+
+    // The first predicted-out product that would cover this ingredient — the answer to "why is this
+    // red when it's sitting on my shelf?" — or null when the red mark means a genuine gap.
+    private (int Id, string Name)? MaybeHave(string ingredientName, string? matchedProduct)
+    {
+        foreach (var (id, product) in outOfStock)
+        {
+            if (IngredientMatcher.IsSatisfied(ingredientName, matchedProduct, [product]))
+                return (id, product.Name);
+        }
+        return null;
+    }
+
+    // Same status-only write as the dashboard/grocery-list Restocked (§6 two-stream model: it clears
+    // the run-out and re-anchors the due date, never feeds the cadence). Reload flips the row green.
+    private async Task Restocked(int productId)
+    {
+        if (restockBusy) return;
+        restockBusy = true;
+        try
+        {
+            await Store.RecordSignalAsync(productId, SignalKind.Restocked);
+            await LoadAsync();
+        }
+        finally { restockBusy = false; }
+    }
 
     // "2 lbs chicken breast" when the recipe gives a quantity, else just the name.
     private static string Qty(string? quantity, string name) =>
@@ -567,6 +625,10 @@
             .Select(p => new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList()))
             .OrderBy(x => x.Name)
             .ToList();
+        outOfStock = PantryOnHand.EdibleOutOfStock(products, today)
+            .Select(p => (p.Id, Product: new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList())))
+            .OrderBy(x => x.Product.Name)
+            .ToList();
 
         ApplyFilter(); // keep the ?uses view in sync after any reload
     }
@@ -601,9 +663,9 @@
         suggestions = [];
         try
         {
-            // onHand still grounds the suggestions in real catalog items. We deliberately DON'T display a
-            // have/grab verdict here — the model's self-reported availability is unreliable and accurate
-            // ingredient↔product matching is Phase 2 (captured as an ingredient→product map at save time).
+            // onHand grounds the suggestions in real catalog items. The card's have/grab marks trust the
+            // model's matched_product only when POSITIVE; a null falls back to the plain-code matcher
+            // (HaveSuggested), so the pre-save card always agrees with what saving would show.
             suggestions = (await Advisor.SuggestAsync(request, onHand.Select(p => p.Name).ToList(), excludedFoods.Select(f => f.Value).ToList())).ToList();
             if (suggestions.Count == 0) suggestError = "No ideas came back — try rephrasing.";
         }

@@ -994,6 +994,14 @@ button.mic-speaking {
     color: var(--overdue-ink);
 }
 
+/* "Why is this red?" — the covering product is just predicted run-out (recipe ingredient rows). */
+.maybe-have {
+    color: var(--ink-soft);
+    font-size: 0.85rem;
+    font-style: italic;
+    margin: 0 0.35rem;
+}
+
 /* Duplicate-product prompt under the Add form: a caution, not an error. */
 .dup-check {
     display: flex;

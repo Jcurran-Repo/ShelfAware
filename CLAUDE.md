@@ -229,6 +229,12 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
    - **Variants adapt + swap (re-root)** — the `!isVariant` gates are gone; adapting a variant uses the
      variant's content as the base but saves the result as a sibling under the ORIGINAL (ParentRecipeId
      re-rooted), so families stay flat and the signature dedupe sees the whole group.
+   - **Red recipe rows explain themselves** (same day, from Jordan's real ground-beef confusion) —
+     suggestion-card ✓/🛒 trusts the model's matched_product only when POSITIVE and falls back to
+     `IngredientMatcher` (`HaveSuggested`), so pre-save and post-save views can't disagree; and when a
+     red row's covering product is merely predicted run-out (`PantryOnHand.EdibleOutOfStock`, the exact
+     complement of on-hand), the row says "you may still have X — it just looks run-out" with a one-tap
+     Restocked (the same status-only signal as the dashboard). A red mark with no hint = a genuine gap.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
