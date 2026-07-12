@@ -1,6 +1,10 @@
 @page "/receipts"
+@using ShelfAware.Core.Evaluation
 @using ShelfAware.Core.Shopping
+@implements IAsyncDisposable
 @inject IHouseholdDbFactory DbFactory
+@inject AppPaths Paths
+@inject IJSRuntime JS
 @inject ILogger<Receipts> Logger
 
 <PageTitle>Receipts — Shelf Aware</PageTitle>
@@ -45,6 +49,10 @@ else
                     @if (row.Receipt.Status == ReceiptStatus.PendingReview)
                     {
                         <span class="chip chip-duesoon">Pending review</span>
+                    }
+                    @if (row.Receipt.VerifiedForEval)
+                    {
+                        <span class="chip chip-stocked" title="You verified every line — graded by the accuracy check">✓ Accuracy check</span>
                     }
                     <span class="receipt-total">@row.Summary.Total.ToString("C")</span>
                 </summary>
@@ -97,6 +105,26 @@ else
                         </tr>
                     </tfoot>
                 </table>
+                @if (row.Receipt.Status == ReceiptStatus.Confirmed)
+                {
+                    <div class="receipt-eval-actions">
+                        @if (row.Receipt.VerifiedForEval)
+                        {
+                            <button class="secondary" @onclick="() => SetVerifiedAsync(row, false)">Stop using for accuracy checks</button>
+                            <button class="secondary" @onclick="() => ExportFixtureAsync(row)">Export fixture labels</button>
+                            <span class="muted">Graded by “Your receipts” on the <a href="/accuracy">Accuracy page</a>.</span>
+                        }
+                        else if (row.HasImage)
+                        {
+                            <button class="secondary" @onclick="() => SetVerifiedAsync(row, true)">✓ I checked every line — use for accuracy checks</button>
+                            <span class="muted">Only mark it verified if you've actually read each line above.</span>
+                        }
+                        else
+                        {
+                            <span class="muted">No saved image for this receipt, so it can't be re-read for an accuracy check.</span>
+                        }
+                    </div>
+                }
             </details>
         </section>
     }
@@ -105,8 +133,11 @@ else
 @code {
     private List<ReceiptRow>? receipts;
     private string? loadError;
+    private IJSObjectReference? downloadModule;
 
-    private record ReceiptRow(Receipt Receipt, ReceiptTotal Summary);
+    // Receipt is the tracked mutable entity so the verify toggle can flip in place; HasImage gates
+    // verification — a receipt with no audit copy (e.g. demo data) can never be re-read for grading.
+    private sealed record ReceiptRow(Receipt Receipt, ReceiptTotal Summary, bool HasImage);
 
     protected override async Task OnInitializedAsync()
     {
@@ -114,13 +145,13 @@ else
         {
             await using var db = await DbFactory.CreateDbContextAsync();
             var loaded = await db.Receipts
-                .AsNoTracking() // read-only history
+                .AsNoTracking() // read-only list; the verify toggle writes via ExecuteUpdate
                 .Where(r => r.Status != ReceiptStatus.Discarded)
                 .Include(r => r.Lines)
                 .ToListAsync();
 
             receipts = loaded
-                .Select(r => new ReceiptRow(r, ReceiptTotals.Summarize(r.Lines)))
+                .Select(r => new ReceiptRow(r, ReceiptTotals.Summarize(r.Lines), HasAuditImage(r)))
                 .OrderByDescending(row => row.Receipt.PurchasedAt ?? DateOnly.MinValue)
                 .ThenByDescending(row => row.Receipt.Id)
                 .ToList();
@@ -130,6 +161,62 @@ else
         {
             Logger.LogError(ex, "Failed to load receipts");
             loadError = "Couldn't load receipts — try reloading the page.";
+        }
+    }
+
+    private bool HasAuditImage(Receipt r)
+    {
+        var folder = Path.Combine(Paths.DataDir, r.ImagePath);
+        return Directory.Exists(folder) && Directory.EnumerateFiles(folder, "page-*.*").Any();
+    }
+
+    private async Task SetVerifiedAsync(ReceiptRow row, bool verified)
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            await db.Receipts.Where(r => r.Id == row.Receipt.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(r => r.VerifiedForEval, verified));
+            row.Receipt.VerifiedForEval = verified;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Toggling VerifiedForEval on receipt {ReceiptId} failed.", row.Receipt.Id);
+            loadError = "Couldn't save the accuracy-check setting — try again.";
+        }
+    }
+
+    // The confirmed lines ARE the labels — download them in the eval harness's expected.json shape
+    // so a receipt can graduate into the committed fixture suite (the image stays private).
+    private async Task ExportFixtureAsync(ReceiptRow row)
+    {
+        var labels = row.Receipt.Lines.OrderBy(l => l.Id).Select(l => new ExpectedLine
+        {
+            NormalizedName = l.NormalizedName,
+            Quantity = l.Quantity,
+            Category = l.Category.ToString(),
+        }).ToList();
+        var json = System.Text.Json.JsonSerializer.Serialize(labels,
+            new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+
+        downloadModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "/js/download.js");
+        await downloadModule.InvokeVoidAsync("downloadText", $"{FixtureName(row.Receipt)}.expected.json", json);
+    }
+
+    private static string FixtureName(Receipt r)
+    {
+        var merchant = new string((r.Merchant ?? "receipt").ToLowerInvariant()
+            .Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray()).Trim('-');
+        return r.PurchasedAt is { } d ? $"{merchant}-{d:yyyy-MM-dd}" : $"{merchant}-{r.Id}";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (downloadModule is not null)
+        {
+            try { await downloadModule.DisposeAsync(); }
+            catch (JSDisconnectedException) { } // circuit already gone — nothing to release
         }
     }
 }

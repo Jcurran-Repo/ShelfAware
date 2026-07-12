@@ -192,6 +192,26 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      OAuth surface. First external sign-in runs the SAME registration gate + household chooser
      (`Components/Account/Pages/ExternalLogin.razor`).
 
+10. **v3.2 — verified-receipt self-eval + usage transparency (2026-07-12):**
+   - **`Receipt.VerifiedForEval`** — the user's explicit "I checked every line" assertion (Upload review
+     checkbox, or retro-verify on `/receipts`). THE trust boundary for accuracy ground truth: machine
+     confirms can never set it (same principle as `writeAliases`), and it's a parameter on the ONE
+     confirm path. Ships via **`AdditiveSchema` (Web/Data) — the post-v3 additive-migration seam**:
+     idempotent `ALTER TABLE … ADD COLUMN` on startup after EnsureCreated. Additive DEFAULT-valued
+     columns only; anything structural stays a fresh-DB change.
+   - **`ExtractionScorer` (Core/Evaluation)** — the scoring math (containment matcher, plural folding,
+     aggregates) moved out of the Evals console so the offline harness and the in-app check share one
+     definition of "accurate". Unit-tested now (it wasn't testable as console-local functions).
+   - **`/accuracy` "Your receipts"** — `ReceiptSelfEval` (Web, scoped) re-reads each verified receipt
+     from its stored audit copy (`app-data/receipts/<folder>/page-*`, the Retry path's files) and
+     scores against the confirmed lines. On-demand button only (a vision call per receipt — token
+     disclaimer shown, with today's usage); last run persists per household in AppSettings
+     (`SelfEvalResults`). Runs on the circuit's key: BYOK grades on the visitor's wallet, managed is
+     metered/quota'd like any call. "Export fixture labels" downloads the harness's expected.json shape.
+   - **Usage recorded in EVERY key mode** — `MeteredChatClient` now always records calls+tokens to the
+     household's `AiUsage` row; quotas remain managed-only (BYOK: recorded, never limited). Settings
+     gains an "AI usage" panel (today + 14-day daily table via `AiUsageMeter.GetRecentAsync`).
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active

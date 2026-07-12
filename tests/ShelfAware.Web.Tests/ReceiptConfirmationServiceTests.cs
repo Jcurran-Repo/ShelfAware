@@ -125,6 +125,26 @@ public class ReceiptConfirmationServiceTests : IDisposable
         Assert.True((await read.Products.SingleAsync(p => p.Id == cocoaId)).IsTracked);
     }
 
+    // --- eval ground-truth trust boundary ---------------------------------------
+
+    [Fact]
+    public async Task Verified_for_eval_is_set_only_when_the_reviewer_asserted_it()
+    {
+        // The default (machine confirms, unticked reviews) leaves the flag off — an unreviewed
+        // receipt must never become accuracy ground truth.
+        var quiet = await SeedPending("Walmart", L("GV WHL MLK", "Whole Milk"));
+        await _service.ConfirmAsync(quiet.Id, new DateOnly(2026, 7, 1),
+            [C("GV WHL MLK", "Whole Milk")], writeAliases: false);
+
+        var asserted = await SeedPending("Walmart", L("RIBS", "Pork Ribs"));
+        await _service.ConfirmAsync(asserted.Id, new DateOnly(2026, 7, 1),
+            [C("RIBS", "Pork Ribs")], writeAliases: true, verifiedForEval: true);
+
+        await using var db = _db.CreateDbContext();
+        Assert.False((await db.Receipts.SingleAsync(r => r.Id == quiet.Id)).VerifiedForEval);
+        Assert.True((await db.Receipts.SingleAsync(r => r.Id == asserted.Id)).VerifiedForEval);
+    }
+
     // --- alias trust boundary -------------------------------------------------
 
     [Fact]

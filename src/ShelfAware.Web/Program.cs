@@ -196,6 +196,8 @@ builder.Services.AddScoped<IAppSettings, EfAppSettings>();          // settings 
 builder.Services.AddScoped<IReceiptInbox, LocalFolderReceiptInbox>(); // reads the household's folder setting
 builder.Services.AddScoped<IReceiptImporter, ReceiptImporter>(); // depends on the scoped IReceiptExtractor
 builder.Services.AddScoped<ReceiptConfirmationService>();
+builder.Services.AddScoped<ReceiptSelfEval>(); // grades verified receipts on the circuit's key
+
 builder.Services.AddScoped<ProductRenameService>(); // rename + re-point the name-keyed recipe links
 builder.Services.AddScoped<DemoDataSeeder>(); // synthetic demo catalog (guarded: this household's pantry is empty)
 builder.Services.AddScoped<UserDataService>();   // export + delete-my-data (one place for both)
@@ -258,6 +260,8 @@ using (var scope = app.Services.CreateScope())
     // instructions instead of a confusing "no such column" on the first query.
     PantryDbGuard.ThrowIfPreHouseholdDb(db);
     db.Database.EnsureCreated();
+    // Columns added after v3 shipped (EnsureCreated never alters an existing DB).
+    AdditiveSchema.Apply(db);
 }
 
 // Auto-scan the receipt inbox on startup (in the background; a no-op when no folder is configured), so

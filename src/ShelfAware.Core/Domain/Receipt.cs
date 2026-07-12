@@ -13,5 +13,11 @@ public class Receipt : IHouseholdOwned
     /// double-imports the same file. Null for manually uploaded receipts.</summary>
     public string? SourceFile { get; set; }
 
+    /// <summary>The user's explicit assertion that they checked every line, making this receipt's
+    /// confirmed lines usable as extraction ground truth ("your receipts" on /accuracy). NEVER set by a
+    /// machine confirm — an unreviewed receipt as "truth" would let the eval grade extraction against
+    /// itself and inflate the scores.</summary>
+    public bool VerifiedForEval { get; set; }
+
     public List<ReceiptLine> Lines { get; set; } = [];
 }

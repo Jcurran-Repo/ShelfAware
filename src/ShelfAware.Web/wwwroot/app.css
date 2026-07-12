@@ -950,6 +950,35 @@ button.mic-speaking {
     margin-top: 0.75rem;
 }
 
+.receipt-eval-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-top: 0.75rem;
+}
+
+/* ---- Review opt-in + accuracy self-check run row ---- */
+.verify-for-eval label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+}
+
+.verify-for-eval .muted {
+    display: block;
+    margin-top: 0.25rem;
+}
+
+.selfeval-run {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-top: 0.75rem;
+}
+
 /* ---- Text helpers ---- */
 .muted {
     color: var(--ink-soft);

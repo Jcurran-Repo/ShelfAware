@@ -223,6 +223,15 @@ else if (phase == Phase.Review && receipt is not null)
                 <option value="@t" />
             }
         </datalist>
+        <p class="verify-for-eval">
+            <label>
+                <input type="checkbox" @bind="verifiedForEval"
+                       aria-label="I checked every line — use this receipt for accuracy checks" />
+                I checked every line — use this receipt for accuracy checks
+            </label>
+            <span class="muted">Verified receipts become ground truth for the “Your receipts” accuracy
+            check on the Accuracy page. Only tick it if you really read each line.</span>
+        </p>
         <div class="review-actions">
             <button @onclick="ConfirmAll" disabled="@(reviewLines.Count == 0 || confirming)">@(confirming ? "Saving…" : "Confirm all")</button>
             <button class="secondary" @onclick="Discard" disabled="@confirming">Discard receipt</button>
@@ -256,6 +265,9 @@ else if (phase == Phase.Done)
     private string confirmSummary = "";
     private string? confirmError;
     private bool confirming;
+    // The user's explicit "I checked every line" opt-in — makes the confirmed lines extraction ground
+    // truth (Receipt.VerifiedForEval). Off by default and reset per review; never set by machine confirms.
+    private bool verifiedForEval;
 
     private List<PendingRow> pendingReceipts = [];
     private record PendingRow(int Id, string? Merchant, DateOnly? PurchasedAt, int LineCount);
@@ -349,6 +361,7 @@ else if (phase == Phase.Done)
         }).ToList();
 
         confirmError = null;
+        verifiedForEval = false; // a fresh review starts unasserted
         phase = Phase.Review;
     }
 
@@ -689,7 +702,8 @@ else if (phase == Phase.Done)
             // Use the user-confirmed receipt date (not the upload date) so refill intervals are accurate
             // even when many receipts are uploaded in one sitting. writeAliases: a human reviewed these
             // pairings, so they're allowed to become sticky merchant aliases.
-            var outcome = await Confirmer.ConfirmAsync(receipt.Id, reviewDate, lines, writeAliases: true);
+            var outcome = await Confirmer.ConfirmAsync(receipt.Id, reviewDate, lines, writeAliases: true,
+                verifiedForEval: verifiedForEval);
 
             var merchant = receipt.Merchant ?? "";
             confirmSummary = outcome.AlreadyConfirmed

@@ -28,10 +28,13 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
     /// boundary: aliases sit at the TOP of the match trust order on future receipts, so only
     /// human-confirmed pairings may write them. The auto-importer passes false — a wrong machine
     /// match must not become sticky and silently propagate to every later receipt.
+    /// <paramref name="verifiedForEval"/> is the same trust boundary for accuracy ground truth:
+    /// only the manual review path may pass true, and only when the user explicitly asserted they
+    /// checked every line (see <see cref="Receipt.VerifiedForEval"/>).
     /// </summary>
     public async Task<ConfirmOutcome> ConfirmAsync(
         int receiptId, DateOnly purchaseDate, IReadOnlyList<ConfirmLine> lines,
-        bool writeAliases, CancellationToken cancellationToken = default)
+        bool writeAliases, bool verifiedForEval = false, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var receipt = await db.Receipts.Include(r => r.Lines)
@@ -147,6 +150,7 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
         }
 
         receipt.Status = ReceiptStatus.Confirmed;
+        receipt.VerifiedForEval = verifiedForEval;
         await db.SaveChangesAsync(cancellationToken);
         return new(AlreadyConfirmed: false, purchases, created, retracked.Count);
     }

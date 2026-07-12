@@ -4,6 +4,8 @@
 @using ShelfAware.Core.Prediction
 @inject IWebHostEnvironment Env
 @inject IHouseholdDbFactory DbFactory
+@inject ReceiptSelfEval SelfEval
+@inject AiUsageMeter Meter
 @inject ILogger<Accuracy> Logger
 
 <PageTitle>Model Accuracy — Shelf Aware</PageTitle>
@@ -75,6 +77,93 @@ else
     </div>
 }
 
+<h2>Your receipts <span class="muted">— verified by you, graded on demand</span></h2>
+
+<section class="panel">
+    <p class="muted">
+        Receipts you've marked <em>"I checked every line"</em> (in Upload review, or on the
+        <a href="/receipts">Receipts page</a>) are ground truth from your own shopping. Grading
+        re-reads each one with the AI and scores the fresh extraction against your verified lines —
+        the same scoring math as the fixture suite above.
+    </p>
+
+    @if (verifiedCount == 0)
+    {
+        <p class="muted">
+            No verified receipts yet. Tick the checkbox when you review an upload, or open a receipt
+            on the <a href="/receipts">Receipts page</a> and mark it verified after reading its lines.
+        </p>
+    }
+    else
+    {
+        @if (selfEval is not null)
+        {
+            <div class="portfolio">
+                @Stat("Line recall", selfEval.Aggregate.Recall, 0.90)
+                @Stat("Line precision", selfEval.Aggregate.Precision, 0.90)
+                @Stat("Field accuracy", selfEval.Aggregate.FieldAccuracy, 0.85)
+            </div>
+            <p class="muted">Model @selfEval.Model · graded @selfEval.GeneratedAt.ToString("yyyy-MM-dd HH:mm")</p>
+
+            <div class="table-scroll">
+                <table>
+                    <caption class="visually-hidden">Per-receipt self-check extraction scores.</caption>
+                    <thead>
+                        <tr>
+                            <th scope="col">Receipt</th>
+                            <th scope="col">Expected</th>
+                            <th scope="col">Found</th>
+                            <th scope="col">Matched</th>
+                            <th scope="col">Recall</th>
+                            <th scope="col">Precision</th>
+                            <th scope="col">Field</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var f in selfEval.Fixtures)
+                        {
+                            <tr>
+                                <td>@f.Name</td>
+                                @if (f.Error is { } err)
+                                {
+                                    <td colspan="6" class="error">@err</td>
+                                }
+                                else
+                                {
+                                    <td>@f.ExpectedLines</td>
+                                    <td>@f.FoundLines</td>
+                                    <td>@f.MatchedLines</td>
+                                    <td>@f.Recall.ToString("P0")</td>
+                                    <td>@f.Precision.ToString("P0")</td>
+                                    <td>@f.FieldAccuracy.ToString("P0")</td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        <div class="selfeval-run">
+            <button @onclick="RunSelfEval" disabled="@selfEvalRunning">
+                @(selfEvalRunning
+                    ? selfEvalProgress
+                    : selfEval is null
+                        ? $"Grade {verifiedCount} verified receipt{(verifiedCount == 1 ? "" : "s")}"
+                        : $"Grade again ({verifiedCount} verified receipt{(verifiedCount == 1 ? "" : "s")})")
+            </button>
+            <span class="muted">
+                ⚠️ Grading re-reads every verified receipt with the AI — it can use a lot of tokens
+                (roughly one full receipt upload per receipt).@(todayUsage is { } u ? $" Today so far: {u.Calls} AI call{(u.Calls == 1 ? "" : "s")} · {u.Tokens:N0} tokens." : "")
+            </span>
+        </div>
+        @if (selfEvalError is not null)
+        {
+            <p class="error" role="alert">@selfEvalError</p>
+        }
+    }
+</section>
+
 <h2>Replenishment prediction <span class="muted">— walk-forward backtest, live from your history</span></h2>
 
 @if (backtest is null || backtest.Samples == 0)
@@ -137,6 +226,13 @@ else
     private EvalResults? results;
     private PredictionBacktest.Summary? backtest;
 
+    private int verifiedCount;
+    private EvalResults? selfEval;
+    private bool selfEvalRunning;
+    private string selfEvalProgress = "";
+    private string? selfEvalError;
+    private AiUsageMeter.TodayUsage? todayUsage;
+
     protected override async Task OnInitializedAsync()
     {
         var path = Path.Combine(Env.WebRootPath, "eval-results.json");
@@ -165,6 +261,47 @@ else
             .Include(p => p.Signals)
             .ToListAsync();
         backtest = PredictionBacktest.Run(products);
+
+        // The self-check loads its LAST run only — grading costs a vision call per receipt, so it
+        // never runs on page load; the button is the only trigger.
+        verifiedCount = await SelfEval.CountVerifiedAsync();
+        selfEval = await SelfEval.GetLastRunAsync();
+        todayUsage = await Meter.GetTodayAsync();
+    }
+
+    private async Task RunSelfEval()
+    {
+        if (selfEvalRunning) return;
+        selfEvalRunning = true;
+        selfEvalError = null;
+        selfEvalProgress = "Starting…";
+        try
+        {
+            var progress = new Progress<ReceiptSelfEval.RunProgress>(p =>
+            {
+                selfEvalProgress = p.Total == 0 || p.Current.Length == 0
+                    ? "Finishing…"
+                    : $"Grading {p.Done + 1} of {p.Total} — {p.Current}…";
+                _ = InvokeAsync(StateHasChanged);
+            });
+            selfEval = await SelfEval.RunAsync(progress);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (InvalidOperationException ex)
+        {
+            // The metered quota message is user-presentable by design — show it as-is.
+            selfEvalError = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Self-eval run failed.");
+            selfEvalError = "Grading failed part-way — nothing was saved. Check the AI key in Settings and try again.";
+        }
+        finally
+        {
+            selfEvalRunning = false;
+            todayUsage = await Meter.GetTodayAsync(); // show what the run just spent
+        }
     }
 
     private RenderFragment Stat(string label, double value, double target) =>

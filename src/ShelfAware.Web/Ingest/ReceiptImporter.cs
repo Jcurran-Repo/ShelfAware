@@ -226,7 +226,9 @@ public class ReceiptImporter(
 
         // writeAliases: false — no human looked at these pairings, so they must not become sticky
         // merchant aliases (a wrong machine match would silently pre-match every future receipt).
-        var outcome = await confirmer.ConfirmAsync(receipt.Id, purchaseDate, confirmLines, writeAliases: false, ct);
+        // verifiedForEval stays false for the same reason: machine confirms are never ground truth.
+        var outcome = await confirmer.ConfirmAsync(receipt.Id, purchaseDate, confirmLines, writeAliases: false,
+            cancellationToken: ct);
         logger.LogInformation("Auto-imported {File}: {Purchases} purchase(s), {NewProducts} new product(s).",
             item.Name, outcome.Purchases, outcome.NewProducts);
         return (outcome.Purchases, outcome.NewProducts, false);
