@@ -134,8 +134,8 @@ else
             return ShoppingEstimator.For(p, prediction, today, prices.PriceFor(p.Id, prediction.RecommendedSize));
         }).ToList();
 
-        // Ordered by aisle (category) so the list matches how you walk a store,
-        // then by urgency within each aisle.
+        // Both tables ordered by aisle (category) so the whole page matches how you walk a store,
+        // then by urgency within each aisle. The date column still carries the chronology.
         buyNow = all
             .Where(e => e.Status is PredictionStatus.Overdue or PredictionStatus.DueSoon)
             .OrderBy(e => e.Category)
@@ -144,7 +144,8 @@ else
             .ToList();
         comingUp = all
             .Where(e => e.Status == PredictionStatus.Stocked)
-            .OrderBy(e => e.NextBuyDate ?? DateOnly.MaxValue)
+            .OrderBy(e => e.Category)
+            .ThenBy(e => e.NextBuyDate ?? DateOnly.MaxValue)
             .ThenBy(e => e.Name)
             .ToList();
         learning = all
