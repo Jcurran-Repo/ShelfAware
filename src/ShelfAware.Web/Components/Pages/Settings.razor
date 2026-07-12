@@ -179,6 +179,68 @@
 </section>
 
 <section class="panel">
+    <h2>AI usage</h2>
+    <p class="muted">
+        What this household's AI features have spent — every chat turn, receipt read, recipe call,
+        and accuracy check counts here, whichever key it ran on. Bring-your-own-key usage is shown
+        for your information but never limited.
+    </p>
+    @if (todayUsage is { } today)
+    {
+        <div class="portfolio">
+            <div class="stat">
+                <span class="stat-label">Today · AI calls</span>
+                <span class="stat-value">@today.Calls</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Today · tokens</span>
+                <span class="stat-value">@today.Tokens.ToString("N0")</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Today · voice sessions</span>
+                <span class="stat-value">@today.VoiceSessionMints</span>
+            </div>
+        </div>
+    }
+    @if (usageHistory.Count > 0)
+    {
+        <div class="table-scroll">
+            <table>
+                <caption class="visually-hidden">Recent daily AI usage: calls, input and output tokens, and voice sessions per day.</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">Day</th>
+                        <th scope="col">AI calls</th>
+                        <th scope="col">Tokens in</th>
+                        <th scope="col">Tokens out</th>
+                        <th scope="col">Total tokens</th>
+                        <th scope="col">Voice sessions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var day in usageHistory)
+                    {
+                        <tr>
+                            <td>@day.Day.ToString("MMM d, yyyy")</td>
+                            <td>@day.Calls</td>
+                            <td>@day.InputTokens.ToString("N0")</td>
+                            <td>@day.OutputTokens.ToString("N0")</td>
+                            <td>@day.Tokens.ToString("N0")</td>
+                            <td>@day.VoiceSessionMints</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <p class="muted">Days with no AI activity aren't listed.</p>
+    }
+    else
+    {
+        <p class="muted">No AI usage recorded yet — it starts counting from your next chat, upload, or voice session.</p>
+    }
+</section>
+
+<section class="panel">
     <h2>Receipt auto-import</h2>
     <p class="muted">
         Point this at a folder of receipt images or PDFs. The assistant imports new ones — on startup,
@@ -482,10 +544,9 @@
     protected override async Task OnInitializedAsync()
     {
         await LoadHouseholdAsync();
-        if (AiSettings.Managed)
-        {
-            todayUsage = await UsageMeter.GetTodayAsync();
-        }
+        // Usage is recorded in every key mode now (BYOK included), so the readouts always load.
+        todayUsage = await UsageMeter.GetTodayAsync();
+        usageHistory = await UsageMeter.GetRecentAsync(days: 14);
         folder = await SettingsStore.GetAsync(SettingKeys.ReceiptFolder) ?? "";
         mode = ImportModes.Parse(
             await SettingsStore.GetAsync(SettingKeys.ImportMode),
@@ -494,8 +555,9 @@
         await RefreshStatus();
     }
 
-    // ---- Managed-mode usage readout ----
+    // ---- AI usage readouts (recorded in every key mode; limits apply only in managed mode) ----
     private AiUsageMeter.TodayUsage? todayUsage;
+    private IReadOnlyList<AiUsageMeter.DayUsage> usageHistory = [];
     private string UsageLimitSuffix => LlmConfig.Value.DailyCallLimit is int limit
         ? $" (daily allowance: {limit} calls)"
         : "";

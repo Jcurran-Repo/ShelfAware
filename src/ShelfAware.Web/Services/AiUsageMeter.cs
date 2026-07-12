@@ -21,6 +21,11 @@ public sealed class AiUsageMeter(
 {
     public sealed record TodayUsage(int Calls, long Tokens, int VoiceSessionMints);
 
+    public sealed record DayUsage(DateOnly Day, int Calls, long InputTokens, long OutputTokens, int VoiceSessionMints)
+    {
+        public long Tokens => InputTokens + OutputTokens;
+    }
+
     public async Task<TodayUsage> GetTodayAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
@@ -28,6 +33,18 @@ public sealed class AiUsageMeter(
         return row is null
             ? new TodayUsage(0, 0, 0)
             : new TodayUsage(row.Calls, row.InputTokens + row.OutputTokens, row.VoiceSessionMints);
+    }
+
+    /// <summary>The household's most recent usage rows, newest first — the Settings usage panel.
+    /// Days with no AI activity have no row, so gaps are normal.</summary>
+    public async Task<IReadOnlyList<DayUsage>> GetRecentAsync(int days, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.AiUsages.AsNoTracking()
+            .OrderByDescending(u => u.Day)
+            .Take(days)
+            .Select(u => new DayUsage(u.Day, u.Calls, u.InputTokens, u.OutputTokens, u.VoiceSessionMints))
+            .ToListAsync(cancellationToken);
     }
 
     /// <summary>Throws (with user-presentable text — the AI surfaces show exception-adjacent friendly

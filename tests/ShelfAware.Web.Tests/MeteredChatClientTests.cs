@@ -134,9 +134,10 @@ public class MeteredChatClientTests : IDisposable
     }
 
     [Fact]
-    public async Task A_byok_circuit_is_never_metered_or_limited()
+    public async Task A_byok_circuit_is_recorded_but_never_limited()
     {
-        // Even with brutal limits configured, a BYOK visitor rides their own key freely.
+        // Even with brutal limits configured, a BYOK visitor rides their own key freely — but the
+        // usage still lands in their household's row, so the Settings panel can show what they spent.
         await SeedTodayAsync("hh-test", calls: 999);
         var (client, meter) = Build("Byok", dailyCalls: 1, dailyTokens: 1);
 
@@ -144,7 +145,25 @@ public class MeteredChatClientTests : IDisposable
 
         Assert.Equal("ok", response.Text);
         Assert.Equal(1, _provider.Calls);
-        Assert.Equal(999, (await meter.GetTodayAsync()).Calls); // unchanged — nothing recorded
+        var today = await meter.GetTodayAsync();
+        Assert.Equal(1000, today.Calls);       // recorded on top of the seeded 999
+        Assert.True(today.Tokens >= 150);      // the fake call's 100 in + 50 out landed too
+    }
+
+    [Fact]
+    public async Task Recent_usage_lists_days_newest_first_for_the_settings_panel()
+    {
+        var (client, meter) = Build("Managed");
+        await AskAsync(client);
+
+        var recent = await meter.GetRecentAsync(days: 14);
+
+        var today = Assert.Single(recent);
+        Assert.Equal(DateOnly.FromDateTime(DateTime.Today), today.Day);
+        Assert.Equal(1, today.Calls);
+        Assert.Equal(100, today.InputTokens);
+        Assert.Equal(50, today.OutputTokens);
+        Assert.Equal(150, today.Tokens);
     }
 
     [Fact]

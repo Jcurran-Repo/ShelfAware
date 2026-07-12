@@ -3,11 +3,12 @@ using Microsoft.Extensions.AI;
 namespace ShelfAware.Web.Services;
 
 /// <summary>
-/// The metering skin over <see cref="ByokChatClient"/> — active ONLY in managed mode, where every call
-/// spends the host's key: checks the household's daily quota before the provider call and records
-/// calls + tokens after it. BYOK circuits pass straight through (their key, their wallet — never
-/// metered, never limited). Sits at the top of the IChatClient chain so every AI service (chat,
-/// extraction, advisors) is covered without touching any of them.
+/// The metering skin over <see cref="ByokChatClient"/>. RECORDING is universal — every call's
+/// tokens land in the household's usage row so the user can see what they've spent (the Settings
+/// usage panel, the accuracy check's cost line). LIMITING is managed-mode only: quotas guard the
+/// HOST's wallet, so BYOK circuits (their key, their wallet) are recorded but never blocked. Sits
+/// at the top of the IChatClient chain so every AI service (chat, extraction, advisors) is covered
+/// without touching any of them.
 /// </summary>
 public sealed class MeteredChatClient(
     ByokChatClient inner,
@@ -18,12 +19,10 @@ public sealed class MeteredChatClient(
     public async Task<ChatResponse> GetResponseAsync(
         IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
-        if (!settings.Managed)
+        if (settings.Managed)
         {
-            return await inner.GetResponseAsync(messages, options, cancellationToken);
+            await meter.EnsureLlmCallAllowedAsync(cancellationToken);
         }
-
-        await meter.EnsureLlmCallAllowedAsync(cancellationToken);
         var response = await inner.GetResponseAsync(messages, options, cancellationToken);
         await RecordAsync(response.Usage, cancellationToken);
         return response;
@@ -33,16 +32,10 @@ public sealed class MeteredChatClient(
         IEnumerable<ChatMessage> messages, ChatOptions? options = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        if (!settings.Managed)
+        if (settings.Managed)
         {
-            await foreach (var update in inner.GetStreamingResponseAsync(messages, options, cancellationToken))
-            {
-                yield return update;
-            }
-            yield break;
+            await meter.EnsureLlmCallAllowedAsync(cancellationToken);
         }
-
-        await meter.EnsureLlmCallAllowedAsync(cancellationToken);
         UsageDetails? usage = null;
         await foreach (var update in inner.GetStreamingResponseAsync(messages, options, cancellationToken))
         {
