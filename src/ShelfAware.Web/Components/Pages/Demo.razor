@@ -1,0 +1,41 @@
+@page "/demo"
+@layout ShelfAware.Web.Components.Layout.PublicLayout
+@attribute [AllowAnonymous]
+@attribute [ExcludeFromInteractiveRouting]
+
+@* Public, no-login showcase — the link Jordan sends people. Static SSR (no circuit), anonymous,
+   PublicLayout (no auth-only islands). Just the demo.gif + what it does + where to see the code. *@
+
+<PageTitle>Shelf Aware — a 30-second tour</PageTitle>
+
+<section class="demo-hero">
+    <p class="demo-eyebrow">A pantry tracker</p>
+    <h1>Know what you're about to run out of — before you're standing in the kitchen.</h1>
+    <p class="demo-lead">
+        Snap a grocery receipt. Shelf Aware reads it, learns how often you buy each thing, and tells
+        you what's about to run low. Then just tell it in plain English — and your grocery list is
+        ready, sorted by aisle.
+    </p>
+
+    <figure class="demo-stage">
+        <img src="demo.gif" width="960" height="600" loading="eager" decoding="async"
+             alt="A 30-second tour: a receipt imports and matches to products, the dashboard shows what's running low, a plain-English message updates it, and the grocery list is ready by aisle." />
+        <figcaption>A 30-second tour — no sign-in needed to watch.</figcaption>
+    </figure>
+
+    <ul class="demo-points">
+        <li><strong>Receipts import themselves.</strong> Lines are read and matched to what you already buy.</li>
+        <li><strong>Just tell it.</strong> &ldquo;We're out of dog food, almost out of coffee&rdquo; updates the dashboard on the spot.</li>
+        <li><strong>Shop by aisle.</strong> The grocery list comes sorted the way you walk the store, with a running total.</li>
+    </ul>
+
+    <div class="demo-cta">
+        <a class="demo-btn demo-btn-primary" href="https://github.com/Jcurran-Repo/ShelfAware">See the code on GitHub</a>
+        <a class="demo-btn" href="/Account/Login">Sign in</a>
+    </div>
+
+    <p class="demo-foot">
+        Built as a portfolio project · source-available under the
+        <a href="https://github.com/Jcurran-Repo/ShelfAware/blob/master/LICENSE">PolyForm Noncommercial License 1.0.0</a>.
+    </p>
+</section>

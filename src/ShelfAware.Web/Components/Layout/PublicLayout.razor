@@ -1,0 +1,15 @@
+@inherits LayoutComponentBase
+
+@* Anonymous-safe layout for public marketing pages (the /demo showcase). Like AccountLayout, it
+   deliberately does NOT use MainLayout: that hosts the persistent VoiceAgent + AiSettingsLoader
+   interactive islands, which would try to open a Blazor circuit on this statically rendered,
+   pre-auth page. Full-width so a landing hero has room. *@
+<div class="public-shell">
+    <header class="public-bar">
+        <a class="public-brand" href="/demo">Shelf&nbsp;Aware</a>
+        <a class="public-signin" href="/Account/Login">Sign in</a>
+    </header>
+    <main class="public-main">
+        @Body
+    </main>
+</div>

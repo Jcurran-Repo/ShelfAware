@@ -1,0 +1,40 @@
+.public-shell {
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    color: var(--ink);
+}
+
+.public-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.9rem 1.5rem;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+}
+
+.public-brand {
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    font-size: 1.05rem;
+    color: var(--ink);
+    text-decoration: none;
+}
+
+.public-signin {
+    color: var(--ink-soft);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.public-signin:hover {
+    color: var(--accent-ink);
+}
+
+.public-main {
+    flex: 1;
+}
