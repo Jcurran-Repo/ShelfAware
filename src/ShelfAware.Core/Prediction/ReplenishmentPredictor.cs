@@ -21,10 +21,12 @@ public static class ReplenishmentPredictor
         //    item bought in random sizes (milk as a half-gallon or a gallon) is ONE product. Learn the
         //    rebuy rhythm from the DOMINANT size's purchases when that size has enough history (≥2 buys),
         //    else fall back to ALL purchases so a mixed-size item still predicts. Either way recommend the
-        //    dominant size.
+        //    dominant size. Sizes group via SizeBucket, so the loose/"each" spellings extraction writes
+        //    inconsistently (null vs "Each" vs "1 ct") are ONE size — otherwise an item bought weekly
+        //    with alternating spellings would learn a cadence from every-other purchase and warn late.
         var dominantSize = DominantSize(product.Purchases);
         var dominantDates = product.Purchases
-            .Where(p => SizeKey(p.Size) == SizeKey(dominantSize))
+            .Where(p => SizeBucket.Key(p.Size) == SizeBucket.Key(dominantSize))
             .Select(p => p.PurchasedAt)
             .Distinct()
             .ToList();
@@ -221,16 +223,21 @@ public static class ReplenishmentPredictor
         return values.Count % 2 == 1 ? values[mid] : (values[mid - 1] + values[mid]) / 2m;
     }
 
-    // The size bought most often; ties broken by the most recently purchased size. Null when no purchase
-    // carries a size. Drives both the cadence (predict from this size's purchases) and what we recommend.
+    // The size bucket bought most often; ties broken by the most recently purchased. Drives both the
+    // cadence (predict from this bucket's purchases) and what we recommend. The display string is the
+    // most recent NON-blank spelling in the winning bucket — only the each-family mixes null with
+    // literal spellings, and a null there would silently drop the size hint the older buys carried.
+    // Null when the bucket has no spelled size at all (an all-null each-family product).
     private static string? DominantSize(IReadOnlyCollection<PurchaseEvent> purchases)
     {
         if (purchases.Count == 0) return null;
         return purchases
-            .GroupBy(p => SizeKey(p.Size))
+            .GroupBy(p => SizeBucket.Key(p.Size))
             .Select(g => new
             {
-                Display = g.OrderByDescending(p => p.PurchasedAt).First().Size,
+                Display = g.OrderByDescending(p => p.PurchasedAt)
+                    .Select(p => p.Size)
+                    .FirstOrDefault(s => !string.IsNullOrWhiteSpace(s)),
                 Count = g.Count(),
                 Latest = g.Max(p => p.PurchasedAt),
             })
@@ -239,8 +246,6 @@ public static class ReplenishmentPredictor
             .Select(x => x.Display)
             .First();
     }
-
-    private static string SizeKey(string? size) => (size ?? "").Trim().ToLowerInvariant();
 
     private static double Median(IReadOnlyList<int> values)
     {

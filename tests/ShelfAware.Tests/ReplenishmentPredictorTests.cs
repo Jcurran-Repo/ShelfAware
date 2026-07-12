@@ -466,6 +466,88 @@ public class ReplenishmentPredictorTests
     }
 
     [Fact]
+    public void EachFamilySpellings_FoldIntoOneCadence()
+    {
+        // Loose produce bought weekly, but extraction alternates the size between null and "Each".
+        // Raw-text grouping would learn the cadence from every-other purchase (14-day gaps) and warn
+        // a week late, silently. The each-family is ONE size bucket, so all five buys feed the rhythm.
+        var product = new Product
+        {
+            Id = 1,
+            Name = "Limes",
+            Purchases =
+            [
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(0),  Size = null },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(7),  Size = "Each" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(14), Size = null },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(21), Size = "Each" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(28), Size = null },
+            ],
+        };
+
+        var r = ReplenishmentPredictor.Predict(product, D(30));
+
+        Assert.Equal(7, r.MedianIntervalDays);   // all five dates, not the same-spelling subset
+        Assert.Equal(D(35), r.DueDate);          // last buy D(28) + 7
+        Assert.Equal("Each", r.RecommendedSize); // the spelled form survives as the hint
+    }
+
+    [Fact]
+    public void EachFamily_DominatesOverABag_WhenBoughtMoreOften()
+    {
+        // Two loose buys (spelled null and "each") plus one bag: loose is the dominant FORM (2 of 3),
+        // so the cadence comes from the two loose dates — the bag stays a separate size, exactly like
+        // the price series treats it. Raw-text grouping saw three one-buy groups and blended them all.
+        var product = new Product
+        {
+            Id = 1,
+            Name = "Envy Apples",
+            Purchases =
+            [
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(0),  Size = "3 lb" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(10), Size = null },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(24), Size = "each" },
+            ],
+        };
+
+        var r = ReplenishmentPredictor.Predict(product, D(25));
+
+        Assert.Equal(14, r.MedianIntervalDays);  // the loose-to-loose gap, no bag date blended in
+        Assert.Equal(D(38), r.DueDate);          // last loose buy D(24) + 14
+        Assert.Equal("each", r.RecommendedSize);
+    }
+
+    [Fact]
+    public void RecommendedSize_PrefersTheMostRecentSpelledForm_OverANull()
+    {
+        // The most recent buy has no size text, but an older buy in the same (each) bucket says
+        // "Each" — keep the spelled hint rather than silently dropping it. All-null stays null.
+        var spelled = new Product
+        {
+            Id = 1,
+            Name = "Avocados",
+            Purchases =
+            [
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(0),  Size = "Each" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(12), Size = null },
+            ],
+        };
+        var allNull = new Product
+        {
+            Id = 2,
+            Name = "Cucumbers",
+            Purchases =
+            [
+                new PurchaseEvent { ProductId = 2, PurchasedAt = D(0),  Size = null },
+                new PurchaseEvent { ProductId = 2, PurchasedAt = D(12), Size = null },
+            ],
+        };
+
+        Assert.Equal("Each", ReplenishmentPredictor.Predict(spelled, D(15)).RecommendedSize);
+        Assert.Null(ReplenishmentPredictor.Predict(allNull, D(15)).RecommendedSize);
+    }
+
+    [Fact]
     public void MixedSizes_FallBackToAllPurchases_WhenNoSizeHasEnoughHistory()
     {
         // One 10.6 oz and one 11 oz buy: no single size has 2 yet, so instead of "still learning" we

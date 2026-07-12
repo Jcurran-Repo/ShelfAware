@@ -1,3 +1,4 @@
+using ShelfAware.Core.Domain;
 using ShelfAware.Core.Shopping;
 
 namespace ShelfAware.Tests;
@@ -5,19 +6,6 @@ namespace ShelfAware.Tests;
 public class PriceSeriesTests
 {
     private static DateOnly D(int day) => new(2026, 6, day);
-
-    [Fact]
-    public void Each_family_spellings_collapse_to_one_bucket()
-    {
-        // Loose produce is priced per unit however many you grab; extraction writes the size as
-        // null / "each" / "EA" / "1 ct" inconsistently. All one pricing basis, so all one bucket.
-        Assert.Equal(PriceSeries.EachKey, PriceSeries.Bucket(null));
-        Assert.Equal(PriceSeries.EachKey, PriceSeries.Bucket(""));
-        Assert.Equal(PriceSeries.EachKey, PriceSeries.Bucket("each"));
-        Assert.Equal(PriceSeries.EachKey, PriceSeries.Bucket("EA"));
-        Assert.Equal(PriceSeries.EachKey, PriceSeries.Bucket(" 1 ct "));
-        Assert.Equal("3 lb bag", PriceSeries.Bucket(" 3 LB Bag "));
-    }
 
     [Fact]
     public void The_limes_case_charts_each_prices_and_excludes_the_bag()
@@ -34,7 +22,7 @@ public class PriceSeriesTests
 
         var series = PriceSeries.Dominant(points)!;
 
-        Assert.Equal(PriceSeries.EachKey, series.SizeKey);
+        Assert.Equal(SizeBucket.EachKey, series.SizeKey);
         Assert.Equal(new[] { 0.25m, 0.28m }, series.Points.Select(p => p.UnitPrice));
         Assert.Equal(2, series.BucketCount); // mixed sizes → the UI labels the charted bucket
     }

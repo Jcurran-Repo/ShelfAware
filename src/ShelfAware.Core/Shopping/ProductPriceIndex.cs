@@ -1,12 +1,14 @@
+using ShelfAware.Core.Domain;
+
 namespace ShelfAware.Core.Shopping;
 
 /// <summary>
 /// Average confirmed unit price per product, keyed by size bucket, falling back to the product's
 /// overall average when the asked-for size has no priced line. THE shared price lookup for the
 /// shopping surfaces (Products grid, Grocery List, spend forecast) so they all price the
-/// recommended (dominant) size the same way — sizes group via <see cref="PriceSeries.Bucket"/>,
-/// so the loose/"each" spellings fold together and per-each produce matches a null recommended
-/// size. Pure C#: callers fetch the (product, size, price) observations and pass them in.
+/// recommended (dominant) size the same way — sizes group via <see cref="SizeBucket"/>, so the
+/// loose/"each" spellings fold together and per-each produce matches a null recommended size.
+/// Pure C#: callers fetch the (product, size, price) observations and pass them in.
 /// </summary>
 public sealed class ProductPriceIndex
 {
@@ -17,7 +19,7 @@ public sealed class ProductPriceIndex
     {
         var all = observations.ToList();
         _bySize = all
-            .GroupBy(o => (o.ProductId, Bucket: PriceSeries.Bucket(o.Size)))
+            .GroupBy(o => (o.ProductId, Bucket: SizeBucket.Key(o.Size)))
             .ToDictionary(g => g.Key, g => g.Average(o => o.UnitPrice));
         _overall = all
             .GroupBy(o => o.ProductId)
@@ -29,7 +31,7 @@ public sealed class ProductPriceIndex
     /// no priced line at all.</summary>
     public decimal? PriceFor(int productId, string? size)
     {
-        if (_bySize.TryGetValue((productId, PriceSeries.Bucket(size)), out var sized)) return sized;
+        if (_bySize.TryGetValue((productId, SizeBucket.Key(size)), out var sized)) return sized;
         return _overall.TryGetValue(productId, out var overall) ? overall : null;
     }
 }
