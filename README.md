@@ -7,6 +7,7 @@ thing, and tells you what's about to run out — before you're standing in the k
 there's no coffee.
 
 [![CI](https://github.com/Jcurran-Repo/ShelfAware/actions/workflows/ci.yml/badge.svg)](https://github.com/Jcurran-Repo/ShelfAware/actions/workflows/ci.yml)
+&nbsp; [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE)
 &nbsp;·&nbsp; .NET 10 · Blazor · EF Core/SQLite · Anthropic Claude · ElevenLabs voice
 
 > **Live demo:** _coming soon_ — `<!-- LIVE_DEMO_URL -->` (Azure App Service; one-line swap once deployed)
@@ -258,8 +259,8 @@ request to the server, which holds it in memory just long enough to make the LLM
 inherent to any server-side app, not a design slip. Backing that up: a strict
 Content-Security-Policy (`script-src 'self'` plus one pinned SDK host — the real defense against a
 rogue script reading localStorage), per-visitor key isolation, HTTPS/HSTS, rate-limited endpoints,
-and a **Forget my keys** button that wipes everything. And it's all open source — don't take my
-word for it.
+and a **Forget my keys** button that wipes everything. And the source is all right here — don't
+take my word for it.
 
 ---
 
@@ -284,6 +285,23 @@ Up next is the **Azure deploy** (SQLite under `/home/data`) — the live-demo li
 one-line swap once it's live. After that: a cloud/email receipt inbox (the `IReceiptInbox` seam is
 already there), more eval fixtures beyond one merchant, and password-reset emails (there's no mail
 server behind it yet — Settings admits as much).
+
+## License
+
+**Shelf Aware is source-available, not open source** — a deliberate distinction. It's under the
+[PolyForm Noncommercial License 1.0.0](LICENSE): use it, self-host it, fork it, and tinker freely
+for any **noncommercial** purpose — for yourself, your household, a school class, a non-profit,
+even a government agency (the license's noncommercial-organization carve-outs apply regardless of
+how those orgs are funded). The one thing you can't do is use it commercially, and that explicitly
+includes running it as a paid or ad-supported hosted service. Those rights stay with me — if you'd
+like a commercial license, open an issue and we'll talk.
+
+Housekeeping: if you redistribute it, keep the `Required Notice:` line from [LICENSE](LICENSE)
+intact — that's the license's one preservation rule. The license covers Shelf Aware's own code;
+third-party components (the vendored audio worklets in `src/ShelfAware.Web/wwwroot/js/vendor` and
+the NuGet dependencies) stay under their own licenses — see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). Contributions are welcome under the terms in
+[CONTRIBUTING.md](CONTRIBUTING.md). <sub>SPDX: `PolyForm-Noncommercial-1.0.0`</sub>
 
 ---
 

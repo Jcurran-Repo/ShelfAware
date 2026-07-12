@@ -118,7 +118,7 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      tool-handler call so a thrown tool exception becomes an error result instead of blanking the dashboard
      box (`50b9e2b`); ProductDetail reloads on id change (`d1618ff`); NotFound/Error use the design system
      (`d927f56`); dashboard double-tap guard + SplitButton a11y + tidy EF writes + table captions (`5739c3a`).
-   - **BYOK — bring your own key** — public/open-source posture: the deployed demo ships **no usable keys**;
+   - **BYOK — bring your own key** — public/source-available posture: the deployed demo ships **no usable keys**;
      visitors bring their own with minimal effort; Jordan's keys are never used live. The `IChatClient` seam
      means service CODE didn't change — BYOK is a lifetime/wiring change (singleton→**scoped**), not per-call:
      - **Provider seam** (`10a8fcb`): `AiProvider` enum + `IChatClientFactory`/`ChatClientFactory` (Anthropic

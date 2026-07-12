@@ -13,6 +13,11 @@ so these files are served from our origin instead. **No CSP directive was loosen
 | `raw-audio-processor.worklet.js` | inline worklet source extracted from `@elevenlabs/client@1.14.0` `dist/platform/web/rawAudioProcessor.generated` (MIT) | 1.14.0 |
 | `audio-concat-processor.worklet.js` | inline worklet source extracted from `@elevenlabs/client@1.14.0` `dist/platform/web/output` (MIT) | 1.14.0 |
 
+These are third-party files under their own licenses, NOT under the repo's PolyForm Noncommercial
+license. The full copyright + permission notices (MIT ×3, plus the compiled `libsamplerate` C
+library's 2-clause BSD) live in [`THIRD-PARTY-NOTICES.md`](../../../../../THIRD-PARTY-NOTICES.md)
+at the repo root — keep that file in sync if a vendored file is added, removed, or re-extracted.
+
 Note: `libsamplerate.worklet.js` is the package's **wasm2js** build — the resampler is compiled to plain
 JavaScript, so it needs no `wasm-unsafe-eval` allowance.
 

@@ -130,13 +130,13 @@ _Last updated: 7/7/2026_
 - [x] NotFound / Error pages use the design system — 7/5/2026
 - [x] Quick-buy double-tap guard + SplitButton a11y + tidy EF write + table captions — 7/5/2026
 
-### BYOK — bring your own key (public / open-source posture: deployed demo ships no usable keys)
+### BYOK — bring your own key (public / source-available posture: deployed demo ships no usable keys)
 - [x] Provider seam: IChatClientFactory (Anthropic + OpenAI) — 7/5/2026
 - [x] Per-circuit AI clients built from the visitor's browser settings (keyless boot preserved) — 7/5/2026
 - [x] Content-Security-Policy + security headers (script-src 'self'; strict in production) — 7/5/2026
 - [x] Settings UI: provider, masked keys, per-module models, forget-my-key, session-only — 7/5/2026
 - [x] Voice keyed per-circuit (server-side, per-request xi-api-key, rate-limited signed-url, pinned EL SDK) — 7/5/2026
-- [x] Open-source README / BYOK setup docs (Whose-keys section: byok/managed/KeyMode + the honest key-custody story) — 7/9/2026
+- [x] Source-available README / BYOK setup docs (Whose-keys section: byok/managed/KeyMode + the honest key-custody story) — 7/9/2026
 
 ### Fixes
 - [x] Short-cadence items now clear Running Low after a restock (DueSoon window capped inside the cadence) — 7/5/2026
