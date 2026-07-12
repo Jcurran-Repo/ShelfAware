@@ -375,6 +375,7 @@ public class AnthropicPantryChat : IPantryChat
                     "recipes" => "/recipes",
                     "trends" => "/trends",
                     "upload" or "receipt" => "/receipt",
+                    "receipts" => "/receipts",
                     "products" => "/products",
                     "accuracy" => "/accuracy",
                     "settings" => "/settings",
@@ -526,7 +527,7 @@ public class AnthropicPantryChat : IPantryChat
                 "Navigate the user's screen to a page of the app. Use when they ask to see, open, go to, or show a page. For a specific product's detail page use page='product' + product_name. To show the recipes that use a specific product ('what can I make with the chicken', 'recipes using the salmon'), use page='recipes' + product_name.",
                 """
                 {
-                  "page": { "type": "string", "enum": ["dashboard","grocery_list","recipes","trends","upload","products","accuracy","settings","product"] },
+                  "page": { "type": "string", "enum": ["dashboard","grocery_list","recipes","trends","upload","receipts","products","accuracy","settings","product"] },
                   "product_name": { "type": "string", "description": "With page='product', the product whose detail page to open. With page='recipes', scope the recipes list to those that use this product. Omit for a whole page." }
                 }
                 """,

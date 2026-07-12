@@ -2,7 +2,7 @@
 
 <header class="site-header @(navOpen ? "nav-open" : null)">
     <span class="brand">Shelf Aware</span>
-    @* Mobile-only disclosure for the nav — eight links swamp a phone. display:none on desktop, so
+    @* Mobile-only disclosure for the nav — this many links swamp a phone. display:none on desktop, so
        navOpen (and the nav-open class) can only take effect under the small-screen media query. *@
     <button type="button" class="nav-toggle" @onclick="() => navOpen = !navOpen"
             aria-expanded="@(navOpen ? "true" : "false")" aria-controls="primary-nav"
@@ -16,6 +16,7 @@
         <NavLink href="/recipes">Recipes</NavLink>
         <NavLink href="/trends">Trends</NavLink>
         <NavLink href="/receipt">Upload</NavLink>
+        <NavLink href="/receipts">Receipts</NavLink>
         <NavLink href="/products">Products</NavLink>
         <NavLink href="/accuracy">Accuracy</NavLink>
         <NavLink href="/settings">Settings</NavLink>

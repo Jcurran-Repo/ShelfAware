@@ -1,0 +1,135 @@
+@page "/receipts"
+@using ShelfAware.Core.Shopping
+@inject IHouseholdDbFactory DbFactory
+@inject ILogger<Receipts> Logger
+
+<PageTitle>Receipts — Shelf Aware</PageTitle>
+
+<div class="page-head">
+    <h1>Receipts</h1>
+    @if (receipts is not null)
+    {
+        <span class="muted">@receipts.Count receipt@(receipts.Count == 1 ? "" : "s")</span>
+    }
+</div>
+<p class="muted">
+    Every receipt the pantry has learned from — when it was, and what it cost. Totals are summed from
+    the extracted line items (unit price × quantity), so a multi-quantity line can drift from the
+    printed total by a cent or two.
+</p>
+
+@if (loadError is not null)
+{
+    <p class="error" role="alert">@loadError</p>
+}
+else if (receipts is null)
+{
+    <p>Loading…</p>
+}
+else if (receipts.Count == 0)
+{
+    <section class="panel">
+        <p class="muted">No receipts yet. <a href="/receipt">Upload one</a> — or point the auto-import
+        at a receipts folder in <a href="/settings">Settings</a> — and it'll show up here.</p>
+    </section>
+}
+else
+{
+    @foreach (var row in receipts)
+    {
+        <section class="panel receipt-card">
+            <details>
+                <summary>
+                    <span class="receipt-date">@(row.Receipt.PurchasedAt is { } d ? d.ToString("MMM d, yyyy") : "Date unknown")</span>
+                    <span class="muted">@(row.Receipt.Merchant is { Length: > 0 } m ? m : "Unknown merchant") · @row.Summary.LineCount item@(row.Summary.LineCount == 1 ? "" : "s")</span>
+                    @if (row.Receipt.Status == ReceiptStatus.PendingReview)
+                    {
+                        <span class="chip chip-duesoon">Pending review</span>
+                    }
+                    <span class="receipt-total">@row.Summary.Total.ToString("C")</span>
+                </summary>
+
+                @if (row.Receipt.Status == ReceiptStatus.PendingReview)
+                {
+                    <p class="muted">This receipt is still awaiting review — confirm it on the
+                    <a href="/receipt">Upload page</a> before its purchases count.</p>
+                }
+                <table>
+                    <caption class="visually-hidden">Line items for the @(row.Receipt.PurchasedAt?.ToString("MMMM d, yyyy") ?? "undated") receipt: item, quantity, size, unit price, and line total.</caption>
+                    <thead>
+                        <tr>
+                            <th scope="col">Item</th>
+                            <th scope="col">Qty</th>
+                            <th scope="col">Size</th>
+                            <th scope="col">Unit price</th>
+                            <th scope="col">Line total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var line in row.Receipt.Lines.OrderBy(l => l.Id))
+                        {
+                            <tr>
+                                <td title="@line.RawText">
+                                    @if (line.ProductId is { } pid)
+                                    {
+                                        <a href="/product/@pid">@line.NormalizedName</a>
+                                    }
+                                    else
+                                    {
+                                        @line.NormalizedName
+                                    }
+                                    @if (line.Brand is { Length: > 0 } brand)
+                                    {
+                                        <span class="muted"> · @brand</span>
+                                    }
+                                </td>
+                                <td>@line.Quantity.ToString("0.##")</td>
+                                <td>@(SizeFormat.Normalize(line.Size) is { Length: > 0 } size ? size : "—")</td>
+                                <td>@(line.UnitPrice is { } up ? up.ToString("C") : "—")</td>
+                                <td>@(ReceiptTotals.LineTotal(line) is { } lt ? lt.ToString("C") : "—")</td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="4" class="subtotal-label">Total@(row.Summary.UnpricedLines > 0 ? $" ({row.Summary.UnpricedLines} line{(row.Summary.UnpricedLines == 1 ? "" : "s")} without a price)" : "")</td>
+                            <td class="subtotal">@row.Summary.Total.ToString("C")</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </details>
+        </section>
+    }
+}
+
+@code {
+    private List<ReceiptRow>? receipts;
+    private string? loadError;
+
+    private record ReceiptRow(Receipt Receipt, ReceiptTotal Summary);
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var loaded = await db.Receipts
+                .AsNoTracking() // read-only history
+                .Where(r => r.Status != ReceiptStatus.Discarded)
+                .Include(r => r.Lines)
+                .ToListAsync();
+
+            receipts = loaded
+                .Select(r => new ReceiptRow(r, ReceiptTotals.Summarize(r.Lines)))
+                .OrderByDescending(row => row.Receipt.PurchasedAt ?? DateOnly.MinValue)
+                .ThenByDescending(row => row.Receipt.Id)
+                .ToList();
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load receipts");
+            loadError = "Couldn't load receipts — try reloading the page.";
+        }
+    }
+}

@@ -44,7 +44,8 @@ Beyond the spec's 3 pages, the app now has Dashboard (`/`), Upload (`/receipt`),
 Products (`/products`), Grocery List (`/list`, by aisle + copy/print + a manual **Extras**
 section), Trends (`/trends`, price tickers + spend forecast — page component is
 `SpendInsight.razor`), Product Detail (`/product/{id}`, rhythm + price-history chart),
-Accuracy (`/accuracy`, renders `eval-results.json`), and **Recipes (`/recipes`)**.
+Accuracy (`/accuracy`, renders `eval-results.json`), **Recipes (`/recipes`)**, and
+Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptTotals`, Core).
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
 + unit tests; Evals excluded — needs a live key). **200 green xUnit tests across three
