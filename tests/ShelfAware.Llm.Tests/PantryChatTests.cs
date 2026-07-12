@@ -277,6 +277,24 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task Creating_a_near_duplicate_product_is_refused_and_names_the_existing_one()
+    {
+        var store = new FakePantryStore(P(4, "Pedigree Dog Food", Category.PetCare));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("create_product", ("name", "Dog Food"), ("category", "PetCare"))),
+            () => Responses.Text("You already have Pedigree Dog Food."));
+
+        await Chat(client, store).HandleAsync("add dog food as a product");
+
+        Assert.Empty(store.Created); // "Dog Food" ⊂ "Pedigree Dog Food" — a twin would split its history
+        var toolResult = client.ReceivedMessages[1]
+            .Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result?.ToString();
+        Assert.Contains("Pedigree Dog Food", toolResult);
+        Assert.Contains("already exists", toolResult);
+    }
+
+    [Fact]
     public async Task An_unmatched_product_changes_nothing()
     {
         var store = new FakePantryStore(P(1, "Coffee", Category.Beverage));

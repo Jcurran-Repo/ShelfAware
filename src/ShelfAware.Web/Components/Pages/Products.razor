@@ -1,4 +1,5 @@
 @page "/products"
+@using ShelfAware.Core.Chat
 @using ShelfAware.Core.Prediction
 @using ShelfAware.Core.Shopping
 @inject IHouseholdDbFactory DbFactory
@@ -31,6 +32,22 @@
     @if (addError is not null)
     {
         <p class="error">@addError</p>
+    }
+    @if (duplicateOf is not null)
+    {
+        <p class="dup-check" role="status">
+            @if (duplicateIsExact)
+            {
+                <span>You already have <a href="/product/@duplicateOf.Id">@duplicateOf.Name</a> — no need to add it twice.</span>
+                <button type="button" class="secondary" @onclick="DismissDuplicate">OK</button>
+            }
+            else
+            {
+                <span>Looks like you might already have this as <a href="/product/@duplicateOf.Id">@duplicateOf.Name</a>.</span>
+                <button type="button" class="secondary" @onclick="CreateAnyway">Add "@pendingName" anyway</button>
+                <button type="button" class="secondary" @onclick="DismissDuplicate">Never mind</button>
+            }
+        </p>
     }
 </section>
 
@@ -200,6 +217,13 @@ else
     private string? addError;
     private string? deleteError;
 
+    // Duplicate guard state: the existing product the typed name resolved to, whether it was an exact
+    // name hit (blocked outright — two same-named products would make every later match ambiguous) or
+    // a fuzzy one (user decides), and the typed name held so "Add anyway" adds exactly what was vetted.
+    private Product? duplicateOf;
+    private bool duplicateIsExact;
+    private string? pendingName;
+
     private string searchText = "";
     private string categoryFilter = "";
     private string statusFilter = "";
@@ -291,6 +315,7 @@ else
     private async Task AddProduct()
     {
         addError = null;
+        duplicateOf = null;
         var name = newName.Trim();
         if (name.Length == 0)
         {
@@ -298,6 +323,37 @@ else
             return;
         }
 
+        // Same resolver the chat tools and receipt confirm trust (exact → substring → weighted tokens).
+        // A second product for the same item splits its purchase history and blinds the predictor, so
+        // surface the match before inserting instead of silently creating a twin.
+        if (ProductMatcher.Resolve(name, products ?? []) is { } match)
+        {
+            duplicateOf = match;
+            duplicateIsExact = string.Equals(match.Name, name, StringComparison.OrdinalIgnoreCase);
+            pendingName = name;
+            return;
+        }
+
+        await CreateAsync(name);
+    }
+
+    // Fuzzy matches can false-positive, so the user staring at the form gets the final say.
+    private async Task CreateAnyway()
+    {
+        if (pendingName is { Length: > 0 } name) await CreateAsync(name);
+        duplicateOf = null;
+    }
+
+    private void DismissDuplicate()
+    {
+        duplicateOf = null;
+        newName = "";
+        newUnit = "";
+    }
+
+    private async Task CreateAsync(string name)
+    {
+        duplicateOf = null;
         await using var db = await DbFactory.CreateDbContextAsync();
         db.Products.Add(new Product
         {

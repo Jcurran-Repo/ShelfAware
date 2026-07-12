@@ -994,6 +994,20 @@ button.mic-speaking {
     color: var(--overdue-ink);
 }
 
+/* Duplicate-product prompt under the Add form: a caution, not an error. */
+.dup-check {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin: 0.6rem 0 0;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--duesoon-ink);
+    border-radius: var(--radius);
+    background: var(--duesoon-bg);
+}
+
 /* ---- Upload review table cues ---- */
 .low-confidence {
     background: var(--duesoon-bg);

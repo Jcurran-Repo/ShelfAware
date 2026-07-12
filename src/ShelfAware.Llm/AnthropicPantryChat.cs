@@ -241,8 +241,14 @@ public class AnthropicPantryChat : IPantryChat
                 if (string.IsNullOrWhiteSpace(name)) return ("A product name is required.", true);
                 if (!Enum.TryParse<Category>(Str("category"), ignoreCase: true, out var category))
                     category = Category.Other;
-                var existing = products.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
-                if (existing is not null) return ($"\"{existing.Name}\" already exists — use it instead.", false);
+                // Same resolver the other tools trust — a near-match means this product likely already
+                // exists under another spelling, and a twin would split its purchase history.
+                if (ProductMatcher.Resolve(name, products) is { } existing)
+                {
+                    return string.Equals(existing.Name, name, StringComparison.OrdinalIgnoreCase)
+                        ? ($"\"{existing.Name}\" already exists — use it instead.", false)
+                        : ($"That sounds like \"{existing.Name}\", which already exists — use it, or retry with a more distinctive name if it's really a different product.", false);
+                }
                 var tags = StrList("tags") ?? [];
                 await _store.CreateProductAsync(name, category, tags, ct);
                 actions.Add($"created {name}");
