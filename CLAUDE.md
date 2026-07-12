@@ -212,6 +212,24 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      household's `AiUsage` row; quotas remain managed-only (BYOK: recorded, never limited). Settings
      gains an "AI usage" panel (today + 14-day daily table via `AiUsageMeter.GetRecentAsync`).
 
+11. **Ordering + duplicate guard + substitution-matrix batch (2026-07-12):**
+   - **Grocery list "Coming up" walks the store** — same Category → urgency → name order as Buy now,
+     so the whole page reads as one list (the date column still carries chronology).
+   - **Duplicate guard on product adds** — the Products form and the chat `create_product` tool resolve
+     through `ProductMatcher` BEFORE inserting (a twin product splits purchase history and blinds the
+     predictor): exact dupes are blocked outright with a link to the existing product; fuzzy near-misses
+     get a use-existing / "Add anyway" prompt (fuzzy can false-positive — the user decides).
+   - **The substitution matrix feeds Adapt** — `IRecipeAdvisor.AdaptAsync` takes `PantryProduct`
+     (name + also-works-as) instead of bare names; the adapter loads `Substitutes`; prompt rule 9
+     prefers curated stand-ins and pins matched_product to the product name only (never the note).
+   - **Swap clouds show curated stand-ins first** — `SwapCloud` (Core, tested): products whose name or
+     also-works-as covers the ingredient come first (token-equal self-swaps excluded via the new
+     `IngredientMatcher.IsSameFood`), AI generic forms dedupe behind them; clouds draw from EVERY
+     tracked edible product, so an out-of-stock stand-in renders as a "grab" bubble.
+   - **Variants adapt + swap (re-root)** — the `!isVariant` gates are gone; adapting a variant uses the
+     variant's content as the base but saves the result as a sibling under the ORIGINAL (ParentRecipeId
+     re-rooted), so families stay flat and the signature dedupe sees the whole group.
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active
@@ -281,12 +299,17 @@ saves the variant) — drives the "🔀 Adapt to what I have" button, the **`ada
 AND the per-ingredient bubble cloud. Adapt prompt is `recipe-adapt-system.txt`. On-hand = the shared
 `PantryOnHand.EdibleInStock` (Core; `CategoryExtensions.IsEdible` + not-overdue). **Robustness:** re-adapting
 **dedupes by main-ingredient content signature** (not the AI's title) so it updates in place; variants are
-saved only when valid, and the adapter logs + re-throws cancellation (no swallowed errors).
+saved only when valid, and the adapter logs + re-throws cancellation (no swallowed errors). **As of
+2026-07-12:** the advisor receives each on-hand product's also-works-as list (item 11), and adapting a
+VARIANT is allowed — it re-roots under the original (see item 11) instead of refusing.
 
-**Bubble-cloud ingredient picker (v2.2).** Each main ingredient on an original recipe has a **⇄ swap**
-that opens a cloud of interchangeable forms (`IIngredientAlternativesAdvisor`, Haiku; generated once and
-**cached** on `RecipeIngredient.AlternativesJson`), colored green/red via `IngredientMatcher`. Clicking a
-bubble runs a **targeted adapt** — a typed `IngredientSwap(IngredientName, ChosenForm)` the adapter turns
+**Bubble-cloud ingredient picker (v2.2).** Each main ingredient on a saved recipe (originals AND, since
+2026-07-12, variants) has a **⇄ swap** that opens a cloud of interchangeable forms
+(`IIngredientAlternativesAdvisor`, Haiku; generated once and **cached** on
+`RecipeIngredient.AlternativesJson`), colored green/red via `IngredientMatcher`. Since 2026-07-12 the cloud
+is `SwapCloud.Merge(curated, generated)` — the user's own stand-in products lead, AI forms dedupe behind
+them (item 11). Clicking a bubble runs a **targeted adapt** — a typed
+`IngredientSwap(IngredientName, ChosenForm)` the adapter turns
 into the prompt preference AND **guards**: if the model ignores the pick, `IngredientMatcher.IsMentionedIn`
 catches it and the adapt is rejected (retry) rather than saving a mislabeled variant.
 
