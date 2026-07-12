@@ -235,6 +235,11 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      red row's covering product is merely predicted run-out (`PantryOnHand.EdibleOutOfStock`, the exact
      complement of on-hand), the row says "you may still have X — it just looks run-out" with a one-tap
      Restocked (the same status-only signal as the dashboard). A red mark with no hint = a genuine gap.
+   - **"Get ideas" batches persist** (same day) — the latest suggestion batch is stored per household
+     (`SettingKeys.LastRecipeSuggestions`, JSON `SuggestionSnapshot` in Recipes.razor) and rehydrated in
+     OnInitializedAsync, with an "Ideas for '…'" header + Clear-ideas button. Replaced only on a
+     SUCCESSFUL new batch (a failed call keeps the old cards on screen AND in storage). `Have`/`ToGrab`
+     are `[JsonIgnore]` — availability marks must recompute live, never replay the stored verdict.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

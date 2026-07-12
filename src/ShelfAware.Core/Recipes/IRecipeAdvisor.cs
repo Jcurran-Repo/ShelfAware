@@ -37,7 +37,9 @@ public record RecipeSuggestion(
     string Name, string Blurb, IReadOnlyList<SuggestedIngredient> Ingredients, IReadOnlyList<string> Steps,
     int? CaloriesPerServing = null)
 {
-    /// <summary>Main ingredients the user still needs to buy — what to add to the grocery list.</summary>
+    /// <summary>Main ingredients the user still needs to buy — what to add to the grocery list.
+    /// Derived — excluded from the persisted last-suggestions snapshot.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
     public IEnumerable<SuggestedIngredient> ToGrab => Ingredients.Where(i => i.IsMain && !i.Have);
 }
 
@@ -49,5 +51,7 @@ public record RecipeSuggestion(
 /// or null. Display/cooking guidance only — it doesn't affect makeability.</param>
 public record SuggestedIngredient(string Name, bool IsMain, string? MatchedProduct, string? Quantity = null)
 {
+    /// <summary>Derived from <see cref="MatchedProduct"/> — excluded from the persisted snapshot.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
     public bool Have => MatchedProduct is not null;
 }

@@ -24,4 +24,9 @@ public static class SettingKeys
     /// list) or "Auto" (add them straight away). The parallel-to-<see cref="ImportMode"/> setting for the
     /// add-a-recipe's-ingredients-to-the-list voice/chat flow.</summary>
     public const string RecipeAddConfirm = "RecipeAddConfirm";
+
+    /// <summary>JSON snapshot of the household's most recent "Get ideas" batch (request + timestamp +
+    /// suggestions), so an AI call's results survive navigation and restarts instead of evaporating.
+    /// Replaced on the next batch, cleared by the user's "Clear ideas".</summary>
+    public const string LastRecipeSuggestions = "LastRecipeSuggestions";
 }

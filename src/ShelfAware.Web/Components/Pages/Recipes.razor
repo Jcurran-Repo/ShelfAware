@@ -4,8 +4,10 @@
 @using ShelfAware.Core.Chat
 @using ShelfAware.Core.Prediction
 @using ShelfAware.Core.Recipes
+@using ShelfAware.Core.Settings
 @inject IHouseholdDbFactory DbFactory
 @inject IPantryStore Store
+@inject IAppSettings Settings
 @inject IRecipeAdvisor Advisor
 @inject IRecipeAdapter Adapter
 @inject IIngredientAlternativesAdvisor AltAdvisor
@@ -61,6 +63,13 @@
 
     @if (suggestions.Count > 0)
     {
+        <div class="suggestions-head">
+            <p class="muted small">
+                Ideas for &ldquo;@suggestedFor&rdquo; — @suggestedAt.ToString("MMM d")
+                <span class="muted"> · kept until you clear or get new ideas</span>
+            </p>
+            <button type="button" class="secondary" @onclick="ClearSuggestions" aria-label="Clear these recipe ideas">Clear ideas</button>
+        </div>
         <div class="recipe-suggestions">
             @foreach (var s in suggestions)
             {
@@ -303,6 +312,15 @@
     private bool suggesting;
     private string? suggestError;
     private List<RecipeSuggestion> suggestions = [];
+    // What the current batch was generated for and when — shown above the cards, persisted with them.
+    private string suggestedFor = "";
+    private DateTimeOffset suggestedAt;
+
+    /// <summary>The persisted shape of a "Get ideas" batch (SettingKeys.LastRecipeSuggestions): an AI
+    /// call's results are too expensive to evaporate on navigation or a server restart, so the latest
+    /// batch is kept per household until replaced or cleared. Have/grab marks are NOT stored — they
+    /// recompute live against the current pantry on every render, so an old batch stays truthful.</summary>
+    private sealed record SuggestionSnapshot(string Request, DateTimeOffset GeneratedAt, List<RecipeSuggestion> Suggestions);
 
     private List<Recipe> savedRecipes = [];
     private HashSet<string> savedNames = new(StringComparer.OrdinalIgnoreCase);
@@ -492,7 +510,33 @@
         picked = pool.Count > 0 ? pool[rng.Next(pool.Count)] : null;
     }
 
-    protected override async Task OnInitializedAsync() => await LoadAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        await RestoreSuggestionsAsync();
+    }
+
+    // Bring back the household's last "Get ideas" batch so the page reopens where it left off.
+    // A snapshot that no longer parses (shape changed between builds) is discarded, not fatal.
+    private async Task RestoreSuggestionsAsync()
+    {
+        var json = await Settings.GetAsync(SettingKeys.LastRecipeSuggestions);
+        if (string.IsNullOrEmpty(json)) return;
+        try
+        {
+            if (JsonSerializer.Deserialize<SuggestionSnapshot>(json) is { Suggestions.Count: > 0 } snapshot)
+            {
+                suggestions = snapshot.Suggestions;
+                suggestedFor = snapshot.Request;
+                suggestedAt = snapshot.GeneratedAt;
+            }
+        }
+        catch (JsonException ex)
+        {
+            Logger.LogWarning(ex, "Stored recipe suggestions no longer parse — discarding the snapshot.");
+            await Settings.SetAsync(SettingKeys.LastRecipeSuggestions, null);
+        }
+    }
 
     // Re-derive the ?uses filter and consume any ?read command whenever the query changes. This runs
     // after OnInitializedAsync has loaded the data AND on every later query-only navigation — the
@@ -660,14 +704,25 @@
         if (suggesting || string.IsNullOrWhiteSpace(request)) return;
         suggesting = true;
         suggestError = null;
-        suggestions = [];
         try
         {
             // onHand grounds the suggestions in real catalog items. The card's have/grab marks trust the
             // model's matched_product only when POSITIVE; a null falls back to the plain-code matcher
             // (HaveSuggested), so the pre-save card always agrees with what saving would show.
-            suggestions = (await Advisor.SuggestAsync(request, onHand.Select(p => p.Name).ToList(), excludedFoods.Select(f => f.Value).ToList())).ToList();
-            if (suggestions.Count == 0) suggestError = "No ideas came back — try rephrasing.";
+            // The previous batch stays on screen (and in storage) until this one actually succeeds.
+            var fresh = (await Advisor.SuggestAsync(request, onHand.Select(p => p.Name).ToList(), excludedFoods.Select(f => f.Value).ToList())).ToList();
+            if (fresh.Count == 0)
+            {
+                suggestError = "No ideas came back — try rephrasing.";
+            }
+            else
+            {
+                suggestions = fresh;
+                suggestedFor = request;
+                suggestedAt = DateTimeOffset.Now;
+                await Settings.SetAsync(SettingKeys.LastRecipeSuggestions,
+                    JsonSerializer.Serialize(new SuggestionSnapshot(suggestedFor, suggestedAt, suggestions)));
+            }
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -679,6 +734,13 @@
         {
             suggesting = false;
         }
+    }
+
+    private async Task ClearSuggestions()
+    {
+        suggestions = [];
+        suggestedFor = "";
+        await Settings.SetAsync(SettingKeys.LastRecipeSuggestions, null);
     }
 
     private async Task Save(RecipeSuggestion s)

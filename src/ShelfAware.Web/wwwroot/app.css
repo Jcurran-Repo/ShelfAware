@@ -994,6 +994,19 @@ button.mic-speaking {
     color: var(--overdue-ink);
 }
 
+/* Header above the kept "Get ideas" batch: what it was for, when, and the clear action. */
+.suggestions-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.suggestions-head p {
+    margin: 0.5rem 0 0;
+}
+
 /* "Why is this red?" — the covering product is just predicted run-out (recipe ingredient rows). */
 .maybe-have {
     color: var(--ink-soft);
