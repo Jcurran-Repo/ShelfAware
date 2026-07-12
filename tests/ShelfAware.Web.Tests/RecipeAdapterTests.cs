@@ -9,7 +9,8 @@ namespace ShelfAware.Web.Tests;
 /// <summary>
 /// The recipe adapter on real EF/SQLite with a faked advisor: covers saving a variant, the content-based
 /// dedupe (re-adapting updates in place), the chosen-swap guard (a swap the model ignores is rejected,
-/// nothing saved), and the refusal to adapt a variant of a variant.
+/// nothing saved), the curated substitutes riding along to the advisor, and re-rooting (adapting a
+/// variant bases on its content but saves as a sibling under the original — never a chain).
 /// </summary>
 public class RecipeAdapterTests : IDisposable
 {
@@ -77,6 +78,30 @@ public class RecipeAdapterTests : IDisposable
     }
 
     [Fact]
+    public async Task The_on_hand_list_carries_each_products_also_works_as_substitutes()
+    {
+        var parentId = await SeedRecipe("Pan-Seared Chicken", "chicken breast");
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Products.Add(new Product
+            {
+                Name = "Chicken Breast Tenderloins",
+                Category = Category.Meat,
+                IsTracked = true,
+                Substitutes = [new ProductSubstitute { Value = "chicken breast" }, new ProductSubstitute { Value = "chicken cutlet" }],
+            });
+            await db.SaveChangesAsync();
+        }
+        var adapter = Adapter(Suggestion("Chicken Tenderloin Skillet", "chicken tenderloins"), out var advisor);
+
+        await adapter.AdaptToOnHandAsync(parentId);
+
+        // The advisor must see the user's curated substitution matrix, not bare product names.
+        var tenderloins = advisor.LastOnHand!.Single(p => p.Name == "Chicken Breast Tenderloins");
+        Assert.Equal(new[] { "chicken breast", "chicken cutlet" }, tenderloins.AlsoWorksAs);
+    }
+
+    [Fact]
     public async Task A_chosen_swap_the_model_ignores_is_rejected_and_saves_nothing()
     {
         var parentId = await SeedRecipe("Pan-Seared Chicken", "chicken breast");
@@ -106,22 +131,55 @@ public class RecipeAdapterTests : IDisposable
     }
 
     [Fact]
-    public async Task Adapting_a_variant_is_refused()
+    public async Task Adapting_a_variant_bases_on_its_content_but_re_roots_under_the_original()
     {
         var parentId = await SeedRecipe("Pan-Seared Chicken", "chicken breast");
         int variantId;
         await using (var db = _db.CreateDbContext())
         {
-            var v = new Recipe { Name = "A variant", SavedAt = DateTimeOffset.Now, ParentRecipeId = parentId };
+            var v = new Recipe
+            {
+                Name = "Pan-Seared Chicken Thighs",
+                SavedAt = DateTimeOffset.Now,
+                ParentRecipeId = parentId,
+                Ingredients = [new RecipeIngredient { Name = "chicken thighs", IsMain = true }],
+                Steps = [new RecipeStep { Order = 1, Text = "Cook the thighs." }],
+            };
             db.Recipes.Add(v);
             await db.SaveChangesAsync();
             variantId = v.Id;
         }
-        var adapter = Adapter(Suggestion("Whatever", "beef"), out _);
+        var adapter = Adapter(Suggestion("Chicken Tenderloin Skillet", "chicken tenderloins"), out var advisor);
 
         var result = await adapter.AdaptToOnHandAsync(variantId);
 
-        Assert.False(result.Success);
-        Assert.Contains("already an adapted", result.Message);
+        Assert.True(result.Success);
+        // The variant's own content is what the advisor was asked to rewrite...
+        Assert.Equal("Pan-Seared Chicken Thighs", advisor.LastRecipe!.Name);
+        Assert.Contains(advisor.LastRecipe.Ingredients, i => i.Name == "chicken thighs");
+        // ...and the family is named after the ORIGINAL in the reply, not the variant.
+        Assert.Contains("a version of Pan-Seared Chicken using", result.Message);
+        // The new variant is a SIBLING under the original, not a child of the variant — no chains.
+        await using var check = _db.CreateDbContext();
+        var newVariant = await check.Recipes.SingleAsync(r => r.Name == "Chicken Tenderloin Skillet");
+        Assert.Equal(parentId, newVariant.ParentRecipeId);
+    }
+
+    [Fact]
+    public async Task Re_adapting_a_variant_to_the_same_mains_replaces_it_instead_of_stacking()
+    {
+        var parentId = await SeedRecipe("Pan-Seared Chicken", "chicken breast");
+        var adapter = Adapter(Suggestion("Chicken Tenderloin Skillet", "chicken tenderloins"), out _);
+        await adapter.AdaptToOnHandAsync(parentId); // creates the tenderloins variant
+        int variantId;
+        await using (var db = _db.CreateDbContext())
+            variantId = (await db.Recipes.SingleAsync(r => r.ParentRecipeId == parentId)).Id;
+
+        var result = await adapter.AdaptToOnHandAsync(variantId); // adapt the variant; same mains come back
+
+        Assert.True(result.Success);
+        await using var check = _db.CreateDbContext();
+        // The signature dedupe keys on the original parent, so the stale twin was replaced, not stacked.
+        Assert.Single(await check.Recipes.Where(r => r.ParentRecipeId == parentId).ToListAsync());
     }
 }

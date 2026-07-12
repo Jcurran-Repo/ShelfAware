@@ -198,11 +198,8 @@
                             {
                                 <button class="secondary" @onclick="() => AddMissingToList(r)" aria-label="Add missing ingredients for @r.Name to the grocery list">Add missing to list</button>
                             }
-                            @if (!isVariant)
-                            {
-                                <button class="secondary" @onclick="() => AdaptRecipe(r)" disabled="@(adaptingId == r.Id)"
-                                        aria-label="Adapt @r.Name to use what you have">@(adaptingId == r.Id ? "Adapting…" : "🔀 Adapt to what I have")</button>
-                            }
+                            <button class="secondary" @onclick="() => AdaptRecipe(r)" disabled="@(adaptingId == r.Id)"
+                                    aria-label="Adapt @r.Name to use what you have">@(adaptingId == r.Id ? "Adapting…" : "🔀 Adapt to what I have")</button>
                             <button class="icon-btn" @onclick="() => DeleteSaved(r)" aria-label="Delete @r.Name" title="Delete @r.Name"><span aria-hidden="true">🗑</span></button>
                         </span>
                     </div>
@@ -220,25 +217,23 @@
                             var have = Have(i);
                             <li class="@(have ? "have" : "grab")">
                                 <span class="ingredient-name">@(have ? "✓" : "🛒") @Qty(i.Quantity, i.Name)</span>
-                                @if (!isVariant)
-                                {
-                                    <button type="button" class="alt-swap" @onclick="() => ToggleAlternatives(i)"
-                                            aria-label="Swap @i.Name for something else" title="Swap this ingredient">⇄</button>
-                                }
+                                <button type="button" class="alt-swap" @onclick="() => ToggleAlternatives(i)"
+                                        aria-label="Swap @i.Name for something else" title="Swap this ingredient">⇄</button>
                                 @if (openAltFor == i.Id)
                                 {
+                                    var cloud = CloudFor(i);
                                     <div class="alt-cloud" role="group" aria-label="Swap @i.Name">
                                         @if (generatingAltFor == i.Id)
                                         {
                                             <span class="muted small">Finding swaps…</span>
                                         }
-                                        else if (AlternativesOf(i).Count == 0)
+                                        else if (cloud.Count == 0)
                                         {
                                             <span class="muted small">No good swaps for this one.</span>
                                         }
                                         else
                                         {
-                                            @foreach (var alt in AlternativesOf(i))
+                                            @foreach (var alt in cloud)
                                             {
                                                 var altHave = HaveForm(alt);
                                                 <button type="button" class="alt-bubble @(altHave ? "have" : "grab")"
@@ -306,6 +301,9 @@
     private int? generatingAltFor; // RecipeIngredient.Id whose alternates are being generated
 
     private List<PantryProduct> onHand = [];
+    // Every tracked edible product with its curated substitutes — the swap clouds draw stand-ins from
+    // the whole matrix, including out-of-stock items (they render as "grab" bubbles).
+    private List<PantryProduct> cloudProducts = [];
 
     private Recipe? picked;
     private string? extraNote;
@@ -373,6 +371,11 @@
 
     private static List<string> AlternativesOf(RecipeIngredient i) =>
         string.IsNullOrEmpty(i.AlternativesJson) ? [] : JsonSerializer.Deserialize<List<string>>(i.AlternativesJson) ?? [];
+
+    // The cloud shows the user's own stand-in products (their curated "also works as" matrix) first,
+    // then the AI-generated generic forms that aren't already represented by one.
+    private List<string> CloudFor(RecipeIngredient i) =>
+        SwapCloud.Merge(SwapCloud.CuratedStandIns(i.Name, cloudProducts), AlternativesOf(i));
 
     // Green when an on-hand product covers this alternate form (same matcher the ingredients use).
     private bool HaveForm(string form) => IngredientMatcher.IsSatisfied(form, null, onHand);
@@ -556,6 +559,11 @@
             .Include(p => p.Purchases).Include(p => p.Signals).Include(p => p.Substitutes).ToListAsync();
         var today = DateOnly.FromDateTime(DateTime.Today);
         onHand = PantryOnHand.EdibleInStock(products, today)
+            .Select(p => new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList()))
+            .OrderBy(x => x.Name)
+            .ToList();
+        cloudProducts = products
+            .Where(p => p.Category.IsEdible())
             .Select(p => new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList()))
             .OrderBy(x => x.Name)
             .ToList();

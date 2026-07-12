@@ -11,6 +11,8 @@ namespace ShelfAware.Web.Services;
 /// <see cref="PantryOnHand"/> rule), asks the recipe advisor to rewrite it for those ingredients, and
 /// saves the result as a variant (ParentRecipeId). One path for both the "Adapt" button and the
 /// adapt_recipe chat/voice tool. Re-adapting to the same result updates in place instead of duplicating.
+/// Adapting a VARIANT re-roots: its own content is the base the advisor rewrites, but the result saves
+/// as another sibling under the original, so the family stays a flat group — never a chain.
 /// </summary>
 public class RecipeAdapter(
     IHouseholdDbFactory dbFactory, IRecipeAdvisor advisor, ILogger<RecipeAdapter> logger) : IRecipeAdapter
@@ -21,13 +23,23 @@ public class RecipeAdapter(
         var recipe = await db.Recipes.Include(r => r.Ingredients).Include(r => r.Steps)
             .FirstOrDefaultAsync(r => r.Id == recipeId, cancellationToken);
         if (recipe is null) return new AdaptResult(false, "That recipe couldn't be found.");
-        if (recipe.IsVariant)
-            return new AdaptResult(false, "That's already an adapted version — adapt the original instead.");
+        // Adapting a variant is allowed — its content is the base — but the result re-roots under the
+        // ORIGINAL recipe, so variants stay one flat group and the signature dedupe below sees them all.
+        var parentId = recipe.ParentRecipeId ?? recipe.Id;
+        var familyName = recipe.ParentRecipeId is null
+            ? recipe.Name
+            : await db.Recipes.Where(r => r.Id == parentId).Select(r => r.Name).SingleAsync(cancellationToken);
 
         var products = await db.Products.Where(p => p.IsTracked)
-            .Include(p => p.Purchases).Include(p => p.Signals).ToListAsync(cancellationToken);
+            .Include(p => p.Purchases).Include(p => p.Signals).Include(p => p.Substitutes)
+            .ToListAsync(cancellationToken);
         var today = DateOnly.FromDateTime(DateTime.Today);
-        var onHand = PantryOnHand.EdibleInStock(products, today).Select(p => p.Name).OrderBy(n => n).ToList();
+        // Carry each product's curated "also works as" list so the advisor swaps to a stand-in the
+        // user has already vouched for before inventing its own.
+        var onHand = PantryOnHand.EdibleInStock(products, today)
+            .Select(p => new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList()))
+            .OrderBy(p => p.Name)
+            .ToList();
         var excluded = await db.ExcludedFoods.Select(f => f.Value).ToListAsync(cancellationToken);
 
         var input = new RecipeToAdapt(
@@ -67,7 +79,7 @@ public class RecipeAdapter(
         // slight naming changes). Cascade removes its ingredients/steps.
         var newSig = MainSignature(adapted.Ingredients.Where(i => i.IsMain).Select(i => i.MatchedProduct ?? i.Name));
         var siblings = await db.Recipes.Include(r => r.Ingredients)
-            .Where(r => r.ParentRecipeId == recipe.Id).ToListAsync(cancellationToken);
+            .Where(r => r.ParentRecipeId == parentId).ToListAsync(cancellationToken);
         var stale = siblings
             .Where(s => MainSignature(s.Ingredients.Where(i => i.IsMain).Select(i => i.MatchedProduct ?? i.Name)) == newSig)
             .ToList();
@@ -78,7 +90,7 @@ public class RecipeAdapter(
             Name = adapted.Name,
             Blurb = adapted.Blurb,
             SavedAt = DateTimeOffset.Now,
-            ParentRecipeId = recipe.Id,
+            ParentRecipeId = parentId,
             EstimatedCaloriesPerServing = adapted.CaloriesPerServing,
             Ingredients = adapted.Ingredients
                 .Select(i => new RecipeIngredient { Name = i.Name, IsMain = i.IsMain, MatchedProduct = i.MatchedProduct, Quantity = i.Quantity })
@@ -89,7 +101,7 @@ public class RecipeAdapter(
         await db.SaveChangesAsync(cancellationToken);
         logger.LogInformation("Adapted recipe {RecipeId} into variant {VariantId} (replaced {Removed} duplicate(s)).",
             recipeId, variant.Id, stale.Count);
-        return new AdaptResult(true, $"Saved \"{variant.Name}\" — a version of {recipe.Name} using what you have.", variant.Id);
+        return new AdaptResult(true, $"Saved \"{variant.Name}\" — a version of {familyName} using what you have.", variant.Id);
     }
 
     // A stable, order-independent signature of a recipe's main ingredients (grounded product name when it

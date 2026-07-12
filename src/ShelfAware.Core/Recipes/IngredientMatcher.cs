@@ -65,6 +65,16 @@ public static class IngredientMatcher
         return need.Count > 0 && names.Any(n => Covers(need, n));
     }
 
+    /// <summary>True when the two phrases name the same food — mutual core-word coverage (plural-tolerant,
+    /// trivial modifiers ignored): "chicken breasts" ↔ "fresh chicken breast", but NOT "chicken breast" vs
+    /// "chicken breast tenderloins" (the extra cut word makes it a different form).</summary>
+    public static bool IsSameFood(string a, string b)
+    {
+        var ta = CoreTokens(a);
+        var tb = CoreTokens(b);
+        return ta.Count > 0 && tb.Count > 0 && Covers(ta, b) && Covers(tb, a);
+    }
+
     // The core food words of an ingredient name, with trivial modifiers and bare numbers removed.
     internal static List<string> CoreTokens(string? name) =>
         Tokenize(name).Where(t => !Trivial.Contains(t) && !t.All(char.IsDigit)).ToList();

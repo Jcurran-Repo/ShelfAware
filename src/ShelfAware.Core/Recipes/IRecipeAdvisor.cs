@@ -16,11 +16,13 @@ public interface IRecipeAdvisor
     /// <summary>Rewrite an existing recipe so it can be cooked with what's on hand — swap main ingredients
     /// the user doesn't have for ones they do that fit the dish, and adjust the steps/cook times to match.
     /// Returns the adapted recipe, or null if the model returned nothing usable.</summary>
+    /// <param name="onHand">On-hand products WITH their curated "also works as" lists, so the model knows
+    /// the user's own substitution matrix (tenderloins stand in for chicken breast) when choosing swaps.</param>
     /// <param name="preference">Optional explicit swap the user chose (e.g. "Use chicken thighs instead of
     /// chicken breast") — honored even if that item isn't on hand; the rest still adapts to on-hand.</param>
     Task<RecipeSuggestion?> AdaptAsync(
         RecipeToAdapt recipe,
-        IReadOnlyList<string> onHand,
+        IReadOnlyList<PantryProduct> onHand,
         IReadOnlyList<string> excludedFoods,
         string? preference = null,
         CancellationToken cancellationToken = default);

@@ -9,18 +9,20 @@ namespace ShelfAware.Web.Tests;
 internal sealed class FakeRecipeAdvisor(RecipeSuggestion? adaptResult) : IRecipeAdvisor
 {
     public string? LastPreference { get; private set; }
-    public IReadOnlyList<string>? LastOnHand { get; private set; }
+    public IReadOnlyList<PantryProduct>? LastOnHand { get; private set; }
+    public RecipeToAdapt? LastRecipe { get; private set; }
 
     public Task<IReadOnlyList<RecipeSuggestion>> SuggestAsync(
         string request, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<RecipeSuggestion>>([]);
 
     public Task<RecipeSuggestion?> AdaptAsync(
-        RecipeToAdapt recipe, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods,
+        RecipeToAdapt recipe, IReadOnlyList<PantryProduct> onHand, IReadOnlyList<string> excludedFoods,
         string? preference = null, CancellationToken cancellationToken = default)
     {
         LastPreference = preference;
         LastOnHand = onHand;
+        LastRecipe = recipe;
         return Task.FromResult(adaptResult);
     }
 }

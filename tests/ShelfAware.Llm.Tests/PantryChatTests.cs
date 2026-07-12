@@ -38,7 +38,7 @@ public class PantryChatTests
             Task.FromResult<IReadOnlyList<RecipeSuggestion>>([suggestion]);
 
         public Task<RecipeSuggestion?> AdaptAsync(
-            RecipeToAdapt recipe, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods,
+            RecipeToAdapt recipe, IReadOnlyList<PantryProduct> onHand, IReadOnlyList<string> excludedFoods,
             string? preference = null, CancellationToken ct = default) => Task.FromResult<RecipeSuggestion?>(null);
     }
 

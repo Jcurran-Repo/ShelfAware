@@ -105,7 +105,7 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
     }
 
     public async Task<RecipeSuggestion?> AdaptAsync(
-        RecipeToAdapt recipe, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods,
+        RecipeToAdapt recipe, IReadOnlyList<PantryProduct> onHand, IReadOnlyList<string> excludedFoods,
         string? preference = null, CancellationToken cancellationToken = default)
     {
         var ingredients = string.Join("\n", recipe.Ingredients.Select(i =>
@@ -113,6 +113,11 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
         var steps = recipe.Steps.Count > 0
             ? string.Join("\n", recipe.Steps.Select((s, i) => $"{i + 1}. {s}"))
             : "(none)";
+        // Each on-hand line carries the user's curated "also works as" list (rule 9) so the model swaps
+        // to a product the user has already declared a valid stand-in before inventing its own.
+        var onHandLines = onHand.Select(p => p.AlsoWorksAs.Count > 0
+            ? $"{p.Name} (also works as: {string.Join(", ", p.AlsoWorksAs)})"
+            : p.Name).ToList();
         var content =
             (string.IsNullOrWhiteSpace(preference)
                 ? ""
@@ -120,7 +125,7 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
             $"Original recipe: {recipe.Name}\n" +
             (string.IsNullOrWhiteSpace(recipe.Blurb) ? "" : $"Blurb: {recipe.Blurb}\n") +
             $"Ingredients:\n{ingredients}\n\nSteps:\n{steps}\n\n" +
-            "Likely on hand:\n" + (onHand.Count > 0 ? "- " + string.Join("\n- ", onHand) : "(nothing recorded)") + "\n\n" +
+            "Likely on hand:\n" + (onHandLines.Count > 0 ? "- " + string.Join("\n- ", onHandLines) : "(nothing recorded)") + "\n\n" +
             "Will NOT eat (exclude entirely):\n" + (excludedFoods.Count > 0 ? "- " + string.Join("\n- ", excludedFoods) : "(none)");
 
         var messages = new List<ChatMessage>

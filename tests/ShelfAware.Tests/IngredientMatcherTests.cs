@@ -46,6 +46,16 @@ public class IngredientMatcherTests
         Assert.False(IngredientMatcher.IsSatisfied("ground beef", matchedProduct: null, [P("Beef Steak")]));
     }
 
+    [Theory]
+    [InlineData("chicken breast", "Chicken Breasts", true)]              // plural + case
+    [InlineData("chicken breast", "fresh chicken breast", true)]         // trivial modifier ignored
+    [InlineData("chicken breast", "chicken breast tenderloins", false)]  // extra cut word = different form
+    [InlineData("chicken breast", "chicken thighs", false)]
+    public void IsSameFood_requires_mutual_coverage(string a, string b, bool expected)
+    {
+        Assert.Equal(expected, IngredientMatcher.IsSameFood(a, b));
+    }
+
     [Fact]
     public void A_substitute_list_bridges_cuts_the_name_alone_would_miss()
     {
