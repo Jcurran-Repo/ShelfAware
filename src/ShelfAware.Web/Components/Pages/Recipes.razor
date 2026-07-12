@@ -489,11 +489,12 @@
 
     private bool Have(RecipeIngredient i) => i.IsSatisfiedBy(onHand);
 
-    // Pre-save cards: the model's grounding is trusted only when POSITIVE — it misses spelling gaps a
-    // human wouldn't ("lean ground beef" vs "93% Lean Ground Beef"), so a null matched_product falls
-    // back to the same plain-code matcher the saved list uses. The two views can never disagree.
+    // Pre-save cards run the SAME rule as saved rows: the model's matched_product counts only while
+    // that product is actually on hand (a restored week-old snapshot must not replay a stale ✓ for
+    // something since run out), and a null match falls back to name/substitute coverage (the model
+    // misses spelling gaps a human wouldn't — "lean ground beef" vs "93% Lean Ground Beef").
     private bool HaveSuggested(SuggestedIngredient i) =>
-        i.Have || IngredientMatcher.IsSatisfied(i.Name, null, onHand);
+        IngredientMatcher.IsSatisfied(i.Name, i.MatchedProduct, onHand);
 
     // The first product that would cover this ingredient but is invisible to on-hand — predicted
     // run-out (tracked), or untracked entirely — so a red mark can explain itself. Null = a genuine

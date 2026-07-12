@@ -292,6 +292,23 @@ public class PantryChatTests
             .Contents.OfType<FunctionResultContent>().Single().Result?.ToString();
         Assert.Contains("Pedigree Dog Food", toolResult);
         Assert.Contains("already exists", toolResult);
+        Assert.Contains("confirmed_distinct", toolResult); // the refusal must name the escape hatch
+    }
+
+    [Fact]
+    public async Task A_user_confirmed_distinct_product_is_created_despite_the_fuzzy_match()
+    {
+        // The chat mirror of the page's "Add anyway": once the user says it's genuinely different,
+        // the fuzzy guard must not make the name permanently uncreatable by voice.
+        var store = new FakePantryStore(P(4, "Pedigree Dog Food", Category.PetCare));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("create_product",
+                ("name", "Dog Food"), ("category", "PetCare"), ("confirmed_distinct", true))),
+            () => Responses.Text("Created Dog Food."));
+
+        await Chat(client, store).HandleAsync("yes it's a different product, create it");
+
+        Assert.Contains(("Dog Food", Category.PetCare), store.Created);
     }
 
     [Fact]

@@ -242,12 +242,15 @@ public class AnthropicPantryChat : IPantryChat
                 if (!Enum.TryParse<Category>(Str("category"), ignoreCase: true, out var category))
                     category = Category.Other;
                 // Same resolver the other tools trust — a near-match means this product likely already
-                // exists under another spelling, and a twin would split its purchase history.
+                // exists under another spelling, and a twin would split its purchase history. Exact dupes
+                // are always refused; a fuzzy match is refused until the user confirms it's different and
+                // the model retries with confirmed_distinct — the chat mirror of the page's "Add anyway".
                 if (ProductMatcher.Resolve(name, products) is { } existing)
                 {
-                    return string.Equals(existing.Name, name, StringComparison.OrdinalIgnoreCase)
-                        ? ($"\"{existing.Name}\" already exists — use it instead.", false)
-                        : ($"That sounds like \"{existing.Name}\", which already exists — use it, or retry with a more distinctive name if it's really a different product.", false);
+                    if (string.Equals(existing.Name, name, StringComparison.OrdinalIgnoreCase))
+                        return ($"\"{existing.Name}\" already exists — use it instead.", false);
+                    if (Bool("confirmed_distinct") is not true)
+                        return ($"That sounds like \"{existing.Name}\", which already exists. If it's the same item, use \"{existing.Name}\"; if the user confirms it's genuinely different, call create_product again with confirmed_distinct=true.", false);
                 }
                 var tags = StrList("tags") ?? [];
                 await _store.CreateProductAsync(name, category, tags, ct);
@@ -506,7 +509,8 @@ public class AnthropicPantryChat : IPantryChat
                 {
                   "name": { "type": "string" },
                   "category": { "type": "string", "enum": {{categoryEnum}} },
-                  "tags": { "type": "array", "items": { "type": "string" }, "description": "1-3 descriptive tags (e.g. Protein, Snack). Reuse the Known tags list when one fits; coin a new tag only when none does." }
+                  "tags": { "type": "array", "items": { "type": "string" }, "description": "1-3 descriptive tags (e.g. Protein, Snack). Reuse the Known tags list when one fits; coin a new tag only when none does." },
+                  "confirmed_distinct": { "type": "boolean", "description": "Set true ONLY after the user has confirmed this is genuinely a different product from a similar-sounding existing one (the tool will tell you when that confirmation is needed)." }
                 }
                 """,
                 ["name", "category"]),
