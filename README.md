@@ -11,8 +11,7 @@ there's no coffee.
 
 > **Live demo:** _coming soon_ — `<!-- LIVE_DEMO_URL -->` (Azure App Service; one-line swap once deployed)
 
-<!-- TODO: record docs/demo.gif — the scene-by-scene plan lives in docs/demo-gif-storyboard.md -->
-<!-- ![30-second tour: a receipt imports itself, the dashboard says what's low, "we're out of dog food" updates it, and the grocery list is ready by aisle](docs/demo.gif) -->
+![30-second tour: a receipt imports itself, the dashboard says what's low, "we're out of dog food" updates it, and the grocery list is ready by aisle](docs/demo.gif)
 
 ---
 
