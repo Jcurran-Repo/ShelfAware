@@ -145,11 +145,11 @@ The extractor is scored against hand-labeled fixtures built from **real Walmart 
 
 | Metric | Result | Target |
 |---|---:|---:|
-| Line **recall** (items found) | **99%** | ≥ 90% |
-| Line **precision** | **99%** | ≥ 90% |
-| **Field accuracy** (quantity + category on matched lines) | **100%** | ≥ 85% |
+| Line **recall** (items found) | **100%** | ≥ 90% |
+| Line **precision** | **100%** | ≥ 90% |
+| **Field accuracy** (quantity + category on matched lines) | **99%** | ≥ 85% |
 
-<sub>3 real Walmart receipts · 83 hand-labeled line items · model `claude-haiku-4-5-20251001`. The receipt files are private (gitignored); only the labels and results are committed.</sub>
+<sub>4 real Walmart receipts · 160 hand-labeled line items · model `claude-haiku-4-5-20251001`. The receipt files are private (gitignored); only the labels and results are committed.</sub>
 
 <!-- TODO: screenshot of the /accuracy page → docs/accuracy.png -->
 
@@ -157,7 +157,11 @@ The extractor is scored against hand-labeled fixtures built from **real Walmart 
 *metric*, not the extraction. Symmetric Jaccard was punishing valid descriptor-word differences
 ("Lean Ground Beef" vs "All Natural 93% Lean Ground Beef"); a token containment coefficient — and a
 hand-audit of all 83 pairings — gave a number that reflects reality. A good eval catches things,
-including its own blind spots.
+including its own blind spots. The metric needed a second fix later: extraction wobbles between
+singular and plural names run to run ("Lime" vs "Limes"), which containment scored as whole missed
+lines until the tokenizer learned to fold bare plurals. The eval also caught a real behavior bug —
+digital-order lines marked **Unavailable** (never delivered or charged) were being extracted as
+purchases; the prompt now skips them, pinned by the largest fixture (77 lines).
 
 ### Predicting run-outs
 

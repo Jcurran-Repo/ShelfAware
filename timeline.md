@@ -174,6 +174,7 @@ _Last updated: 7/7/2026_
 - [x] Mobile hamburger nav — below 768px the eight links collapse behind a ☰ toggle (opens as a full-width column, folds on link tap, aria-expanded); desktop untouched — 7/8/2026
 - [x] Predictor folds loose/"each" size spellings (SizeBucket, Core) — the cadence side of the 7/8 limes fix: null/"Each"/"1 ct" purchases are one size for dominant-size selection, so alternating extraction spellings can't stretch the learned rhythm; one shared bucketing for prices AND cadence — 7/12/2026
 - [x] Receipts page (`/receipts`) — every receipt with date, merchant, and line-item total; disclosure per receipt reveals the lines (product links, qty, size, unit price, line total); pending-review chip; voice `open_page` can navigate to it — 7/12/2026
+- [x] Extraction skips never-delivered "Unavailable" order lines — caught by a real phantom purchase (5/22 avocados, ordered-but-out-of-stock, never charged); prompt rules 4+9 now skip by fulfillment status, pinned by a new 77-line hand-labelled 5/22 fixture (the largest yet); eval tokenizer folds singular/plural wobble; suite now 4 receipts / 160 lines at 100% recall / 100% precision / 99% field — 7/12/2026
 
 ---
 

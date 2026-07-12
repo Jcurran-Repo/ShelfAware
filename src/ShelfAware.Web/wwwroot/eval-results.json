@@ -1,12 +1,22 @@
 {
-  "GeneratedAt": "2026-06-30T12:25:30.3930009-05:00",
+  "GeneratedAt": "2026-07-12T11:16:12.3686329-05:00",
   "Model": "claude-haiku-4-5-20251001",
   "Aggregate": {
-    "Recall": 0.98989898989899,
-    "Precision": 0.98989898989899,
-    "FieldAccuracy": 1
+    "Recall": 1,
+    "Precision": 1,
+    "FieldAccuracy": 0.9935064935064934
   },
   "Fixtures": [
+    {
+      "Name": "walmart-2026-05-22",
+      "ExpectedLines": 77,
+      "FoundLines": 77,
+      "MatchedLines": 77,
+      "Recall": 1,
+      "Precision": 1,
+      "FieldAccuracy": 0.974025974025974,
+      "Error": null
+    },
     {
       "Name": "walmart-2026-06-03",
       "ExpectedLines": 36,
@@ -31,9 +41,9 @@
       "Name": "walmart-2026-06-26",
       "ExpectedLines": 33,
       "FoundLines": 33,
-      "MatchedLines": 32,
-      "Recall": 0.9696969696969697,
-      "Precision": 0.9696969696969697,
+      "MatchedLines": 33,
+      "Recall": 1,
+      "Precision": 1,
       "FieldAccuracy": 1,
       "Error": null
     }

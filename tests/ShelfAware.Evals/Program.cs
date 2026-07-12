@@ -187,7 +187,15 @@ static double TokenSimilarity(string a, string b)
 static HashSet<string> Tokens(string s) =>
     new string(s.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : ' ').ToArray())
         .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+        .Select(Singular)
         .ToHashSet();
+
+// Extraction is inconsistent about plurality run to run ("Lime" vs "Limes", "Envy Apple" vs
+// "Envy Apples") and the containment metric has no stemming, so a bare plural difference used to
+// score as a whole missed line. Fold a simple trailing-s plural (not -ss); both sides get the same
+// folding, so it can't manufacture similarity that isn't there.
+static string Singular(string token) =>
+    token.Length >= 4 && token.EndsWith('s') && !token.EndsWith("ss") ? token[..^1] : token;
 
 static double Mean(List<FixtureScore> scores, Func<FixtureScore, double> selector)
 {
