@@ -93,11 +93,22 @@
                                 @(haveIt ? "✓" : "🛒") @Qty(i.Quantity, i.Name)
                                 @if (!haveIt && MaybeHave(i.Name, i.MatchedProduct) is { } outItem)
                                 {
-                                    <span class="maybe-have">you may still have <strong>@outItem.Name</strong> — it just looks run-out</span>
-                                    <button type="button" class="restock-btn" @onclick="() => Restocked(outItem.Id)"
-                                            disabled="@restockBusy"
-                                            title="Still have @outItem.Name at home — clears the run-out and this goes green"
-                                            aria-label="Mark @outItem.Name restocked — you still have it">Restocked</button>
+                                    @if (outItem.Untracked)
+                                    {
+                                        <span class="maybe-have">you have this as <strong>@outItem.Name</strong>, but it's untracked</span>
+                                        <button type="button" class="restock-btn" @onclick="() => TrackIt(outItem.Id)"
+                                                disabled="@restockBusy"
+                                                title="Track @outItem.Name again so recipes and the grocery list can see it"
+                                                aria-label="Track @outItem.Name again">Track it</button>
+                                    }
+                                    else
+                                    {
+                                        <span class="maybe-have">you may still have <strong>@outItem.Name</strong> — it just looks run-out</span>
+                                        <button type="button" class="restock-btn" @onclick="() => Restocked(outItem.Id)"
+                                                disabled="@restockBusy"
+                                                title="Still have @outItem.Name at home — clears the run-out and this goes green"
+                                                aria-label="Mark @outItem.Name restocked — you still have it">Restocked</button>
+                                    }
                                 }
                             </li>
                         }
@@ -243,11 +254,22 @@
                                         aria-label="Swap @i.Name for something else" title="Swap this ingredient">⇄</button>
                                 @if (!have && MaybeHave(i.Name, i.MatchedProduct) is { } outItem)
                                 {
-                                    <span class="maybe-have">you may still have <strong>@outItem.Name</strong> — it just looks run-out</span>
-                                    <button type="button" class="restock-btn" @onclick="() => Restocked(outItem.Id)"
-                                            disabled="@restockBusy"
-                                            title="Still have @outItem.Name at home — clears the run-out and this goes green"
-                                            aria-label="Mark @outItem.Name restocked — you still have it">Restocked</button>
+                                    @if (outItem.Untracked)
+                                    {
+                                        <span class="maybe-have">you have this as <strong>@outItem.Name</strong>, but it's untracked</span>
+                                        <button type="button" class="restock-btn" @onclick="() => TrackIt(outItem.Id)"
+                                                disabled="@restockBusy"
+                                                title="Track @outItem.Name again so recipes and the grocery list can see it"
+                                                aria-label="Track @outItem.Name again">Track it</button>
+                                    }
+                                    else
+                                    {
+                                        <span class="maybe-have">you may still have <strong>@outItem.Name</strong> — it just looks run-out</span>
+                                        <button type="button" class="restock-btn" @onclick="() => Restocked(outItem.Id)"
+                                                disabled="@restockBusy"
+                                                title="Still have @outItem.Name at home — clears the run-out and this goes green"
+                                                aria-label="Mark @outItem.Name restocked — you still have it">Restocked</button>
+                                    }
                                 }
                                 @if (openAltFor == i.Id)
                                 {
@@ -347,6 +369,9 @@
     // silently drops. Surfaced on red ingredient rows so "why is this red?" answers itself, with a
     // one-tap Restocked to correct the engine when the shelf disagrees.
     private List<(int Id, PantryProduct Product)> outOfStock = [];
+    // Edible products the user UNTRACKED — the third way a red row can lie ("I own that!"). Surfaced
+    // with a one-tap Track-it; used for the hint only, never for on-hand or the swap clouds.
+    private List<(int Id, PantryProduct Product)> untrackedEdible = [];
     private bool restockBusy;
 
     private Recipe? picked;
@@ -470,14 +495,21 @@
     private bool HaveSuggested(SuggestedIngredient i) =>
         i.Have || IngredientMatcher.IsSatisfied(i.Name, null, onHand);
 
-    // The first predicted-out product that would cover this ingredient — the answer to "why is this
-    // red when it's sitting on my shelf?" — or null when the red mark means a genuine gap.
-    private (int Id, string Name)? MaybeHave(string ingredientName, string? matchedProduct)
+    // The first product that would cover this ingredient but is invisible to on-hand — predicted
+    // run-out (tracked), or untracked entirely — so a red mark can explain itself. Null = a genuine
+    // gap. Run-out is checked first: for a tracked item that's the precise story, and the untracked
+    // pool only matters when nothing the engine watches would cover the row.
+    private (int Id, string Name, bool Untracked)? MaybeHave(string ingredientName, string? matchedProduct)
     {
         foreach (var (id, product) in outOfStock)
         {
             if (IngredientMatcher.IsSatisfied(ingredientName, matchedProduct, [product]))
-                return (id, product.Name);
+                return (id, product.Name, false);
+        }
+        foreach (var (id, product) in untrackedEdible)
+        {
+            if (IngredientMatcher.IsSatisfied(ingredientName, matchedProduct, [product]))
+                return (id, product.Name, true);
         }
         return null;
     }
@@ -491,6 +523,21 @@
         try
         {
             await Store.RecordSignalAsync(productId, SignalKind.Restocked);
+            await LoadAsync();
+        }
+        finally { restockBusy = false; }
+    }
+
+    // One tap to let the engine watch a product again (the same write as the Products-grid checkbox and
+    // the set_tracking chat tool). The reload recomputes the row honestly: green if the item's in stock,
+    // the run-out hint if its history says it ran dry — exactly what tracking it re-enables.
+    private async Task TrackIt(int productId)
+    {
+        if (restockBusy) return;
+        restockBusy = true;
+        try
+        {
+            await Store.SetTrackingAsync(productId, tracked: true);
             await LoadAsync();
         }
         finally { restockBusy = false; }
@@ -656,8 +703,9 @@
 
         // "Likely on hand" = tracked, EDIBLE products the engine doesn't think you've run out of. Edible
         // only so a family match ("chicken") can't be satisfied by "Chicken Jerky Dog Treats" or a
-        // chicken-scented cleaner — recipes only reason over food.
-        var products = await db.Products.AsNoTracking().Where(p => p.IsTracked)
+        // chicken-scented cleaner — recipes only reason over food. Untracked products load too, but ONLY
+        // to power the "you have this, but it's untracked" hint — every other pool filters them out.
+        var products = await db.Products.AsNoTracking()
             .Include(p => p.Purchases).Include(p => p.Signals).Include(p => p.Substitutes).ToListAsync();
         var today = DateOnly.FromDateTime(DateTime.Today);
         onHand = PantryOnHand.EdibleInStock(products, today)
@@ -665,11 +713,15 @@
             .OrderBy(x => x.Name)
             .ToList();
         cloudProducts = products
-            .Where(p => p.Category.IsEdible())
+            .Where(p => p.IsTracked && p.Category.IsEdible())
             .Select(p => new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList()))
             .OrderBy(x => x.Name)
             .ToList();
         outOfStock = PantryOnHand.EdibleOutOfStock(products, today)
+            .Select(p => (p.Id, Product: new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList())))
+            .OrderBy(x => x.Product.Name)
+            .ToList();
+        untrackedEdible = PantryOnHand.EdibleUntracked(products)
             .Select(p => (p.Id, Product: new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList())))
             .OrderBy(x => x.Product.Name)
             .ToList();

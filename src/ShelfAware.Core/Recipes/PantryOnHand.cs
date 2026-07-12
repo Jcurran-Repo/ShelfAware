@@ -24,4 +24,11 @@ public static class PantryOnHand
             p.IsTracked &&
             p.Category.IsEdible() &&
             ReplenishmentPredictor.Predict(p, today).Status == PredictionStatus.Overdue);
+
+    /// <summary>The third way a covering product can be invisible: edible but UNTRACKED. Untracked items
+    /// are excluded from on-hand and run-out alike (the engine isn't allowed to watch them), which
+    /// otherwise leaves a red recipe row with no explanation at all — surfaced so the row can say
+    /// "you have this, but it's untracked" with a one-tap re-track.</summary>
+    public static IEnumerable<Product> EdibleUntracked(IEnumerable<Product> products) =>
+        products.Where(p => !p.IsTracked && p.Category.IsEdible());
 }

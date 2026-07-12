@@ -75,4 +75,20 @@ public class PantryOnHandTests
 
         Assert.Equal(["Coffee"], PantryOnHand.EdibleOutOfStock(products, Today).Select(p => p.Name).ToList());
     }
+
+    [Fact]
+    public void Untracked_edibles_are_surfaced_separately_and_non_food_stays_out()
+    {
+        var products = new[]
+        {
+            P("93% Lean Ground Beef", Category.Meat, tracked: false), // the "you have this, but untracked" case
+            P("Whole Milk", Category.Dairy),                          // tracked → not in this pool
+            P("Old Sponges", Category.Household, tracked: false),     // untracked but non-food → never surfaced
+        };
+
+        Assert.Equal(["93% Lean Ground Beef"], PantryOnHand.EdibleUntracked(products).Select(p => p.Name).ToList());
+        // And it stays out of BOTH stock pools — this pool is the only place untracked items appear.
+        Assert.Empty(PantryOnHand.EdibleInStock([products[0]], Today).ToList());
+        Assert.Empty(PantryOnHand.EdibleOutOfStock([products[0]], Today).ToList());
+    }
 }
