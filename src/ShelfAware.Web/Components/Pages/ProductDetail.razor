@@ -269,14 +269,10 @@ else
         prediction = ReplenishmentPredictor.Predict(product, today);
 
         // Price the recommended (dominant) size specifically; fall back to the overall average.
-        // PriceSeries.Bucket also folds the loose/"each" spellings together, so per-each produce
+        // ProductPriceIndex folds the loose/"each" spellings together, so per-each produce
         // prices match a null recommended size.
-        var recommendedKey = PriceSeries.Bucket(prediction.RecommendedSize);
-        var recommendedSizePrices = priceByReceipt.Where(x => PriceSeries.Bucket(x.Size) == recommendedKey).Select(x => x.Price).ToList();
-        decimal? estPrice = recommendedSizePrices.Count > 0
-            ? recommendedSizePrices.Average()
-            : priceByReceipt.Count > 0 ? priceByReceipt.Average(x => x.Price) : null;
-        estimate = ShoppingEstimator.For(product, prediction, today, estPrice);
+        var sizePrices = new ProductPriceIndex(priceByReceipt.Select(x => (Id, x.Size, x.Price)));
+        estimate = ShoppingEstimator.For(product, prediction, today, sizePrices.PriceFor(Id, prediction.RecommendedSize));
 
         var pricePoints = new List<PricePoint>();
         var ordered = product.Purchases.OrderBy(p => p.PurchasedAt).ToList();

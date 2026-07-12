@@ -122,27 +122,16 @@ else
             .Select(l => new { Id = l.ProductId!.Value, l.Size, Price = l.UnitPrice!.Value })
             .ToListAsync();
         // Price the recommended (dominant) size specifically, not a blend across every size bought —
-        // so a half-gallon-vs-gallon item estimates the size we actually tell you to buy. Fall back to
-        // the product's overall average when that size has no priced line. PriceSeries.Bucket folds the
-        // loose/"each" spellings together, so per-each produce matches a null recommended size.
-        var priceBySize = priceLines
-            .GroupBy(x => (x.Id, Key: PriceSeries.Bucket(x.Size)))
-            .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
-        var priceByProduct = priceLines
-            .GroupBy(x => x.Id)
-            .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
-
-        decimal? PriceFor(int productId, string? recommendedSize)
-        {
-            if (priceBySize.TryGetValue((productId, PriceSeries.Bucket(recommendedSize)), out var sp)) return sp;
-            return priceByProduct.TryGetValue(productId, out var ap) ? ap : null;
-        }
+        // so a half-gallon-vs-gallon item estimates the size we actually tell you to buy.
+        // ProductPriceIndex folds the loose/"each" spellings together (per-each produce matches a
+        // null recommended size) and falls back to the product's overall average.
+        var prices = new ProductPriceIndex(priceLines.Select(x => (x.Id, x.Size, x.Price)));
 
         var today = DateOnly.FromDateTime(DateTime.Today);
         var all = products.Select(p =>
         {
             var prediction = ReplenishmentPredictor.Predict(p, today);
-            return ShoppingEstimator.For(p, prediction, today, PriceFor(p.Id, prediction.RecommendedSize));
+            return ShoppingEstimator.For(p, prediction, today, prices.PriceFor(p.Id, prediction.RecommendedSize));
         }).ToList();
 
         // Ordered by aisle (category) so the list matches how you walk a store,

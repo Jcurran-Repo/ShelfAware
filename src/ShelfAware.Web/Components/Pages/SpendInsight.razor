@@ -109,23 +109,19 @@ else
                 g => g.Key,
                 g => PriceSeries.Dominant(g.Select(x => new PricePoint(x.Size, x.Date, x.Price)).ToList())!);
 
-        var avgByProduct = lineData
-            .GroupBy(x => x.ProductId)
-            .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
-        // Per size bucket, for valuing a purchase of a KNOWN size and for pricing the forecast's
-        // recommended size — an $8 bag purchase shouldn't be valued at the loose-lime average.
-        var avgBySize = lineData
-            .GroupBy(x => (x.ProductId, Key: PriceSeries.Bucket(x.Size)))
-            .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
+        // Per size bucket with an all-sizes fallback, for valuing a purchase of a KNOWN size and for
+        // pricing the forecast's recommended size — an $8 bag purchase shouldn't be valued at the
+        // loose-lime average (ProductPriceIndex folds the loose/"each" spellings together).
+        var priceIndex = new ProductPriceIndex(lineData.Select(x => (x.ProductId, x.Size, x.Price)));
         var byReceiptProduct = lineData
             .GroupBy(x => (x.ReceiptId, x.ProductId))
             .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
 
         decimal? PriceFor(PurchaseEvent pe)
         {
+            // The purchase's own receipt line is the exact paid price; the index is the estimate.
             if (pe.ReceiptId is { } rid && byReceiptProduct.TryGetValue((rid, pe.ProductId), out var p)) return p;
-            if (avgBySize.TryGetValue((pe.ProductId, PriceSeries.Bucket(pe.Size)), out var s)) return s;
-            return avgByProduct.TryGetValue(pe.ProductId, out var a) ? a : null;
+            return priceIndex.PriceFor(pe.ProductId, pe.Size);
         }
 
         var today = DateOnly.FromDateTime(DateTime.Today);
@@ -158,8 +154,7 @@ else
             if (prediction.MedianIntervalDays is not { } m || prediction.DueDate is not { } due) continue;
             // Price the size we'd actually tell the user to buy (same idea as the grocery list),
             // falling back to the all-sizes average when that size has no priced line.
-            if (!avgBySize.TryGetValue((p.Id, PriceSeries.Bucket(prediction.RecommendedSize)), out var price) &&
-                !avgByProduct.TryGetValue(p.Id, out price)) continue;
+            if (priceIndex.PriceFor(p.Id, prediction.RecommendedSize) is not { } price) continue;
 
             var typicalQty = ShoppingEstimator.For(p, prediction, today, price).TypicalQuantity;
             var interval = Math.Max(1, (int)Math.Round(m));

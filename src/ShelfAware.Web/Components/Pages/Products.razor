@@ -247,33 +247,21 @@ else
             .OrderByDescending(x => x.Count).ThenBy(x => x.Value)
             .ToList();
 
-        // Confirmed unit price per product, keyed by size so the estimate prices the recommended
-        // (dominant) size rather than blending across sizes; falls back to the product's overall average.
+        // Confirmed unit prices, indexed so the estimate prices the recommended (dominant) size
+        // rather than blending across sizes; ProductPriceIndex folds the loose/"each" spellings
+        // together and falls back to the product's overall average.
         var priceLines = await db.ReceiptLines
             .Where(l => l.ProductId != null && l.UnitPrice != null)
             .Select(l => new { Id = l.ProductId!.Value, l.Size, Price = l.UnitPrice!.Value })
             .ToListAsync();
-        var priceBySize = priceLines
-            .GroupBy(x => (x.Id, Key: SizeKey(x.Size)))
-            .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
-        var priceByProduct = priceLines
-            .GroupBy(x => x.Id)
-            .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
-
-        decimal? PriceFor(int productId, string? recommendedSize)
-        {
-            if (priceBySize.TryGetValue((productId, SizeKey(recommendedSize)), out var sp)) return sp;
-            return priceByProduct.TryGetValue(productId, out var ap) ? ap : null;
-        }
+        var prices = new ProductPriceIndex(priceLines.Select(x => (x.Id, x.Size, x.Price)));
 
         var today = DateOnly.FromDateTime(DateTime.Today);
         predictions = products.ToDictionary(p => p.Id, p => ReplenishmentPredictor.Predict(p, today));
         estimates = products.ToDictionary(
             p => p.Id,
-            p => ShoppingEstimator.For(p, predictions[p.Id], today, PriceFor(p.Id, predictions[p.Id].RecommendedSize)));
+            p => ShoppingEstimator.For(p, predictions[p.Id], today, prices.PriceFor(p.Id, predictions[p.Id].RecommendedSize)));
     }
-
-    private static string SizeKey(string? size) => (size ?? "").Trim().ToLowerInvariant();
 
     private static string Relative(int days) => days switch
     {
