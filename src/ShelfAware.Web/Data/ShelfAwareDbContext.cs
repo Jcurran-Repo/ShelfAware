@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using ShelfAware.Core.Domain;
 
 namespace ShelfAware.Web.Data;
@@ -84,28 +85,51 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
-        StampHousehold();
+        EnforceHousehold();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
 
     public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
-        StampHousehold();
+        EnforceHousehold();
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
-    /// <summary>Stamps the current household onto every newly added row, so no service or page ever sets
-    /// tenancy by hand. The IsNullOrEmpty check lets AppSetting's "" CLR default be overwritten while an
-    /// explicitly pre-assigned id is respected.</summary>
-    private void StampHousehold()
+    /// <summary>Makes tenancy an ENFORCEMENT rather than a default on the write side, mirroring what the
+    /// global query filter does on the read side.
+    ///
+    /// Inserts are stamped with the current household, so no service or page ever sets tenancy by hand
+    /// (the IsNullOrEmpty check lets AppSetting's "" CLR default be overwritten). Updates and deletes are
+    /// CHECKED instead: EF builds those from the change tracker, keyed on the primary key alone, so a
+    /// query filter never sees them — attaching a detached entity carrying someone else's id would issue a
+    /// perfectly valid cross-tenant UPDATE/DELETE. Nothing does that today; this is what makes sure nothing
+    /// ever can.
+    ///
+    /// Throwing (rather than silently rewriting the id) is the same call
+    /// <see cref="ICurrentHousehold.GetRequiredIdAsync"/> makes: a caller who named a different household
+    /// has a bug, and guessing which one they meant would hide it.</summary>
+    private void EnforceHousehold()
     {
         if (HouseholdId is null) return; // unscoped context — writes are left exactly as the caller made them
         foreach (var entry in ChangeTracker.Entries<IHouseholdOwned>())
         {
-            if (entry.State == EntityState.Added && string.IsNullOrEmpty(entry.Entity.HouseholdId))
+            switch (entry.State)
             {
-                entry.Entity.HouseholdId = HouseholdId;
+                case EntityState.Added when string.IsNullOrEmpty(entry.Entity.HouseholdId):
+                    entry.Entity.HouseholdId = HouseholdId;
+                    break;
+
+                case EntityState.Added:
+                case EntityState.Modified:
+                case EntityState.Deleted:
+                    if (entry.Entity.HouseholdId != HouseholdId) throw WrongHousehold(entry);
+                    break;
             }
         }
     }
+
+    private InvalidOperationException WrongHousehold(EntityEntry<IHouseholdOwned> entry) =>
+        new($"Refusing to {entry.State.ToString().ToLowerInvariant()} a {entry.Entity.GetType().Name} owned by " +
+            $"household '{entry.Entity.HouseholdId}' from a context scoped to '{HouseholdId}'. Pantry writes " +
+            "must go through a context from IHouseholdDbFactory, on entities loaded by that same context.");
 }
