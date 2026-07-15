@@ -160,8 +160,9 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
    - **Households are the tenancy unit** — accounts belong to exactly one (created at registration, or
      joined via a CSPRNG **invite code**); ALL pantry data is household-scoped. Every pantry entity
      implements `IHouseholdOwned`; `ShelfAwareDbContext` has a per-instance `HouseholdId` driving a global
-     query filter on every table + SaveChanges stamping on inserts. `AppSettings` = composite PK
-     `(HouseholdId, Key)`; alias uniqueness = `(HouseholdId, Merchant, RawText)`.
+     query filter on every table + SaveChanges stamping on inserts (and, since the 7/15 hardening pass in
+     item 12, **refusing** cross-household updates/deletes — the filter never sees those). `AppSettings` =
+     composite PK `(HouseholdId, Key)`; alias uniqueness = `(HouseholdId, Merchant, RawText)`.
    - **`IHouseholdDbFactory` is THE way to a pantry context** (scoped; pre-sets `HouseholdId` from the
      scoped `ICurrentHousehold`: `UseFixed` pin → HttpContext claim → circuit auth state). The raw
      `IDbContextFactory` is bootstrap-only. Formerly-singleton data services (store, settings, inbox,
@@ -173,7 +174,8 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      They use `AccountLayout`, NOT MainLayout (whose VoiceAgent/AiSettingsLoader islands must not spin up
      circuits pre-auth). Zero scripts beyond `js/account.js` (progressive enhancement) — strict CSP holds.
    - **Security posture:** registration gate is server-side (`Auth:AllowRegistration`; first-user bootstrap
-     + invite-join always open); logout bumps the security stamp (all circuits/devices die within the
+     + invite-join always open — but invites expire/limit/revoke since item 12); logout bumps the security
+     stamp (all circuits/devices die within the
      5-minute revalidation) then clears the cookie; per-IP rate limit on `/Account` POSTs atop Identity
      lockout; `/api/data/export` + `/api/cookalong/signed-url` require auth (401/403 for API callers);
      DataProtection keys persist to `app-data/keys` (DPAPI-encrypted on Windows) so republish doesn't log
@@ -211,6 +213,54 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
    - **Usage recorded in EVERY key mode** — `MeteredChatClient` now always records calls+tokens to the
      household's `AiUsage` row; quotas remain managed-only (BYOK: recorded, never limited). Settings
      gains an "AI usage" panel (today + 14-day daily table via `AiUsageMeter.GetRecentAsync`).
+
+12. **Security hardening from the adversarial tenancy review (2026-07-15, branch `feature/security-hardening`):**
+   An adversarial review hunted for a path where household A reads/writes B's data and **found none** — the
+   boundary held (raw `IDbContextFactory` really is bootstrap-only; the one `IgnoreQueryFilters` really does
+   only enumerate which households exist; both API endpoints scope to the caller's claim; every tenant table
+   is filtered). Two suspicions were tested rather than assumed and came back clean: **EF's `FindAsync` DOES
+   apply global query filters** (so `EfPantryStore`'s "the filtered lookup enforces it" comment is correct),
+   and **`AddDbContextFactory` registers the context type as Scoped** (so `HouseholdService`/`Register.razor`
+   injecting a bare `AuthDbContext` is right, and its one-transaction claim holds). What the review did find,
+   all fixed here:
+   - **Tenancy is enforced on WRITES now, not just reads** (`ShelfAwareDbContext.EnforceHousehold`). The query
+     filter protects reads; EF builds updates/deletes from the change tracker keyed on the PK alone, so no
+     filter is ever consulted for them. Added → stamped when empty, **refused** when it names another
+     household (the stamp used to be permissive by design); Modified/Deleted → **refused** when the entity's
+     household isn't the context's. Unscoped context untouched. This closes the `?? f` detached-delete shape
+     for good; the three call sites dropped the fallback anyway (it also turned a double-tap into a
+     `DbUpdateConcurrencyException`).
+   - **`ReceiptStorage` (Web/Data) owns receipt images**, filed per household under a hash of its id, the way
+     `CachingTextToSpeech` owns clips. "Delete my data" left every receipt image on disk **permanently** —
+     `ImagePath` was the only pointer and the same transaction destroyed it. Deletion now runs by tree AND by
+     each row's stored path (reaches pre-scoping rows; no file migration). Fell out of it: five hand-rolled
+     `Path.Combine(ReceiptsDir, …)` call sites collapsed, the extension↔media-type map went from THREE copies
+     to one (`ReceiptMediaTypes`), and the household-folder hash is now shared (`HouseholdFolder`).
+   - **`SettingKeys` classifies every key `Config` vs `UserContent`.** The delete skipped AppSettings as "app
+     configuration", which stopped being true when it grew `LastRecipeSuggestions` + `SelfEvalResults`
+     (merchant names, dates). `SelfEvalResults` wasn't even declared there. A reflection test fails if a new
+     key is in neither list, so the choice can't be defaulted to "survives a delete".
+   - **`Receipts:AllowedRoot`** (unset = today's behaviour, so the self-host is unchanged) confines the receipt
+     folder. Unvalidated, it's an arbitrary-path read of every image/PDF the server can see. `ReceiptFolderPolicy`
+     is asked by Settings (friendly refusal) **and** by the inbox (the real boundary — a stored setting can
+     outlive the rules it was written under). GetFullPath first; trailing-separator compare so `<root>-old`
+     isn't "inside" `<root>`; UNC refused when confined.
+   - **Invite codes are no longer permanent bearer credentials**: `Auth:InviteCodeLifetimeDays` (unset = never),
+     `InviteMaxUses`/`InviteUseCount` (a "single use" checkbox), and **member removal** — which never existed.
+     The use is claimed with a **conditional update**, not read-then-increment, or two people redeeming a
+     single-use code race past the check. **Removal works because it bumps the security stamp** — the household
+     id is in the COOKIE, so clearing the column alone leaves them reading the pantry until it's re-issued
+     (bound: the 5-minute revalidation). Can't remove yourself or the last member (a household with nobody in
+     it is data nobody can reach).
+   - **`/Account/Household`** is where a signed-in account with no household lands (reachable for the first
+     time now that removal exists). **The guard is MIDDLEWARE, not a component** — found by running it: the
+     page body initialises before the layout, so a component guard loses the race and the user meets a 500
+     from `GetRequiredIdAsync`. ⚠️ Don't move it back into `HouseholdInitializer`.
+   - **`AdditiveSchema.Apply` now covers `auth.db` too.** It was described as "a fresh file per deployment
+     site", which stopped being true once a deployment had accounts worth keeping; EnsureCreated never alters
+     an existing file.
+   - **Speech-cache trim is per household** — one shared budget deleted the oldest clips anywhere, so a heavy
+     household evicted a light one's and made them re-buy the audio. Total disk is now households × `Speech:CacheMegabytes`.
 
 11. **Ordering + duplicate guard + substitution-matrix batch (2026-07-12):**
    - **Grocery list "Coming up" walks the store** — same Category → urgency → name order as Buy now,
