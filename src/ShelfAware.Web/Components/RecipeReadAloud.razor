@@ -8,14 +8,18 @@
    ten-step recipe sat silent for eleven round-trips before the first word — which is most of why the
    button reader felt worse than the realtime agent, and it was never the voice's fault. *@
 @using ShelfAware.Core.Speech
+@using ShelfAware.Core.Chat
 @implements IAsyncDisposable
 @inject ITextToSpeech Tts
+@inject ISpeechToText Stt
+@inject IPantryChat Chat
 @inject IJSRuntime JS
 @inject VoiceCoordinator Coordinator
+@inject ILogger<RecipeReadAloud> Logger
 
 <div class="read-aloud panel">
     <div class="ra-head">
-        <h3>🔊 Reading: @Recipe.Name</h3>
+        <h3>@(HandsFree ? "🎙 Cooking" : "🔊 Reading"): @Recipe.Name</h3>
         <div class="ra-head-actions">
             <button class="secondary" @onclick="BackToAssistantAsync"
                     aria-label="Stop reading and hand back to the voice assistant" title="Stop reading and talk to the assistant">🎤 Back to assistant</button>
@@ -44,6 +48,8 @@
                 }
             </ol>
         }
+        @* The buttons stay in hands-free too: a mic can be denied, misheard, or simply not wanted, and
+           a cook-along that can only be driven by voice is one bad transcript from being stuck. *@
         <div class="ra-controls" role="group" aria-label="Read-aloud controls">
             <button class="secondary" @onclick="PrevAsync" aria-label="Previous step">⏮ Prev</button>
             <button @onclick="TogglePauseAsync">@(paused ? "▶ Resume" : "⏸ Pause")</button>
@@ -54,6 +60,32 @@
             }
         </div>
         <p class="muted small" role="status">@Status</p>
+
+        @if (HandsFree)
+        {
+            <div class="ra-listen">
+                @if (micError is not null)
+                {
+                    <p class="muted small" role="status">@micError Use the buttons above.</p>
+                }
+                else
+                {
+                    <p class="listen-state" role="status">
+                        <span class="listen-dot listen-@(phase.ToString().ToLowerInvariant())" aria-hidden="true"></span>
+                        @PhaseLabel
+                    </p>
+                    @if (lastHeard is not null)
+                    {
+                        <p class="muted small">You said: “@lastHeard”</p>
+                    }
+                    @if (lastReply is not null)
+                    {
+                        <p class="small">@lastReply</p>
+                    }
+                    <p class="muted small">Say “next”, “back”, “repeat”, “hold on”, or ask a question.</p>
+                }
+            </div>
+        }
     }
 </div>
 
@@ -61,12 +93,32 @@
     [Parameter, EditorRequired] public Recipe Recipe { get; set; } = null!;
     [Parameter] public EventCallback OnClosed { get; set; }
 
+    /// <summary>Listen between steps instead of running the recipe end to end. Same reader, plus ears.</summary>
+    [Parameter] public bool HandsFree { get; set; }
+
+    // How long to hold the mic open when nobody's talking; the hard cap on one utterance; and how much
+    // silence means they've finished. The window closes on SILENCE, not on a timer, so "next" comes back
+    // at once and a long question isn't guillotined — these are only the outer bounds.
+    private const int ListenOpenMs = 6000;
+    private const int ListenMaxMs = 15000;
+    private const int SilenceMs = 900;
+
+    // Enough turns for a follow-up ("what about butter?" after "can I swap the oil?") without letting a
+    // two-hour cook grow the prompt forever.
+    private const int MaxHistoryTurns = 6;
+
     private IJSObjectReference? _module;
+    private IJSObjectReference? _ear;
+    private IJSObjectReference? _voice;
     private DotNetObjectReference<RecipeReadAloud>? _selfRef;
 
-    // Cancels synthesis still in flight when the reader is closed — otherwise shutting the panel at
-    // step two leaves the remaining steps synthesizing on the user's key for audio nobody will hear.
+    // Two scopes, deliberately. _cts is the COMPONENT's life: it dies when the reader closes, and the
+    // listening loop rides on it. _narration is just this batch of synthesis, cancelled the moment the
+    // playlist is complete or abandoned — otherwise shutting the panel at step two leaves the remaining
+    // steps synthesizing on the user's key for audio nobody will hear. Linking means closing the reader
+    // still kills both; collapsing them into one would cancel the ears the instant synthesis finished.
     private readonly CancellationTokenSource _cts = new();
+    private CancellationTokenSource? _narration;
 
     private List<RecipeStep> steps = [];
     private bool preparing = true;
@@ -76,10 +128,29 @@
     private bool buffering; // playback caught up to synthesis and is waiting on the next segment
     private int currentIndex; // 0 = intro (recipe name); 1..N = step number being read
 
+    // Hands-free state
+    private enum Phase { Reading, Listening, Thinking, Answering, Held }
+    private Phase phase = Phase.Reading;
+    private bool held;          // they said "hold on" — stay put and keep listening for them
+    private bool inListenTurn;  // guards against two loops racing if OnStepFinished re-fires
+    private string? micError;
+    private string? lastHeard;
+    private string? lastReply;
+    private readonly List<ChatTurn> history = [];
+
     private string Status => finished
         ? "Done."
         : buffering ? "Catching up…"
         : currentIndex == 0 ? "Intro…" : $"Step {currentIndex} of {steps.Count}";
+
+    private string PhaseLabel => phase switch
+    {
+        Phase.Listening => "Listening…",
+        Phase.Thinking => "Thinking…",
+        Phase.Answering => "Answering…",
+        Phase.Held => "Holding — say “I'm back” when you're ready.",
+        _ => "Reading…",
+    };
 
     protected override void OnInitialized() =>
         steps = Recipe.Steps.OrderBy(s => s.Order).ToList();
@@ -90,6 +161,8 @@
 
         _module = await JS.InvokeAsync<IJSObjectReference>("import", "/js/readaloud.js");
         _selfRef = DotNetObjectReference.Create(this);
+
+        if (HandsFree) await OpenEarsAsync();
 
         // Segment 0 = spoken intro (name + blurb); segments 1..N = the steps, so a segment index maps
         // straight onto a step number for highlighting.
@@ -107,6 +180,31 @@
     }
 
     /// <summary>
+    /// Take the mic for the session. A refusal is not a failure: the reader keeps working on buttons,
+    /// which is why they're still on screen in hands-free mode.
+    /// </summary>
+    private async Task OpenEarsAsync()
+    {
+        _ear = await JS.InvokeAsync<IJSObjectReference>("import", "/js/cooklisten.js");
+        _voice = await JS.InvokeAsync<IJSObjectReference>("import", "/js/voice.js");
+
+        if (!await _ear.InvokeAsync<bool>("isSupported"))
+        {
+            micError = "This browser can't listen.";
+            return;
+        }
+
+        var session = await _ear.InvokeAsync<SessionResult>("startSession");
+        if (!session.Ok)
+        {
+            micError = session.Error == "NotAllowedError"
+                ? "No microphone access."
+                : "Couldn't open the microphone.";
+            Logger.LogInformation("Hands-free cook-along couldn't open the mic: {Error}", session.Error);
+        }
+    }
+
+    /// <summary>
     /// Play the intro as soon as it exists, then queue the steps behind it. The steps synthesize with
     /// bounded parallelism (a long recipe shouldn't narrate at one round-trip per step, nor hammer the
     /// provider's concurrency limit) but are awaited IN ORDER, so the playlist stays in step order even
@@ -114,7 +212,9 @@
     /// </summary>
     private async Task NarrateAsync(IJSObjectReference player, IReadOnlyList<string> texts)
     {
-        var intro = await Tts.SynthesizeAsync(texts[0], ContextFor(texts, 0), _cts.Token);
+        _narration = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+
+        var intro = await Tts.SynthesizeAsync(texts[0], ContextFor(texts, 0), _narration.Token);
         if (!intro.Success)
         {
             error = "Couldn't generate the narration — check that the ElevenLabs key is set.";
@@ -125,7 +225,8 @@
 
         preparing = false;
         paused = false;
-        await player.InvokeVoidAsync("load", new[] { SegmentFor(intro) }, _selfRef, texts.Count > 1);
+        // autoAdvance: hands-free stops after each step to give the cook a turn; the button reader runs on.
+        await player.InvokeVoidAsync("load", new[] { SegmentFor(intro) }, _selfRef, texts.Count > 1, !HandsFree);
         StateHasChanged();
         await player.InvokeVoidAsync("playFrom", 0);
 
@@ -152,7 +253,8 @@
         {
             // Stop anything still queued (we broke out, or the reader closed), then let the player know
             // the playlist is closed so it can finish instead of waiting for a segment that isn't coming.
-            await _cts.CancelAsync();
+            // This cancels the NARRATION only — the component (and its ears) outlive it.
+            await _narration.CancelAsync();
             await DrainAsync(rest);
             await TellPlayerAsync("endOfStream");
         }
@@ -176,11 +278,12 @@
     /// </summary>
     private Task<TextToSpeechResult>[] StartSteps(IReadOnlyList<string> texts, int maxConcurrency)
     {
+        var token = _narration!.Token;
         var gate = new SemaphoreSlim(maxConcurrency);
         return Enumerable.Range(1, texts.Count - 1).Select(async i =>
         {
-            await gate.WaitAsync(_cts.Token);
-            try { return await Tts.SynthesizeAsync(texts[i], ContextFor(texts, i), _cts.Token); }
+            await gate.WaitAsync(token);
+            try { return await Tts.SynthesizeAsync(texts[i], ContextFor(texts, i), token); }
             finally { gate.Release(); }
         }).ToArray();
     }
@@ -273,9 +376,235 @@
         return InvokeAsync(StateHasChanged);
     }
 
+    /// <summary>
+    /// Hands-free only: a step finished playing and the player did NOT run on, so it's the cook's turn.
+    /// </summary>
+    [JSInvokable]
+    public async Task OnStepFinished(int _)
+    {
+        if (!HandsFree || micError is not null || _cts.IsCancellationRequested) return;
+        await ListenUntilReadingAsync();
+    }
+
+    /// <summary>
+    /// Keep taking turns until something puts audio back on. Not-hearing costs nothing — the noise gate
+    /// drops a quiet window before it ever becomes a speech-to-text call — so it's fine to sit here for
+    /// as long as they're chopping.
+    /// </summary>
+    private async Task ListenUntilReadingAsync()
+    {
+        if (inListenTurn) return; // one loop at a time
+        inListenTurn = true;
+        try
+        {
+            while (!_cts.IsCancellationRequested && !await TakeTurnAsync()) { }
+        }
+        catch (OperationCanceledException)
+        {
+            // Reader closed while we were listening. Ours — nothing to report.
+        }
+        catch (JSDisconnectedException)
+        {
+            // Circuit gone; the browser has stopped caring about this reader.
+        }
+        finally
+        {
+            inListenTurn = false;
+        }
+    }
+
+    /// <summary>One listening turn. Returns true when the turn handed control back to playback (or ended
+    /// the session), false to listen again.</summary>
+    private async Task<bool> TakeTurnAsync()
+    {
+        await SetPhaseAsync(held ? Phase.Held : Phase.Listening);
+        await CueAsync(rising: true);
+
+        var window = await _ear!.InvokeAsync<HeardResult>("listen", ListenOpenMs, ListenMaxMs, SilenceMs);
+        if (_cts.IsCancellationRequested) return true;
+
+        // The room never rose above its own noise floor. No transcript, no cost, no turn.
+        if (!window.Heard || window.Audio is null) return false;
+
+        await CueAsync(rising: false);
+        await SetPhaseAsync(Phase.Thinking);
+
+        var clip = new AudioClip(Convert.FromBase64String(window.Audio), window.MimeType ?? "audio/webm");
+        var stt = await Stt.TranscribeAsync(clip, _cts.Token);
+        if (!stt.Success || string.IsNullOrWhiteSpace(stt.Text))
+        {
+            // Heard something, made nothing of it — a dropped pan, the radio. Listen again rather than
+            // guessing, and never wake the brain for it.
+            if (!stt.Success) Logger.LogInformation("Cook-along transcription failed: {Error}", stt.Error);
+            return false;
+        }
+
+        lastHeard = stt.Text;
+        return await ApplyAsync(stt.Text);
+    }
+
+    /// <summary>Act on one understood utterance. Returns true when playback resumed or we're closing.</summary>
+    private async Task<bool> ApplyAsync(string text)
+    {
+        var intent = CookAlongCommands.Match(text);
+
+        // "go ahead" means carry on whether we're held or reading — the words don't distinguish, and only
+        // we know which we are. Resolve it here rather than pretending the grammar could.
+        if (held && intent is CookAlongIntent.Next or CookAlongIntent.Resume)
+        {
+            held = false;
+            lastReply = null;
+            await SetPhaseAsync(Phase.Reading);
+            await ResumeAsync();
+            return true;
+        }
+        if (!held && intent == CookAlongIntent.Resume) intent = CookAlongIntent.Next;
+
+        switch (intent)
+        {
+            case CookAlongIntent.Next:
+                await ResumeReadingAsync("next");
+                return true;
+
+            case CookAlongIntent.Back:
+                await ResumeReadingAsync("prev");
+                return true;
+
+            case CookAlongIntent.Repeat:
+                await ResumeReadingAsync("playFrom", currentIndex);
+                return true;
+
+            case CookAlongIntent.Hold:
+                held = true;
+                await PauseForHoldAsync();
+                return false; // stay in the loop — holding still means listening for them to come back
+
+            case CookAlongIntent.Stop:
+                await CloseAsync();
+                return true;
+
+            default:
+                // Not a command, so it's a question. Guard the brain against the kitchen: a single stray
+                // syllable is not worth a model call or an answer to a question nobody asked.
+                if (!CookAlongCommands.IsWorthAsking(text)) return false;
+                await AskBrainAsync(text);
+                return false; // answered — stay on this step and keep listening
+        }
+    }
+
+    /// <summary>
+    /// The fall-through, and the whole reason this is a cook-along rather than a voice remote: anything
+    /// the grammar doesn't own goes to the SAME brain the assistant uses. The recipe rides in as screen
+    /// context — the mechanism that already lets the roaming agent resolve "the second one" — so no new
+    /// brain API was needed to make it aware of what's on the hob.
+    /// </summary>
+    private async Task AskBrainAsync(string question)
+    {
+        await SetPhaseAsync(Phase.Thinking);
+
+        var result = await Chat.HandleAsync(question, history, CookContext(), _cts.Token);
+        history.Add(new ChatTurn(question, result.Reply));
+        if (history.Count > MaxHistoryTurns) history.RemoveRange(0, history.Count - MaxHistoryTurns);
+
+        lastReply = result.Reply;
+
+        // NavigateTo is deliberately ignored here. The brain can decide a question is best answered on
+        // another page, but yanking someone to the grocery list mid-sear would end the cook-along they're
+        // standing in. They can say "stop" if they want to leave.
+        await SetPhaseAsync(Phase.Answering);
+        var speech = await Tts.SynthesizeAsync(result.Reply, null, _cts.Token);
+        if (speech.Success && _voice is not null)
+        {
+            await _voice.InvokeVoidAsync("play", Convert.ToBase64String(speech.Audio), speech.MediaType);
+        }
+    }
+
+    private async Task ResumeReadingAsync(string fn, params object[] args)
+    {
+        held = false;
+        lastReply = null;
+        finished = false;
+        paused = false;
+        await SetPhaseAsync(Phase.Reading);
+        if (_module is not null) await _module.InvokeVoidAsync(fn, args);
+    }
+
+    private async Task PauseForHoldAsync()
+    {
+        if (_module is not null) await _module.InvokeVoidAsync("pause");
+        paused = true;
+        await SetPhaseAsync(Phase.Held);
+    }
+
+    private async Task ResumeAsync()
+    {
+        if (_module is not null) await _module.InvokeVoidAsync("resume");
+        paused = false;
+    }
+
+    /// <summary>
+    /// What the cook is looking at — except they aren't looking at it, which is the point of the last
+    /// line. Without it the model writes for a screen and the reader recites a paragraph at someone
+    /// holding a hot pan.
+    /// </summary>
+    private string CookContext()
+    {
+        var where = currentIndex == 0 ? "the introduction" : $"step {currentIndex} of {steps.Count}";
+        var lines = new List<string>
+        {
+            $"The user is cooking \"{Recipe.Name}\" hands-free and is currently on {where}.",
+        };
+
+        if (Recipe.Ingredients.Count > 0)
+            lines.Add("Ingredients: " + string.Join(", ", Recipe.Ingredients.Select(i => i.Name)) + ".");
+
+        lines.Add("Steps: " + string.Join(" ", steps.Select((s, i) => $"({i + 1}) {s.Text}")));
+        lines.Add("They are listening, not reading, with their hands busy — answer their cooking question "
+                  + "in one or two short spoken sentences.");
+        return string.Join(' ', lines);
+    }
+
+    private async Task CueAsync(bool rising)
+    {
+        if (_ear is null) return;
+        try { await _ear.InvokeVoidAsync("beep", rising); }
+        catch (JSDisconnectedException) { /* circuit gone — the cue is the least of it */ }
+    }
+
+    private Task SetPhaseAsync(Phase next)
+    {
+        phase = next;
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private sealed record SessionResult(bool Ok, string? Error, double Floor);
+    private sealed record HeardResult(bool Heard, string? Audio, string? MimeType, string? Error);
+
     public async ValueTask DisposeAsync()
     {
         await _cts.CancelAsync();
+
+        // Release the microphone first and unconditionally: leaving a browser's recording indicator lit
+        // after the panel is gone is alarming, and rightly so.
+        if (_ear is not null)
+        {
+            try
+            {
+                await _ear.InvokeVoidAsync("endSession");
+                await _ear.DisposeAsync();
+            }
+            catch (JSDisconnectedException) { /* circuit gone — the browser released the mic with it */ }
+        }
+
+        if (_voice is not null)
+        {
+            try
+            {
+                await _voice.InvokeVoidAsync("stopPlayback");
+                await _voice.DisposeAsync();
+            }
+            catch (JSDisconnectedException) { /* circuit gone */ }
+        }
 
         if (_module is not null)
         {
@@ -288,6 +617,7 @@
         }
 
         _selfRef?.Dispose();
+        _narration?.Dispose();
         _cts.Dispose();
     }
 

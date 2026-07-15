@@ -1617,6 +1617,57 @@ button.tag-chip {
     margin-top: 0.4rem;
 }
 
+/* ---- Built-in hands-free reader: what it's doing with the microphone ---- */
+.ra-listen {
+    margin-top: 0.7rem;
+    padding-top: 0.6rem;
+    border-top: 1px solid var(--line);
+}
+
+.ra-listen p {
+    margin: 0.25rem 0;
+}
+
+.listen-state {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-weight: 600;
+}
+
+.listen-dot {
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    background: var(--ink-soft);
+    flex: none;
+}
+
+/* Listening is the only state the cook needs to recognise from across a kitchen, so it's the only one
+   that moves. The rest are colour alone — a room full of blinking dots reads as an alarm. */
+.listen-listening {
+    background: var(--accent);
+    animation: listen-pulse 1.4s ease-in-out infinite;
+}
+
+.listen-thinking,
+.listen-answering {
+    background: var(--accent);
+}
+
+.listen-held {
+    background: var(--duesoon-line);
+}
+
+@keyframes listen-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.45; transform: scale(1.35); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .listen-listening { animation: none; }
+}
+
 /* ---- Hands-free cook-along (Phase 4b) ---- */
 .cookalong {
     border: 1px solid var(--accent);

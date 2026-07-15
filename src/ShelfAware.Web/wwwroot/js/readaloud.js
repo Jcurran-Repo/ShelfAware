@@ -13,17 +13,21 @@ let segments = [];      // [{ base64, mime }]
 let index = 0;          // segment currently playing
 let wantIndex = -1;     // >= 0: playback outran synthesis; play this the moment it arrives
 let expectingMore = false;
+let autoAdvance = true; // false = hands-free: stop at each step and let .NET listen
 let audio = null;
-let dotnet = null;      // DotNetObjectReference: OnIndex(int), OnFinished(), OnBuffering(bool)
+let dotnet = null;      // DotNetObjectReference: OnIndex(int), OnFinished(), OnBuffering(bool), OnStepFinished(int)
 let stopped = true;
 
-export function load(segs, dotnetRef, more) {
+export function load(segs, dotnetRef, more, auto) {
     stop();
     segments = segs || [];
     dotnet = dotnetRef;
     index = 0;
     wantIndex = -1;
     expectingMore = !!more;
+    // Button-driven reading runs the recipe end to end; hands-free stops after each step so the cook
+    // gets a turn. Same playlist either way — the difference is only who says "next".
+    autoAdvance = auto !== false;
     stopped = false;
 }
 
@@ -103,10 +107,15 @@ function playCurrent() {
     const seg = segments[index];
     if (!seg) { finish(); return; }
     audio = new Audio(`data:${seg.mime};base64,${seg.base64}`);
-    audio.onended = () => { if (!stopped) next(); };
-    audio.onerror = () => { if (!stopped) next(); };
+    audio.onended = () => { if (!stopped) segmentEnded(); };
+    audio.onerror = () => { if (!stopped) segmentEnded(); };
     notifyIndex();
     audio.play().catch(() => {});
+}
+
+function segmentEnded() {
+    if (autoAdvance) { next(); return; }
+    if (dotnet) dotnet.invokeMethodAsync('OnStepFinished', index);
 }
 
 function stopAudio() {
