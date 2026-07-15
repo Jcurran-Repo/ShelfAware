@@ -1060,10 +1060,7 @@
         inviteBusy = true;
         try
         {
-            await Households.ClearInviteCodeAsync(household.Id);
-            // The service tracked entity IS this instance, so it already reflects the clear — but say so
-            // explicitly rather than leaning on that: the panel's whole job is to show what's really there.
-            household = await Households.GetAsync(household.Id);
+            household = await Households.ClearInviteCodeAsync(household.Id);
             inviteNote = "Invite code cleared — nobody can join until you generate a new one.";
         }
         catch (OperationCanceledException) { throw; }

@@ -418,6 +418,35 @@ public class HouseholdServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Redeeming_a_replaced_code_leaves_the_replacement_unspent()
+    {
+        // Someone holding a superseded code must not cost the person holding the CURRENT one their invite.
+        //
+        // Honest scope: the lookup is what refuses the stale code here, so this passes with or without the
+        // `h.InviteCode == matchedCode` term in JoinAsync's claim — it was written believing it pinned that
+        // term, and it doesn't (checked by reverting the term and watching it still pass). What that term
+        // actually guards is the narrower interleaving where the Replace commits AFTER the lookup has
+        // already matched, so the claim would otherwise spend a use of whatever code is there by then. A
+        // single-threaded test can't stage that, which is the reason the WHERE names the code rather than
+        // relying on the surrounding transaction's timing. Left in for the outcome it does pin.
+        var (household, oldCode) = await HouseholdWithCodeAsync(maxUses: 1);
+        var newCode = (await _service.GenerateInviteCodeAsync(household.Id, maxUses: 1)).InviteCode!;
+
+        var stale = NewUser("b@example.com");
+        _context.Users.Add(stale);
+        Assert.Null(await _service.JoinAsync(oldCode, stale));
+        Assert.Null(stale.HouseholdId);
+
+        var after = (await _service.GetAsync(household.Id))!;
+        Assert.Equal(newCode, after.InviteCode);
+        Assert.Equal(0, after.InviteUseCount);
+
+        var invited = NewUser("c@example.com");
+        _context.Users.Add(invited);
+        Assert.NotNull(await _service.JoinAsync(newCode, invited));
+    }
+
+    [Fact]
     public async Task Clearing_leaves_the_members_alone()
     {
         // Revoking the key is not evicting the people who already used it — that's RemoveMemberAsync.

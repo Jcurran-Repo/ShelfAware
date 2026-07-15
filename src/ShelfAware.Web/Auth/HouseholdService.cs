@@ -84,8 +84,19 @@ public sealed class HouseholdService(
         //
         // Both assignments read the PRE-update row (SQL evaluates a SET list against the old values), so
         // InviteUseCount + 1 is the count this claim is about to produce.
+        //
+        // The code is part of the WHERE, not just the lookup above: this claims a use of THE CODE WE
+        // MATCHED, not of whatever code the household happens to hold by the time the write lands. Without
+        // it the statement says "spend a use, whatever the credential is now" — so a Clear or a Replace
+        // committed in the window between the lookup and here would be honoured by the read and ignored by
+        // the write, and the one-click revocation this class now advertises would have a hole in it exactly
+        // the width of that window. Being inside the caller's transaction narrows the window; it doesn't
+        // close it, and a claim that only holds because of the isolation level around it isn't one.
+        var matchedCode = household.InviteCode;
         var claimed = await db.Households
-            .Where(h => h.Id == household.Id && (h.InviteMaxUses == null || h.InviteUseCount < h.InviteMaxUses))
+            .Where(h => h.Id == household.Id
+                && h.InviteCode == matchedCode
+                && (h.InviteMaxUses == null || h.InviteUseCount < h.InviteMaxUses))
             .ExecuteUpdateAsync(s => s
                 .SetProperty(h => h.InviteUseCount, h => h.InviteUseCount + 1)
                 .SetProperty(h => h.InviteCode, h =>
@@ -140,13 +151,19 @@ public sealed class HouseholdService(
     /// "I pasted that in the wrong window" — previously the only way to kill a code was to mint a
     /// replacement, which left a live credential lying around as the price of revoking one.
     ///
-    /// Clears the limits alongside the code: they describe the code, and keeping a spent use count next to
-    /// no code at all would be state that answers a question nobody can ask. Removes nobody who already
-    /// joined — that's <see cref="RemoveMemberAsync"/>. Idempotent.</summary>
-    public async Task ClearInviteCodeAsync(string householdId, CancellationToken ct = default)
+    /// Clears the limits alongside the code, since they describe the code. Note this is tidiness, not a
+    /// rule the type enforces: a code retired by its last use leaves its own limits behind (see
+    /// <see cref="JoinAsync"/>, which nulls the code in the claim statement and nothing else). Either way
+    /// nothing reads them while <see cref="Household.InviteCode"/> is null, and generating the next code
+    /// overwrites all four.
+    ///
+    /// Removes nobody who already joined — that's <see cref="RemoveMemberAsync"/>. Idempotent. Returns the
+    /// household so the caller can render the result rather than re-reading it and hoping it got the same
+    /// tracked instance back.</summary>
+    public async Task<Household> ClearInviteCodeAsync(string householdId, CancellationToken ct = default)
     {
         var household = await db.Households.SingleAsync(h => h.Id == householdId, ct);
-        if (household.InviteCode is null) return;
+        if (household.InviteCode is null) return household;
 
         household.InviteCode = null;
         household.InviteUseCount = 0;
@@ -154,6 +171,7 @@ public sealed class HouseholdService(
         household.InviteExpiresAt = null;
         await db.SaveChangesAsync(ct);
         logger.LogInformation("Household {HouseholdId} cleared its invite code.", householdId);
+        return household;
     }
 
     public async Task RenameAsync(string householdId, string name, CancellationToken ct = default)

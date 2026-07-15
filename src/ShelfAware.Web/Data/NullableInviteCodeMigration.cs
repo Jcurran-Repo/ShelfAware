@@ -47,9 +47,16 @@ public static class NullableInviteCodeMigration
             // PRAGMA foreign_keys is a no-op inside a transaction, so it has to bracket one. Nothing
             // references Households today (AspNetUsers.HouseholdId is a plain indexed column, not an FK),
             // but the rebuild follows SQLite's documented procedure rather than relying on that staying true.
+            //
+            // The re-enable is in a finally because the setting is per-CONNECTION and outlives this method:
+            // a throw between the two would hand the rest of the process a connection with foreign-key
+            // enforcement silently switched off. Startup would abort anyway today, which makes that
+            // harmless by luck rather than by design.
             Execute(conn, "PRAGMA foreign_keys=off;");
-            using (var tx = conn.BeginTransaction())
+            try
             {
+                using var tx = conn.BeginTransaction();
+
                 // Mirrors the live column order rather than EF's property order: this is the smallest
                 // possible delta from what's actually on disk, so the only things that change are
                 // InviteCode's nullability and the wiped values. (Column order already differs between a
@@ -81,7 +88,10 @@ public static class NullableInviteCodeMigration
 
                 tx.Commit();
             }
-            Execute(conn, "PRAGMA foreign_keys=on;");
+            finally
+            {
+                Execute(conn, "PRAGMA foreign_keys=on;");
+            }
         }
         finally
         {
