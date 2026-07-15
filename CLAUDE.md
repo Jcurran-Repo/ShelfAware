@@ -187,7 +187,10 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      + invite-join always open — but invites expire/limit/revoke since item 12); logout bumps the security
      stamp (all circuits/devices die within the
      5-minute revalidation) then clears the cookie; per-IP rate limit on `/Account` POSTs atop Identity
-     lockout; `/api/data/export` + `/api/cookalong/signed-url` require auth (401/403 for API callers);
+     lockout; `/api/data/export` + `/api/cookalong/signed-url` require auth (they answer with a status
+     code rather than an HTML redirect — see the block above them in `Program.cs`: **there is no API**,
+     they're the only two things the browser needs a real HTTP request for, and a real API would go under
+     `/api/v1/` with its own auth story);
      DataProtection keys persist to `app-data/keys` (DPAPI-encrypted on Windows) so republish doesn't log
      everyone out. **Backup set is now `shelfaware.db` + `auth.db` + `keys/`.**
    - **BREAKING SCHEMA — v3 needs a fresh pantry DB.** No in-place upgrade (Jordan's call: wipe + re-import

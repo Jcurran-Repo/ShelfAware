@@ -465,6 +465,33 @@ app.Use(async (context, next) =>
 
 app.MapStaticAssets();
 
+// ---- The two /api endpoints, and what "/api" means here ----
+//
+// This is not an API. It's the two things the browser needs a REAL HTTP request for, which a Blazor
+// circuit can't give it: a file download needs an actual response with Content-Disposition (you can't
+// push one over the SignalR connection), and the cook-along's ElevenLabs SDK is browser JavaScript that
+// has to fetch() its own signed URL. There is no REST surface over the pantry, no tokens, no versioning,
+// and nothing here is a contract anyone may depend on. Both are cookie-authenticated and same-origin.
+//
+// The prefix still earns its keep: three places key off StartsWithSegments("/api") to return a STATUS
+// CODE rather than redirect to an HTML page (401 instead of Login, 403 instead of AccessDenied, and 403
+// rather than the no-household chooser). Those are exactly the semantics a real API would want too, which
+// is why these live here rather than under some /internal/ prefix that would need the same three rules
+// duplicated the day a real API shows up.
+//
+// **If you are adding a real API: put it under /api/v1/ and give it its own auth story.** Versioned means
+// "a contract I won't break"; unversioned means "app plumbing, it can move". Two things to decide rather
+// than inherit:
+//   - These two are not a pair. /api/data/export is genuinely API-shaped and could graduate to
+//     /api/v1/export someday. /api/cookalong/signed-url is browser plumbing forever — no API consumer
+//     wants "mint a session URL for the SDK running in this page".
+//   - The policies above assume COOKIE auth. The moment bearer tokens exist under this prefix,
+//     /api/data/export becomes reachable by token too. That may be what you want — but decide it, don't
+//     let it happen as a side effect of sharing a path segment.
+//
+// Renaming these is as cheap now as it will ever be (a handful of string literals, no external
+// consumers), so there's nothing to buy by moving them pre-emptively. Decided 2026-07-15.
+
 // Mints a short-lived ElevenLabs signed URL for the cook-along realtime agent, using the VISITOR's own
 // key + agent id (sent from their browser over HTTPS) — the app ships with no voice key of its own. The
 // key is used only for this call and is never stored or logged; dev/self-host falls back to server config.
