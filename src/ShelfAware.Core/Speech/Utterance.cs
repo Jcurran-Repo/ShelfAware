@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace ShelfAware.Core.Speech;
 
 /// <summary>
@@ -40,8 +42,21 @@ internal static class Utterance
     public static int WordCount(string? transcript) =>
         string.IsNullOrWhiteSpace(transcript) ? 0 : Tokenize(transcript).Count;
 
+    /// <summary>
+    /// Transcriber annotations, e.g. "(coughing)", "(laughter)", "[door closes]". Nobody SPEAKS a
+    /// parenthesis — anything inside one is the transcriber describing the room, not a word the user
+    /// said. Stripping the whole bracket (not just its punctuation) is the difference between "next" and
+    /// "next coughing", and the latter matches no command and gets handed to the model as a question.
+    ///
+    /// ElevenLabs Scribe is asked not to produce these at all (tag_audio_events=false), but this is
+    /// cheap, and a matcher that can be derailed by a cough shouldn't depend on one provider's flag.
+    /// </summary>
+    private static readonly Regex Annotations =
+        new(@"\([^)]*\)|\[[^\]]*\]", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     private static List<string> Tokenize(string s) =>
-        new string(s.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) || c == '\'' ? c : ' ').ToArray())
+        new string(Annotations.Replace(s, " ").ToLowerInvariant()
+                .Select(c => char.IsLetterOrDigit(c) || c == '\'' ? c : ' ').ToArray())
             .Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .ToList();
 }

@@ -56,6 +56,39 @@ public class CookAlongCommandsTests
     public void An_impossible_step_still_parses_and_is_left_for_the_caller() =>
         Assert.Equal(new CookAlongCommand(CookAlongIntent.GoToStep, 99), CookAlongCommands.Match("go to step 99"));
 
+    // A cough is not a word. Scribe tags non-speech audio INTO the transcript ("Next (coughing)"), which
+    // turned a one-word command into a two-word phrase that matched nothing and got sent to the model as
+    // a question — the recipe just sat there. We ask Scribe not to tag, and refuse to be fooled anyway.
+    [Theory]
+    [InlineData("Next (coughing)", CookAlongIntent.Next)]
+    [InlineData("(coughing) next", CookAlongIntent.Next)]
+    [InlineData("next step (laughter)", CookAlongIntent.Next)]
+    [InlineData("(clears throat) go back", CookAlongIntent.Back)]
+    [InlineData("repeat [door closes]", CookAlongIntent.Repeat)]
+    [InlineData("(sneezing) stop reading", CookAlongIntent.Stop)]
+    public void Transcriber_annotations_are_not_words(string t, CookAlongIntent expected) =>
+        Assert.Equal(expected, Intent(t));
+
+    [Fact]
+    public void An_annotated_step_jump_still_jumps()
+    {
+        var command = CookAlongCommands.Match("go to step 3 (coughing)");
+        Assert.Equal(CookAlongIntent.GoToStep, command.Intent);
+        Assert.Equal(3, command.Step);
+    }
+
+    // Nothing but annotations means nobody said anything — it must never advance the recipe, and must
+    // never be worth a model call either.
+    [Theory]
+    [InlineData("(coughing)")]
+    [InlineData("(laughter) (footsteps)")]
+    [InlineData("[background noise]")]
+    public void An_utterance_that_is_only_room_noise_does_nothing(string t)
+    {
+        Assert.Equal(CookAlongIntent.None, Intent(t));
+        Assert.False(CookAlongCommands.IsWorthAsking(t));
+    }
+
     // A step NUMBER inside a real question is still a question. The whole-utterance rule again.
     [Theory]
     [InlineData("what goes in at step 3")]

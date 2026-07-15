@@ -39,7 +39,21 @@ public class ElevenLabsSpeechToText : ISpeechToText
         using var form = new MultipartFormDataContent
         {
             { new StringContent(_options.SpeechToTextModel), "model_id" },
+
+            // Scribe tags non-speech audio into the TEXT by default — "Next (coughing)" comes back as
+            // exactly that. We want the words someone said, not stage directions about the room: a cough
+            // isn't a word, but it turned "next" into a two-word phrase that matched no command and got
+            // handed to the model as if it were a question. Off.
+            { new StringContent("false"), "tag_audio_events" },
+
+            // We only ever read `text`. Asking for word timings we never look at is work for them and
+            // payload for us.
+            { new StringContent("none"), "timestamps_granularity" },
         };
+
+        // Don't make it guess the language off one word — see ElevenLabsOptions.SpeechLanguage.
+        if (!string.IsNullOrWhiteSpace(_options.SpeechLanguage))
+            form.Add(new StringContent(_options.SpeechLanguage), "language_code");
         var file = new ByteArrayContent(audio.Data);
         file.Headers.ContentType = new MediaTypeHeaderValue(audio.MediaType);
         form.Add(file, "file", FileNameFor(audio.MediaType));

@@ -49,6 +49,61 @@ public class SpeechServicesTests
         Assert.Contains("file", request.Body);
     }
 
+    // Scribe tags non-speech audio INTO the text by default, so "next" plus a cough comes back as
+    // "Next (coughing)" — which matches no command and reaches the model as a question while the recipe
+    // sits there. We want words, not stage directions.
+    [Fact]
+    public async Task Transcribe_asks_scribe_not_to_tag_audio_events()
+    {
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Json("""{ "text": "next" }"""));
+        var stt = new ElevenLabsSpeechToText(Client(handler), Opts(), Creds(), NullLogger<ElevenLabsSpeechToText>.Instance);
+
+        await stt.TranscribeAsync(new AudioClip([1, 2, 3], "audio/webm"));
+
+        var body = Assert.Single(handler.Requests).Body;
+        Assert.Contains("tag_audio_events", body);
+        Assert.Contains("false", body);
+    }
+
+    // We only ever read `text`; word timings are work for them and payload for us.
+    [Fact]
+    public async Task Transcribe_does_not_ask_for_timestamps_it_never_reads()
+    {
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Json("""{ "text": "next" }"""));
+        var stt = new ElevenLabsSpeechToText(Client(handler), Opts(), Creds(), NullLogger<ElevenLabsSpeechToText>.Instance);
+
+        await stt.TranscribeAsync(new AudioClip([1, 2, 3], "audio/webm"));
+
+        Assert.Contains("timestamps_granularity", Assert.Single(handler.Requests).Body);
+    }
+
+    [Fact]
+    public async Task Transcribe_names_the_language_rather_than_making_scribe_guess_off_one_word()
+    {
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Json("""{ "text": "next" }"""));
+        var stt = new ElevenLabsSpeechToText(Client(handler), Opts(), Creds(), NullLogger<ElevenLabsSpeechToText>.Instance);
+
+        await stt.TranscribeAsync(new AudioClip([1, 2, 3], "audio/webm"));
+
+        var body = Assert.Single(handler.Requests).Body;
+        Assert.Contains("language_code", body);
+        Assert.Contains(Defaults.SpeechLanguage, body); // eng
+    }
+
+    // Blanking it must restore auto-detection rather than send an empty language.
+    [Fact]
+    public async Task Transcribe_omits_the_language_when_it_is_not_configured()
+    {
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Json("""{ "text": "next" }"""));
+        var stt = new ElevenLabsSpeechToText(
+            Client(handler), Opts(new ElevenLabsOptions { SpeechLanguage = "" }), Creds(),
+            NullLogger<ElevenLabsSpeechToText>.Instance);
+
+        await stt.TranscribeAsync(new AudioClip([1, 2, 3], "audio/webm"));
+
+        Assert.DoesNotContain("language_code", Assert.Single(handler.Requests).Body);
+    }
+
     [Fact]
     public async Task Transcribe_trims_whitespace_from_the_transcript()
     {

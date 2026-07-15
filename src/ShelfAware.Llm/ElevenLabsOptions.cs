@@ -14,6 +14,13 @@ public class ElevenLabsOptions
     /// <summary>Scribe speech-to-text model. scribe_v1 is the stable default; scribe_v2 is also available.</summary>
     public string SpeechToTextModel { get; set; } = "scribe_v1";
 
+    /// <summary>ISO-639-1 or -3 language for transcription; blank = let Scribe detect it. Defaulted
+    /// rather than left to detection because the cook-along's hot path is one-word commands, and
+    /// detection is at its worst there: a clean, noise-free "Next." came back tagged eng with a
+    /// language_probability of 0.33. Naming the language takes that guess off the table. Blank it out
+    /// (or set your own) if you're not cooking in English.</summary>
+    public string SpeechLanguage { get; set; } = "eng";
+
     /// <summary>Text-to-speech model. Flash v2.5 is ElevenLabs' ~75 ms low-latency model, recommended for
     /// conversational / read-aloud voice loops (our push-to-talk + cook-along case).</summary>
     public string TextToSpeechModel { get; set; } = "eleven_flash_v2_5";
