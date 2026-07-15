@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using ShelfAware.Core.Speech;
+using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.Services;
 
@@ -12,24 +13,63 @@ namespace ShelfAware.Web.Services;
 /// step and paid for it again — and the reader waited on the network to say a sentence it had already
 /// said yesterday. With it, a recipe costs one synthesis ever and re-opens instantly.
 ///
-/// The cache is CONTENT-addressed and shared across households. That is deliberate: a hit requires the
-/// identical text, which means the asker already has the content, so there is nothing to learn from a
-/// hit that they didn't already know. It also means a hit needs no API key at all — which is what lets
-/// seeded/demo recipes talk for a visitor who has brought no key of their own.
+/// **Scoped to one household.** It was briefly content-addressed and SHARED, on the theory that a hit
+/// requires identical text so there's nothing to learn from one — and that a keyless visitor could then
+/// hear seeded/demo recipes someone else had paid to synthesize. That second half was the only thing the
+/// sharing actually bought, and it never worked: on a keyless deploy nobody has a key, so nobody ever
+/// warms the cache, so it never pays out. It was risk with no realised benefit. Households essentially
+/// never share step text anyway (recipes are generated per household), so the sharing bought nothing
+/// while making one household's audio outlive its owner — "delete my data" cannot reach a clip it
+/// cannot identify. Per-household directories are deletable. If keyless demo audio is ever wanted, the
+/// answer is to PRE-WARM the demo household's cache deliberately, not to leave every household's audio
+/// readable by hash.
 ///
 /// Cache failures are never synthesis failures: if the disk misbehaves we log it and go to the provider.
 /// </summary>
 public sealed class CachingTextToSpeech : ITextToSpeech
 {
     private readonly ITextToSpeech _inner;
-    private readonly string _directory;
+    private readonly string _root;
+    private readonly ICurrentHousehold _household;
     private readonly ILogger<CachingTextToSpeech> _logger;
 
-    public CachingTextToSpeech(ITextToSpeech inner, string directory, ILogger<CachingTextToSpeech> logger)
+    public CachingTextToSpeech(
+        ITextToSpeech inner, string root, ICurrentHousehold household, ILogger<CachingTextToSpeech> logger)
     {
         _inner = inner;
-        _directory = directory;
+        _root = root;
+        _household = household;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// The folder a household's clips live in: a HASH of its id, never the id itself. A household id has
+    /// no business being concatenated into a filesystem path — today they're server-minted and safe, but
+    /// that's a property of code elsewhere, and the day one becomes user-influenced this would be a path
+    /// traversal. Hex can't traverse anything. Deterministic, so a delete can find the folder.
+    /// </summary>
+    private static string FolderFor(string householdId) =>
+        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(householdId)))[..32];
+
+    /// <summary>
+    /// Forget everything ever spoken for one household — its recipes' audio is a recording of its content,
+    /// so "delete my data" has to reach it or it isn't true. Exposed as an operation rather than exposing
+    /// the folder layout: the caller shouldn't have to know how clips are filed to be allowed to delete
+    /// them. Returns false if something was there and wouldn't go.
+    /// </summary>
+    public static bool DeleteHousehold(string root, string householdId, ILogger logger)
+    {
+        var folder = Path.Combine(root, FolderFor(householdId));
+        try
+        {
+            if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(ex, "Couldn't remove cached speech at {Folder}.", folder);
+            return false;
+        }
     }
 
     public string OutputFingerprint => _inner.OutputFingerprint;
@@ -41,7 +81,13 @@ public sealed class CachingTextToSpeech : ITextToSpeech
         // Blank text isn't ours to rule on — let the provider own that (and its error message).
         if (string.IsNullOrWhiteSpace(text)) return await _inner.SynthesizeAsync(text, context, cancellationToken);
 
-        var path = Path.Combine(_directory, KeyFor(text, context) + ".audio");
+        // No household, no cache. An unauthenticated scope has no drawer of its own to read from or write
+        // to, and guessing one would be exactly the cross-household sharing this is scoped to avoid.
+        var householdId = await _household.GetIdAsync(cancellationToken);
+        if (householdId is null) return await _inner.SynthesizeAsync(text, context, cancellationToken);
+
+        var directory = Path.Combine(_root, FolderFor(householdId));
+        var path = Path.Combine(directory, KeyFor(text, context) + ".audio");
 
         if (await TryReadAsync(path, cancellationToken) is { } cached)
         {
@@ -50,7 +96,7 @@ public sealed class CachingTextToSpeech : ITextToSpeech
         }
 
         var result = await _inner.SynthesizeAsync(text, context, cancellationToken);
-        if (result.Success) await TryWriteAsync(path, result.Audio, cancellationToken);
+        if (result.Success) await TryWriteAsync(directory, path, result.Audio, cancellationToken);
         return result;
     }
 
@@ -94,14 +140,15 @@ public sealed class CachingTextToSpeech : ITextToSpeech
         }
     }
 
-    private async Task TryWriteAsync(string path, byte[] audio, CancellationToken cancellationToken)
+    private async Task TryWriteAsync(string directory, string path, byte[] audio, CancellationToken cancellationToken)
     {
         // Write-then-move so a concurrent reader never sees a half-written clip, and two circuits
-        // synthesizing the same step race harmlessly to publish identical bytes.
-        var temp = Path.Combine(_directory, $"{Guid.NewGuid():N}.tmp");
+        // synthesizing the same step race harmlessly to publish identical bytes. The temp file shares the
+        // household's directory so the move is a rename within one volume, never a copy across one.
+        var temp = Path.Combine(directory, $"{Guid.NewGuid():N}.tmp");
         try
         {
-            Directory.CreateDirectory(_directory);
+            Directory.CreateDirectory(directory);
             await File.WriteAllBytesAsync(temp, audio, cancellationToken);
             File.Move(temp, path, overwrite: true);
         }
@@ -142,7 +189,9 @@ public sealed class CachingTextToSpeech : ITextToSpeech
         {
             if (!Directory.Exists(directory)) return 0;
 
-            var files = new DirectoryInfo(directory).GetFiles("*.audio");
+            // Recursive: clips live in a per-household subfolder now, and the budget is for the whole
+            // cache — one household's long recipe shouldn't be invisible to the sweep.
+            var files = new DirectoryInfo(directory).GetFiles("*.audio", SearchOption.AllDirectories);
             var total = files.Sum(f => f.Length);
             if (total <= maxBytes) return 0;
 

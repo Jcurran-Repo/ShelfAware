@@ -36,6 +36,14 @@ builder.Services.AddRazorComponents()
 var dataDir = builder.Configuration["DataDir"] ?? Path.Combine(builder.Environment.ContentRootPath, "app-data");
 var receiptsDir = Path.Combine(dataDir, "receipts");
 Directory.CreateDirectory(receiptsDir);
+
+// Synthesized speech, filed per household (see CachingTextToSpeech). Resolved here beside the other data
+// paths because two things need it: the speech registration, and delete-my-data — a household's audio is
+// a recording of its recipes, so wiping the rows and leaving the clips would make that button a lie.
+// Speech:CacheMegabytes <= 0 means OFF — the cache isn't registered at all, rather than being emptied at
+// every boot while it refills all session (which would re-buy every recipe after a restart AND use the disk).
+var speechCacheMb = builder.Configuration.GetValue<int?>("Speech:CacheMegabytes") ?? 256;
+var speechCacheDir = speechCacheMb > 0 ? Path.Combine(dataDir, "tts-cache") : null;
 builder.Services.AddDbContextFactory<ShelfAwareDbContext>(options =>
     // SplitQuery: several read paths Include two+ collections (Purchases + Signals + Tags/Substitutes).
     // As a single query that's a cartesian join — row-multiplying and slow — which is what EF's [20504]
@@ -200,7 +208,13 @@ builder.Services.AddScoped<ReceiptSelfEval>(); // grades verified receipts on th
 
 builder.Services.AddScoped<ProductRenameService>(); // rename + re-point the name-keyed recipe links
 builder.Services.AddScoped<DemoDataSeeder>(); // synthetic demo catalog (guarded: this household's pantry is empty)
-builder.Services.AddScoped<UserDataService>();   // export + delete-my-data (one place for both)
+// Export + delete-my-data (one place for both). Takes the speech cache root so a delete reaches the
+// synthesized audio of the household's recipes, not just its rows.
+builder.Services.AddScoped(sp => new UserDataService(
+    sp.GetRequiredService<IHouseholdDbFactory>(),
+    sp.GetRequiredService<ICurrentHousehold>(),
+    speechCacheDir,
+    sp.GetRequiredService<ILogger<UserDataService>>()));
 
 // Voice I/O (ElevenLabs): Scribe = STT (ear), TTS = mouth. Speech is its own REST API, not an
 // IChatClient workload, so each rides a typed HttpClient with the base address + xi-api-key header.
@@ -208,10 +222,6 @@ builder.Services.AddScoped<UserDataService>();   // export + delete-my-data (one
 // TTS rides through a disk cache (see SpeechRegistration). Recipe steps are static text, so a recipe
 // should cost one synthesis ever — re-reading it shouldn't re-buy audio we already own, or make the
 // reader wait on the network to say a sentence it said yesterday.
-// Speech:CacheMegabytes <= 0 means OFF — the cache isn't registered at all, rather than being emptied at
-// every boot while it refills all session (which would re-buy every recipe after a restart AND use the disk).
-var speechCacheMb = builder.Configuration.GetValue<int?>("Speech:CacheMegabytes") ?? 256;
-var speechCacheDir = speechCacheMb > 0 ? Path.Combine(dataDir, "tts-cache") : null;
 builder.Services.AddSpeech(builder.Configuration, speechCacheDir);
 
 // Per-circuit ElevenLabs credentials: the visitor's own key from their browser (dev falls back to config).

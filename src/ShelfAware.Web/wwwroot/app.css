@@ -1691,6 +1691,15 @@ button.tag-chip {
     margin: 0;
 }
 
+/* What the default WOULD have been — a calibrated value you can't tell apart from a guess hasn't
+   reported anything. */
+.listen-delta {
+    color: var(--ink-soft);
+    font-size: 0.85em;
+    margin-left: 0.4rem;
+    white-space: nowrap;
+}
+
 @media (max-width: 30rem) {
     .listen-values {
         grid-template-columns: 1fr;

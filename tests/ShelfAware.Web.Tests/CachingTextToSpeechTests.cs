@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using ShelfAware.Core.Speech;
+using ShelfAware.Web.Data;
 using ShelfAware.Web.Services;
 
 namespace ShelfAware.Web.Tests;
@@ -19,8 +20,9 @@ public sealed class CachingTextToSpeechTests : IDisposable
         if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
     }
 
-    private CachingTextToSpeech Cache(ITextToSpeech inner) =>
-        new(inner, _dir, NullLogger<CachingTextToSpeech>.Instance);
+    // Clips are filed per household — the same text for a DIFFERENT household is a different drawer.
+    private CachingTextToSpeech Cache(ITextToSpeech inner, string? household = "household-a") =>
+        new(inner, _dir, new FakeCurrentHousehold(household), NullLogger<CachingTextToSpeech>.Instance);
 
     /// <summary>A provider that counts what it was asked to synthesize and hands back canned audio.</summary>
     private sealed class FakeTts(string fingerprint = "voice-a", bool succeed = true) : ITextToSpeech
@@ -60,19 +62,87 @@ public sealed class CachingTextToSpeechTests : IDisposable
         Assert.Equal(1, inner.Calls);
     }
 
-    // A cache hit needs no key, which is what lets seeded/demo recipes talk for a visitor who brought none.
+    // Within one household, a cached clip is served without touching the provider at all.
     [Fact]
     public async Task A_cached_clip_is_served_without_consulting_the_provider_at_all()
     {
         var warm = new FakeTts();
         await Cache(warm).SynthesizeAsync("Step 1. Sear the chicken.");
 
-        // A provider that would fail (e.g. no API key on this circuit) must never be reached.
-        var keyless = new FakeTts(succeed: false);
-        var result = await Cache(keyless).SynthesizeAsync("Step 1. Sear the chicken.");
+        // A provider that would fail (e.g. its key has since gone) must never be reached.
+        var second = new FakeTts(succeed: false);
+        var result = await Cache(second).SynthesizeAsync("Step 1. Sear the chicken.");
 
         Assert.True(result.Success);
-        Assert.Equal(0, keyless.Calls);
+        Assert.Equal(0, second.Calls);
+    }
+
+    // THE tenancy line. One household's audio is never served to another, even for identical text — the
+    // cache was briefly shared, and the only thing that bought (keyless demo audio) needed a pre-warm that
+    // never existed. Sharing was risk with no payout, and it made a household's audio outlive its owner.
+    [Fact]
+    public async Task One_households_audio_is_never_served_to_another()
+    {
+        await Cache(new FakeTts(), household: "household-a").SynthesizeAsync("Step 1. Sear the chicken.");
+
+        var other = new FakeTts();
+        var result = await Cache(other, household: "household-b").SynthesizeAsync("Step 1. Sear the chicken.");
+
+        Assert.True(result.Success);
+        Assert.Equal(1, other.Calls); // B paid for its own; it did not read A's drawer
+    }
+
+    // An unauthenticated scope has no drawer of its own. Guessing one would be the sharing we just removed.
+    [Fact]
+    public async Task A_scope_with_no_household_neither_reads_nor_writes_the_cache()
+    {
+        await Cache(new FakeTts(), household: "household-a").SynthesizeAsync("Step 1. Sear the chicken.");
+
+        var anonymous = new FakeTts();
+        await Cache(anonymous, household: null).SynthesizeAsync("Step 1. Sear the chicken.");
+        await Cache(anonymous, household: null).SynthesizeAsync("Step 1. Sear the chicken.");
+
+        Assert.Equal(2, anonymous.Calls); // never cached, never a hit — and never A's clip
+    }
+
+    // "Delete my data" has to reach the audio, or it isn't true. This is what per-household filing buys:
+    // a clip you can attribute is a clip you can delete.
+    [Fact]
+    public async Task Deleting_a_household_removes_its_audio_and_leaves_everyone_elses()
+    {
+        await Cache(new FakeTts(), household: "household-a").SynthesizeAsync("Step 1. Sear the chicken.");
+        await Cache(new FakeTts(), household: "household-b").SynthesizeAsync("Step 1. Sear the chicken.");
+
+        Assert.True(CachingTextToSpeech.DeleteHousehold(_dir, "household-a", NullLogger.Instance));
+
+        // A must re-synthesize; B must not.
+        var a = new FakeTts();
+        await Cache(a, household: "household-a").SynthesizeAsync("Step 1. Sear the chicken.");
+        Assert.Equal(1, a.Calls);
+
+        var b = new FakeTts();
+        await Cache(b, household: "household-b").SynthesizeAsync("Step 1. Sear the chicken.");
+        Assert.Equal(0, b.Calls);
+    }
+
+    [Fact]
+    public void Deleting_a_household_that_never_spoke_is_a_no_op() =>
+        Assert.True(CachingTextToSpeech.DeleteHousehold(_dir, "never-cooked", NullLogger.Instance));
+
+    // A household id must never reach the filesystem raw. They're server-minted today, but that's a fact
+    // about code elsewhere — hex can't traverse anything regardless of what someone puts in an id later.
+    [Fact]
+    public async Task A_hostile_household_id_cannot_escape_the_cache_directory()
+    {
+        var hostile = "../../../../Windows/Temp/pwned";
+
+        await Cache(new FakeTts(), household: hostile).SynthesizeAsync("Step 1. Sear the chicken.");
+
+        // Everything it wrote is under the cache root, in a hex-named folder.
+        var written = Directory.GetFiles(_dir, "*.audio", SearchOption.AllDirectories);
+        Assert.Single(written);
+        Assert.StartsWith(_dir, Path.GetFullPath(written[0]), StringComparison.OrdinalIgnoreCase);
+        Assert.Matches("^[0-9a-f]+$", Path.GetFileName(Path.GetDirectoryName(written[0]))!);
     }
 
     [Fact]
@@ -211,6 +281,7 @@ public sealed class CachingTextToSpeechTests : IDisposable
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddScoped<IVoiceCredentials>(_ => new StubVoiceCredentials());
+        services.AddScoped<ICurrentHousehold>(_ => new FakeCurrentHousehold());
         services.AddSpeech(new ConfigurationBuilder().Build(), _dir);
 
         using var provider = services.BuildServiceProvider(validateScopes: true);
@@ -228,6 +299,7 @@ public sealed class CachingTextToSpeechTests : IDisposable
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddScoped<IVoiceCredentials>(_ => new StubVoiceCredentials());
+        services.AddScoped<ICurrentHousehold>(_ => new FakeCurrentHousehold());
         services.AddSpeech(new ConfigurationBuilder().Build(), cacheDirectory: null);
 
         using var provider = services.BuildServiceProvider(validateScopes: true);

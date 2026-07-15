@@ -1,5 +1,6 @@
 using ShelfAware.Core.Speech;
 using ShelfAware.Llm;
+using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.Services;
 
@@ -35,11 +36,13 @@ public static class SpeechRegistration
             return services;
         }
 
-        // The provider is registered concretely and the cache is what answers ITextToSpeech.
+        // The provider is registered concretely and the cache is what answers ITextToSpeech. The cache
+        // reads ICurrentHousehold (scoped) per call — clips are filed per household, never shared.
         services.AddHttpClient<ElevenLabsTextToSpeech>(ConfigureElevenLabs);
         services.AddTransient<ITextToSpeech>(sp => new CachingTextToSpeech(
             sp.GetRequiredService<ElevenLabsTextToSpeech>(),
             cacheDirectory,
+            sp.GetRequiredService<ICurrentHousehold>(),
             sp.GetRequiredService<ILogger<CachingTextToSpeech>>()));
 
         return services;

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using ShelfAware.Core.Domain;
 using ShelfAware.Web.Data;
 
@@ -45,7 +46,7 @@ public class UserDataServiceTests : IDisposable
     public async Task DeleteAllAsync_empties_every_user_table()
     {
         await Seed();
-        var svc = new UserDataService(_db);
+        var svc = new UserDataService(_db, new FakeCurrentHousehold(), null, NullLogger<UserDataService>.Instance);
         Assert.True(await svc.CountAllAsync() > 0);
 
         await svc.DeleteAllAsync();
@@ -64,7 +65,7 @@ public class UserDataServiceTests : IDisposable
     [Fact]
     public async Task DeleteAllAsync_on_an_empty_db_is_a_no_op()
     {
-        var svc = new UserDataService(_db);
+        var svc = new UserDataService(_db, new FakeCurrentHousehold(), null, NullLogger<UserDataService>.Instance);
         await svc.DeleteAllAsync(); // must not throw on nothing to delete
         Assert.Equal(0, await svc.CountAllAsync());
     }
@@ -73,7 +74,7 @@ public class UserDataServiceTests : IDisposable
     public async Task ExportAsync_returns_the_stored_content()
     {
         await Seed();
-        var svc = new UserDataService(_db);
+        var svc = new UserDataService(_db, new FakeCurrentHousehold(), null, NullLogger<UserDataService>.Instance);
 
         var export = await svc.ExportAsync();
 

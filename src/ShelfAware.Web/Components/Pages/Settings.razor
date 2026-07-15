@@ -210,15 +210,46 @@
     }
     else
     {
+        @* Show what it MEASURED against what it would otherwise have guessed. Jordan ran the wizard and
+           couldn't tell whether anything had changed — the panel showed the values but nothing to compare
+           them to, so "it changed values… I think?" was the only honest reading available. A calibration
+           you can't tell apart from a default hasn't reported its result. *@
         <dl class="listen-values">
             <dt>Waits for a pause of</dt>
-            <dd>@listening.SilenceMs ms <span class="muted">before deciding you've finished</span></dd>
+            <dd>
+                <strong>@listening.SilenceMs ms</strong> <span class="muted">before deciding you've finished</span>
+                @if (Changed(listening.SilenceMs, ListeningSettings.Default.SilenceMs))
+                {
+                    <span class="listen-delta">was @ListeningSettings.Default.SilenceMs ms by default</span>
+                }
+            </dd>
             <dt>Ignores anything below</dt>
-            <dd>@listening.FloorMultiple.ToString("0.0")× the room <span class="muted">— the noise gate</span></dd>
+            <dd>
+                <strong>@listening.FloorMultiple.ToString("0.0")× the room</strong> <span class="muted">— the noise gate</span>
+                @if (Changed(listening.FloorMultiple, ListeningSettings.Default.FloorMultiple))
+                {
+                    <span class="listen-delta">was @ListeningSettings.Default.FloorMultiple.ToString("0.0")× by default</span>
+                }
+            </dd>
             <dt>Holds the mic open for</dt>
-            <dd>@(listening.OpenMs / 1000.0)s <span class="muted">if you say nothing</span></dd>
+            <dd>
+                <strong>@(listening.OpenMs / 1000.0)s</strong> <span class="muted">if you say nothing</span>
+            </dd>
         </dl>
-        <p class="muted small">@(calibrated ? "Calibrated on this device." : "Not calibrated — using defaults.")</p>
+
+        @if (lastCalibration is { } m)
+        {
+            <p class="muted small">
+                Measured just now: your room at @m.NoiseFloor.ToString("0.000"), your voice at
+                @m.SpeechPeak.ToString("0.000") (@((m.SpeechPeak / Math.Max(m.NoiseFloor, 0.0001)).ToString("0"))× louder),
+                and your longest mid-sentence pause was @m.LongestPauseMs ms — which is what the silence
+                window is built from.
+            </p>
+        }
+        else
+        {
+            <p class="muted small">@(calibrated ? "Calibrated on this device." : "Not calibrated — using defaults.")</p>
+        }
 
         <div class="ra-controls">
             <button @onclick="CalibrateAsync">🎙 Calibrate listening</button>
@@ -457,6 +488,13 @@
     private ListeningSettings listening = ListeningSettings.Default;
     private bool calibrated;
 
+    /// <summary>What the last run in THIS visit actually measured, so the wizard can show its working
+    /// rather than silently swapping numbers the user has no baseline for. Null until they run it.</summary>
+    private CalibrationSample? lastCalibration;
+
+    private static bool Changed(int value, int fallback) => value != fallback;
+    private static bool Changed(double value, double fallback) => Math.Abs(value - fallback) > 0.05;
+
     // Generous on purpose: a calibration that gave up after the CURRENT silence window could never
     // observe a pause longer than it, which is exactly the speaker it most needs to measure. And the
     // provisional gate has to be loose — we don't yet know what this room sounds like, which is the
@@ -572,6 +610,7 @@
 
             listening = tuned;
             calibrated = true;
+            lastCalibration = sample;
             Logger.LogInformation(
                 "Listening calibrated: floor {Floor}, peak {Peak}, longest pause {Pause}ms -> silence {Silence}ms, gate {Gate}x.",
                 sample.NoiseFloor, sample.SpeechPeak, sample.LongestPauseMs, tuned.SilenceMs, tuned.FloorMultiple);
@@ -602,6 +641,7 @@
             listening = ListeningSettings.Default;
             calibrated = false;
             calibrationError = null;
+            lastCalibration = null;
         }
         catch (JSException ex)
         {

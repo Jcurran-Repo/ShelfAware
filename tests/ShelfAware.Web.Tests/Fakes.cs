@@ -2,8 +2,25 @@ using ShelfAware.Core.Extraction;
 using ShelfAware.Core.Ingest;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Settings;
+using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.Tests;
+
+/// <summary>A fixed household, standing in for the scope resolution (claim / circuit auth state) that only
+/// exists in a real request. Null models an unauthenticated scope.</summary>
+internal sealed class FakeCurrentHousehold(string? id = "household-under-test") : ICurrentHousehold
+{
+    private string? _id = id;
+
+    public ValueTask<string?> GetIdAsync(CancellationToken cancellationToken = default) => new(_id);
+
+    public ValueTask<string> GetRequiredIdAsync(CancellationToken cancellationToken = default) =>
+        _id is null
+            ? throw new InvalidOperationException("No household in scope.") // mirrors the real one: never fall through to nobody's pantry
+            : new(_id);
+
+    public void UseFixed(string householdId) => _id = householdId;
+}
 
 /// <summary>Returns a canned adaptation and records what it was asked with — drives RecipeAdapter tests.</summary>
 internal sealed class FakeRecipeAdvisor(RecipeSuggestion? adaptResult) : IRecipeAdvisor

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using ShelfAware.Core.Domain;
 using ShelfAware.Web.Data;
 
@@ -206,7 +207,7 @@ public class HouseholdIsolationTests : IDisposable
         }
 
         _db.HouseholdId = B;
-        var service = new UserDataService(_db);
+        var service = new UserDataService(_db, new FakeCurrentHousehold(), null, NullLogger<UserDataService>.Instance);
 
         var export = await service.ExportAsync();
         Assert.Equal("Coffee", Assert.Single(export.Products).Name);

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Domain;
+using ShelfAware.Web.Services;
 
 namespace ShelfAware.Web.Data;
 
@@ -8,11 +9,18 @@ namespace ShelfAware.Web.Data;
 /// "Download my data" export and the "Delete my data" danger action. Kept as a service (not inline in
 /// the page) so the delete order lives in exactly one tested spot and the export endpoint can reuse it.
 ///
-/// Scope: the user's own content (pantry, purchase history, signals, receipts, recipes, lists). It does
-/// NOT touch <c>AppSettings</c> (app configuration) or the visitor's BYOK keys — those are held in the
-/// browser and cleared separately by "Forget my key".
+/// Scope: the user's own content (pantry, purchase history, signals, receipts, recipes, lists) — and the
+/// synthesized audio of their recipe steps, which is derived from that content and therefore theirs. It
+/// does NOT touch <c>AppSettings</c> (app configuration) or the visitor's BYOK keys — those are held in
+/// the browser and cleared separately by "Forget my key".
 /// </summary>
-public sealed class UserDataService(IHouseholdDbFactory dbFactory)
+/// <param name="speechCacheRoot">Root of the TTS cache, or null when caching is off. Deleting a household's
+/// rows while leaving a recording of its recipes on disk would make "delete my data" a false statement.</param>
+public sealed class UserDataService(
+    IHouseholdDbFactory dbFactory,
+    ICurrentHousehold currentHousehold,
+    string? speechCacheRoot,
+    ILogger<UserDataService> logger)
 {
     /// <summary>Everything, flattened (loaded without navigations so there are no serialization cycles) —
     /// a portable JSON snapshot the user can keep before deleting, or just as a backup.</summary>
@@ -81,6 +89,28 @@ public sealed class UserDataService(IHouseholdDbFactory dbFactory)
         await db.GroceryExtras.ExecuteDeleteAsync(ct);
 
         await tx.CommitAsync(ct);
+
+        // Only AFTER the rows are certainly gone. The audio is derived from them, so deleting it first
+        // would mean a failed transaction left the recipes intact but silent.
+        await DeleteCachedSpeechAsync(ct);
+    }
+
+    /// <summary>
+    /// The synthesized audio of this household's recipe steps. It's a recording of their content, so
+    /// leaving it on disk after "delete my data" would make that button a lie — and it's the reason the
+    /// speech cache is per-household rather than shared: a clip you can't attribute is a clip you can't
+    /// delete. Failing to remove it must not fail the delete: the data itself is already gone, and
+    /// reporting failure would invite them to press it again.
+    /// </summary>
+    private async Task DeleteCachedSpeechAsync(CancellationToken ct)
+    {
+        if (speechCacheRoot is null) return;
+
+        var householdId = await currentHousehold.GetIdAsync(ct);
+        if (householdId is null) return;
+
+        if (!CachingTextToSpeech.DeleteHousehold(speechCacheRoot, householdId, logger))
+            logger.LogWarning("Deleted the household's data, but some of its cached speech remains on disk.");
     }
 }
 
