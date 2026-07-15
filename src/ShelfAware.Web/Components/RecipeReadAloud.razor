@@ -185,6 +185,10 @@
     /// </summary>
     private async Task OpenEarsAsync()
     {
+        // There's one microphone. If the roaming assistant is up, it must let go before we take it —
+        // two loops transcribing the same room would both answer every utterance and bill for it.
+        await Coordinator.RequestStandDownAsync();
+
         _ear = await JS.InvokeAsync<IJSObjectReference>("import", "/js/cooklisten.js");
         _voice = await JS.InvokeAsync<IJSObjectReference>("import", "/js/voice.js");
 

@@ -159,11 +159,15 @@
     }
     @if (readingRecipe is not null)
     {
-        <RecipeReadAloud Recipe="readingRecipe" @key="readingRecipe.Id" OnClosed="StopReading" />
+        @* Keyed on the MODE as well as the recipe: switching the same recipe between hands-free and
+           buttons has to build a new reader, or the ears never open (or never close) — the mic is
+           acquired on first render, which a parameter change alone doesn't repeat. *@
+        <RecipeReadAloud Recipe="readingRecipe" HandsFree="readingHandsFree"
+                         @key="(readingRecipe.Id, readingHandsFree)" OnClosed="StopReading" />
     }
     @if (cookingRecipe is not null)
     {
-        <CookAlong Recipe="cookingRecipe" @key="cookingRecipe.Id" OnClosed="StopCooking" OnUnavailable="HandleCookUnavailable" />
+        <CookAlong Recipe="cookingRecipe" @key="cookingRecipe.Id" OnClosed="StopCooking" OnUnavailable="HandleAgentUnavailable" />
     }
     @if (picked is not null)
     {
@@ -212,19 +216,26 @@
                             <span class="chip variant-chip" title="Adapted to use what you have">🔀 adapted</span>
                         }
                         <span class="saved-actions">
+                            @* Cook-along is OUR reader now: it listens between steps, answers on the same
+                               brain as the assistant, and re-reads a recipe for free once it's cached.
+                               The caret carries the alternatives — a no-microphone read, and the
+                               ElevenLabs realtime agent for anyone who wants interruption mid-sentence
+                               and is paying for it. The caret IS the choice: per-recipe, at the moment
+                               you care, rather than a preference buried in Settings. *@
                             @if (r.Steps.Count > 0)
                             {
-                                @if (CookAlongAvailable)
-                                {
-                                    <SplitButton PrimaryLabel="🎙 Cook-along" MainClass="secondary" OnPrimary="() => StartCooking(r)"
-                                                 PrimaryAriaLabel="@($"Hands-free cook-along for {r.Name}")">
-                                        <button class="secondary" @onclick="() => StartReading(r)" aria-label="Read @r.Name aloud">🔊 Read it to me</button>
-                                    </SplitButton>
-                                }
-                                else
-                                {
-                                    <button class="secondary" @onclick="() => StartReading(r)" aria-label="Read @r.Name aloud">🔊 Read it to me</button>
-                                }
+                                <SplitButton PrimaryLabel="🎙 Cook-along" MainClass="secondary" OnPrimary="() => StartHandsFree(r)"
+                                             PrimaryAriaLabel="@($"Hands-free cook-along for {r.Name}")">
+                                    <button class="secondary" @onclick="() => StartReading(r)"
+                                            aria-label="Read @r.Name aloud without the microphone"
+                                            title="Buttons only — no microphone. Synthesized once, then free to re-read.">🔊 Read it to me</button>
+                                    @if (CookAlongAvailable)
+                                    {
+                                        <button class="secondary" @onclick="() => StartAgent(r)"
+                                                aria-label="Live ElevenLabs agent cook-along for @r.Name"
+                                                title="Interrupt it mid-sentence. Runs on your ElevenLabs key and is billed per minute of conversation.">💬 Live agent</button>
+                                    }
+                                </SplitButton>
                             }
                             <button class="secondary" @onclick="() => MarkEaten(r)" aria-label="Mark @r.Name eaten">Ate it</button>
                             @if (!makeable)
@@ -377,20 +388,22 @@
     private Recipe? picked;
     private string? extraNote;
     private Recipe? readingRecipe;
-    private Recipe? cookingRecipe;
-    private bool cookAutoStarted; // this cook-along was opened by the voice chain (so we may fall back)
+    private bool readingHandsFree; // ...with the mic open, listening between steps
+    private Recipe? cookingRecipe; // the ElevenLabs realtime agent
     private readonly Random rng = new();
 
-    /// <summary>Deep link from the chat's read_recipe tool (/recipes?read={id}) — auto-starts a hands-free
-    /// read of the recipe: the listening cook-along agent when it's configured (so the whole voice chain,
-    /// including leaving by voice, stays hands-free), else the button-controlled read-aloud.</summary>
+    /// <summary>Deep link from the chat's read_recipe tool (/recipes?read={id}) — auto-starts our own
+    /// hands-free reader, so the whole voice chain (including leaving by voice) stays hands-free without
+    /// depending on a configured ElevenLabs agent or a per-minute session.</summary>
     [SupplyParameterFromQuery(Name = "read")] public int? ReadId { get; set; }
 
     /// <summary>Deep link from open_page(page="recipes", product_name) (/recipes?uses={id}) — scopes the
     /// saved list to recipes that use that product, the middle step of the hands-free navigation chain.</summary>
     [SupplyParameterFromQuery(Name = "uses")] public int? UsesProductId { get; set; }
 
-    // Hands-free cook-along only shows when the visitor has set an ElevenLabs agent id (per circuit; empty = hidden).
+    // The ElevenLabs realtime agent is an ALTERNATIVE now, not the cook-along: it only appears in the
+    // caret when the visitor has brought their own agent id (per circuit; empty = the option is hidden).
+    // Our own hands-free reader needs no agent, so cook-along itself is always available.
     private bool CookAlongAvailable => !string.IsNullOrEmpty(Voice.AgentId);
 
     // Adapt a recipe to what's on hand and save it as a variant (on-demand — one AI call per click).
@@ -468,18 +481,20 @@
         }
     }
 
-    // Only one voice surface at a time — starting one closes the other. cookAutoStarted resets on any
-    // manual start; the deep-link path sets it true afterwards so only that case auto-falls-back.
-    private void StartReading(Recipe r) { cookAutoStarted = false; cookingRecipe = null; readingRecipe = r; }
+    // Only one voice surface at a time — starting one closes the other.
+    private void StartHandsFree(Recipe r) { cookingRecipe = null; readingHandsFree = true; readingRecipe = r; }
+    private void StartReading(Recipe r) { cookingRecipe = null; readingHandsFree = false; readingRecipe = r; }
     private void StopReading() => readingRecipe = null;
-    private void StartCooking(Recipe r) { cookAutoStarted = false; readingRecipe = null; cookingRecipe = r; }
+    private void StartAgent(Recipe r) { readingRecipe = null; cookingRecipe = r; }
     private void StopCooking() => cookingRecipe = null;
 
-    // The voice chain's auto-started cook-along couldn't connect (e.g. bad wifi). Fall back to the plain
-    // reader so the recipe still gets read instead of dead-ending on an error the user can't tap away.
-    private void HandleCookUnavailable()
+    // The ElevenLabs agent couldn't connect (bad wifi is the classic). Fall back to our own hands-free
+    // reader — which since it listens and answers on the same brain, is no longer a downgrade the way
+    // falling back to a button-only read used to be. Unconditional now: whoever started the agent, a
+    // dead-end error they can't tap away is worse than the reader that does work.
+    private void HandleAgentUnavailable()
     {
-        if (cookAutoStarted && cookingRecipe is { } r) StartReading(r);
+        if (cookingRecipe is { } r) StartHandsFree(r);
     }
 
     // A saved recipe is makeable when every MAIN ingredient is covered by something on hand — by food
@@ -611,8 +626,7 @@
         if (!RendererInfo.IsInteractive || ReadId is not { } id) return;
         if (savedRecipes.FirstOrDefault(r => r.Id == id) is { Steps.Count: > 0 } target)
         {
-            if (CookAlongAvailable) { StartCooking(target); cookAutoStarted = true; }
-            else StartReading(target);
+            StartHandsFree(target);
         }
         Nav.NavigateTo(UsesProductId is { } u ? $"/recipes?uses={u}" : "/recipes", replace: true);
     }

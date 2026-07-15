@@ -10,6 +10,8 @@ namespace ShelfAware.Web.Services;
 ///   which no longer works now that the agent isn't a child of the dashboard).</item>
 ///   <item><see cref="ResumeRequested"/> — a read-aloud/cook-along surface hands control back to the
 ///   agent ("Back to assistant"), so it re-opens the mic and resumes the conversation.</item>
+///   <item><see cref="StandDownRequested"/> — the mirror image: a surface is taking the microphone for
+///   itself, so the agent lets go of it.</item>
 /// </list>
 /// Scoped = one instance per Blazor circuit (single user session), which is exactly the sharing scope
 /// we want. Handlers are <see cref="Func{Task}"/> so subscribers can marshal onto the renderer.
@@ -28,9 +30,23 @@ public sealed class VoiceCoordinator
     /// <summary>Raised when a surface hands control back to the agent to resume listening.</summary>
     public event Func<Task>? ResumeRequested;
 
+    /// <summary>
+    /// Raised when a surface is taking the microphone for itself — currently the hands-free reader, which
+    /// runs its own listening loop. There is one microphone, and two loops transcribing the same room
+    /// would both answer every utterance and bill for the privilege. The agent stands down WITHOUT
+    /// losing its conversation, so a later "Back to assistant" resumes mid-thought.
+    ///
+    /// The read_recipe hand-off (ChatResult.HandsOff) covers the case where the AGENT starts the reader.
+    /// This covers the other direction: the user clicking into a reader while the agent is already up,
+    /// which nothing was watching for.
+    /// </summary>
+    public event Func<Task>? StandDownRequested;
+
     public Task NotifyPantryChangedAsync() => InvokeAllAsync(PantryChanged);
 
     public Task RequestResumeAsync() => InvokeAllAsync(ResumeRequested);
+
+    public Task RequestStandDownAsync() => InvokeAllAsync(StandDownRequested);
 
     // Invoke every subscriber in turn (a plain Func<Task>.Invoke would only await the last one).
     private static async Task InvokeAllAsync(Func<Task>? handlers)
