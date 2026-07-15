@@ -18,5 +18,10 @@ public class AuthDbContext(DbContextOptions<AuthDbContext> options) : IdentityDb
 
         modelBuilder.Entity<Household>().HasIndex(h => h.InviteCode).IsUnique();
         modelBuilder.Entity<AppUser>().HasIndex(u => u.HouseholdId);
+
+        // Derived from InviteMaxUses/InviteUseCount for display — behaviour, not stored state. EF maps
+        // computed properties as columns by convention unless told otherwise (the same trap Recipe's
+        // IsVariant hit), and a phantom column here would break EnsureCreated against a live auth.db.
+        modelBuilder.Entity<Household>().Ignore(h => h.InviteUsesRemaining);
     }
 }

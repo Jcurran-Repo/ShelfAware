@@ -27,4 +27,8 @@
             Household.UseFixed(householdId);
         }
     }
+
+    // No household is deliberately NOT handled here: a signed-in account without one is redirected to the
+    // chooser by middleware, before any of this renders. It can't be done from a component — the page body
+    // initialises before the layout does, so it would already have thrown on GetRequiredIdAsync by now.
 }

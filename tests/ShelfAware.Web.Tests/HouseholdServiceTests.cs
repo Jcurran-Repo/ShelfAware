@@ -1,4 +1,7 @@
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using ShelfAware.Web.Auth;
 
 namespace ShelfAware.Web.Tests;
@@ -7,16 +10,35 @@ public class HouseholdServiceTests : IDisposable
 {
     private readonly TestAuthDb _db = new();
     private readonly AuthDbContext _context;
+    private readonly UserManager<AppUser> _users;
     private readonly HouseholdService _service;
 
     public HouseholdServiceTests()
     {
         _context = _db.CreateDbContext();
-        _service = new HouseholdService(_context, NullLogger<HouseholdService>.Instance);
+        _users = NewUserManager(_context);
+        _service = NewService(new AuthOptions());
     }
+
+    private HouseholdService NewService(AuthOptions options) =>
+        new(_context, _users, Options.Create(options), NullLogger<HouseholdService>.Instance);
+
+    /// <summary>A REAL UserManager over the test context, not a fake: removing a member is only a removal
+    /// because it bumps the security stamp, and a fake would let that go untested.</summary>
+    private static UserManager<AppUser> NewUserManager(AuthDbContext context) => new(
+        new UserStore<AppUser>(context),
+        Options.Create(new IdentityOptions()),
+        new PasswordHasher<AppUser>(),
+        [],
+        [],
+        new UpperInvariantLookupNormalizer(),
+        new IdentityErrorDescriber(),
+        null!,
+        NullLogger<UserManager<AppUser>>.Instance);
 
     public void Dispose()
     {
+        _users.Dispose();
         _context.Dispose();
         _db.Dispose();
     }
@@ -112,7 +134,7 @@ public class HouseholdServiceTests : IDisposable
         var household = await _service.CreateForAsync("Home", owner);
         var oldCode = household.InviteCode;
 
-        var newCode = await _service.RegenerateInviteCodeAsync(household.Id);
+        var newCode = (await _service.RegenerateInviteCodeAsync(household.Id)).InviteCode;
 
         Assert.NotEqual(oldCode, newCode);
         Assert.Null(await _service.FindByInviteCodeAsync(oldCode));
@@ -131,10 +153,205 @@ public class HouseholdServiceTests : IDisposable
         await _service.JoinAsync(household.InviteCode, b);
         var other = await _service.CreateForAsync("Elsewhere", stranger);
 
-        var members = await _service.GetMemberEmailsAsync(household.Id);
+        var members = await _service.GetMembersAsync(household.Id);
 
-        Assert.Equal(new[] { "amy@example.com", "zoe@example.com" }, members);
-        Assert.Equal(new[] { "stranger@example.com" }, await _service.GetMemberEmailsAsync(other.Id));
+        Assert.Equal(["amy@example.com", "zoe@example.com"], members.Select(m => m.Email));
+        Assert.Equal(["stranger@example.com"], (await _service.GetMembersAsync(other.Id)).Select(m => m.Email));
+    }
+
+    // ---- Invite expiry ----
+
+    [Fact]
+    public async Task Without_a_configured_lifetime_a_code_never_expires()
+    {
+        // The self-host default, and what every code minted before expiry existed already is.
+        var owner = NewUser("a@example.com");
+        _context.Users.Add(owner);
+
+        var household = await _service.CreateForAsync("Home", owner);
+
+        Assert.Null(household.InviteExpiresAt);
+        Assert.True(household.InviteIsUsable(DateTimeOffset.Now.AddYears(5)));
+    }
+
+    [Fact]
+    public async Task A_configured_lifetime_dates_the_code()
+    {
+        var service = NewService(new AuthOptions { InviteCodeLifetimeDays = 7 });
+        var owner = NewUser("a@example.com");
+        _context.Users.Add(owner);
+
+        var household = await service.CreateForAsync("Home", owner);
+
+        Assert.NotNull(household.InviteExpiresAt);
+        Assert.True(household.InviteIsUsable(DateTimeOffset.Now.AddDays(6)));
+        Assert.False(household.InviteIsUsable(DateTimeOffset.Now.AddDays(8)));
+    }
+
+    [Fact]
+    public async Task An_expired_code_admits_nobody()
+    {
+        var owner = NewUser("a@example.com");
+        _context.Users.Add(owner);
+        var household = await _service.CreateForAsync("Home", owner);
+        household.InviteExpiresAt = DateTimeOffset.Now.AddDays(-1);
+        await _context.SaveChangesAsync();
+
+        var joiner = NewUser("b@example.com");
+        _context.Users.Add(joiner);
+
+        Assert.Null(await _service.FindByInviteCodeAsync(household.InviteCode));
+        Assert.Null(await _service.JoinAsync(household.InviteCode, joiner));
+        Assert.Null(joiner.HouseholdId);
+    }
+
+    [Fact]
+    public async Task Regenerating_restarts_the_clock_and_the_use_count()
+    {
+        // A regenerated code is a new credential, not the old one respelled.
+        var service = NewService(new AuthOptions { InviteCodeLifetimeDays = 7 });
+        var owner = NewUser("a@example.com");
+        _context.Users.Add(owner);
+        var household = await service.CreateForAsync("Home", owner);
+        household.InviteExpiresAt = DateTimeOffset.Now.AddDays(-1);
+        household.InviteUseCount = 5;
+        await _context.SaveChangesAsync();
+
+        var regenerated = await service.RegenerateInviteCodeAsync(household.Id, maxUses: 1);
+
+        Assert.Equal(0, regenerated.InviteUseCount);
+        Assert.True(regenerated.InviteExpiresAt > DateTimeOffset.Now);
+        Assert.True(regenerated.InviteIsUsable(DateTimeOffset.Now));
+    }
+
+    // ---- Invite use limits ----
+
+    [Fact]
+    public async Task A_single_use_code_admits_one_person_and_then_stops()
+    {
+        var owner = NewUser("a@example.com");
+        _context.Users.Add(owner);
+        var household = await _service.CreateForAsync("Home", owner);
+        await _service.RegenerateInviteCodeAsync(household.Id, maxUses: 1);
+        var code = (await _service.GetAsync(household.Id))!.InviteCode;
+
+        var first = NewUser("b@example.com");
+        _context.Users.Add(first);
+        Assert.NotNull(await _service.JoinAsync(code, first));
+        Assert.Equal(household.Id, first.HouseholdId);
+
+        var second = NewUser("c@example.com");
+        _context.Users.Add(second);
+        Assert.Null(await _service.JoinAsync(code, second));
+        Assert.Null(second.HouseholdId);
+    }
+
+    [Fact]
+    public async Task An_unlimited_code_keeps_admitting_people()
+    {
+        var owner = NewUser("a@example.com");
+        _context.Users.Add(owner);
+        var household = await _service.CreateForAsync("Home", owner);
+
+        foreach (var email in new[] { "b@example.com", "c@example.com", "d@example.com" })
+        {
+            var joiner = NewUser(email);
+            _context.Users.Add(joiner);
+            Assert.NotNull(await _service.JoinAsync(household.InviteCode, joiner));
+        }
+
+        Assert.Equal(4, (await _service.GetMembersAsync(household.Id)).Count);
+    }
+
+    [Fact]
+    public async Task An_empty_code_never_matches()
+    {
+        // Guards the degenerate case where a household somehow has no code: "" must not be a skeleton key.
+        Assert.Null(await _service.FindByInviteCodeAsync(""));
+        Assert.Null(await _service.FindByInviteCodeAsync("   "));
+    }
+
+    // ---- Member removal ----
+
+    private async Task<(Household Household, AppUser Owner, AppUser Other)> TwoMemberHouseholdAsync()
+    {
+        var owner = NewUser("a@example.com");
+        var other = NewUser("b@example.com");
+        _context.Users.AddRange(owner, other);
+        var household = await _service.CreateForAsync("Home", owner);
+        await _service.JoinAsync(household.InviteCode, other);
+        await _context.SaveChangesAsync();
+        return (household, owner, other);
+    }
+
+    [Fact]
+    public async Task Removing_a_member_clears_their_household_and_bumps_their_security_stamp()
+    {
+        var (household, owner, other) = await TwoMemberHouseholdAsync();
+        var stampBefore = other.SecurityStamp;
+
+        var refused = await _service.RemoveMemberAsync(household.Id, other.Id, actingUserId: owner.Id);
+
+        Assert.Null(refused);
+        Assert.Null(other.HouseholdId);
+        // The household id rides in the auth COOKIE. Without a new stamp their existing cookie would keep
+        // asserting membership until it happened to be re-issued — this is what actually removes them.
+        Assert.NotEqual(stampBefore, other.SecurityStamp);
+        Assert.Equal(["a@example.com"], (await _service.GetMembersAsync(household.Id)).Select(m => m.Email));
+    }
+
+    [Fact]
+    public async Task You_cannot_remove_yourself()
+    {
+        var (household, owner, _) = await TwoMemberHouseholdAsync();
+
+        var refused = await _service.RemoveMemberAsync(household.Id, owner.Id, actingUserId: owner.Id);
+
+        Assert.NotNull(refused);
+        Assert.Equal(household.Id, owner.HouseholdId);
+    }
+
+    [Fact]
+    public async Task You_cannot_remove_the_last_member()
+    {
+        // A household with nobody in it is data nobody can read, export, or delete.
+        var owner = NewUser("a@example.com");
+        var outsider = NewUser("z@example.com");
+        _context.Users.AddRange(owner, outsider);
+        var household = await _service.CreateForAsync("Home", owner);
+        await _context.SaveChangesAsync();
+
+        var refused = await _service.RemoveMemberAsync(household.Id, owner.Id, actingUserId: outsider.Id);
+
+        Assert.NotNull(refused);
+        Assert.Equal(household.Id, owner.HouseholdId);
+    }
+
+    [Fact]
+    public async Task You_cannot_remove_someone_from_a_household_they_are_not_in()
+    {
+        var (household, owner, _) = await TwoMemberHouseholdAsync();
+        var stranger = NewUser("stranger@example.com");
+        _context.Users.Add(stranger);
+        await _service.CreateForAsync("Elsewhere", stranger);
+        await _context.SaveChangesAsync();
+
+        var refused = await _service.RemoveMemberAsync(household.Id, stranger.Id, actingUserId: owner.Id);
+
+        Assert.NotNull(refused);
+        Assert.NotNull(stranger.HouseholdId);
+    }
+
+    [Fact]
+    public async Task A_removed_member_can_be_invited_back()
+    {
+        var (household, owner, other) = await TwoMemberHouseholdAsync();
+        await _service.RemoveMemberAsync(household.Id, other.Id, actingUserId: owner.Id);
+
+        var rejoined = await _service.JoinAsync(household.InviteCode, other);
+
+        Assert.NotNull(rejoined);
+        Assert.Equal(household.Id, other.HouseholdId);
     }
 
     [Fact]

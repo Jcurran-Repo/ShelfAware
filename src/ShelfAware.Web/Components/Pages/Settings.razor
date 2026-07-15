@@ -6,6 +6,7 @@
 @using ShelfAware.Llm
 @using ShelfAware.Web.Auth
 @using Microsoft.Extensions.Options
+@using System.Security.Claims
 @using ShelfAware.Web.Ingest
 @inject IAppSettings SettingsStore
 @inject ReceiptFolderPolicy FolderPolicy
@@ -50,27 +51,60 @@
 
         <label class="field"><span>Invite code</span></label>
         <div class="review-actions invite-row">
-            <code class="invite-code">@household.InviteCode</code>
-            <button @onclick="CopyInvite">Copy</button>
+            <code class="invite-code">@(InviteUsable ? household.InviteCode : "—")</code>
+            <button @onclick="CopyInvite" disabled="@(!InviteUsable)">Copy</button>
             <button class="secondary" @onclick="RegenerateInvite" disabled="@regenerating">
                 @(regenerating ? "Regenerating…" : "Regenerate")
             </button>
         </div>
+        <label class="field">
+            <input type="checkbox" @bind="inviteSingleUse" />
+            <span>Single use — the next code works for one person only</span>
+        </label>
         @if (inviteNote is not null)
         {
             <p class="chat-reply" role="status">@inviteNote</p>
         }
+        <p class="@(InviteUsable ? "muted small" : "error small")">@InviteStatus</p>
         <p class="muted small">
-            Regenerating invalidates the old code — anyone you already gave it to needs the new one.
+            Regenerating invalidates the old code — anyone you already gave it to needs the new one. It
+            doesn't remove anyone who already joined; use Remove for that.
         </p>
 
         <h3>Members</h3>
         <ul class="member-list">
             @foreach (var member in members)
             {
-                <li>@member</li>
+                <li>
+                    <span>@member.Email</span>
+                    @if (member.Id == currentUserId)
+                    {
+                        <span class="muted small">you</span>
+                    }
+                    else
+                    {
+                        <button class="secondary" @onclick="() => RemoveMember(member)"
+                                disabled="@(removingId is not null)"
+                                aria-label="Remove @member.Email from this household">
+                            @(removingId == member.Id ? "Removing…" : "Remove")
+                        </button>
+                    }
+                </li>
             }
         </ul>
+        @if (memberNote is not null)
+        {
+            <p class="chat-reply" role="status">@memberNote</p>
+        }
+        @if (memberError is not null)
+        {
+            <p class="error" role="alert">@memberError</p>
+        }
+        <p class="muted small">
+            Removing someone takes their access away within a few minutes, on every device they're signed
+            in on. It doesn't touch the pantry — that belongs to the household, not the account — and they
+            keep their account, they're just not in a household until they join or start one.
+        </p>
         <p class="muted small">
             Forgot a password? There's no email reset yet — whoever runs this server can recreate the
             account. The pantry is untouched either way: it belongs to the household, not the account.
@@ -450,13 +484,46 @@
     private Task<AuthenticationState>? AuthState { get; set; }
 
     private Household? household;
-    private IReadOnlyList<string> members = [];
+    private IReadOnlyList<HouseholdMember> members = [];
+    private string? currentUserId;
     private string householdName = "";
     private bool renaming;
     private bool regenerating;
+    private bool inviteSingleUse;
     private string? inviteNote;
+    private string? memberNote;
+    private string? memberError;
+    private string? removingId;
     private bool HouseholdNameChanged =>
         household is not null && householdName.Trim().Length > 0 && householdName.Trim() != household.Name;
+
+    private bool InviteUsable => household?.InviteIsUsable(DateTimeOffset.Now) == true;
+
+    /// <summary>What the code is good for, in the terms someone about to share it cares about: whether it
+    /// works, for how long, and for how many people.</summary>
+    private string InviteStatus
+    {
+        get
+        {
+            if (household is null) return "";
+            if (!InviteUsable) return "This code can't be used any more — regenerate it to invite someone.";
+
+            // Each clause carries its own verb so any combination reads as a sentence.
+            var parts = new List<string>();
+            if (household.InviteExpiresAt is { } expires)
+            {
+                var days = (int)Math.Ceiling((expires - DateTimeOffset.Now).TotalDays);
+                parts.Add(days <= 1 ? "expires today" : $"expires in {days} days");
+            }
+            if (household.InviteUsesRemaining is { } left)
+            {
+                parts.Add(left == 1 ? "has one use left" : $"has {left} uses left");
+            }
+            return parts.Count == 0
+                ? "This code doesn't expire and can be used any number of times."
+                : "This code " + string.Join(" and ", parts) + ".";
+        }
+    }
 
     private string folder = "";
     private ImportMode mode = ImportMode.Smart;
@@ -870,9 +937,47 @@
         var user = (await AuthState).User;
         var householdId = user.FindFirst(HouseholdClaimsPrincipalFactory.HouseholdClaim)?.Value;
         if (householdId is null) return;
+        currentUserId = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         household = await Households.GetAsync(householdId);
-        members = await Households.GetMemberEmailsAsync(householdId);
+        members = await Households.GetMembersAsync(householdId);
         householdName = household?.Name ?? "";
+    }
+
+    private async Task RemoveMember(HouseholdMember member)
+    {
+        if (household is null || currentUserId is null || removingId is not null) return;
+        if (!await JS.InvokeAsync<bool>("confirm",
+            $"Remove {member.Email} from this household? They'll lose access to the pantry within a few minutes."))
+        {
+            return;
+        }
+
+        removingId = member.Id;
+        memberNote = null;
+        memberError = null;
+        try
+        {
+            var refused = await Households.RemoveMemberAsync(household.Id, member.Id, currentUserId);
+            if (refused is not null)
+            {
+                memberError = refused;
+            }
+            else
+            {
+                memberNote = $"{member.Email} is no longer in this household.";
+            }
+            members = await Households.GetMembersAsync(household.Id);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Removing a member from household {HouseholdId} failed.", household.Id);
+            memberError = "Couldn't remove them just now — please try again.";
+        }
+        finally
+        {
+            removingId = null;
+        }
     }
 
     private async Task RenameHousehold()
@@ -910,7 +1015,9 @@
         regenerating = true;
         try
         {
-            household.InviteCode = await Households.RegenerateInviteCodeAsync(household.Id);
+            // Re-read rather than patching the code onto the local copy: regenerating resets the expiry
+            // and the use count too, and the panel reports all three.
+            household = await Households.RegenerateInviteCodeAsync(household.Id, inviteSingleUse ? 1 : null);
             inviteNote = "New invite code generated — the old one no longer works.";
         }
         catch (OperationCanceledException) { throw; }

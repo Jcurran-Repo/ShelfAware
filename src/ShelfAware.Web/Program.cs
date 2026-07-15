@@ -281,6 +281,9 @@ using (var scope = app.Services.CreateScope())
     using (var authDb = authFactory.CreateDbContext())
     {
         authDb.Database.EnsureCreated();
+        // EnsureCreated never alters an existing file, and auth.db stopped being "fresh per deployment"
+        // as soon as a deployment had real accounts in it worth keeping.
+        AdditiveSchema.Apply(authDb);
     }
 
     var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<ShelfAwareDbContext>>();
@@ -403,6 +406,37 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.UseAntiforgery();
 app.UseRateLimiter();
+
+// Signed in, but in no household — send them somewhere that says so.
+//
+// This has to be middleware rather than a component. Every page resolves its household through
+// GetRequiredIdAsync, which THROWS rather than guess a tenant, and the page body initialises before
+// anything in the layout gets a chance to intervene — so a component-level guard loses the race and the
+// user meets a 500 instead of an explanation. Middleware runs before any of it renders.
+//
+// Only reachable since members can be removed; before that, every account had a household for life.
+app.Use(async (context, next) =>
+{
+    var path = context.Request.Path;
+    var isAppPage =
+        !path.StartsWithSegments("/Account")     // the chooser itself, and sign-in/out
+        && !path.StartsWithSegments("/api")      // API callers get a status code, not a redirect
+        && !path.StartsWithSegments("/_blazor")  // never redirect the circuit's own transport
+        && !path.StartsWithSegments("/_framework")
+        && !path.StartsWithSegments("/_content")
+        && !path.StartsWithSegments("/demo")     // public, anonymous
+        && !Path.HasExtension(path.Value);       // static assets
+
+    if (isAppPage
+        && context.User.Identity?.IsAuthenticated == true
+        && context.User.FindFirst(HouseholdClaimsPrincipalFactory.HouseholdClaim) is null)
+    {
+        context.Response.Redirect("/Account/Household");
+        return;
+    }
+
+    await next();
+});
 
 app.MapStaticAssets();
 

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using ShelfAware.Web.Auth;
 
 namespace ShelfAware.Web.Data;
 
@@ -8,6 +9,10 @@ namespace ShelfAware.Web.Data;
 /// after v3 shipped is applied here as an idempotent <c>ALTER TABLE … ADD COLUMN</c> on startup.
 /// Additive DEFAULT-valued columns only; anything structural is a fresh-DB change (see PantryDbGuard
 /// and the v3 notes in CLAUDE.md).
+///
+/// Both DBs get the same treatment. auth.db was described as "a fresh file per deployment site", which
+/// stopped being true the moment a deployment had accounts in it worth keeping — an added column there
+/// needs the same ALTER as the pantry's, or the next query fails on a real user's live database.
 /// </summary>
 public static class AdditiveSchema
 {
@@ -17,7 +22,17 @@ public static class AdditiveSchema
         EnsureColumn(db, table: "Receipts", column: "VerifiedForEval", definition: "INTEGER NOT NULL DEFAULT 0");
     }
 
-    private static void EnsureColumn(ShelfAwareDbContext db, string table, string column, string definition)
+    public static void Apply(AuthDbContext db)
+    {
+        // 2026-07-15: invite codes stopped being permanent, unlimited bearer credentials. Existing codes
+        // get NULL/0 — no expiry, no use limit — which is exactly what they already were, so a live
+        // deployment's outstanding invites keep working until someone regenerates them.
+        EnsureColumn(db, table: "Households", column: "InviteExpiresAt", definition: "TEXT NULL");
+        EnsureColumn(db, table: "Households", column: "InviteMaxUses", definition: "INTEGER NULL");
+        EnsureColumn(db, table: "Households", column: "InviteUseCount", definition: "INTEGER NOT NULL DEFAULT 0");
+    }
+
+    private static void EnsureColumn(DbContext db, string table, string column, string definition)
     {
         var conn = db.Database.GetDbConnection();
         var wasClosed = conn.State != System.Data.ConnectionState.Open;

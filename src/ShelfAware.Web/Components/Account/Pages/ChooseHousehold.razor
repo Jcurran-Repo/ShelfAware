@@ -1,0 +1,136 @@
+@page "/Account/Household"
+@using Microsoft.Extensions.Options
+@inject UserManager<AppUser> UserManager
+@inject SignInManager<AppUser> SignInManager
+@inject HouseholdService Households
+@inject AuthDbContext Db
+@inject IOptions<AuthOptions> Auth
+@inject IdentityRedirectManager RedirectManager
+@inject ILogger<ChooseHousehold> Logger
+
+@* Where a signed-in account with no household lands: today that means someone who was removed from one.
+   It exists because the alternative is worse — every page resolves the household through
+   GetRequiredIdAsync, which throws rather than guess a tenant, so without this page a removed member
+   meets an error page and no explanation. *@
+
+<PageTitle>Your household — Shelf Aware</PageTitle>
+
+<h1>You're not in a household</h1>
+<StatusMessage Message="@errorMessage" />
+
+<p class="muted">
+    A household is the pantry you share — its products, receipts, and recipes. Your account isn't in one
+    right now, so there's nothing for it to show you. Join one with its invite code, or start your own.
+</p>
+
+<EditForm Model="Input" method="post" OnValidSubmit="ChooseAsync" FormName="choose-household">
+    <DataAnnotationsValidator />
+    <fieldset class="auth-household">
+        <legend>Your household</legend>
+        <div class="auth-field">
+            <label for="invite-code">Joining someone? Enter their invite code</label>
+            <InputText @bind-Value="Input.InviteCode" id="invite-code" autocomplete="off"
+                       placeholder="e.g. K7MPQ2XW4A" />
+        </div>
+        @if (mayCreate)
+        {
+            <div class="auth-field">
+                <label for="household-name">…or name a new household</label>
+                <InputText @bind-Value="Input.HouseholdName" id="household-name" autocomplete="off"
+                           placeholder="e.g. The Currans" />
+            </div>
+        }
+    </fieldset>
+    <button type="submit" class="auth-submit">Continue</button>
+</EditForm>
+
+<p class="muted auth-alt">
+    <form method="post" action="Account/Logout" data-enhance="false">
+        <AntiforgeryToken />
+        <input type="hidden" name="ReturnUrl" value="Account/Login" />
+        <button type="submit" class="link-button">Sign out</button>
+    </form>
+</p>
+
+@code {
+    private string? errorMessage;
+    private bool mayCreate;
+
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Input ??= new();
+
+        var user = await UserManager.GetUserAsync(HttpContext.User);
+        if (user is null)
+        {
+            RedirectManager.RedirectTo("Account/Login");
+            return;
+        }
+
+        // Already in one — nothing to choose. (Also covers the reload after a successful choice.)
+        if (!string.IsNullOrEmpty(user.HouseholdId)) RedirectManager.RedirectTo("");
+
+        // The same gate registration uses: a deployment that isn't accepting new households doesn't start
+        // accepting them because the visitor already has an account.
+        mayCreate = HouseholdService.MayCreateHousehold(Auth.Value.AllowRegistration, await Households.AnyUsersAsync());
+    }
+
+    private async Task ChooseAsync()
+    {
+        var user = await UserManager.GetUserAsync(HttpContext.User);
+        if (user is null)
+        {
+            RedirectManager.RedirectTo("Account/Login");
+            return;
+        }
+
+        var joining = !string.IsNullOrWhiteSpace(Input.InviteCode);
+        if (!joining && !mayCreate)
+        {
+            errorMessage = "Error: this deployment isn't accepting new households. Ask someone for an invite code.";
+            return;
+        }
+        if (!joining && string.IsNullOrWhiteSpace(Input.HouseholdName))
+        {
+            errorMessage = "Error: enter an invite code to join a household, or name a new one.";
+            return;
+        }
+
+        await using var tx = await Db.Database.BeginTransactionAsync();
+
+        if (joining)
+        {
+            if (await Households.JoinAsync(Input.InviteCode!, user) is null)
+            {
+                errorMessage = "Error: that invite code isn't valid — it may have expired or been used up. Ask for a new one.";
+                return; // no commit: the use claim rolls back with everything else
+            }
+        }
+        else
+        {
+            await Households.CreateForAsync(Input.HouseholdName!, user);
+        }
+
+        await tx.CommitAsync();
+        Logger.LogInformation("An account with no household {Mode}.", joining ? "joined one" : "created one");
+
+        // Re-issue the cookie: the household id is a CLAIM, so without this they'd keep browsing as
+        // someone with no household and land straight back here.
+        await SignInManager.RefreshSignInAsync(user);
+        RedirectManager.RedirectTo("");
+    }
+
+    private sealed class InputModel
+    {
+        public string? InviteCode { get; set; }
+
+        [StringLength(60)]
+        public string? HouseholdName { get; set; }
+    }
+}

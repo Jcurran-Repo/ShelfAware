@@ -9,4 +9,13 @@ public class AuthOptions
     /// a fresh locked deploy must be enterable) and joining an EXISTING household with a valid invite code
     /// (possession of the code is the authorization).</summary>
     public bool AllowRegistration { get; set; } = true;
+
+    /// <summary>How long a freshly generated invite code stays usable, in days. Null (the default) means
+    /// never expires — the behaviour every existing code already has, so upgrading changes nothing until
+    /// someone regenerates.
+    ///
+    /// Set it on any deployment where a leaked code matters. A code admits its bearer to a household's
+    /// whole pantry and bypasses Auth:AllowRegistration by design ("possession of the code is the
+    /// authorization"), so without an expiry the blast radius of one screenshot is permanent.</summary>
+    public int? InviteCodeLifetimeDays { get; set; }
 }
