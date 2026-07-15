@@ -70,17 +70,28 @@ export function playFrom(i) {
     playCurrent();
 }
 
-export function pause() {
-    if (audio) audio.pause();
+// An ENDED clip reports paused === true, and play()ing one seeks back to zero and reads the step again.
+// That matters because "hold on" is most naturally said during the listening window — i.e. exactly when
+// the step's audio has just finished — so pausing and resuming there must be a no-op, not a rewind.
+function isLive() {
+    return !!audio && !audio.ended && !stopped;
 }
 
+export function pause() {
+    if (isLive()) audio.pause();
+}
+
+// Returns whether there was actually something to resume, so the caller can tell "carry on reading"
+// from "there was nothing playing — keep listening".
 export function resume() {
-    if (audio && audio.paused && !stopped) audio.play().catch(() => {});
+    if (!isLive() || !audio.paused) return false;
+    audio.play().catch(() => {});
+    return true;
 }
 
 // Flip play/paused and return the resulting paused state (so .NET can label the button).
 export function togglePause() {
-    if (!audio) return true;
+    if (!isLive()) return false; // nothing playing: the button shouldn't offer to pause silence
     if (audio.paused) { resume(); return false; }
     pause();
     return true;

@@ -24,6 +24,8 @@ let source = null;
 let noiseFloor = 0;
 let cancelled = false;
 
+const CUE_SECONDS = 0.13;
+
 export function isSupported() {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder
         && (window.AudioContext || window.webkitAudioContext));
@@ -86,8 +88,11 @@ export async function beep(rising) {
         gain.gain.exponentialRampToValueAtTime(0.05, t + 0.01);
         gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
         osc.start(t);
-        osc.stop(t + 0.13);
-        await wait(90);
+        osc.stop(t + CUE_SECONDS);
+        // Outlast the tone before handing back, with a little room to settle. Returning early would open
+        // the mic while the cue was still sounding, and the gate would hear US — a window that records
+        // its own beep, transcribes nothing, and opens another one.
+        await wait(CUE_SECONDS * 1000 + 60);
     } catch {
         // A cue we couldn't play is a worse UI, not a broken one — the window still opens.
     }
