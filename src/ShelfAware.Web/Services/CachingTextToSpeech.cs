@@ -48,20 +48,8 @@ public sealed class CachingTextToSpeech : ITextToSpeech
     /// the folder layout: the caller shouldn't have to know how clips are filed to be allowed to delete
     /// them. Returns false if something was there and wouldn't go.
     /// </summary>
-    public static bool DeleteHousehold(string root, string householdId, ILogger logger)
-    {
-        var folder = Path.Combine(root, HouseholdFolder.For(householdId));
-        try
-        {
-            if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
-            return true;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            logger.LogWarning(ex, "Couldn't remove cached speech at {Folder}.", folder);
-            return false;
-        }
-    }
+    public static bool DeleteHousehold(string root, string householdId, ILogger logger) =>
+        HouseholdFolder.DeleteUnder(root, householdId, logger);
 
     public string OutputFingerprint => _inner.OutputFingerprint;
     public string OutputMediaType => _inner.OutputMediaType;

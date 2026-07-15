@@ -25,11 +25,6 @@ public sealed class ReceiptSelfEval(
     ReceiptStorage storage,
     ILogger<ReceiptSelfEval> logger)
 {
-    /// <summary>Where the last run is kept. Declared in SettingKeys with every other key — and classified
-    /// there as the household's content, because a score named "Walmart 2026-07-04" is a fact about their
-    /// shopping and has to go when they delete their data.</summary>
-    public const string ResultsKey = SettingKeys.SelfEvalResults;
-
     public sealed record RunProgress(int Done, int Total, string Current);
 
     /// <summary>Verified receipts eligible for grading (confirmed + flag set), newest first.</summary>
@@ -42,7 +37,7 @@ public sealed class ReceiptSelfEval(
 
     public async Task<EvalResults?> GetLastRunAsync(CancellationToken cancellationToken = default)
     {
-        var json = await appSettings.GetAsync(ResultsKey, cancellationToken);
+        var json = await appSettings.GetAsync(SettingKeys.SelfEvalResults, cancellationToken);
         if (string.IsNullOrEmpty(json)) return null;
         try
         {
@@ -89,7 +84,7 @@ public sealed class ReceiptSelfEval(
             Aggregate = ExtractionScorer.Aggregate(scores),
             Fixtures = scores,
         };
-        await appSettings.SetAsync(ResultsKey, JsonSerializer.Serialize(results), cancellationToken);
+        await appSettings.SetAsync(SettingKeys.SelfEvalResults, JsonSerializer.Serialize(results), cancellationToken);
         return results;
     }
 

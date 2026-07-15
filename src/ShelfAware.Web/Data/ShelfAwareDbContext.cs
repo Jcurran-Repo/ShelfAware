@@ -95,19 +95,17 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
-    /// <summary>Makes tenancy an ENFORCEMENT rather than a default on the write side, mirroring what the
-    /// global query filter does on the read side.
+    /// <summary>Tenancy on the write side, mirroring what the global query filter does on the read side.
     ///
-    /// Inserts are stamped with the current household, so no service or page ever sets tenancy by hand
-    /// (the IsNullOrEmpty check lets AppSetting's "" CLR default be overwritten). Updates and deletes are
-    /// CHECKED instead: EF builds those from the change tracker, keyed on the primary key alone, so a
-    /// query filter never sees them — attaching a detached entity carrying someone else's id would issue a
-    /// perfectly valid cross-tenant UPDATE/DELETE. Nothing does that today; this is what makes sure nothing
-    /// ever can.
+    /// Inserts are stamped, so no service or page sets tenancy by hand (the IsNullOrEmpty check lets
+    /// AppSetting's "" CLR default be overwritten). Updates and deletes are CHECKED instead, because EF
+    /// builds those from the change tracker keyed on the primary key alone — no query filter ever sees
+    /// them, so a detached entity carrying someone else's id would issue a perfectly valid cross-tenant
+    /// UPDATE or DELETE.
     ///
-    /// Throwing (rather than silently rewriting the id) is the same call
-    /// <see cref="ICurrentHousehold.GetRequiredIdAsync"/> makes: a caller who named a different household
-    /// has a bug, and guessing which one they meant would hide it.</summary>
+    /// Throwing rather than silently rewriting the id is the call
+    /// <see cref="ICurrentHousehold.GetRequiredIdAsync"/> makes too: a caller who named a different
+    /// household has a bug, and guessing which one they meant would hide it.</summary>
     private void EnforceHousehold()
     {
         if (HouseholdId is null) return; // unscoped context — writes are left exactly as the caller made them

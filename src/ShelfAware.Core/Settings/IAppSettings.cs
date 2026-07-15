@@ -9,17 +9,15 @@ public interface IAppSettings
 }
 
 /// <summary>
-/// Every key the settings table can hold, and — just as importantly — whether each one is CONFIGURATION
-/// or the household's own CONTENT.
+/// Every key the settings table can hold, and — just as importantly — whether each is CONFIGURATION or
+/// the household's own CONTENT.
 ///
-/// The distinction earns its keep at "delete my data". This table started as pure configuration, which is
-/// why the delete skipped it wholesale. Then it grew keys that hold content derived from a household's
-/// pantry (their last recipe ideas; their receipts' self-eval scores, merchant names and all), and the
-/// delete kept skipping it — so that content outlived the button that promised to remove it.
+/// The distinction earns its keep at "delete my data": this table is mostly how the app is set up, but
+/// some keys hold content derived from a household's pantry (their last recipe ideas; their receipts'
+/// self-eval scores, merchant names and all), and that has to go when they delete their data.
 ///
-/// Classifying here rather than listing keys at the delete site is the difference between a fix and the
-/// same bug later: a new key doesn't compile past <see cref="SettingKeysAreClassified"/> without someone
-/// deciding which of the two it is.
+/// Classify here rather than listing keys at the delete site — a test fails if a new key is in neither
+/// list, so the choice gets made rather than defaulted to "survives".
 /// </summary>
 public static class SettingKeys
 {

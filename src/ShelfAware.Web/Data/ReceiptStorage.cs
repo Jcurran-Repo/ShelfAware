@@ -1,26 +1,17 @@
 namespace ShelfAware.Web.Data;
 
 /// <summary>
-/// Owns where receipt images live on disk, the way <c>CachingTextToSpeech</c> owns where clips live.
+/// Owns where receipt images live on disk, the way <c>CachingTextToSpeech</c> owns where clips live —
+/// and for the same reason. The saved copy of a receipt is a photograph of a household's shopping, so
+/// "delete my data" has to reach it, and a file you can't attribute is a file you can't delete. Hence a
+/// per-household tree: a delete removes it wholesale rather than hoping every row was enumerated first.
 ///
-/// **Why this exists.** The saved copy of a receipt is a photograph of a household's shopping — merchant,
-/// date, every line, whatever else was in frame. It used to be written by five call sites doing their own
-/// <c>Path.Combine(paths.ReceiptsDir, …)</c> into ONE tree shared by every household, and "delete my data"
-/// never touched it: it deleted the Receipt rows, and <see cref="Core.Domain.Receipt.ImagePath"/> was the
-/// only pointer to the folder, so the images survived the delete AND became unreachable in the same
-/// transaction. That's the exact failure the speech cache was restructured to avoid — "a clip you can't
-/// attribute is a clip you can't delete" — and the receipt images are the more sensitive of the two.
-///
-/// So: clips are filed under a per-household folder, and so are these. A delete removes the household's
-/// tree, rather than hoping every row was enumerated first.
-///
-/// Paths are stored on the receipt RELATIVE to the data directory — the existing <c>ImagePath</c>
-/// contract — so the data directory can move without rewriting the database. They're also stored with a
-/// FORWARD SLASH rather than the platform's separator, and normalised back on the way out. That isn't
-/// cosmetic: Path.Combine bakes in a backslash on the Windows self-host, and a backslash is an ordinary
-/// filename character on Linux, so the Azure target named in CLAUDE.md would read every Windows-written
-/// ImagePath as one long literal filename and report every receipt's copy as missing. Normalising on read
-/// rescues rows already written the old way, so this is a fix rather than a fresh start.
+/// <see cref="Core.Domain.Receipt.ImagePath"/> is stored RELATIVE to the data directory, so that
+/// directory can move without rewriting the database, and with a FORWARD SLASH rather than the
+/// platform's separator. The separator isn't cosmetic: a backslash is an ordinary filename character on
+/// Linux, so a Windows-written path would read there as one long literal filename and every receipt's
+/// copy would report as missing. Reads normalise either separator, so rows written before this rule
+/// still resolve.
 /// </summary>
 public sealed class ReceiptStorage(AppPaths paths, ICurrentHousehold household, ILogger<ReceiptStorage> logger)
 {
@@ -72,36 +63,19 @@ public sealed class ReceiptStorage(AppPaths paths, ICurrentHousehold household, 
     /// whose <c>ImagePath</c> has no household segment and so isn't under the household's tree.</summary>
     public void DeleteFolder(string imagePath)
     {
-        var folder = Within(imagePath);
-        // Not under the receipts store (the demo seeder's "demo/no-image" placeholder, say) — nothing of
-        // ours to remove, and definitely not something to go deleting on a stored string's say-so.
-        if (folder is null || !Directory.Exists(folder)) return;
-        TryDelete(folder);
+        // Null means it doesn't resolve inside the store (the demo seeder's "demo/no-image" placeholder,
+        // say): nothing of ours, and not something to go deleting on a stored string's say-so.
+        if (Within(imagePath) is { } folder) HouseholdFolder.Delete(folder, logger);
     }
 
-    /// <summary>Forgets every receipt image this household ever saved. The counterpart of
-    /// <c>CachingTextToSpeech.DeleteHousehold</c>, and exposed as an operation for the same reason: the
-    /// caller shouldn't have to know how images are filed to be allowed to delete them.</summary>
+    /// <summary>Forgets every receipt image this household ever saved. Exposed as an operation for the
+    /// same reason as the speech cache's equivalent: the caller shouldn't have to know how images are
+    /// filed to be allowed to delete them.</summary>
     public async Task DeleteHouseholdAsync(CancellationToken cancellationToken = default)
     {
-        var householdId = await household.GetIdAsync(cancellationToken);
-        if (householdId is null) return;
-        var folder = Path.Combine(paths.DataDir, Root, HouseholdFolder.For(householdId));
-        if (!Directory.Exists(folder)) return;
-        TryDelete(folder);
-    }
-
-    private void TryDelete(string folder)
-    {
-        try
+        if (await household.GetIdAsync(cancellationToken) is { } householdId)
         {
-            Directory.Delete(folder, recursive: true);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // Failing to remove the copy must not fail the delete: the rows are already gone, and
-            // reporting failure would only invite the user to press it again.
-            logger.LogWarning(ex, "Couldn't remove saved receipt images at {Folder}.", folder);
+            HouseholdFolder.DeleteUnder(Absolute(Root), householdId, logger);
         }
     }
 

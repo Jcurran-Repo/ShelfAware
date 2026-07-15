@@ -50,12 +50,9 @@ public sealed class ReceiptFolderPolicy(IOptions<ReceiptFolderOptions> options)
     /// The one place a folder is judged, returning BOTH answers from a SINGLE resolution — the verdict for
     /// the Settings page and the path for the inbox.
     ///
-    /// One resolution is the point. Resolving separately for the check and for the return means the value
-    /// that gets opened is not the value that was proven safe: they can differ, and since resolving now
-    /// touches the filesystem to follow links, they can differ because someone changed a link in between.
-    /// Checking one string and using another is the bug this method exists to make unspeakable — it was
-    /// "validate resolved, return raw" once, then "validate one resolution, return a second" once, and
-    /// both times the shape survived the fix. Now there is only ever one string.
+    /// The single resolution is the point, so keep it that way. Resolving separately for the check and for
+    /// the return would mean the path that gets opened is not the path that was proven safe, and since
+    /// resolving touches the filesystem to follow links, the two can genuinely differ.
     /// </summary>
     private (string? Allowed, string? Rejection) Judge(string? folder)
     {
@@ -88,15 +85,14 @@ public sealed class ReceiptFolderPolicy(IOptions<ReceiptFolderOptions> options)
     /// entirely. Resolving here rather than at save time is deliberate — the inbox re-resolves on every
     /// read, so a link created AFTER the setting was saved is caught too.
     ///
-    /// Bounded honestly: this follows a link at the END of the path (and chains of them), not one in the
-    /// middle of it. Escaping through an intermediate link needs the attacker to already be able to create
-    /// links on the server, at which point confinement is not what's protecting anything.
+    /// Bounded: this follows a link at the END of the path (and chains of them), not one in the middle.
+    /// Escaping through an intermediate link needs the attacker to already be able to create links on the
+    /// server, at which point confinement isn't what's protecting anything.
     ///
-    /// Neither catch logs, and that is not the swallowing CLAUDE.md forbids: the exception IS the answer
-    /// here, not a lost error. "This string isn't a path" is reported to whoever asked — the person typing
-    /// it gets a sentence back, and a bad Receipts:AllowedRoot fails the boot with one (see Program.cs) —
-    /// so nothing goes quiet. Static on purpose, so RootIsUsable can be reached from options validation
-    /// before any instance exists, which is also why there's no logger to reach for.
+    /// Neither catch logs, which is handling rather than the swallowing CLAUDE.md forbids — the exception
+    /// IS the answer, and "this isn't a path" reaches whoever asked: a sentence for the person typing it,
+    /// a failed boot for a bad Receipts:AllowedRoot. Static so RootIsUsable can run in options validation
+    /// before any instance exists, which is also why there's no logger here to reach for.
     /// </summary>
     private static string? Resolve(string folder)
     {
