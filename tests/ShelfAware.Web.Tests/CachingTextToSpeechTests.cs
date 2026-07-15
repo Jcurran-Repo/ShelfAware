@@ -220,6 +220,22 @@ public sealed class CachingTextToSpeechTests : IDisposable
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<ISpeechToText>());
     }
 
+    // Speech:CacheMegabytes = 0 means OFF. Registering the cache anyway and emptying it at each boot would
+    // re-buy every recipe after a restart and use the disk regardless — the opposite of what was asked for.
+    [Fact]
+    public void Asking_for_no_cache_gets_no_cache_rather_than_an_empty_one()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddScoped<IVoiceCredentials>(_ => new StubVoiceCredentials());
+        services.AddSpeech(new ConfigurationBuilder().Build(), cacheDirectory: null);
+
+        using var provider = services.BuildServiceProvider(validateScopes: true);
+        using var scope = provider.CreateScope();
+
+        Assert.IsNotType<CachingTextToSpeech>(scope.ServiceProvider.GetRequiredService<ITextToSpeech>());
+    }
+
     private sealed class StubVoiceCredentials : IVoiceCredentials
     {
         public string ApiKey => "";

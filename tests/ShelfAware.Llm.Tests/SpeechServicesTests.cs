@@ -260,6 +260,57 @@ public class SpeechServicesTests
         Assert.DoesNotContain("next_text", body);
     }
 
+    // The cache reads OutputFingerprint on every synthesis, so it throwing isn't a flatter voice — it's
+    // all TTS down. And it has to agree with what actually gets SENT: no voice_settings must not
+    // fingerprint the same as the defaults, or two different requests would share a cache key.
+    [Fact]
+    public void The_output_fingerprint_survives_absent_voice_settings_without_pretending_they_were_sent()
+    {
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Audio([1]));
+        ElevenLabsTextToSpeech Tts(ElevenLabsOptions o) =>
+            new(Client(handler), Opts(o), Creds(), NullLogger<ElevenLabsTextToSpeech>.Instance);
+
+        var absent = Tts(new ElevenLabsOptions { VoiceSettings = null! }).OutputFingerprint;
+
+        Assert.NotNull(absent);
+        Assert.NotEqual(Tts(new ElevenLabsOptions()).OutputFingerprint, absent);
+    }
+
+    // Changing how text is spoken has to retire clips voiced the old way, or the cache serves yesterday's
+    // pronunciation forever. That's what SpeechText.Version rides in the fingerprint for.
+    [Fact]
+    public void The_output_fingerprint_changes_with_anything_that_changes_the_audio()
+    {
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Audio([1]));
+        string Print(ElevenLabsOptions o) =>
+            new ElevenLabsTextToSpeech(Client(handler), Opts(o), Creds(), NullLogger<ElevenLabsTextToSpeech>.Instance)
+                .OutputFingerprint;
+
+        var baseline = Print(new ElevenLabsOptions());
+
+        Assert.NotEqual(baseline, Print(new ElevenLabsOptions { VoiceId = "other-voice" }));
+        Assert.NotEqual(baseline, Print(new ElevenLabsOptions { TextToSpeechModel = "eleven_multilingual_v2" }));
+        Assert.NotEqual(baseline, Print(new ElevenLabsOptions { OutputFormat = "opus_48000_128" }));
+        Assert.NotEqual(baseline, Print(new ElevenLabsOptions { NormalizeText = false }));
+
+        var slower = new ElevenLabsOptions();
+        slower.VoiceSettings.Speed = 0.8;
+        Assert.NotEqual(baseline, Print(slower));
+    }
+
+    // ...and NOT with the key. Whose key paid for a clip doesn't change how it sounds, and keying on it
+    // would make every visitor re-buy audio the household already owns.
+    [Fact]
+    public void The_output_fingerprint_ignores_the_api_key()
+    {
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Audio([1]));
+        string Print(string key) =>
+            new ElevenLabsTextToSpeech(Client(handler), Opts(), Creds(key), NullLogger<ElevenLabsTextToSpeech>.Instance)
+                .OutputFingerprint;
+
+        Assert.Equal(Print("key-one"), Print("key-two"));
+    }
+
     [Fact]
     public async Task Synthesize_sends_the_configured_voice_settings()
     {

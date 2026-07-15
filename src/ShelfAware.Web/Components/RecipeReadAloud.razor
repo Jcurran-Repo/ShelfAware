@@ -206,8 +206,7 @@
             return;
         }
 
-        // Clamped on the way in: this came from the browser's own storage, where anything could be.
-        listening = (await _ear.InvokeAsync<ListeningSettings?>("loadSettings") ?? ListeningSettings.Default).Clamped();
+        listening = await LoadListeningAsync(_ear);
 
         var session = await _ear.InvokeAsync<SessionResult>("startSession");
         if (!session.Ok)
@@ -216,6 +215,26 @@
                 ? "No microphone access."
                 : "Couldn't open the microphone.";
             Logger.LogInformation("Hands-free cook-along couldn't open the mic: {Error}", session.Error);
+        }
+    }
+
+    /// <summary>
+    /// This device's calibration, or the defaults. Two different kinds of nonsense can come out of browser
+    /// storage and each needs its own guard: <see cref="ListeningSettings.Clamped"/> handles values that
+    /// are merely absurd, and the catch handles bytes that aren't ListeningSettings at all — a hand-edit,
+    /// or the shape simply changing in a future version. Neither is worth taking the reader down for; a
+    /// calibration we can't read just means we aren't calibrated.
+    /// </summary>
+    private async Task<ListeningSettings> LoadListeningAsync(IJSObjectReference ear)
+    {
+        try
+        {
+            return (await ear.InvokeAsync<ListeningSettings?>("loadSettings") ?? ListeningSettings.Default).Clamped();
+        }
+        catch (JSException ex)
+        {
+            Logger.LogWarning(ex, "Couldn't read the listening calibration; falling back to defaults.");
+            return ListeningSettings.Default;
         }
     }
 

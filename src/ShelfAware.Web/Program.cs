@@ -208,8 +208,10 @@ builder.Services.AddScoped<UserDataService>();   // export + delete-my-data (one
 // TTS rides through a disk cache (see SpeechRegistration). Recipe steps are static text, so a recipe
 // should cost one synthesis ever — re-reading it shouldn't re-buy audio we already own, or make the
 // reader wait on the network to say a sentence it said yesterday.
-var speechCacheDir = Path.Combine(dataDir, "tts-cache");
-var speechCacheBytes = (builder.Configuration.GetValue<int?>("Speech:CacheMegabytes") ?? 256) * 1024L * 1024L;
+// Speech:CacheMegabytes <= 0 means OFF — the cache isn't registered at all, rather than being emptied at
+// every boot while it refills all session (which would re-buy every recipe after a restart AND use the disk).
+var speechCacheMb = builder.Configuration.GetValue<int?>("Speech:CacheMegabytes") ?? 256;
+var speechCacheDir = speechCacheMb > 0 ? Path.Combine(dataDir, "tts-cache") : null;
 builder.Services.AddSpeech(builder.Configuration, speechCacheDir);
 
 // Per-circuit ElevenLabs credentials: the visitor's own key from their browser (dev falls back to config).
@@ -243,8 +245,11 @@ var app = builder.Build();
 // Keep the speech cache from creeping forever. It only grows when text changes (an edited step orphans
 // its clip, and its neighbours'), so once at startup is the right cadence — a per-write sweep would put
 // a directory scan on the path the cache exists to make fast.
-CachingTextToSpeech.Trim(speechCacheDir, speechCacheBytes,
-    app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("SpeechCache"));
+if (speechCacheDir is not null)
+{
+    CachingTextToSpeech.Trim(speechCacheDir, speechCacheMb * 1024L * 1024L,
+        app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("SpeechCache"));
+}
 
 using (var scope = app.Services.CreateScope())
 {

@@ -19,11 +19,21 @@ public static class SpeechRegistration
     /// Requires a scoped <see cref="IVoiceCredentials"/> registered by the caller: the key is per-circuit
     /// (the visitor's own), so it is attached per request rather than baked into a default header.
     /// </summary>
+    /// <param name="cacheDirectory">Where synthesized audio lives, or null to synthesize every time. Null
+    /// is what <c>Speech:CacheMegabytes = 0</c> means: someone asking for no cache should GET no cache,
+    /// not an empty one that refills all session and gets wiped at the next boot — that would re-buy every
+    /// recipe after each restart, use the disk anyway, and say nothing.</param>
     public static IServiceCollection AddSpeech(
-        this IServiceCollection services, IConfiguration configuration, string cacheDirectory)
+        this IServiceCollection services, IConfiguration configuration, string? cacheDirectory)
     {
         services.Configure<ElevenLabsOptions>(configuration.GetSection(ElevenLabsOptions.SectionName));
         services.AddHttpClient<ISpeechToText, ElevenLabsSpeechToText>(ConfigureElevenLabs);
+
+        if (cacheDirectory is null)
+        {
+            services.AddHttpClient<ITextToSpeech, ElevenLabsTextToSpeech>(ConfigureElevenLabs);
+            return services;
+        }
 
         // The provider is registered concretely and the cache is what answers ITextToSpeech.
         services.AddHttpClient<ElevenLabsTextToSpeech>(ConfigureElevenLabs);

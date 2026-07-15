@@ -1,4 +1,5 @@
 @page "/settings"
+@implements IAsyncDisposable
 @using ShelfAware.Core.Settings
 @using ShelfAware.Core.Speech
 @using ShelfAware.Core.Ingest
@@ -500,6 +501,12 @@
     /// </summary>
     private async Task CalibrateAsync()
     {
+        // The rendered UI hides the button once we leave Idle, but a second click can land before that
+        // render does — and two calibrations would fight over one microphone: the module's stream and
+        // analyser are single globals, so the second overwrites the first's, and the first's cleanup then
+        // tears down the session the second is still measuring with.
+        if (calibrationStage is not CalibrationStage.Idle) return;
+
         calibrationError = null;
         var ear = await EarAsync();
 
@@ -604,6 +611,35 @@
 
     private sealed record MicSession(bool Ok, string? Error, double Floor);
     private sealed record UtteranceSample(bool Spoke, double Peak, int LongestPauseMs, int UtteranceMs);
+
+    /// <summary>
+    /// Put the microphone down when the page goes. Navigating away mid-calibration doesn't stop the wizard
+    /// — it's a detached task — so without this the browser's recording indicator stays lit on whatever
+    /// page they went to, until a measurement happens to time out. That's alarming, and rightly so; the
+    /// reader gets this right and this page shouldn't be the exception. Also releases the JS references,
+    /// which were leaking per visit.
+    /// </summary>
+    public async ValueTask DisposeAsync()
+    {
+        calibrationStage = CalibrationStage.Idle;
+
+        if (earModule is not null)
+        {
+            try
+            {
+                await earModule.InvokeVoidAsync("endSession");
+                await earModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException) { /* circuit gone — the browser released the mic with it */ }
+            catch (JSException ex) { Logger.LogInformation(ex, "Couldn't close the calibration microphone."); }
+        }
+
+        if (aiModule is not null)
+        {
+            try { await aiModule.DisposeAsync(); }
+            catch (JSDisconnectedException) { /* circuit gone */ }
+        }
+    }
 
     private IJSObjectReference? aiModule;
 

@@ -35,6 +35,11 @@ public class ElevenLabsTextToSpeech : ITextToSpeech
     {
         get
         {
+            // Null-tolerant to match VoiceSettingsPayload.From below, and tolerant the SAME way: null
+            // there means "send no voice_settings", so null here must fingerprint as "none sent" rather
+            // than as the defaults — otherwise two genuinely different requests would share a cache key.
+            // It matters that this can't throw: the cache reads it on EVERY synthesis, so a null would
+            // take all TTS down rather than merely flatten the voice.
             var v = _options.VoiceSettings;
             return string.Join('|',
                 "elevenlabs",
@@ -42,8 +47,8 @@ public class ElevenLabsTextToSpeech : ITextToSpeech
                 _options.VoiceId,
                 _options.OutputFormat,
                 _options.NormalizeText ? "norm" + SpeechText.Version : "raw",
-                Num(v.Stability), Num(v.SimilarityBoost), Num(v.Style),
-                v.UseSpeakerBoost?.ToString() ?? "-", Num(v.Speed));
+                Num(v?.Stability), Num(v?.SimilarityBoost), Num(v?.Style),
+                v?.UseSpeakerBoost?.ToString() ?? "-", Num(v?.Speed));
 
             static string Num(double? d) => d?.ToString(CultureInfo.InvariantCulture) ?? "-";
         }
