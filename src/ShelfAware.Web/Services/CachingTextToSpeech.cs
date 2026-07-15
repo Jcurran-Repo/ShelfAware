@@ -43,15 +43,6 @@ public sealed class CachingTextToSpeech : ITextToSpeech
     }
 
     /// <summary>
-    /// The folder a household's clips live in: a HASH of its id, never the id itself. A household id has
-    /// no business being concatenated into a filesystem path — today they're server-minted and safe, but
-    /// that's a property of code elsewhere, and the day one becomes user-influenced this would be a path
-    /// traversal. Hex can't traverse anything. Deterministic, so a delete can find the folder.
-    /// </summary>
-    private static string FolderFor(string householdId) =>
-        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(householdId)))[..32];
-
-    /// <summary>
     /// Forget everything ever spoken for one household — its recipes' audio is a recording of its content,
     /// so "delete my data" has to reach it or it isn't true. Exposed as an operation rather than exposing
     /// the folder layout: the caller shouldn't have to know how clips are filed to be allowed to delete
@@ -59,7 +50,7 @@ public sealed class CachingTextToSpeech : ITextToSpeech
     /// </summary>
     public static bool DeleteHousehold(string root, string householdId, ILogger logger)
     {
-        var folder = Path.Combine(root, FolderFor(householdId));
+        var folder = Path.Combine(root, HouseholdFolder.For(householdId));
         try
         {
             if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
@@ -86,7 +77,7 @@ public sealed class CachingTextToSpeech : ITextToSpeech
         var householdId = await _household.GetIdAsync(cancellationToken);
         if (householdId is null) return await _inner.SynthesizeAsync(text, context, cancellationToken);
 
-        var directory = Path.Combine(_root, FolderFor(householdId));
+        var directory = Path.Combine(_root, HouseholdFolder.For(householdId));
         var path = Path.Combine(directory, KeyFor(text, context) + ".audio");
 
         if (await TryReadAsync(path, cancellationToken) is { } cached)

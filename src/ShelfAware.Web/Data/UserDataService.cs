@@ -9,16 +9,17 @@ namespace ShelfAware.Web.Data;
 /// "Download my data" export and the "Delete my data" danger action. Kept as a service (not inline in
 /// the page) so the delete order lives in exactly one tested spot and the export endpoint can reuse it.
 ///
-/// Scope: the user's own content (pantry, purchase history, signals, receipts, recipes, lists) — and the
-/// synthesized audio of their recipe steps, which is derived from that content and therefore theirs. It
-/// does NOT touch <c>AppSettings</c> (app configuration) or the visitor's BYOK keys — those are held in
-/// the browser and cleared separately by "Forget my key".
+/// Scope: the user's own content (pantry, purchase history, signals, receipts, recipes, lists) — plus the
+/// two things DERIVED from that content and stored outside the rows, which are therefore just as much
+/// theirs: the saved images of their receipts, and the synthesized audio of their recipe steps. It does
+/// NOT touch the visitor's BYOK keys — those are held in the browser and cleared by "Forget my key".
 /// </summary>
 /// <param name="speechCacheRoot">Root of the TTS cache, or null when caching is off. Deleting a household's
 /// rows while leaving a recording of its recipes on disk would make "delete my data" a false statement.</param>
 public sealed class UserDataService(
     IHouseholdDbFactory dbFactory,
     ICurrentHousehold currentHousehold,
+    ReceiptStorage receiptStorage,
     string? speechCacheRoot,
     ILogger<UserDataService> logger)
 {
@@ -72,6 +73,12 @@ public sealed class UserDataService(
     public async Task DeleteAllAsync(CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
+
+        // Read the pointers to the saved receipt images BEFORE the rows that hold them are deleted.
+        // ImagePath is the only reference to a receipt's folder, so deleting the rows first would strand
+        // the images beyond any reach — which is exactly the bug this method used to have.
+        var imagePaths = await db.Receipts.AsNoTracking().Select(r => r.ImagePath).ToListAsync(ct);
+
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 
         await db.RecipeSteps.ExecuteDeleteAsync(ct);
@@ -90,9 +97,28 @@ public sealed class UserDataService(
 
         await tx.CommitAsync(ct);
 
-        // Only AFTER the rows are certainly gone. The audio is derived from them, so deleting it first
-        // would mean a failed transaction left the recipes intact but silent.
+        // Only AFTER the rows are certainly gone. Both of these are derived from them, so deleting either
+        // first would mean a failed transaction left the receipts listed but imageless, or the recipes
+        // intact but silent.
+        await DeleteSavedReceiptImagesAsync(imagePaths, ct);
         await DeleteCachedSpeechAsync(ct);
+    }
+
+    /// <summary>
+    /// The saved copy of every receipt: a photograph of this household's shopping, and theirs as surely as
+    /// the rows extracted from it. Removed two ways on purpose. The household's whole tree goes, which
+    /// covers everything filed since receipts became household-scoped and can't miss a row; and each
+    /// receipt's own <c>ImagePath</c> goes, which reaches the older rows whose folders predate that tree.
+    /// Neither can fail the delete — the data itself is already gone, and reporting failure would only
+    /// invite the user to press it again.
+    /// </summary>
+    private async Task DeleteSavedReceiptImagesAsync(IEnumerable<string> imagePaths, CancellationToken ct)
+    {
+        foreach (var imagePath in imagePaths)
+        {
+            receiptStorage.DeleteFolder(imagePath);
+        }
+        await receiptStorage.DeleteHouseholdAsync(ct);
     }
 
     /// <summary>

@@ -206,6 +206,10 @@ builder.Services.AddScoped<IReceiptImporter, ReceiptImporter>(); // depends on t
 builder.Services.AddScoped<ReceiptConfirmationService>();
 builder.Services.AddScoped<ReceiptSelfEval>(); // grades verified receipts on the circuit's key
 
+// Owns where receipt images live on disk (per household), so "delete my data" can reach them and no
+// call site does its own path math. Scoped: it files by the current household.
+builder.Services.AddScoped<ReceiptStorage>();
+
 builder.Services.AddScoped<ProductRenameService>(); // rename + re-point the name-keyed recipe links
 builder.Services.AddScoped<DemoDataSeeder>(); // synthetic demo catalog (guarded: this household's pantry is empty)
 // Export + delete-my-data (one place for both). Takes the speech cache root so a delete reaches the
@@ -213,6 +217,7 @@ builder.Services.AddScoped<DemoDataSeeder>(); // synthetic demo catalog (guarded
 builder.Services.AddScoped(sp => new UserDataService(
     sp.GetRequiredService<IHouseholdDbFactory>(),
     sp.GetRequiredService<ICurrentHousehold>(),
+    sp.GetRequiredService<ReceiptStorage>(),
     speechCacheDir,
     sp.GetRequiredService<ILogger<UserDataService>>()));
 

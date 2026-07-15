@@ -22,7 +22,7 @@ public sealed class ReceiptSelfEval(
     IReceiptExtractor extractor,
     CircuitAiSettings aiSettings,
     IAppSettings appSettings,
-    AppPaths paths,
+    ReceiptStorage storage,
     ILogger<ReceiptSelfEval> logger)
 {
     public const string ResultsKey = "SelfEvalResults";
@@ -99,10 +99,7 @@ public sealed class ReceiptSelfEval(
             Category = l.Category.ToString(),
         }).ToList();
 
-        var folder = Path.Combine(paths.DataDir, receipt.ImagePath);
-        var files = Directory.Exists(folder)
-            ? Directory.GetFiles(folder, "page-*.*").OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList()
-            : [];
+        var files = storage.Pages(receipt.ImagePath);
         if (files.Count == 0)
         {
             return new FixtureScore
@@ -117,8 +114,8 @@ public sealed class ReceiptSelfEval(
             var attachments = new List<ReceiptAttachment>();
             foreach (var file in files)
             {
-                attachments.Add(new ReceiptAttachment(
-                    await File.ReadAllBytesAsync(file, cancellationToken), MediaTypeFor(file)));
+                var (bytes, mediaType) = await storage.ReadPageAsync(file, cancellationToken);
+                attachments.Add(new ReceiptAttachment(bytes, mediaType));
             }
 
             // No candidate-product list, matching the offline harness: this grades pure extraction,
@@ -147,12 +144,4 @@ public sealed class ReceiptSelfEval(
         return r.PurchasedAt is { } d ? $"{merchant} {d:yyyy-MM-dd}" : $"{merchant} #{r.Id}";
     }
 
-    private static string MediaTypeFor(string path) => Path.GetExtension(path).ToLowerInvariant() switch
-    {
-        ".png" => "image/png",
-        ".webp" => "image/webp",
-        ".gif" => "image/gif",
-        ".pdf" => "application/pdf",
-        _ => "image/jpeg",
-    };
 }

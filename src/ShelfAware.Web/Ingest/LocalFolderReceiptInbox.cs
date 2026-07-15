@@ -1,5 +1,6 @@
 using ShelfAware.Core.Ingest;
 using ShelfAware.Core.Settings;
+using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.Ingest;
 
@@ -10,16 +11,6 @@ namespace ShelfAware.Web.Ingest;
 /// </summary>
 public class LocalFolderReceiptInbox(IAppSettings settings) : IReceiptInbox
 {
-    private static readonly Dictionary<string, string> MediaTypeByExt = new(StringComparer.OrdinalIgnoreCase)
-    {
-        [".jpg"] = "image/jpeg",
-        [".jpeg"] = "image/jpeg",
-        [".png"] = "image/png",
-        [".gif"] = "image/gif",
-        [".webp"] = "image/webp",
-        [".pdf"] = "application/pdf",
-    };
-
     public async Task<bool> IsConfiguredAsync(CancellationToken cancellationToken = default)
     {
         var folder = await FolderAsync(cancellationToken);
@@ -32,10 +23,10 @@ public class LocalFolderReceiptInbox(IAppSettings settings) : IReceiptInbox
         if (folder is null || !Directory.Exists(folder)) return [];
 
         return Directory.EnumerateFiles(folder)
-            .Where(path => MediaTypeByExt.ContainsKey(Path.GetExtension(path)))
+            .Where(ReceiptMediaTypes.IsSupported)
             .Select(path => Path.GetFileName(path))
             .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
-            .Select(name => new InboxItem(name, name, MediaTypeByExt[Path.GetExtension(name)]))
+            .Select(name => new InboxItem(name, name, ReceiptMediaTypes.ForPath(name)))
             .ToList();
     }
 

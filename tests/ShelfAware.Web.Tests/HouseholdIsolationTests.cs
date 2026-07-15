@@ -207,7 +207,17 @@ public class HouseholdIsolationTests : IDisposable
         }
 
         _db.HouseholdId = B;
-        var service = new UserDataService(_db, new FakeCurrentHousehold(), null, NullLogger<UserDataService>.Instance);
+        var household = new FakeCurrentHousehold(B);
+        var dataDir = Path.Combine(Path.GetTempPath(), "shelfaware-web-tests", Guid.NewGuid().ToString("N"));
+        var service = new UserDataService(
+            _db,
+            household,
+            new ReceiptStorage(
+                new AppPaths(dataDir, Path.Combine(dataDir, "receipts")),
+                household,
+                NullLogger<ReceiptStorage>.Instance),
+            null,
+            NullLogger<UserDataService>.Instance);
 
         var export = await service.ExportAsync();
         Assert.Equal("Coffee", Assert.Single(export.Products).Name);

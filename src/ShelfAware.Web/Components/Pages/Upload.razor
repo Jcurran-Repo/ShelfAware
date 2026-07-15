@@ -6,7 +6,7 @@
 @inject IHouseholdDbFactory DbFactory
 @inject IReceiptExtractor Extractor
 @inject ITagAdvisor Advisor
-@inject AppPaths Paths
+@inject ReceiptStorage Storage
 @inject IOptions<ShelfAware.Llm.LlmOptions> LlmOptions
 @inject ReceiptConfirmationService Confirmer
 @inject ILogger<Upload> Logger
@@ -390,10 +390,7 @@ else if (phase == Phase.Done)
             var r = await db.Receipts.Include(x => x.Lines).FirstOrDefaultAsync(x => x.Id == receiptId);
             if (r is null) { await LoadPendingAsync(); return; }
 
-            var folder = Path.Combine(Paths.DataDir, r.ImagePath);
-            var files = Directory.Exists(folder)
-                ? Directory.GetFiles(folder, "page-*.*").OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList()
-                : [];
+            var files = Storage.Pages(r.ImagePath);
             if (files.Count == 0)
             {
                 pendingError = "The saved copy of this receipt is missing — discard it and re-upload.";
@@ -403,7 +400,8 @@ else if (phase == Phase.Done)
             var attachments = new List<ReceiptAttachment>();
             foreach (var file in files)
             {
-                attachments.Add(new ReceiptAttachment(await File.ReadAllBytesAsync(file), MediaTypeFor(file)));
+                var (bytes, mediaType) = await Storage.ReadPageAsync(file);
+                attachments.Add(new ReceiptAttachment(bytes, mediaType));
             }
 
             List<string> productNames;
@@ -444,14 +442,6 @@ else if (phase == Phase.Done)
         }
     }
 
-    private static string MediaTypeFor(string path) => Path.GetExtension(path).ToLowerInvariant() switch
-    {
-        ".png" => "image/png",
-        ".gif" => "image/gif",
-        ".webp" => "image/webp",
-        ".pdf" => "application/pdf",
-        _ => "image/jpeg",
-    };
 
     private const int MaxFiles = 20;
 
@@ -518,25 +508,23 @@ else if (phase == Phase.Done)
         errorMessage = null;
         StateHasChanged();
 
-        var folderName = NewReceiptFolderName();
-        var folder = Path.Combine(Paths.ReceiptsDir, folderName);
+        var imagePath = await Storage.NewFolderAsync();
 
         try
         {
-            Directory.CreateDirectory(folder);
             var attachments = new List<ReceiptAttachment>();
             var index = 0;
             foreach (var file in selectedFiles)
             {
                 var attachment = await ReadForExtractionAsync(file);
                 attachments.Add(attachment);
-                await File.WriteAllBytesAsync(Path.Combine(folder, $"page-{index++}.{ExtFor(attachment.MediaType)}"), attachment.Data);
+                await Storage.WritePageAsync(imagePath, index++, attachment.Data, attachment.MediaType);
             }
 
             // Load existing products first so the model can match lines against them (LLM-assisted matching).
             await LoadCatalogAsync();
             var result = await Extractor.ExtractAsync(attachments, products.Select(p => p.Name).Distinct().ToList(), allKnownTags);
-            receipt = await PersistExtractionAsync(folderName, result);
+            receipt = await PersistExtractionAsync(imagePath, result);
 
             if (!result.Success || result.Receipt is null)
             {
@@ -586,14 +574,12 @@ else if (phase == Phase.Done)
                 StateHasChanged();
                 try
                 {
-                    var folderName = NewReceiptFolderName();
-                    Directory.CreateDirectory(Path.Combine(Paths.ReceiptsDir, folderName));
+                    var imagePath = await Storage.NewFolderAsync();
                     var attachment = await ReadForExtractionAsync(selectedFiles[i]);
-                    await File.WriteAllBytesAsync(
-                        Path.Combine(Paths.ReceiptsDir, folderName, $"page-0.{ExtFor(attachment.MediaType)}"), attachment.Data);
+                    await Storage.WritePageAsync(imagePath, 0, attachment.Data, attachment.MediaType);
 
                     var result = await Extractor.ExtractAsync([attachment], productNames, allKnownTags);
-                    var saved = await PersistExtractionAsync(folderName, result);
+                    var saved = await PersistExtractionAsync(imagePath, result);
                     item.InQueue = true;
 
                     if (result.Success && result.Receipt is not null)
@@ -628,12 +614,12 @@ else if (phase == Phase.Done)
 
     /// <summary>Persist ANY extraction outcome as a PendingReview receipt — a successful read keeps its
     /// lines; a failed one keeps the audit copy + raw model output so the queue's Retry can re-extract.</summary>
-    private async Task<Receipt> PersistExtractionAsync(string folderName, ExtractionResult result)
+    private async Task<Receipt> PersistExtractionAsync(string imagePath, ExtractionResult result)
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         var r = new Receipt
         {
-            ImagePath = Path.Combine("receipts", folderName),
+            ImagePath = imagePath,
             RawModelJson = result.RawModelJson,
             Status = ReceiptStatus.PendingReview,
         };
@@ -672,7 +658,6 @@ else if (phase == Phase.Done)
             .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t).ToList();
     }
 
-    private static string NewReceiptFolderName() => $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}"[..40];
 
     // Browser-side resize for images (longest edge capped per Llm:MaxImageEdgePx, DESIGN.md §5);
     // PDFs pass through as-is.
@@ -684,8 +669,6 @@ else if (phase == Phase.Done)
         var resized = await file.RequestImageFileAsync("image/jpeg", maxEdge, maxEdge);
         return new ReceiptAttachment(await ReadAllAsync(resized.OpenReadStream(MaxUploadBytes)), "image/jpeg");
     }
-
-    private static string ExtFor(string mediaType) => mediaType == "application/pdf" ? "pdf" : "jpg";
 
     // Persistence lives in ReceiptConfirmationService — the ONE confirm path shared with the
     // auto-importer. The service is idempotent (an already-confirmed receipt is a no-op) and the

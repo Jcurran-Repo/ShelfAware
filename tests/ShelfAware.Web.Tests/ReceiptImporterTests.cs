@@ -25,7 +25,10 @@ public class ReceiptImporterTests : IDisposable
 
     private ReceiptImporter Importer(FakeExtractor extractor) => new(
         _db, extractor, _inbox, _settings, new ReceiptConfirmationService(_db),
-        new AppPaths(_dataDir, Path.Combine(_dataDir, "receipts")),
+        new ReceiptStorage(
+            new AppPaths(_dataDir, Path.Combine(_dataDir, "receipts")),
+            new FakeCurrentHousehold(),
+            NullLogger<ReceiptStorage>.Instance),
         NullLogger<ReceiptImporter>.Instance);
 
     private async Task SeedProduct(string name, params string[] tags)

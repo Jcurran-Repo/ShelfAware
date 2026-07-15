@@ -3,7 +3,7 @@
 @using ShelfAware.Core.Shopping
 @implements IAsyncDisposable
 @inject IHouseholdDbFactory DbFactory
-@inject AppPaths Paths
+@inject ReceiptStorage Storage
 @inject IJSRuntime JS
 @inject ILogger<Receipts> Logger
 
@@ -164,11 +164,7 @@ else
         }
     }
 
-    private bool HasAuditImage(Receipt r)
-    {
-        var folder = Path.Combine(Paths.DataDir, r.ImagePath);
-        return Directory.Exists(folder) && Directory.EnumerateFiles(folder, "page-*.*").Any();
-    }
+    private bool HasAuditImage(Receipt r) => Storage.HasPages(r.ImagePath);
 
     private async Task SetVerifiedAsync(ReceiptRow row, bool verified)
     {

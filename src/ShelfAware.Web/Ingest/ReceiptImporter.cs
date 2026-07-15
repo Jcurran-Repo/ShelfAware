@@ -22,7 +22,7 @@ public class ReceiptImporter(
     IReceiptInbox inbox,
     IAppSettings settings,
     ReceiptConfirmationService confirmer,
-    AppPaths paths,
+    ReceiptStorage storage,
     ILogger<ReceiptImporter> logger) : IReceiptImporter
 {
     /// <summary>A line auto-confirms only at/above this extraction confidence (unless an alias vouches
@@ -125,14 +125,12 @@ public class ReceiptImporter(
             ct);
 
         // Keep a copy of the source file (mirrors the manual upload's audit trail).
-        var folderName = $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}"[..40];
-        Directory.CreateDirectory(Path.Combine(paths.ReceiptsDir, folderName));
-        var ext = item.MediaType == "application/pdf" ? "pdf" : Path.GetExtension(item.Name).TrimStart('.');
-        await File.WriteAllBytesAsync(Path.Combine(paths.ReceiptsDir, folderName, $"page-0.{ext}"), bytes, ct);
+        var imagePath = await storage.NewFolderAsync(ct);
+        await storage.WritePageAsync(imagePath, 0, bytes, item.MediaType, ct);
 
         var receipt = new Receipt
         {
-            ImagePath = Path.Combine("receipts", folderName),
+            ImagePath = imagePath,
             RawModelJson = extraction.RawModelJson,
             SourceFile = item.Id, // marks this file imported so a re-scan skips it (even on failure)
         };
