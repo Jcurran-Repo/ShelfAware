@@ -1668,6 +1668,40 @@ button.tag-chip {
     .listen-listening { animation: none; }
 }
 
+/* ---- Listening calibration (Settings) ---- */
+.calibrate-stage {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.6rem 0;
+}
+
+.listen-values {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.25rem 0.8rem;
+    margin: 0.6rem 0;
+}
+
+.listen-values dt {
+    color: var(--ink-soft);
+}
+
+.listen-values dd {
+    margin: 0;
+}
+
+@media (max-width: 30rem) {
+    .listen-values {
+        grid-template-columns: 1fr;
+        gap: 0 0.8rem;
+    }
+
+    .listen-values dd {
+        margin-bottom: 0.4rem;
+    }
+}
+
 /* ---- Hands-free cook-along (Phase 4b) ---- */
 .cookalong {
     border: 1px solid var(--accent);

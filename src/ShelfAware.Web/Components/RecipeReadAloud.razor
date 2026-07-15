@@ -102,16 +102,14 @@
     /// <summary>Listen between steps instead of running the recipe end to end. Same reader, plus ears.</summary>
     [Parameter] public bool HandsFree { get; set; }
 
-    // How long to hold the mic open when nobody's talking; the hard cap on one utterance; and how much
-    // silence means they've finished. The window closes on SILENCE, not on a timer, so "next" comes back
-    // at once and a long question isn't guillotined — these are only the outer bounds.
-    private const int ListenOpenMs = 6000;
-    private const int ListenMaxMs = 15000;
-    private const int SilenceMs = 900;
-
     // Enough turns for a follow-up ("what about butter?" after "can I swap the oil?") without letting a
     // two-hour cook grow the prompt forever.
     private const int MaxHistoryTurns = 6;
+
+    // How long to hold the mic open, what counts as speech in this room, how much quiet means they've
+    // finished. Calibrated per device if they've run the wizard (Settings), else the defaults — which are
+    // guesses, and the reason the wizard exists.
+    private ListeningSettings listening = ListeningSettings.Default;
 
     private IJSObjectReference? _module;
     private IJSObjectReference? _ear;
@@ -207,6 +205,9 @@
             micError = "This browser can't listen.";
             return;
         }
+
+        // Clamped on the way in: this came from the browser's own storage, where anything could be.
+        listening = (await _ear.InvokeAsync<ListeningSettings?>("loadSettings") ?? ListeningSettings.Default).Clamped();
 
         var session = await _ear.InvokeAsync<SessionResult>("startSession");
         if (!session.Ok)
@@ -451,7 +452,7 @@
         await SetPhaseAsync(held ? Phase.Held : Phase.Listening);
         await CueAsync(rising: true);
 
-        var window = await _ear!.InvokeAsync<HeardResult>("listen", ListenOpenMs, ListenMaxMs, SilenceMs);
+        var window = await _ear!.InvokeAsync<HeardResult>("listen", listening);
         if (_cts.IsCancellationRequested) return true;
 
         // The room never rose above its own noise floor. No transcript, no cost, no turn.

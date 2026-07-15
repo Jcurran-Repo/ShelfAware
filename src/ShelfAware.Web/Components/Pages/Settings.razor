@@ -1,5 +1,6 @@
 @page "/settings"
 @using ShelfAware.Core.Settings
+@using ShelfAware.Core.Speech
 @using ShelfAware.Core.Ingest
 @using ShelfAware.Llm
 @using ShelfAware.Web.Auth
@@ -156,7 +157,13 @@
                        placeholder="For push-to-talk and read-aloud" aria-label="ElevenLabs API key" />
             </label>
             <label class="field">
-                <span>Cook-along agent id <span class="muted">— optional, for hands-free cook-along</span></span>
+                <span>
+                    Cook-along agent id
+                    <span class="muted">
+                        — optional. Hands-free cook-along doesn't need this; it's only for the
+                        “Live agent” option, which can be interrupted mid-sentence but bills per minute.
+                    </span>
+                </span>
                 <input @bind="elAgentId" aria-label="ElevenLabs cook-along agent id" />
             </label>
 
@@ -175,6 +182,50 @@
             }
         </div>
     }
+    }
+</section>
+
+@* Calibration is per DEVICE, not per household — two people in one kitchen still have different
+   microphones, and one of them is on a phone. So this panel shows even on a managed deployment, where
+   the keys panel is hidden: it isn't a key, it's what this room sounds like. *@
+<section class="panel">
+    <h2>Hands-free listening</h2>
+    <p class="muted">
+        How the cook-along hears you on <strong>this device</strong>. The defaults are guesses — a
+        minute of calibration measures your microphone, your kitchen, and how you actually talk.
+    </p>
+
+    @if (calibrationError is not null)
+    {
+        <p class="error" role="status">@calibrationError</p>
+    }
+
+    @if (calibrationStage is not CalibrationStage.Idle)
+    {
+        <p class="calibrate-stage" role="status" aria-live="assertive">
+            <span class="listen-dot listen-listening" aria-hidden="true"></span>
+            <strong>@CalibrationPrompt</strong>
+        </p>
+    }
+    else
+    {
+        <dl class="listen-values">
+            <dt>Waits for a pause of</dt>
+            <dd>@listening.SilenceMs ms <span class="muted">before deciding you've finished</span></dd>
+            <dt>Ignores anything below</dt>
+            <dd>@listening.FloorMultiple.ToString("0.0")× the room <span class="muted">— the noise gate</span></dd>
+            <dt>Holds the mic open for</dt>
+            <dd>@(listening.OpenMs / 1000.0)s <span class="muted">if you say nothing</span></dd>
+        </dl>
+        <p class="muted small">@(calibrated ? "Calibrated on this device." : "Not calibrated — using defaults.")</p>
+
+        <div class="ra-controls">
+            <button @onclick="CalibrateAsync">🎙 Calibrate listening</button>
+            @if (calibrated)
+            {
+                <button class="secondary" @onclick="ResetCalibrationAsync">Reset to defaults</button>
+            }
+        </div>
     }
 </section>
 
@@ -395,6 +446,165 @@
     private bool sessionOnly;
     private bool savingKeys;
     private string? keyNote;
+    // ---- Hands-free listening calibration ------------------------------------------------------
+
+    private enum CalibrationStage { Idle, Quiet, Command, Question, Working }
+
+    private IJSObjectReference? earModule;
+    private CalibrationStage calibrationStage = CalibrationStage.Idle;
+    private string? calibrationError;
+    private ListeningSettings listening = ListeningSettings.Default;
+    private bool calibrated;
+
+    // Generous on purpose: a calibration that gave up after the CURRENT silence window could never
+    // observe a pause longer than it, which is exactly the speaker it most needs to measure. And the
+    // provisional gate has to be loose — we don't yet know what this room sounds like, which is the
+    // whole point of asking.
+    private const int CalibrationEndSilenceMs = 2500;
+    private const int CalibrationWaitMs = 10000;
+    private const int CalibrationCapMs = 20000;
+    private const double ProvisionalFloorMultiple = 2.5;
+
+    private string CalibrationPrompt => calibrationStage switch
+    {
+        CalibrationStage.Quiet => "Listening to the room — stay quiet for a moment…",
+        CalibrationStage.Command => "Now say “next”, the way you would while cooking.",
+        CalibrationStage.Question => "Now ask a question — say “can I use butter instead of oil?”",
+        CalibrationStage.Working => "Working it out…",
+        _ => "",
+    };
+
+    private async Task<IJSObjectReference> EarAsync() =>
+        earModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "/js/cooklisten.js");
+
+    private async Task LoadListeningAsync()
+    {
+        try
+        {
+            var ear = await EarAsync();
+            var stored = await ear.InvokeAsync<ListeningSettings?>("loadSettings");
+            calibrated = stored is not null;
+            listening = (stored ?? ListeningSettings.Default).Clamped();
+        }
+        catch (JSException ex)
+        {
+            // A browser that can't read its own storage isn't a reason to break the page.
+            Logger.LogInformation(ex, "Couldn't read the listening calibration.");
+        }
+    }
+
+    /// <summary>
+    /// Measure the room, then a command, then a question. The question matters most: it's the only way to
+    /// learn how long THIS person pauses mid-sentence, which is the number that decides whether we cut
+    /// them off — and the one nobody can guess on their behalf.
+    /// </summary>
+    private async Task CalibrateAsync()
+    {
+        calibrationError = null;
+        var ear = await EarAsync();
+
+        if (!await ear.InvokeAsync<bool>("isSupported"))
+        {
+            calibrationError = "This browser can't listen.";
+            return;
+        }
+
+        var session = await ear.InvokeAsync<MicSession>("startSession");
+        if (!session.Ok)
+        {
+            calibrationError = session.Error == "NotAllowedError"
+                ? "No microphone access — allow it and try again."
+                : "Couldn't open the microphone.";
+            return;
+        }
+
+        try
+        {
+            calibrationStage = CalibrationStage.Quiet;
+            StateHasChanged();
+            var floor = await ear.InvokeAsync<double>("measureFloor", 3000);
+
+            var gate = Math.Max(floor * ProvisionalFloorMultiple, 0.01);
+
+            calibrationStage = CalibrationStage.Command;
+            StateHasChanged();
+            await ear.InvokeVoidAsync("beep", true);
+            var command = await MeasureAsync(ear, gate);
+
+            calibrationStage = CalibrationStage.Question;
+            StateHasChanged();
+            await ear.InvokeVoidAsync("beep", true);
+            var question = await MeasureAsync(ear, gate);
+
+            calibrationStage = CalibrationStage.Working;
+            StateHasChanged();
+            await ear.InvokeVoidAsync("beep", false);
+
+            // Both samples describe the same voice — take the widest of each, since the settings have to
+            // accommodate their longest pause and wordiest question, not their average one.
+            var sample = new CalibrationSample(
+                NoiseFloor: floor,
+                SpeechPeak: Math.Max(command.Peak, question.Peak),
+                LongestPauseMs: Math.Max(command.LongestPauseMs, question.LongestPauseMs),
+                LongestUtteranceMs: Math.Max(command.UtteranceMs, question.UtteranceMs));
+
+            if (!ListeningSettings.TryFromCalibration(sample, out var tuned))
+            {
+                // Refusing to conclude is the honest outcome: a gate guessed from a mic that heard nothing
+                // either never opens or never closes, and they'd have no idea why.
+                calibrationError = "I didn't hear you clearly enough to calibrate — nothing changed. "
+                                   + "Check the microphone and try again, a little closer.";
+                return;
+            }
+
+            if (!await ear.InvokeAsync<bool>("saveSettings", tuned))
+            {
+                calibrationError = "Couldn't save the calibration — this browser is blocking storage.";
+                return;
+            }
+
+            listening = tuned;
+            calibrated = true;
+            Logger.LogInformation(
+                "Listening calibrated: floor {Floor}, peak {Peak}, longest pause {Pause}ms -> silence {Silence}ms, gate {Gate}x.",
+                sample.NoiseFloor, sample.SpeechPeak, sample.LongestPauseMs, tuned.SilenceMs, tuned.FloorMultiple);
+        }
+        catch (JSException ex)
+        {
+            Logger.LogWarning(ex, "Listening calibration failed.");
+            calibrationError = "The microphone stopped responding — nothing changed.";
+        }
+        finally
+        {
+            calibrationStage = CalibrationStage.Idle;
+            try { await ear.InvokeVoidAsync("endSession"); }
+            catch (JSException) { /* already gone */ }
+            StateHasChanged();
+        }
+    }
+
+    private static async Task<UtteranceSample> MeasureAsync(IJSObjectReference ear, double gate) =>
+        await ear.InvokeAsync<UtteranceSample>(
+            "measureUtterance", gate, CalibrationWaitMs, CalibrationEndSilenceMs, CalibrationCapMs);
+
+    private async Task ResetCalibrationAsync()
+    {
+        try
+        {
+            await (await EarAsync()).InvokeVoidAsync("clearSettings");
+            listening = ListeningSettings.Default;
+            calibrated = false;
+            calibrationError = null;
+        }
+        catch (JSException ex)
+        {
+            Logger.LogInformation(ex, "Couldn't clear the listening calibration.");
+        }
+    }
+
+    private sealed record MicSession(bool Ok, string? Error, double Floor);
+    private sealed record UtteranceSample(bool Spoke, double Peak, int LongestPauseMs, int UtteranceMs);
+
     private IJSObjectReference? aiModule;
 
     // Each provider's config is remembered so switching providers doesn't wipe the other's key/models.
@@ -463,6 +673,11 @@
         }
         catch (JSDisconnectedException) { /* circuit gone mid-load */ }
         catch (Exception ex) { Logger.LogWarning(ex, "Couldn't load BYOK settings on the Settings page."); }
+
+        // Separate store, separate concern: this one is per-device and isn't a secret, so it survives a
+        // Forget-my-key and the session-only toggle.
+        await LoadListeningAsync();
+
         aiLoaded = true;
         StateHasChanged();
     }

@@ -26,6 +26,38 @@ let cancelled = false;
 
 const CUE_SECONDS = 0.13;
 
+// Calibration lives in the browser because only the browser can hear the room — but the numbers it
+// produces belong to the device, not the household: two people in one kitchen still have different
+// microphones, and one of them is on a phone. Its OWN key, not the AI settings' key, because that store
+// has a session-only mode for secrets and a calibration should outlive a closed tab.
+const SETTINGS_KEY = 'shelfaware.listening';
+
+export function loadSettings() {
+    try {
+        const raw = localStorage.getItem(SETTINGS_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch {
+        return null; // storage disabled/full — the caller falls back to defaults
+    }
+}
+
+export function saveSettings(settings) {
+    try {
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+export function clearSettings() {
+    try {
+        localStorage.removeItem(SETTINGS_KEY);
+    } catch {
+        // Nothing to forget, or nowhere to forget it from.
+    }
+}
+
 export function isSupported() {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder
         && (window.AudioContext || window.webkitAudioContext));
@@ -49,7 +81,7 @@ export async function startSession() {
         analyser.fftSize = 2048;
         source.connect(analyser);
 
-        noiseFloor = await measureFloor(600);
+        noiseFloor = await measureFloorInternal(600);
         return { ok: true, floor: round(noiseFloor) };
     } catch (e) {
         await endSession();
@@ -100,10 +132,15 @@ export async function beep(rising) {
 
 /// Listen for one utterance. Returns { heard: false } if the room never rose above its own noise floor
 /// (no speech-to-text call is worth making for that), else { heard: true, audio, mimeType }.
-export async function listen(openMs, maxMs, silenceMs) {
+///
+/// `settings` is ListeningSettings from .NET — { silenceMs, openMs, maxMs, floorMultiple, minThreshold }.
+/// The numbers live there, not here: they have defaults, clamping and a calibration policy that all want
+/// to be testable without a microphone, and two sets of defaults would eventually disagree.
+export async function listen(settings) {
     if (!stream || !analyser) return { heard: false, error: 'no-session' };
 
-    const threshold = speechThreshold();
+    const { openMs, maxMs, silenceMs } = settings;
+    const threshold = speechThreshold(settings);
     const recorder = newRecorder();
     if (!recorder) return { heard: false, error: 'no-recorder' };
 
@@ -143,14 +180,69 @@ export async function listen(openMs, maxMs, silenceMs) {
     };
 }
 
-// What counts as speech in THIS room. Relative to the measured floor so a kitchen with the extractor fan
-// running doesn't read as continuous talking, with an absolute minimum so a silent room doesn't make the
-// gate infinitely twitchy.
-function speechThreshold() {
-    return Math.max(noiseFloor * 3, 0.012);
+// What counts as speech in THIS room. Relative to the floor measured at session start, so a kitchen with
+// the extractor fan running doesn't read as continuous talking, with an absolute minimum so a silent room
+// doesn't make the gate infinitely twitchy (any multiple of nearly-zero is still nearly-zero).
+function speechThreshold(settings) {
+    return Math.max(noiseFloor * settings.floorMultiple, settings.minThreshold);
 }
 
-async function measureFloor(ms) {
+// ---- Calibration -------------------------------------------------------------------------------
+// Two primitives; .NET drives the sequence. Deliberately: the wizard's steps, the arithmetic turning
+// measurements into settings, and the "we never heard you" case are all decisions, and decisions belong
+// somewhere they can be read and tested. All this half does is hear.
+
+/// The room with nobody talking. Also refreshes the session's floor, so calibrating re-baselines the
+/// gate immediately rather than at the next cook-along.
+export async function measureFloor(ms) {
+    if (!analyser) return 0;
+    noiseFloor = await measureFloorInternal(ms);
+    return round(noiseFloor);
+}
+
+/// Measure ONE spoken utterance without transcribing it. Returns
+/// { spoke, peak, longestPauseMs, utteranceMs }.
+///
+/// longestPauseMs is the point of the whole exercise: the longest gap BETWEEN words inside one utterance.
+/// It's what decides whether we cut someone off mid-sentence, and it's unguessable for anyone else.
+/// Note `endSilenceMs` must be generous — a calibration that gave up after 900ms of quiet could never
+/// observe a 1200ms pause, which is exactly the person it most needs to measure.
+export async function measureUtterance(threshold, maxWaitMs, endSilenceMs, hardCapMs) {
+    if (!analyser) return { spoke: false, peak: 0, longestPauseMs: 0, utteranceMs: 0 };
+
+    let peak = 0, longestPause = 0;
+    let spoke = false, firstLoudAt = 0, lastLoudAt = 0, quietSince = 0;
+    const startedAt = Date.now();
+
+    while (!cancelled) {
+        const level = rms();
+        const now = Date.now();
+
+        if (level > threshold) {
+            peak = Math.max(peak, level);
+            if (!spoke) { spoke = true; firstLoudAt = now; }
+            else if (quietSince > 0) longestPause = Math.max(longestPause, now - quietSince);
+            quietSince = 0;
+            lastLoudAt = now;
+        } else if (spoke && quietSince === 0) {
+            quietSince = now;
+        }
+
+        if (spoke && quietSince > 0 && now - quietSince >= endSilenceMs) break; // they finished
+        if (!spoke && now - startedAt >= maxWaitMs) break;                      // nobody spoke
+        if (now - startedAt >= hardCapMs) break;
+        await wait(25);
+    }
+
+    return {
+        spoke,
+        peak: round(peak),
+        longestPauseMs: Math.round(longestPause),
+        utteranceMs: spoke ? Math.round(lastLoudAt - firstLoudAt) : 0,
+    };
+}
+
+async function measureFloorInternal(ms) {
     const readings = [];
     const until = Date.now() + ms;
     while (Date.now() < until) {
