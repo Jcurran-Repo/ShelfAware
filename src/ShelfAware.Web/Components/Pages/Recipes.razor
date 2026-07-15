@@ -761,8 +761,12 @@
     private async Task RemoveExcluded(ExcludedFood f)
     {
         await using var db = await DbFactory.CreateDbContextAsync();
-        db.ExcludedFoods.Remove(await db.ExcludedFoods.FindAsync(f.Id) ?? f);
-        await db.SaveChangesAsync();
+        // See the note in DeleteSaved: no fallback to the detached entity.
+        if (await db.ExcludedFoods.FindAsync(f.Id) is { } row)
+        {
+            db.ExcludedFoods.Remove(row);
+            await db.SaveChangesAsync();
+        }
         await LoadAsync();
     }
 
@@ -863,8 +867,14 @@
     private async Task DeleteSaved(Recipe r)
     {
         await using var db = await DbFactory.CreateDbContextAsync();
-        db.Recipes.Remove(await db.Recipes.FindAsync(r.Id) ?? r);
-        await db.SaveChangesAsync();
+        // No fallback to the detached `r`: the lookup is household-filtered, so a miss means the recipe is
+        // already gone (a double tap) or isn't ours — and removing `r` anyway would delete it keyed on the
+        // id alone, with no household predicate. Nothing to delete is a no-op, not an error.
+        if (await db.Recipes.FindAsync(r.Id) is { } row)
+        {
+            db.Recipes.Remove(row);
+            await db.SaveChangesAsync();
+        }
         await LoadAsync();
     }
 }
