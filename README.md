@@ -38,9 +38,14 @@ overdue or about to be. That restraint *is* the app.
 
 **I talk to it — literally.** Type *"we're out of dog food, almost out of coffee"* into the box,
 or hold the mic button and say it. There's a hands-free conversation mode for multi-turn updates
-(*"what am I low on?" → "add the first two"*), and saved recipes can read themselves aloud
-step-by-step while you cook — including a barge-in cook-along that listens for "next" and "repeat"
-while it talks.
+(*"what am I low on?" → "add the first two"*).
+
+**And it cooks with me.** Hit **Cook-along** on a saved recipe and it reads a step, then waits.
+Say *"next"*, *"back"*, *"repeat"*, *"go to step 3"* — hands covered in flour, no screen. Ask it a
+real question (*"can I use butter instead of oil?"*) and it answers, because behind the voice is the
+same brain the rest of the app talks to; it knows which recipe you're on and which step you're
+standing at. It measures your kitchen and your voice first, so it isn't guessing what counts as
+speech in *your* room, or how long *you* pause mid-sentence.
 
 **When it's time to shop,** the grocery list is already there — sorted by aisle, with the size and
 brand we usually buy and a rough cost. The whole app installs to a phone's home screen, so the
@@ -76,6 +81,8 @@ no API call, no token cost, same answer every time.
 | Match a receipt line to a product you already have | **LLM-assisted** |
 | Decide if a new tag means the same as an old one (Soda ≈ Soft Drink) | **LLM** |
 | Turn speech into text, read replies aloud | **ElevenLabs** (pure I/O — the same chat brain decides) |
+| Answer *"can I use butter instead of oil?"* mid-recipe | **LLM** (tool calling, with the recipe in view) |
+| Hear *"next"* while you're cooking | **plain C#** — see below |
 | Predict run-out dates | **plain C#** |
 | Decide which imports are trustworthy enough to auto-confirm | **plain C#** |
 | Catch a duplicate tag (casing / plural / typo) | **plain C#** |
@@ -84,6 +91,29 @@ no API call, no token cost, same answer every time.
 
 The prediction engine — the thing the app is *named for* — contains **zero** LLM calls. It's pure,
 deterministic, unit-tested, and (see below) it grades itself.
+
+### I built the cook-along twice
+
+The first version handed the whole conversation to ElevenLabs' realtime agent. It worked. It also
+billed per minute of conversation — including the silence while you chop — put a load-bearing prompt
+in a vendor dashboard where git couldn't see it, and ran its reasoning on a model I hadn't chosen.
+
+So I built my own out of the parts I already had: their speech-to-text, their text-to-speech, and my
+brain in the middle. Then I measured both — and the surprise is that **mine is faster on the turns
+that matter**. "next" is the overwhelmingly common thing you say to a recipe, and here it costs a
+string comparison and an already-cached clip: no model call, no round-trip, no meter. The realtime
+agent round-trips an LLM to work out that "next" means next.
+
+The interesting part is what that plain-code grammar is *allowed* to be. At first a miss was **wrong**
+— say it oddly, or cough halfway through, and the model would helpfully *answer* your command instead
+of obeying it. That made the phrase list load-bearing, and no list survives contact with how people
+actually talk. So the model got a tool that moves the reader. Now a miss is merely **slow**: the
+grammar became an optimisation rather than a gate, and it's free to be incomplete.
+
+Both are still there. The realtime agent is one click away under the caret, because interrupting
+mid-sentence is the one thing my loop genuinely can't do — it listens *between* steps, which is where
+a cook actually talks, and which is why it needs no echo cancellation to hear "stop" over its own
+voice. Different tools, honest trade, and the cheap one is the default.
 
 ### How it's wired
 
@@ -206,7 +236,8 @@ git clone https://github.com/Jcurran-Repo/ShelfAware && cd ShelfAware
 # Anthropic API key — stored in user-secrets, never committed
 dotnet user-secrets --project src/ShelfAware.Web set "Llm:ApiKey" "sk-ant-..."
 
-# Optional — voice (push-to-talk, conversation, recipe read-aloud):
+# Optional — voice (push-to-talk, conversation, cook-along). One key does all of it;
+# the realtime-agent option additionally wants ElevenLabs:AgentId, and nothing else does.
 dotnet user-secrets --project src/ShelfAware.Web set "ElevenLabs:ApiKey" "..."
 
 # Run (creates the SQLite DBs under src/ShelfAware.Web/app-data on first launch)
@@ -246,8 +277,9 @@ do the work:
 **Settings → AI provider & keys**, picks Anthropic, OpenAI, or a local OpenAI-compatible server
 (Ollama, LM Studio, llama.cpp — self-hosted runs only), pastes a key, and can tweak which model
 does which job (receipt-reading needs vision; the assistant needs tool calling). An ElevenLabs key
-+ agent id switch on voice the same way. This is how the live demo will run — I'm not paying for
-the internet's tokens, and nobody has to trust me with theirs.
+switches on voice the same way — the agent id is only for the realtime-agent option, which is the
+one thing here billed per minute. This is how the live demo will run — I'm not paying for the
+internet's tokens, and nobody has to trust me with theirs.
 
 **`managed` — the host's keys, on a meter.** The server's keys are authoritative, the key panel
 disappears from Settings, and each household gets a daily allowance — `Llm:DailyCallLimit`,
