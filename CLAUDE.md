@@ -227,7 +227,8 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      household's `AiUsage` row; quotas remain managed-only (BYOK: recorded, never limited). Settings
      gains an "AI usage" panel (today + 14-day daily table via `AiUsageMeter.GetRecentAsync`).
 
-12. **Security hardening from the adversarial tenancy review (2026-07-15, branch `feature/security-hardening`):**
+12. **Security hardening from the adversarial tenancy review (2026-07-15 — ✅ MERGED to master, PUSHED, and
+   LIVE on the tailnet; 17 commits, 609 tests green):**
    An adversarial review hunted for a path where household A reads/writes B's data and **found none** — the
    boundary held (raw `IDbContextFactory` really is bootstrap-only; the one `IgnoreQueryFilters` really does
    only enumerate which households exist; both API endpoints scope to the caller's claim; every tenant table
@@ -274,6 +275,21 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      an existing file.
    - **Speech-cache trim is per household** — one shared budget deleted the oldest clips anywhere, so a heavy
      household evicted a light one's and made them re-buy the audio. Total disk is now households × `Speech:CacheMegabytes`.
+     Clips loose at the cache ROOT (pre-split, from before `8cd4029`) are swept outright whatever the budget:
+     every lookup goes through a household folder, so nothing can read, export, or **delete** them — 5 MB of
+     unattributable recordings on the dev box, 0 on the server (it had no cache yet).
+   - **"Download my data" is a ZIP**, not just JSON: `data.json` (every table) + `receipts/<ImagePath>/page-*`
+     + `recipes/<name>/step-N.mp3`. The audio naming is why `RecipeNarration` (Core) exists — the cache keys a
+     clip on its text AND its neighbours, so the export must segment a recipe EXACTLY as the reader did or it
+     silently finds nothing. ⚠️ Don't let the reader keep its own copy of either half of that rule.
+     **`ZipArchive` is a synchronous API** and Kestrel refuses sync IO on a response, so the endpoint opts in
+     via `IHttpBodyControlFeature` — tests pass without it (MemoryStream doesn't care) and a browser doesn't;
+     a stream that refuses sync writes pins it. The export never synthesizes: asking for your data must not
+     spend your AI budget.
+   - **Deploy notes (2026-07-15):** `AdditiveSchema.Apply(authDb)` migrated the live `auth.db` in place on boot
+     (the three Invite columns verified present — check the `-wal`, not just the `.db`, or a fresh change looks
+     missing). Pre-deploy backup at `ShelfAware-server/app-data/backup-2026-07-15-pre-security-hardening/`.
+     `appsettings.json` preserved at its 7/8 timestamp per the runbook (hash-compared before/after).
 
 11. **Ordering + duplicate guard + substitution-matrix batch (2026-07-12):**
    - **Grocery list "Coming up" walks the store** — same Category → urgency → name order as Buy now,
