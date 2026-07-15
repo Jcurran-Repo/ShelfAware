@@ -66,9 +66,11 @@ public sealed class UserDataService(
     /// The whole export as a ZIP, written straight to <paramref name="destination"/>.
     ///
     /// A zip because the export stopped being only text: the pantry's rows go in as <c>data.json</c>, the
-    /// saved receipt images go in beside them, and so does the synthesized audio of the recipes. It
-    /// streams rather than building in memory — a household's receipt photos can run to tens of megabytes
-    /// and there's no reason for the server to hold them all at once.
+    /// saved receipt images go in beside them, and so does the synthesized audio of the recipes. It writes
+    /// as it goes rather than building the archive in memory — a household's receipt photos can run to
+    /// tens of megabytes and there's no reason for the server to hold them all at once. (Images stream
+    /// page by page; a clip is read whole, which is bounded by the largest single clip and not worth a
+    /// stream-returning cache API to avoid.)
     ///
     /// The layout is meant to be opened by a person, not just parsed: <c>receipts/</c> mirrors each row's
     /// <c>ImagePath</c>, so a receipt in data.json names the folder its photo is in; and
@@ -95,19 +97,54 @@ public sealed class UserDataService(
     /// CompressionLevel.NoCompression: zipping a JPEG twice costs CPU and saves nothing.</summary>
     private async Task AddReceiptImagesAsync(ZipArchive zip, IReadOnlyList<Receipt> receipts, CancellationToken ct)
     {
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var receipt in receipts)
         {
             foreach (var page in receiptStorage.Pages(receipt.ImagePath))
             {
                 ct.ThrowIfCancellationRequested();
-                var name = $"{receipt.ImagePath.Replace('\\', '/').TrimEnd('/')}/{Path.GetFileName(page)}";
-                var entry = zip.CreateEntry(name, CompressionLevel.NoCompression);
-                await using var writing = entry.Open();
-                await using var reading = File.OpenRead(page);
-                await reading.CopyToAsync(writing, ct);
+                var name = $"{ZipFolderFor(receipt.ImagePath)}/{Path.GetFileName(page)}";
+                // Two rows can't be made to share an ImagePath today (each mints its own GUID), but a zip
+                // permits duplicate names and extraction tools disagree about what to do with them.
+                if (!used.Add(name)) continue;
+                await AddFileAsync(zip, name, page, ct);
             }
         }
     }
+
+    /// <summary>
+    /// One file into the archive, or a logged miss.
+    ///
+    /// A page that won't open must not take the download with it. By the time this runs the response has
+    /// started, so an escaping exception can't become an error page — Kestrel just drops the connection
+    /// and the user is left with a truncated zip and no idea why. One locked file (the importer mid-write,
+    /// a virus scanner holding a handle, a page deleted since it was listed) costs them that page, not
+    /// their whole export. Everything else on this path already fails soft for the same reason.
+    /// </summary>
+    private async Task AddFileAsync(ZipArchive zip, string name, string path, CancellationToken ct)
+    {
+        try
+        {
+            await using var reading = File.OpenRead(path);
+            var entry = zip.CreateEntry(name, CompressionLevel.NoCompression);
+            await using var writing = entry.Open();
+            await reading.CopyToAsync(writing, ct);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(ex, "Couldn't add {Path} to the export; skipping it.", path);
+        }
+    }
+
+    /// <summary>A stored <c>ImagePath</c> as a zip folder: forward slashes, and no segment that could
+    /// walk out of the archive when it's extracted. The paths we generate contain nothing of the sort —
+    /// but this string is the one place a stored value becomes a path on someone ELSE'S machine, and the
+    /// recipe names beside it are sanitised for exactly that reason.</summary>
+    private static string ZipFolderFor(string imagePath) =>
+        string.Join('/', imagePath
+            .Replace('\\', '/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Where(segment => segment is not ("." or "..")));
 
     /// <summary>
     /// The recipes as they were read aloud, named for what they say.
@@ -128,10 +165,11 @@ public sealed class UserDataService(
 
         foreach (var recipe in recipes)
         {
-            // The export loaded rows flat (no navigations, so the JSON has no cycles), so put the steps
-            // back on before asking how this recipe gets narrated.
-            recipe.Steps = stepsByRecipe.TryGetValue(recipe.Id, out var mine) ? mine : [];
-            var segments = RecipeNarration.Of(recipe);
+            // Asked by parts, not by grafting steps onto the Recipe: these are the same instances that
+            // were just serialized into data.json, and quietly mutating them would leave this method
+            // correct only for as long as it happens to run last.
+            var mine = stepsByRecipe.TryGetValue(recipe.Id, out var found) ? found : [];
+            var segments = RecipeNarration.Of(recipe.Name, recipe.Blurb, mine);
             var folder = UniqueFolderFor(recipe, used);
 
             for (var i = 0; i < segments.Count; i++)

@@ -63,9 +63,10 @@ public sealed class ReceiptStorage(AppPaths paths, ICurrentHousehold household, 
     /// whose <c>ImagePath</c> has no household segment and so isn't under the household's tree.</summary>
     public void DeleteFolder(string imagePath)
     {
-        // Null means it doesn't resolve inside the store (the demo seeder's "demo/no-image" placeholder,
-        // say): nothing of ours, and not something to go deleting on a stored string's say-so.
-        if (Within(imagePath) is { } folder) HouseholdFolder.Delete(folder, logger);
+        // Within is what makes the delete below safe: null means the path doesn't resolve inside the
+        // store (the demo seeder's "demo/no-image" placeholder, say), and DeleteTree checks nothing
+        // itself — so this guard is the only thing between a stored string and a recursive delete.
+        if (Within(imagePath) is { } folder) HouseholdFolder.DeleteTree(folder, logger);
     }
 
     /// <summary>Forgets every receipt image this household ever saved. Exposed as an operation for the

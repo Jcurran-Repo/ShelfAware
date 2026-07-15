@@ -17,11 +17,16 @@ public sealed record NarrationSegment(string Name, string Text);
 /// </summary>
 public static class RecipeNarration
 {
-    public static IReadOnlyList<NarrationSegment> Of(Recipe recipe)
+    public static IReadOnlyList<NarrationSegment> Of(Recipe recipe) => Of(recipe.Name, recipe.Blurb, recipe.Steps);
+
+    /// <summary>The same rule, for a caller holding a recipe's parts rather than a loaded entity — the
+    /// export reads its rows flat (no navigations, so the JSON can't cycle) and shouldn't have to graft
+    /// steps back onto a Recipe just to ask this question.</summary>
+    public static IReadOnlyList<NarrationSegment> Of(string name, string? blurb, IEnumerable<RecipeStep> steps)
     {
-        var intro = string.IsNullOrWhiteSpace(recipe.Blurb) ? $"{recipe.Name}." : $"{recipe.Name}. {recipe.Blurb}";
+        var intro = string.IsNullOrWhiteSpace(blurb) ? $"{name}." : $"{name}. {blurb}";
         var segments = new List<NarrationSegment> { new("intro", intro) };
-        segments.AddRange(recipe.Steps
+        segments.AddRange(steps
             .OrderBy(s => s.Order)
             .Select((s, i) => new NarrationSegment($"step-{i + 1}", $"Step {i + 1}. {s.Text}")));
         return segments;

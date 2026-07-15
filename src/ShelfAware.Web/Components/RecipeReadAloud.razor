@@ -171,9 +171,11 @@
         if (HandsFree) await OpenEarsAsync();
 
         // Segment 0 = spoken intro (name + blurb); segments 1..N = the steps, so a segment index maps
-        // straight onto a step number for highlighting. RecipeNarration owns the rule because the export
-        // has to reproduce it exactly to find these clips in the cache again.
-        var texts = RecipeNarration.Of(Recipe).Select(s => s.Text).ToList();
+        // straight onto a step number for highlighting. RecipeNarration owns BOTH the segmenting and the
+        // context, because the cache keys a clip on its text AND its neighbours — the export has to
+        // reproduce the whole rule to find these clips again, and a second copy of half of it here would
+        // drift silently.
+        var texts = RecipeNarration.Of(Recipe);
 
         try
         {
@@ -244,11 +246,12 @@
     /// provider's concurrency limit) but are awaited IN ORDER, so the playlist stays in step order even
     /// though the calls finish out of order.
     /// </summary>
-    private async Task NarrateAsync(IJSObjectReference player, IReadOnlyList<string> texts)
+    private async Task NarrateAsync(IJSObjectReference player, IReadOnlyList<NarrationSegment> texts)
     {
         _narration = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
 
-        var intro = await Tts.SynthesizeAsync(texts[0], ContextFor(texts, 0), _narration.Token);
+        var intro = await Tts.SynthesizeAsync(
+            texts[0].Text, RecipeNarration.ContextAt(texts, 0), _narration.Token);
         if (!intro.Success)
         {
             error = "Couldn't generate the narration — check that the ElevenLabs key is set.";
@@ -294,12 +297,6 @@
         }
     }
 
-    /// <summary>The neighbouring segments, so the provider can carry intonation across the cut. Mirrors
-    /// RecipeNarration.ContextAt over the already-flattened texts.</summary>
-    private static SpeechContext ContextFor(IReadOnlyList<string> texts, int i) =>
-        new(Previous: i > 0 ? texts[i - 1] : null,
-            Next: i + 1 < texts.Count ? texts[i + 1] : null);
-
     private static Segment SegmentFor(TextToSpeechResult clip) =>
         new(Convert.ToBase64String(clip.Audio), clip.MediaType);
 
@@ -308,14 +305,14 @@
     /// not disposed: it outlives this method along with the tasks it throttles, and SemaphoreSlim only
     /// holds a disposable wait handle if AvailableWaitHandle is read, which we never do.
     /// </summary>
-    private Task<TextToSpeechResult>[] StartSteps(IReadOnlyList<string> texts, int maxConcurrency)
+    private Task<TextToSpeechResult>[] StartSteps(IReadOnlyList<NarrationSegment> texts, int maxConcurrency)
     {
         var token = _narration!.Token;
         var gate = new SemaphoreSlim(maxConcurrency);
         return Enumerable.Range(1, texts.Count - 1).Select(async i =>
         {
             await gate.WaitAsync(token);
-            try { return await Tts.SynthesizeAsync(texts[i], ContextFor(texts, i), token); }
+            try { return await Tts.SynthesizeAsync(texts[i].Text, RecipeNarration.ContextAt(texts, i), token); }
             finally { gate.Release(); }
         }).ToArray();
     }

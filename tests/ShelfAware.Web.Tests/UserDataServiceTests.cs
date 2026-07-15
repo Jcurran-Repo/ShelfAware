@@ -300,6 +300,56 @@ public class UserDataServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task A_page_that_cannot_be_read_costs_that_page_and_not_the_whole_download()
+    {
+        // By the time images are written the response has started, so an escaping IOException can't become
+        // an error page — it just drops the connection and leaves a truncated zip. One locked file must
+        // cost one file.
+        var storage = Storage();
+        var readable = await storage.NewFolderAsync();
+        await storage.WritePageAsync(readable, 0, [1, 2, 3], "image/jpeg");
+        var locked = await storage.NewFolderAsync();
+        await storage.WritePageAsync(locked, 0, [4, 5, 6], "image/jpeg");
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Receipts.Add(new Receipt { ImagePath = locked });
+            db.Receipts.Add(new Receipt { ImagePath = readable });
+            await db.SaveChangesAsync();
+        }
+
+        // Hold the file open exclusively — what a scanner or a mid-write importer looks like.
+        var lockedPage = storage.Pages(locked).Single();
+        using (File.Open(lockedPage, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            using var zip = await ArchiveAsync();
+
+            Assert.NotNull(zip.GetEntry("data.json"));
+            Assert.Single(zip.Entries, e => e.FullName.StartsWith(readable) && e.FullName.EndsWith("page-0.jpg"));
+            Assert.DoesNotContain(zip.Entries, e => e.FullName.StartsWith(locked));
+        }
+    }
+
+    [Fact]
+    public async Task Exporting_does_not_disturb_the_rows_it_just_serialized()
+    {
+        // The audio pass used to graft steps back onto the very Recipe instances that had just been
+        // serialized, which was correct only for as long as it ran last.
+        var speech = new FakeSpeechCache();
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Recipes.Add(new Recipe { Name = "Toast", Steps = { new RecipeStep { Order = 1, Text = "Toast it." } } });
+            await db.SaveChangesAsync();
+        }
+
+        var snapshot = await Service(speech).ExportAsync();
+        var buffer = new MemoryStream();
+        await Service(speech).WriteArchiveAsync(buffer);
+
+        // The flat load is what keeps data.json cycle-free; nothing in the archive path may undo it.
+        Assert.Empty(Assert.Single(snapshot.Recipes).Steps);
+    }
+
+    [Fact]
     public async Task Recipe_audio_is_named_for_the_recipe_and_step_it_speaks()
     {
         // A content-addressed hash is honest and useless. The export re-derives each segment's key the
