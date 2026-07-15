@@ -19,12 +19,17 @@ public class ReceiptFolderPolicyTests
     public void Unconfigured_allows_any_local_path()
     {
         // The self-host default: the owner's receipts live wherever the owner keeps them.
+        //
+        // Built from GetTempPath rather than written out as C:\Users\... — CI runs on Linux, where a
+        // string like that isn't an absolute path at all but a relative filename that happens to contain
+        // backslashes and a colon, so GetFullPath resolves it under the working directory and Permit
+        // rightly hands back somewhere else entirely.
         var policy = Policy(null);
+        var theirs = Path.Combine(Path.GetTempPath(), "Documents", "Walmart Receipts");
 
         Assert.False(policy.IsConfined);
-        Assert.Null(policy.Reject(@"C:\Users\jordan\Documents\Walmart Receipts"));
-        Assert.Equal(@"C:\Users\jordan\Documents\Walmart Receipts",
-            policy.Permit(@"C:\Users\jordan\Documents\Walmart Receipts"));
+        Assert.Null(policy.Reject(theirs));
+        Assert.Equal(theirs, policy.Permit(theirs));
     }
 
     [Fact]
@@ -44,13 +49,18 @@ public class ReceiptFolderPolicyTests
         Assert.Null(Policy(Root).Reject(Root));
     }
 
+    /// <summary>Absolute on either platform, and genuinely elsewhere: a sibling of the allowed root.
+    /// A hardcoded "C:\Windows\Temp" is refused on Linux too, but only because it resolves to a relative
+    /// path under the working directory — passing for a reason the test isn't about.</summary>
+    private static readonly string Elsewhere = Path.Combine(Path.GetTempPath(), "sa-somewhere-else");
+
     [Fact]
     public void A_folder_outside_the_root_is_refused()
     {
         var policy = Policy(Root);
 
-        Assert.NotNull(policy.Reject(@"C:\Windows\Temp"));
-        Assert.Null(policy.Permit(@"C:\Windows\Temp"));
+        Assert.NotNull(policy.Reject(Elsewhere));
+        Assert.Null(policy.Permit(Elsewhere));
     }
 
     [Fact]
@@ -99,7 +109,7 @@ public class ReceiptFolderPolicyTests
     {
         // The inbox re-checks rather than trusting the table: a value can outlive the rules in force when
         // it was written (an older build, a hand-edited DB).
-        Assert.Null(Policy(Root).Permit(@"C:\Windows\Temp"));
+        Assert.Null(Policy(Root).Permit(Elsewhere));
     }
 
     [Fact]

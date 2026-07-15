@@ -551,6 +551,15 @@ the same item bought across brands/sizes rolls up into one product.
 
 ## Environment & workflow gotchas
 
+- **CI runs on `ubuntu-latest`; you develop on Windows — a green local suite is not a green CI.** Paths are
+  where this bites: `"C:\Users\..."` is not an absolute path on Linux, it's a RELATIVE filename that happens
+  to contain a colon and backslashes, so `Path.GetFullPath` resolves it under the working directory. A test
+  hardcoding one either fails there (if it asserts on the resolved value) or — worse — passes for a reason
+  it isn't about. Build test paths from `Path.GetTempPath()` + `Path.Combine`. Same class of trap as
+  `Path.DirectorySeparatorChar` and case-sensitive path comparison (see `PathScope`): the Linux behaviour is
+  only ever exercised by CI, so **let a failed CI teach you rather than re-running locally and shrugging**.
+  (Caught 2026-07-15: `Unconfigured_allows_any_local_path`, green on Windows 609/609, red on CI.)
+
 - **Stop the dev server before `dotnet build`** — a running server locks the DLLs (MSB3027 after
   10 retries). Started outside the preview tooling it won't show in `preview_list`; find/kill the
   `ShelfAware.Web` process (it names itself in the lock error).
