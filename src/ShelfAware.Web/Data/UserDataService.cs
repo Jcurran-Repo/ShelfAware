@@ -1,7 +1,10 @@
+using System.Buffers;
+using System.IO.Compression;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Settings;
-using ShelfAware.Web.Services;
+using ShelfAware.Core.Speech;
 
 namespace ShelfAware.Web.Data;
 
@@ -22,13 +25,14 @@ namespace ShelfAware.Web.Data;
 /// usage surviving is what stops a delete doubling as a quota reset. Export asks "what do you have on
 /// me", and the only defensible answer to that is all of it.
 /// </summary>
-/// <param name="speechCacheRoot">Root of the TTS cache, or null when caching is off. Deleting a household's
-/// rows while leaving a recording of its recipes on disk would make "delete my data" a false statement.</param>
+/// <param name="speechCache">The household's stored recipe audio, or null when caching is off. Both
+/// halves need it: deleting a household's rows while leaving a recording of its recipes on disk would
+/// make "delete my data" a false statement, and an export without it isn't everything.</param>
 public sealed class UserDataService(
     IHouseholdDbFactory dbFactory,
     ICurrentHousehold currentHousehold,
     ReceiptStorage receiptStorage,
-    string? speechCacheRoot,
+    ISpeechCache? speechCache,
     ILogger<UserDataService> logger)
 {
     /// <summary>Everything, flattened (loaded without navigations so there are no serialization cycles) —
@@ -57,6 +61,129 @@ public sealed class UserDataService(
             GroceryExtras = await db.GroceryExtras.AsNoTracking().ToListAsync(ct),
         };
     }
+
+    /// <summary>
+    /// The whole export as a ZIP, written straight to <paramref name="destination"/>.
+    ///
+    /// A zip because the export stopped being only text: the pantry's rows go in as <c>data.json</c>, the
+    /// saved receipt images go in beside them, and so does the synthesized audio of the recipes. It
+    /// streams rather than building in memory — a household's receipt photos can run to tens of megabytes
+    /// and there's no reason for the server to hold them all at once.
+    ///
+    /// The layout is meant to be opened by a person, not just parsed: <c>receipts/</c> mirrors each row's
+    /// <c>ImagePath</c>, so a receipt in data.json names the folder its photo is in; and
+    /// <c>recipes/&lt;name&gt;/step-3.mp3</c> is the clip of that recipe's third step, because a
+    /// content-addressed hash is honest but useless to the person who asked for their data.
+    /// </summary>
+    public async Task WriteArchiveAsync(Stream destination, CancellationToken ct = default)
+    {
+        var snapshot = await ExportAsync(ct);
+        using var zip = new ZipArchive(destination, ZipArchiveMode.Create, leaveOpen: true);
+
+        var json = zip.CreateEntry("data.json", CompressionLevel.Optimal);
+        await using (var entry = json.Open())
+        {
+            await JsonSerializer.SerializeAsync(entry, snapshot, JsonOptions, ct);
+        }
+
+        await AddReceiptImagesAsync(zip, snapshot.Receipts, ct);
+        await AddRecipeAudioAsync(zip, snapshot.Recipes, snapshot.RecipeSteps, ct);
+    }
+
+    /// <summary>Every saved receipt page, filed under the same relative path the row already carries — so
+    /// a Receipt in data.json points at its own photo in the archive. Already-compressed images get
+    /// CompressionLevel.NoCompression: zipping a JPEG twice costs CPU and saves nothing.</summary>
+    private async Task AddReceiptImagesAsync(ZipArchive zip, IReadOnlyList<Receipt> receipts, CancellationToken ct)
+    {
+        foreach (var receipt in receipts)
+        {
+            foreach (var page in receiptStorage.Pages(receipt.ImagePath))
+            {
+                ct.ThrowIfCancellationRequested();
+                var name = $"{receipt.ImagePath.Replace('\\', '/').TrimEnd('/')}/{Path.GetFileName(page)}";
+                var entry = zip.CreateEntry(name, CompressionLevel.NoCompression);
+                await using var writing = entry.Open();
+                await using var reading = File.OpenRead(page);
+                await reading.CopyToAsync(writing, ct);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The recipes as they were read aloud, named for what they say.
+    ///
+    /// Only clips already in the cache are included — this exports, it doesn't synthesize, so asking for
+    /// your data never spends your AI budget. A recipe you never had read to you simply has no audio, and
+    /// that's the honest answer rather than a surprise bill.
+    /// </summary>
+    private async Task AddRecipeAudioAsync(
+        ZipArchive zip, IReadOnlyList<Recipe> recipes, IReadOnlyList<RecipeStep> steps, CancellationToken ct)
+    {
+        if (speechCache is null) return;
+        var householdId = await currentHousehold.GetIdAsync(ct);
+        if (householdId is null) return;
+
+        var stepsByRecipe = steps.GroupBy(s => s.RecipeId).ToDictionary(g => g.Key, g => g.ToList());
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var recipe in recipes)
+        {
+            // The export loaded rows flat (no navigations, so the JSON has no cycles), so put the steps
+            // back on before asking how this recipe gets narrated.
+            recipe.Steps = stepsByRecipe.TryGetValue(recipe.Id, out var mine) ? mine : [];
+            var segments = RecipeNarration.Of(recipe);
+            var folder = UniqueFolderFor(recipe, used);
+
+            for (var i = 0; i < segments.Count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var clip = await speechCache.FindAsync(
+                    householdId, segments[i].Text, RecipeNarration.ContextAt(segments, i), ct);
+                if (clip is null) continue; // never synthesized, or trimmed since
+
+                var entry = zip.CreateEntry(
+                    $"recipes/{folder}/{segments[i].Name}{ExtensionFor(clip.MediaType)}",
+                    CompressionLevel.NoCompression); // audio is already compressed
+                await using var writing = entry.Open();
+                await writing.WriteAsync(clip.Audio, ct);
+            }
+        }
+    }
+
+    /// <summary>What a zip entry may not contain if the archive is to extract anywhere. Deliberately NOT
+    /// Path.GetInvalidFileNameChars(), which answers for the machine we're running on: Linux would happily
+    /// let ':' and '*' through, and the resulting archive wouldn't unpack on the Windows box that asked
+    /// for it. A download is a portable artifact, so it gets the strictest set.</summary>
+    private static readonly SearchValues<char> UnsafeInNames = SearchValues.Create("<>:\"/\\|?*");
+
+    /// <summary>A recipe's folder name: its own name where that survives being a filename, its id when it
+    /// doesn't, and its id appended when two recipes would otherwise collide (variants share a name by
+    /// design — "Chicken Thighs" adapted twice is two folders, not one that overwrites itself).</summary>
+    private static string UniqueFolderFor(Recipe recipe, HashSet<string> used)
+    {
+        var cleaned = new string([.. recipe.Name.Select(c => UnsafeInNames.Contains(c) || char.IsControl(c) ? '-' : c)])
+            // Trailing dots and spaces are legal in a zip and unopenable once extracted on Windows; a name
+            // of nothing but dots would otherwise leave a segment that reads as "the folder above".
+            .Trim().Trim('.').Trim();
+        var name = string.IsNullOrWhiteSpace(cleaned) ? $"recipe-{recipe.Id}" : cleaned;
+        if (!used.Add(name))
+        {
+            name = $"{name} ({recipe.Id})";
+            used.Add(name);
+        }
+        return name;
+    }
+
+    private static string ExtensionFor(string mediaType) => mediaType switch
+    {
+        "audio/mpeg" => ".mp3",
+        "audio/wav" or "audio/wave" => ".wav",
+        "audio/ogg" => ".ogg",
+        "audio/webm" => ".webm",
+        _ => ".audio",
+    };
+
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
     /// <summary>Total rows the delete would remove — shown in the confirm dialog so the warning is
     /// concrete ("this removes 214 records") rather than vague.</summary>
@@ -147,12 +274,12 @@ public sealed class UserDataService(
     /// </summary>
     private async Task DeleteCachedSpeechAsync(CancellationToken ct)
     {
-        if (speechCacheRoot is null) return;
+        if (speechCache is null) return;
 
         var householdId = await currentHousehold.GetIdAsync(ct);
         if (householdId is null) return;
 
-        if (!CachingTextToSpeech.DeleteHousehold(speechCacheRoot, householdId, logger))
+        if (!speechCache.DeleteHousehold(householdId))
             logger.LogWarning("Deleted the household's data, but some of its cached speech remains on disk.");
     }
 }

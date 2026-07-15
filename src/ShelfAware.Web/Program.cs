@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
@@ -251,7 +252,7 @@ builder.Services.AddScoped(sp => new UserDataService(
     sp.GetRequiredService<IHouseholdDbFactory>(),
     sp.GetRequiredService<ICurrentHousehold>(),
     sp.GetRequiredService<ReceiptStorage>(),
-    speechCacheDir,
+    sp.GetService<ISpeechCache>(), // null when Speech:CacheMegabytes = 0: no cache, nothing to find or forget
     sp.GetRequiredService<ILogger<UserDataService>>()));
 
 // Voice I/O (ElevenLabs): Scribe = STT (ear), TTS = mouth. Speech is its own REST API, not an
@@ -548,13 +549,24 @@ app.MapGet("/api/cookalong/signed-url", async (HttpContext ctx, IHttpClientFacto
     return Results.Content(await response.Content.ReadAsStringAsync(ct), "application/json");
 }).RequireRateLimiting("cookalong").RequireAuthorization();
 
-// Full data export ("Download my data") — a portable JSON snapshot; also the "export first" offered
-// before Delete my data. Reads the user's own content only (no keys, no app config).
-app.MapGet("/api/data/export", async (UserDataService data, CancellationToken ct) =>
+// Full data export ("Download my data") — everything in the household's database as data.json, plus the
+// saved receipt images and the audio of any recipe that's been read aloud. Also the "export first"
+// offered before Delete my data. Written straight to the response rather than buffered: the receipt
+// photos alone can run to tens of megabytes.
+app.MapGet("/api/data/export", async (UserDataService data, HttpContext ctx, CancellationToken ct) =>
 {
-    var snapshot = await data.ExportAsync(ct);
-    var json = JsonSerializer.SerializeToUtf8Bytes(snapshot, new JsonSerializerOptions { WriteIndented = true });
-    return Results.File(json, "application/json", $"shelfaware-data-{DateTime.Now:yyyy-MM-dd}.json");
+    // ZipArchive is a synchronous API — it writes its data descriptors and central directory with
+    // Stream.Write, which Kestrel refuses on a response by default. The only two ways out are to allow it
+    // here, or to build the whole archive in memory first and write that asynchronously. Allowing it wins:
+    // this endpoint is rare and one-user-at-a-time, so the cost is one thread blocked on writes that
+    // mostly land in Kestrel's buffer — whereas buffering would hold every receipt photo in RAM at once,
+    // and memory is the scarcer thing on a small deployment.
+    ctx.Features.Get<IHttpBodyControlFeature>()!.AllowSynchronousIO = true;
+
+    ctx.Response.ContentType = "application/zip";
+    ctx.Response.Headers.ContentDisposition =
+        $"attachment; filename=\"shelfaware-data-{DateTime.Now:yyyy-MM-dd}.zip\"";
+    await data.WriteArchiveAsync(ctx.Response.Body, ct);
 }).RequireAuthorization();
 
 // PWA manifest — makes the app installable ("Add to home screen"). Served explicitly so the content type

@@ -113,7 +113,7 @@ public sealed class CachingTextToSpeechTests : IDisposable
         await Cache(new FakeTts(), household: "household-a").SynthesizeAsync("Step 1. Sear the chicken.");
         await Cache(new FakeTts(), household: "household-b").SynthesizeAsync("Step 1. Sear the chicken.");
 
-        Assert.True(CachingTextToSpeech.DeleteHousehold(_dir, "household-a", NullLogger.Instance));
+        Assert.True(Cache(new FakeTts()).DeleteHousehold("household-a"));
 
         // A must re-synthesize; B must not.
         var a = new FakeTts();
@@ -127,7 +127,7 @@ public sealed class CachingTextToSpeechTests : IDisposable
 
     [Fact]
     public void Deleting_a_household_that_never_spoke_is_a_no_op() =>
-        Assert.True(CachingTextToSpeech.DeleteHousehold(_dir, "never-cooked", NullLogger.Instance));
+        Assert.True(Cache(new FakeTts()).DeleteHousehold("never-cooked"));
 
     // A household id must never reach the filesystem raw. They're server-minted today, but that's a fact
     // about code elsewhere — hex can't traverse anything regardless of what someone puts in an id later.

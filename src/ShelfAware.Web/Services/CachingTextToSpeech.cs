@@ -26,7 +26,7 @@ namespace ShelfAware.Web.Services;
 ///
 /// Cache failures are never synthesis failures: if the disk misbehaves we log it and go to the provider.
 /// </summary>
-public sealed class CachingTextToSpeech : ITextToSpeech
+public sealed class CachingTextToSpeech : ITextToSpeech, ISpeechCache
 {
     private readonly ITextToSpeech _inner;
     private readonly string _root;
@@ -48,8 +48,20 @@ public sealed class CachingTextToSpeech : ITextToSpeech
     /// the folder layout: the caller shouldn't have to know how clips are filed to be allowed to delete
     /// them. Returns false if something was there and wouldn't go.
     /// </summary>
-    public static bool DeleteHousehold(string root, string householdId, ILogger logger) =>
-        HouseholdFolder.DeleteUnder(root, householdId, logger);
+    public bool DeleteHousehold(string householdId) => HouseholdFolder.DeleteUnder(_root, householdId, _logger);
+
+    /// <summary>The same lookup <see cref="SynthesizeAsync"/> does, exposed for the export — which needs
+    /// to hand a household the audio of its own recipes, and can only find a clip by asking the thing
+    /// that filed it.</summary>
+    public async Task<StoredClip?> FindAsync(
+        string householdId, string text, SpeechContext? context = null, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var path = PathFor(householdId, text, context);
+        return await TryReadAsync(path, cancellationToken) is { } audio
+            ? new StoredClip(audio, _inner.OutputMediaType)
+            : null;
+    }
 
     public string OutputFingerprint => _inner.OutputFingerprint;
     public string OutputMediaType => _inner.OutputMediaType;
@@ -65,8 +77,7 @@ public sealed class CachingTextToSpeech : ITextToSpeech
         var householdId = await _household.GetIdAsync(cancellationToken);
         if (householdId is null) return await _inner.SynthesizeAsync(text, context, cancellationToken);
 
-        var directory = Path.Combine(_root, HouseholdFolder.For(householdId));
-        var path = Path.Combine(directory, KeyFor(text, context) + ".audio");
+        var path = PathFor(householdId, text, context);
 
         if (await TryReadAsync(path, cancellationToken) is { } cached)
         {
@@ -75,9 +86,13 @@ public sealed class CachingTextToSpeech : ITextToSpeech
         }
 
         var result = await _inner.SynthesizeAsync(text, context, cancellationToken);
-        if (result.Success) await TryWriteAsync(directory, path, result.Audio, cancellationToken);
+        if (result.Success) await TryWriteAsync(Path.GetDirectoryName(path)!, path, result.Audio, cancellationToken);
         return result;
     }
+
+    /// <summary>Where a clip lives. One definition, so a lookup can't drift from a write.</summary>
+    private string PathFor(string householdId, string text, SpeechContext? context) =>
+        Path.Combine(_root, HouseholdFolder.For(householdId), KeyFor(text, context) + ".audio");
 
     /// <summary>
     /// The neighbouring segments are part of the key because they change the audio — they're sent as

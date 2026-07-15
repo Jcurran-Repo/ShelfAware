@@ -171,9 +171,9 @@
         if (HandsFree) await OpenEarsAsync();
 
         // Segment 0 = spoken intro (name + blurb); segments 1..N = the steps, so a segment index maps
-        // straight onto a step number for highlighting.
-        var texts = new List<string> { Intro() };
-        texts.AddRange(steps.Select((s, i) => $"Step {i + 1}. {s.Text}"));
+        // straight onto a step number for highlighting. RecipeNarration owns the rule because the export
+        // has to reproduce it exactly to find these clips in the cache again.
+        var texts = RecipeNarration.Of(Recipe).Select(s => s.Text).ToList();
 
         try
         {
@@ -294,10 +294,8 @@
         }
     }
 
-    private string Intro() =>
-        string.IsNullOrWhiteSpace(Recipe.Blurb) ? $"{Recipe.Name}." : $"{Recipe.Name}. {Recipe.Blurb}";
-
-    /// <summary>The neighbouring segments, so the provider can carry intonation across the cut.</summary>
+    /// <summary>The neighbouring segments, so the provider can carry intonation across the cut. Mirrors
+    /// RecipeNarration.ContextAt over the already-flattened texts.</summary>
     private static SpeechContext ContextFor(IReadOnlyList<string> texts, int i) =>
         new(Previous: i > 0 ? texts[i - 1] : null,
             Next: i + 1 < texts.Count ? texts[i + 1] : null);

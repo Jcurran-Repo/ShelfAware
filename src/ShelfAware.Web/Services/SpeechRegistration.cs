@@ -39,11 +39,15 @@ public static class SpeechRegistration
         // The provider is registered concretely and the cache is what answers ITextToSpeech. The cache
         // reads ICurrentHousehold (scoped) per call — clips are filed per household, never shared.
         services.AddHttpClient<ElevenLabsTextToSpeech>(ConfigureElevenLabs);
-        services.AddTransient<ITextToSpeech>(sp => new CachingTextToSpeech(
+        services.AddTransient(sp => new CachingTextToSpeech(
             sp.GetRequiredService<ElevenLabsTextToSpeech>(),
             cacheDirectory,
             sp.GetRequiredService<ICurrentHousehold>(),
             sp.GetRequiredService<ILogger<CachingTextToSpeech>>()));
+        services.AddTransient<ITextToSpeech>(sp => sp.GetRequiredService<CachingTextToSpeech>());
+        // Registered ONLY when there's a cache, so a null ISpeechCache means exactly "no cache" rather
+        // than an empty one that finds nothing and deletes nothing while claiming otherwise.
+        services.AddTransient<ISpeechCache>(sp => sp.GetRequiredService<CachingTextToSpeech>());
 
         return services;
     }

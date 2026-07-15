@@ -1,7 +1,9 @@
+using System.IO.Compression;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Settings;
+using ShelfAware.Core.Speech;
 using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.Tests;
@@ -24,8 +26,28 @@ public class UserDataServiceTests : IDisposable
         _household,
         NullLogger<ReceiptStorage>.Instance);
 
-    private UserDataService Service() =>
-        new(_db, _household, Storage(), null, NullLogger<UserDataService>.Instance);
+    private UserDataService Service(ISpeechCache? speech = null) =>
+        new(_db, _household, Storage(), speech, NullLogger<UserDataService>.Instance);
+
+    /// <summary>Stands in for the disk cache: answers only for text it was told about, so a test can say
+    /// "this step has audio and that one doesn't" without synthesizing anything.</summary>
+    private sealed class FakeSpeechCache : ISpeechCache
+    {
+        private readonly Dictionary<string, byte[]> _clips = new();
+        public string? DeletedHousehold { get; private set; }
+
+        public void Add(string text, byte[] audio) => _clips[text] = audio;
+
+        public Task<StoredClip?> FindAsync(
+            string householdId, string text, SpeechContext? context = null, CancellationToken cancellationToken = default) =>
+            Task.FromResult(_clips.TryGetValue(text, out var audio) ? new StoredClip(audio, "audio/mpeg") : null);
+
+        public bool DeleteHousehold(string householdId)
+        {
+            DeletedHousehold = householdId;
+            return true;
+        }
+    }
 
     // One row (or two) in every user-content table, including FK children, so a wrong delete order or a
     // missed table shows up.
@@ -208,6 +230,179 @@ public class UserDataServiceTests : IDisposable
         Assert.Contains(export.Settings, s => s.Key == SettingKeys.LastRecipeSuggestions);
         Assert.Contains(export.Settings, s => s.Key == SettingKeys.ReceiptFolder);
         Assert.Equal(3, Assert.Single(export.AiUsage).Calls);
+    }
+
+    private async Task<ZipArchive> ArchiveAsync(ISpeechCache? speech = null)
+    {
+        var buffer = new MemoryStream();
+        await Service(speech).WriteArchiveAsync(buffer);
+        buffer.Position = 0;
+        return new ZipArchive(buffer, ZipArchiveMode.Read);
+    }
+
+    [Fact]
+    public async Task The_archive_needs_a_stream_that_tolerates_synchronous_writes()
+    {
+        // ZipArchive is a synchronous API: it writes its data descriptors and central directory with
+        // Stream.Write. A MemoryStream doesn't care, which is why every test above passes — but Kestrel's
+        // response stream throws on sync IO unless the endpoint opts in, so this passed in tests and
+        // broke the moment a browser asked for it. Pinning the requirement so the endpoint's
+        // AllowSynchronousIO can never be "tidied away" without something going red.
+        await Seed();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => Service().WriteArchiveAsync(new SynchronousWritesRefusedStream()));
+    }
+
+    /// <summary>Behaves like Kestrel's response stream with AllowSynchronousIO off.</summary>
+    private sealed class SynchronousWritesRefusedStream : Stream
+    {
+        public override bool CanWrite => true;
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => 0; set => throw new NotSupportedException(); }
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw new InvalidOperationException("Synchronous operations are disallowed.");
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) =>
+            ValueTask.CompletedTask;
+
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+    }
+
+    [Fact]
+    public async Task The_archive_carries_the_json_and_the_receipt_images_beside_it()
+    {
+        // The point of the zip: a Receipt row in data.json names the folder its photo is in, so the
+        // export is something you can open rather than only parse.
+        var storage = Storage();
+        var imagePath = await storage.NewFolderAsync();
+        await storage.WritePageAsync(imagePath, 0, [1, 2, 3], "image/jpeg");
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Receipts.Add(new Receipt { ImagePath = imagePath, Merchant = "Walmart" });
+            await db.SaveChangesAsync();
+        }
+
+        using var zip = await ArchiveAsync();
+
+        Assert.NotNull(zip.GetEntry("data.json"));
+        var image = Assert.Single(zip.Entries, e => e.FullName.EndsWith("page-0.jpg"));
+        Assert.StartsWith(imagePath, image.FullName);
+    }
+
+    [Fact]
+    public async Task Recipe_audio_is_named_for_the_recipe_and_step_it_speaks()
+    {
+        // A content-addressed hash is honest and useless. The export re-derives each segment's key the
+        // same way the reader did, so the files come out named for what they say.
+        var speech = new FakeSpeechCache();
+        speech.Add("Chicken Thighs. Weeknight easy.", [1]);
+        speech.Add("Step 1. Heat the oven.", [2]);
+        // Step 2 deliberately has no clip: it was never read aloud.
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Recipes.Add(new Recipe
+            {
+                Name = "Chicken Thighs",
+                Blurb = "Weeknight easy.",
+                Steps =
+                {
+                    new RecipeStep { Order = 1, Text = "Heat the oven." },
+                    new RecipeStep { Order = 2, Text = "Roast for 40 minutes." },
+                },
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var zip = await ArchiveAsync(speech);
+
+        Assert.NotNull(zip.GetEntry("recipes/Chicken Thighs/intro.mp3"));
+        Assert.NotNull(zip.GetEntry("recipes/Chicken Thighs/step-1.mp3"));
+        Assert.Null(zip.GetEntry("recipes/Chicken Thighs/step-2.mp3"));
+    }
+
+    [Fact]
+    public async Task An_export_never_synthesizes_audio_it_does_not_already_have()
+    {
+        // Asking for your data must not spend your AI budget. A recipe nobody ever had read aloud simply
+        // has no audio in the archive.
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Recipes.Add(new Recipe { Name = "Toast", Steps = { new RecipeStep { Order = 1, Text = "Toast it." } } });
+            await db.SaveChangesAsync();
+        }
+
+        using var zip = await ArchiveAsync(new FakeSpeechCache()); // knows about nothing
+
+        Assert.DoesNotContain(zip.Entries, e => e.FullName.StartsWith("recipes/"));
+        Assert.NotNull(zip.GetEntry("data.json"));
+    }
+
+    [Fact]
+    public async Task Two_recipes_sharing_a_name_get_their_own_folders()
+    {
+        // Variants share a name by design — an adapted "Chicken Thighs" is a sibling, not a replacement.
+        var speech = new FakeSpeechCache();
+        speech.Add("Chicken Thighs.", [1]);
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Recipes.Add(new Recipe { Name = "Chicken Thighs" });
+            db.Recipes.Add(new Recipe { Name = "Chicken Thighs" });
+            await db.SaveChangesAsync();
+        }
+
+        using var zip = await ArchiveAsync(speech);
+
+        Assert.Equal(2, zip.Entries.Count(e => e.FullName.EndsWith("intro.mp3")));
+    }
+
+    [Theory]
+    [InlineData("../../etc/passwd")]  // the classic
+    [InlineData("..")]                // nothing left after cleaning
+    [InlineData("C:\\evil")]          // a drive-qualified path
+    [InlineData("   ")]               // no name at all
+    public async Task A_recipe_name_can_never_produce_an_entry_that_escapes_on_extraction(string hostile)
+    {
+        // A recipe name is user input that ends up as a path inside a file someone will unzip. What
+        // matters isn't that ".." never appears — "-..-etc-passwd" is one harmless folder — it's that no
+        // SEGMENT is a traversal, so the archive can't write outside where it was extracted.
+        var speech = new FakeSpeechCache();
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Recipes.Add(new Recipe { Name = hostile });
+            await db.SaveChangesAsync();
+        }
+        // Whatever the intro turned out to be, this cache has it — so an entry is definitely produced.
+        var intro = RecipeNarration.Of(new Recipe { Name = hostile }).First().Text;
+        speech.Add(intro, [1]);
+
+        using var zip = await ArchiveAsync(speech);
+
+        var entry = Assert.Single(zip.Entries, e => e.FullName.EndsWith("intro.mp3"));
+        var segments = entry.FullName.Split('/');
+        Assert.Equal(3, segments.Length);                 // recipes / <one folder> / intro.mp3
+        Assert.Equal("recipes", segments[0]);
+        Assert.DoesNotContain(segments, s => s is "." or ".." || string.IsNullOrWhiteSpace(s));
+    }
+
+    [Fact]
+    public async Task The_archive_works_with_no_speech_cache_at_all()
+    {
+        // Speech:CacheMegabytes = 0 means there is no ISpeechCache to inject. The export still works.
+        await Seed();
+
+        using var zip = await ArchiveAsync(speech: null);
+
+        Assert.NotNull(zip.GetEntry("data.json"));
     }
 
     [Fact]
