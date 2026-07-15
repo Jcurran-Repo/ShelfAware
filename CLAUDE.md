@@ -19,6 +19,16 @@ as overkill "because it's single-user."
   build what you think is best, and don't silently implement something you believe is
   wrong — surface the trade-off, reason it out together, decide jointly, then code.
 
+- **Never push or merge to `master` without a code review AND a security review.** Run
+  **`/pre-push`** (`.claude/commands/pre-push.md`), which drives `/code-review` + `/security-review`
+  over the whole branch diff and spells out what "security" means in this repo (the tenancy boundary,
+  new settings keys, anything written to disk per household, new endpoints). This is a hard gate, not
+  a suggestion, and it applies to a one-line fix as much as an arc. **Reviewing after the merge is
+  worth much less than before it** — the voice-engine arc's pre-merge review found five real bugs
+  including an open microphone, and the 7/15 no-household 500 shipped past a fully green test suite
+  and was only caught by running the app. Green tests are not a review. Report the findings and then
+  **stop: pushing is Jordan's call, always.**
+
 - **Craftsmanship — take pride in every change; no shortcuts.** Always do the polished,
   professional thing, not the quickest thing that happens to pass. Concretely: **no empty
   or catch-all `catch` blocks that swallow errors** — catch specific exceptions, log via
