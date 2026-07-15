@@ -291,6 +291,41 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      missing). Pre-deploy backup at `ShelfAware-server/app-data/backup-2026-07-15-pre-security-hardening/`.
      `appsettings.json` preserved at its 7/8 timestamp per the runbook (hash-compared before/after).
 
+13. **v3.4 — an invite code is an act, not a fixture (2026-07-15, branch `feature/invite-redesign`):**
+   Item 12 made invite codes expirable, limitable, and revocable, but every household still *had* one from
+   the moment it was created — permanently advertising a bearer credential to its own pantry whether or not
+   anyone had ever wanted to invite a soul. The shape was wrong, not just the lifetime. Now:
+   - **`Household.InviteCode` is `string?`, null by default.** `CreateForAsync` no longer mints one;
+     `GenerateInviteCodeAsync` (was `RegenerateInviteCodeAsync` — it's now the *only* way a code appears, so
+     "generate" and "regenerate" are the same call) mints on demand, **defaulting to `maxUses: 1`**; new
+     `ClearInviteCodeAsync` revokes in one click. Settings shows "—" + Generate, or code + Copy/Replace/Clear.
+   - **Spending the last use retires the code**, in the SAME `ExecuteUpdate` that claims the use — a second
+     write would reintroduce the race the conditional claim exists to close. Both `SetProperty` RHS's read the
+     pre-update row, so `InviteUseCount + 1` is the count the claim is about to produce. Consequence worth
+     knowing: a used-up code can no longer exist, so `InviteStatus`'s not-usable branch is reachable only by
+     expiry.
+   - **NULL, not `""` — and this is load-bearing.** The unique index on `InviteCode` is deliberately
+     unfiltered: SQLite counts NULLs as distinct, so every code-less household coexists while two households
+     can never share a live code. `""` would let exactly ONE household have no code; the second registration
+     on a deployment would fail to save. Pinned by `Two_code_less_households_can_coexist`.
+   - **`NullableInviteCodeMigration` is the documented exception to `AdditiveSchema`** (which stays
+     additive-columns-only, and stays accurate — the rebuild lives in its own class rather than making that
+     docstring lie). SQLite cannot ALTER a column to nullable, so relaxing NOT NULL needs the create/copy/
+     drop/rename rebuild. **It must run STRICTLY AFTER `AdditiveSchema.Apply`** — that's what puts the three
+     Invite columns on a pre-7/15 auth.db, and the rebuild copies them by name. Guarded on
+     `pragma_table_info.notnull` (idempotent, and a no-op on a fresh DB), transactional, and it **asserts the
+     column set it knows** rather than trusting it: it names columns explicitly, so a `Household` property
+     added later would otherwise be silently DROPPED on any deployment that hadn't migrated yet. Deletable
+     once every deployment has booted past v3.4.
+   - **The migration wipes existing codes** (Jordan's call): every one was minted permanent + unlimited by
+     rules that no longer exist, so carrying one across would import exactly the credential this change stops
+     issuing. Wiping evicts nobody — membership is `AspNetUsers.HouseholdId`, untouched (pinned by
+     `Members_keep_their_household`).
+   - **Dry-run before deploy:** the migration was run against a *copy* of the live `auth.db` (3 households, 4
+     users) before merge — codes wiped, every user's household intact, and a probe insert proved the rebuilt
+     index still admits multiple NULLs. Green tests wouldn't have proven the rebuilt index; do this again for
+     any future rebuild.
+
 11. **Ordering + duplicate guard + substitution-matrix batch (2026-07-12):**
    - **Grocery list "Coming up" walks the store** — same Category → urgency → name order as Buy now,
      so the whole page reads as one list (the date column still carries chronology).

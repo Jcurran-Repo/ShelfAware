@@ -201,6 +201,14 @@ _Last updated: 7/7/2026_
 
 ---
 
+## v3.4 — An invite code is an act, not a fixture
+- [x] A household starts with NO invite code — the 7/15 hardening pass made codes expirable, limitable, and revocable, but every household still *had* one from birth: a bearer credential to a whole pantry, printed on a settings page forever, whether or not anyone had ever wanted to invite a soul. The lifetime was the fixable part; the shape was the wrong part. `CreateForAsync` stops minting, `GenerateInviteCodeAsync` mints on request (single-use by default — inviting one person shouldn't hand out a key that admits a crowd), and `ClearInviteCodeAsync` revokes in one click instead of "mint a replacement", which used to mean leaving a live credential lying around as the price of killing one — 7/15/2026
+- [x] Spending the last use retires the code — a used-up code is refused either way, so this changes no access decision; what it changes is that a household can no longer be *holding* a dead credential that reads as a live one, and "nobody has been invited" stops being indistinguishable from "somebody already came". Done in the same `ExecuteUpdate` that claims the use — a follow-up write would reopen the exact race the conditional claim exists to close — 7/15/2026
+- [x] "No code" is NULL, not "" — and the unique index is why: SQLite counts NULLs as distinct, so every code-less household coexists, while `""` would let exactly ONE household have no code and fail the second registration on the deployment. SQLite can't ALTER a column to nullable, so this needed `NullableInviteCodeMigration` — the documented exception to `AdditiveSchema` (which stays additive-only, and stays honest, by not being the thing that does this). Guarded, transactional, idempotent, and it asserts the column set it knows rather than silently dropping a column added later — 7/15/2026
+- [x] The migration wipes existing codes — every one was minted permanent and unlimited under rules that no longer exist, so carrying one across would import precisely the credential this change stops issuing. It evicts nobody: membership isn't the code. Verified by dry-running the migration against a copy of the live auth.db before merge — 7/15/2026
+
+---
+
 ## Backlog (unscheduled)
 - [x] Double-scroll fix (Grocery List + Upload review) — 7/2/2026
 - [ ] CSV history importer — Parked (blocked on an itemized data export)

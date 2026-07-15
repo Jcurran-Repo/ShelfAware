@@ -313,6 +313,10 @@ using (var scope = app.Services.CreateScope())
         // EnsureCreated never alters an existing file, and auth.db stopped being "fresh per deployment"
         // as soon as a deployment had real accounts in it worth keeping.
         AdditiveSchema.Apply(authDb);
+        // STRICTLY AFTER the additive pass, which is what puts the three Invite columns on a pre-7/15
+        // auth.db — the rebuild copies them by name, so it needs them to exist first. One-off; see the
+        // class docs for why it's the exception to AdditiveSchema's additive-only rule.
+        NullableInviteCodeMigration.Apply(authDb);
     }
 
     var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<ShelfAwareDbContext>>();
