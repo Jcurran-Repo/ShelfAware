@@ -138,7 +138,8 @@
     private enum Phase { Reading, Listening, Thinking, Answering, Held }
     private Phase phase = Phase.Reading;
     private bool held;          // they said "hold on" — stay put and keep listening for them
-    private bool inListenTurn;  // guards against two loops racing if OnStepFinished re-fires
+    private bool inListenTurn;      // guards against two loops racing if OnStepFinished re-fires
+    private bool listenTurnPending; // a step finished while a loop was unwinding; don't drop its turn
     private bool voiceStopped;  // they said "stop" — mic down, recipe still on screen
     private string? micError;
     private string? lastHeard;
@@ -366,6 +367,7 @@
     [JSInvokable]
     public Task OnIndex(int i)
     {
+        Logger.LogInformation("Cook-along reader moved to segment {Index}.", i);
         currentIndex = i;
         finished = false;
         return InvokeAsync(StateHasChanged);
@@ -396,6 +398,12 @@
     public async Task OnStepFinished(int _)
     {
         if (!HandsFree || micError is not null || voiceStopped || _cts.IsCancellationRequested) return;
+
+        // A step can finish while the previous turn's loop is still unwinding — a command hands control
+        // back to playback, and if that clip ends before the loop has finished exiting, its turn arrives
+        // to find the door still shut. Remember it rather than dropping it: a dropped turn is a reader
+        // that has gone quietly deaf, which looks like the microphone died.
+        if (inListenTurn) { listenTurnPending = true; return; }
         await ListenUntilReadingAsync();
     }
 
@@ -407,23 +415,33 @@
     private async Task ListenUntilReadingAsync()
     {
         if (inListenTurn) return; // one loop at a time
-        inListenTurn = true;
-        try
+
+        do
         {
-            while (!_cts.IsCancellationRequested && !await TakeTurnAsync()) { }
+            listenTurnPending = false;
+            inListenTurn = true;
+            try
+            {
+                while (!_cts.IsCancellationRequested && !await TakeTurnAsync()) { }
+            }
+            catch (OperationCanceledException)
+            {
+                // Reader closed while we were listening. Ours — nothing to report.
+                return;
+            }
+            catch (JSDisconnectedException)
+            {
+                // Circuit gone; the browser has stopped caring about this reader.
+                return;
+            }
+            finally
+            {
+                inListenTurn = false;
+            }
         }
-        catch (OperationCanceledException)
-        {
-            // Reader closed while we were listening. Ours — nothing to report.
-        }
-        catch (JSDisconnectedException)
-        {
-            // Circuit gone; the browser has stopped caring about this reader.
-        }
-        finally
-        {
-            inListenTurn = false;
-        }
+        // A step finished while we were unwinding, and OnStepFinished found the door shut. Take its turn
+        // now rather than leaving the cook talking to a reader that stopped listening.
+        while (listenTurnPending && !voiceStopped && micError is null && !_cts.IsCancellationRequested);
     }
 
     /// <summary>One listening turn. Returns true when the turn handed control back to playback (or ended
@@ -461,6 +479,12 @@
     {
         var command = CookAlongCommands.Match(text);
         var intent = command.Intent;
+
+        // What it heard and what it decided, in one line. A voice loop is otherwise unobservable: when it
+        // does the wrong thing you have only the user's account of a conversation nobody recorded.
+        Logger.LogInformation(
+            "Cook-along heard \"{Transcript}\" -> {Intent}{Step} (reader on segment {Index}, held={Held})",
+            text, intent, command.Step is { } s ? $" step {s}" : "", currentIndex, held);
 
         // Coming back from a hold. If something is genuinely paused mid-sentence (only the on-screen
         // Pause button can cause that — we don't listen while we're talking), any carry-on phrase resumes
@@ -589,6 +613,7 @@
         finished = false;
         paused = false;
         await SetPhaseAsync(Phase.Reading);
+        Logger.LogInformation("Cook-along telling the reader: {Fn}({Args}).", fn, string.Join(", ", args));
         if (_module is not null) await _module.InvokeVoidAsync(fn, args);
     }
 
