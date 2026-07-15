@@ -144,4 +144,140 @@ public class SpeechServicesTests
         Assert.False(result.Success);
         Assert.NotNull(result.Error);
     }
+
+    // ---- Text-to-speech: what we actually send ---------------------------------------------------
+
+    // The model does NOT normalize for us on Flash (ElevenLabs gate apply_text_normalization behind
+    // Enterprise and disable it on Flash for latency), so the text has to leave here already spoken.
+    [Fact]
+    public async Task Synthesize_sends_normalized_text_not_the_raw_recipe_step()
+    {
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Audio([1, 2, 3]));
+        var tts = new ElevenLabsTextToSpeech(Client(handler), Opts(), Creds(), NullLogger<ElevenLabsTextToSpeech>.Instance);
+
+        await tts.SynthesizeAsync("Simmer 6-7 min/side at 350°F");
+
+        var body = Assert.Single(handler.Requests).Body;
+        Assert.Contains("6 to 7 minutes per side", body);
+        Assert.Contains("350 degrees Fahrenheit", body);
+        Assert.DoesNotContain("6-7", body);
+    }
+
+    [Fact]
+    public async Task Synthesize_leaves_text_alone_when_normalization_is_switched_off()
+    {
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Audio([1, 2, 3]));
+        var tts = new ElevenLabsTextToSpeech(
+            Client(handler), Opts(new ElevenLabsOptions { NormalizeText = false }), Creds(),
+            NullLogger<ElevenLabsTextToSpeech>.Instance);
+
+        await tts.SynthesizeAsync("Simmer 6-7 min/side");
+
+        Assert.Contains("6-7 min/side", Assert.Single(handler.Requests).Body);
+    }
+
+    [Fact]
+    public async Task Synthesize_passes_the_neighbouring_segments_for_continuity_and_normalizes_them_too()
+    {
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Audio([1, 2, 3]));
+        var tts = new ElevenLabsTextToSpeech(Client(handler), Opts(), Creds(), NullLogger<ElevenLabsTextToSpeech>.Instance);
+
+        await tts.SynthesizeAsync("Step 2. Sear the chicken.",
+            new SpeechContext(Previous: "Step 1. Add 2 tbsp oil.", Next: "Step 3. Rest 5 min."));
+
+        var body = Assert.Single(handler.Requests).Body;
+        Assert.Contains("previous_text", body);
+        Assert.Contains("2 tablespoons oil", body);
+        Assert.Contains("next_text", body);
+        Assert.Contains("Rest 5 minutes", body);
+    }
+
+    [Fact]
+    public async Task Synthesize_omits_continuity_hints_when_there_is_no_context()
+    {
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Audio([1, 2, 3]));
+        var tts = new ElevenLabsTextToSpeech(Client(handler), Opts(), Creds(), NullLogger<ElevenLabsTextToSpeech>.Instance);
+
+        await tts.SynthesizeAsync("A one-line confirmation.");
+
+        var body = Assert.Single(handler.Requests).Body;
+        Assert.DoesNotContain("previous_text", body);
+        Assert.DoesNotContain("next_text", body);
+    }
+
+    [Fact]
+    public async Task Synthesize_sends_the_configured_voice_settings()
+    {
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Audio([1, 2, 3]));
+        var tts = new ElevenLabsTextToSpeech(Client(handler), Opts(), Creds(), NullLogger<ElevenLabsTextToSpeech>.Instance);
+
+        await tts.SynthesizeAsync("hello");
+
+        var body = Assert.Single(handler.Requests).Body;
+        Assert.Contains("voice_settings", body);
+        Assert.Contains("stability", body);
+        Assert.Contains("speed", body);
+    }
+
+    // Each setting is nullable so one a given model rejects can be turned off in config without
+    // taking the whole request down; all-null means send no voice_settings at all.
+    [Fact]
+    public async Task Synthesize_omits_a_voice_setting_that_is_switched_off()
+    {
+        var options = new ElevenLabsOptions();
+        options.VoiceSettings.Speed = null;
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Audio([1, 2, 3]));
+        var tts = new ElevenLabsTextToSpeech(Client(handler), Opts(options), Creds(), NullLogger<ElevenLabsTextToSpeech>.Instance);
+
+        await tts.SynthesizeAsync("hello");
+
+        var body = Assert.Single(handler.Requests).Body;
+        Assert.Contains("stability", body);
+        Assert.DoesNotContain("speed", body);
+    }
+
+    [Fact]
+    public async Task Synthesize_omits_voice_settings_entirely_when_none_are_configured()
+    {
+        var options = new ElevenLabsOptions
+        {
+            VoiceSettings = new ElevenLabsVoiceSettings
+            {
+                Stability = null, SimilarityBoost = null, Style = null, UseSpeakerBoost = null, Speed = null,
+            },
+        };
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Audio([1, 2, 3]));
+        var tts = new ElevenLabsTextToSpeech(Client(handler), Opts(options), Creds(), NullLogger<ElevenLabsTextToSpeech>.Instance);
+
+        await tts.SynthesizeAsync("hello");
+
+        Assert.DoesNotContain("voice_settings", Assert.Single(handler.Requests).Body);
+    }
+
+    // Text that is nothing BUT unspeakable punctuation normalizes to empty — don't spend a call on it.
+    [Fact]
+    public async Task Synthesize_text_that_normalizes_to_nothing_short_circuits_without_a_call()
+    {
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Audio([1, 2, 3]));
+        var tts = new ElevenLabsTextToSpeech(Client(handler), Opts(), Creds(), NullLogger<ElevenLabsTextToSpeech>.Instance);
+
+        var result = await tts.SynthesizeAsync(" \t ");
+
+        Assert.False(result.Success);
+        Assert.Empty(handler.Requests);
+    }
+
+    // A caller that walks away (reader closed mid-narration) must see the cancel, not a soft failure —
+    // otherwise the read-aloud can't tell "you closed me" from "the API broke".
+    [Fact]
+    public async Task Synthesize_propagates_the_callers_cancellation()
+    {
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Audio([1, 2, 3]));
+        var tts = new ElevenLabsTextToSpeech(Client(handler), Opts(), Creds(), NullLogger<ElevenLabsTextToSpeech>.Instance);
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => tts.SynthesizeAsync("hello", null, cts.Token));
+    }
 }

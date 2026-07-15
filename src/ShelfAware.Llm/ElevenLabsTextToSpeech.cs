@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Speech;
@@ -25,17 +26,29 @@ public class ElevenLabsTextToSpeech : ITextToSpeech
         _logger = logger;
     }
 
-    public async Task<TextToSpeechResult> SynthesizeAsync(string text, CancellationToken cancellationToken = default)
+    public async Task<TextToSpeechResult> SynthesizeAsync(string text, SpeechContext? context = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(text)) return TextToSpeechResult.Fail("Nothing to speak.");
         if (string.IsNullOrWhiteSpace(_credentials.ApiKey))
             return TextToSpeechResult.Fail("Add your ElevenLabs key in Settings to use voice.");
 
+        // The model does no normalization for us on Flash — see ElevenLabsOptions.NormalizeText. The
+        // neighbouring segments get the same treatment so the continuity hints match what is actually spoken.
+        var spoken = Speakable(text);
+        if (string.IsNullOrWhiteSpace(spoken)) return TextToSpeechResult.Fail("Nothing to speak.");
+
         _logger.LogInformation("Synthesizing {Chars} character(s) via ElevenLabs TTS ({Model}, voice {Voice}).",
-            text.Length, _options.TextToSpeechModel, _options.VoiceId);
+            spoken.Length, _options.TextToSpeechModel, _options.VoiceId);
 
         var url = $"/v1/text-to-speech/{_options.VoiceId}?output_format={_options.OutputFormat}";
-        var payload = new { text, model_id = _options.TextToSpeechModel };
+        var payload = new TtsPayload
+        {
+            Text = spoken,
+            ModelId = _options.TextToSpeechModel,
+            PreviousText = Speakable(context?.Previous),
+            NextText = Speakable(context?.Next),
+            VoiceSettings = VoiceSettingsPayload.From(_options.VoiceSettings),
+        };
 
         try
         {
@@ -55,10 +68,83 @@ public class ElevenLabsTextToSpeech : ITextToSpeech
             _logger.LogInformation("Synthesized {Bytes} bytes of {MediaType}.", audio.Length, mediaType);
             return TextToSpeechResult.Ok(audio, mediaType);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The caller walked away (e.g. the reader was closed mid-narration) — let it propagate.
+            // Guarded on the token because HttpClient reports its own TIMEOUT as a TaskCanceledException
+            // too, and a timeout is a soft failure we still want to report as one, below.
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Text-to-speech call to ElevenLabs failed.");
             return TextToSpeechResult.Fail(ex.Message);
+        }
+    }
+
+    /// <summary>Blank stays blank (an omitted continuity hint); otherwise normalize when configured to.</summary>
+    private string? Speakable(string? text) =>
+        string.IsNullOrWhiteSpace(text) ? null
+        : _options.NormalizeText ? SpeechText.ForSpeech(text)
+        : text;
+
+    private sealed record TtsPayload
+    {
+        [JsonPropertyName("text")] public required string Text { get; init; }
+
+        [JsonPropertyName("model_id")] public required string ModelId { get; init; }
+
+        [JsonPropertyName("previous_text")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? PreviousText { get; init; }
+
+        [JsonPropertyName("next_text")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? NextText { get; init; }
+
+        [JsonPropertyName("voice_settings")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public VoiceSettingsPayload? VoiceSettings { get; init; }
+    }
+
+    private sealed record VoiceSettingsPayload
+    {
+        [JsonPropertyName("stability")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public double? Stability { get; init; }
+
+        [JsonPropertyName("similarity_boost")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public double? SimilarityBoost { get; init; }
+
+        [JsonPropertyName("style")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public double? Style { get; init; }
+
+        [JsonPropertyName("use_speaker_boost")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public bool? UseSpeakerBoost { get; init; }
+
+        [JsonPropertyName("speed")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public double? Speed { get; init; }
+
+        /// <summary>Null when nothing is configured, so the request omits voice_settings entirely
+        /// rather than sending an empty object.</summary>
+        public static VoiceSettingsPayload? From(ElevenLabsVoiceSettings? s)
+        {
+            if (s is null) return null;
+            if (s.Stability is null && s.SimilarityBoost is null && s.Style is null
+                && s.UseSpeakerBoost is null && s.Speed is null) return null;
+
+            return new VoiceSettingsPayload
+            {
+                Stability = s.Stability,
+                SimilarityBoost = s.SimilarityBoost,
+                Style = s.Style,
+                UseSpeakerBoost = s.UseSpeakerBoost,
+                Speed = s.Speed,
+            };
         }
     }
 

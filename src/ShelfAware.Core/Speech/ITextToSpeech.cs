@@ -7,8 +7,16 @@ namespace ShelfAware.Core.Speech;
 /// </summary>
 public interface ITextToSpeech
 {
-    Task<TextToSpeechResult> SynthesizeAsync(string text, CancellationToken cancellationToken = default);
+    Task<TextToSpeechResult> SynthesizeAsync(string text, SpeechContext? context = null, CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// The text either side of what's being synthesized, when it's one segment of a longer narration.
+/// Providers use it for prosodic continuity so segment N doesn't open with the cold, falling
+/// intonation of a fresh sentence — without it, a step-by-step playlist sounds like a list of
+/// unrelated announcements rather than someone reading a recipe.
+/// </summary>
+public sealed record SpeechContext(string? Previous = null, string? Next = null);
 
 public record TextToSpeechResult
 {

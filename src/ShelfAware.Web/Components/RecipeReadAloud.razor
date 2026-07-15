@@ -1,7 +1,12 @@
-@* Recipe read-aloud (Phase 3, button-controlled — no barge-in yet). Synthesizes the recipe name +
-   each step to audio (ElevenLabs TTS from Phase 0) and plays them as a step-by-step playlist with
-   pause/resume/prev/next, highlighting the step currently being read. One reader is active at a time;
-   the parent renders this once for the recipe being read. *@
+@* Recipe read-aloud (button-controlled — no barge-in here). Synthesizes the recipe name + each step
+   to audio (ElevenLabs TTS) and plays them as a step-by-step playlist with pause/resume/prev/next,
+   highlighting the step currently being read. One reader is active at a time; the parent renders this
+   once for the recipe being read.
+
+   Narration STREAMS: the intro is synthesized and starts playing on its own, and the steps are
+   synthesized behind playback and appended as they land. Waiting for the whole recipe first meant a
+   ten-step recipe sat silent for eleven round-trips before the first word — which is most of why the
+   button reader felt worse than the realtime agent, and it was never the voice's fault. *@
 @using ShelfAware.Core.Speech
 @implements IAsyncDisposable
 @inject ITextToSpeech Tts
@@ -59,15 +64,21 @@
     private IJSObjectReference? _module;
     private DotNetObjectReference<RecipeReadAloud>? _selfRef;
 
+    // Cancels synthesis still in flight when the reader is closed — otherwise shutting the panel at
+    // step two leaves the remaining steps synthesizing on the user's key for audio nobody will hear.
+    private readonly CancellationTokenSource _cts = new();
+
     private List<RecipeStep> steps = [];
     private bool preparing = true;
     private string? error;
     private bool paused;
     private bool finished;
+    private bool buffering; // playback caught up to synthesis and is waiting on the next segment
     private int currentIndex; // 0 = intro (recipe name); 1..N = step number being read
 
     private string Status => finished
         ? "Done."
+        : buffering ? "Catching up…"
         : currentIndex == 0 ? "Intro…" : $"Step {currentIndex} of {steps.Count}";
 
     protected override void OnInitialized() =>
@@ -78,15 +89,33 @@
         if (!firstRender) return;
 
         _module = await JS.InvokeAsync<IJSObjectReference>("import", "/js/readaloud.js");
+        _selfRef = DotNetObjectReference.Create(this);
 
         // Segment 0 = spoken intro (name + blurb); segments 1..N = the steps, so a segment index maps
-        // straight onto a step number for highlighting. Synthesized with bounded parallelism so a long
-        // recipe narrates quickly without hammering the TTS concurrency limit.
+        // straight onto a step number for highlighting.
         var texts = new List<string> { Intro() };
         texts.AddRange(steps.Select((s, i) => $"Step {i + 1}. {s.Text}"));
 
-        var clips = await SynthesizeBounded(texts, maxConcurrency: 4);
-        if (clips.Any(c => !c.Success))
+        try
+        {
+            await NarrateAsync(_module, texts);
+        }
+        catch (OperationCanceledException)
+        {
+            // The reader was closed mid-narration. Our own cancel — nothing to report.
+        }
+    }
+
+    /// <summary>
+    /// Play the intro as soon as it exists, then queue the steps behind it. The steps synthesize with
+    /// bounded parallelism (a long recipe shouldn't narrate at one round-trip per step, nor hammer the
+    /// provider's concurrency limit) but are awaited IN ORDER, so the playlist stays in step order even
+    /// though the calls finish out of order.
+    /// </summary>
+    private async Task NarrateAsync(IJSObjectReference player, IReadOnlyList<string> texts)
+    {
+        var intro = await Tts.SynthesizeAsync(texts[0], ContextFor(texts, 0), _cts.Token);
+        if (!intro.Success)
         {
             error = "Couldn't generate the narration — check that the ElevenLabs key is set.";
             preparing = false;
@@ -94,29 +123,81 @@
             return;
         }
 
-        var segments = clips.Select(c => new Segment(Convert.ToBase64String(c.Audio), c.MediaType)).ToArray();
-        _selfRef = DotNetObjectReference.Create(this);
-        await _module.InvokeVoidAsync("load", segments, _selfRef);
-
         preparing = false;
         paused = false;
+        await player.InvokeVoidAsync("load", new[] { SegmentFor(intro) }, _selfRef, texts.Count > 1);
         StateHasChanged();
-        await _module.InvokeVoidAsync("playFrom", 0);
+        await player.InvokeVoidAsync("playFrom", 0);
+
+        if (texts.Count == 1) return; // no steps — load(more: false) already told the player that
+
+        var rest = StartSteps(texts, maxConcurrency: 4);
+        try
+        {
+            for (var i = 0; i < rest.Length; i++)
+            {
+                var clip = await rest[i];
+                if (!clip.Success)
+                {
+                    // Never silently skip a cooking step — the listener's hands are busy and they'd
+                    // never know a step went missing. Stop here and say so; the steps are on screen.
+                    error = $"Couldn't narrate step {i + 1}. The remaining steps are listed above.";
+                    StateHasChanged();
+                    break;
+                }
+                await player.InvokeVoidAsync("append", SegmentFor(clip));
+            }
+        }
+        finally
+        {
+            // Stop anything still queued (we broke out, or the reader closed), then let the player know
+            // the playlist is closed so it can finish instead of waiting for a segment that isn't coming.
+            await _cts.CancelAsync();
+            await DrainAsync(rest);
+            await TellPlayerAsync("endOfStream");
+        }
     }
 
     private string Intro() =>
         string.IsNullOrWhiteSpace(Recipe.Blurb) ? $"{Recipe.Name}." : $"{Recipe.Name}. {Recipe.Blurb}";
 
-    private async Task<TextToSpeechResult[]> SynthesizeBounded(IReadOnlyList<string> texts, int maxConcurrency)
+    /// <summary>The neighbouring segments, so the provider can carry intonation across the cut.</summary>
+    private static SpeechContext ContextFor(IReadOnlyList<string> texts, int i) =>
+        new(Previous: i > 0 ? texts[i - 1] : null,
+            Next: i + 1 < texts.Count ? texts[i + 1] : null);
+
+    private static Segment SegmentFor(TextToSpeechResult clip) =>
+        new(Convert.ToBase64String(clip.Audio), clip.MediaType);
+
+    /// <summary>
+    /// Starts synthesis of segments 1..N and hands back their tasks in order. The gate is deliberately
+    /// not disposed: it outlives this method along with the tasks it throttles, and SemaphoreSlim only
+    /// holds a disposable wait handle if AvailableWaitHandle is read, which we never do.
+    /// </summary>
+    private Task<TextToSpeechResult>[] StartSteps(IReadOnlyList<string> texts, int maxConcurrency)
     {
-        using var gate = new SemaphoreSlim(maxConcurrency);
-        var tasks = texts.Select(async t =>
+        var gate = new SemaphoreSlim(maxConcurrency);
+        return Enumerable.Range(1, texts.Count - 1).Select(async i =>
         {
-            await gate.WaitAsync();
-            try { return await Tts.SynthesizeAsync(t); }
+            await gate.WaitAsync(_cts.Token);
+            try { return await Tts.SynthesizeAsync(texts[i], ContextFor(texts, i), _cts.Token); }
             finally { gate.Release(); }
-        });
-        return await Task.WhenAll(tasks); // WhenAll preserves input order
+        }).ToArray();
+    }
+
+    /// <summary>Observe every task before we walk away, so a cancelled one can't surface later as an
+    /// unobserved exception.</summary>
+    private static async Task DrainAsync(Task<TextToSpeechResult>[] tasks)
+    {
+        try { await Task.WhenAll(tasks); }
+        catch (OperationCanceledException) { /* expected: we cancelled them */ }
+    }
+
+    private async Task TellPlayerAsync(string fn)
+    {
+        if (_module is null) return;
+        try { await _module.InvokeVoidAsync(fn); }
+        catch (JSDisconnectedException) { /* circuit already gone — nothing to tell */ }
     }
 
     private async Task TogglePauseAsync()
@@ -179,11 +260,23 @@
     {
         finished = true;
         paused = false;
+        buffering = false;
+        return InvokeAsync(StateHasChanged);
+    }
+
+    /// <summary>Playback outran synthesis (or caught back up) — say so rather than freezing the step
+    /// counter with no explanation.</summary>
+    [JSInvokable]
+    public Task OnBuffering(bool on)
+    {
+        buffering = on;
         return InvokeAsync(StateHasChanged);
     }
 
     public async ValueTask DisposeAsync()
     {
+        await _cts.CancelAsync();
+
         if (_module is not null)
         {
             try
@@ -191,9 +284,11 @@
                 await _module.InvokeVoidAsync("stop");
                 await _module.DisposeAsync();
             }
-            catch { /* circuit already gone */ }
+            catch (JSDisconnectedException) { /* circuit already gone — nothing to stop */ }
         }
+
         _selfRef?.Dispose();
+        _cts.Dispose();
     }
 
     private sealed record Segment(string Base64, string Mime);
