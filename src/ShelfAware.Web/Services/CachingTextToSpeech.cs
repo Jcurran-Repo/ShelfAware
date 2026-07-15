@@ -208,9 +208,13 @@ public sealed class CachingTextToSpeech : ITextToSpeech, ISpeechCache
             return 0;
         }
 
-        // Clips written before the cache was split by household sit loose at the root; sweeping that too
-        // keeps them from lingering forever, and it's the only thing left that can't be attributed.
-        var removed = TrimFolder(directory, maxBytesPerHousehold, SearchOption.TopDirectoryOnly, logger);
+        // Clips loose at the ROOT are orphans by construction, so they go — all of them, whatever the
+        // budget says. Every lookup builds its path through a household folder, so nothing can ever read
+        // one again: not a cache hit, not "download my data", and not "delete my data", which is the one
+        // that matters. They're audio of someone's recipes that no longer belongs to anyone we can name.
+        // They exist because the cache filed everything flat before it filed per household; giving them a
+        // budget would keep unreachable recordings on disk indefinitely, so their budget is nothing.
+        var removed = TrimFolder(directory, maxBytes: 0, SearchOption.TopDirectoryOnly, logger);
         foreach (var household in households)
         {
             removed += TrimFolder(household.FullName, maxBytesPerHousehold, SearchOption.AllDirectories, logger);

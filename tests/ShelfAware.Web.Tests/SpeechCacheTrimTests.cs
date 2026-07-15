@@ -69,17 +69,19 @@ public class SpeechCacheTrimTests : IDisposable
     }
 
     [Fact]
-    public void Clips_left_loose_at_the_root_are_still_swept()
+    public void Clips_left_loose_at_the_root_go_regardless_of_the_budget()
     {
-        // Written before the cache was split by household: nothing can attribute them, so nothing else
-        // would ever remove them.
+        // Written before the cache was split by household. Nothing can attribute them, so nothing can
+        // read, export, or delete them — they'd sit there forever on any budget they happen to fit under.
         Directory.CreateDirectory(_root);
         var loose = Path.Combine(_root, "orphan.audio");
-        File.WriteAllBytes(loose, new byte[2000]);
+        File.WriteAllBytes(loose, new byte[10]);
+        var kept = Clip("household-a", "mine", 100, ageDays: 99);
 
-        CachingTextToSpeech.Trim(_root, maxBytesPerHousehold: 1000, NullLogger.Instance);
+        CachingTextToSpeech.Trim(_root, maxBytesPerHousehold: 1_000_000, NullLogger.Instance);
 
         Assert.False(File.Exists(loose));
+        Assert.True(File.Exists(kept), "a household's own clip was swept along with the orphans.");
     }
 
     [Fact]

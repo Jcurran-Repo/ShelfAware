@@ -236,25 +236,32 @@ public sealed class CachingTextToSpeechTests : IDisposable
         Assert.False(Directory.Exists(_dir) && Directory.GetFiles(_dir, "*.audio").Length > 0);
     }
 
+    /// <summary>A household's drawer, where real clips live — the budget only ever applies in here.</summary>
+    private string Drawer(string household = "household-a")
+    {
+        var folder = Path.Combine(_dir, HouseholdFolder.For(household));
+        Directory.CreateDirectory(folder);
+        return folder;
+    }
+
     [Fact]
     public void Trim_leaves_a_cache_that_is_under_budget_alone()
     {
-        Directory.CreateDirectory(_dir);
-        File.WriteAllBytes(Path.Combine(_dir, "a.audio"), new byte[100]);
+        File.WriteAllBytes(Path.Combine(Drawer(), "a.audio"), new byte[100]);
 
         var removed = CachingTextToSpeech.Trim(_dir, maxBytesPerHousehold: 1000, NullLogger.Instance);
 
         Assert.Equal(0, removed);
-        Assert.Single(Directory.GetFiles(_dir, "*.audio"));
+        Assert.Single(Directory.GetFiles(Drawer(), "*.audio"));
     }
 
     [Fact]
     public void Trim_drops_the_oldest_clips_until_the_cache_fits()
     {
-        Directory.CreateDirectory(_dir);
+        var drawer = Drawer();
         foreach (var (name, age) in new[] { ("old.audio", 3), ("middle.audio", 2), ("new.audio", 1) })
         {
-            var path = Path.Combine(_dir, name);
+            var path = Path.Combine(drawer, name);
             File.WriteAllBytes(path, new byte[100]);
             File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddHours(-age));
         }
@@ -263,7 +270,25 @@ public sealed class CachingTextToSpeechTests : IDisposable
         var removed = CachingTextToSpeech.Trim(_dir, maxBytesPerHousehold: 100, NullLogger.Instance);
 
         Assert.Equal(2, removed);
-        Assert.Equal(["new.audio"], Directory.GetFiles(_dir, "*.audio").Select(Path.GetFileName));
+        Assert.Equal(["new.audio"], Directory.GetFiles(drawer, "*.audio").Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public void Trim_removes_root_level_clips_however_small_because_nothing_can_ever_read_them()
+    {
+        // Every lookup goes through a household folder, so a clip at the root is unreachable: no cache
+        // hit, no export, and — the one that matters — no "delete my data". It's a recording of someone's
+        // recipes that belongs to nobody we can name. Budget doesn't come into it.
+        Directory.CreateDirectory(_dir);
+        var orphan = Path.Combine(_dir, "from-before-the-split.audio");
+        File.WriteAllBytes(orphan, new byte[10]); // tiny: would survive any budget
+        File.WriteAllBytes(Path.Combine(Drawer(), "mine.audio"), new byte[100]);
+
+        var removed = CachingTextToSpeech.Trim(_dir, maxBytesPerHousehold: 1_000_000, NullLogger.Instance);
+
+        Assert.Equal(1, removed);
+        Assert.False(File.Exists(orphan));
+        Assert.Single(Directory.GetFiles(Drawer(), "*.audio")); // a household's own clips are untouched
     }
 
     [Fact]
