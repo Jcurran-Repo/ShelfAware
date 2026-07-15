@@ -205,21 +205,17 @@ builder.Services.AddScoped<UserDataService>();   // export + delete-my-data (one
 // Voice I/O (ElevenLabs): Scribe = STT (ear), TTS = mouth. Speech is its own REST API, not an
 // IChatClient workload, so each rides a typed HttpClient with the base address + xi-api-key header.
 // Typed clients are transient (the factory owns handler lifetime) — fine, the services are stateless.
-builder.Services.Configure<ElevenLabsOptions>(builder.Configuration.GetSection(ElevenLabsOptions.SectionName));
-builder.Services.AddHttpClient<ISpeechToText, ElevenLabsSpeechToText>(ConfigureElevenLabs);
-builder.Services.AddHttpClient<ITextToSpeech, ElevenLabsTextToSpeech>(ConfigureElevenLabs);
+// TTS rides through a disk cache (see SpeechRegistration). Recipe steps are static text, so a recipe
+// should cost one synthesis ever — re-reading it shouldn't re-buy audio we already own, or make the
+// reader wait on the network to say a sentence it said yesterday.
+var speechCacheDir = Path.Combine(dataDir, "tts-cache");
+var speechCacheBytes = (builder.Configuration.GetValue<int?>("Speech:CacheMegabytes") ?? 256) * 1024L * 1024L;
+builder.Services.AddSpeech(builder.Configuration, speechCacheDir);
 
 // Per-circuit ElevenLabs credentials: the visitor's own key from their browser (dev falls back to config).
 // Scoped, so concurrent visitors never share a voice key; the speech services read it per request.
 builder.Services.AddScoped<CircuitVoiceCredentials>();
 builder.Services.AddScoped<IVoiceCredentials>(sp => sp.GetRequiredService<CircuitVoiceCredentials>());
-
-static void ConfigureElevenLabs(IServiceProvider sp, HttpClient http)
-{
-    // Base address only — the xi-api-key is attached PER REQUEST from the visitor's per-circuit credentials
-    // (CircuitVoiceCredentials), never baked in as a default header.
-    http.BaseAddress = new Uri("https://api.elevenlabs.io");
-}
 
 // Rate-limit the cook-along signed-url endpoint per IP, so nobody can spam a visitor's ElevenLabs key
 // through it. Built-in ASP.NET Core rate limiting — no package.
@@ -243,6 +239,12 @@ builder.Services.AddRateLimiter(o =>
 });
 
 var app = builder.Build();
+
+// Keep the speech cache from creeping forever. It only grows when text changes (an edited step orphans
+// its clip, and its neighbours'), so once at startup is the right cadence — a per-write sweep would put
+// a directory scan on the path the cache exists to make fast.
+CachingTextToSpeech.Trim(speechCacheDir, speechCacheBytes,
+    app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("SpeechCache"));
 
 using (var scope = app.Services.CreateScope())
 {

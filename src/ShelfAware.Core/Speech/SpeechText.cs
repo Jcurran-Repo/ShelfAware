@@ -19,6 +19,13 @@ namespace ShelfAware.Core.Speech;
 /// </summary>
 public static class SpeechText
 {
+    /// <summary>
+    /// Bump this whenever a rule below changes what gets spoken. It rides in
+    /// <see cref="ITextToSpeech.OutputFingerprint"/>, so a change here retires audio that was cached
+    /// under the old rules instead of serving yesterday's pronunciation forever.
+    /// </summary>
+    public const int Version = 1;
+
     private const RegexOptions Options = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled;
 
     /// <summary>

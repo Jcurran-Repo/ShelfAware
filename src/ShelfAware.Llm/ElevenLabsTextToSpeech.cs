@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
@@ -25,6 +26,31 @@ public class ElevenLabsTextToSpeech : ITextToSpeech
         _credentials = credentials;
         _logger = logger;
     }
+
+    /// <inheritdoc />
+    /// <remarks>Includes NormalizeText because it decides what words are actually spoken, so flipping it
+    /// (or changing SpeechText's rules, via its Version) retires clips voiced under the old behaviour
+    /// rather than serving them forever. Deliberately excludes the API key — it doesn't affect the audio.</remarks>
+    public string OutputFingerprint
+    {
+        get
+        {
+            var v = _options.VoiceSettings;
+            return string.Join('|',
+                "elevenlabs",
+                _options.TextToSpeechModel,
+                _options.VoiceId,
+                _options.OutputFormat,
+                _options.NormalizeText ? "norm" + SpeechText.Version : "raw",
+                Num(v.Stability), Num(v.SimilarityBoost), Num(v.Style),
+                v.UseSpeakerBoost?.ToString() ?? "-", Num(v.Speed));
+
+            static string Num(double? d) => d?.ToString(CultureInfo.InvariantCulture) ?? "-";
+        }
+    }
+
+    /// <inheritdoc />
+    public string OutputMediaType => MediaTypeFor(_options.OutputFormat);
 
     public async Task<TextToSpeechResult> SynthesizeAsync(string text, SpeechContext? context = null, CancellationToken cancellationToken = default)
     {

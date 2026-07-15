@@ -8,6 +8,22 @@ namespace ShelfAware.Core.Speech;
 public interface ITextToSpeech
 {
     Task<TextToSpeechResult> SynthesizeAsync(string text, SpeechContext? context = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// A stable identifier for everything about this synthesizer's configuration that changes the audio
+    /// it produces — voice, model, encoding, delivery settings. Same text + same context + same
+    /// fingerprint means the same audio, which is what lets a cache be correct rather than a gamble.
+    ///
+    /// It must NOT include the API key: whose key paid for a clip doesn't change how the clip sounds.
+    /// It SHOULD change whenever the spoken form would — including the provider's own text handling —
+    /// so that improving how we speak retires the clips we spoke the old way, instead of serving them
+    /// forever.
+    /// </summary>
+    string OutputFingerprint { get; }
+
+    /// <summary>The MIME type this synthesizer produces under its current configuration. Lets a caller
+    /// (or a cache) describe stored audio without having to know the provider's encoding options.</summary>
+    string OutputMediaType { get; }
 }
 
 /// <summary>
