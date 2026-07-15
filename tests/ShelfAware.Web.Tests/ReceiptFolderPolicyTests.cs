@@ -123,6 +123,29 @@ public class ReceiptFolderPolicyTests
     }
 
     [Fact]
+    public void A_drive_root_as_the_allowed_root_still_contains_things()
+    {
+        // "Anything on this drive" is the loosest confinement that still counts as confinement, and it's
+        // what someone types when they want it. A root already ends in a separator, so appending another
+        // built a prefix no real path has and refused the entire volume.
+        var driveRoot = Path.GetPathRoot(Path.GetTempPath())!;
+        var policy = Policy(driveRoot);
+
+        Assert.True(policy.IsConfined);
+        Assert.Null(policy.Reject(Path.Combine(driveRoot, "anywhere", "at", "all")));
+        Assert.Null(policy.Reject(driveRoot));
+    }
+
+    [Fact]
+    public void An_unresolvable_path_is_refused_even_when_nothing_is_confined()
+    {
+        // A path that can't be resolved can't be read either — saying so beats saving it and silently
+        // importing nothing. (The old code only looked at the path at all when confined.)
+        Assert.NotNull(Policy(null).Reject("C:\\bad\0path"));
+        Assert.Null(Policy(null).Permit("C:\\bad\0path"));
+    }
+
+    [Fact]
     public void A_root_that_cannot_be_resolved_is_reported_rather_than_silently_unconfining()
     {
         // The failure this guards is silent: an unusable root leaves nothing to enforce, and "nothing to

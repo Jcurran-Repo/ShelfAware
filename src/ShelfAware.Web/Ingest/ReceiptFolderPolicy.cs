@@ -40,38 +40,43 @@ public sealed class ReceiptFolderPolicy(IOptions<ReceiptFolderOptions> options)
     public string? AllowedRoot => _allowedRoot;
 
     /// <summary>Null when the folder is allowed; otherwise why it isn't, phrased for the person typing it.</summary>
-    public string? Reject(string? folder)
+    public string? Reject(string? folder) => Judge(folder).Rejection;
+
+    /// <summary>The gate the inbox uses: an allowed folder comes back RESOLVED, anything else comes back
+    /// null and is read as "no folder configured".</summary>
+    public string? Permit(string? folder) => Judge(folder).Allowed;
+
+    /// <summary>
+    /// The one place a folder is judged, returning BOTH answers from a SINGLE resolution — the verdict for
+    /// the Settings page and the path for the inbox.
+    ///
+    /// One resolution is the point. Resolving separately for the check and for the return means the value
+    /// that gets opened is not the value that was proven safe: they can differ, and since resolving now
+    /// touches the filesystem to follow links, they can differ because someone changed a link in between.
+    /// Checking one string and using another is the bug this method exists to make unspeakable — it was
+    /// "validate resolved, return raw" once, then "validate one resolution, return a second" once, and
+    /// both times the shape survived the fix. Now there is only ever one string.
+    /// </summary>
+    private (string? Allowed, string? Rejection) Judge(string? folder)
     {
-        if (string.IsNullOrWhiteSpace(folder)) return null; // "no folder" is a valid choice — the feature is off
-        if (_allowedRoot is null) return null;
+        // "No folder" is a valid choice — it means the feature is off, not that anything is wrong.
+        if (string.IsNullOrWhiteSpace(folder)) return (null, null);
 
         var full = Resolve(folder);
-        if (full is null) return "That doesn't look like a valid folder path.";
+        // A path that can't be resolved can't be read either, so say so whether or not we're confining.
+        if (full is null) return (null, "That doesn't look like a valid folder path.");
+
+        if (_allowedRoot is null) return (full, null); // unconfined: the self-host, where any local path is the feature
 
         // A UNC path can be inside the allowed root only by coincidence of spelling, and reaching another
         // machine is never what confinement is for.
         if (folder.TrimStart().StartsWith(@"\\", StringComparison.Ordinal))
-            return "Receipt folders have to be on this server.";
+            return (null, "Receipt folders have to be on this server.");
 
-        return IsWithin(full)
-            ? null
-            : $"Receipt folders have to be inside {_allowedRoot} on this deployment.";
+        return PathScope.IsAtOrInside(full, _allowedRoot)
+            ? (full, null)
+            : (null, $"Receipt folders have to be inside {_allowedRoot} on this deployment.");
     }
-
-    /// <summary>The gate the inbox uses: an allowed folder comes back RESOLVED, anything else comes back
-    /// null and is read as "no folder configured".
-    ///
-    /// It returns the resolved path, not the string it was handed, so the path that gets opened is the
-    /// exact one that was checked. Handing back the raw input worked only because .NET happened to resolve
-    /// it identically at open time — validate-one-string/use-another is a bypass waiting for the two
-    /// normalisations to diverge.</summary>
-    public string? Permit(string? folder)
-    {
-        if (string.IsNullOrWhiteSpace(folder)) return null;
-        return Reject(folder) is null ? Resolve(folder) : null;
-    }
-
-    private bool IsWithin(string full) => PathScope.IsAtOrInside(full, _allowedRoot!);
 
     /// <summary>
     /// The full, real path, or null if it isn't one.
@@ -86,6 +91,12 @@ public sealed class ReceiptFolderPolicy(IOptions<ReceiptFolderOptions> options)
     /// Bounded honestly: this follows a link at the END of the path (and chains of them), not one in the
     /// middle of it. Escaping through an intermediate link needs the attacker to already be able to create
     /// links on the server, at which point confinement is not what's protecting anything.
+    ///
+    /// Neither catch logs, and that is not the swallowing CLAUDE.md forbids: the exception IS the answer
+    /// here, not a lost error. "This string isn't a path" is reported to whoever asked — the person typing
+    /// it gets a sentence back, and a bad Receipts:AllowedRoot fails the boot with one (see Program.cs) —
+    /// so nothing goes quiet. Static on purpose, so RootIsUsable can be reached from options validation
+    /// before any instance exists, which is also why there's no logger to reach for.
     /// </summary>
     private static string? Resolve(string folder)
     {
@@ -106,10 +117,13 @@ public sealed class ReceiptFolderPolicy(IOptions<ReceiptFolderOptions> options)
                 full = Path.TrimEndingDirectorySeparator(target.FullName);
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
         {
-            // Not a link, doesn't exist yet, or we can't look: none of those make the path itself invalid,
-            // and the containment check below is still meaningful on the resolved-so-far value.
+            // Not a link, doesn't exist yet, a shape the link API rejects even though GetFullPath took it,
+            // or we simply can't look. None of those make the path itself invalid, and the containment
+            // check still means something against the resolved-so-far value — whereas letting this escape
+            // would turn "no folder configured" into an unhandled error in the inbox, which has no
+            // handler for it and is the one thing this method promises never to do.
         }
 
         return full;

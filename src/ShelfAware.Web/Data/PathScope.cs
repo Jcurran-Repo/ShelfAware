@@ -29,8 +29,18 @@ public static class PathScope
     /// root itself doesn't count. For callers where being handed the root would be a catastrophe rather
     /// than a no-op (deleting "receipts" is not the same as deleting one receipt's folder).
     ///
-    /// The trailing separator is the whole point: without it "<c>/inbox-old</c>" starts with
-    /// "<c>/inbox</c>" as a string while being nobody's idea of inside it.</summary>
-    public static bool IsInside(string candidate, string root) =>
-        candidate.StartsWith(root + Path.DirectorySeparatorChar, Comparison);
+    /// The comparison is against the root PLUS a separator, which is the whole point: without it
+    /// "<c>/inbox-old</c>" starts with "<c>/inbox</c>" as a string while being nobody's idea of inside it.
+    ///
+    /// A filesystem root already ends in that separator, though, and appending a second one produces a
+    /// prefix no real path has — so "<c>C:\</c>" or "<c>/</c>" as the root would reject everything on the
+    /// volume. That fails closed rather than open, but "allow anything on this drive" is exactly what
+    /// someone types when they want the loosest confinement that still counts as confinement, and it
+    /// should work.</summary>
+    public static bool IsInside(string candidate, string root)
+    {
+        var prefix = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
+        // Longer than the prefix, so the root itself is "at" but never "inside".
+        return candidate.Length > prefix.Length && candidate.StartsWith(prefix, Comparison);
+    }
 }

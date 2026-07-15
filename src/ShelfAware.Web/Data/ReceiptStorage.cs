@@ -14,8 +14,13 @@ namespace ShelfAware.Web.Data;
 /// So: clips are filed under a per-household folder, and so are these. A delete removes the household's
 /// tree, rather than hoping every row was enumerated first.
 ///
-/// Paths are stored on the receipt RELATIVE to the data directory (that's the existing
-/// <c>ImagePath</c> contract, and it keeps the DB portable across machines and deploy targets).
+/// Paths are stored on the receipt RELATIVE to the data directory — the existing <c>ImagePath</c>
+/// contract — so the data directory can move without rewriting the database. They're also stored with a
+/// FORWARD SLASH rather than the platform's separator, and normalised back on the way out. That isn't
+/// cosmetic: Path.Combine bakes in a backslash on the Windows self-host, and a backslash is an ordinary
+/// filename character on Linux, so the Azure target named in CLAUDE.md would read every Windows-written
+/// ImagePath as one long literal filename and report every receipt's copy as missing. Normalising on read
+/// rescues rows already written the old way, so this is a fix rather than a fresh start.
 /// </summary>
 public sealed class ReceiptStorage(AppPaths paths, ICurrentHousehold household, ILogger<ReceiptStorage> logger)
 {
@@ -28,7 +33,9 @@ public sealed class ReceiptStorage(AppPaths paths, ICurrentHousehold household, 
     {
         var householdId = await household.GetRequiredIdAsync(cancellationToken);
         var name = $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}"[..40];
-        var relative = Path.Combine(Root, HouseholdFolder.For(householdId), name);
+        // Joined with '/', not Path.Combine: this string goes in the database, and it has to mean the same
+        // thing on the machine that reads it as on the one that wrote it.
+        var relative = $"{Root}/{HouseholdFolder.For(householdId)}/{name}";
         Directory.CreateDirectory(Absolute(relative));
         return relative;
     }
@@ -98,7 +105,15 @@ public sealed class ReceiptStorage(AppPaths paths, ICurrentHousehold household, 
         }
     }
 
-    private string Absolute(string relative) => Path.Combine(paths.DataDir, relative);
+    private string Absolute(string relative) => Path.Combine(paths.DataDir, ForThisPlatform(relative));
+
+    /// <summary>A stored <c>ImagePath</c> with whatever separator wrote it, turned into one this platform
+    /// understands. Both directions are handled, so a database written on Windows still finds its images
+    /// on Linux and vice versa. Safe for these paths specifically: every segment we generate is "receipts",
+    /// a hex hash, or a timestamp-and-GUID, none of which can contain either separator — so there is no
+    /// legitimate backslash here to mistake for a directory break.</summary>
+    private static string ForThisPlatform(string relative) =>
+        relative.Replace('\\', '/').Replace('/', Path.DirectorySeparatorChar);
 
     /// <summary>Resolves a stored <c>ImagePath</c> and proves it lands inside the receipts store, or
     /// returns null. These strings come from our own DB rather than a request, so this is belt-and-braces
