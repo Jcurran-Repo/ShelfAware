@@ -368,7 +368,7 @@
     [JSInvokable]
     public Task OnIndex(int i)
     {
-        Logger.LogInformation("Cook-along reader moved to segment {Index}.", i);
+        Logger.LogDebug("Cook-along reader moved to segment {Index}.", i);
         currentIndex = i;
         finished = false;
         return InvokeAsync(StateHasChanged);
@@ -481,11 +481,14 @@
         var command = CookAlongCommands.Match(text);
         var intent = command.Intent;
 
-        // What it heard and what it decided, in one line. A voice loop is otherwise unobservable: when it
-        // does the wrong thing you have only the user's account of a conversation nobody recorded.
+        // What it DECIDED is ordinary telemetry. What was SAID is not: this is a microphone in someone's
+        // kitchen, and a self-hosted deployment shouldn't record its owner's speech to disk by default.
+        // The transcript sits at Debug, off unless you go looking — which is what chasing a
+        // misunderstanding requires, and nothing else should.
         Logger.LogInformation(
-            "Cook-along heard \"{Transcript}\" -> {Intent}{Step} (reader on segment {Index}, held={Held})",
-            text, intent, command.Step is { } s ? $" step {s}" : "", currentIndex, held);
+            "Cook-along resolved {Intent}{Step} (reader on segment {Index}, held={Held}).",
+            intent, command.Step is { } s ? $" step {s}" : "", currentIndex, held);
+        Logger.LogDebug("Cook-along heard \"{Transcript}\".", text);
 
         // Coming back from a hold. If something is genuinely paused mid-sentence (only the on-screen
         // Pause button can cause that — we don't listen while we're talking), any carry-on phrase resumes
@@ -614,7 +617,7 @@
         finished = false;
         paused = false;
         await SetPhaseAsync(Phase.Reading);
-        Logger.LogInformation("Cook-along telling the reader: {Fn}({Args}).", fn, string.Join(", ", args));
+        Logger.LogDebug("Cook-along telling the reader: {Fn}({Args}).", fn, string.Join(", ", args));
         if (_module is not null) await _module.InvokeVoidAsync(fn, args);
     }
 
