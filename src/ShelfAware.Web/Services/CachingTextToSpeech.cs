@@ -189,10 +189,24 @@ public sealed class CachingTextToSpeech : ITextToSpeech
     {
         if (!Directory.Exists(directory)) return 0;
 
-        // Each immediate subfolder is one household (see HouseholdFolder). Clips written before the cache
-        // was split by household sit loose at the root; sweeping that too keeps them from lingering
-        // forever, and it's the only thing left that can't be attributed.
-        var households = new DirectoryInfo(directory).GetDirectories();
+        // Listing the households can fail on its own (a locked or unreadable cache directory), and this
+        // runs unguarded during startup — so a cache we can't even enumerate must stay a logged warning,
+        // never an exception that stops the app booting. Trimming is a housekeeping nicety; it has no
+        // business being able to take the deployment down.
+        DirectoryInfo[] households;
+        try
+        {
+            // Each immediate subfolder is one household (see HouseholdFolder).
+            households = new DirectoryInfo(directory).GetDirectories();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(ex, "Couldn't list the speech cache at {Directory}; skipping the trim.", directory);
+            return 0;
+        }
+
+        // Clips written before the cache was split by household sit loose at the root; sweeping that too
+        // keeps them from lingering forever, and it's the only thing left that can't be attributed.
         var removed = TrimFolder(directory, maxBytesPerHousehold, SearchOption.TopDirectoryOnly, logger);
         foreach (var household in households)
         {

@@ -101,4 +101,35 @@ public class ReceiptFolderPolicyTests
         // it was written (an older build, a hand-edited DB).
         Assert.Null(Policy(Root).Permit(@"C:\Windows\Temp"));
     }
+
+    [Fact]
+    public void Permit_returns_the_resolved_path_not_the_string_it_was_given()
+    {
+        // The path that gets opened must be the exact one that was checked. Returning the raw input worked
+        // only because .NET happened to resolve it the same way at open time.
+        var roundabout = Path.Combine(Root, "a", "..", "b");
+
+        Assert.Equal(Path.Combine(Root, "b"), Policy(Root).Permit(roundabout));
+    }
+
+    [Fact]
+    public void An_unconfined_permit_also_returns_a_resolved_path()
+    {
+        var roundabout = Path.Combine(Path.GetTempPath(), "x", "..", "y");
+
+        Assert.Equal(
+            Path.TrimEndingDirectorySeparator(Path.Combine(Path.GetTempPath(), "y")),
+            Policy(null).Permit(roundabout));
+    }
+
+    [Fact]
+    public void A_root_that_cannot_be_resolved_is_reported_rather_than_silently_unconfining()
+    {
+        // The failure this guards is silent: an unusable root leaves nothing to enforce, and "nothing to
+        // enforce" looks identical to "confinement was never wanted". Program.cs fails startup on it.
+        Assert.True(ReceiptFolderPolicy.RootIsUsable(Root));
+        Assert.True(ReceiptFolderPolicy.RootIsUsable(null));      // not configured: legitimately unconfined
+        Assert.True(ReceiptFolderPolicy.RootIsUsable("   "));
+        Assert.False(ReceiptFolderPolicy.RootIsUsable("C:\\bad\0path"));
+    }
 }

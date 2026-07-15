@@ -161,7 +161,15 @@ builder.Services.Configure<SecurityStampValidatorOptions>(options =>
     options.ValidationInterval = TimeSpan.FromMinutes(5));
 
 builder.Services.AddAuthorization();
-builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection(AuthOptions.SectionName));
+// Validated at STARTUP, not trusted. A lifetime of 0 or negative used to be read as "never expires" —
+// the least safe reading of what is almost certainly a typo, and one that silently switches invite expiry
+// off. Absent still means never; a number now has to be a real number of days, or the app won't boot.
+builder.Services.AddOptions<AuthOptions>()
+    .Bind(builder.Configuration.GetSection(AuthOptions.SectionName))
+    .Validate(o => o.InviteCodeLifetimeDays is null or > 0,
+        "Auth:InviteCodeLifetimeDays must be at least 1, or absent for codes that never expire. " +
+        "0 or negative would silently mean 'never', which is not what anyone types 0 to get.")
+    .ValidateOnStart();
 builder.Services.AddScoped<HouseholdService>();
 
 // Auth cookies + antiforgery tokens are encrypted with DataProtection keys. Persist them next to the
@@ -214,7 +222,17 @@ builder.Services.AddScoped<IAppSettings, EfAppSettings>();          // settings 
 // Where a household may point its receipt folder. Unset (the self-host default) allows any local path —
 // that's the feature there, and the owner is the only tenant. Set it on any multi-household deployment:
 // without it the folder setting is an arbitrary-path read of everything the server process can see.
-builder.Services.Configure<ReceiptFolderOptions>(builder.Configuration.GetSection(ReceiptFolderOptions.SectionName));
+//
+// Validated at startup because the failure mode is silent: a root that doesn't resolve leaves the policy
+// with nothing to enforce, and "nothing to enforce" is spelled the same as "not configured" — so a typo in
+// the security setting would turn confinement off and look exactly like a deployment that never wanted it.
+// Refusing to boot is the only way that mistake gets noticed.
+builder.Services.AddOptions<ReceiptFolderOptions>()
+    .Bind(builder.Configuration.GetSection(ReceiptFolderOptions.SectionName))
+    .Validate(o => ReceiptFolderPolicy.RootIsUsable(o.AllowedRoot),
+        "Receipts:AllowedRoot is set but isn't a usable path, so receipt folders would silently stop being " +
+        "confined. Fix the path, or remove the setting if this deployment doesn't want confinement.")
+    .ValidateOnStart();
 builder.Services.AddSingleton<ReceiptFolderPolicy>();               // config-only, no per-household state
 builder.Services.AddScoped<IReceiptInbox, LocalFolderReceiptInbox>(); // reads the household's folder setting
 builder.Services.AddScoped<IReceiptImporter, ReceiptImporter>(); // depends on the scoped IReceiptExtractor

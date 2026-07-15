@@ -79,6 +79,11 @@ public sealed class HouseholdService(
             return null;
         }
 
+        // ExecuteUpdate wrote straight to the database and the change tracker never saw it, so the entity
+        // we're about to hand back still reports the pre-join use count. Re-read it: a caller asking the
+        // returned household how many uses are left deserves the answer, not the one from a moment ago.
+        await db.Entry(household).ReloadAsync(ct);
+
         user.HouseholdId = household.Id;
         await db.SaveChangesAsync(ct);
         logger.LogInformation("A member joined household {HouseholdId}.", household.Id);
@@ -104,7 +109,11 @@ public sealed class HouseholdService(
         household.InviteCode = await UnusedInviteCodeAsync(ct);
         household.InviteUseCount = 0;
         household.InviteMaxUses = maxUses;
-        household.InviteExpiresAt = options.Value.InviteCodeLifetimeDays is { } days and > 0
+        // Only ABSENT means "never expires". A configured 0 or negative used to mean it too, which made a
+        // typo silently switch the expiry off — the least safe reading of a mistake. Startup validation
+        // (Program.cs) now refuses anything below 1, so a value here is a real lifetime; and if one ever
+        // slipped through, AddDays(0) expires the code immediately, which fails closed.
+        household.InviteExpiresAt = options.Value.InviteCodeLifetimeDays is { } days
             ? DateTimeOffset.Now.AddDays(days)
             : null;
     }
@@ -137,12 +146,24 @@ public sealed class HouseholdService(
     /// asserting membership until it happened to be re-issued — they'd keep reading the pantry for days.
     /// The stamp change invalidates the cookie and kills their live circuits at the next revalidation
     /// (5 minutes), which is also the bound on how long a removal takes to bite.
+    ///
+    /// Both parties are checked HERE rather than trusted from the caller. Settings.razor does derive both
+    /// ids from the caller's own claim, so nothing today can misuse this — but this method is the
+    /// authorization boundary for evicting someone from their data, and a boundary that relies on its one
+    /// caller having been careful isn't one.
     /// </summary>
     /// <returns>Null on success, or why it was refused.</returns>
     public async Task<string?> RemoveMemberAsync(
         string householdId, string userId, string actingUserId, CancellationToken ct = default)
     {
         if (userId == actingUserId) return "You can't remove yourself. Use 'Delete my account' instead.";
+
+        // You may only remove people from a household you are in yourself. Anyone in it may remove anyone
+        // else — the app has no roles and says so ("everyone in your household shares this pantry") — but
+        // "anyone" means a member, not anyone at all.
+        var actor = await db.Users.SingleOrDefaultAsync(u => u.Id == actingUserId, ct);
+        if (actor is null || actor.HouseholdId != householdId)
+            return "You can only remove people from your own household.";
 
         var user = await db.Users.SingleOrDefaultAsync(u => u.Id == userId, ct);
         if (user is null || user.HouseholdId != householdId)
@@ -151,11 +172,11 @@ public sealed class HouseholdService(
             return "That person isn't in this household.";
         }
 
-        // The pantry outlives its members, so it must never become unreachable: a household with no one in
-        // it is data nobody can see, delete, or export.
-        if (await db.Users.CountAsync(u => u.HouseholdId == householdId, ct) <= 1)
-            return "You can't remove the last member of a household.";
-
+        // Note there's no separate "can't remove the last member" rule, because there can't be a last
+        // member to remove: the actor and the target are both in this household and are not the same
+        // person, so it has at least two, and the actor is still in it afterwards. The invariant that a
+        // household never empties out — its pantry would be data nobody could read, export, or delete —
+        // falls out of the two checks above rather than needing a third that could never fire.
         user.HouseholdId = null;
         await db.SaveChangesAsync(ct);
 

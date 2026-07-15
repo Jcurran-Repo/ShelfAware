@@ -44,13 +44,15 @@
     <button type="submit" class="auth-submit">Continue</button>
 </EditForm>
 
-<p class="muted auth-alt">
+@* A div, not a p: a <form> is flow content, so the parser would close a <p> before it and the styling
+   would land on an empty paragraph instead of this. And no ReturnUrl — /Account/Logout binds the field
+   and then ignores it, always redirecting to Login. *@
+<div class="muted auth-alt">
     <form method="post" action="Account/Logout" data-enhance="false">
         <AntiforgeryToken />
-        <input type="hidden" name="ReturnUrl" value="Account/Login" />
         <button type="submit" class="link-button">Sign out</button>
     </form>
-</p>
+</div>
 
 @code {
     private string? errorMessage;
@@ -74,7 +76,16 @@
         }
 
         // Already in one — nothing to choose. (Also covers the reload after a successful choice.)
-        if (!string.IsNullOrEmpty(user.HouseholdId)) RedirectManager.RedirectTo("");
+        //
+        // Refresh the sign-in first, don't just redirect. Landing here at all means the middleware saw no
+        // household CLAIM, while this says the row has one — so the cookie is stale, and redirecting alone
+        // would send them to a page the middleware bounces straight back here, forever. Re-issuing the
+        // cookie mints the missing claim, which both breaks the loop and fixes the thing that caused it.
+        if (!string.IsNullOrEmpty(user.HouseholdId))
+        {
+            await SignInManager.RefreshSignInAsync(user);
+            RedirectManager.RedirectTo("");
+        }
 
         // The same gate registration uses: a deployment that isn't accepting new households doesn't start
         // accepting them because the visitor already has an account.

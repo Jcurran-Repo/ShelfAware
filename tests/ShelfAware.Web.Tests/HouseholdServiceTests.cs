@@ -264,6 +264,41 @@ public class HouseholdServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Join_returns_a_household_whose_use_count_is_current()
+    {
+        // The claim is an ExecuteUpdate, which writes past the change tracker — so the entity handed back
+        // reported the count from before the join until it was reloaded.
+        var owner = NewUser("a@example.com");
+        _context.Users.Add(owner);
+        var household = await _service.CreateForAsync("Home", owner);
+        await _service.RegenerateInviteCodeAsync(household.Id, maxUses: 3);
+        var code = (await _service.GetAsync(household.Id))!.InviteCode;
+
+        var joiner = NewUser("b@example.com");
+        _context.Users.Add(joiner);
+        var joined = await _service.JoinAsync(code, joiner);
+
+        Assert.NotNull(joined);
+        Assert.Equal(1, joined.InviteUseCount);
+        Assert.Equal(2, joined.InviteUsesRemaining);
+    }
+
+    [Fact]
+    public async Task A_zero_day_lifetime_would_expire_immediately_rather_than_never()
+    {
+        // Startup validation refuses 0 outright (Program.cs), so this can't be configured — but if one
+        // ever slipped through, it must fail CLOSED. It used to be read as "never expires".
+        var service = NewService(new AuthOptions { InviteCodeLifetimeDays = 0 });
+        var owner = NewUser("a@example.com");
+        _context.Users.Add(owner);
+
+        var household = await service.CreateForAsync("Home", owner);
+
+        Assert.NotNull(household.InviteExpiresAt);
+        Assert.False(household.InviteIsUsable(DateTimeOffset.Now.AddSeconds(1)));
+    }
+
+    [Fact]
     public async Task An_empty_code_never_matches()
     {
         // Guards the degenerate case where a household somehow has no code: "" must not be a skeleton key.
@@ -312,19 +347,40 @@ public class HouseholdServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task You_cannot_remove_the_last_member()
+    public async Task An_outsider_cannot_remove_a_member()
     {
-        // A household with nobody in it is data nobody can read, export, or delete.
-        var owner = NewUser("a@example.com");
+        // The method is the authorization boundary, not Settings.razor. It checks the ACTOR belongs here,
+        // rather than trusting its one caller to have derived the id from the right claim.
+        var (household, _, other) = await TwoMemberHouseholdAsync();
         var outsider = NewUser("z@example.com");
-        _context.Users.AddRange(owner, outsider);
+        _context.Users.Add(outsider);
+        await _service.CreateForAsync("Elsewhere", outsider);
+        await _context.SaveChangesAsync();
+
+        var refused = await _service.RemoveMemberAsync(household.Id, other.Id, actingUserId: outsider.Id);
+
+        Assert.NotNull(refused);
+        Assert.Equal(household.Id, other.HouseholdId);
+    }
+
+    [Fact]
+    public async Task A_household_can_never_be_emptied()
+    {
+        // The pantry belongs to the household, so a household with nobody in it is data nobody can read,
+        // export, or delete. No rule enforces this directly — it falls out of "the actor must be a member"
+        // plus "you can't remove yourself", which together mean there are always at least two people and
+        // the remover is always one of the survivors. This pins the OUTCOME, whatever the mechanism.
+        var owner = NewUser("a@example.com");
+        _context.Users.Add(owner);
         var household = await _service.CreateForAsync("Home", owner);
         await _context.SaveChangesAsync();
 
-        var refused = await _service.RemoveMemberAsync(household.Id, owner.Id, actingUserId: outsider.Id);
+        // The only member trying to remove the only member: refused, so the household keeps its last one.
+        var refused = await _service.RemoveMemberAsync(household.Id, owner.Id, actingUserId: owner.Id);
 
         Assert.NotNull(refused);
         Assert.Equal(household.Id, owner.HouseholdId);
+        Assert.Single(await _service.GetMembersAsync(household.Id));
     }
 
     [Fact]

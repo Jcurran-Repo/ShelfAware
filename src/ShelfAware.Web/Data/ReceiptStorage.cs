@@ -120,9 +120,9 @@ public sealed class ReceiptStorage(AppPaths paths, ICurrentHousehold household, 
             return null;
         }
 
-        // The separator matters: without it "<root>-old" reads as being under "<root>".
-        return full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-            ? full
-            : null;
+        // STRICTLY inside: being handed the store root itself must not resolve to "delete every
+        // household's receipts". PathScope also gets the platform right — a case-insensitive compare
+        // would call /receipts and /RECEIPTS the same directory on the Linux deploy target.
+        return PathScope.IsInside(full, root) ? full : null;
     }
 }

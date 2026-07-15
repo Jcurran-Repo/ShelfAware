@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.Ingest;
 
@@ -30,7 +31,7 @@ public sealed class ReceiptFolderOptions
 /// </summary>
 public sealed class ReceiptFolderPolicy(IOptions<ReceiptFolderOptions> options)
 {
-    private readonly string? _allowedRoot = Normalize(options.Value.AllowedRoot);
+    private readonly string? _allowedRoot = NormalizeRoot(options.Value.AllowedRoot);
 
     /// <summary>Whether this deployment confines receipt folders at all.</summary>
     public bool IsConfined => _allowedRoot is not null;
@@ -57,32 +58,69 @@ public sealed class ReceiptFolderPolicy(IOptions<ReceiptFolderOptions> options)
             : $"Receipt folders have to be inside {_allowedRoot} on this deployment.";
     }
 
-    /// <summary>The gate the inbox uses: an allowed folder comes back, anything else comes back null and
-    /// is read as "no folder configured".</summary>
-    public string? Permit(string? folder) =>
-        string.IsNullOrWhiteSpace(folder) || Reject(folder) is not null ? null : folder.Trim();
-
-    private bool IsWithin(string full)
+    /// <summary>The gate the inbox uses: an allowed folder comes back RESOLVED, anything else comes back
+    /// null and is read as "no folder configured".
+    ///
+    /// It returns the resolved path, not the string it was handed, so the path that gets opened is the
+    /// exact one that was checked. Handing back the raw input worked only because .NET happened to resolve
+    /// it identically at open time — validate-one-string/use-another is a bypass waiting for the two
+    /// normalisations to diverge.</summary>
+    public string? Permit(string? folder)
     {
-        // The separator matters: without it, "C:\inbox-old" reads as being inside "C:\inbox".
-        if (string.Equals(full, _allowedRoot, StringComparison.OrdinalIgnoreCase)) return true;
-        return full.StartsWith(_allowedRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(folder)) return null;
+        return Reject(folder) is null ? Resolve(folder) : null;
     }
 
-    /// <summary>GetFullPath is what makes the check meaningful: it resolves "..", "." and relative
-    /// segments, so a path can't walk out of the root and back in on a technicality.</summary>
+    private bool IsWithin(string full) => PathScope.IsAtOrInside(full, _allowedRoot!);
+
+    /// <summary>
+    /// The full, real path, or null if it isn't one.
+    ///
+    /// Two steps, and both matter. GetFullPath resolves "..", "." and relative segments, so a path can't
+    /// walk out of the root and claim to be inside it. Then reparse points are followed, because
+    /// GetFullPath does NOT: a junction or symlink sitting inside the allowed root and pointing at
+    /// C:\Windows would otherwise pass a purely textual containment check while reading somewhere else
+    /// entirely. Resolving here rather than at save time is deliberate — the inbox re-resolves on every
+    /// read, so a link created AFTER the setting was saved is caught too.
+    ///
+    /// Bounded honestly: this follows a link at the END of the path (and chains of them), not one in the
+    /// middle of it. Escaping through an intermediate link needs the attacker to already be able to create
+    /// links on the server, at which point confinement is not what's protecting anything.
+    /// </summary>
     private static string? Resolve(string folder)
     {
+        string full;
         try
         {
-            return Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder.Trim()));
+            full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder.Trim()));
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
             return null;
         }
+
+        try
+        {
+            if (Directory.ResolveLinkTarget(full, returnFinalTarget: true) is { } target)
+            {
+                full = Path.TrimEndingDirectorySeparator(target.FullName);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Not a link, doesn't exist yet, or we can't look: none of those make the path itself invalid,
+            // and the containment check below is still meaningful on the resolved-so-far value.
+        }
+
+        return full;
     }
 
-    private static string? Normalize(string? root) =>
+    /// <summary>Whether a configured root is one this class can actually enforce. Checked at STARTUP
+    /// (see Program.cs) rather than trusted: a root that doesn't resolve would leave <c>_allowedRoot</c>
+    /// null, and null means "allow any local path" — so a typo in the security setting would silently turn
+    /// confinement off, which is the one failure mode this whole class exists to prevent.</summary>
+    public static bool RootIsUsable(string? root) => string.IsNullOrWhiteSpace(root) || Resolve(root) is not null;
+
+    private static string? NormalizeRoot(string? root) =>
         string.IsNullOrWhiteSpace(root) ? null : Resolve(root);
 }
