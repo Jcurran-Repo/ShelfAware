@@ -66,8 +66,10 @@ public class ElevenLabsVoiceSettings
     /// <summary>Boosts similarity to the original speaker (ElevenLabs default true).</summary>
     public bool? UseSpeakerBoost { get; set; } = true;
 
-    /// <summary>Speaking rate; 1.0 is the ElevenLabs default. Defaulted a shade under it because this
-    /// voice reads cooking steps to someone whose hands are busy — they need to follow along, not keep
-    /// up. Tune by ear; set to null to send nothing and take the model's own default.</summary>
-    public double? Speed { get; set; } = 0.95;
+    /// <summary>Speaking rate; 1.0 is the ElevenLabs default. Defaulted under it because this voice reads
+    /// cooking steps to someone whose hands are busy — they need to follow along, not keep up. Set by ear
+    /// (0.95 still read a touch fast). Measured on one step: 1.0 = 12.0s, 0.95 = 12.8s, 0.90 = 13.9s,
+    /// 0.85 = 14.4s — and 0.80 comes out the same length as 0.85, so 0.85 is the floor and lower values
+    /// buy nothing. Set to null to send nothing and take the model's own default.</summary>
+    public double? Speed { get; set; } = 0.90;
 }
