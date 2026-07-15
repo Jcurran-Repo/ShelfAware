@@ -6,7 +6,9 @@
 @using ShelfAware.Llm
 @using ShelfAware.Web.Auth
 @using Microsoft.Extensions.Options
+@using ShelfAware.Web.Ingest
 @inject IAppSettings SettingsStore
+@inject ReceiptFolderPolicy FolderPolicy
 @inject IReceiptInbox Inbox
 @inject IReceiptImporter Importer
 @inject IHouseholdDbFactory DbFactory
@@ -355,9 +357,17 @@
 
     <div class="tag-add">
         <input @bind="folder" @bind:event="oninput" placeholder="e.g. C:\Users\you\Documents\Receipts"
-               aria-label="Receipt folder path" size="48" />
+               aria-label="Receipt folder path" size="48" aria-describedby="folder-limit" />
         <button @onclick="SaveFolder" disabled="@saving">@(saving ? "Saving…" : "Save")</button>
     </div>
+    @if (FolderPolicy.IsConfined)
+    {
+        <p class="muted" id="folder-limit">On this deployment, receipt folders have to be inside <code>@FolderPolicy.AllowedRoot</code>.</p>
+    }
+    @if (folderError is not null)
+    {
+        <p class="error" role="alert">@folderError</p>
+    }
     @if (savedNote is not null)
     {
         <p class="chat-reply" role="status">@savedNote</p>
@@ -457,6 +467,7 @@
     private bool saving;
     private bool scanning;
     private string? savedNote;
+    private string? folderError;
     private string? scanResult;
     private string? scanProgress;
 
@@ -944,9 +955,17 @@
     {
         saving = true;
         savedNote = null;
+        folderError = null;
         scanResult = null;
         try
         {
+            // Refused here so the user gets a sentence they can act on. The inbox refuses it again when it
+            // actually reads — that's the boundary; this is the manners.
+            if (FolderPolicy.Reject(folder) is { } why)
+            {
+                folderError = why;
+                return;
+            }
             await SettingsStore.SetAsync(SettingKeys.ReceiptFolder, folder.Trim());
             await RefreshStatus();
             savedNote = "Saved.";

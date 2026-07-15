@@ -201,6 +201,11 @@ builder.Services.AddScoped<IRecipeAdapter, RecipeAdapter>();
 // agent triggers, plus the runtime settings store behind the /settings page. Both the importer and the
 // manual Upload review confirm receipts through the ONE shared confirmation service.
 builder.Services.AddScoped<IAppSettings, EfAppSettings>();          // settings are per household now
+// Where a household may point its receipt folder. Unset (the self-host default) allows any local path —
+// that's the feature there, and the owner is the only tenant. Set it on any multi-household deployment:
+// without it the folder setting is an arbitrary-path read of everything the server process can see.
+builder.Services.Configure<ReceiptFolderOptions>(builder.Configuration.GetSection(ReceiptFolderOptions.SectionName));
+builder.Services.AddSingleton<ReceiptFolderPolicy>();               // config-only, no per-household state
 builder.Services.AddScoped<IReceiptInbox, LocalFolderReceiptInbox>(); // reads the household's folder setting
 builder.Services.AddScoped<IReceiptImporter, ReceiptImporter>(); // depends on the scoped IReceiptExtractor
 builder.Services.AddScoped<ReceiptConfirmationService>();

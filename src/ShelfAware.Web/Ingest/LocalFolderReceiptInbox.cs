@@ -9,7 +9,7 @@ namespace ShelfAware.Web.Ingest;
 /// The id is the file name — stable enough to detect already-imported files. Swap this out for an
 /// Azure Blob / cloud-drive impl once the app is deployed; the import logic doesn't change.
 /// </summary>
-public class LocalFolderReceiptInbox(IAppSettings settings) : IReceiptInbox
+public class LocalFolderReceiptInbox(IAppSettings settings, ReceiptFolderPolicy policy) : IReceiptInbox
 {
     public async Task<bool> IsConfiguredAsync(CancellationToken cancellationToken = default)
     {
@@ -41,9 +41,11 @@ public class LocalFolderReceiptInbox(IAppSettings settings) : IReceiptInbox
         return await File.ReadAllBytesAsync(Path.Combine(folder, safe), cancellationToken);
     }
 
-    private async Task<string?> FolderAsync(CancellationToken ct)
-    {
-        var folder = (await settings.GetAsync(SettingKeys.ReceiptFolder, ct))?.Trim();
-        return string.IsNullOrEmpty(folder) ? null : folder;
-    }
+    /// <summary>The household's configured folder, IF this deployment allows reading it. The check lives
+    /// here and not only where the setting is saved: this is the boundary that actually opens files, and a
+    /// stored value can outlive the rules that were in force when it was written (an older build, a
+    /// hand-edited DB, a future writer). A folder we won't read is indistinguishable from no folder — the
+    /// Settings page is where the user is told why.</summary>
+    private async Task<string?> FolderAsync(CancellationToken ct) =>
+        policy.Permit(await settings.GetAsync(SettingKeys.ReceiptFolder, ct));
 }
