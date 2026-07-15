@@ -46,11 +46,14 @@ public sealed class HouseholdService(
     }
 
     /// <summary>Creates a household and makes <paramref name="user"/> its first member. The caller
-    /// owns the transaction (registration wraps user-create + this in one).</summary>
+    /// owns the transaction (registration wraps user-create + this in one).
+    ///
+    /// The new household has NO invite code. Minting one here is what made a code a standing fixture —
+    /// every household permanently advertising a key to its own pantry, whether or not anyone had ever
+    /// wanted to invite a soul. A code now costs a deliberate click (<see cref="GenerateInviteCodeAsync"/>).</summary>
     public async Task<Household> CreateForAsync(string name, AppUser user, CancellationToken ct = default)
     {
         var household = new Household { Name = name.Trim() };
-        await ResetInviteAsync(household, maxUses: null, ct);
         db.Households.Add(household);
         user.HouseholdId = household.Id;
         await db.SaveChangesAsync(ct);
@@ -70,9 +73,23 @@ public sealed class HouseholdService(
         // the write below are otherwise a race, and two people redeeming a single-use code at the same
         // moment would both pass it. One statement, so the database decides who got the last use. It runs
         // on this context, so it's inside the caller's registration transaction and rolls back with it.
+        //
+        // Spending the last use also RETIRES the code, in this same statement. A code that has been used
+        // up is already refused by InviteIsUsable, so clearing it changes no access decision — what it
+        // changes is what the household is still holding: a spent code left in the column is a dead
+        // credential sitting on the Settings page looking like a live one, and the next reader can't tell
+        // "nobody has been invited" from "somebody already came". Both are the resting state; only one of
+        // them says so. Doing it here rather than in a follow-up write is what keeps it honest under a
+        // race — the row that loses the claim never reaches this code at all.
+        //
+        // Both assignments read the PRE-update row (SQL evaluates a SET list against the old values), so
+        // InviteUseCount + 1 is the count this claim is about to produce.
         var claimed = await db.Households
             .Where(h => h.Id == household.Id && (h.InviteMaxUses == null || h.InviteUseCount < h.InviteMaxUses))
-            .ExecuteUpdateAsync(s => s.SetProperty(h => h.InviteUseCount, h => h.InviteUseCount + 1), ct);
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(h => h.InviteUseCount, h => h.InviteUseCount + 1)
+                .SetProperty(h => h.InviteCode, h =>
+                    h.InviteMaxUses != null && h.InviteUseCount + 1 >= h.InviteMaxUses ? null : h.InviteCode), ct);
         if (claimed == 0)
         {
             logger.LogInformation("An invite for household {HouseholdId} was redeemed after its last use went.", household.Id);
@@ -90,22 +107,18 @@ public sealed class HouseholdService(
         return household;
     }
 
-    /// <summary>Replaces the invite code, cutting off anyone still holding the old one. Resets the expiry
-    /// and the use count too: a regenerated code is a new credential, not the old one with a new spelling.</summary>
-    public async Task<Household> RegenerateInviteCodeAsync(
-        string householdId, int? maxUses = null, CancellationToken ct = default)
+    /// <summary>Mints an invite code for a household, replacing any code it already had (which cuts off
+    /// anyone still holding the old one). This is the ONLY way a code comes into existence — households
+    /// are created without one — so it serves as both "generate" and "regenerate"; the household can't
+    /// tell the difference and neither should the caller.
+    ///
+    /// <paramref name="maxUses"/> defaults to a single use: inviting one person shouldn't hand out a key
+    /// that admits a crowd, and the caller has to say so explicitly to widen it. The expiry and the use
+    /// count reset too — a new code is a new credential, not the old one with a new spelling.</summary>
+    public async Task<Household> GenerateInviteCodeAsync(
+        string householdId, int? maxUses = 1, CancellationToken ct = default)
     {
         var household = await db.Households.SingleAsync(h => h.Id == householdId, ct);
-        await ResetInviteAsync(household, maxUses, ct);
-        await db.SaveChangesAsync(ct);
-        logger.LogInformation(
-            "Household {HouseholdId} regenerated its invite code (max uses: {MaxUses}).",
-            householdId, maxUses?.ToString() ?? "unlimited");
-        return household;
-    }
-
-    private async Task ResetInviteAsync(Household household, int? maxUses, CancellationToken ct)
-    {
         household.InviteCode = await UnusedInviteCodeAsync(ct);
         household.InviteUseCount = 0;
         household.InviteMaxUses = maxUses;
@@ -116,6 +129,31 @@ public sealed class HouseholdService(
         household.InviteExpiresAt = options.Value.InviteCodeLifetimeDays is { } days
             ? DateTimeOffset.Now.AddDays(days)
             : null;
+        await db.SaveChangesAsync(ct);
+        logger.LogInformation(
+            "Household {HouseholdId} generated an invite code (max uses: {MaxUses}).",
+            householdId, maxUses?.ToString() ?? "unlimited");
+        return household;
+    }
+
+    /// <summary>Revokes the household's invite code, returning it to having none. The one-click answer to
+    /// "I pasted that in the wrong window" — previously the only way to kill a code was to mint a
+    /// replacement, which left a live credential lying around as the price of revoking one.
+    ///
+    /// Clears the limits alongside the code: they describe the code, and keeping a spent use count next to
+    /// no code at all would be state that answers a question nobody can ask. Removes nobody who already
+    /// joined — that's <see cref="RemoveMemberAsync"/>. Idempotent.</summary>
+    public async Task ClearInviteCodeAsync(string householdId, CancellationToken ct = default)
+    {
+        var household = await db.Households.SingleAsync(h => h.Id == householdId, ct);
+        if (household.InviteCode is null) return;
+
+        household.InviteCode = null;
+        household.InviteUseCount = 0;
+        household.InviteMaxUses = null;
+        household.InviteExpiresAt = null;
+        await db.SaveChangesAsync(ct);
+        logger.LogInformation("Household {HouseholdId} cleared its invite code.", householdId);
     }
 
     public async Task RenameAsync(string householdId, string name, CancellationToken ct = default)

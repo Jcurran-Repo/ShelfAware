@@ -37,8 +37,9 @@
     {
         <p class="muted">
             Everyone in your household shares this pantry — products, receipts, recipes, and these settings.
-            To bring someone in, give them the <strong>invite code</strong>; they enter it when creating
-            their account.
+            To bring someone in, generate an <strong>invite code</strong> and give it to them; they enter it
+            when creating their account. There's no code until you make one, and it goes away once it's been
+            used — so there's never a spare key lying around.
         </p>
 
         <label class="field"><span>Household name</span></label>
@@ -50,13 +51,28 @@
         </div>
 
         <label class="field"><span>Invite code</span></label>
-        <div class="review-actions invite-row">
-            <code class="invite-code">@(InviteUsable ? household.InviteCode : "—")</code>
-            <button @onclick="CopyInvite" disabled="@(!InviteUsable)">Copy</button>
-            <button class="secondary" @onclick="RegenerateInvite" disabled="@regenerating">
-                @(regenerating ? "Regenerating…" : "Regenerate")
-            </button>
-        </div>
+        @if (household.InviteCode is null)
+        {
+            <div class="review-actions invite-row">
+                <code class="invite-code">—</code>
+                <button @onclick="GenerateInvite" disabled="@inviteBusy">
+                    @(inviteBusy ? "Generating…" : "Generate invite code")
+                </button>
+            </div>
+            <p class="muted small">No invite code — nobody can join this household until you generate one.</p>
+        }
+        else
+        {
+            <div class="review-actions invite-row">
+                <code class="invite-code">@household.InviteCode</code>
+                <button @onclick="CopyInvite" disabled="@(!InviteUsable)">Copy</button>
+                <button class="secondary" @onclick="GenerateInvite" disabled="@inviteBusy">
+                    @(inviteBusy ? "Working…" : "Replace")
+                </button>
+                <button class="secondary" @onclick="ClearInvite" disabled="@inviteBusy">Clear code</button>
+            </div>
+            <p class="@(InviteUsable ? "muted small" : "error small")">@InviteStatus</p>
+        }
         <label class="field">
             <input type="checkbox" @bind="inviteSingleUse" />
             <span>Single use — the next code works for one person only</span>
@@ -65,10 +81,9 @@
         {
             <p class="chat-reply" role="status">@inviteNote</p>
         }
-        <p class="@(InviteUsable ? "muted small" : "error small")">@InviteStatus</p>
         <p class="muted small">
-            Regenerating invalidates the old code — anyone you already gave it to needs the new one. It
-            doesn't remove anyone who already joined; use Remove for that.
+            Replacing or clearing invalidates the old code — anyone you already gave it to needs the new one.
+            Neither removes anyone who already joined; use Remove for that.
         </p>
 
         <h3>Members</h3>
@@ -488,8 +503,10 @@
     private string? currentUserId;
     private string householdName = "";
     private bool renaming;
-    private bool regenerating;
-    private bool inviteSingleUse;
+    private bool inviteBusy;
+    /// <summary>Checked by default: a code that admits one person is the one you almost always want, and
+    /// the wider option should be the one you reach for deliberately.</summary>
+    private bool inviteSingleUse = true;
     private string? inviteNote;
     private string? memberNote;
     private string? memberError;
@@ -505,8 +522,10 @@
     {
         get
         {
-            if (household is null) return "";
-            if (!InviteUsable) return "This code can't be used any more — regenerate it to invite someone.";
+            if (household?.InviteCode is null) return "";
+            // Reachable only by expiry now — spending the last use retires the code itself, so a used-up
+            // code isn't a code any more and the panel shows the no-code branch instead.
+            if (!InviteUsable) return "This code can't be used any more — replace it to invite someone.";
 
             // Each clause carries its own verb so any combination reads as a sentence.
             var parts = new List<string>();
@@ -1004,31 +1023,58 @@
 
     private async Task CopyInvite()
     {
-        if (household is null) return;
+        if (household?.InviteCode is null) return;
         await JS.InvokeVoidAsync("navigator.clipboard.writeText", household.InviteCode);
         inviteNote = "Invite code copied to the clipboard.";
     }
 
-    private async Task RegenerateInvite()
+    private async Task GenerateInvite()
     {
-        if (household is null || regenerating) return;
-        regenerating = true;
+        if (household is null || inviteBusy) return;
+        var replacing = household.InviteCode is not null;
+        inviteBusy = true;
         try
         {
-            // Re-read rather than patching the code onto the local copy: regenerating resets the expiry
-            // and the use count too, and the panel reports all three.
-            household = await Households.RegenerateInviteCodeAsync(household.Id, inviteSingleUse ? 1 : null);
-            inviteNote = "New invite code generated — the old one no longer works.";
+            // Re-read rather than patching the code onto the local copy: generating sets the expiry and
+            // resets the use count too, and the panel reports all three.
+            household = await Households.GenerateInviteCodeAsync(household.Id, inviteSingleUse ? 1 : null);
+            inviteNote = replacing
+                ? "New invite code generated — the old one no longer works."
+                : "Invite code generated — it works until it's used, or you clear it.";
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Regenerating the invite code failed.");
-            inviteNote = "Couldn't regenerate just now — please try again.";
+            Logger.LogError(ex, "Generating an invite code failed.");
+            inviteNote = "Couldn't generate a code just now — please try again.";
         }
         finally
         {
-            regenerating = false;
+            inviteBusy = false;
+        }
+    }
+
+    private async Task ClearInvite()
+    {
+        if (household?.InviteCode is null || inviteBusy) return;
+        inviteBusy = true;
+        try
+        {
+            await Households.ClearInviteCodeAsync(household.Id);
+            // The service tracked entity IS this instance, so it already reflects the clear — but say so
+            // explicitly rather than leaning on that: the panel's whole job is to show what's really there.
+            household = await Households.GetAsync(household.Id);
+            inviteNote = "Invite code cleared — nobody can join until you generate a new one.";
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Clearing the invite code failed.");
+            inviteNote = "Couldn't clear the code just now — please try again.";
+        }
+        finally
+        {
+            inviteBusy = false;
         }
     }
 

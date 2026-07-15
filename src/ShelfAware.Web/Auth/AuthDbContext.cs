@@ -16,6 +16,10 @@ public class AuthDbContext(DbContextOptions<AuthDbContext> options) : IdentityDb
     {
         base.OnModelCreating(modelBuilder);
 
+        // Unique, and deliberately NOT filtered: SQLite treats NULLs as distinct in a unique index, so
+        // every code-less household coexists here while two households could never share a live code.
+        // That property is the whole reason Household.InviteCode is null rather than "" — don't "tidy"
+        // the column back to non-nullable.
         modelBuilder.Entity<Household>().HasIndex(h => h.InviteCode).IsUnique();
         modelBuilder.Entity<AppUser>().HasIndex(u => u.HouseholdId);
 

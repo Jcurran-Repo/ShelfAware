@@ -7,10 +7,17 @@ public class Household
     public string Id { get; set; } = Guid.NewGuid().ToString("n");
     public string Name { get; set; } = "";
 
-    /// <summary>Uppercase share code another person enters at registration to join this household.
-    /// Possession of the code IS the authorization to join, so it's generated from a CSPRNG and
-    /// can be regenerated at any time to cut off further joins.</summary>
-    public string InviteCode { get; set; } = "";
+    /// <summary>Uppercase share code another person enters at registration to join this household, or
+    /// null when there is no code — which is the default and the resting state.
+    ///
+    /// A code is a bearer credential for an entire pantry, so it's a deliberate, transient act rather than
+    /// a standing fixture: a household is created without one, one is minted only when a member asks for
+    /// it, and it disappears again the moment its last use is redeemed or a member clears it. Possession
+    /// of the code IS the authorization to join, so it's generated from a CSPRNG.
+    ///
+    /// NULL, not "": the unique index on this column admits any number of NULLs but only a single "", so
+    /// a second code-less household would collide with the first the moment it was saved.</summary>
+    public string? InviteCode { get; set; }
 
     /// <summary>When the code stops working, or null for never.
     ///

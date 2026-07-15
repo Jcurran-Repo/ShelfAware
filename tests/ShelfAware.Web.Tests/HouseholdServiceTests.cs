@@ -81,6 +81,19 @@ public class HouseholdServiceTests : IDisposable
 
     // ---- Create / join ----
 
+    /// <summary>A household plus a live code — the shape most of these tests want, and deliberately NOT
+    /// what creating one gives you any more.</summary>
+    private async Task<(Household Household, string Code)> HouseholdWithCodeAsync(
+        HouseholdService? service = null, int? maxUses = null, string ownerEmail = "a@example.com")
+    {
+        service ??= _service;
+        var owner = NewUser(ownerEmail);
+        _context.Users.Add(owner);
+        var household = await service.CreateForAsync("Home", owner);
+        await service.GenerateInviteCodeAsync(household.Id, maxUses);
+        return (household, household.InviteCode!);
+    }
+
     [Fact]
     public async Task Create_assigns_the_user_and_persists_the_household()
     {
@@ -91,7 +104,6 @@ public class HouseholdServiceTests : IDisposable
 
         Assert.Equal("The Currans", household.Name);
         Assert.Equal(household.Id, user.HouseholdId);
-        Assert.Equal(HouseholdService.InviteCodeLength, household.InviteCode.Length);
 
         await using var fresh = _db.CreateDbContext();
         var saved = fresh.Households.Single();
@@ -100,15 +112,47 @@ public class HouseholdServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task A_new_household_has_no_invite_code()
+    {
+        // The header act of the redesign: creation used to mint a permanent code nobody had asked for.
+        var user = NewUser("a@example.com");
+        _context.Users.Add(user);
+
+        var household = await _service.CreateForAsync("Home", user);
+
+        Assert.Null(household.InviteCode);
+        Assert.False(household.InviteIsUsable(DateTimeOffset.Now));
+
+        await using var fresh = _db.CreateDbContext();
+        Assert.Null(fresh.Households.Single().InviteCode);
+    }
+
+    [Fact]
+    public async Task Two_code_less_households_can_coexist()
+    {
+        // Why InviteCode is null and not "": the unique index counts NULLs as distinct but would let only
+        // ONE household hold "". Without this, the second household created on a deployment would fail to
+        // save — which is exactly the bug the sentinel would have shipped.
+        var first = NewUser("a@example.com");
+        var second = NewUser("b@example.com");
+        _context.Users.AddRange(first, second);
+
+        await _service.CreateForAsync("Home", first);
+        await _service.CreateForAsync("Elsewhere", second);
+
+        await using var fresh = _db.CreateDbContext();
+        Assert.Equal(2, fresh.Households.Count());
+        Assert.All(fresh.Households.ToList(), h => Assert.Null(h.InviteCode));
+    }
+
+    [Fact]
     public async Task Join_matches_the_code_case_insensitively_and_trims()
     {
-        var owner = NewUser("a@example.com");
-        _context.Users.Add(owner);
-        var household = await _service.CreateForAsync("Home", owner);
+        var (household, code) = await HouseholdWithCodeAsync();
 
         var joiner = NewUser("b@example.com");
         _context.Users.Add(joiner);
-        var joined = await _service.JoinAsync($"  {household.InviteCode.ToLowerInvariant()}  ", joiner);
+        var joined = await _service.JoinAsync($"  {code.ToLowerInvariant()}  ", joiner);
 
         Assert.NotNull(joined);
         Assert.Equal(household.Id, joiner.HouseholdId);
@@ -127,18 +171,29 @@ public class HouseholdServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Regenerate_invalidates_the_old_code_and_honors_the_new_one()
+    public async Task Generating_again_invalidates_the_old_code_and_honors_the_new_one()
     {
-        var owner = NewUser("a@example.com");
-        _context.Users.Add(owner);
-        var household = await _service.CreateForAsync("Home", owner);
-        var oldCode = household.InviteCode;
+        var (household, oldCode) = await HouseholdWithCodeAsync();
 
-        var newCode = (await _service.RegenerateInviteCodeAsync(household.Id)).InviteCode;
+        var newCode = (await _service.GenerateInviteCodeAsync(household.Id)).InviteCode;
 
         Assert.NotEqual(oldCode, newCode);
         Assert.Null(await _service.FindByInviteCodeAsync(oldCode));
-        Assert.NotNull(await _service.FindByInviteCodeAsync(newCode));
+        Assert.NotNull(await _service.FindByInviteCodeAsync(newCode!));
+    }
+
+    [Fact]
+    public async Task Generating_defaults_to_a_single_use()
+    {
+        // Inviting one person shouldn't hand out a key that admits a crowd — widening it is the deliberate
+        // act, not narrowing it.
+        var owner = NewUser("a@example.com");
+        _context.Users.Add(owner);
+        var household = await _service.CreateForAsync("Home", owner);
+
+        var generated = await _service.GenerateInviteCodeAsync(household.Id);
+
+        Assert.Equal(1, generated.InviteMaxUses);
     }
 
     [Fact]
@@ -150,7 +205,8 @@ public class HouseholdServiceTests : IDisposable
         _context.Users.AddRange(a, b, stranger);
 
         var household = await _service.CreateForAsync("Home", a);
-        await _service.JoinAsync(household.InviteCode, b);
+        await _service.GenerateInviteCodeAsync(household.Id);
+        await _service.JoinAsync(household.InviteCode!, b);
         var other = await _service.CreateForAsync("Elsewhere", stranger);
 
         var members = await _service.GetMembersAsync(household.Id);
@@ -165,10 +221,7 @@ public class HouseholdServiceTests : IDisposable
     public async Task Without_a_configured_lifetime_a_code_never_expires()
     {
         // The self-host default, and what every code minted before expiry existed already is.
-        var owner = NewUser("a@example.com");
-        _context.Users.Add(owner);
-
-        var household = await _service.CreateForAsync("Home", owner);
+        var (household, _) = await HouseholdWithCodeAsync();
 
         Assert.Null(household.InviteExpiresAt);
         Assert.True(household.InviteIsUsable(DateTimeOffset.Now.AddYears(5)));
@@ -178,10 +231,7 @@ public class HouseholdServiceTests : IDisposable
     public async Task A_configured_lifetime_dates_the_code()
     {
         var service = NewService(new AuthOptions { InviteCodeLifetimeDays = 7 });
-        var owner = NewUser("a@example.com");
-        _context.Users.Add(owner);
-
-        var household = await service.CreateForAsync("Home", owner);
+        var (household, _) = await HouseholdWithCodeAsync(service);
 
         Assert.NotNull(household.InviteExpiresAt);
         Assert.True(household.InviteIsUsable(DateTimeOffset.Now.AddDays(6)));
@@ -191,33 +241,29 @@ public class HouseholdServiceTests : IDisposable
     [Fact]
     public async Task An_expired_code_admits_nobody()
     {
-        var owner = NewUser("a@example.com");
-        _context.Users.Add(owner);
-        var household = await _service.CreateForAsync("Home", owner);
+        var (household, code) = await HouseholdWithCodeAsync();
         household.InviteExpiresAt = DateTimeOffset.Now.AddDays(-1);
         await _context.SaveChangesAsync();
 
         var joiner = NewUser("b@example.com");
         _context.Users.Add(joiner);
 
-        Assert.Null(await _service.FindByInviteCodeAsync(household.InviteCode));
-        Assert.Null(await _service.JoinAsync(household.InviteCode, joiner));
+        Assert.Null(await _service.FindByInviteCodeAsync(code));
+        Assert.Null(await _service.JoinAsync(code, joiner));
         Assert.Null(joiner.HouseholdId);
     }
 
     [Fact]
-    public async Task Regenerating_restarts_the_clock_and_the_use_count()
+    public async Task Generating_again_restarts_the_clock_and_the_use_count()
     {
-        // A regenerated code is a new credential, not the old one respelled.
+        // A new code is a new credential, not the old one respelled.
         var service = NewService(new AuthOptions { InviteCodeLifetimeDays = 7 });
-        var owner = NewUser("a@example.com");
-        _context.Users.Add(owner);
-        var household = await service.CreateForAsync("Home", owner);
+        var (household, _) = await HouseholdWithCodeAsync(service);
         household.InviteExpiresAt = DateTimeOffset.Now.AddDays(-1);
         household.InviteUseCount = 5;
         await _context.SaveChangesAsync();
 
-        var regenerated = await service.RegenerateInviteCodeAsync(household.Id, maxUses: 1);
+        var regenerated = await service.GenerateInviteCodeAsync(household.Id, maxUses: 1);
 
         Assert.Equal(0, regenerated.InviteUseCount);
         Assert.True(regenerated.InviteExpiresAt > DateTimeOffset.Now);
@@ -229,11 +275,7 @@ public class HouseholdServiceTests : IDisposable
     [Fact]
     public async Task A_single_use_code_admits_one_person_and_then_stops()
     {
-        var owner = NewUser("a@example.com");
-        _context.Users.Add(owner);
-        var household = await _service.CreateForAsync("Home", owner);
-        await _service.RegenerateInviteCodeAsync(household.Id, maxUses: 1);
-        var code = (await _service.GetAsync(household.Id))!.InviteCode;
+        var (household, code) = await HouseholdWithCodeAsync(maxUses: 1);
 
         var first = NewUser("b@example.com");
         _context.Users.Add(first);
@@ -247,20 +289,60 @@ public class HouseholdServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task An_unlimited_code_keeps_admitting_people()
+    public async Task Spending_the_last_use_retires_the_code()
     {
-        var owner = NewUser("a@example.com");
-        _context.Users.Add(owner);
-        var household = await _service.CreateForAsync("Home", owner);
+        // The rule that makes a code transient rather than a fixture: once it's been used up it stops
+        // existing, so the Settings page can't show a dead code that looks live, and "nobody has been
+        // invited" and "somebody already came" are the same visible state — because they're the same state.
+        var (household, code) = await HouseholdWithCodeAsync(maxUses: 1);
+
+        var joiner = NewUser("b@example.com");
+        _context.Users.Add(joiner);
+        var joined = await _service.JoinAsync(code, joiner);
+
+        Assert.NotNull(joined);
+        Assert.Null(joined.InviteCode);
+
+        // Not just on the returned entity — in the database.
+        await using var fresh = _db.CreateDbContext();
+        Assert.Null(fresh.Households.Single(h => h.Id == household.Id).InviteCode);
+    }
+
+    [Fact]
+    public async Task A_multi_use_code_survives_until_its_last_use()
+    {
+        var (household, code) = await HouseholdWithCodeAsync(maxUses: 2);
+
+        var first = NewUser("b@example.com");
+        _context.Users.Add(first);
+        var afterFirst = await _service.JoinAsync(code, first);
+        Assert.NotNull(afterFirst?.InviteCode); // still live: one use left
+
+        var second = NewUser("c@example.com");
+        _context.Users.Add(second);
+        var afterSecond = await _service.JoinAsync(code, second);
+        Assert.NotNull(afterSecond);
+        Assert.Null(afterSecond.InviteCode); // spent
+
+        Assert.Equal(3, (await _service.GetMembersAsync(household.Id)).Count);
+    }
+
+    [Fact]
+    public async Task An_unlimited_code_keeps_admitting_people_and_is_never_retired()
+    {
+        // maxUses null has no "last use" to spend, so the retire rule must not fire — the CASE in the
+        // claim statement is guarded on InviteMaxUses being set, and a null there must mean forever.
+        var (household, code) = await HouseholdWithCodeAsync(maxUses: null);
 
         foreach (var email in new[] { "b@example.com", "c@example.com", "d@example.com" })
         {
             var joiner = NewUser(email);
             _context.Users.Add(joiner);
-            Assert.NotNull(await _service.JoinAsync(household.InviteCode, joiner));
+            Assert.NotNull(await _service.JoinAsync(code, joiner));
         }
 
         Assert.Equal(4, (await _service.GetMembersAsync(household.Id)).Count);
+        Assert.Equal(code, (await _service.GetAsync(household.Id))!.InviteCode);
     }
 
     [Fact]
@@ -268,11 +350,7 @@ public class HouseholdServiceTests : IDisposable
     {
         // The claim is an ExecuteUpdate, which writes past the change tracker — so the entity handed back
         // reported the count from before the join until it was reloaded.
-        var owner = NewUser("a@example.com");
-        _context.Users.Add(owner);
-        var household = await _service.CreateForAsync("Home", owner);
-        await _service.RegenerateInviteCodeAsync(household.Id, maxUses: 3);
-        var code = (await _service.GetAsync(household.Id))!.InviteCode;
+        var (_, code) = await HouseholdWithCodeAsync(maxUses: 3);
 
         var joiner = NewUser("b@example.com");
         _context.Users.Add(joiner);
@@ -289,10 +367,7 @@ public class HouseholdServiceTests : IDisposable
         // Startup validation refuses 0 outright (Program.cs), so this can't be configured — but if one
         // ever slipped through, it must fail CLOSED. It used to be read as "never expires".
         var service = NewService(new AuthOptions { InviteCodeLifetimeDays = 0 });
-        var owner = NewUser("a@example.com");
-        _context.Users.Add(owner);
-
-        var household = await service.CreateForAsync("Home", owner);
+        var (household, _) = await HouseholdWithCodeAsync(service);
 
         Assert.NotNull(household.InviteExpiresAt);
         Assert.False(household.InviteIsUsable(DateTimeOffset.Now.AddSeconds(1)));
@@ -301,9 +376,87 @@ public class HouseholdServiceTests : IDisposable
     [Fact]
     public async Task An_empty_code_never_matches()
     {
-        // Guards the degenerate case where a household somehow has no code: "" must not be a skeleton key.
+        // "" must not be a skeleton key into the code-less households that are now the norm.
+        var user = NewUser("a@example.com");
+        _context.Users.Add(user);
+        await _service.CreateForAsync("Home", user);
+
         Assert.Null(await _service.FindByInviteCodeAsync(""));
         Assert.Null(await _service.FindByInviteCodeAsync("   "));
+    }
+
+    // ---- Clearing a code ----
+
+    [Fact]
+    public async Task Clearing_removes_the_code_and_its_limits()
+    {
+        var service = NewService(new AuthOptions { InviteCodeLifetimeDays = 7 });
+        var (household, code) = await HouseholdWithCodeAsync(service, maxUses: 3);
+
+        await service.ClearInviteCodeAsync(household.Id);
+
+        await using var fresh = _db.CreateDbContext();
+        var saved = fresh.Households.Single(h => h.Id == household.Id);
+        Assert.Null(saved.InviteCode);
+        Assert.Null(saved.InviteMaxUses);
+        Assert.Null(saved.InviteExpiresAt);
+        Assert.Equal(0, saved.InviteUseCount);
+        Assert.Null(await service.FindByInviteCodeAsync(code));
+    }
+
+    [Fact]
+    public async Task A_cleared_code_admits_nobody()
+    {
+        var (household, code) = await HouseholdWithCodeAsync();
+        await _service.ClearInviteCodeAsync(household.Id);
+
+        var joiner = NewUser("b@example.com");
+        _context.Users.Add(joiner);
+
+        Assert.Null(await _service.JoinAsync(code, joiner));
+        Assert.Null(joiner.HouseholdId);
+    }
+
+    [Fact]
+    public async Task Clearing_leaves_the_members_alone()
+    {
+        // Revoking the key is not evicting the people who already used it — that's RemoveMemberAsync.
+        var (household, code) = await HouseholdWithCodeAsync(maxUses: null);
+        var joiner = NewUser("b@example.com");
+        _context.Users.Add(joiner);
+        await _service.JoinAsync(code, joiner);
+
+        await _service.ClearInviteCodeAsync(household.Id);
+
+        Assert.Equal(2, (await _service.GetMembersAsync(household.Id)).Count);
+        Assert.Equal(household.Id, joiner.HouseholdId);
+    }
+
+    [Fact]
+    public async Task Clearing_a_household_with_no_code_is_a_no_op()
+    {
+        var user = NewUser("a@example.com");
+        _context.Users.Add(user);
+        var household = await _service.CreateForAsync("Home", user);
+
+        await _service.ClearInviteCodeAsync(household.Id);
+        await _service.ClearInviteCodeAsync(household.Id);
+
+        Assert.Null(household.InviteCode);
+    }
+
+    [Fact]
+    public async Task A_cleared_code_can_be_replaced_by_a_new_one()
+    {
+        var (household, oldCode) = await HouseholdWithCodeAsync();
+        await _service.ClearInviteCodeAsync(household.Id);
+
+        var regenerated = await _service.GenerateInviteCodeAsync(household.Id);
+
+        Assert.NotNull(regenerated.InviteCode);
+        Assert.NotEqual(oldCode, regenerated.InviteCode);
+        Assert.Null(await _service.FindByInviteCodeAsync(oldCode));
+        Assert.NotNull(await _service.FindByInviteCodeAsync(regenerated.InviteCode!));
     }
 
     // ---- Member removal ----
@@ -314,7 +467,10 @@ public class HouseholdServiceTests : IDisposable
         var other = NewUser("b@example.com");
         _context.Users.AddRange(owner, other);
         var household = await _service.CreateForAsync("Home", owner);
-        await _service.JoinAsync(household.InviteCode, other);
+        // A code has to be asked for now, and this one is spent by the join below — so anything that wants
+        // to invite again has to generate a fresh one, exactly as a person would.
+        await _service.GenerateInviteCodeAsync(household.Id);
+        await _service.JoinAsync(household.InviteCode!, other);
         await _context.SaveChangesAsync();
         return (household, owner, other);
     }
@@ -404,7 +560,10 @@ public class HouseholdServiceTests : IDisposable
         var (household, owner, other) = await TwoMemberHouseholdAsync();
         await _service.RemoveMemberAsync(household.Id, other.Id, actingUserId: owner.Id);
 
-        var rejoined = await _service.JoinAsync(household.InviteCode, other);
+        // Their original code was spent letting them in the first time, so inviting them back is a fresh
+        // deliberate act rather than the standing code still sitting there — which is the point.
+        await _service.GenerateInviteCodeAsync(household.Id);
+        var rejoined = await _service.JoinAsync(household.InviteCode!, other);
 
         Assert.NotNull(rejoined);
         Assert.Equal(household.Id, other.HouseholdId);
