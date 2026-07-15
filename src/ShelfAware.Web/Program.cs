@@ -150,6 +150,16 @@ builder.Services.AddIdentityCore<AppUser>(options =>
     .AddDefaultTokenProviders()
     .AddClaimsPrincipalFactory<HouseholdClaimsPrincipalFactory>();
 
+// How fast a security-stamp change bites on plain HTTP requests. Identity's default is 30 MINUTES,
+// which was survivable when the stamp only changed on logout, but not now that removing a member relies
+// on it: the household id rides in the cookie, so a removed member's requests would keep working — and
+// keep reading the pantry — for half an hour after they were removed. Five minutes matches
+// IdentityRevalidatingAuthenticationStateProvider's circuit interval, so "within a few minutes" is one
+// promise rather than two different ones depending on whether you're on a page or hitting an endpoint.
+// Cost is a user lookup per user per 5 minutes, which at household scale is nothing.
+builder.Services.Configure<SecurityStampValidatorOptions>(options =>
+    options.ValidationInterval = TimeSpan.FromMinutes(5));
+
 builder.Services.AddAuthorization();
 builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection(AuthOptions.SectionName));
 builder.Services.AddScoped<HouseholdService>();
@@ -418,21 +428,36 @@ app.UseRateLimiter();
 app.Use(async (context, next) =>
 {
     var path = context.Request.Path;
-    var isAppPage =
-        !path.StartsWithSegments("/Account")     // the chooser itself, and sign-in/out
-        && !path.StartsWithSegments("/api")      // API callers get a status code, not a redirect
-        && !path.StartsWithSegments("/_blazor")  // never redirect the circuit's own transport
-        && !path.StartsWithSegments("/_framework")
-        && !path.StartsWithSegments("/_content")
-        && !path.StartsWithSegments("/demo")     // public, anonymous
-        && !Path.HasExtension(path.Value);       // static assets
+    var householdless =
+        context.User.Identity?.IsAuthenticated == true
+        && context.User.FindFirst(HouseholdClaimsPrincipalFactory.HouseholdClaim) is null;
 
-    if (isAppPage
-        && context.User.Identity?.IsAuthenticated == true
-        && context.User.FindFirst(HouseholdClaimsPrincipalFactory.HouseholdClaim) is null)
+    if (householdless)
     {
-        context.Response.Redirect("/Account/Household");
-        return;
+        // An API caller can't act on a redirect to an HTML chooser, and the endpoints below would
+        // otherwise throw their way to a 500. 403 is the honest answer: authenticated, but nothing here
+        // belongs to you.
+        if (path.StartsWithSegments("/api"))
+        {
+            await Results.Problem(
+                "Your account isn't in a household, so there's no pantry to act on. Join one at /Account/Household.",
+                statusCode: StatusCodes.Status403Forbidden).ExecuteAsync(context);
+            return;
+        }
+
+        var isAppPage =
+            !path.StartsWithSegments("/Account")     // the chooser itself, and sign-in/out
+            && !path.StartsWithSegments("/_blazor")  // never redirect the circuit's own transport
+            && !path.StartsWithSegments("/_framework")
+            && !path.StartsWithSegments("/_content")
+            && !path.StartsWithSegments("/demo")     // public, anonymous
+            && !Path.HasExtension(path.Value);       // static assets
+
+        if (isAppPage)
+        {
+            context.Response.Redirect("/Account/Household");
+            return;
+        }
     }
 
     await next();

@@ -187,4 +187,50 @@ public class UserDataServiceTests : IDisposable
         Assert.Single(export.Receipts);
         Assert.Single(export.GroceryExtras);
     }
+
+    [Fact]
+    public async Task ExportAsync_includes_settings_and_usage_not_just_pantry_rows()
+    {
+        // "What do you have on me" has one defensible answer, and it isn't "most of it". Note these two
+        // are treated differently by DELETE (config survives; usage survives so a wipe isn't a quota
+        // reset) — which is the reason they have to be readable here.
+        await using (var db = _db.CreateDbContext())
+        {
+            db.AppSettings.Add(new AppSetting { Key = SettingKeys.ReceiptFolder, Value = @"C:\receipts" });
+            db.AppSettings.Add(new AppSetting { Key = SettingKeys.LastRecipeSuggestions, Value = "[{\"name\":\"Chicken\"}]" });
+            db.AiUsages.Add(new AiUsage { Day = new DateOnly(2026, 7, 15), Calls = 3, InputTokens = 100, OutputTokens = 20 });
+            await db.SaveChangesAsync();
+        }
+
+        var export = await Service().ExportAsync();
+
+        Assert.Equal(2, export.Settings.Count);
+        Assert.Contains(export.Settings, s => s.Key == SettingKeys.LastRecipeSuggestions);
+        Assert.Contains(export.Settings, s => s.Key == SettingKeys.ReceiptFolder);
+        Assert.Equal(3, Assert.Single(export.AiUsage).Calls);
+    }
+
+    [Fact]
+    public void Every_table_in_the_household_database_is_in_the_export()
+    {
+        // The export promises "everything", and a promise nothing checks is a comment. Adding a DbSet
+        // without a matching export list fails here rather than quietly shipping a partial download.
+        var tables = typeof(ShelfAwareDbContext).GetProperties()
+            .Where(p => p.PropertyType.IsGenericType
+                        && p.PropertyType.GetGenericTypeDefinition() == typeof(DbSet<>))
+            .Select(p => p.PropertyType.GetGenericArguments()[0])
+            .ToList();
+
+        var exported = typeof(DataExport).GetProperties()
+            .Where(p => p.PropertyType.IsGenericType
+                        && p.PropertyType.GetGenericTypeDefinition() == typeof(IReadOnlyList<>))
+            .Select(p => p.PropertyType.GetGenericArguments()[0])
+            .ToHashSet();
+
+        Assert.NotEmpty(tables); // guards against the reflection silently matching nothing
+        var missing = tables.Where(t => !exported.Contains(t)).Select(t => t.Name).ToList();
+        Assert.True(missing.Count == 0,
+            $"Not exported: {string.Join(", ", missing)}. Every table in a household's database belongs in " +
+            "the download — add an IReadOnlyList<T> to DataExport and populate it in ExportAsync.");
+    }
 }

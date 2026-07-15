@@ -14,6 +14,13 @@ namespace ShelfAware.Web.Data;
 /// two things DERIVED from that content and stored outside the rows, which are therefore just as much
 /// theirs: the saved images of their receipts, and the synthesized audio of their recipe steps. It does
 /// NOT touch the visitor's BYOK keys — those are held in the browser and cleared by "Forget my key".
+///
+/// **The export is everything in the household's database, deliberately** — including its settings and
+/// its AI usage history, which the delete treats differently (settings split into config-that-stays and
+/// content-that-goes; usage stays). Export and delete answer different questions. Delete asks "what is
+/// yours to remove", and the answers are allowed to differ: config surviving a wipe is a kindness, and
+/// usage surviving is what stops a delete doubling as a quota reset. Export asks "what do you have on
+/// me", and the only defensible answer to that is all of it.
 /// </summary>
 /// <param name="speechCacheRoot">Root of the TTS cache, or null when caching is off. Deleting a household's
 /// rows while leaving a recording of its recipes on disk would make "delete my data" a false statement.</param>
@@ -25,13 +32,16 @@ public sealed class UserDataService(
     ILogger<UserDataService> logger)
 {
     /// <summary>Everything, flattened (loaded without navigations so there are no serialization cycles) —
-    /// a portable JSON snapshot the user can keep before deleting, or just as a backup.</summary>
+    /// a portable JSON snapshot the user can keep before deleting, or just as a backup. Every table in the
+    /// household's database is here; if a new one is added, it belongs here too.</summary>
     public async Task<DataExport> ExportAsync(CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         return new DataExport
         {
             ExportedAt = DateTimeOffset.Now,
+            Settings = await db.AppSettings.AsNoTracking().ToListAsync(ct),
+            AiUsage = await db.AiUsages.AsNoTracking().ToListAsync(ct),
             Products = await db.Products.AsNoTracking().ToListAsync(ct),
             Purchases = await db.PurchaseEvents.AsNoTracking().ToListAsync(ct),
             Signals = await db.InventorySignals.AsNoTracking().ToListAsync(ct),
@@ -147,10 +157,20 @@ public sealed class UserDataService(
     }
 }
 
-/// <summary>A flat snapshot of all user content, for the JSON export/backup.</summary>
+/// <summary>A flat snapshot of everything in a household's database, for the JSON export/backup.</summary>
 public sealed class DataExport
 {
     public DateTimeOffset ExportedAt { get; init; }
+
+    /// <summary>How the household set the app up, AND the pantry-derived things filed here (their last
+    /// recipe ideas, their receipts' self-eval scores). Both are theirs; the export doesn't editorialise
+    /// about which. Contains no keys — BYOK credentials live in the browser and never reach this table.</summary>
+    public IReadOnlyList<AppSetting> Settings { get; init; } = [];
+
+    /// <summary>What their AI features have spent, per day. Not removed by "delete my data" (that would
+    /// make the button a quota reset), which is exactly why it has to be readable here.</summary>
+    public IReadOnlyList<AiUsage> AiUsage { get; init; } = [];
+
     public IReadOnlyList<Product> Products { get; init; } = [];
     public IReadOnlyList<PurchaseEvent> Purchases { get; init; } = [];
     public IReadOnlyList<InventorySignal> Signals { get; init; } = [];
