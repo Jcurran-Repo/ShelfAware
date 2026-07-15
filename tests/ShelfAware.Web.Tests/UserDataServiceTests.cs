@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using ShelfAware.Core.Domain;
+using ShelfAware.Core.Settings;
 using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.Tests;
@@ -145,6 +146,31 @@ public class UserDataServiceTests : IDisposable
         await Service().DeleteAllAsync();
 
         Assert.True(File.Exists(Path.Combine(outside, "no-image")));
+    }
+
+    [Fact]
+    public async Task DeleteAllAsync_removes_pantry_derived_settings_but_keeps_configuration()
+    {
+        await using (var db = _db.CreateDbContext())
+        {
+            db.AppSettings.Add(new AppSetting { Key = SettingKeys.ReceiptFolder, Value = @"C:\receipts" });
+            db.AppSettings.Add(new AppSetting { Key = SettingKeys.ImportMode, Value = "Smart" });
+            db.AppSettings.Add(new AppSetting { Key = SettingKeys.LastRecipeSuggestions, Value = "[{\"name\":\"Chicken\"}]" });
+            db.AppSettings.Add(new AppSetting { Key = SettingKeys.SelfEvalResults, Value = "{\"Fixtures\":[{\"Name\":\"Walmart 2026-07-04\"}]}" });
+            await db.SaveChangesAsync();
+        }
+
+        await Service().DeleteAllAsync();
+
+        await using var check = _db.CreateDbContext();
+        var left = await check.AppSettings.Select(s => s.Key).ToListAsync();
+
+        // Their recipe ideas and their receipts' merchant names are content, and content goes...
+        Assert.DoesNotContain(SettingKeys.LastRecipeSuggestions, left);
+        Assert.DoesNotContain(SettingKeys.SelfEvalResults, left);
+        // ...but wiping the pantry shouldn't forget which folder the receipts arrive in.
+        Assert.Contains(SettingKeys.ReceiptFolder, left);
+        Assert.Contains(SettingKeys.ImportMode, left);
     }
 
     [Fact]

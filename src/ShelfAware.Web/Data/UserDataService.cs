@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Domain;
+using ShelfAware.Core.Settings;
 using ShelfAware.Web.Services;
 
 namespace ShelfAware.Web.Data;
@@ -64,7 +65,8 @@ public sealed class UserDataService(
             + await db.RecipeIngredients.CountAsync(ct)
             + await db.RecipeSteps.CountAsync(ct)
             + await db.ExcludedFoods.CountAsync(ct)
-            + await db.GroceryExtras.CountAsync(ct);
+            + await db.GroceryExtras.CountAsync(ct)
+            + await db.AppSettings.CountAsync(s => SettingKeys.UserContent.Contains(s.Key), ct);
     }
 
     /// <summary>Wipe every user-content table. In one transaction so it's all-or-nothing, and children
@@ -94,6 +96,11 @@ public sealed class UserDataService(
         await db.Products.ExecuteDeleteAsync(ct);
         await db.ExcludedFoods.ExecuteDeleteAsync(ct);
         await db.GroceryExtras.ExecuteDeleteAsync(ct);
+
+        // The settings table is mostly configuration, which survives — but some of its keys hold content
+        // derived from the pantry we just deleted (the last recipe ideas; the self-eval's per-receipt
+        // scores, each named for its merchant and date). SettingKeys says which is which.
+        await db.AppSettings.Where(s => SettingKeys.UserContent.Contains(s.Key)).ExecuteDeleteAsync(ct);
 
         await tx.CommitAsync(ct);
 

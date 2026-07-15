@@ -25,7 +25,10 @@ public sealed class ReceiptSelfEval(
     ReceiptStorage storage,
     ILogger<ReceiptSelfEval> logger)
 {
-    public const string ResultsKey = "SelfEvalResults";
+    /// <summary>Where the last run is kept. Declared in SettingKeys with every other key — and classified
+    /// there as the household's content, because a score named "Walmart 2026-07-04" is a fact about their
+    /// shopping and has to go when they delete their data.</summary>
+    public const string ResultsKey = SettingKeys.SelfEvalResults;
 
     public sealed record RunProgress(int Done, int Total, string Current);
 

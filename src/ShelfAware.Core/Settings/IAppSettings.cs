@@ -8,6 +8,19 @@ public interface IAppSettings
     Task SetAsync(string key, string? value, CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// Every key the settings table can hold, and — just as importantly — whether each one is CONFIGURATION
+/// or the household's own CONTENT.
+///
+/// The distinction earns its keep at "delete my data". This table started as pure configuration, which is
+/// why the delete skipped it wholesale. Then it grew keys that hold content derived from a household's
+/// pantry (their last recipe ideas; their receipts' self-eval scores, merchant names and all), and the
+/// delete kept skipping it — so that content outlived the button that promised to remove it.
+///
+/// Classifying here rather than listing keys at the delete site is the difference between a fix and the
+/// same bug later: a new key doesn't compile past <see cref="SettingKeysAreClassified"/> without someone
+/// deciding which of the two it is.
+/// </summary>
 public static class SettingKeys
 {
     /// <summary>Folder the assistant scans for new receipt files to auto-import.</summary>
@@ -29,4 +42,19 @@ public static class SettingKeys
     /// suggestions), so an AI call's results survive navigation and restarts instead of evaporating.
     /// Replaced on the next batch, cleared by the user's "Clear ideas".</summary>
     public const string LastRecipeSuggestions = "LastRecipeSuggestions";
+
+    /// <summary>JSON of the household's last receipt self-eval run (per-receipt scores, each named for the
+    /// merchant and date it came from). Persisted so the Accuracy page can show the last run without
+    /// re-spending a vision call per receipt.</summary>
+    public const string SelfEvalResults = "SelfEvalResults";
+
+    /// <summary>How the app is set up. Survives "delete my data": wiping your pantry shouldn't forget
+    /// which folder your receipts arrive in.</summary>
+    public static readonly IReadOnlyList<string> Config =
+        [ReceiptFolder, ImportMode, AutoConfirmImports, RecipeAddConfirm];
+
+    /// <summary>Derived from the household's own pantry and receipts, and therefore theirs: removed by
+    /// "delete my data" like any other content.</summary>
+    public static readonly IReadOnlyList<string> UserContent =
+        [LastRecipeSuggestions, SelfEvalResults];
 }
