@@ -155,7 +155,7 @@
         Phase.Listening => "Listening…",
         Phase.Thinking => "Thinking…",
         Phase.Answering => "Answering…",
-        Phase.Held => "Holding — say “I'm back” when you're ready.",
+        Phase.Held => "Holding — ignoring the room until you say “I'm back”.",
         _ => "Reading…",
     };
 
@@ -459,24 +459,38 @@
     /// <summary>Act on one understood utterance. Returns true when playback resumed or we're closing.</summary>
     private async Task<bool> ApplyAsync(string text)
     {
-        var intent = CookAlongCommands.Match(text);
+        var command = CookAlongCommands.Match(text);
+        var intent = command.Intent;
 
-        // "go ahead" means carry on whether we're held or reading — the words don't distinguish, and only
-        // we know which we are. Resolve it here rather than pretending the grammar could.
-        if (held && intent is CookAlongIntent.Next or CookAlongIntent.Resume)
+        // Coming back from a hold. If something is genuinely paused mid-sentence (only the on-screen
+        // Pause button can cause that — we don't listen while we're talking), any carry-on phrase resumes
+        // it. Otherwise the hold was taken during a listening window, nothing is paused, and the command
+        // means exactly what it says: "next" is NEXT, not "resume the nothing that's playing".
+        if (held && intent is not CookAlongIntent.None)
         {
             held = false;
             lastReply = null;
 
-            // "Hold on" is most naturally said DURING the listening window — by which point the step has
-            // already finished playing, so there's nothing to resume. Stay in the loop and keep listening
-            // rather than handing back to a playback that already ended and will never call us again.
-            if (!await ResumeAsync()) return false;
-
-            await SetPhaseAsync(Phase.Reading);
-            return true;
+            if (intent is CookAlongIntent.Next or CookAlongIntent.Resume)
+            {
+                if (await ResumeAsync())
+                {
+                    await SetPhaseAsync(Phase.Reading);
+                    return true;
+                }
+                // "I'm back" with nothing to resume just means carry on listening — stay put.
+                if (intent is CookAlongIntent.Resume)
+                {
+                    await SetPhaseAsync(Phase.Listening);
+                    return false;
+                }
+            }
         }
-        if (!held && intent == CookAlongIntent.Resume) intent = CookAlongIntent.Next;
+        else if (!held && intent is CookAlongIntent.Resume)
+        {
+            // "go ahead" while we're already going means the next step.
+            intent = CookAlongIntent.Next;
+        }
 
         switch (intent)
         {
@@ -492,10 +506,25 @@
                 await ResumeReadingAsync("playFrom", currentIndex);
                 return true;
 
+            // Segment 0 is the intro and 1..N are the steps, so a step number IS its segment index.
+            case CookAlongIntent.GoToStep when command.Step is { } n && n >= 0 && n <= steps.Count:
+                await ResumeReadingAsync("playFrom", n);
+                return true;
+
+            case CookAlongIntent.GoToStep:
+                // A step this recipe doesn't have. The brain has the steps in context and can say so
+                // ("there are only seven") far better than we can — this is exactly what it's for.
+                await AskBrainAsync(text);
+                return false;
+
             case CookAlongIntent.Hold:
+                // Hold can't pause a sentence — we aren't listening while we speak, so by the time you
+                // can say it, the step has already finished and the reader is waiting anyway. What it
+                // CAN do is stop us reacting to the room: while held we ignore anything that isn't a
+                // command, so a rustling bag can't wake the brain and answer a question nobody asked.
                 held = true;
-                await PauseForHoldAsync();
-                return false; // stay in the loop — holding still means listening for them to come back
+                await SetPhaseAsync(Phase.Held);
+                return false;
 
             case CookAlongIntent.Stop:
                 // "Stop listening" means stop LISTENING — it isn't "throw the recipe away". Someone with
@@ -505,8 +534,10 @@
                 return true;
 
             default:
-                // Not a command, so it's a question. Guard the brain against the kitchen: a single stray
-                // syllable is not worth a model call or an answer to a question nobody asked.
+                // Not a command, so it's a question — unless we're holding, in which case they told us
+                // they're busy and the room isn't talking to us.
+                if (held) return false;
+                // Guard the brain against the kitchen: a single stray syllable is not worth a model call.
                 if (!CookAlongCommands.IsWorthAsking(text)) return false;
                 await AskBrainAsync(text);
                 return false; // answered — stay on this step and keep listening
@@ -548,13 +579,6 @@
         paused = false;
         await SetPhaseAsync(Phase.Reading);
         if (_module is not null) await _module.InvokeVoidAsync(fn, args);
-    }
-
-    private async Task PauseForHoldAsync()
-    {
-        if (_module is not null) await _module.InvokeVoidAsync("pause");
-        paused = true;
-        await SetPhaseAsync(Phase.Held);
     }
 
     /// <summary>Resume playback. False when there was nothing playing to resume (the step had already
