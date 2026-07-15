@@ -1,4 +1,4 @@
-﻿using System.Security.Cryptography;
+using System.Security.Cryptography;
 using System.Text;
 using ShelfAware.Core.Speech;
 
@@ -9,12 +9,12 @@ namespace ShelfAware.Web.Services;
 /// neighbouring segments, and the synthesizer's <see cref="ITextToSpeech.OutputFingerprint"/>.
 ///
 /// Recipe steps are static text. Without this, every re-read of the same recipe re-synthesized every
-/// step and paid for it again â€” and the reader waited on the network to say a sentence it had already
+/// step and paid for it again — and the reader waited on the network to say a sentence it had already
 /// said yesterday. With it, a recipe costs one synthesis ever and re-opens instantly.
 ///
 /// The cache is CONTENT-addressed and shared across households. That is deliberate: a hit requires the
 /// identical text, which means the asker already has the content, so there is nothing to learn from a
-/// hit that they didn't already know. It also means a hit needs no API key at all â€” which is what lets
+/// hit that they didn't already know. It also means a hit needs no API key at all — which is what lets
 /// seeded/demo recipes talk for a visitor who has brought no key of their own.
 ///
 /// Cache failures are never synthesis failures: if the disk misbehaves we log it and go to the provider.
@@ -38,7 +38,7 @@ public sealed class CachingTextToSpeech : ITextToSpeech
     public async Task<TextToSpeechResult> SynthesizeAsync(
         string text, SpeechContext? context = null, CancellationToken cancellationToken = default)
     {
-        // Blank text isn't ours to rule on â€” let the provider own that (and its error message).
+        // Blank text isn't ours to rule on — let the provider own that (and its error message).
         if (string.IsNullOrWhiteSpace(text)) return await _inner.SynthesizeAsync(text, context, cancellationToken);
 
         var path = Path.Combine(_directory, KeyFor(text, context) + ".audio");
@@ -55,7 +55,7 @@ public sealed class CachingTextToSpeech : ITextToSpeech
     }
 
     /// <summary>
-    /// The neighbouring segments are part of the key because they change the audio â€” they're sent as
+    /// The neighbouring segments are part of the key because they change the audio — they're sent as
     /// continuity hints, so the same sentence read after a different one genuinely sounds different.
     /// Keying on them costs a little re-synthesis when a step is edited (its neighbours' clips retire
     /// too) and buys a cache that can't serve a clip voiced for a different position in the recipe.
@@ -112,7 +112,7 @@ public sealed class CachingTextToSpeech : ITextToSpeech
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // A cache we can't write to costs money, not correctness â€” say so and carry on.
+            // A cache we can't write to costs money, not correctness — say so and carry on.
             _logger.LogWarning(ex, "Couldn't cache synthesized speech at {Path}.", path);
             CleanUp(temp);
         }
@@ -147,7 +147,7 @@ public sealed class CachingTextToSpeech : ITextToSpeech
             if (total <= maxBytes) return 0;
 
             var removed = 0;
-            // LastWriteTime, not LastAccessTime â€” NTFS doesn't reliably maintain access times, so an
+            // LastWriteTime, not LastAccessTime — NTFS doesn't reliably maintain access times, so an
             // LRU here would be a lie. Oldest-written is honest and good enough for orphaned clips.
             foreach (var file in files.OrderBy(f => f.LastWriteTimeUtc))
             {
