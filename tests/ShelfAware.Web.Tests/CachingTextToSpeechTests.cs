@@ -242,7 +242,7 @@ public sealed class CachingTextToSpeechTests : IDisposable
         Directory.CreateDirectory(_dir);
         File.WriteAllBytes(Path.Combine(_dir, "a.audio"), new byte[100]);
 
-        var removed = CachingTextToSpeech.Trim(_dir, maxBytes: 1000, NullLogger.Instance);
+        var removed = CachingTextToSpeech.Trim(_dir, maxBytesPerHousehold: 1000, NullLogger.Instance);
 
         Assert.Equal(0, removed);
         Assert.Single(Directory.GetFiles(_dir, "*.audio"));
@@ -260,7 +260,7 @@ public sealed class CachingTextToSpeechTests : IDisposable
         }
 
         // Room for one 100-byte clip: the two oldest go.
-        var removed = CachingTextToSpeech.Trim(_dir, maxBytes: 100, NullLogger.Instance);
+        var removed = CachingTextToSpeech.Trim(_dir, maxBytesPerHousehold: 100, NullLogger.Instance);
 
         Assert.Equal(2, removed);
         Assert.Equal(["new.audio"], Directory.GetFiles(_dir, "*.audio").Select(Path.GetFileName));
@@ -269,7 +269,7 @@ public sealed class CachingTextToSpeechTests : IDisposable
     [Fact]
     public void Trim_on_a_cache_that_was_never_created_is_a_no_op()
     {
-        Assert.Equal(0, CachingTextToSpeech.Trim(Path.Combine(_dir, "nope"), maxBytes: 10, NullLogger.Instance));
+        Assert.Equal(0, CachingTextToSpeech.Trim(Path.Combine(_dir, "nope"), maxBytesPerHousehold: 10, NullLogger.Instance));
     }
 
     // Drives the REAL composition root, not a hand-rolled copy of it: whatever asks for ITextToSpeech

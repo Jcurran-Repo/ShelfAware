@@ -264,7 +264,9 @@ var app = builder.Build();
 
 // Keep the speech cache from creeping forever. It only grows when text changes (an edited step orphans
 // its clip, and its neighbours'), so once at startup is the right cadence — a per-write sweep would put
-// a directory scan on the path the cache exists to make fast.
+// a directory scan on the path the cache exists to make fast. The budget is PER HOUSEHOLD (so a heavy
+// user can't evict a light one's clips and make them re-buy the audio), which means total disk is
+// households × Speech:CacheMegabytes rather than a single ceiling.
 if (speechCacheDir is not null)
 {
     CachingTextToSpeech.Trim(speechCacheDir, speechCacheMb * 1024L * 1024L,

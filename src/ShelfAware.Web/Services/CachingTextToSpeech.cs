@@ -169,20 +169,45 @@ public sealed class CachingTextToSpeech : ITextToSpeech
     }
 
     /// <summary>
-    /// Trims the cache to <paramref name="maxBytes"/>, oldest clip first. Called once at startup rather
-    /// than on every write: the cache only grows when text changes (an edited step orphans its clip, and
-    /// its neighbours'), so it creeps rather than spikes, and a per-write sweep would cost a directory
-    /// scan on the path we just made fast. Returns the number of files removed.
+    /// Trims the cache, oldest clip first. Called once at startup rather than on every write: the cache
+    /// only grows when text changes (an edited step orphans its clip, and its neighbours'), so it creeps
+    /// rather than spikes, and a per-write sweep would cost a directory scan on the path we just made
+    /// fast. Returns the number of files removed.
+    ///
+    /// <paramref name="maxBytesPerHousehold"/> is a budget PER HOUSEHOLD, and each household's folder is
+    /// swept against its own. One shared budget over the whole tree made the sweep cross-tenant in the one
+    /// way that still mattered after the clips themselves were separated: the oldest clips anywhere got
+    /// deleted, so a household that cooks a lot would silently evict the recipes of one that doesn't, and
+    /// that household would then pay to re-synthesize audio it had already bought. Whose clips go should
+    /// depend on your own usage, not your neighbour's.
+    ///
+    /// The cost is that total disk is now households × budget rather than a single ceiling. That's the
+    /// honest shape of the promise — "your recipes stay cached" can't be kept from a shared pot — and on a
+    /// self-host with one or two households it's the same number it always was.
     /// </summary>
-    public static int Trim(string directory, long maxBytes, ILogger logger)
+    public static int Trim(string directory, long maxBytesPerHousehold, ILogger logger)
+    {
+        if (!Directory.Exists(directory)) return 0;
+
+        // Each immediate subfolder is one household (see HouseholdFolder). Clips written before the cache
+        // was split by household sit loose at the root; sweeping that too keeps them from lingering
+        // forever, and it's the only thing left that can't be attributed.
+        var households = new DirectoryInfo(directory).GetDirectories();
+        var removed = TrimFolder(directory, maxBytesPerHousehold, SearchOption.TopDirectoryOnly, logger);
+        foreach (var household in households)
+        {
+            removed += TrimFolder(household.FullName, maxBytesPerHousehold, SearchOption.AllDirectories, logger);
+        }
+        return removed;
+    }
+
+    private static int TrimFolder(string directory, long maxBytes, SearchOption depth, ILogger logger)
     {
         try
         {
             if (!Directory.Exists(directory)) return 0;
 
-            // Recursive: clips live in a per-household subfolder now, and the budget is for the whole
-            // cache — one household's long recipe shouldn't be invisible to the sweep.
-            var files = new DirectoryInfo(directory).GetFiles("*.audio", SearchOption.AllDirectories);
+            var files = new DirectoryInfo(directory).GetFiles("*.audio", depth);
             var total = files.Sum(f => f.Length);
             if (total <= maxBytes) return 0;
 
@@ -205,11 +230,14 @@ public sealed class CachingTextToSpeech : ITextToSpeech
                 }
             }
 
-            logger.LogInformation("Trimmed {Removed} cached speech file(s); cache now {Bytes} byte(s).", removed, total);
+            logger.LogInformation(
+                "Trimmed {Removed} cached speech file(s) in {Directory}; now {Bytes} byte(s).",
+                removed, directory, total);
             return removed;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            // One household's unreadable folder must not stop the others being swept.
             logger.LogWarning(ex, "Couldn't trim the speech cache at {Directory}.", directory);
             return 0;
         }
