@@ -445,6 +445,67 @@ public class PantryChatTests
         Assert.False(result.HandsOff); // shows the variant but keeps listening
     }
 
+    // The safety net under the cook-along's plain-code grammar. That grammar matches whole utterances, so
+    // a cough, a stutter or an unlisted phrasing ("up next") misses it and lands here — where it used to
+    // be ANSWERED instead of obeyed. With this the miss costs a model call instead of the wrong outcome,
+    // which is what lets the grammar stay conservative rather than trying to list every way to say "next".
+    [Fact]
+    public async Task Go_to_step_carries_a_step_target_out()
+    {
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("go_to_step", ("step", 4))),
+            () => Responses.Text("Moving to step 4."));
+
+        var result = await Chat(client, new FakePantryStore()).HandleAsync("up next");
+
+        Assert.True(result.Success);
+        Assert.Equal(4, result.StepTarget);
+    }
+
+    [Fact]
+    public async Task Go_to_step_zero_means_start_the_recipe_over()
+    {
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("go_to_step", ("step", 0))),
+            () => Responses.Text("Starting over."));
+
+        var result = await Chat(client, new FakePantryStore()).HandleAsync("take it from the top again");
+
+        Assert.Equal(0, result.StepTarget);
+    }
+
+    // Only the reader knows how long its recipe is, so an out-of-range step rides out and IT decides.
+    // Guessing here would mean duplicating the recipe's length into the chat layer.
+    [Fact]
+    public async Task Go_to_step_does_not_range_check_what_it_cannot_know()
+    {
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("go_to_step", ("step", 99))),
+            () => Responses.Text("Moving."));
+
+        Assert.Equal(99, (await Chat(client, new FakePantryStore()).HandleAsync("step 99")).StepTarget);
+    }
+
+    [Fact]
+    public async Task Go_to_step_rejects_a_missing_or_negative_step()
+    {
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("go_to_step", ("step", -1))),
+            () => Responses.Text("I couldn't do that."));
+
+        Assert.Null((await Chat(client, new FakePantryStore()).HandleAsync("go back a lot")).StepTarget);
+    }
+
+    // Ordinary chat must never carry a step target — everything that isn't a cook-along ignores it, but a
+    // stray one would silently yank a reader that happened to be open.
+    [Fact]
+    public async Task An_ordinary_reply_carries_no_step_target()
+    {
+        var client = new FakeChatClient(() => Responses.Text("You have two litres of milk."));
+
+        Assert.Null((await Chat(client, new FakePantryStore()).HandleAsync("how much milk do I have")).StepTarget);
+    }
+
     [Fact]
     public async Task Open_page_carries_a_navigation_target_out()
     {

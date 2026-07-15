@@ -112,7 +112,7 @@ public class AnthropicPantryChat : IPantryChat
             {
                 var text = response.Text.Trim();
                 _logger.LogInformation("Pantry chat completed on turn {Turn} with {ActionCount} action(s) applied.", turn + 1, actions.Count);
-                return ChatResult.Ok(text.Length > 0 ? text : "Done.", actions, nav.Url, nav.HandsOff);
+                return ChatResult.Ok(text.Length > 0 ? text : "Done.", actions, nav.Url, nav.HandsOff, nav.Step);
             }
 
             // Carry the assistant's tool-call turn back into the history, then answer each call.
@@ -151,14 +151,15 @@ public class AnthropicPantryChat : IPantryChat
         _logger.LogWarning("Pantry chat hit the {MaxTurns}-turn limit without a final reply ({ActionCount} action(s) applied).", MaxTurns, actions.Count);
         return ChatResult.Ok(
             actions.Count > 0 ? $"Applied: {string.Join(", ", actions)}." : "Stopped after several steps without finishing.",
-            actions, nav.Url, nav.HandsOff);
+            actions, nav.Url, nav.HandsOff, nav.Step);
     }
 
     /// <summary>Mutable navigation slot the tool handlers write into (last navigation wins) — the
     /// service is a singleton, so per-request state rides through parameters, never fields.
     /// <see cref="HandsOff"/> marks a navigation that starts its own audio on the destination
-    /// (read_recipe), so a persistent listening agent knows to stop rather than talk over it.</summary>
-    private sealed class NavigationTarget { public string? Url; public bool HandsOff; }
+    /// (read_recipe), so a persistent listening agent knows to stop rather than talk over it.
+    /// <see cref="Step"/> moves a hands-free cook-along that's already on screen.</summary>
+    private sealed class NavigationTarget { public string? Url; public bool HandsOff; public int? Step; }
 
     private async Task<(string text, bool isError)> ExecuteToolAsync(
         FunctionCallContent call, IReadOnlyList<Product> products, List<string> actions, NavigationTarget nav, CancellationToken ct)
@@ -396,6 +397,16 @@ public class AnthropicPantryChat : IPantryChat
                 return ($"Opening the {page.Replace('_', ' ')} page.", false);
             }
 
+            case "go_to_step":
+            {
+                var step = Int("step");
+                if (step is null || step < 0) return ("Give the step number to move to.", true);
+                // Not range-checked here: only the reader on screen knows how long its recipe is, and it
+                // re-checks. Overreaching would mean duplicating the recipe's length into the chat layer.
+                nav.Step = (int)step;
+                return step == 0 ? ("Starting the recipe over.", false) : ($"Moving to step {step}.", false);
+            }
+
             case "read_recipe":
             {
                 var name = Str("recipe_name")?.Trim();
@@ -542,6 +553,19 @@ public class AnthropicPantryChat : IPantryChat
                 }
                 """,
                 ["page"]),
+
+            // The safety net under the cook-along's plain-code grammar. That grammar makes "next" instant
+            // and free, but it matches whole utterances — so a cough, a stutter, or a phrasing nobody
+            // listed ("up next") fell through to here and got ANSWERED instead of obeyed. This turns a
+            // grammar miss from the wrong outcome into a slower right one.
+            MakeTool("go_to_step",
+                "Move the recipe reader to a step, while the user is cooking along hands-free (the context will say so, and which step they're on). Use this WHENEVER they are asking to move rather than asking a question — 'next', 'up next', 'go back', 'read that again', 'take me to step 3', 'carry on', 'skip ahead' — no matter how they phrase it, including when their words are garbled or run together. Steps are 1-based; use 0 to start over from the introduction. Do NOT use it to answer a question ABOUT a step ('what goes in at step 3') — answer those normally.",
+                """
+                {
+                  "step": { "type": "integer", "description": "The 1-based step to read, or 0 for the recipe's introduction." }
+                }
+                """,
+                ["step"]),
 
             MakeTool("read_recipe",
                 "Open a SAVED recipe on screen and read it aloud step-by-step. Use when the user asks to hear, read, or be walked through a recipe — by name, or by position ('read the second recipe') even when no on-screen list is provided.",

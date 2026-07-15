@@ -50,10 +50,11 @@ public static class CookAlongCommands
 {
     private static readonly string[] Next =
     [
-        "next", "next step", "next one", "go on", "go ahead", "continue", "keep going", "carry on",
-        "move on", "onward", "then", "then what", "and then", "what's next", "what is next",
-        "whats next", "what do i do next", "what next", "done", "got it", "did it", "that's done",
-        "thats done", "finished", "i'm done with that", "im done with that",
+        "next", "next step", "next one", "up next", "on to the next", "onto the next", "next up",
+        "go on", "go ahead", "continue", "keep going", "carry on", "move on", "move along", "onward",
+        "then", "then what", "and then", "what's next", "what is next", "whats next",
+        "what do i do next", "what next", "done", "got it", "did it", "that's done", "thats done",
+        "finished", "i'm done with that", "im done with that",
     ];
 
     private static readonly string[] Back =

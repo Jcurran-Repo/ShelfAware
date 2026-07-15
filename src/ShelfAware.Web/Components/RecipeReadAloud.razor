@@ -514,8 +514,7 @@
             case CookAlongIntent.GoToStep:
                 // A step this recipe doesn't have. The brain has the steps in context and can say so
                 // ("there are only seven") far better than we can — this is exactly what it's for.
-                await AskBrainAsync(text);
-                return false;
+                return await AskBrainAsync(text);
 
             case CookAlongIntent.Hold:
                 // Hold can't pause a sentence — we aren't listening while we speak, so by the time you
@@ -539,8 +538,7 @@
                 if (held) return false;
                 // Guard the brain against the kitchen: a single stray syllable is not worth a model call.
                 if (!CookAlongCommands.IsWorthAsking(text)) return false;
-                await AskBrainAsync(text);
-                return false; // answered — stay on this step and keep listening
+                return await AskBrainAsync(text);
         }
     }
 
@@ -549,14 +547,26 @@
     /// the grammar doesn't own goes to the SAME brain the assistant uses. The recipe rides in as screen
     /// context — the mechanism that already lets the roaming agent resolve "the second one" — so no new
     /// brain API was needed to make it aware of what's on the hob.
+    ///
+    /// It can also MOVE us (go_to_step), which is what lets the grammar stay conservative: a phrasing it
+    /// doesn't know costs a model call instead of getting the wrong answer. Returns true when it moved.
     /// </summary>
-    private async Task AskBrainAsync(string question)
+    private async Task<bool> AskBrainAsync(string question)
     {
         await SetPhaseAsync(Phase.Thinking);
 
         var result = await Chat.HandleAsync(question, history, CookContext(), _cts.Token);
         history.Add(new ChatTurn(question, result.Reply));
         if (history.Count > MaxHistoryTurns) history.RemoveRange(0, history.Count - MaxHistoryTurns);
+
+        // It understood a move the grammar missed. The step IS the answer — reading "sure, here's step
+        // four" first would just be latency between them and the thing they asked for.
+        if (result.StepTarget is { } step && step >= 0 && step <= steps.Count)
+        {
+            lastReply = null;
+            await ResumeReadingAsync("playFrom", step);
+            return true;
+        }
 
         lastReply = result.Reply;
 
@@ -569,6 +579,7 @@
         {
             await _voice.InvokeVoidAsync("play", Convert.ToBase64String(speech.Audio), speech.MediaType);
         }
+        return false; // answered — stay on this step and keep listening
     }
 
     private async Task ResumeReadingAsync(string fn, params object[] args)
@@ -609,6 +620,13 @@
         lines.Add("Steps: " + string.Join(" ", steps.Select((s, i) => $"({i + 1}) {s.Text}")));
         lines.Add("They are listening, not reading, with their hands busy — answer their cooking question "
                   + "in one or two short spoken sentences.");
+        // Everything reaching the brain has ALREADY missed the plain-code grammar, so a movement phrasing
+        // that gets here is by definition an odd one — garbled, coughed through, or just unlisted. Say so,
+        // or it will helpfully answer "up next" instead of doing it.
+        lines.Add("If they are asking to MOVE around the recipe rather than asking a question — however "
+                  + "oddly it is worded, and even if it sounds garbled — use go_to_step instead of "
+                  + "replying. Simple commands are handled before you see them, so anything that reaches "
+                  + "you has already been misheard once.");
         return string.Join(' ', lines);
     }
 

@@ -46,9 +46,27 @@ public record ChatResult
     /// listening so commands can be chained. Ignored by single-shot surfaces (push-to-talk).</summary>
     public bool HandsOff { get; init; }
 
+    /// <summary>
+    /// The step a hands-free reader should jump to (1-based; 0 = the recipe's introduction), or null.
+    /// Set by the go_to_step tool and meaningful only to a cook-along that's on screen — everything else
+    /// ignores it.
+    ///
+    /// This is what stops the cook-along's plain-code grammar from having to be exhaustive. That grammar
+    /// makes "next" instant and free, but it matches whole utterances, so anything it doesn't recognise —
+    /// a cough, a stutter, "up next", a phrasing nobody thought of — used to be ANSWERED instead of
+    /// obeyed, which is the wrong outcome rather than a slow one. With this, a miss just costs a model
+    /// call: the grammar is an optimisation, not a gate.
+    /// </summary>
+    public int? StepTarget { get; init; }
+
     public static ChatResult Ok(
-        string reply, IReadOnlyList<string> actions, string? navigateTo = null, bool handsOff = false) =>
-        new() { Success = true, Reply = reply, Actions = actions, NavigateTo = navigateTo, HandsOff = handsOff };
+        string reply, IReadOnlyList<string> actions, string? navigateTo = null, bool handsOff = false,
+        int? stepTarget = null) =>
+        new()
+        {
+            Success = true, Reply = reply, Actions = actions,
+            NavigateTo = navigateTo, HandsOff = handsOff, StepTarget = stepTarget,
+        };
 
     public static ChatResult Fail(string reply) =>
         new() { Success = false, Reply = reply };
