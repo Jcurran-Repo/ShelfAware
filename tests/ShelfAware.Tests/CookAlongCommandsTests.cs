@@ -89,6 +89,39 @@ public class CookAlongCommandsTests
         Assert.False(CookAlongCommands.IsWorthAsking(t));
     }
 
+    // The window closes on silence, not a timer, so saying a command again before the pause elapses puts
+    // both in one utterance. Impatience is not a different instruction.
+    [Theory]
+    [InlineData("next next", CookAlongIntent.Next)]
+    [InlineData("Next. Next.", CookAlongIntent.Next)]
+    [InlineData("next next next", CookAlongIntent.Next)]
+    [InlineData("next step next step", CookAlongIntent.Next)]
+    [InlineData("back back", CookAlongIntent.Back)]
+    [InlineData("repeat repeat", CookAlongIntent.Repeat)]
+    [InlineData("stop reading stop reading", CookAlongIntent.Stop)]
+    [InlineData("okay next, next please", CookAlongIntent.Next)]
+    public void Saying_a_command_twice_is_still_that_command(string t, CookAlongIntent expected) =>
+        Assert.Equal(expected, Intent(t));
+
+    [Fact]
+    public void A_repeated_step_jump_still_jumps()
+    {
+        var command = CookAlongCommands.Match("step 3 step 3");
+        Assert.Equal(CookAlongIntent.GoToStep, command.Intent);
+        Assert.Equal(3, command.Step);
+    }
+
+    // Collapsing repetition must not be able to MAKE a command out of a sentence: if the repeated unit
+    // isn't one, the result isn't either.
+    [Theory]
+    [InlineData("how much salt how much salt")]
+    [InlineData("is it done is it done")]
+    public void A_repeated_question_is_still_a_question(string t) => Assert.Equal(CookAlongIntent.None, Intent(t));
+
+    // Two different commands in one breath is not repetition and must not be guessed at.
+    [Fact]
+    public void Two_different_commands_are_not_collapsed() => Assert.Equal(CookAlongIntent.None, Intent("next back"));
+
     // A step NUMBER inside a real question is still a question. The whole-utterance rule again.
     [Theory]
     [InlineData("what goes in at step 3")]
@@ -174,8 +207,11 @@ public class CookAlongCommandsTests
     [Theory]
     [InlineData("can I use butter instead", true)]
     [InlineData("how much salt", true)]
-    [InlineData("mm", false)]         // a stray syllable off the extractor fan
+    [InlineData("mm", false)]                      // a stray syllable off the extractor fan
     [InlineData("uh", false)]
+    [InlineData("mm mm", false)]                   // ...twice. Still nobody talking.
+    [InlineData("um uh", false)]                   // two tokens of pure filler
+    [InlineData("(coughing) (footsteps)", false)]  // two tokens of pure room
     [InlineData("", false)]
     [InlineData(null, false)]
     public void Only_a_real_utterance_is_worth_waking_the_brain(string? t, bool expected) =>

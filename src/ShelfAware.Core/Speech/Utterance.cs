@@ -35,12 +35,54 @@ internal static class Utterance
         int start = 0, end = tokens.Count;
         while (start < end && Filler.Contains(tokens[start])) start++;
         while (end > start && Filler.Contains(tokens[end - 1])) end--;
-        return string.Join(' ', tokens.Skip(start).Take(end - start));
+        return CollapseRepetition(tokens.Skip(start).Take(end - start).ToList());
     }
 
-    /// <summary>Word count of the raw transcript, before filler is stripped.</summary>
-    public static int WordCount(string? transcript) =>
-        string.IsNullOrWhiteSpace(transcript) ? 0 : Tokenize(transcript).Count;
+    /// <summary>
+    /// "next next" is still "next". The window closes on silence, not on a timer, so someone who says a
+    /// command and repeats it before the pause elapses — impatient, or not sure it heard — lands both in
+    /// one utterance. Saying a thing twice doesn't make it a different thing.
+    ///
+    /// Collapses only a WHOLE utterance that is one phrase repeated end to end ("next next", "next step
+    /// next step", "back back back"), which is what impatience actually sounds like. It can't
+    /// accidentally turn a sentence into a command: if the repeated unit isn't a command, the result
+    /// isn't either, and it still goes to the model.
+    /// </summary>
+    private static string CollapseRepetition(List<string> tokens)
+    {
+        for (var unit = 1; unit <= tokens.Count / 2; unit++)
+        {
+            if (tokens.Count % unit != 0) continue;
+
+            var repeats = tokens.Count / unit;
+            var isRepetition = true;
+            for (var r = 1; r < repeats && isRepetition; r++)
+            {
+                for (var i = 0; i < unit; i++)
+                {
+                    if (tokens[i] == tokens[r * unit + i]) continue;
+                    isRepetition = false;
+                    break;
+                }
+            }
+
+            if (isRepetition) return string.Join(' ', tokens.Take(unit));
+        }
+
+        return string.Join(' ', tokens);
+    }
+
+    /// <summary>
+    /// How many words someone actually SAID — annotations gone, filler gone, repetition collapsed. Not
+    /// the raw token count, which counts the room: "(coughing) (footsteps)" is two tokens and no words,
+    /// "um uh" is two tokens of nobody saying anything, and "mm mm" is one grunt said twice. All three
+    /// used to clear a two-word bar.
+    /// </summary>
+    public static int WordCount(string? transcript)
+    {
+        var core = Core(transcript);
+        return core.Length == 0 ? 0 : core.Split(' ').Length;
+    }
 
     /// <summary>
     /// Transcriber annotations, e.g. "(coughing)", "(laughter)", "[door closes]". Nobody SPEAKS a
