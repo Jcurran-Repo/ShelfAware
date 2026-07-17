@@ -245,6 +245,7 @@ builder.Services.AddScoped<ReceiptSelfEval>(); // grades verified receipts on th
 builder.Services.AddScoped<ReceiptStorage>();
 
 builder.Services.AddScoped<ProductRenameService>(); // rename + re-point the name-keyed recipe links
+builder.Services.AddScoped<ProductMergeService>();  // fold a variety-split product into its item
 builder.Services.AddScoped<DemoDataSeeder>(); // synthetic demo catalog (guarded: this household's pantry is empty)
 // Export + delete-my-data (one place for both). Takes the speech cache root so a delete reaches the
 // synthesized audio of the household's recipes, not just its rows.

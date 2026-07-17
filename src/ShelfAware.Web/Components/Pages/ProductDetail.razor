@@ -5,6 +5,8 @@
 @inject IHouseholdDbFactory DbFactory
 @inject IProductSubstituteAdvisor SubAdvisor
 @inject ProductRenameService Renamer
+@inject ProductMergeService Merger
+@inject NavigationManager Nav
 
 <PageTitle>@(product?.Name ?? "Product") — Shelf Aware</PageTitle>
 
@@ -30,12 +32,48 @@ else
         {
             <h1>@product.Name</h1>
             <button type="button" class="icon-btn" @onclick="StartRename" aria-label="Rename @product.Name" title="Rename @product.Name"><span aria-hidden="true">✏️</span></button>
+            <button type="button" class="icon-btn" @onclick="OpenMerge" aria-label="Merge @product.Name into another product" title="Merge @product.Name into another product"><span aria-hidden="true">⇆</span></button>
         }
         <span class="chip chip-@ChipClass(prediction.Status)">@StatusLabel(prediction.Status)</span>
     </div>
     @if (renameError is not null)
     {
         <p class="error" role="alert">@renameError</p>
+    }
+    @if (merging)
+    {
+        <section class="panel merge-panel">
+            <h2>Merge into another product</h2>
+            <p class="muted">Moves every purchase, receipt line, alias, and signal from
+                <strong>@product.Name</strong> onto the product you pick, then deletes
+                <strong>@product.Name</strong>. Use it when one item got split — e.g. flavors that
+                should be one product. This can't be undone.</p>
+            <div class="merge-controls">
+                <label>
+                    Merge into
+                    <select @bind="mergeTargetId" @bind:after="OnMergeTargetChanged" aria-label="Product to merge @product.Name into">
+                        <option value="0">— pick a product —</option>
+                        @foreach (var candidate in mergeCandidates)
+                        {
+                            <option value="@candidate.Id">@candidate.Name</option>
+                        }
+                    </select>
+                </label>
+                <label>
+                    Label moved purchases' variety as
+                    <input @bind="mergeVariety" @bind:event="oninput" placeholder="optional — e.g. Strawberry"
+                           aria-label="Variety label for the moved purchases" />
+                </label>
+            </div>
+            <div class="review-actions">
+                <button type="button" @onclick="SaveMerge" disabled="@(mergeTargetId == 0 || mergeBusy)">@(mergeBusy ? "Merging…" : "Merge")</button>
+                <button type="button" class="secondary" @onclick="CancelMerge" disabled="@mergeBusy">Cancel</button>
+            </div>
+            @if (mergeError is not null)
+            {
+                <p class="error" role="alert">@mergeError</p>
+            }
+        </section>
     }
     <p class="muted">@product.Category@(product.DefaultUnit is { } u ? $" · {u}" : "") · <a href="/products">All products</a></p>
     @if (product.Tags.Count > 0)
@@ -147,6 +185,23 @@ else
         </section>
     }
 
+    @if (varietyBreakdown.Any(v => v.Variety != Unlabeled))
+    {
+        <section class="panel">
+            <h2>Varieties bought</h2>
+            <p class="muted">One rhythm for the whole item — every brand and variety counts toward the same cadence; this is just how the buys split.</p>
+            <ul class="brands">
+                @foreach (var v in varietyBreakdown)
+                {
+                    <li>
+                        <span class="brand-name">@v.Variety</span>
+                        <span class="muted">@v.Count purchase@(v.Count == 1 ? "" : "s") · last @v.LastBought.ToString("MMM d, yyyy")@(v.AvgPrice is { } ap ? $" · avg {Money(ap)}" : "")</span>
+                    </li>
+                }
+            </ul>
+        </section>
+    }
+
     @if (priceSeries.Count >= 2)
     {
         <section class="panel">
@@ -179,6 +234,7 @@ else
                         <th scope="col">Since previous</th>
                         <th scope="col">Qty</th>
                         <th scope="col">Size</th>
+                        <th scope="col">Variety</th>
                         <th scope="col">Unit price</th>
                     </tr>
                 </thead>
@@ -190,6 +246,7 @@ else
                             <td>@(h.GapDays is { } g ? $"{g} day{(g == 1 ? "" : "s")}" : "—")</td>
                             <td>@h.Quantity.ToString("0.##")</td>
                             <td>@(SizeFormat.Normalize(h.Size) is { Length: > 0 } s ? s : "—")</td>
+                            <td>@(h.Variety is { Length: > 0 } v ? v : "—")</td>
                             <td>@(h.UnitPrice is { } up ? up.ToString("C") : "—")</td>
                         </tr>
                     }
@@ -210,15 +267,18 @@ else
     private readonly List<decimal> priceSeries = [];
     private string? chartSizeLabel; // the charted size bucket, shown only when the product mixes sizes
     private List<BrandRow> brandBreakdown = [];
+    private List<VarietyRow> varietyBreakdown = [];
     private List<RecipeLink> usedInRecipes = [];
 
     private string newSubstitute = "";
     private bool suggesting;
 
     private const string Unbranded = "Unbranded";
+    private const string Unlabeled = "Unlabeled";
 
-    private record PurchaseRow(DateOnly Date, int? GapDays, decimal Quantity, string? Size, decimal? UnitPrice);
+    private record PurchaseRow(DateOnly Date, int? GapDays, decimal Quantity, string? Size, string? Variety, decimal? UnitPrice);
     private record BrandRow(string Brand, int Count, decimal? AvgPrice);
+    private record VarietyRow(string Variety, int Count, DateOnly LastBought, decimal? AvgPrice);
     private record RecipeLink(int Id, string Name);
 
     private int? loadedId;
@@ -238,7 +298,20 @@ else
         priceSeries.Clear();
         chartSizeLabel = null;
         brandBreakdown = [];
+        varietyBreakdown = [];
         usedInRecipes = [];
+
+        // Transient edit affordances must not survive a product switch: a merge navigates this SAME
+        // reused component instance to the target product, and a panel left open there would offer a
+        // stale candidate list — including the product now on screen. (Found live: the panel arrived
+        // open on the merge target.) Rename gets the same reset for the same reuse reason.
+        renaming = false;
+        renameError = null;
+        merging = false;
+        mergeError = null;
+        mergeTargetId = 0;
+        mergeVariety = null;
+        mergeCandidates = [];
 
         await using var db = await DbFactory.CreateDbContextAsync();
         product = await db.Products
@@ -282,7 +355,7 @@ else
             int? gap = i > 0 ? pe.PurchasedAt.DayNumber - ordered[i - 1].PurchasedAt.DayNumber : null;
             decimal? price = pe.ReceiptId is { } rid && priceLookup.TryGetValue(rid, out var pr) ? pr : null;
             if (price is { } pv) pricePoints.Add(new PricePoint(pe.Size, pe.PurchasedAt, pv));
-            history.Add(new PurchaseRow(pe.PurchasedAt, gap, pe.Quantity, pe.Size, price));
+            history.Add(new PurchaseRow(pe.PurchasedAt, gap, pe.Quantity, pe.Size, pe.Variety, price));
         }
         history.Reverse(); // most recent first
 
@@ -306,6 +379,23 @@ else
                 return new BrandRow(g.Key, g.Count(), prices.Count > 0 ? prices.Average() : null);
             })
             .OrderByDescending(b => b.Count).ThenBy(b => b.Brand)
+            .ToList();
+
+        // The variety split (Jordan's drink-mix ask): strawberry vs. grape across EVERY brand — the
+        // Kool-Aid strawberry and the Crystal Light strawberry are one variety row. Purchases from
+        // before variety tracking (or plain items) group under "Unlabeled"; the section only renders
+        // when a real variety exists. The rhythm panel above stays collective on purpose — variety,
+        // like brand and size, never splits the cadence.
+        varietyBreakdown = product.Purchases
+            .GroupBy(pe => string.IsNullOrWhiteSpace(pe.Variety) ? Unlabeled : pe.Variety!.Trim(),
+                StringComparer.OrdinalIgnoreCase)
+            .Select(g =>
+            {
+                var prices = g.Select(PriceOf).Where(p => p is not null).Select(p => p!.Value).ToList();
+                return new VarietyRow(g.Key, g.Count(), g.Max(pe => pe.PurchasedAt),
+                    prices.Count > 0 ? prices.Average() : null);
+            })
+            .OrderByDescending(v => v.Count).ThenBy(v => v.Variety)
             .ToList();
 
         // Saved recipes whose ingredient→product map points at this item (grounded match captured at
@@ -362,6 +452,64 @@ else
             renameError = null;
         }
         finally { renameBusy = false; }
+    }
+
+    // Merging (the repair path for variety-split history — see ProductMergeService). The candidate
+    // list loads when the panel opens; picking a target pre-fills the variety label from the words
+    // this product's name would lose ("Strawberry Drink Mix" → "Drink Mix" suggests "Strawberry").
+    // On success we navigate to the surviving product — this page's subject no longer exists.
+    private bool merging;
+    private bool mergeBusy;
+    private int mergeTargetId;
+    private string? mergeVariety;
+    private string? mergeError;
+    private List<MergeCandidate> mergeCandidates = [];
+    private record MergeCandidate(int Id, string Name);
+
+    private async Task OpenMerge()
+    {
+        if (product is null) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        mergeCandidates = await db.Products
+            .Where(p => p.Id != product.Id)
+            .OrderBy(p => p.Name)
+            .Select(p => new MergeCandidate(p.Id, p.Name))
+            .ToListAsync();
+        mergeTargetId = 0;
+        mergeVariety = null;
+        mergeError = null;
+        merging = true;
+    }
+
+    private void CancelMerge()
+    {
+        merging = false;
+        mergeError = null;
+    }
+
+    private void OnMergeTargetChanged()
+    {
+        if (product is null) return;
+        var target = mergeCandidates.FirstOrDefault(c => c.Id == mergeTargetId);
+        mergeVariety = target is null ? null
+            : ProductMergeService.SuggestVarietyLabel(product.Name, target.Name);
+    }
+
+    private async Task SaveMerge()
+    {
+        if (product is null || mergeBusy || mergeTargetId == 0) return;
+        mergeBusy = true;
+        try
+        {
+            var result = await Merger.MergeAsync(product.Id, mergeTargetId, mergeVariety);
+            if (!result.Ok)
+            {
+                mergeError = result.Message;
+                return;
+            }
+            Nav.NavigateTo($"/product/{mergeTargetId}");
+        }
+        finally { mergeBusy = false; }
     }
 
     // "Also works as" editing. Each change persists immediately and reloads the list (so removes have ids).

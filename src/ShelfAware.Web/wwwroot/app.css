@@ -1325,6 +1325,22 @@ button.tag-chip {
     min-width: 16rem;
 }
 
+/* Merge-into panel: the two controls sit side by side and wrap on narrow screens. */
+.merge-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-top: 0.6rem;
+}
+
+.merge-controls label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+
 .item-name:hover {
     text-decoration: underline;
 }
