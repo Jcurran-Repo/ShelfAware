@@ -62,12 +62,15 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
     // (each as days-ago + quantity), plus any live signals and "also works as" substitutes.
     // DriftPerDayAgo is the signed fraction of the price added per day in the past — NEGATIVE means it
     // used to be cheaper (the price is rising), positive means it's coming down.
+    // BuyVariants rotates brand + variety across the buys (cycled by buy index) for items bought in
+    // flavors — the Variety feature's demo stage; null keeps the product's one Brand and no variety.
     private sealed record Seed(
         string Name, Category Category, string? Brand, string Size, decimal Price, string[] Tags,
         (int DaysAgo, decimal Qty)[] Buys,
         (int DaysAgo, SignalKind Kind)[]? Signals = null,
         string[]? AlsoWorksAs = null,
-        double DriftPerDayAgo = 0);
+        double DriftPerDayAgo = 0,
+        (string? Brand, string? Variety)[]? BuyVariants = null);
 
     private static (List<Product> Products, List<Receipt> Receipts) BuildCatalog(DateOnly today)
     {
@@ -123,6 +126,21 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
             new("Paper Napkins", Category.Household, "Vanity Fair", "100 ct", 3.42m, ["Paper"],
                 Trips(3, 40, 5, 6), Signals: [(1, SignalKind.RunningLow)]),
 
+            // Variety hero: one item bought across two brands AND several flavors — the cadence is the
+            // drink mix's collectively, while Product Detail splits the buys by variety (note strawberry
+            // arrives from BOTH brands, so the variety rows really do pool across brand).
+            new("Drink Mix", Category.Beverage, "Kool-Aid", "6 ct", 3.24m, ["Snack"],
+                Trips(6, 9, 2, 3),
+                BuyVariants: [("Kool-Aid", "Strawberry"), ("Crystal Light", "Grape"),
+                              ("Kool-Aid", "Grape"), ("Crystal Light", "Strawberry"),
+                              ("Kool-Aid", "Strawberry"), ("Kool-Aid", "Tropical Punch")]),
+
+            // Unbranded varieties: produce rotates varietals, not flavors.
+            new("Apples", Category.Produce, null, "3 lb bag", 4.42m, ["Fruit", "Snack"],
+                Trips(5, 10, 2, 4),
+                BuyVariants: [(null, "Gala"), (null, "Honeycrisp"), (null, "Gala"),
+                              (null, "Fuji"), (null, "Gala")]),
+
             // ---- Overdue by the stats (populate the dashboard's "overdue") ----
             new("Sandwich Bread", Category.Pantry, "Nature's Own", "20 oz", 2.98m, ["Bakery"],
                 [(11, 1), (18, 1), (26, 1), (33, 1), (40, 1)]),
@@ -145,7 +163,9 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
             // Eggs are the "price is easing" counter-hero: pricier in the past, drifting down (green ▼).
             new("Large Eggs", Category.Dairy, "Great Value", "18 ct", 4.86m, ["Breakfast", "Protein"],
                 Trips(6, 9, 2, 8), DriftPerDayAgo: 0.002),
-            new("Greek Yogurt", Category.Dairy, "Chobani", "32 oz", 5.94m, ["Breakfast"], Trips(5, 11, 3, 9)),
+            new("Greek Yogurt", Category.Dairy, "Chobani", "32 oz", 5.94m, ["Breakfast"], Trips(5, 11, 3, 9),
+                BuyVariants: [("Chobani", "Strawberry"), ("Chobani", "Plain"), ("Chobani", "Blueberry"),
+                              ("Chobani", "Plain"), ("Chobani", "Strawberry")]),
             new("Salted Butter", Category.Dairy, "Land O'Lakes", "1 lb", 4.48m, ["Baking"], Trips(4, 26, 5, 4)),
             new("Bacon", Category.Meat, "Oscar Mayer", "16 oz", 6.48m, ["Protein", "Breakfast"], Trips(4, 18, 4, 15)),
             new("Baby Spinach", Category.Produce, null, "10 oz", 2.98m, ["Vegetable", "Salad"], Trips(5, 8, 2, 7)),
@@ -213,17 +233,24 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
                 })],
             };
 
-            foreach (var (daysAgo, qty) in s.Buys)
+            for (var buy = 0; buy < s.Buys.Length; buy++)
             {
+                var (daysAgo, qty) = s.Buys[buy];
+                // Items sold in flavors rotate brand + variety across their buys; the rest keep the
+                // product's single brand. The raw line carries the variety like a real shelf label.
+                var (brand, variety) = s.BuyVariants is { Length: > 0 } variants
+                    ? variants[buy % variants.Length]
+                    : (s.Brand, null);
                 var date = today.AddDays(-daysAgo);
                 var trip = TripOn(date);
                 trip.Lines.Add(new ReceiptLine
                 {
                     RawText = string.Join(' ',
-                        new[] { s.Brand, s.Name, s.Size }.Where(v => !string.IsNullOrEmpty(v))).ToUpperInvariant(),
+                        new[] { brand, variety, s.Name, s.Size }.Where(v => !string.IsNullOrEmpty(v))).ToUpperInvariant(),
                     NormalizedName = s.Name,
-                    Brand = s.Brand,
+                    Brand = brand,
                     Size = s.Size,
+                    Variety = variety,
                     Quantity = qty,
                     UnitPrice = PriceOn(s, daysAgo),
                     Category = s.Category,
@@ -234,8 +261,9 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
                 {
                     PurchasedAt = date,
                     Quantity = qty,
-                    Brand = s.Brand,
+                    Brand = brand,
                     Size = s.Size,
+                    Variety = variety,
                     Source = PurchaseSource.Receipt,
                     Receipt = trip, // tie the buy to its trip so per-purchase price lookups hit exactly
                 });

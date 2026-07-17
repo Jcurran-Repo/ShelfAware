@@ -209,6 +209,14 @@ _Last updated: 7/7/2026_
 
 ---
 
+## v3.5 — Variety (flavor as per-purchase metadata)
+- [x] `Variety` on ReceiptLine + PurchaseEvent + extraction — flavor/varietal tracked like Brand and Size: extraction strips it from the item name into its own field (Kool-Aid Strawberry Drink Mix → "Drink Mix" / Kool-Aid / Strawberry), so every flavor rolls into ONE product and the cadence is the item's collectively; cut/form/lean% stay in the name (Whole Milk keeps Whole). Live-verified end-to-end via auto-import of a synthetic receipt — 7/17/2026
+- [x] Product Detail "Varieties bought" split (count · last bought · avg price, pooled across brands — both brands' strawberry are one row) + Variety column in Recent purchases + editable Variety column on Upload review — 7/17/2026
+- [x] Product merge (⇆ on Product Detail) — folds a split product into its item: moves purchases/lines/aliases/signals before the delete (one transaction), unions tags + substitutes, re-points name-keyed recipe links, and labels moved purchases' variety with a name-diff pre-fill ("Strawberry Drink Mix" → "Drink Mix" suggests "Strawberry"). The repair path for pre-variety history, and for dup-guard "Add anyway" twins generally — 7/17/2026
+- [x] Demo seeder varieties (Drink Mix hero across two brands + four flavors, apple varietals, yogurt flavors) — 7/17/2026
+
+---
+
 ## Backlog (unscheduled)
 - [x] Double-scroll fix (Grocery List + Upload review) — 7/2/2026
 - [ ] CSV history importer — Parked (blocked on an itemized data export)

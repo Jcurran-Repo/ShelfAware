@@ -355,6 +355,34 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      SUCCESSFUL new batch (a failed call keeps the old cards on screen AND in storage). `Have`/`ToGrab`
      are `[JsonIgnore]` — availability marks must recompute live, never replay the stored verdict.
 
+14. **v3.5 — Variety (2026-07-17, branch `feature/variety`):** flavor/varietal is per-purchase
+   metadata now, exactly like Brand and Size — the fourth line of the data-model rule below.
+   - **`Variety` (`string?`) on `ReceiptLine` + `PurchaseEvent` + `ExtractedLine`** (AdditiveSchema
+     columns, so live DBs migrate on boot). Extraction prompt rule 3 now STRIPS flavor/varietal into
+     the `variety` field ("Kool-Aid Strawberry Drk Mix" → name "Drink Mix", variety "Strawberry")
+     while type/cut/form/lean% STAY in the name — "Whole Milk" keeps Whole, "Chicken Breast" keeps
+     Breast, and an ingredient that IS the item ("Chicken Jerky Dog Treats") is not a flavor. Rule 12
+     matches existing products across flavor differences like it already did across brand + size.
+     Live-verified: a synthetic receipt extracted Strawberry/Grape/Gala; milk got null.
+   - **The cadence stays the ITEM's** — pooled over every brand and variety (Jordan's spec:
+     "frequency is determined collectively, not individually"). Nothing in the predictor changed.
+     Product Detail gains "Varieties bought" (count · last bought · avg price — strawberry pools
+     across Kool-Aid AND Crystal Light) plus a Variety column in Recent purchases; the Upload review
+     grid gains an editable Variety column.
+   - **`ProductMergeService` + a ⇆ Merge panel on Product Detail** — the repair path for history:
+     pre-variety products carry the flavor in their NAME ("Strawberry Drink Mix") and can never roll
+     up on their own. Merge moves purchases/lines/aliases/signals (immediate `ExecuteUpdate` through
+     the household filter, BEFORE the source delete, one transaction — purchases/signals/tags cascade
+     on product delete and ReceiptLine.ProductId has no delete action), unions tags+substitutes,
+     re-points `RecipeIngredient.MatchedProduct` (the rename rule), and can stamp the moved rows'
+     Variety — `SuggestVarietyLabel` pre-fills it from the name diff, filling only NULLs (COALESCE).
+     ⚠️ Until old split products are merged, extraction's existing_product/matcher may still route a
+     new flavor into a variety-named product (substring match) — review catches it; merging fixes it.
+   - **Transient edit panels reset on product switch** in ProductDetail's OnParametersSetAsync —
+     found live: a merge navigates the reused component instance to the TARGET, which arrived with
+     the panel still open offering a stale candidate list including itself. Don't remove that reset.
+   - Demo seeder: `Seed.BuyVariants` rotates brand+variety per buy (Drink Mix hero, Apples, yogurt).
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active
@@ -503,10 +531,10 @@ A product is a brand-agnostic **item**; brand and size are tracked **per purchas
 the same item bought across brands/sizes rolls up into one product.
 
 - `Product.Name` is the brand-stripped item ("Whole Milk", "Chicken Wrapped Cod Skin Dog
-  Treats"). `Brand` and `Size` (both `string?`) live on `ReceiptLine` **and**
-  `PurchaseEvent`; `ConfirmAll` copies the reviewed line's brand+size onto both. Matching
-  (ProductMatcher + aliases) keys on the item name only — so different brands/sizes merge,
-  and the old store-brand collision is moot.
+  Treats"). `Brand`, `Size`, and (since v3.5) `Variety` (all `string?`) live on `ReceiptLine`
+  **and** `PurchaseEvent`; `ConfirmAll` copies the reviewed line's brand+size+variety onto both.
+  Matching (ProductMatcher + aliases) keys on the item name only — so different brands/sizes/
+  flavors merge, and the old store-brand collision is moot.
 - Extraction prompt drives `normalized_name`=item, `brand`=brand, `size`=size. **Gotcha:
   keep the item's DISTINGUISHING words (variety/cut/flavor/form); strip ONLY brand + size.**
   An early prompt over-shortened "…Chicken Jerky Dog Treats" to bare "Dog Treats" and merged
