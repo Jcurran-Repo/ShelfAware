@@ -129,18 +129,16 @@ else
                 <tr>
                     <td>
                         <a class="item-name" href="/product/@p.Id">@p.Name</a>
-                        @{ var ub = e.UsualBrand; var rs = e.RecommendedSize; }
-                        @if (rs is { Length: > 0 } || ub is not null || p.Tags.Count > 0)
+                        @{ var ub = e.UsualBrand; var uv = e.UsualVariety; var rs = e.RecommendedSize; }
+                        @if (rs is { Length: > 0 } || ub is not null || uv is not null || p.Tags.Count > 0)
                         {
                             <div class="item-meta">
                                 @if (rs is { Length: > 0 } sz)
                                 {
                                     <span class="size-chip" title="Usual size to buy">@sz</span>
                                 }
-                                @if (ub is not null)
-                                {
-                                    <span class="usual-brand">@ub</span>
-                                }
+                                <BrandVarietyHint UsualBrand="@ub" UsualVariety="@uv"
+                                                  Brands="@e.BrandsBought" Varieties="@e.VarietiesBought" />
                                 @foreach (var t in p.Tags.OrderBy(t => t.Value))
                                 {
                                     <button type="button" class="tag-chip tag-chip-mini" @onclick="() => ToggleTag(t.Value)" title="Filter by @t.Value">@t.Value</button>

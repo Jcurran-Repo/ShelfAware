@@ -1,0 +1,37 @@
+@* The usual-brand + usual-variety chips every shopping surface shares (Grocery List, Products grid,
+   dashboard cards), with the full plural breakdown one tap away. A native <details> rather than a
+   title-attribute tooltip because title needs a hover and phones don't have one — in the store, the
+   answer to "which kinds do we actually buy?" has to open on a tap. The breakdown expands inline
+   (no floating popover: the grids live inside overflow-scroll containers that would clip one). *@
+@if (UsualBrand is not null || UsualVariety is not null)
+{
+    <details class="hint-pop">
+        <summary aria-label="Usual brand and variety — expand for every kind bought">
+            @if (UsualBrand is { } brand)
+            {
+                <span class="usual-brand">@brand</span>
+            }
+            @if (UsualVariety is { } variety)
+            {
+                <span class="usual-variety">@variety</span>
+            }
+        </summary>
+        <div class="hint-pop-body">
+            @if (Brands.Count > 0)
+            {
+                <div><span class="hint-label">Brands</span> @string.Join(" · ", Brands)</div>
+            }
+            @if (Varieties.Count > 0)
+            {
+                <div><span class="hint-label">Varieties</span> @string.Join(" · ", Varieties)</div>
+            }
+        </div>
+    </details>
+}
+
+@code {
+    [Parameter] public string? UsualBrand { get; set; }
+    [Parameter] public string? UsualVariety { get; set; }
+    [Parameter] public IReadOnlyList<string> Brands { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> Varieties { get; set; } = [];
+}

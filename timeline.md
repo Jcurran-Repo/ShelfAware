@@ -214,6 +214,8 @@ _Last updated: 7/7/2026_
 - [x] Product Detail "Varieties bought" split (count · last bought · avg price, pooled across brands — both brands' strawberry are one row) + Variety column in Recent purchases + editable Variety column on Upload review — 7/17/2026
 - [x] Product merge (⇆ on Product Detail) — folds a split product into its item: moves purchases/lines/aliases/signals before the delete (one transaction), unions tags + substitutes, re-points name-keyed recipe links, and labels moved purchases' variety with a name-diff pre-fill ("Strawberry Drink Mix" → "Drink Mix" suggests "Strawberry"). The repair path for pre-variety history, and for dup-guard "Add anyway" twins generally — 7/17/2026
 - [x] Demo seeder varieties (Drink Mix hero across two brands + four flavors, apple varietals, yogurt flavors) — 7/17/2026
+- [x] Variety shown everywhere brand is (grocery list, products grid, dashboard cards, copy/print text) — usual variety with "+N", and a tap-to-expand breakdown of every brand and variety bought (native details, phone-friendly) — 7/17/2026
+- [x] Buy-quantity is a TRIP's worth: same-day lines sum before the median, so 3 Gala + 3 Honeycrisp on one receipt recommends 6 apples (est. cost follows); demo data buys realistic multiples — 7/17/2026
 
 ---
 

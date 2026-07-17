@@ -128,18 +128,21 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
 
             // Variety hero: one item bought across two brands AND several flavors — the cadence is the
             // drink mix's collectively, while Product Detail splits the buys by variety (note strawberry
-            // arrives from BOTH brands, so the variety rows really do pool across brand).
+            // arrives from BOTH brands, so the variety rows really do pool across brand). Quantities
+            // vary like real shopping — nobody buys exactly one packet forever.
             new("Drink Mix", Category.Beverage, "Kool-Aid", "6 ct", 3.24m, ["Snack"],
-                Trips(6, 9, 2, 3),
+                [(3, 2), (12, 2), (21, 1), (30, 2), (38, 1), (47, 3)],
                 BuyVariants: [("Kool-Aid", "Strawberry"), ("Crystal Light", "Grape"),
                               ("Kool-Aid", "Grape"), ("Crystal Light", "Strawberry"),
                               ("Kool-Aid", "Strawberry"), ("Kool-Aid", "Tropical Punch")]),
 
-            // Unbranded varieties: produce rotates varietals, not flavors.
-            new("Apples", Category.Produce, null, "3 lb bag", 4.42m, ["Fruit", "Snack"],
-                Trips(5, 10, 2, 4),
-                BuyVariants: [(null, "Gala"), (null, "Honeycrisp"), (null, "Gala"),
-                              (null, "Fuji"), (null, "Gala")]),
+            // Unbranded varieties, bought loose and TWO KINDS PER TRIP (paired same-day lines):
+            // 3 Gala + 3 Honeycrisp on one receipt is a six-apple trip, so the grocery list should
+            // say 6 with "Gala +2" — the per-trip quantity + variety-hint case, exactly as shopped.
+            new("Apples", Category.Produce, null, "each", 0.78m, ["Fruit", "Snack"],
+                [(4, 3), (4, 3), (13, 3), (13, 3), (23, 3), (23, 2), (32, 3), (32, 3)],
+                BuyVariants: [(null, "Gala"), (null, "Honeycrisp"), (null, "Gala"), (null, "Honeycrisp"),
+                              (null, "Gala"), (null, "Fuji"), (null, "Gala"), (null, "Honeycrisp")]),
 
             // ---- Overdue by the stats (populate the dashboard's "overdue") ----
             new("Sandwich Bread", Category.Pantry, "Nature's Own", "20 oz", 2.98m, ["Bakery"],

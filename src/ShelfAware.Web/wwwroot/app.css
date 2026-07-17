@@ -1110,6 +1110,55 @@ td.raw .chip {
     color: var(--ink-soft);
 }
 
+.usual-variety {
+    font-size: 0.78rem;
+    color: var(--accent);
+    font-style: italic;
+}
+
+/* Tap-for-detail brand/variety breakdown (BrandVarietyHint). Expands inline — the grids sit in
+   overflow-scroll containers that would clip a floating popover. */
+.hint-pop {
+    display: inline-block;
+}
+
+.hint-pop summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+    list-style: none;
+}
+
+.hint-pop summary::-webkit-details-marker {
+    display: none;
+}
+
+.hint-pop summary::after {
+    content: "▾";
+    font-size: 0.65rem;
+    color: var(--muted);
+}
+
+.hint-pop[open] summary::after {
+    content: "▴";
+}
+
+.hint-pop-body {
+    margin-top: 0.25rem;
+    padding: 0.3rem 0.55rem;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface-alt);
+    font-size: 0.75rem;
+    color: var(--ink-soft);
+}
+
+.hint-pop-body .hint-label {
+    font-weight: 600;
+    margin-right: 0.3rem;
+}
+
 /* Neutral pill for package size (part of the product's identity). */
 .size-chip {
     display: inline-block;

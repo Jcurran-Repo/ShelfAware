@@ -184,17 +184,15 @@ else
                         <tr>
                             <td>
                                 <a class="item-name" href="/product/@e.ProductId">@e.Name</a>
-                                @if (e.RecommendedSize is { Length: > 0 } || e.UsualBrand is not null || e.Tags.Count > 0)
+                                @if (e.RecommendedSize is { Length: > 0 } || e.UsualBrand is not null || e.UsualVariety is not null || e.Tags.Count > 0)
                                 {
                                     <div class="item-meta">
                                         @if (e.RecommendedSize is { Length: > 0 } sz)
                                         {
                                             <span class="size-chip" title="Suggested size to buy">@sz</span>
                                         }
-                                        @if (e.UsualBrand is { } brand)
-                                        {
-                                            <span class="usual-brand">@brand</span>
-                                        }
+                                        <BrandVarietyHint UsualBrand="@e.UsualBrand" UsualVariety="@e.UsualVariety"
+                                                          Brands="@e.BrandsBought" Varieties="@e.VarietiesBought" />
                                         @foreach (var t in e.Tags)
                                         {
                                             <a class="tag-chip tag-chip-mini" href="/products?tag=@Uri.EscapeDataString(t)" title="See all @t products">@t</a>
@@ -374,6 +372,7 @@ else
         {
             var qualifiers = new List<string>();
             if (e.UsualBrand is { } b) qualifiers.Add(b);
+            if (e.UsualVariety is { } v) qualifiers.Add(v);
             if (e.RecommendedSize is { Length: > 0 } s) qualifiers.Add(s);
             var q = qualifiers.Count > 0 ? $" ({string.Join(", ", qualifiers)})" : "";
             var cost = e.ExpectedCost is { } c ? $" — {Money(c)}" : "";

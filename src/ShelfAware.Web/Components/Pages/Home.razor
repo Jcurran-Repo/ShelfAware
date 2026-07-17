@@ -62,18 +62,18 @@ else
                         @{
                             var size = SizeFormat.Normalize(r.RecommendedSize);
                             var brand = ShoppingEstimator.UsualBrandOf(p.Purchases);
+                            var variety = ShoppingEstimator.UsualVarietyOf(p.Purchases);
                         }
-                        @if (size is { Length: > 0 } || brand is not null)
+                        @if (size is { Length: > 0 } || brand is not null || variety is not null)
                         {
                             <div class="item-meta">
                                 @if (size is { Length: > 0 } sz)
                                 {
                                     <span class="size-chip" title="Suggested size to buy">@sz</span>
                                 }
-                                @if (brand is not null)
-                                {
-                                    <span class="usual-brand">@brand</span>
-                                }
+                                <BrandVarietyHint UsualBrand="@brand" UsualVariety="@variety"
+                                                  Brands="@ShoppingEstimator.BrandsBoughtOf(p.Purchases)"
+                                                  Varieties="@ShoppingEstimator.VarietiesBoughtOf(p.Purchases)" />
                             </div>
                         }
                         @{

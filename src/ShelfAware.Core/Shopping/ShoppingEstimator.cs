@@ -40,6 +40,16 @@ public record ProductEstimate
     /// <summary>Most-bought brand for this item, with a "+N" hint when bought across several brands
     /// (e.g. "Great Value +2"); null when no purchase carries a brand.</summary>
     public string? UsualBrand { get; init; }
+    /// <summary>Most-bought variety, same shape as <see cref="UsualBrand"/> ("Gala +1" = usually
+    /// gala, other kinds too); null when no purchase carries a variety. Shown wherever the brand is —
+    /// a variety you can't see is a variety you can't shop for.</summary>
+    public string? UsualVariety { get; init; }
+    /// <summary>Every brand bought as "Name ×buys", most-bought first — the breakdown behind
+    /// <see cref="UsualBrand"/>'s "+N", for the tap-for-detail hint on the shopping surfaces.</summary>
+    public IReadOnlyList<string> BrandsBought { get; init; } = [];
+    /// <summary>Every variety bought, same shape as <see cref="BrandsBought"/> — so "fresh Envy and
+    /// Cosmic Crisp" is one tap away on the list, not a trip to the product page.</summary>
+    public IReadOnlyList<string> VarietiesBought { get; init; } = [];
     /// <summary>The product's descriptive tags, for display on the shopping list.</summary>
     public IReadOnlyList<string> Tags { get; init; } = [];
 }
@@ -49,12 +59,20 @@ public static class ShoppingEstimator
     public static ProductEstimate For(Product product, PredictionResult prediction, DateOnly today, decimal? unitPrice)
     {
         var purchaseDates = product.Purchases.Select(p => p.PurchasedAt).ToList();
-        var quantities = product.Purchases.Select(p => p.Quantity).Where(q => q > 0).ToList();
-        var typicalQuantity = quantities.Count > 0 ? Median(quantities) : 1m;
+
+        // A typical buy is a TRIP's worth, not a receipt line's worth: 3 Gala plus 3 Honeycrisp on one
+        // receipt is a six-apple trip, and the list should say 6. Same-day quantities sum (the predictor's
+        // stock-up factor already reads trips this way), then the median runs over trips.
+        var tripTotals = product.Purchases
+            .Where(p => p.Quantity > 0)
+            .GroupBy(p => p.PurchasedAt)
+            .Select(g => g.Sum(p => p.Quantity))
+            .ToList();
+        var typicalQuantity = tripTotals.Count > 0 ? Median(tripTotals) : 1m;
 
         // Round the buy-quantity UP for whole-unit (count) items so a median like 1.5 reads as "buy 2".
-        // Genuinely weight/volume-priced items (any purchase quantity is fractional) stay precise.
-        var allWhole = quantities.All(q => q == decimal.Truncate(q));
+        // Genuinely weight/volume-priced items (any trip total is fractional) stay precise.
+        var allWhole = tripTotals.All(q => q == decimal.Truncate(q));
         var recommendedQuantity = allWhole ? Math.Ceiling(typicalQuantity) : typicalQuantity;
 
         return new ProductEstimate
@@ -73,6 +91,9 @@ public static class ShoppingEstimator
             ExpectedCost = unitPrice is { } price ? price * recommendedQuantity : null,
             RecommendedSize = SizeFormat.Normalize(prediction.RecommendedSize),
             UsualBrand = UsualBrandOf(product.Purchases),
+            UsualVariety = UsualVarietyOf(product.Purchases),
+            BrandsBought = BrandsBoughtOf(product.Purchases),
+            VarietiesBought = VarietiesBoughtOf(product.Purchases),
             Tags = product.Tags.Select(t => t.Value).OrderBy(t => t).ToList(),
         };
     }
@@ -80,17 +101,34 @@ public static class ShoppingEstimator
     /// <summary>Most-bought brand across an item's purchases, with a "+N" hint when bought across several
     /// brands (e.g. "Great Value +2"); null when no purchase carries a brand. Shared by the Products grid,
     /// Grocery List, and dashboard so the "usual brand" reads identically everywhere.</summary>
-    public static string? UsualBrandOf(IEnumerable<PurchaseEvent> purchases)
+    public static string? UsualBrandOf(IEnumerable<PurchaseEvent> purchases) => UsualOf(purchases, pe => pe.Brand);
+
+    /// <summary>Most-bought variety, same rules and "+N" shape as <see cref="UsualBrandOf"/>.</summary>
+    public static string? UsualVarietyOf(IEnumerable<PurchaseEvent> purchases) => UsualOf(purchases, pe => pe.Variety);
+
+    /// <summary>Every brand bought as "Name ×buys", most-bought first (ties alphabetical) — what the
+    /// "+N" hint summarizes; the shopping surfaces show it on tap.</summary>
+    public static IReadOnlyList<string> BrandsBoughtOf(IEnumerable<PurchaseEvent> purchases) =>
+        [.. GroupsOf(purchases, pe => pe.Brand).Select(g => $"{g.Key} ×{g.Count()}")];
+
+    /// <summary>Every variety bought, same shape as <see cref="BrandsBoughtOf"/>.</summary>
+    public static IReadOnlyList<string> VarietiesBoughtOf(IEnumerable<PurchaseEvent> purchases) =>
+        [.. GroupsOf(purchases, pe => pe.Variety).Select(g => $"{g.Key} ×{g.Count()}")];
+
+    private static string? UsualOf(IEnumerable<PurchaseEvent> purchases, Func<PurchaseEvent, string?> label)
     {
-        var brands = purchases
-            .Where(pe => !string.IsNullOrWhiteSpace(pe.Brand))
-            .GroupBy(pe => pe.Brand!.Trim())
-            .OrderByDescending(g => g.Count())
-            .ThenBy(g => g.Key)
-            .ToList();
-        if (brands.Count == 0) return null;
-        return brands.Count == 1 ? brands[0].Key : $"{brands[0].Key} +{brands.Count - 1}";
+        var groups = GroupsOf(purchases, label);
+        if (groups.Count == 0) return null;
+        return groups.Count == 1 ? groups[0].Key : $"{groups[0].Key} +{groups.Count - 1}";
     }
+
+    private static List<IGrouping<string, PurchaseEvent>> GroupsOf(
+        IEnumerable<PurchaseEvent> purchases, Func<PurchaseEvent, string?> label) =>
+        [.. purchases
+            .Where(pe => !string.IsNullOrWhiteSpace(label(pe)))
+            .GroupBy(pe => label(pe)!.Trim())
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key)];
 
     private static decimal Median(List<decimal> values)
     {

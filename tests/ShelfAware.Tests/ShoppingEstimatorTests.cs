@@ -147,6 +147,56 @@ public class ShoppingEstimatorTests
     }
 
     [Fact]
+    public void RecommendedQuantity_SumsSameDayLines_IntoOneTripTotal()
+    {
+        // 3 Gala + 3 Honeycrisp on one receipt is a six-apple TRIP — the list should say 6, not the
+        // per-line 3. Same-day lines sum (the predictor's stock-up factor reads trips the same way).
+        var product = ProductWith((0, 3m), (0, 3m), (10, 3m), (10, 3m), (20, 3m), (20, 2m));
+
+        var e = ShoppingEstimator.For(product, Prediction(PredictionStatus.Stocked, D(30)), D(20), unitPrice: 1m);
+
+        Assert.Equal(6m, e.TypicalQuantity);      // trip totals 6, 6, 5 → median 6
+        Assert.Equal(6m, e.RecommendedQuantity);
+        Assert.Equal(6m, e.ExpectedCost);         // costs a trip's worth, not a line's worth
+    }
+
+    [Fact]
+    public void UsualVariety_IsMostBoughtVariety_WithPlusNHint_AndBreakdownsListEveryKind()
+    {
+        var product = new Product
+        {
+            Id = 1,
+            Name = "Apples",
+            Category = Category.Produce,
+            Purchases =
+            [
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(0), Variety = "Gala" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(0), Variety = "Honeycrisp" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(10), Variety = "Gala", Brand = "Rainier" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(20), Variety = "Fuji" },
+            ],
+        };
+
+        var e = ShoppingEstimator.For(product, Prediction(PredictionStatus.Stocked, D(30)), D(20), unitPrice: null);
+
+        Assert.Equal("Gala +2", e.UsualVariety);
+        // Most-bought first, ties alphabetical — the tap-for-detail list behind the "+N".
+        Assert.Equal(["Gala ×2", "Fuji ×1", "Honeycrisp ×1"], e.VarietiesBought);
+        Assert.Equal(["Rainier ×1"], e.BrandsBought);
+    }
+
+    [Fact]
+    public void UsualVariety_IsNull_WhenNoPurchaseCarriesAVariety()
+    {
+        var product = ProductWith((0, 1m), (10, 1m)); // ProductWith leaves Variety null
+
+        var e = ShoppingEstimator.For(product, Prediction(PredictionStatus.Stocked, D(20)), D(10), unitPrice: null);
+
+        Assert.Null(e.UsualVariety);
+        Assert.Empty(e.VarietiesBought);
+    }
+
+    [Fact]
     public void UsualBrand_IsMostBoughtBrand_WithPlusNHintAcrossBrands()
     {
         var product = new Product
