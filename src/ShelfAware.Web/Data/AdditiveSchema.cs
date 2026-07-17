@@ -20,6 +20,11 @@ public static class AdditiveSchema
     {
         // 2026-07-12: the user's "I checked every line" flag for the in-app accuracy check.
         EnsureColumn(db, table: "Receipts", column: "VerifiedForEval", definition: "INTEGER NOT NULL DEFAULT 0");
+
+        // 2026-07-17: flavor/varietal as per-purchase metadata (like Brand and Size) — the Variety
+        // feature. Pre-existing rows get NULL: their variety, if any, is baked into the product name.
+        EnsureColumn(db, table: "ReceiptLines", column: "Variety", definition: "TEXT NULL");
+        EnsureColumn(db, table: "PurchaseEvents", column: "Variety", definition: "TEXT NULL");
     }
 
     public static void Apply(AuthDbContext db)

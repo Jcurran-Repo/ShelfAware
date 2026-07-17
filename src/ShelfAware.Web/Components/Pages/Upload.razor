@@ -142,6 +142,7 @@ else if (phase == Phase.Review && receipt is not null)
                     <th scope="col">Item</th>
                     <th scope="col">Brand</th>
                     <th scope="col">Size</th>
+                    <th scope="col">Variety</th>
                     <th scope="col">Qty</th>
                     <th scope="col">Category</th>
                     <th scope="col">Tags</th>
@@ -165,6 +166,7 @@ else if (phase == Phase.Review && receipt is not null)
                         <td><input @bind="line.NormalizedName" aria-label="Item name for @line.RawText" /></td>
                         <td><input @bind="line.Brand" size="12" placeholder="—" aria-label="Brand for @line.RawText" /></td>
                         <td><input @bind="line.Size" size="8" placeholder="—" aria-label="Size for @line.RawText" /></td>
+                        <td><input @bind="line.Variety" size="10" placeholder="—" aria-label="Variety for @line.RawText" /></td>
                         <td><input type="number" step="0.01" min="0.01" @bind="line.Quantity" size="5" aria-label="Quantity for @line.RawText" /></td>
                         <td>
                             <select @bind="line.Category" aria-label="Category for @line.RawText">
@@ -280,6 +282,7 @@ else if (phase == Phase.Done)
         public string NormalizedName { get; set; } = "";
         public string? Brand { get; set; }
         public string? Size { get; set; }
+        public string? Variety { get; set; }
         public decimal Quantity { get; set; } = 1;
         public Category Category { get; set; }
         public decimal Confidence { get; set; }
@@ -350,6 +353,7 @@ else if (phase == Phase.Done)
                 NormalizedName = l.NormalizedName,
                 Brand = l.Brand,
                 Size = l.Size,
+                Variety = l.Variety,
                 Quantity = l.Quantity,
                 Category = l.Category,
                 Confidence = l.Confidence,
@@ -640,6 +644,7 @@ else if (phase == Phase.Done)
         NormalizedName = l.NormalizedName,
         Brand = l.Brand,
         Size = l.Size,
+        Variety = l.Variety,
         Quantity = l.Quantity,
         UnitPrice = l.UnitPrice,
         Category = l.Category,
@@ -681,7 +686,7 @@ else if (phase == Phase.Done)
         try
         {
             var lines = reviewLines.Select(l => new ReceiptConfirmationService.ConfirmLine(
-                l.RawText, l.NormalizedName, l.Brand, l.Size, l.Quantity, l.Category, l.Tags, l.ProductId)).ToList();
+                l.RawText, l.NormalizedName, l.Brand, l.Size, l.Variety, l.Quantity, l.Category, l.Tags, l.ProductId)).ToList();
             // Use the user-confirmed receipt date (not the upload date) so refill intervals are accurate
             // even when many receipts are uploaded in one sitting. writeAliases: a human reviewed these
             // pairings, so they're allowed to become sticky merchant aliases.

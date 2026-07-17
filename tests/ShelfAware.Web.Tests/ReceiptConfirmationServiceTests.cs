@@ -37,8 +37,8 @@ public class ReceiptConfirmationServiceTests : IDisposable
 
     private static ReceiptConfirmationService.ConfirmLine C(
         string raw, string name, int productId = 0, decimal qty = 1, string? brand = null,
-        string? size = null, string[]? tags = null, Category category = Category.Other) =>
-        new(raw, name, brand, size, qty, category, tags ?? [], productId);
+        string? size = null, string? variety = null, string[]? tags = null, Category category = Category.Other) =>
+        new(raw, name, brand, size, variety, qty, category, tags ?? [], productId);
 
     // --- the happy path ------------------------------------------------------
 
@@ -76,6 +76,22 @@ public class ReceiptConfirmationServiceTests : IDisposable
 
         Assert.Equal(2, await db.ProductAliases.CountAsync(a => a.Merchant == "Walmart"));
         Assert.All(await db.ReceiptLines.ToListAsync(), l => Assert.NotNull(l.ProductId));
+    }
+
+    // --- variety mirrors brand + size onto both the purchase and the stored line ---
+
+    [Fact]
+    public async Task Copies_variety_onto_the_purchase_and_the_stored_line()
+    {
+        var receipt = await SeedPending("Walmart", L("KOOL AID STRAW DRK MIX", "Drink Mix"));
+
+        await _service.ConfirmAsync(receipt.Id, new DateOnly(2026, 7, 1),
+            [C("KOOL AID STRAW DRK MIX", "Drink Mix", brand: "Kool-Aid", variety: "  Strawberry  ")],
+            writeAliases: false);
+
+        await using var db = _db.CreateDbContext();
+        Assert.Equal("Strawberry", (await db.PurchaseEvents.SingleAsync()).Variety); // trimmed
+        Assert.Equal("Strawberry", (await db.ReceiptLines.SingleAsync()).Variety);
     }
 
     // --- idempotency (the double-click bug) ----------------------------------

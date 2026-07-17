@@ -169,6 +169,7 @@ public class ReceiptImporter(
                     NormalizedName = name,
                     Brand = string.IsNullOrWhiteSpace(line.Brand) ? null : line.Brand!.Trim(),
                     Size = string.IsNullOrWhiteSpace(line.Size) ? null : line.Size!.Trim(),
+                    Variety = string.IsNullOrWhiteSpace(line.Variety) ? null : line.Variety!.Trim(),
                     Quantity = line.Quantity,
                     UnitPrice = line.UnitPrice,
                     Category = line.Category,
@@ -202,8 +203,8 @@ public class ReceiptImporter(
             allTrusted &= alias is not null || (resolved is not null && line.Confidence >= SmartConfidenceFloor);
 
             confirmLines.Add(new ReceiptConfirmationService.ConfirmLine(
-                line.RawText, name, line.Brand, line.Size, line.Quantity, line.Category, line.Tags,
-                resolved?.Id ?? 0));
+                line.RawText, name, line.Brand, line.Size, line.Variety, line.Quantity, line.Category,
+                line.Tags, resolved?.Id ?? 0));
         }
 
         // Zero purchasable lines (e.g. not actually a receipt) always queues — confirming an empty

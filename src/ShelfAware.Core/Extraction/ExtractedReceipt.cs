@@ -16,6 +16,9 @@ public record ExtractedLine
     public string? Brand { get; init; }
     public decimal Quantity { get; init; } = 1;
     public string? Size { get; init; }
+    /// <summary>Flavor/varietal stripped from the item name (e.g. "Strawberry", "Gala"), or null.
+    /// Like brand and size it is tracked per purchase, so flavors roll up into one product.</summary>
+    public string? Variety { get; init; }
     public decimal? UnitPrice { get; init; }
     public Category Category { get; init; } = Category.Other;
     /// <summary>Descriptive tags the model suggests for this item (from the seed vocabulary), applied to

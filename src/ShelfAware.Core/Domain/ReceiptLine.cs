@@ -13,6 +13,10 @@ public class ReceiptLine : IHouseholdOwned
     /// <see cref="PurchaseEvent.Size"/> (as Brand is mirrored on both) so a confirmed line's price
     /// can be attributed to the size that was bought — the recommended-size cost estimate.</summary>
     public string? Size { get; set; }
+    /// <summary>Flavor/varietal on this line (e.g. "Strawberry", "Gala"), or null. Mirrors
+    /// <see cref="PurchaseEvent.Variety"/> the way Brand and Size do — metadata, not identity, so
+    /// every flavor of an item rolls up into one product and one cadence.</summary>
+    public string? Variety { get; set; }
     public decimal Quantity { get; set; } = 1;
     public decimal? UnitPrice { get; set; }
     public Category Category { get; set; }

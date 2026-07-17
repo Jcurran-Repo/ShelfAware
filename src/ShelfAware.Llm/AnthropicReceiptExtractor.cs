@@ -31,13 +31,14 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
               "brand":           { "type": ["string", "null"] },
               "quantity":        { "type": "number" },
               "size":            { "type": ["string", "null"], "description": "e.g. '1 gal', '12 ct'" },
+              "variety":         { "type": ["string", "null"], "description": "Flavor/varietal stripped from the name, e.g. 'Strawberry', 'Gala'. Null when the item has none." },
               "unit_price":      { "type": ["number", "null"] },
               "category":        { "type": "string", "enum": ["Dairy","Meat","Produce","Pantry","Frozen","Beverage","Household","PetCare","PersonalCare","Other"] },
               "tags":            { "type": "array", "items": { "type": "string" }, "description": "Descriptive tags, additional to category. [] when none apply." },
               "confidence":      { "type": "number" },
               "existing_product":{ "type": ["string", "null"], "description": "Exact name from the provided existing-products list this line matches, or null." }
             },
-            "required": ["raw_text", "normalized_name", "brand", "quantity", "size", "unit_price", "category", "tags", "confidence", "existing_product"],
+            "required": ["raw_text", "normalized_name", "brand", "quantity", "size", "variety", "unit_price", "category", "tags", "confidence", "existing_product"],
             "additionalProperties": false
           }
         }
@@ -171,6 +172,7 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
                 Brand = GetNullableString(line, "brand"),
                 Quantity = line.GetProperty("quantity").GetDecimal(),
                 Size = GetNullableString(line, "size"),
+                Variety = GetNullableString(line, "variety"),
                 UnitPrice = line.TryGetProperty("unit_price", out var up) && up.ValueKind == JsonValueKind.Number ? up.GetDecimal() : null,
                 Category = Enum.TryParse<Category>(line.GetProperty("category").GetString(), ignoreCase: true, out var cat) ? cat : Category.Other,
                 Tags = ParseTags(line),

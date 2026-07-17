@@ -15,7 +15,7 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
 {
     /// <param name="ProductId">Resolved product id; 0 means "create a new product" from this line.</param>
     public record ConfirmLine(
-        string RawText, string NormalizedName, string? Brand, string? Size,
+        string RawText, string NormalizedName, string? Brand, string? Size, string? Variety,
         decimal Quantity, Category Category, IReadOnlyList<string> Tags, int ProductId);
 
     /// <param name="Retracked">How many untracked products this receipt turned back on — buying an
@@ -78,6 +78,7 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
             if (name.Length == 0) continue;
             var brand = string.IsNullOrWhiteSpace(line.Brand) ? null : line.Brand!.Trim();
             var size = string.IsNullOrWhiteSpace(line.Size) ? null : line.Size!.Trim();
+            var variety = string.IsNullOrWhiteSpace(line.Variety) ? null : line.Variety!.Trim();
             var quantity = line.Quantity > 0 ? line.Quantity : 1m;
 
             Product product;
@@ -114,6 +115,7 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
                 Quantity = quantity,
                 Brand = brand,
                 Size = size,
+                Variety = variety,
                 Source = PurchaseSource.Receipt,
                 ReceiptId = receipt.Id,
             });
@@ -128,6 +130,7 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
                 dbLine.NormalizedName = name;
                 dbLine.Brand = brand;
                 dbLine.Size = size;
+                dbLine.Variety = variety;
                 dbLine.Quantity = quantity;
                 dbLine.Category = line.Category;
                 dbLine.Product = product;
