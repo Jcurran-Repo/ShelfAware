@@ -1,0 +1,406 @@
+@page "/reports"
+@using ShelfAware.Core.Domain
+@using ShelfAware.Core.Prediction
+@using ShelfAware.Core.Reporting
+@using ShelfAware.Core.Settings
+@using ShelfAware.Web.Components.Charts
+@using ShelfAware.Web.Data
+@inject ReportDataService ReportData
+@inject IHouseholdDbFactory DbFactory
+@inject IAppSettings SettingsStore
+@inject IJSRuntime JS
+
+<PageTitle>Reports — Shelf Aware</PageTitle>
+
+<div class="report-head">
+    <div>
+        <h1>Reports</h1>
+        <p class="muted">Ready-made reports over your receipts — every number is arithmetic, printable as-is.</p>
+    </div>
+    <button class="secondary report-print-btn" @onclick="Print" title="Print this report">🖨 Print</button>
+</div>
+
+<nav class="report-presets" aria-label="Report presets">
+    @foreach (var p in PresetDefs)
+    {
+        <a class="report-preset-pill @(p.Key == ActivePreset ? "active" : null)" href="/reports?preset=@p.Key">
+            @p.Title
+        </a>
+    }
+</nav>
+
+@* Only exists on paper — the printed page needs to say what and when it is without the app chrome. *@
+<div class="report-print-header">
+    <strong>Shelf Aware — @PresetDefs.First(p => p.Key == ActivePreset).Title</strong>
+    <span>@RangeCaption · printed @DateTime.Today.ToString("MMM d, yyyy")</span>
+</div>
+
+@if (!loaded)
+{
+    <p>Loading…</p>
+}
+else if (source is null || source.Purchases.Count == 0)
+{
+    <div class="card report-empty">
+        <p>No purchase history yet — reports read from confirmed receipts.</p>
+        <p class="muted">Upload a receipt (or load the sample data from Settings) and this page fills in.</p>
+    </div>
+}
+else
+{
+    @switch (ActivePreset)
+    {
+        case "price-watch":
+            <section class="report-section">
+                <h2>What's costing more?</h2>
+                <p class="muted">Your own grocery inflation: each item's paid price, early half of the last
+                    3 months vs the late half, weighted by what you actually spend on it.</p>
+                @if (priceWatch!.OverallPct is { } pct)
+                {
+                    <div class="portfolio">
+                        <div class="stat">
+                            <span class="stat-label">Your groceries vs 3 months ago</span>
+                            <span class="stat-value @(pct > 0 ? "change-up" : pct < 0 ? "change-down" : "")">
+                                @(pct > 0 ? "▲" : pct < 0 ? "▼" : "→") @Math.Abs(pct).ToString("0.#")%
+                            </span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Based on</span>
+                            <span class="stat-value">@priceWatch.ComparedProducts items</span>
+                        </div>
+                    </div>
+                    <p class="muted small">@priceWatch.ComparedProducts of @priceWatch.TotalProducts products were
+                        bought in both halves of the window; only those can show a change.</p>
+                }
+                else
+                {
+                    <p class="muted">Not enough repeat purchases yet to say anything honest — an inflation figure
+                        needs at least @PriceWatch.MinComparedProducts items bought in both halves of the window.
+                        Keep shopping; this fills in on its own.</p>
+                }
+
+                @if (priceWatch.Movers.Count > 0)
+                {
+                    <div class="table-scroll">
+                        <table>
+                            <caption class="visually-hidden">Per-item price change over the window, increases first.</caption>
+                            <thead>
+                                <tr>
+                                    <th scope="col">Item</th>
+                                    <th scope="col" class="num">Was</th>
+                                    <th scope="col" class="num">Now</th>
+                                    <th scope="col" class="num">Change</th>
+                                    <th scope="col" class="num">You spent</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var m in priceWatch.Movers)
+                                {
+                                    <tr>
+                                        <td><a href="/product/@m.ProductId">@m.ProductName</a></td>
+                                        <td class="num">@m.EarlyUnitPrice.ToString("C")</td>
+                                        <td class="num">@m.LateUnitPrice.ToString("C")</td>
+                                        <td class="num @(m.ChangePct > 0 ? "change-up" : m.ChangePct < 0 ? "change-down" : "")">
+                                            @(m.ChangePct > 0 ? "▲" : m.ChangePct < 0 ? "▼" : "→") @Math.Abs(m.ChangePct).ToString("0.#")%
+                                        </td>
+                                        <td class="num">@m.Spend.ToString("C")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+
+                @if (topMoverPrices is { } tm)
+                {
+                    <h3>@tm.Name — what one costs</h3>
+                    <TimeSeriesChart Buckets="tm.Result.Buckets" Series="tm.Result.Series" Unit="tm.Result.Unit"
+                                     AriaLabel="@($"{tm.Name} unit price by week")" />
+                    <ReportDataTable Buckets="tm.Result.Buckets" Series="tm.Result.Series" Unit="tm.Result.Unit"
+                                     Additive="false" Caption="@($"{tm.Name} unit price by week")" />
+                }
+            </section>
+            break;
+
+        case "gap":
+            <section class="report-section">
+                <h2>The gap report</h2>
+                <p class="muted">Each item's two rhythms side by side: how long one usually lasts (burn) vs how
+                    often you rebuy. A positive gap means you're living without it for days at a time.</p>
+                @if (gapRows.Count == 0)
+                {
+                    <p class="muted">No items have both rhythms yet — the burn rate needs a couple of
+                        ran-out-then-rebought cycles. Mark items "Out" when they run out and this fills in.</p>
+                }
+                else
+                {
+                    <div class="table-scroll">
+                        <table>
+                            <caption class="visually-hidden">Rebuy rhythm vs burn rate per item, largest gap first.</caption>
+                            <thead>
+                                <tr>
+                                    <th scope="col">Item</th>
+                                    <th scope="col" class="num">One lasts</th>
+                                    <th scope="col" class="num">You rebuy every</th>
+                                    <th scope="col" class="num">Gap</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var row in gapRows)
+                                {
+                                    <tr>
+                                        <td><a href="/product/@row.ProductId">@row.Name</a></td>
+                                        <td class="num">~@row.Burn.ToString("0.#") days</td>
+                                        <td class="num">~@row.Rebuy.ToString("0.#") days</td>
+                                        <td class="num @(row.Gap >= 1 ? "change-up" : "")">
+                                            @(row.Gap >= 1 ? $"out ~{row.Gap:0.#} days" : "—")
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <p class="muted small">Gap = rebuy − burn. "Out ~2 days" means the item is usually gone about
+                        two days before it's bought again — the quiet cost the dashboard's Due Soon exists to close.</p>
+                }
+            </section>
+            break;
+
+        default: @* report-card *@
+            <section class="report-section">
+                <h2>This month</h2>
+                <div class="portfolio">
+                    <div class="stat">
+                        <span class="stat-label">Spend · @Today.ToString("MMMM")</span>
+                        <span class="stat-value">@((thisMonth?.Total ?? 0).ToString("C0"))</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Spend · @Today.AddMonths(-1).ToString("MMMM")</span>
+                        <span class="stat-value">@((lastMonth?.Total ?? 0).ToString("C0"))</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Shopping trips · @Today.ToString("MMMM")</span>
+                        <span class="stat-value">@tripsThisMonth</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Meals cooked · @Today.ToString("MMMM")</span>
+                        <span class="stat-value">@((mealsThisMonth?.Total ?? 0).ToString("0"))</span>
+                    </div>
+                </div>
+            </section>
+
+            <section class="report-section">
+                <h2>Spend by aisle</h2>
+                <ChartLegend Series="categorySpend!.Series" />
+                <BarChart Buckets="categorySpend.Buckets" Series="categorySpend.Series" Unit="categorySpend.Unit"
+                          Stacked="categorySpend.Stackable" AriaLabel="Monthly spend stacked by category" />
+                @if (categorySpend.Note is { } catNote)
+                {
+                    <p class="muted small">@catNote</p>
+                }
+                <ReportDataTable Buckets="categorySpend.Buckets" Series="categorySpend.Series"
+                                 Unit="categorySpend.Unit" Additive="true" Caption="Monthly spend by category" />
+            </section>
+
+            <section class="report-section">
+                <h2>Top items · last 30 days</h2>
+                <div class="table-scroll">
+                    <table>
+                        <caption class="visually-hidden">Top items by spend over the last 30 days.</caption>
+                        <thead>
+                            <tr>
+                                <th scope="col">Item</th>
+                                <th scope="col" class="num">Spend</th>
+                                <th scope="col" class="rank-bar-col"><span class="visually-hidden">Share of total</span></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var (label, total) in topItems)
+                            {
+                                <tr>
+                                    <td>@label</td>
+                                    <td class="num">@total.ToString("C")</td>
+                                    <td class="rank-bar-col">
+                                        <span class="rank-bar" style="width:@(RankWidth(total))%" aria-hidden="true"></span>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            @if (priceWatch!.Movers.Count > 0)
+            {
+                <section class="report-section">
+                    <h2>Price movers · last 3 months</h2>
+                    <div class="table-scroll">
+                        <table>
+                            <caption class="visually-hidden">Largest price changes over the last three months.</caption>
+                            <thead>
+                                <tr><th scope="col">Item</th><th scope="col" class="num">Was</th>
+                                    <th scope="col" class="num">Now</th><th scope="col" class="num">Change</th></tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var m in priceWatch.Movers.Take(5))
+                                {
+                                    <tr>
+                                        <td><a href="/product/@m.ProductId">@m.ProductName</a></td>
+                                        <td class="num">@m.EarlyUnitPrice.ToString("C")</td>
+                                        <td class="num">@m.LateUnitPrice.ToString("C")</td>
+                                        <td class="num @(m.ChangePct > 0 ? "change-up" : m.ChangePct < 0 ? "change-down" : "")">
+                                            @(m.ChangePct > 0 ? "▲" : m.ChangePct < 0 ? "▼" : "→") @Math.Abs(m.ChangePct).ToString("0.#")%
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <p class="muted small">The full list, and your overall grocery inflation, live in the
+                        <a href="/reports?preset=price-watch">What's costing more?</a> report.</p>
+                </section>
+            }
+            break;
+    }
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "preset")] public string? Preset { get; set; }
+
+    private static readonly (string Key, string Title)[] PresetDefs =
+    [
+        ("report-card", "Monthly report card"),
+        ("price-watch", "What's costing more?"),
+        ("gap", "The gap report"),
+    ];
+
+    private bool loaded;
+    private ReportSourceData? source;
+    private ReportResult? thisMonth, lastMonth, mealsThisMonth, categorySpend;
+    private int tripsThisMonth;
+    private List<(string Label, decimal Total)> topItems = [];
+    private decimal topItemMax;
+    private PriceWatchResult? priceWatch;
+    private (string Name, ReportResult Result)? topMoverPrices;
+    private List<(int ProductId, string Name, double Burn, double Rebuy, double Gap)> gapRows = [];
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+    private string ActivePreset =>
+        PresetDefs.Any(p => p.Key == Preset) ? Preset! : "report-card";
+
+    private string RangeCaption => ActivePreset switch
+    {
+        "price-watch" => $"{Today.AddMonths(-3):MMM d} – {Today:MMM d, yyyy}",
+        "gap" => "all history",
+        _ => $"{SixMonthsBack:MMM yyyy} – {Today:MMM yyyy}",
+    };
+
+    private DateOnly SixMonthsBack
+    {
+        get
+        {
+            var back = new DateOnly(Today.Year, Today.Month, 1).AddMonths(-5);
+            var first = source?.FirstPurchase;
+            return first is { } f && f > back ? new DateOnly(f.Year, f.Month, 1) : back;
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Loads on first visit AND on preset switch (same component instance, new query string —
+        // the ProductDetail id-change lesson). The heavy fact load runs once; presets reuse it.
+        source ??= await ReportData.LoadAsync();
+        BuildActivePreset();
+        if (ActivePreset == "gap" && gapRows.Count == 0) await BuildGapRowsAsync();
+        loaded = true;
+    }
+
+    private void BuildActivePreset()
+    {
+        if (source is null || source.Purchases.Count == 0) return;
+        var monthStart = new DateOnly(Today.Year, Today.Month, 1);
+
+        // The three-month price watch serves both its own preset and the report card's teaser.
+        priceWatch = PriceWatch.Compute(source.Purchases, Today.AddMonths(-3), Today);
+
+        if (ActivePreset == "price-watch")
+        {
+            var top = priceWatch.Movers.OrderByDescending(m => Math.Abs(m.ChangePct)).FirstOrDefault();
+            if (top is not null && top.ChangePct != 0)
+            {
+                var result = ReportEngine.Run(
+                    new ReportSpec
+                    {
+                        Metric = ReportMetric.UnitPrice,
+                        ProductId = top.ProductId,
+                        Grain = ReportGrain.Weekly,
+                        From = Today.AddMonths(-3),
+                        To = Today,
+                    },
+                    source.Purchases, source.Meals);
+                topMoverPrices = (top.ProductName, result);
+            }
+            return;
+        }
+
+        if (ActivePreset != "report-card") return;
+
+        thisMonth = Run(new ReportSpec { From = monthStart, To = Today });
+        lastMonth = Run(new ReportSpec { From = monthStart.AddMonths(-1), To = monthStart.AddDays(-1) });
+        mealsThisMonth = Run(new ReportSpec { Metric = ReportMetric.MealsCooked, From = monthStart, To = Today });
+        tripsThisMonth = source.Purchases
+            .Where(f => f.Date >= monthStart && f.Date <= Today)
+            .Select(f => f.Date).Distinct().Count();
+
+        categorySpend = Run(new ReportSpec
+        {
+            Split = ReportSplit.ByCategory,
+            Chart = ReportChart.StackedBars,
+            From = SixMonthsBack,
+            To = Today,
+        });
+
+        var top30 = Run(new ReportSpec
+        {
+            Split = ReportSplit.ByProduct,
+            TopN = 10,
+            From = Today.AddDays(-29),
+            To = Today,
+        });
+        topItems = top30.Series.Select(s => (s.Label, s.Total)).Where(t => t.Total > 0).ToList();
+        topItemMax = topItems.Count > 0 ? topItems.Max(t => t.Total) : 0;
+    }
+
+    private ReportResult Run(ReportSpec spec) => ReportEngine.Run(spec, source!.Purchases, source.Meals);
+
+    /// <summary>The gap rows need full products (purchases + signals) for the predictor — loaded only
+    /// when the gap preset is actually opened, not on every report visit.</summary>
+    private async Task BuildGapRowsAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var products = await db.Products.AsNoTracking()
+            .Where(p => p.IsTracked)
+            .Include(p => p.Purchases)
+            .Include(p => p.Signals)
+            .ToListAsync();
+        var trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
+
+        gapRows = products
+            .Select(p => (Product: p, Prediction: ReplenishmentPredictor.Predict(p, Today, trackExpirations)))
+            .Where(x => x.Prediction is { RebuyIntervalDays: not null, BurnRateDays: not null })
+            .Select(x => (
+                x.Product.Id,
+                x.Product.Name,
+                Burn: x.Prediction.BurnRateDays!.Value,
+                Rebuy: x.Prediction.RebuyIntervalDays!.Value,
+                Gap: x.Prediction.RebuyIntervalDays.Value - x.Prediction.BurnRateDays.Value))
+            .OrderByDescending(x => x.Gap)
+            .ThenBy(x => x.Name)
+            .ToList();
+    }
+
+    private decimal RankWidth(decimal total) =>
+        topItemMax > 0 ? Math.Round(total / topItemMax * 100, 1) : 0;
+
+    private async Task Print() => await JS.InvokeVoidAsync("window.print");
+}

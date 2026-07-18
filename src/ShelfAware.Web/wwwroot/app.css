@@ -16,6 +16,19 @@
 
     --radius: 8px;
     --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.05);
+
+    /* Report chart series — fixed slot order (the ordering IS the colorblind-safety mechanism:
+       it maximizes adjacent-pair CVD distance; validated against --surface in both modes).
+       Series are assigned 1..8 in rank order and never cycled; pooled series wear --chart-pooled. */
+    --chart-1: #2a78d6;
+    --chart-2: #1baf7a;
+    --chart-3: #eda100;
+    --chart-4: #008300;
+    --chart-5: #4a3aa7;
+    --chart-6: #e34948;
+    --chart-7: #e87ba4;
+    --chart-8: #eb6834;
+    --chart-pooled: #8a939e;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -35,6 +48,17 @@
         --unknown-bg: #2a2f36;  --unknown-ink: #aab2bb;  --unknown-line: #586675;
 
         --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+
+        /* Same eight hues re-stepped for the dark surface (validated separately) — not a hue flip. */
+        --chart-1: #3987e5;
+        --chart-2: #199e70;
+        --chart-3: #c98500;
+        --chart-4: #008300;
+        --chart-5: #9085e9;
+        --chart-6: #e66767;
+        --chart-7: #d55181;
+        --chart-8: #d95926;
+        --chart-pooled: #6d7783;
     }
 }
 
@@ -1970,13 +1994,121 @@ tfoot td {
     flex-wrap: wrap;
 }
 
+/* ---- Reports ---- */
+.report-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.report-presets {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin: 0.25rem 0 1.25rem;
+}
+
+.report-preset-pill {
+    padding: 0.4rem 0.9rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--ink);
+    text-decoration: none;
+    font-size: 0.9rem;
+}
+
+.report-preset-pill:hover { border-color: var(--accent); }
+
+.report-preset-pill.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+.report-section {
+    background: var(--surface);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 1rem 1.25rem 1.25rem;
+    margin-bottom: 1.25rem;
+}
+
+.report-section h2 { margin-top: 0.25rem; }
+.report-section h3 { margin-bottom: 0.25rem; }
+
+.report-chart {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-width: 860px;
+}
+
+.report-chart-tick {
+    font-size: 11px;
+    fill: var(--ink-soft);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.chart-legend {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 1rem;
+    padding: 0;
+    margin: 0 0 0.5rem;
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+}
+
+.chart-legend li {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.chart-legend-swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    flex: none;
+}
+
+.report-data table { font-size: 0.85rem; }
+
+/* Numeric table cells: right-aligned, digits that line up down the column. */
+.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.rank-bar-col { width: 40%; }
+
+.rank-bar {
+    display: inline-block;
+    height: 10px;
+    border-radius: 3px;
+    background: var(--chart-1);
+    min-width: 2px;
+    vertical-align: middle;
+}
+
+.report-empty { padding: 1.25rem; }
+
+/* The printed page introduces itself; on screen the app chrome already does. */
+.report-print-header { display: none; }
+
 @media print {
     .site-header,
     .list-actions,
     details.everything-else,
     .info-btn,
     .untrack-btn,
-    .restock-btn {
+    .restock-btn,
+    .report-presets,
+    .report-print-btn {
         display: none !important;
     }
 
@@ -1988,6 +2120,25 @@ tfoot td {
     table {
         box-shadow: none;
     }
+
+    .report-print-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        border-bottom: 1px solid #000;
+        padding-bottom: 0.35rem;
+        margin-bottom: 1rem;
+        font-size: 0.9rem;
+    }
+
+    .report-section {
+        box-shadow: none;
+        padding: 0 0 0.5rem;
+        margin-bottom: 1rem;
+        break-inside: avoid;
+    }
+
+    .report-chart { max-width: 100%; }
 }
 
 /* ---- Blazor form validation + error boundary defaults ---- */
