@@ -1,0 +1,58 @@
+@* The numbers behind a chart, always rendered beneath it. This is deliberate, not decoration: it's
+   the accessibility fallback (three light-mode chart slots sit below 3:1 contrast — the validated
+   palette's relief rule requires a table or direct labels), it's what a screen reader actually
+   reads, and it's what makes the printed report usable as a document. Data is small by construction
+   (≤ 13 buckets × ≤ 8 series), so no scroll games. *@
+@using ShelfAware.Core.Reporting
+
+<div class="table-scroll report-data">
+    <table>
+        <caption class="visually-hidden">@Caption</caption>
+        <thead>
+            <tr>
+                <th scope="col">Period</th>
+                @foreach (var series in Series)
+                {
+                    <th scope="col" class="num">@series.Label</th>
+                }
+            </tr>
+        </thead>
+        <tbody>
+            @for (var b = 0; b < Buckets.Count; b++)
+            {
+                var bucket = b;
+                <tr>
+                    <th scope="row">@Buckets[bucket].Label</th>
+                    @foreach (var series in Series)
+                    {
+                        <td class="num">
+                            @(bucket < series.Values.Count && series.Values[bucket] is { } v
+                                ? ChartFormat.Value(Unit, v)
+                                : "—")
+                        </td>
+                    }
+                </tr>
+            }
+        </tbody>
+        @if (Additive)
+        {
+            <tfoot>
+                <tr>
+                    <th scope="row">Total</th>
+                    @foreach (var series in Series)
+                    {
+                        <td class="num">@ChartFormat.Value(Unit, series.Total)</td>
+                    }
+                </tr>
+            </tfoot>
+        }
+    </table>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<ReportBucket> Buckets { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<ReportSeries> Series { get; set; } = [];
+    [Parameter] public ReportUnit Unit { get; set; }
+    [Parameter] public bool Additive { get; set; }
+    [Parameter] public string Caption { get; set; } = "Report data";
+}

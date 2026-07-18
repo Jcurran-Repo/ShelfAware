@@ -1,0 +1,22 @@
+@* Legend chips in HTML (not SVG) so they wrap, reflow, and read to screen readers as a plain list.
+   Rendered whenever a chart has two or more series; a single series is named by its section title.
+   Identity is never color-alone: the chip pairs every swatch with its label in ink-colored text. *@
+@using ShelfAware.Core.Reporting
+
+@if (Series.Count > 1)
+{
+    <ul class="chart-legend" aria-label="Chart series">
+        @foreach (var (series, i) in Series.Select((s, idx) => (s, idx)))
+        {
+            <li>
+                <span class="chart-legend-swatch" style="background:@ChartFormat.SeriesColor(series, i)"
+                      aria-hidden="true"></span>
+                @series.Label
+            </li>
+        }
+    </ul>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<ReportSeries> Series { get; set; } = [];
+}

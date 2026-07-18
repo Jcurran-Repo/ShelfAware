@@ -1,0 +1,160 @@
+@* Bar chart over the report engine's buckets — grouped by default, stacked only when the caller
+   passes Stacked (the page must first check ReportResult.Stackable; overlapping series stacked
+   would double-count, and the engine refuses such specs upstream anyway). Mark specs per the viz
+   method: 2px surface gaps between adjacent bars AND between stacked segments, rounded data-ends
+   on the outermost segment only, native <title> tooltips per rect. *@
+@using ShelfAware.Core.Reporting
+
+<svg class="report-chart" viewBox="0 0 @F(W) @F(H)" xmlns="http://www.w3.org/2000/svg"
+     role="img" aria-label="@AriaLabel" preserveAspectRatio="xMidYMid meet">
+    @foreach (var (value, y) in Ticks())
+    {
+        <line x1="@F(PadL)" y1="@F(y)" x2="@F(W - PadR)" y2="@F(y)"
+              stroke="var(--line)" stroke-width="1" />
+        @ChartFormat.SvgText(PadL - 6, y + 3.5, "end", ChartFormat.Tick(Unit, value))
+    }
+
+    @foreach (var (label, x) in XLabels())
+    {
+        @ChartFormat.SvgText(x, H - 6, "middle", label)
+    }
+
+    @foreach (var bar in Bars())
+    {
+        <rect x="@F(bar.X)" y="@F(bar.Y)" width="@F(bar.Width)" height="@F(bar.Height)"
+              rx="@F(bar.Rounded ? 2 : 0)" fill="@bar.Color">
+            <title>@bar.Tooltip</title>
+        </rect>
+    }
+
+    <line x1="@F(PadL)" y1="@F(H - PadB)" x2="@F(W - PadR)" y2="@F(H - PadB)"
+          stroke="var(--ink-soft)" stroke-width="1" />
+</svg>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<ReportBucket> Buckets { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<ReportSeries> Series { get; set; } = [];
+    [Parameter] public ReportUnit Unit { get; set; }
+    [Parameter] public bool Stacked { get; set; }
+    [Parameter] public string AriaLabel { get; set; } = "Report chart";
+
+    private const double W = 720, H = 280;
+    private const double PadL = 56, PadR = 12, PadT = 14, PadB = 26;
+    private const double Gap = 2; // the surface gap between fills — the mark spec's separator
+    private double PlotW => W - PadL - PadR;
+    private double PlotH => H - PadT - PadB;
+
+    private readonly record struct Bar(
+        double X, double Y, double Width, double Height, bool Rounded, string Color, string Tooltip);
+
+    private static string F(double v) => v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+
+    private decimal MaxValue
+    {
+        get
+        {
+            if (Buckets.Count == 0 || Series.Count == 0) return 1;
+            var max = 0m;
+            for (var b = 0; b < Buckets.Count; b++)
+            {
+                var inBucket = Series.Select(s => b < s.Values.Count ? s.Values[b] ?? 0 : 0);
+                max = Math.Max(max, Stacked ? inBucket.Sum() : inBucket.Max());
+            }
+            return max > 0 ? max : 1;
+        }
+    }
+
+    private decimal TickStep()
+    {
+        var raw = MaxValue / 4m;
+        var magnitude = (decimal)Math.Pow(10, Math.Floor(Math.Log10((double)raw)));
+        var normalized = raw / magnitude;
+        var nice = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 2.5m ? 2.5m : normalized <= 5 ? 5 : 10;
+        return nice * magnitude;
+    }
+
+    private decimal AxisMax()
+    {
+        var step = TickStep();
+        return Math.Ceiling(MaxValue / step) * step;
+    }
+
+    private IEnumerable<(decimal Value, double Y)> Ticks()
+    {
+        var step = TickStep();
+        var top = AxisMax();
+        for (var v = 0m; v <= top; v += step) yield return (v, YOf(v));
+    }
+
+    private double YOf(decimal value) => PadT + (1 - (double)(value / AxisMax())) * PlotH;
+
+    private double SlotCenter(int bucket) => PadL + (bucket + 0.5) * PlotW / Buckets.Count;
+
+    private IEnumerable<Bar> Bars()
+    {
+        if (Buckets.Count == 0 || Series.Count == 0) yield break;
+        var slot = PlotW / Buckets.Count;
+
+        for (var b = 0; b < Buckets.Count; b++)
+        {
+            if (Stacked)
+            {
+                // One column per bucket, segments bottom-up in series order; the gap is carved out
+                // of each upper segment's foot so the column's total height stays the true sum.
+                var width = Math.Min(36, slot * 0.6);
+                var x = SlotCenter(b) - width / 2;
+                var running = 0m;
+                var top = TopSeriesIndex(b);
+                for (var s = 0; s < Series.Count; s++)
+                {
+                    if (ValueAt(s, b) is not { } value || value <= 0) continue;
+                    var yTop = YOf(running + value);
+                    var yBottom = YOf(running);
+                    var inset = running > 0 ? Gap : 0; // no gap below the baseline segment
+                    var height = Math.Max(0.5, yBottom - yTop - inset);
+                    yield return new Bar(x, yBottom - inset - height, width, height,
+                        Rounded: s == top, ChartFormat.SeriesColor(Series[s], s), Tooltip(s, b, value));
+                    running += value;
+                }
+            }
+            else
+            {
+                var laneCount = Series.Count;
+                var lane = Math.Min(28, slot * 0.8 / laneCount);
+                var groupWidth = lane * laneCount;
+                var left = SlotCenter(b) - groupWidth / 2;
+                for (var s = 0; s < laneCount; s++)
+                {
+                    if (ValueAt(s, b) is not { } value || value <= 0) continue;
+                    var y = YOf(value);
+                    yield return new Bar(left + s * lane, y, Math.Max(1, lane - Gap),
+                        Math.Max(0.5, H - PadB - y), Rounded: true,
+                        ChartFormat.SeriesColor(Series[s], s), Tooltip(s, b, value));
+                }
+            }
+        }
+    }
+
+    private decimal? ValueAt(int series, int bucket) =>
+        bucket < Series[series].Values.Count ? Series[series].Values[bucket] : null;
+
+    /// <summary>The topmost non-empty segment of a stacked column — the only one that rounds.</summary>
+    private int TopSeriesIndex(int bucket)
+    {
+        for (var s = Series.Count - 1; s >= 0; s--)
+        {
+            if (ValueAt(s, bucket) is { } v && v > 0) return s;
+        }
+        return -1;
+    }
+
+    private string Tooltip(int series, int bucket, decimal value) =>
+        $"{Buckets[bucket].Label} · {Series[series].Label}: {ChartFormat.Value(Unit, value)}";
+
+    private IEnumerable<(string Label, double X)> XLabels()
+    {
+        var every = Math.Max(1, (int)Math.Ceiling(Buckets.Count / 10.0));
+        for (var i = 0; i < Buckets.Count; i += every)
+            yield return (Buckets[i].Label, SlotCenter(i));
+    }
+}
