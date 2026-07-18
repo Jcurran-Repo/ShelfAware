@@ -122,11 +122,14 @@ public static class ShoppingEstimator
         return groups.Count == 1 ? groups[0].Key : $"{groups[0].Key} +{groups.Count - 1}";
     }
 
+    // Case-insensitive grouping (first-seen casing displays): a review-edited "gala" next to an
+    // extracted "Gala" is one variety, not a "+1" — and the count here must agree with Product
+    // Detail's breakdown sections, which fold case the same way.
     private static List<IGrouping<string, PurchaseEvent>> GroupsOf(
         IEnumerable<PurchaseEvent> purchases, Func<PurchaseEvent, string?> label) =>
         [.. purchases
             .Where(pe => !string.IsNullOrWhiteSpace(label(pe)))
-            .GroupBy(pe => label(pe)!.Trim())
+            .GroupBy(pe => label(pe)!.Trim(), StringComparer.OrdinalIgnoreCase)
             .OrderByDescending(g => g.Count())
             .ThenBy(g => g.Key)];
 

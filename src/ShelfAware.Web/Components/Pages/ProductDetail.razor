@@ -7,6 +7,7 @@
 @inject ProductRenameService Renamer
 @inject ProductMergeService Merger
 @inject NavigationManager Nav
+@inject ILogger<ProductDetail> Logger
 
 <PageTitle>@(product?.Name ?? "Product") — Shelf Aware</PageTitle>
 
@@ -372,7 +373,8 @@ else
         decimal? PriceOf(PurchaseEvent pe) =>
             pe.ReceiptId is { } rid && priceLookup.TryGetValue(rid, out var pr) ? pr : null;
         brandBreakdown = product.Purchases
-            .GroupBy(pe => string.IsNullOrWhiteSpace(pe.Brand) ? Unbranded : pe.Brand!.Trim())
+            .GroupBy(pe => string.IsNullOrWhiteSpace(pe.Brand) ? Unbranded : pe.Brand!.Trim(),
+                StringComparer.OrdinalIgnoreCase)
             .Select(g =>
             {
                 var prices = g.Select(PriceOf).Where(p => p is not null).Select(p => p!.Value).ToList();
@@ -508,6 +510,14 @@ else
                 return;
             }
             Nav.NavigateTo($"/product/{mergeTargetId}");
+        }
+        catch (DbUpdateException ex)
+        {
+            // Reachable: the same source merged from two tabs — the second delete finds zero rows
+            // (concurrency exception). A merge that half-happened rolled back; say so instead of
+            // letting the exception tear down the circuit.
+            Logger.LogError(ex, "Merging product {SourceId} into {TargetId} failed.", product.Id, mergeTargetId);
+            mergeError = "The merge didn't complete — the product may have changed or been merged elsewhere. Reload the page and try again.";
         }
         finally { mergeBusy = false; }
     }

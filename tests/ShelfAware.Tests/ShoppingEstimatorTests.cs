@@ -186,6 +186,29 @@ public class ShoppingEstimatorTests
     }
 
     [Fact]
+    public void VarietyGrouping_FoldsCase_SoAnEditedSpellingIsNotAPlusOne()
+    {
+        // A review-edited "gala" next to an extracted "Gala" is one variety, not "Gala +1" — and this
+        // count must agree with Product Detail's breakdown, which folds case the same way.
+        var product = new Product
+        {
+            Id = 1,
+            Name = "Apples",
+            Category = Category.Produce,
+            Purchases =
+            [
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(0), Variety = "Gala" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(10), Variety = "gala" },
+            ],
+        };
+
+        var e = ShoppingEstimator.For(product, Prediction(PredictionStatus.Stocked, D(20)), D(10), unitPrice: null);
+
+        Assert.Equal("Gala", e.UsualVariety); // no "+1"; first-seen casing displays
+        Assert.Equal(["Gala ×2"], e.VarietiesBought);
+    }
+
+    [Fact]
     public void UsualVariety_IsNull_WhenNoPurchaseCarriesAVariety()
     {
         var product = ProductWith((0, 1m), (10, 1m)); // ProductWith leaves Variety null
