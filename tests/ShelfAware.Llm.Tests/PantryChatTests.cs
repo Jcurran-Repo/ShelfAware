@@ -597,6 +597,22 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task Open_reports_lands_on_the_named_report_and_shrugs_off_unknown_names()
+    {
+        var store = new FakePantryStore();
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("open_page", ("page", "reports"), ("report", "waste"))),
+            () => Responses.Text("Opening the reports page."));
+        Assert.Equal("/reports?preset=waste", (await Chat(client, store).HandleAsync("show me the waste report")).NavigateTo);
+
+        // A preset the model invents degrades to the default report card, not an error.
+        var fallback = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("open_page", ("page", "reports"), ("report", "spending-vibes"))),
+            () => Responses.Text("Opening the reports page."));
+        Assert.Equal("/reports", (await Chat(fallback, store).HandleAsync("show me the vibes report")).NavigateTo);
+    }
+
+    [Fact]
     public async Task Open_product_page_resolves_the_product_fuzzily()
     {
         var store = new FakePantryStore(P(7, "Whole Milk", Category.Dairy));

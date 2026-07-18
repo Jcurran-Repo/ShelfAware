@@ -13,7 +13,11 @@ public sealed record ReportSourceData(
     IReadOnlyList<MealFact> Meals,
     IReadOnlyList<(int Id, string Name)> Products,
     IReadOnlyList<string> Tags,
-    DateOnly? FirstPurchase);
+    DateOnly? FirstPurchase,
+    /// <summary>What one of each product costs NOW (the dominant size bucket's most recent paid
+    /// price — the same "Current" the Trends ticker shows), keyed by product NAME because that's
+    /// what RecipeIngredient.MatchedProduct stores. Case-insensitive.</summary>
+    IReadOnlyDictionary<string, decimal> CurrentPriceByProductName);
 
 /// <summary>
 /// Joins the household's EF rows into the report engine's flat facts — the one place reporting
@@ -56,11 +60,11 @@ public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
         var byReceiptProduct = lineData
             .GroupBy(x => (x.ReceiptId, x.ProductId))
             .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
-        var dominantKeyByProduct = lineData
+        var dominantByProduct = lineData
             .GroupBy(x => x.ProductId)
             .ToDictionary(
                 g => g.Key,
-                g => PriceSeries.Dominant(g.Select(x => new PricePoint(x.Size, x.Date, x.Price)).ToList())!.SizeKey);
+                g => PriceSeries.Dominant(g.Select(x => new PricePoint(x.Size, x.Date, x.Price)).ToList())!);
 
         var purchases = await db.PurchaseEvents.AsNoTracking().ToListAsync(ct);
         var purchaseFacts = new List<PurchaseFact>(purchases.Count);
@@ -71,8 +75,8 @@ public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
             // The purchase's own receipt line is the exact paid price; the index is the estimate.
             decimal? paid = pe.ReceiptId is { } rid && byReceiptProduct.TryGetValue((rid, pe.ProductId), out var linePrice)
                 ? linePrice : null;
-            var inDominant = dominantKeyByProduct.TryGetValue(pe.ProductId, out var dominantKey)
-                && SizeBucket.Key(pe.Size) == dominantKey;
+            var inDominant = dominantByProduct.TryGetValue(pe.ProductId, out var dominant)
+                && SizeBucket.Key(pe.Size) == dominant.SizeKey;
 
             purchaseFacts.Add(new PurchaseFact(
                 pe.PurchasedAt,
@@ -94,12 +98,20 @@ public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
             .Select(m => new MealFact(m.AteAt, m.RecipeId, m.Name, m.EstimatedCaloriesPerServing))
             .ToList();
 
+        var currentPriceByName = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (productId, series) in dominantByProduct)
+        {
+            if (productById.TryGetValue(productId, out var product) && series.Points.Count > 0)
+                currentPriceByName[product.Name] = series.Points[^1].UnitPrice;
+        }
+
         return new ReportSourceData(
             purchaseFacts,
             mealFacts,
             products.OrderBy(p => p.Name).Select(p => (p.Id, p.Name)).ToList(),
             tagsByProduct.Values.SelectMany(t => t).Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(t => t, StringComparer.OrdinalIgnoreCase).ToList(),
-            purchaseFacts.Count > 0 ? purchaseFacts.Min(f => f.Date) : null);
+            purchaseFacts.Count > 0 ? purchaseFacts.Min(f => f.Date) : null,
+            currentPriceByName);
     }
 }

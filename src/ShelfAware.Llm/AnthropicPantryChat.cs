@@ -416,6 +416,17 @@ public class AnthropicPantryChat : IPantryChat
                     actions.Add($"opened recipes using {product.Name}");
                     return ($"Showing recipes that use {product.Name}.", false);
                 }
+                // "show me the waste report" → the reports page, opened on that preset. The preset
+                // names are the page's own; an unknown one just lands on the default report card.
+                if (page == "reports")
+                {
+                    var preset = Str("report")?.Trim().ToLowerInvariant();
+                    nav.Url = preset is "report-card" or "price-watch" or "eat" or "waist" or "waste" or "gap" or "custom"
+                        ? $"/reports?preset={preset}"
+                        : "/reports";
+                    actions.Add("opened reports");
+                    return ("Opening the reports page.", false);
+                }
                 string? url = page switch
                 {
                     "dashboard" or "home" => "/",
@@ -593,11 +604,12 @@ public class AnthropicPantryChat : IPantryChat
                 []),
 
             MakeTool("open_page",
-                "Navigate the user's screen to a page of the app. Use when they ask to see, open, go to, or show a page. For a specific product's detail page use page='product' + product_name. To show the recipes that use a specific product ('what can I make with the chicken', 'recipes using the salmon'), use page='recipes' + product_name.",
+                "Navigate the user's screen to a page of the app. Use when they ask to see, open, go to, or show a page. For a specific product's detail page use page='product' + product_name. To show the recipes that use a specific product ('what can I make with the chicken', 'recipes using the salmon'), use page='recipes' + product_name. For reports ('show me what's costing more', 'the waste report', 'our monthly report'), use page='reports' + the matching report.",
                 """
                 {
-                  "page": { "type": "string", "enum": ["dashboard","grocery_list","recipes","trends","upload","receipts","products","accuracy","settings","product"] },
-                  "product_name": { "type": "string", "description": "With page='product', the product whose detail page to open. With page='recipes', scope the recipes list to those that use this product. Omit for a whole page." }
+                  "page": { "type": "string", "enum": ["dashboard","grocery_list","recipes","trends","reports","upload","receipts","products","accuracy","settings","product"] },
+                  "product_name": { "type": "string", "description": "With page='product', the product whose detail page to open. With page='recipes', scope the recipes list to those that use this product. Omit for a whole page." },
+                  "report": { "type": "string", "enum": ["report-card","price-watch","eat","waist","waste","gap","custom"], "description": "With page='reports': which report to open. report-card=monthly summary, price-watch=what's costing more, eat=meals cooked + cost per meal, waist=calories over time, waste=expired/worth-checking items, gap=out-before-rebuy gaps. Omit for the default." }
                 }
                 """,
                 ["page"]),

@@ -217,6 +217,169 @@ else
             }
             break;
 
+        case "eat":
+            <section class="report-section">
+                <h2>What we actually eat</h2>
+                @if (source.Meals.Count == 0)
+                {
+                    <p class="muted">Nothing logged yet — tap <strong>🍽 Ate it</strong> on a recipe when you cook
+                        it and this report starts writing itself. (Meals from before the log existed have no
+                        dates, so they're honestly not charted.)</p>
+                }
+                else
+                {
+                    <ChartLegend Series="mealsByRecipe!.Series" />
+                    <BarChart Buckets="mealsByRecipe.Buckets" Series="mealsByRecipe.Series" Unit="mealsByRecipe.Unit"
+                              Stacked="mealsByRecipe.Stackable" AriaLabel="Meals cooked per week by recipe" />
+                    @if (mealsByRecipe.Note is { } mealNote)
+                    {
+                        <p class="muted small">@mealNote</p>
+                    }
+                    <ReportDataTable Buckets="mealsByRecipe.Buckets" Series="mealsByRecipe.Series"
+                                     Unit="mealsByRecipe.Unit" Additive="true" Caption="Meals cooked per week by recipe" />
+                }
+            </section>
+
+            @if (mealCosts.Count > 0)
+            {
+                <section class="report-section">
+                    <h2>Cost per meal</h2>
+                    <p class="muted">Each recipe's main ingredients priced at what they cost <em>now</em> (your
+                        latest receipt prices) — seasonings and pantry staples not included.</p>
+                    <div class="table-scroll">
+                        <table>
+                            <caption class="visually-hidden">Estimated current cost per cooking of each logged recipe.</caption>
+                            <thead>
+                                <tr>
+                                    <th scope="col">Recipe</th>
+                                    <th scope="col" class="num">Cooked</th>
+                                    <th scope="col" class="num">Costs about</th>
+                                    <th scope="col">Priced from</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var row in mealCosts)
+                                {
+                                    <tr>
+                                        <td>@row.Name</td>
+                                        <td class="num">@(row.TimesCooked)×</td>
+                                        <td class="num">@(row.Cost is { } cost ? cost.ToString("C") : "—")</td>
+                                        <td class="muted small">@row.PricedMains of @row.TotalMains main ingredients</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            }
+            break;
+
+        case "waist":
+            <section class="report-section">
+                <h2>Waist watch</h2>
+                <p class="muted">Calories cooked per week, from the meals you logged and each recipe's estimated
+                    calories per serving. <strong>Ballpark by design</strong> — the estimates are AI guesses per
+                    serving, not what anyone's plate held. A trend to glance at, never a nutrition log.</p>
+                @if (caloriesByRecipe is null || caloriesByRecipe.Series.All(s => s.Total == 0))
+                {
+                    <p class="muted">No calorie data yet — it needs logged meals ("🍽 Ate it") on recipes that
+                        carry a calorie estimate. Cook something and check back.</p>
+                }
+                else
+                {
+                    <div class="portfolio">
+                        <div class="stat">
+                            <span class="stat-label">This week</span>
+                            <span class="stat-value">@ThisWeekCalories.ToString("N0") kcal</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Last week</span>
+                            <span class="stat-value">@LastWeekCalories.ToString("N0") kcal</span>
+                        </div>
+                    </div>
+                    <ChartLegend Series="caloriesByRecipe.Series" />
+                    <BarChart Buckets="caloriesByRecipe.Buckets" Series="caloriesByRecipe.Series"
+                              Unit="caloriesByRecipe.Unit" Stacked="caloriesByRecipe.Stackable"
+                              AriaLabel="Calories cooked per week by recipe" />
+                    @if (caloriesByRecipe.Note is { } kcalNote)
+                    {
+                        <p class="muted small">@kcalNote</p>
+                    }
+                    <ReportDataTable Buckets="caloriesByRecipe.Buckets" Series="caloriesByRecipe.Series"
+                                     Unit="caloriesByRecipe.Unit" Additive="true" Caption="Calories cooked per week by recipe" />
+                }
+            </section>
+            break;
+
+        case "waste":
+            <section class="report-section">
+                <h2>Waste watch</h2>
+                @if (!trackExpirations)
+                {
+                    <p class="muted">This report reads the expiration dates you record on purchases — and
+                        expiration tracking is switched off for this household. Turn it on in
+                        <a href="/settings">Settings</a> and date a few labels; the report fills in from there.</p>
+                }
+                else if (labelOutcomes.Count == 0)
+                {
+                    <p class="muted">No dated purchases yet. Add a label date when you review a receipt (or on a
+                        product's page) and this report starts keeping score.</p>
+                }
+                else
+                {
+                    <p class="muted">What became of each purchase you dated. The app can't see inside the fridge —
+                        an item whose label passed without a trace <em>might</em> have been finished quietly, so
+                        this reads "worth checking", never "wasted".</p>
+                    <div class="portfolio">
+                        <div class="stat">
+                            <span class="stat-label">Worth checking</span>
+                            <span class="stat-value">@QuietCount item@(QuietCount == 1 ? "" : "s")</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">At stake</span>
+                            <span class="stat-value">@QuietSpend.ToString("C")</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Finished or replaced in time</span>
+                            <span class="stat-value">@SafeCount</span>
+                        </div>
+                    </div>
+
+                    @if (QuietCount > 0)
+                    {
+                        <div class="table-scroll">
+                            <table>
+                                <caption class="visually-hidden">Dated purchases whose label passed with no sign they were finished.</caption>
+                                <thead>
+                                    <tr>
+                                        <th scope="col">Item</th>
+                                        <th scope="col" class="num">Bought</th>
+                                        <th scope="col" class="num">Label date</th>
+                                        <th scope="col" class="num">Paid</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var (purchase, _) in labelOutcomes.Where(o => o.Outcome == LabelOutcome.PassedQuietly))
+                                    {
+                                        <tr>
+                                            <td><a href="/product/@purchase.ProductId">@purchase.ProductName</a></td>
+                                            <td class="num">@purchase.PurchasedAt.ToString("MMM d")</td>
+                                            <td class="num">@purchase.Label.ToString("MMM d")</td>
+                                            <td class="num">@(purchase.Price is { } paid ? paid.ToString("C") : "—")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                    <p class="muted small">Also judged: @OutcomeCount(LabelOutcome.Superseded) replaced in time ·
+                        @OutcomeCount(LabelOutcome.MarkedOut) marked out ·
+                        @OutcomeCount(LabelOutcome.Overridden) overridden (frozen/kept) ·
+                        @OutcomeCount(LabelOutcome.StillAhead) not due yet.</p>
+                }
+            </section>
+            break;
+
         case "price-watch":
             <section class="report-section">
                 <h2>What's costing more?</h2>
@@ -438,6 +601,9 @@ else
     [
         ("report-card", "Monthly report card"),
         ("price-watch", "What's costing more?"),
+        ("eat", "What we actually eat"),
+        ("waist", "Waist watch"),
+        ("waste", "Waste watch"),
         ("gap", "The gap report"),
         ("custom", "Custom report"),
     ];
@@ -459,7 +625,8 @@ else
     private string RangeCaption => ActivePreset switch
     {
         "price-watch" => $"{Today.AddMonths(-3):MMM d} – {Today:MMM d, yyyy}",
-        "gap" => "all history",
+        "eat" or "waist" => $"{Today.AddMonths(-2):MMM d} – {Today:MMM d, yyyy}",
+        "gap" or "waste" => "all history",
         "custom" when customSpec is { } s => $"{s.From:MMM d} – {s.To:MMM d, yyyy}",
         _ => $"{SixMonthsBack:MMM yyyy} – {Today:MMM yyyy}",
     };
@@ -481,8 +648,145 @@ else
         source ??= await ReportData.LoadAsync();
         BuildActivePreset();
         if (ActivePreset == "gap" && gapRows.Count == 0) await BuildGapRowsAsync();
+        if (ActivePreset is "eat" or "waist" && source.Purchases.Count > 0)
+        {
+            await LoadRecipeMainsAsync();
+            BuildMealPresets();
+        }
+        if (ActivePreset == "waste") await BuildWasteRowsAsync();
         if (ActivePreset == "custom") await EnterCustomAsync();
         loaded = true;
+    }
+
+    // ---- Meals: what we eat, what it costs, roughly what it adds up to --------------------------
+
+    private ReportResult? mealsByRecipe, caloriesByRecipe;
+    private List<(string Name, int TimesCooked, decimal? Cost, int PricedMains, int TotalMains)> mealCosts = [];
+    private bool trackExpirations;
+    private List<(LabeledPurchase Purchase, LabelOutcome Outcome)> labelOutcomes = [];
+
+    private decimal ThisWeekCalories => WeekTotal(caloriesByRecipe, 0);
+    private decimal LastWeekCalories => WeekTotal(caloriesByRecipe, 1);
+
+    private static decimal WeekTotal(ReportResult? result, int weeksBack)
+    {
+        if (result is null || result.Buckets.Count <= weeksBack) return 0;
+        var index = result.Buckets.Count - 1 - weeksBack;
+        return result.Series.Sum(s => index < s.Values.Count ? s.Values[index] ?? 0 : 0);
+    }
+
+    private int QuietCount => labelOutcomes.Count(o => o.Outcome == LabelOutcome.PassedQuietly);
+    private decimal QuietSpend => labelOutcomes
+        .Where(o => o.Outcome == LabelOutcome.PassedQuietly).Sum(o => o.Purchase.Price ?? 0);
+    private int SafeCount => labelOutcomes.Count(o =>
+        o.Outcome is LabelOutcome.Superseded or LabelOutcome.MarkedOut or LabelOutcome.Overridden);
+    private int OutcomeCount(LabelOutcome outcome) => labelOutcomes.Count(o => o.Outcome == outcome);
+
+    private void BuildMealPresets()
+    {
+        var mealWindow = new ReportSpec
+        {
+            Metric = ReportMetric.MealsCooked,
+            Split = ReportSplit.ByRecipe,
+            Grain = ReportGrain.Weekly,
+            Chart = ReportChart.StackedBars,
+            TopN = 5,
+            From = Today.AddMonths(-2),
+            To = Today,
+        };
+        mealsByRecipe = Run(mealWindow);
+        caloriesByRecipe = Run(mealWindow with { Metric = ReportMetric.Calories });
+
+        // Cost per meal: main ingredients priced at today's receipt prices via the matched product.
+        // The window's cooked recipes only — an uncooked recipe's cost isn't "what we actually eat".
+        var cookedCounts = source!.Meals
+            .Where(m => m.Date >= mealWindow.From && m.Date <= mealWindow.To)
+            .GroupBy(m => m.RecipeId)
+            .ToDictionary(g => g.Key, g => g.Count());
+        mealCosts = recipeMains
+            .Where(r => cookedCounts.ContainsKey(r.RecipeId))
+            .Select(r =>
+            {
+                var priced = r.Mains
+                    .Select(m => m.MatchedProduct is { } name
+                        && source.CurrentPriceByProductName.TryGetValue(name, out var price) ? price : (decimal?)null)
+                    .ToList();
+                var pricedCount = priced.Count(p => p is not null);
+                return (
+                    r.Name,
+                    TimesCooked: cookedCounts[r.RecipeId],
+                    Cost: pricedCount > 0 ? priced.Sum(p => p ?? 0) : (decimal?)null,
+                    PricedMains: pricedCount,
+                    TotalMains: r.Mains.Count);
+            })
+            .OrderByDescending(r => r.TimesCooked)
+            .ThenBy(r => r.Name)
+            .ToList();
+    }
+
+    /// <summary>Recipe main ingredients, loaded once alongside the meal presets (the fact load keeps
+    /// Core EF-free, but ingredient rows belong to this page's cost table, not to every report).</summary>
+    private List<(int RecipeId, string Name, List<RecipeIngredient> Mains)> recipeMains = [];
+
+    private async Task LoadRecipeMainsAsync()
+    {
+        if (recipeMains.Count > 0) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var recipes = await db.Recipes.AsNoTracking()
+            .Include(r => r.Ingredients)
+            .ToListAsync();
+        recipeMains = recipes
+            .Select(r => (r.Id, r.Name, r.MainIngredients.ToList()))
+            .ToList();
+    }
+
+    private async Task BuildWasteRowsAsync()
+    {
+        trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
+        if (!trackExpirations || labelOutcomes.Count > 0) return;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var dated = await db.PurchaseEvents.AsNoTracking()
+            .Where(p => p.ExpirationDate != null)
+            .Select(p => new { p.ProductId, p.Product!.Name, p.PurchasedAt, Label = p.ExpirationDate!.Value })
+            .ToListAsync();
+        if (dated.Count == 0) return;
+
+        var productIds = dated.Select(d => d.ProductId).Distinct().ToList();
+        var purchaseDates = (await db.PurchaseEvents.AsNoTracking()
+                .Where(p => productIds.Contains(p.ProductId))
+                .Select(p => new { p.ProductId, p.PurchasedAt })
+                .ToListAsync())
+            .GroupBy(p => p.ProductId)
+            .ToDictionary(g => g.Key, g => (IReadOnlyCollection<DateOnly>)g.Select(p => p.PurchasedAt).ToList());
+        var signals = (await db.InventorySignals.AsNoTracking()
+                .Where(s => productIds.Contains(s.ProductId))
+                .Select(s => new { s.ProductId, s.SignaledAt, s.Kind })
+                .ToListAsync())
+            .GroupBy(s => s.ProductId)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyCollection<(DateOnly, SignalKind)>)g
+                    .Select(s => (DateOnly.FromDateTime(s.SignaledAt.LocalDateTime), s.Kind)).ToList());
+
+        // Price each dated purchase from the report facts (same paid-then-estimate rule as spend).
+        var priceByPurchase = source!.Purchases
+            .GroupBy(f => (f.ProductId, f.Date))
+            .ToDictionary(g => g.Key, g => g.First().Price);
+
+        labelOutcomes = dated
+            .Select(d =>
+            {
+                var purchase = new LabeledPurchase(d.ProductId, d.Name, d.PurchasedAt, d.Label,
+                    priceByPurchase.GetValueOrDefault((d.ProductId, d.PurchasedAt)));
+                return (purchase, ExpirationOutcomes.Judge(
+                    purchase,
+                    purchaseDates.GetValueOrDefault(d.ProductId) ?? [],
+                    signals.GetValueOrDefault(d.ProductId) ?? [],
+                    Today));
+            })
+            .OrderByDescending(o => o.Item1.Label)
+            .ToList();
     }
 
     // ---- Custom report builder ----------------------------------------------------------------
