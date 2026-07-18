@@ -80,6 +80,7 @@ public class UserDataServiceTests : IDisposable
         });
         db.ExcludedFoods.Add(new ExcludedFood { Value = "olives" });
         db.GroceryExtras.Add(new GroceryExtra { Name = "napkins" });
+        db.SavedReports.Add(new SavedReport { Name = "Snack spend", Query = "from=2026-06-01&to=2026-07-01", SavedAt = DateTimeOffset.Now });
         await db.SaveChangesAsync();
     }
 
@@ -99,6 +100,7 @@ public class UserDataServiceTests : IDisposable
         Assert.Equal(0, await db.Recipes.CountAsync());
         Assert.Equal(0, await db.RecipeIngredients.CountAsync());
         Assert.Equal(0, await db.MealEvents.CountAsync());
+        Assert.Equal(0, await db.SavedReports.CountAsync());
         Assert.Equal(0, await db.Receipts.CountAsync());
         Assert.Equal(0, await db.ReceiptLines.CountAsync());
         Assert.Equal(0, await db.GroceryExtras.CountAsync());
@@ -210,6 +212,7 @@ public class UserDataServiceTests : IDisposable
         Assert.Equal("Whole Milk", export.Products[0].Name);
         Assert.Single(export.Recipes);
         Assert.Single(export.MealEvents);
+        Assert.Single(export.SavedReports);
         Assert.Single(export.Receipts);
         Assert.Single(export.GroceryExtras);
     }

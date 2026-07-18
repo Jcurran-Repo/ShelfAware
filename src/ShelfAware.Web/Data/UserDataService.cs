@@ -60,6 +60,7 @@ public sealed class UserDataService(
             MealEvents = await db.MealEvents.AsNoTracking().ToListAsync(ct),
             ExcludedFoods = await db.ExcludedFoods.AsNoTracking().ToListAsync(ct),
             GroceryExtras = await db.GroceryExtras.AsNoTracking().ToListAsync(ct),
+            SavedReports = await db.SavedReports.AsNoTracking().ToListAsync(ct),
         };
     }
 
@@ -241,6 +242,7 @@ public sealed class UserDataService(
             + await db.RecipeIngredients.CountAsync(ct)
             + await db.RecipeSteps.CountAsync(ct)
             + await db.MealEvents.CountAsync(ct)
+            + await db.SavedReports.CountAsync(ct)
             + await db.ExcludedFoods.CountAsync(ct)
             + await db.GroceryExtras.CountAsync(ct)
             + await db.AppSettings.CountAsync(s => SettingKeys.UserContent.Contains(s.Key), ct);
@@ -274,6 +276,7 @@ public sealed class UserDataService(
         await db.Products.ExecuteDeleteAsync(ct);
         await db.ExcludedFoods.ExecuteDeleteAsync(ct);
         await db.GroceryExtras.ExecuteDeleteAsync(ct);
+        await db.SavedReports.ExecuteDeleteAsync(ct); // no FKs — but a report config is user content
 
         // The settings table is mostly configuration, which survives — but some of its keys hold content
         // derived from the pantry we just deleted (the last recipe ideas; the self-eval's per-receipt
@@ -351,6 +354,7 @@ public sealed class DataExport
     public IReadOnlyList<RecipeIngredient> RecipeIngredients { get; init; } = [];
     public IReadOnlyList<RecipeStep> RecipeSteps { get; init; } = [];
     public IReadOnlyList<MealEvent> MealEvents { get; init; } = [];
+    public IReadOnlyList<SavedReport> SavedReports { get; init; } = [];
     public IReadOnlyList<ExcludedFood> ExcludedFoods { get; init; } = [];
     public IReadOnlyList<GroceryExtra> GroceryExtras { get; init; } = [];
 }

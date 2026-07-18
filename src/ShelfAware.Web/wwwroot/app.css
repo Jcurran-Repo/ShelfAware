@@ -2097,6 +2097,90 @@ tfoot td {
 
 .report-empty { padding: 1.25rem; }
 
+.builder-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 0.75rem 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.builder-grid label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+}
+
+.builder-grid select,
+.builder-grid input {
+    font: inherit;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 0.35rem 0.5rem;
+}
+
+.builder-grid .builder-check {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+    align-self: end;
+}
+
+.builder-problems {
+    color: var(--overdue-ink);
+    background: var(--overdue-bg);
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem 0.5rem 1.75rem;
+    font-size: 0.85rem;
+    margin: 0 0 0.75rem;
+}
+
+.builder-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.builder-save-name {
+    font: inherit;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 0.35rem 0.5rem;
+}
+
+.saved-reports {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+
+.saved-report {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+}
+
+.saved-report-delete {
+    background: none;
+    border: none;
+    color: var(--ink-soft);
+    cursor: pointer;
+    padding: 0.15rem 0.3rem;
+    border-radius: 4px;
+}
+
+.saved-report-delete:hover {
+    color: var(--overdue-ink);
+    background: var(--overdue-bg);
+}
+
 /* The printed page introduces itself; on screen the app chrome already does. */
 .report-print-header { display: none; }
 
@@ -2108,7 +2192,8 @@ tfoot td {
     .untrack-btn,
     .restock-btn,
     .report-presets,
-    .report-print-btn {
+    .report-print-btn,
+    .report-builder {
         display: none !important;
     }
 

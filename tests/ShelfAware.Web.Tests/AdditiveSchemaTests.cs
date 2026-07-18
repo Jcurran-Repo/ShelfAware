@@ -48,7 +48,7 @@ public class AdditiveSchemaTests : IDisposable
     {
         await using var db = _db.CreateDbContext();
         // What EnsureCreated built in the TestDb constructor is the reference schema.
-        var fresh = await MealEventsSchemaAsync(db);
+        var fresh = await TableSchemaAsync(db, "MealEvents");
         Assert.NotEmpty(fresh);
 
         // Simulate a DB from before the meal log existed, then boot.
@@ -58,7 +58,7 @@ public class AdditiveSchemaTests : IDisposable
 
         // The migrated table is IDENTICAL to a fresh file's — same DDL, same indexes. This is the pin
         // on EnsureTable's whole premise (DDL lifted from EF's create script, no second schema copy).
-        Assert.Equal(fresh, await MealEventsSchemaAsync(db));
+        Assert.Equal(fresh, await TableSchemaAsync(db, "MealEvents"));
 
         // And it behaves: writes go through, the recipe cascade holds.
         var recipe = new Recipe { Name = "Toast", SavedAt = DateTimeOffset.Now };
@@ -71,15 +71,36 @@ public class AdditiveSchemaTests : IDisposable
         Assert.Empty(await db.MealEvents.ToListAsync());
     }
 
-    /// <summary>Every sqlite_master row about MealEvents (the table and each index), name-ordered,
+    [Fact]
+    public async Task Creates_the_SavedReports_table_on_an_older_db_with_the_fresh_schema()
+    {
+        await using var db = _db.CreateDbContext();
+        var fresh = await TableSchemaAsync(db, "SavedReports");
+        Assert.NotEmpty(fresh);
+
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE SavedReports;");
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db);
+
+        Assert.Equal(fresh, await TableSchemaAsync(db, "SavedReports"));
+
+        db.SavedReports.Add(new SavedReport { Name = "Snacks", Query = "from=2026-06-01&to=2026-07-18", SavedAt = DateTimeOffset.Now });
+        await db.SaveChangesAsync();
+        Assert.Single(await db.SavedReports.ToListAsync());
+    }
+
+    /// <summary>Every sqlite_master row about the table (itself and each index), name-ordered,
     /// whitespace-normalized — a comparable fingerprint of the physical schema.</summary>
-    private static async Task<List<string>> MealEventsSchemaAsync(ShelfAwareDbContext db)
+    private static async Task<List<string>> TableSchemaAsync(ShelfAwareDbContext db, string table)
     {
         var conn = db.Database.GetDbConnection();
         if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText =
-            "SELECT sql FROM sqlite_master WHERE tbl_name = 'MealEvents' AND sql IS NOT NULL ORDER BY name;";
+        cmd.CommandText = "SELECT sql FROM sqlite_master WHERE tbl_name = @t AND sql IS NOT NULL ORDER BY name;";
+        var p = cmd.CreateParameter();
+        p.ParameterName = "@t";
+        p.Value = table;
+        cmd.Parameters.Add(p);
         var rows = new List<string>();
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())

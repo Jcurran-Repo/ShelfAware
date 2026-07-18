@@ -69,6 +69,7 @@ public class HouseholdIsolationTests : IDisposable
             };
             db.Recipes.Add(toast);
             db.MealEvents.Add(new MealEvent { Recipe = toast, AteAt = new DateOnly(2026, 7, 10) });
+            db.SavedReports.Add(new SavedReport { Name = "Mine", Query = "from=2026-06-01&to=2026-07-01", SavedAt = DateTimeOffset.Now });
             await db.SaveChangesAsync();
         }
 
@@ -83,6 +84,7 @@ public class HouseholdIsolationTests : IDisposable
             Assert.Empty(await db.RecipeIngredients.ToListAsync());
             Assert.Empty(await db.RecipeSteps.ToListAsync());
             Assert.Empty(await db.MealEvents.ToListAsync());
+            Assert.Empty(await db.SavedReports.ToListAsync());
         }
 
         await using (var db = As(A))

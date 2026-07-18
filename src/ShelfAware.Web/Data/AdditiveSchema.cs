@@ -37,6 +37,9 @@ public static class AdditiveSchema
         // 2026-07-18: the meal log — "Ate it" started recording WHEN, for the Reports tab's
         // meals/calories-over-time charts. A brand-new table is invisible to existing rows.
         EnsureTable(db, table: "MealEvents");
+
+        // 2026-07-18: named report configurations (the Reports tab's "Save this report").
+        EnsureTable(db, table: "SavedReports");
     }
 
     public static void Apply(AuthDbContext db)

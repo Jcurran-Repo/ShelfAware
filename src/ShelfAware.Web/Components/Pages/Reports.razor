@@ -9,6 +9,7 @@
 @inject IHouseholdDbFactory DbFactory
 @inject IAppSettings SettingsStore
 @inject IJSRuntime JS
+@inject NavigationManager Nav
 
 <PageTitle>Reports — Shelf Aware</PageTitle>
 
@@ -50,6 +51,172 @@ else
 {
     @switch (ActivePreset)
     {
+        case "custom":
+            <section class="report-section report-builder">
+                <h2>Custom report</h2>
+
+                @if (savedReports.Count > 0)
+                {
+                    <div class="saved-reports" role="list" aria-label="Saved reports">
+                        @foreach (var saved in savedReports)
+                        {
+                            <span class="saved-report" role="listitem">
+                                <a class="report-preset-pill" href="/reports?preset=custom&@saved.Query">@saved.Name</a>
+                                <button class="saved-report-delete" title="Delete '@saved.Name'"
+                                        @onclick="() => DeleteSavedAsync(saved)">✕</button>
+                            </span>
+                        }
+                    </div>
+                }
+
+                <div class="builder-grid">
+                    <label>Measure
+                        <select @bind="draft.Metric">
+                            <option value="@ReportMetric.Spend">Spend ($)</option>
+                            <option value="@ReportMetric.UnitPrice">Unit price ($ per one)</option>
+                            <option value="@ReportMetric.Quantity">Quantity bought</option>
+                            <option value="@ReportMetric.PurchaseCount">Times bought</option>
+                            <option value="@ReportMetric.MealsCooked">Meals cooked</option>
+                            <option value="@ReportMetric.Calories">Calories cooked</option>
+                        </select>
+                    </label>
+                    <label>Split into series
+                        <select @bind="draft.Split">
+                            <option value="@ReportSplit.None">No split</option>
+                            <option value="@ReportSplit.ByCategory">By aisle category</option>
+                            <option value="@ReportSplit.ByProduct">By product</option>
+                            <option value="@ReportSplit.ByTag">By tag</option>
+                            <option value="@ReportSplit.ByRecipe">By recipe</option>
+                        </select>
+                    </label>
+                    <label>Buckets
+                        <select @bind="draft.Grain">
+                            <option value="@ReportGrain.Weekly">Weekly</option>
+                            <option value="@ReportGrain.Monthly">Monthly</option>
+                            <option value="@ReportGrain.Quarterly">Quarterly</option>
+                        </select>
+                    </label>
+                    <label>Chart
+                        <select @bind="draft.Chart">
+                            <option value="@ReportChart.Line">Lines</option>
+                            <option value="@ReportChart.Bars">Bars</option>
+                            <option value="@ReportChart.StackedBars">Stacked bars</option>
+                            <option value="@ReportChart.Table">Table only</option>
+                        </select>
+                    </label>
+                    <label>From <input type="date" @bind="draft.From" /></label>
+                    <label>To <input type="date" @bind="draft.To" /></label>
+                    <label>Product (optional)
+                        <select @bind="draft.ProductId">
+                            <option value="">Any product</option>
+                            @foreach (var (id, name) in source.Products)
+                            {
+                                <option value="@id">@name</option>
+                            }
+                        </select>
+                    </label>
+                    <label>Tag (optional)
+                        <select @bind="draft.Tag">
+                            <option value="">Any tag</option>
+                            @foreach (var tag in source.Tags)
+                            {
+                                <option value="@tag">@tag</option>
+                            }
+                        </select>
+                    </label>
+                    <label>Aisle (optional)
+                        <select @bind="draft.Category">
+                            <option value="">Any aisle</option>
+                            @foreach (var category in Enum.GetValues<Category>())
+                            {
+                                <option value="@category">@category</option>
+                            }
+                        </select>
+                    </label>
+                    <label>Recipe (optional, meal measures)
+                        <select @bind="draft.RecipeId">
+                            <option value="">Any recipe</option>
+                            @foreach (var (id, name) in MealRecipes)
+                            {
+                                <option value="@id">@name</option>
+                            }
+                        </select>
+                    </label>
+                    <label>Keep top
+                        <input type="number" min="1" max="8" @bind="draft.TopN" />
+                    </label>
+                    <label class="builder-check">
+                        <input type="checkbox" @bind="draft.ComparePrevious" /> Compare with the period before
+                    </label>
+                </div>
+
+                @if (draftProblems.Count > 0)
+                {
+                    <ul class="builder-problems">
+                        @foreach (var problem in draftProblems)
+                        {
+                            <li>@problem</li>
+                        }
+                    </ul>
+                }
+
+                <div class="builder-actions">
+                    <button @onclick="ApplyDraft" disabled="@(draftProblems.Count > 0)">Run report</button>
+                    @if (customResult is not null)
+                    {
+                        <input class="builder-save-name" placeholder="Name this report…" @bind="saveName" />
+                        <button class="secondary" @onclick="SaveCurrentAsync"
+                                disabled="@string.IsNullOrWhiteSpace(saveName)">Save</button>
+                    }
+                    @if (saveNote is { } sn)
+                    {
+                        <span class="muted small">@sn</span>
+                    }
+                </div>
+            </section>
+
+            @if (customResult is { } result)
+            {
+                <section class="report-section">
+                    <h2>@CustomTitle</h2>
+                    @if (result.Total is { } total)
+                    {
+                        <div class="portfolio">
+                            <div class="stat">
+                                <span class="stat-label">Total · @customSpec!.From.ToString("MMM d") – @customSpec.To.ToString("MMM d")</span>
+                                <span class="stat-value">@ChartFormat.Value(result.Unit, total)</span>
+                            </div>
+                            @if (result.PreviousTotal is { } previous)
+                            {
+                                <div class="stat">
+                                    <span class="stat-label">Period before</span>
+                                    <span class="stat-value">@ChartFormat.Value(result.Unit, previous)</span>
+                                </div>
+                            }
+                        </div>
+                    }
+                    <ChartLegend Series="result.Series" />
+                    @if (customSpec!.Chart == ReportChart.Line)
+                    {
+                        <TimeSeriesChart Buckets="result.Buckets" Series="result.Series" Unit="result.Unit"
+                                         AriaLabel="@CustomTitle" />
+                    }
+                    else if (customSpec.Chart is ReportChart.Bars or ReportChart.StackedBars)
+                    {
+                        <BarChart Buckets="result.Buckets" Series="result.Series" Unit="result.Unit"
+                                  Stacked="customSpec.Chart == ReportChart.StackedBars && result.Stackable"
+                                  AriaLabel="@CustomTitle" />
+                    }
+                    @if (result.Note is { } note)
+                    {
+                        <p class="muted small">@note</p>
+                    }
+                    <ReportDataTable Buckets="result.Buckets" Series="result.Series" Unit="result.Unit"
+                                     Additive="result.Additive" Caption="@CustomTitle" />
+                </section>
+            }
+            break;
+
         case "price-watch":
             <section class="report-section">
                 <h2>What's costing more?</h2>
@@ -272,6 +439,7 @@ else
         ("report-card", "Monthly report card"),
         ("price-watch", "What's costing more?"),
         ("gap", "The gap report"),
+        ("custom", "Custom report"),
     ];
 
     private bool loaded;
@@ -292,6 +460,7 @@ else
     {
         "price-watch" => $"{Today.AddMonths(-3):MMM d} – {Today:MMM d, yyyy}",
         "gap" => "all history",
+        "custom" when customSpec is { } s => $"{s.From:MMM d} – {s.To:MMM d, yyyy}",
         _ => $"{SixMonthsBack:MMM yyyy} – {Today:MMM yyyy}",
     };
 
@@ -312,7 +481,151 @@ else
         source ??= await ReportData.LoadAsync();
         BuildActivePreset();
         if (ActivePreset == "gap" && gapRows.Count == 0) await BuildGapRowsAsync();
+        if (ActivePreset == "custom") await EnterCustomAsync();
         loaded = true;
+    }
+
+    // ---- Custom report builder ----------------------------------------------------------------
+
+    /// <summary>The form's mutable working copy — @bind needs setters, ReportSpec is a value.
+    /// Nullable where "not chosen" is a real state the selects need to express.</summary>
+    private sealed class Draft
+    {
+        public ReportMetric Metric { get; set; }
+        public ReportSplit Split { get; set; }
+        public ReportGrain Grain { get; set; }
+        public ReportChart Chart { get; set; }
+        public DateOnly From { get; set; }
+        public DateOnly To { get; set; }
+        public int TopN { get; set; } = 6;
+        public Category? Category { get; set; }
+        public int? ProductId { get; set; }
+        public string? Tag { get; set; }
+        public int? RecipeId { get; set; }
+        public bool ComparePrevious { get; set; }
+
+        public ReportSpec ToSpec() => new()
+        {
+            Metric = Metric, Split = Split, Grain = Grain, Chart = Chart,
+            From = From, To = To, TopN = TopN,
+            Category = Category, ProductId = ProductId,
+            Tag = string.IsNullOrWhiteSpace(Tag) ? null : Tag, RecipeId = RecipeId,
+            ComparePrevious = ComparePrevious,
+        };
+
+        public void CopyFrom(ReportSpec spec)
+        {
+            Metric = spec.Metric; Split = spec.Split; Grain = spec.Grain; Chart = spec.Chart;
+            From = spec.From; To = spec.To; TopN = spec.TopN;
+            Category = spec.Category; ProductId = spec.ProductId;
+            Tag = spec.Tag; RecipeId = spec.RecipeId;
+            ComparePrevious = spec.ComparePrevious;
+        }
+    }
+
+    private readonly Draft draft = new();
+    private ReportSpec? customSpec;
+    private ReportResult? customResult;
+    private List<SavedReport> savedReports = [];
+    private string? saveName;
+    private string? saveNote;
+    private bool draftInitialized;
+
+    private List<string> draftProblems => ReportSpecRules.Check(draft.ToSpec()).ToList();
+
+    /// <summary>Recipes that can be picked = recipes with at least one logged meal (anything else
+    /// has nothing to chart, and the empty result would look like a bug rather than a fact).</summary>
+    private IEnumerable<(int Id, string Name)> MealRecipes =>
+        source!.Meals.GroupBy(m => m.RecipeId).Select(g => (g.Key, g.First().RecipeName)).OrderBy(r => r.RecipeName);
+
+    private string CustomTitle
+    {
+        get
+        {
+            if (customSpec is not { } s) return "Custom report";
+            var metric = s.Metric switch
+            {
+                ReportMetric.Spend => "Spend",
+                ReportMetric.UnitPrice => "Unit price",
+                ReportMetric.Quantity => "Quantity",
+                ReportMetric.PurchaseCount => "Times bought",
+                ReportMetric.MealsCooked => "Meals cooked",
+                _ => "Calories cooked",
+            };
+            var subject = s.ProductId is { } pid ? source!.Products.FirstOrDefault(p => p.Id == pid).Name
+                : s.Tag is { } tag ? $"“{tag}”"
+                : s.Category is { } category ? category.ToString()
+                : s.RecipeId is { } rid ? MealRecipes.FirstOrDefault(r => r.Id == rid).Name
+                : null;
+            return subject is null ? metric : $"{metric} · {subject}";
+        }
+    }
+
+    /// <summary>Adopt the URL's spec (deep link, saved-report pill, back button). The equality guard
+    /// keeps the NavigateTo that ApplyDraft itself issues from re-running the same report.</summary>
+    private async Task EnterCustomAsync()
+    {
+        if (savedReports.Count == 0)
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            savedReports = await db.SavedReports.AsNoTracking().OrderBy(r => r.Name).ToListAsync();
+        }
+
+        var query = System.Web.HttpUtility.ParseQueryString(new Uri(Nav.Uri).Query);
+        var values = query.AllKeys.Where(k => k is not null)
+            .ToDictionary(k => k!, k => (string?)query[k]);
+        var defaultFrom = Today.AddMonths(-3);
+        var parsed = ReportSpecUrl.FromQuery(values, defaultFrom, Today);
+
+        if (!draftInitialized || (values.ContainsKey("from") && parsed != customSpec))
+        {
+            draft.CopyFrom(parsed);
+            draftInitialized = true;
+            if (ReportSpecRules.Check(parsed).Count == 0 && source!.Purchases.Count > 0)
+            {
+                customSpec = parsed;
+                customResult = ReportEngine.Run(parsed, source.Purchases, source.Meals);
+            }
+        }
+    }
+
+    private void ApplyDraft()
+    {
+        var spec = draft.ToSpec();
+        if (ReportSpecRules.Check(spec).Count > 0) return; // the button is disabled; belt and braces
+        customSpec = spec;
+        customResult = ReportEngine.Run(spec, source!.Purchases, source.Meals);
+        saveNote = null;
+        // replace:true — tuning a report shouldn't bury the back button under every attempt.
+        Nav.NavigateTo($"/reports?preset=custom&{ReportSpecUrl.ToQuery(spec)}", replace: true);
+    }
+
+    private async Task SaveCurrentAsync()
+    {
+        if (customSpec is not { } spec || string.IsNullOrWhiteSpace(saveName)) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.SavedReports.Add(new SavedReport
+        {
+            Name = saveName.Trim(),
+            Query = ReportSpecUrl.ToQuery(spec),
+            SavedAt = DateTimeOffset.Now,
+        });
+        await db.SaveChangesAsync();
+        savedReports = await db.SavedReports.AsNoTracking().OrderBy(r => r.Name).ToListAsync();
+        saveNote = $"Saved “{saveName.Trim()}”.";
+        saveName = null;
+    }
+
+    private async Task DeleteSavedAsync(SavedReport report)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var mine = await db.SavedReports.FindAsync(report.Id);
+        if (mine is not null)
+        {
+            db.SavedReports.Remove(mine);
+            await db.SaveChangesAsync();
+        }
+        savedReports.RemoveAll(r => r.Id == report.Id);
     }
 
     private void BuildActivePreset()
