@@ -58,8 +58,10 @@
 
     private static string F(double v) => v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
 
+    // DefaultIfEmpty: an empty-series result (a split over a window with no facts) must render an
+    // empty frame, not throw — Max() on an empty sequence is an InvalidOperationException.
     private decimal MaxValue =>
-        Series.SelectMany(s => s.Values).Max(v => v ?? 0) is var max && max > 0 ? max : 1;
+        Series.SelectMany(s => s.Values).Select(v => v ?? 0).DefaultIfEmpty(0).Max() is var max && max > 0 ? max : 1;
 
     /// <summary>The axis always starts at zero — a truncated baseline is the classic way a chart
     /// lies, and nothing here is worth that. NiceStep keeps ticks at 1/2/2.5/5 × 10^k.</summary>

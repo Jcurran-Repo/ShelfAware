@@ -79,6 +79,11 @@ public sealed record ReportSpec
 /// lying chart). Empty list = the spec is sound.</summary>
 public static class ReportSpecRules
 {
+    /// <summary>The palette has exactly eight validated categorical slots; a series count past that
+    /// would repeat colors and un-earn the colorblind-separation guarantee. TopN is capped here (the
+    /// rule layer) so the engine, the URL parser, and the builder all agree on one number.</summary>
+    public const int MaxTopN = 8;
+
     public static IReadOnlyList<string> Check(ReportSpec spec)
     {
         var problems = new List<string>();
@@ -112,8 +117,8 @@ public static class ReportSpecRules
                 ? "Tag series overlap (one product can carry several tags), so stacking them would double-count — compare them side by side instead."
                 : "Only a split that partitions the data (by category, product, or recipe) can stack to an honest total.");
 
-        if (spec.TopN < 1)
-            problems.Add("Keep at least one series.");
+        if (spec.TopN is < 1 or > MaxTopN)
+            problems.Add($"Keep between 1 and {MaxTopN} series — there are exactly {MaxTopN} validated chart colors, and a ninth series would silently wear the eighth's.");
 
         return problems;
     }

@@ -49,7 +49,7 @@ public static class ReportSpecUrl
             Metric = Enum<ReportMetric>("metric") ?? Defaults.Metric,
             Grain = Enum<ReportGrain>("grain") ?? Defaults.Grain,
             Split = Enum<ReportSplit>("split") ?? Defaults.Split,
-            TopN = Int("top") is { } top and >= 1 and <= 8 ? top : Defaults.TopN,
+            TopN = Int("top") is { } top && top >= 1 && top <= ReportSpecRules.MaxTopN ? top : Defaults.TopN,
             Category = Enum<Category>("category"),
             ProductId = Int("product"),
             Tag = Text("tag"),

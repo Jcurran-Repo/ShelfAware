@@ -24,7 +24,8 @@
 <nav class="report-presets" aria-label="Report presets">
     @foreach (var p in PresetDefs)
     {
-        <a class="report-preset-pill @(p.Key == ActivePreset ? "active" : null)" href="/reports?preset=@p.Key">
+        <a class="report-preset-pill @(p.Key == ActivePreset ? "active" : null)"
+           aria-current="@(p.Key == ActivePreset ? "page" : null)" href="/reports?preset=@p.Key">
             @p.Title
         </a>
     }
@@ -856,10 +857,12 @@ else
                 ReportMetric.MealsCooked => "Meals cooked",
                 _ => "Calories cooked",
             };
-            var subject = s.ProductId is { } pid ? source!.Products.FirstOrDefault(p => p.Id == pid).Name
+            // A saved report can outlive its subject (a product merged away, a recipe deleted) —
+            // name that state rather than rendering "Spend · " with a ghost separator.
+            var subject = s.ProductId is { } pid ? source!.Products.FirstOrDefault(p => p.Id == pid).Name ?? "(a former product)"
                 : s.Tag is { } tag ? $"“{tag}”"
                 : s.Category is { } category ? category.ToString()
-                : s.RecipeId is { } rid ? MealRecipes.FirstOrDefault(r => r.Id == rid).Name
+                : s.RecipeId is { } rid ? MealRecipes.FirstOrDefault(r => r.Id == rid).Name ?? "(a former recipe)"
                 : null;
             return subject is null ? metric : $"{metric} · {subject}";
         }
