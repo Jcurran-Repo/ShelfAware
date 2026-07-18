@@ -181,9 +181,14 @@ var dataProtection = builder.Services.AddDataProtection()
     .SetApplicationName("ShelfAware");
 if (OperatingSystem.IsWindows())
 {
-    // Encrypt the key ring at rest with the Windows user's DPAPI (the tailnet self-host). On Linux
-    // (Azure) the keys stay plain files under app-data — same trust boundary as the SQLite DBs.
-    dataProtection.ProtectKeysWithDpapi();
+    // Encrypt the key ring at rest with MACHINE-scope DPAPI, not user-scope. User-scope needs the
+    // user's credential material, which a boot-time task (S4U, no stored password) doesn't reliably
+    // have before anyone logs on — and worse, an S4U logon re-encrypting the user's master keys is
+    // exactly what corrupted them on 2026-07-17 and 500'd every auth page after the next reboot.
+    // Machine scope decrypts in any logon session. Trade-off: any local process can read the key
+    // ring — the same trust boundary as the SQLite DBs sitting next to it. On Linux (Azure) the
+    // keys stay plain files under app-data, so this was never a stronger guarantee than that.
+    dataProtection.ProtectKeysWithDpapi(protectToLocalMachine: true);
 }
 
 builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection(LlmOptions.SectionName));
