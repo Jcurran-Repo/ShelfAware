@@ -126,24 +126,34 @@ public static class ReplenishmentPredictor
         //    goes bad whether or not you drank it. Only the LATEST purchase's date governs (rebuying
         //    supersedes the old jug, whether or not the new one carries a date); among same-day
         //    purchases the LONGEST date wins (you'd open the shorter-dated one first). "Best by"
-        //    convention: the labeled day itself is still good — expired means today is PAST it. A
-        //    Restocked dated after the label is the human overriding it ("I froze it") and wins;
-        //    Restocked ON the labeled day is just "I have it" (nothing showed expired yet), not an
-        //    override. Escalate-only: a future date never softens a cadence-based warning, and nothing
-        //    here feeds either rhythm.
+        //    convention: the labeled day itself is still good — expired means today is PAST it.
+        //
+        //    Before the label: the date is a HARD CAP on the due date — the cadence estimates how long
+        //    stock usually lasts, the label bounds how long it CAN last, so the projection never
+        //    extends past it (min, never max). The cap ESCALATES only: it can pull a due date earlier
+        //    and bump status up (it even gives a still-learning item a real due date — one purchase of
+        //    milk has no rhythm, but you know it dies on the 25th), never calms a warning down. Through
+        //    the cap an expiring item flows into Due Soon → the lists BEFORE it dies, not just after.
+        //
+        //    A Restocked dated after the label is the human overriding it ("I froze it — still good")
+        //    and stands down the label entirely — pin AND cap — until the next purchase resets things.
+        //    A Restocked ON or BEFORE the labeled day is just "I have it": the item in hand IS the
+        //    labeled item and the label hasn't been contradicted yet, so the cap stands. That
+        //    asymmetry is deliberate — people tap Restocked casually, and a casual tap must not
+        //    silently disarm expiration tracking. Nothing here feeds either rhythm.
         DateOnly? expiresOn = null;
-        bool expired = false, expirationOverridden = false;
+        bool expired = false, expirationOverridden = false, dueCapped = false;
         if (honorExpirations && product.Purchases.Count > 0)
         {
             var latestBuy = product.Purchases.Max(p => p.PurchasedAt);
             expiresOn = product.Purchases
                 .Where(p => p.PurchasedAt == latestBuy)
                 .Max(p => p.ExpirationDate);
-            if (expiresOn is { } label && today > label)
+            if (expiresOn is { } label)
             {
                 expirationOverridden = product.Signals.Any(s =>
                     s.Kind == SignalKind.Restocked && DateOnly.FromDateTime(s.SignaledAt.Date) > label);
-                if (!expirationOverridden)
+                if (!expirationOverridden && today > label)
                 {
                     expired = true;
                     if (!pinned) // an explicit OutNow already pins; the user's own outage date stands
@@ -152,6 +162,24 @@ public static class ReplenishmentPredictor
                         pinned = true;
                         dueDate = label; // "due" = the day it went bad, like OutNow's outage date
                     }
+                }
+                else if (!expirationOverridden && (dueDate is null || label < dueDate.Value))
+                {
+                    dueDate = label;
+                    dueCapped = true;
+                    // The label's warning window: the cadence's own threshold when a rhythm exists
+                    // (a noisy rhythm warns earlier here too), the flat 3-day rule for a learner —
+                    // and never wider than the label leaves room for (the interval-minus-one guard,
+                    // so a next-day label doesn't start life already DueSoon).
+                    var labelThreshold = drivingMedian is { } lm
+                        ? Round(Math.Max(3.0, Math.Max(0.2 * lm, spread ?? 0)))
+                        : 3;
+                    if (lastStockBack is { } anchor2)
+                        labelThreshold = Math.Min(labelThreshold, Math.Max(0, label.DayNumber - anchor2.DayNumber - 1));
+                    var labelStatus = today >= label.AddDays(-labelThreshold)
+                        ? PredictionStatus.DueSoon
+                        : PredictionStatus.Stocked;
+                    if (labelStatus > status) status = labelStatus; // escalate-only (lifts Unknown too)
                 }
             }
         }
@@ -173,6 +201,7 @@ public static class ReplenishmentPredictor
             ExpiresOn = expiresOn,
             Expired = expired,
             ExpirationOverridden = expirationOverridden,
+            DueCappedByExpiration = dueCapped,
         };
     }
 

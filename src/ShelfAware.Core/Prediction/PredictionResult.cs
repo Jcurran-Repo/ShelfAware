@@ -62,8 +62,15 @@ public record PredictionResult
 
     /// True when the label has passed but a Restocked signal dated AFTER the labeled date suppressed it —
     /// the human overriding the label ("I froze it; it's fine"). Surfaced so the expiration panel can say
-    /// the label was overridden instead of silently not firing.
+    /// the label was overridden instead of silently not firing. The override stands down the DueDate cap
+    /// too — half an override would be a lie.
     public bool ExpirationOverridden { get; init; }
+
+    /// True when <see cref="DueDate"/> IS the label rather than the rhythm: the cadence projected past
+    /// <see cref="ExpiresOn"/> (or had nothing to project — a still-learning item with a dated purchase),
+    /// so the due date was hard-capped there. The cadence estimates how long stock usually lasts; the
+    /// label bounds how long it can. Lets the detail page say why the next-buy date moved.
+    public bool DueCappedByExpiration { get; init; }
 
     // ---- Derived: the two-stream gap (rebuy rhythm vs. burn rate) ----
 

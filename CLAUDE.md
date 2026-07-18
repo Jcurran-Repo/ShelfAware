@@ -392,15 +392,29 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      either cadence rhythm.
    - **Derived state, not a fired event.** `ReplenishmentPredictor.Predict(product, today,
      honorExpirations)` computes it: past the label ("best by" day itself is still good) → pinned
-     Overdue with DueDate = the label date; `ExpiresOn`/`Expired`/`ExpirationOverridden` ride on
-     `PredictionResult`. No background sweeper exists to double-fire, miss a slept-through day, or
-     re-flag after an override. ⚠️ **`honorExpirations` defaults FALSE deliberately** — a forgotten
-     call site fails INERT (no expiry state for an opted-in household, a visible gap) rather than
-     LOUD (phantom pins for an opted-out one). Don't "fix" the default.
-   - **Restocked dated AFTER the label overrides it** ("I froze it" beats the sticker) — and the
-     Product Detail panel SAYS "overridden" (Jordan's requirement: the human must never wonder why
-     a date they set stopped counting). Restocked ON the label day is not an override (nothing had
-     shown expired yet). An explicit OutNow keeps its own due date; `Expired` still reports.
+     Overdue with DueDate = the label date; `ExpiresOn`/`Expired`/`ExpirationOverridden`/
+     `DueCappedByExpiration` ride on `PredictionResult`. No background sweeper exists to
+     double-fire, miss a slept-through day, or re-flag after an override. ⚠️ **`honorExpirations`
+     defaults FALSE deliberately** — a forgotten call site fails INERT (no expiry state for an
+     opted-in household, a visible gap) rather than LOUD (phantom pins for an opted-out one).
+     Don't "fix" the default.
+   - **Before the label, the date HARD-CAPS the due date** (Jordan's call, 7/18): the cadence
+     estimates how long stock usually lasts, the label bounds how long it CAN — `DueDate =
+     min(rhythm, label)`, never max. Escalate-only: the cap pulls dates earlier and bumps status up
+     (it even gives a still-learning one-purchase item a real due date from the label alone), never
+     calms a warning. Consequence that IS the feature: an expiring item flows into Due Soon → the
+     dashboard and grocery list BEFORE it dies, through the existing machinery — no expiration
+     column on any grid, deliberately. Only Product Detail annotates ("· 🏷️ capped by the
+     expiration date").
+   - **Restocked dated AFTER the label overrides it** ("I froze it" beats the sticker) — pin AND
+     cap stand down (half an override would be a lie), and the Product Detail panel SAYS
+     "overridden" (Jordan's requirement: the human must never wonder why a date they set stopped
+     counting). **Restocked ON/BEFORE the label day is NOT an override** — it's just "I have it";
+     the item in hand IS the labeled item, and people tap Restocked casually, so a casual tap must
+     not silently disarm the feature. The expected freezer-household flow is reactive: the app asks
+     once at the label ("still good?"), one Restocked tap answers for that purchase; chronic
+     freezer items should Clear the date or not be dated. An explicit OutNow keeps its own due
+     date; `Expired` still reports.
    - **Toggle:** `SettingKeys.TrackExpirationDates` (Config; default off — it's the most
      ritual-heavy field in the app). Off is DORMANT, not destructive: dates kept, nothing fires or
      renders anywhere (grid column, panel, dashboard note, chat tool all gate on

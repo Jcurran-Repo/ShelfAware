@@ -600,24 +600,128 @@ public class ReplenishmentPredictorTests
     }
 
     [Fact]
-    public void TheLabeledDayItself_IsStillGood()
+    public void TheLabeledDayItself_IsStillGood_ButDueToday()
     {
-        // "Best by Jul 5" milk is fine ON Jul 5 — expired means today is PAST the label.
+        // "Best by Jul 5" milk is fine ON Jul 5 — expired means today is PAST the label. But the cap
+        // makes it DUE today: the label is the last day this stock can serve, so buy now, not tomorrow.
         var r = ReplenishmentPredictor.Predict(Expiring((D(0), D(5))), D(5), honorExpirations: true);
 
         Assert.False(r.Expired);
         Assert.Equal(D(5), r.ExpiresOn);
-        Assert.Equal(PredictionStatus.Unknown, r.Status); // one purchase — the rhythm is untouched
+        Assert.Equal(D(5), r.DueDate);
+        Assert.Equal(PredictionStatus.DueSoon, r.Status);
+        Assert.True(r.DueCappedByExpiration);
     }
 
     [Fact]
-    public void FutureExpiration_SurfacesTheDate_WithoutTouchingStatus()
+    public void FutureLabel_GivesEvenAStillLearningItem_ARealDueDate()
     {
+        // One purchase — no rhythm — but you KNOW it dies on D(9): the label alone supplies the due
+        // date and lifts the item out of "still learning". Far from the label it's simply Stocked.
         var r = ReplenishmentPredictor.Predict(Expiring((D(0), D(9))), D(2), honorExpirations: true);
 
-        Assert.Equal(D(9), r.ExpiresOn); // the UI can say "expires Jan 10"
+        Assert.Equal(D(9), r.ExpiresOn);
         Assert.False(r.Expired);
-        Assert.Equal(PredictionStatus.Unknown, r.Status);
+        Assert.Equal(D(9), r.DueDate);
+        Assert.Equal(PredictionStatus.Stocked, r.Status); // window (flat 3) starts D(6)
+        Assert.True(r.DueCappedByExpiration);
+
+        var nearer = ReplenishmentPredictor.Predict(Expiring((D(0), D(9))), D(7), honorExpirations: true);
+        Assert.Equal(PredictionStatus.DueSoon, nearer.Status); // inside the label's warning window
+    }
+
+    [Fact]
+    public void TheLabel_HardCaps_ACadenceDueDate()
+    {
+        // Rhythm says ~every 10 days (due D(30)); the latest jug's label says D(24). The cadence
+        // estimates how long stock usually lasts; the label bounds how long it CAN — min, never max.
+        var r = ReplenishmentPredictor.Predict(
+            Expiring((D(0), null), (D(10), null), (D(20), D(24))), D(21), honorExpirations: true);
+
+        Assert.Equal(D(24), r.DueDate);
+        Assert.True(r.DueCappedByExpiration);
+        Assert.Equal(PredictionStatus.DueSoon, r.Status); // 3 days out, window ≥ 3
+    }
+
+    [Fact]
+    public void ALabelAfterTheCadenceDueDate_ChangesNothing()
+    {
+        // Due D(30) by rhythm, label D(40): the rhythm's earlier date already governs — the label
+        // never EXTENDS a projection (that would let a hopeful sticker mute a real warning).
+        var r = ReplenishmentPredictor.Predict(
+            Expiring((D(0), null), (D(10), null), (D(20), D(40))), D(21), honorExpirations: true);
+
+        Assert.Equal(D(30), r.DueDate);
+        Assert.False(r.DueCappedByExpiration);
+        Assert.Equal(D(40), r.ExpiresOn); // still surfaced for the panel
+    }
+
+    [Fact]
+    public void TheCap_NeverCalmsAWarningDown()
+    {
+        // Statistically OVERDUE (rhythm due D(30), today D(31)) with a hopeful future label D(35):
+        // escalate-only — the label can't rescue an item the rhythm says you've already run out of.
+        var r = ReplenishmentPredictor.Predict(
+            Expiring((D(0), null), (D(10), null), (D(20), D(35))), D(31), honorExpirations: true);
+
+        Assert.Equal(PredictionStatus.Overdue, r.Status);
+        Assert.Equal(D(30), r.DueDate); // the rhythm's own date — earlier than the label — stands
+        Assert.False(r.DueCappedByExpiration);
+    }
+
+    [Fact]
+    public void RestockedBeforeTheLabel_DoesNotRemoveTheCap()
+    {
+        // "I have it" on D(3) doesn't contradict a label that hasn't been proven wrong — the item in
+        // hand IS the labeled item. People tap Restocked casually; a casual tap must not silently
+        // disarm expiration tracking. (Contrast RestockedAfterTheLabel_Overrides.)
+        var product = Expiring((D(0), D(9)));
+        product.Signals = [Signal(SignalKind.Restocked, D(3))];
+
+        var r = ReplenishmentPredictor.Predict(product, D(7), honorExpirations: true);
+
+        Assert.Equal(D(9), r.DueDate);
+        Assert.True(r.DueCappedByExpiration);
+        Assert.False(r.ExpirationOverridden);
+    }
+
+    [Fact]
+    public void TheOverride_StandsDownTheCapToo()
+    {
+        // Rhythm due D(30); label D(24) passed; Restocked D(25) overrode it. Half an override would
+        // be a lie: the due date returns to the rhythm's own projection, re-anchored by the restock.
+        var product = Expiring((D(0), null), (D(10), null), (D(20), D(24)));
+        product.Signals = [Signal(SignalKind.Restocked, D(25))];
+
+        var r = ReplenishmentPredictor.Predict(product, D(26), honorExpirations: true);
+
+        Assert.True(r.ExpirationOverridden);
+        Assert.False(r.Expired);
+        Assert.False(r.DueCappedByExpiration);
+        Assert.Equal(D(35), r.DueDate); // restock anchor D(25) + the ~10-day rhythm
+    }
+
+    [Fact]
+    public void AStockUp_CannotStretchTheProjectionPastTheLabel()
+    {
+        // Bought 3× the usual on D(20) (projection would stretch to ~D(50)) — but all three jugs die
+        // on D(26). The label caps the stock-up too.
+        var product = new Product
+        {
+            Id = 1,
+            Name = "Milk",
+            Purchases =
+            [
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(0), Quantity = 1 },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(10), Quantity = 1 },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(20), Quantity = 3, ExpirationDate = D(26) },
+            ],
+        };
+
+        var r = ReplenishmentPredictor.Predict(product, D(21), honorExpirations: true);
+
+        Assert.Equal(D(26), r.DueDate);
+        Assert.True(r.DueCappedByExpiration);
     }
 
     [Fact]

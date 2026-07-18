@@ -113,7 +113,7 @@ else
         <h2>Current rhythm</h2>
         <dl class="rhythm">
             <dt>Next buy</dt>
-            <dd>@(estimate.NextBuyDate is { } d ? $"{d:MMM d, yyyy} ({Relative(estimate.DaysUntil!.Value)})" : "still learning")</dd>
+            <dd>@(estimate.NextBuyDate is { } d ? $"{d:MMM d, yyyy} ({Relative(estimate.DaysUntil!.Value)})" : "still learning")@(prediction.DueCappedByExpiration ? " · 🏷️ capped by the expiration date" : "")</dd>
             <dt>Rebuy rhythm</dt>
             <dd>@(prediction.RebuyIntervalDays is { } rb ? $"~every {Math.Round(rb)} days" : "—")</dd>
             @if (prediction.BurnRateDays is { } burn)
@@ -177,8 +177,8 @@ else
             else if (prediction.ExpiresOn is { } labelAhead)
             {
                 <p class="muted"><span aria-hidden="true">🏷️</span> Expires <strong>@labelAhead.ToString("MMM d, yyyy")</strong>
-                    (@Relative(labelAhead.DayNumber - DateOnly.FromDateTime(DateTime.Today).DayNumber)) — when the date
-                    passes, this item marks itself out.</p>
+                    (@Relative(labelAhead.DayNumber - DateOnly.FromDateTime(DateTime.Today).DayNumber)) — the next-buy
+                    date can't project past this, and once it passes the item marks itself out.</p>
             }
             else
             {

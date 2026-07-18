@@ -227,6 +227,7 @@ _Last updated: 7/7/2026_
 - [x] Surfaces: optional Expires column on Upload review (typo + already-past warnings), Expiration panel on Product Detail (state story + date editor through the ONE write path), dashboard cards say "Expired Jul 16" as their own note — the honest reason a card is red, distinct from the user's own "Marked out" — 7/18/2026
 - [x] Per-household Settings toggle, default OFF — the most ritual-heavy field in the app is opt-in, and off is dormant, not destructive (dates kept, nothing fires or renders; engine default fails inert on purpose). Expired items also leave recipe on-hand (PantryOnHand threads the flag); the backtest stays expiration-blind so it grades predictions, not labels — 7/18/2026
 - [x] `set_expiration` chat/voice tool — "the milk expires Friday" is a future-looking label fact, never an OutNow; the system prompt now carries today's date (with weekday) so the model resolves relative dates itself; unparseable dates error rather than silently clearing. Live-verified through the quick-update box — 7/18/2026
+- [x] The label HARD-CAPS the due date (min(rhythm, label), escalate-only) — the cadence estimates how long stock usually lasts, the label bounds how long it CAN, so an expiring item flows into Due Soon → the lists BEFORE it dies through the existing machinery (no expiration columns on any grid, deliberately); a still-learning item gets a real due date from its label alone; a post-label Restocked stands down pin AND cap while a casual pre-label Restocked can't silently disarm the feature — 7/18/2026
 
 ---
 
