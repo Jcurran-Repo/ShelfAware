@@ -1,6 +1,8 @@
 namespace ShelfAware.Core.Prediction;
 
-/// <summary>Replenishment status for a tracked product (DESIGN.md §6.5).</summary>
+/// <summary>Replenishment status for a tracked product (DESIGN.md §6.5).
+/// ⚠️ Declaration order IS severity order and is COMPARED (the expiration cap escalates via
+/// <c>labelStatus &gt; status</c>) — don't reorder or insert members mid-list.</summary>
 public enum PredictionStatus
 {
     /// Fewer than two purchase-equivalent dates — "still learning".
