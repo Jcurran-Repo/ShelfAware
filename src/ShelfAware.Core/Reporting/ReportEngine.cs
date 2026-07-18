@@ -111,9 +111,17 @@ public static class ReportEngine
             valueOf: (bucketFacts) => PurchaseValue(spec.Metric, bucketFacts),
             dateOf: f => f.Date,
             // Pooling the remainder is only honest when the pooled values share units and partition:
-            // spend/count by product pool fine; quantities never pool; tag series can't pool at all.
-            poolRemainder: spec.Split == ReportSplit.ByProduct && spec.Metric != ReportMetric.Quantity,
-            remainderNoun: spec.Split == ReportSplit.ByTag ? "tags" : "products");
+            // spend/count by product or category pool fine (and a partitioning split MUST pool —
+            // dropping small categories from a stacked chart would falsify the stack's total);
+            // quantities never pool (mixed units); tag series can't pool at all (overlap).
+            poolRemainder: spec.Split is ReportSplit.ByProduct or ReportSplit.ByCategory
+                && spec.Metric != ReportMetric.Quantity,
+            remainderNoun: spec.Split switch
+            {
+                ReportSplit.ByTag => "tags",
+                ReportSplit.ByCategory => "categories",
+                _ => "products",
+            });
     }
 
     /// <summary>One series per tag, top-N by total later. A purchase carrying two tags appears in

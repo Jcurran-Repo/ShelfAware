@@ -150,6 +150,23 @@ public class ReportEngineTests
     }
 
     [Fact]
+    public void Category_split_beyond_top_N_pools_so_the_stack_and_total_stay_complete()
+    {
+        // Caught live: small categories were DROPPED from the stacked chart, silently understating
+        // the stack against the spend tiles beside it. A partitioning split must pool, never drop.
+        var facts = Enum.GetValues<Category>()
+            .Select((c, i) => Buy(5 + i, productId: 100 + i, name: $"Item {i}", category: c, price: 10m + i))
+            .ToArray();
+        var result = ReportEngine.Run(
+            Spec(split: ReportSplit.ByCategory) with { TopN = 4 }, facts, []);
+
+        Assert.Equal(5, result.Series.Count);
+        Assert.Equal("Everything else", result.Series[^1].Label);
+        Assert.Equal(facts.Sum(f => f.Price!.Value), result.Total); // nothing vanished
+        Assert.Null(result.Note); // pooled, so there's no dropped-series disclosure to make
+    }
+
+    [Fact]
     public void Product_split_keeps_top_N_by_spend_and_pools_the_rest()
     {
         var facts = new[]
