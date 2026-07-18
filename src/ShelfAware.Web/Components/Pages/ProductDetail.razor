@@ -1,8 +1,12 @@
 @page "/product/{Id:int}"
+@using ShelfAware.Core.Chat
 @using ShelfAware.Core.Prediction
 @using ShelfAware.Core.Recipes
+@using ShelfAware.Core.Settings
 @using ShelfAware.Core.Shopping
 @inject IHouseholdDbFactory DbFactory
+@inject IAppSettings SettingsStore
+@inject IPantryStore Store
 @inject IProductSubstituteAdvisor SubAdvisor
 @inject ProductRenameService Renamer
 @inject ProductMergeService Merger
@@ -153,6 +157,56 @@ else
             }
         }
     </section>
+
+    @if (trackExpirations)
+    {
+        <section class="panel">
+            <h2>Expiration</h2>
+            @if (prediction.Expired && prediction.ExpiresOn is { } labelPassed)
+            {
+                <p class="error"><span aria-hidden="true">🏷️</span> Expired @labelPassed.ToString("MMM d, yyyy") — counted as out.
+                    If it's actually still good (frozen, sniff-tested, whatever), mark it <strong>Restocked</strong> on the
+                    dashboard — that overrides the label.</p>
+            }
+            else if (prediction.ExpirationOverridden && prediction.ExpiresOn is { } labelOverridden)
+            {
+                <p class="muted"><span aria-hidden="true">🏷️</span> Expired @labelOverridden.ToString("MMM d, yyyy") —
+                    <strong>overridden</strong>: it was marked Restocked after the label date, so your word beats the label
+                    and it no longer counts as out.</p>
+            }
+            else if (prediction.ExpiresOn is { } labelAhead)
+            {
+                <p class="muted"><span aria-hidden="true">🏷️</span> Expires <strong>@labelAhead.ToString("MMM d, yyyy")</strong>
+                    (@Relative(labelAhead.DayNumber - DateOnly.FromDateTime(DateTime.Today).DayNumber)) — when the date
+                    passes, this item marks itself out.</p>
+            }
+            else
+            {
+                <p class="muted">No expiration date on the latest purchase. Add one and the item marks itself out when
+                    the date passes — no need to remember to check.</p>
+            }
+            @if (history.Count > 0)
+            {
+                <div class="tag-add">
+                    <input type="date" @bind="editExpiration" aria-label="Expiration date for the latest purchase of @product.Name" />
+                    <button type="button" @onclick="SaveExpiration" disabled="@(expirationBusy || editExpiration == prediction.ExpiresOn)">@(expirationBusy ? "Saving…" : "Save")</button>
+                    @if (prediction.ExpiresOn is not null)
+                    {
+                        <button type="button" class="secondary" @onclick="ClearExpiration" disabled="@expirationBusy">Clear</button>
+                    }
+                </div>
+                <p class="muted small">The date rides on the latest purchase — buying the item again starts fresh (a new date, or none).</p>
+            }
+            else
+            {
+                <p class="muted small">No purchases yet — the date rides on a purchase, so record one first.</p>
+            }
+            @if (expirationError is not null)
+            {
+                <p class="error" role="alert">@expirationError</p>
+            }
+        </section>
+    }
 
     <section class="panel">
         <h2>Also works as</h2>
@@ -358,7 +412,10 @@ else
             .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
 
         var today = DateOnly.FromDateTime(DateTime.Today);
-        prediction = ReplenishmentPredictor.Predict(product, today);
+        trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
+        prediction = ReplenishmentPredictor.Predict(product, today, trackExpirations);
+        editExpiration = prediction.ExpiresOn; // the panel's date input starts at the governing date
+        expirationError = null;
 
         // Price the recommended (dominant) size specifically; fall back to the overall average.
         // ProductPriceIndex folds the loose/"each" spellings together, so per-each produce
@@ -576,6 +633,37 @@ else
             mergeError = "The merge didn't complete — the product may have changed or been merged elsewhere. Reload the page and try again.";
         }
         finally { mergeBusy = false; }
+    }
+
+    // Expiration editing. Writes go through the ONE path (IPantryStore.SetExpirationAsync — the same
+    // method the set_expiration chat tool uses) so the "date lands on every latest-day purchase" rule
+    // can't drift between surfaces. A save reloads the whole page state: the status chip, the panel,
+    // and the prediction all reflect the new date at once.
+    private bool trackExpirations;
+    private DateOnly? editExpiration;
+    private bool expirationBusy;
+    private string? expirationError;
+
+    private Task SaveExpiration() => ApplyExpirationAsync(editExpiration);
+    private Task ClearExpiration() => ApplyExpirationAsync(null);
+
+    private async Task ApplyExpirationAsync(DateOnly? value)
+    {
+        if (product is null || expirationBusy) return;
+        expirationBusy = true;
+        try
+        {
+            if (await Store.SetExpirationAsync(product.Id, value))
+            {
+                loadedId = null; // force the OnParametersSet load to run again for this product
+                await OnParametersSetAsync();
+            }
+            else
+            {
+                expirationError = "Couldn't save — this product has no purchases to carry a date.";
+            }
+        }
+        finally { expirationBusy = false; }
     }
 
     // "Also works as" editing. Each change persists immediately and reloads the list (so removes have ids).

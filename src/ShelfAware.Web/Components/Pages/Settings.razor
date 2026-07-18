@@ -438,6 +438,25 @@
 </section>
 
 <section class="panel">
+    <h2>Expiration dates</h2>
+    <p class="muted">
+        Track the dates on what you buy — entirely optional. When it's on, the receipt review screen gains
+        an "Expires" column, each product page gets an expiration panel (the assistant understands "the
+        milk expires Friday" too), and once a date passes the item marks itself out — you never have to
+        remember to check. Only the dates you choose to enter count; skipping the column costs nothing.
+    </p>
+    <label class="field">
+        <input type="checkbox" checked="@trackExpirations" @onchange="ToggleTrackExpirations" />
+        <span>Track expiration dates</span>
+    </label>
+    @if (!trackExpirations && hasStoredExpirations)
+    {
+        <p class="muted small">Dates you entered earlier are kept but dormant — nothing fires or shows
+            while this is off. Turn it back on and they count again.</p>
+    }
+</section>
+
+<section class="panel">
     <h2>Recipe ingredients → grocery list</h2>
     <p class="muted">
         When you ask the assistant to add a recipe's ingredients to your list (by voice or chat), it adds
@@ -547,6 +566,9 @@
     private string folder = "";
     private ImportMode mode = ImportMode.Smart;
     private string recipeAddConfirm = "Confirm";
+    private bool trackExpirations;
+    // Only used for the "your old dates are dormant, not deleted" reassurance under an unticked box.
+    private bool hasStoredExpirations;
     private bool configured;
     private int fileCount;
     private int newCount;
@@ -940,6 +962,11 @@
             await SettingsStore.GetAsync(SettingKeys.ImportMode),
             await SettingsStore.GetAsync(SettingKeys.AutoConfirmImports)); // legacy toggle honored
         recipeAddConfirm = await SettingsStore.GetAsync(SettingKeys.RecipeAddConfirm) ?? "Confirm";
+        trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
+        await using (var db = await DbFactory.CreateDbContextAsync())
+        {
+            hasStoredExpirations = await db.PurchaseEvents.AnyAsync(p => p.ExpirationDate != null);
+        }
         await RefreshStatus();
     }
 
@@ -1079,6 +1106,13 @@
     {
         mode = m;
         await SettingsStore.SetAsync(SettingKeys.ImportMode, m.ToString());
+    }
+
+    private async Task ToggleTrackExpirations(ChangeEventArgs e)
+    {
+        trackExpirations = e.Value is bool b && b;
+        // Off is dormant, never destructive: only the flag changes; recorded dates stay put.
+        await SettingsStore.SetAsync(SettingKeys.TrackExpirationDates, trackExpirations ? "true" : "false");
     }
 
     private async Task SaveRecipeAddConfirm() =>

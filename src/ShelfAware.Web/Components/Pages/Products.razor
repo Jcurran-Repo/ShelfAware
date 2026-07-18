@@ -1,8 +1,10 @@
 @page "/products"
 @using ShelfAware.Core.Chat
 @using ShelfAware.Core.Prediction
+@using ShelfAware.Core.Settings
 @using ShelfAware.Core.Shopping
 @inject IHouseholdDbFactory DbFactory
+@inject IAppSettings SettingsStore
 @inject IJSRuntime JS
 @inject ILogger<Products> Logger
 
@@ -279,7 +281,8 @@ else
         var prices = new ProductPriceIndex(priceLines.Select(x => (x.Id, x.Size, x.Price)));
 
         var today = DateOnly.FromDateTime(DateTime.Today);
-        predictions = products.ToDictionary(p => p.Id, p => ReplenishmentPredictor.Predict(p, today));
+        var trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
+        predictions = products.ToDictionary(p => p.Id, p => ReplenishmentPredictor.Predict(p, today, trackExpirations));
         estimates = products.ToDictionary(
             p => p.Id,
             p => ShoppingEstimator.For(p, predictions[p.Id], today, prices.PriceFor(p.Id, predictions[p.Id].RecommendedSize)));

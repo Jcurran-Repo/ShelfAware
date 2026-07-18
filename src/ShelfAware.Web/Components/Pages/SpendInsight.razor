@@ -1,8 +1,10 @@
 @page "/trends"
 @using ShelfAware.Core.Domain
 @using ShelfAware.Core.Prediction
+@using ShelfAware.Core.Settings
 @using ShelfAware.Core.Shopping
 @inject IHouseholdDbFactory DbFactory
+@inject IAppSettings SettingsStore
 
 <PageTitle>Trends — Shelf Aware</PageTitle>
 
@@ -148,9 +150,10 @@ else
         }
 
         // Forecast next month: step each tracked item's due date by its interval through the window.
+        var trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
         foreach (var p in products.Where(p => p.IsTracked))
         {
-            var prediction = ReplenishmentPredictor.Predict(p, today);
+            var prediction = ReplenishmentPredictor.Predict(p, today, trackExpirations);
             if (prediction.MedianIntervalDays is not { } m || prediction.DueDate is not { } due) continue;
             // Price the size we'd actually tell the user to buy (same idea as the grocery list),
             // falling back to the all-sizes average when that size has no priced line.

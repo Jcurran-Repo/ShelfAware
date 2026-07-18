@@ -1,9 +1,11 @@
 @page "/list"
 @using ShelfAware.Core.Chat
 @using ShelfAware.Core.Prediction
+@using ShelfAware.Core.Settings
 @using ShelfAware.Core.Shopping
 @implements IAsyncDisposable
 @inject IHouseholdDbFactory DbFactory
+@inject IAppSettings SettingsStore
 @inject IPantryStore Store
 @inject IJSRuntime JS
 
@@ -128,9 +130,10 @@ else
         var prices = new ProductPriceIndex(priceLines.Select(x => (x.Id, x.Size, x.Price)));
 
         var today = DateOnly.FromDateTime(DateTime.Today);
+        var trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
         var all = products.Select(p =>
         {
-            var prediction = ReplenishmentPredictor.Predict(p, today);
+            var prediction = ReplenishmentPredictor.Predict(p, today, trackExpirations);
             return ShoppingEstimator.For(p, prediction, today, prices.PriceFor(p.Id, prediction.RecommendedSize));
         }).ToList();
 

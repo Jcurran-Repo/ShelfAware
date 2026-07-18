@@ -1,6 +1,7 @@
 @page "/receipt"
 @using ShelfAware.Core.Chat
 @using ShelfAware.Core.Extraction
+@using ShelfAware.Core.Settings
 @using ShelfAware.Core.Tagging
 @using Microsoft.Extensions.Options
 @inject IHouseholdDbFactory DbFactory
@@ -9,6 +10,7 @@
 @inject ReceiptStorage Storage
 @inject IOptions<ShelfAware.Llm.LlmOptions> LlmOptions
 @inject ReceiptConfirmationService Confirmer
+@inject IAppSettings SettingsStore
 @inject ILogger<Upload> Logger
 
 <PageTitle>Upload receipt — Shelf Aware</PageTitle>
@@ -143,6 +145,10 @@ else if (phase == Phase.Review && receipt is not null)
                     <th scope="col">Brand</th>
                     <th scope="col">Size</th>
                     <th scope="col">Variety</th>
+                    @if (trackExpirations)
+                    {
+                        <th scope="col">Expires</th>
+                    }
                     <th scope="col">Qty</th>
                     <th scope="col">Category</th>
                     <th scope="col">Tags</th>
@@ -167,6 +173,23 @@ else if (phase == Phase.Review && receipt is not null)
                         <td><input @bind="line.Brand" size="12" placeholder="—" aria-label="Brand for @line.RawText" /></td>
                         <td><input @bind="line.Size" size="8" placeholder="—" aria-label="Size for @line.RawText" /></td>
                         <td><input @bind="line.Variety" size="10" placeholder="—" aria-label="Variety for @line.RawText" /></td>
+                        @if (trackExpirations)
+                        {
+                            <td class="expires-cell">
+                                <input type="date" @bind="line.ExpirationDate" aria-label="Expiration date for @line.RawText" />
+                                @if (line.ExpirationDate is { } exp)
+                                {
+                                    @if (exp < reviewDate)
+                                    {
+                                        <div class="error small" role="status">Before the purchase date — typo? If it's right, it marks the item out immediately.</div>
+                                    }
+                                    else if (exp < DateOnly.FromDateTime(DateTime.Today))
+                                    {
+                                        <div class="muted small" role="status">Already past — this will mark the item out.</div>
+                                    }
+                                }
+                            </td>
+                        }
                         <td><input type="number" step="0.01" min="0.01" @bind="line.Quantity" size="5" aria-label="Quantity for @line.RawText" /></td>
                         <td>
                             <select @bind="line.Category" aria-label="Category for @line.RawText">
@@ -283,6 +306,7 @@ else if (phase == Phase.Done)
         public string? Brand { get; set; }
         public string? Size { get; set; }
         public string? Variety { get; set; }
+        public DateOnly? ExpirationDate { get; set; } // human-typed at review; never extracted
         public decimal Quantity { get; set; } = 1;
         public Category Category { get; set; }
         public decimal Confidence { get; set; }
@@ -299,7 +323,15 @@ else if (phase == Phase.Done)
     // Tag universe for suggestions + dedup: seed vocabulary ∪ tags already stored on products.
     private List<string> allKnownTags = [];
 
-    protected override async Task OnInitializedAsync() => await LoadPendingAsync();
+    // The household's expiration-tracking toggle — gates the review grid's "Expires" column. Refreshed
+    // per review load (not just once) so a Settings change lands without a page reload.
+    private bool trackExpirations;
+
+    protected override async Task OnInitializedAsync()
+    {
+        trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
+        await LoadPendingAsync();
+    }
 
     // Everything PendingReview: receipts the importer queued (Smart/Review mode), abandoned manual
     // reviews, AND zero-line receipts whose extraction failed — those used to be filtered out and were
@@ -329,6 +361,7 @@ else if (phase == Phase.Done)
 
         receipt = r;
         reviewDate = r.PurchasedAt ?? DateOnly.FromDateTime(DateTime.Today);
+        trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
         products = await db.Products.OrderBy(p => p.Name).ToListAsync();
         var stored = await db.ProductTags.Select(t => t.Value).Distinct().ToListAsync();
         allKnownTags = TagVocabulary.Seed.Concat(stored).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t).ToList();
@@ -354,6 +387,7 @@ else if (phase == Phase.Done)
                 Brand = l.Brand,
                 Size = l.Size,
                 Variety = l.Variety,
+                ExpirationDate = l.ExpirationDate,
                 Quantity = l.Quantity,
                 Category = l.Category,
                 Confidence = l.Confidence,
@@ -686,7 +720,8 @@ else if (phase == Phase.Done)
         try
         {
             var lines = reviewLines.Select(l => new ReceiptConfirmationService.ConfirmLine(
-                l.RawText, l.NormalizedName, l.Brand, l.Size, l.Variety, l.Quantity, l.Category, l.Tags, l.ProductId)).ToList();
+                l.RawText, l.NormalizedName, l.Brand, l.Size, l.Variety, l.Quantity, l.Category, l.Tags, l.ProductId,
+                l.ExpirationDate)).ToList();
             // Use the user-confirmed receipt date (not the upload date) so refill intervals are accurate
             // even when many receipts are uploaded in one sitting. writeAliases: a human reviewed these
             // pairings, so they're allowed to become sticky merchant aliases.

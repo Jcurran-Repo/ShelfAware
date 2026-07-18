@@ -723,7 +723,8 @@
         var products = await db.Products.AsNoTracking()
             .Include(p => p.Purchases).Include(p => p.Signals).Include(p => p.Substitutes).ToListAsync();
         var today = DateOnly.FromDateTime(DateTime.Today);
-        onHand = PantryOnHand.EdibleInStock(products, today)
+        var trackExpirations = await Settings.GetTrackExpirationDatesAsync();
+        onHand = PantryOnHand.EdibleInStock(products, today, trackExpirations)
             .Select(p => new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList()))
             .OrderBy(x => x.Name)
             .ToList();
@@ -732,7 +733,7 @@
             .Select(p => new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList()))
             .OrderBy(x => x.Name)
             .ToList();
-        outOfStock = PantryOnHand.EdibleOutOfStock(products, today)
+        outOfStock = PantryOnHand.EdibleOutOfStock(products, today, trackExpirations)
             .Select(p => (p.Id, Product: new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList())))
             .OrderBy(x => x.Product.Name)
             .ToList();

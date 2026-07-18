@@ -2,8 +2,10 @@
 @implements IDisposable
 @using ShelfAware.Core.Chat
 @using ShelfAware.Core.Prediction
+@using ShelfAware.Core.Settings
 @using ShelfAware.Core.Shopping
 @inject IHouseholdDbFactory DbFactory
+@inject IAppSettings SettingsStore
 @inject IPantryChat Chat
 @inject IPantryStore Store
 @inject NavigationManager Nav
@@ -86,6 +88,12 @@ else
                         @if (r.SignalNote is not null)
                         {
                             <div class="card-note">@if (r.Pinned) { <span aria-hidden="true">📌 </span> }@r.SignalNote</div>
+                        }
+                        @if (r.Expired && r.ExpiresOn is { } expiredOn)
+                        {
+                            @* The honest reason this card is red: the label, not the cadence — the user
+                               can see the jug in the fridge, so the card must say WHY it counts as out. *@
+                            <div class="card-note"><span aria-hidden="true">🏷️ </span>Expired @expiredOn.ToString("MMM d")</div>
                         }
                         <div class="card-basis muted">@r.Basis</div>
                     </div>
@@ -212,7 +220,8 @@ else
             .ToListAsync();
 
         today = DateOnly.FromDateTime(DateTime.Today);
-        predictions = products.ToDictionary(p => p.Id, p => ReplenishmentPredictor.Predict(p, today));
+        var trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
+        predictions = products.ToDictionary(p => p.Id, p => ReplenishmentPredictor.Predict(p, today, trackExpirations));
 
         // Running Low = Overdue + DueSoon, signal-pinned first, then most overdue first (§8).
         runningLow = products
