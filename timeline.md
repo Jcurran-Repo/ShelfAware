@@ -220,6 +220,16 @@ _Last updated: 7/7/2026_
 
 ---
 
+## v3.6 — Expiration dates (opt-in)
+- [x] `ExpirationDate` on ReceiptLine + PurchaseEvent — the label's date as per-purchase metadata (like Brand/Size/Variety), human-entered only: receipts don't print it, so extraction never touches it. Only the LATEST purchase's date governs (rebuying supersedes the old jug; same-day ties take the longest date), and nothing feeds either cadence rhythm — a label is a fact about the food, not about buying behavior — 7/18/2026
+- [x] Derived expired-state in the engine, not a fired event — past the label (the "best by" day itself is still good) the item pins Overdue with the label as its due date; a state can't double-fire, miss a day the server slept through, or re-flag after an override. Requested by a demoee; built because perishables are the strongest replenishment category and a dated label is signal the cadence can fundamentally never infer — 7/18/2026
+- [x] Restocked-after-the-label OVERRIDES it, visibly — "I froze it" beats the sticker, and the expiration panel says "overridden" instead of silently not firing (the human must never wonder why a date they set stopped counting) — 7/18/2026
+- [x] Surfaces: optional Expires column on Upload review (typo + already-past warnings), Expiration panel on Product Detail (state story + date editor through the ONE write path), dashboard cards say "Expired Jul 16" as their own note — the honest reason a card is red, distinct from the user's own "Marked out" — 7/18/2026
+- [x] Per-household Settings toggle, default OFF — the most ritual-heavy field in the app is opt-in, and off is dormant, not destructive (dates kept, nothing fires or renders; engine default fails inert on purpose). Expired items also leave recipe on-hand (PantryOnHand threads the flag); the backtest stays expiration-blind so it grades predictions, not labels — 7/18/2026
+- [x] `set_expiration` chat/voice tool — "the milk expires Friday" is a future-looking label fact, never an OutNow; the system prompt now carries today's date (with weekday) so the model resolves relative dates itself; unparseable dates error rather than silently clearing. Live-verified through the quick-update box — 7/18/2026
+
+---
+
 ## Backlog (unscheduled)
 - [x] Double-scroll fix (Grocery List + Upload review) — 7/2/2026
 - [ ] CSV history importer — Parked (blocked on an itemized data export)

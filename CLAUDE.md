@@ -383,6 +383,41 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      the panel still open offering a stale candidate list including itself. Don't remove that reset.
    - Demo seeder: `Seed.BuyVariants` rotates brand+variety per buy (Drink Mix hero, Apples, yogurt).
 
+15. **v3.6 — Expiration dates, opt-in (2026-07-18, branch `feature/expiration-dates`):** the label's
+   date as per-purchase metadata — the fifth line of the data-model rule (after Brand/Size/Variety),
+   with one difference: **human-entered only, never extracted** (receipts don't print it).
+   - **`ExpirationDate` (`DateOnly?`) on `ReceiptLine` + `PurchaseEvent`** (AdditiveSchema columns).
+     Only the LATEST purchase's date governs — rebuying supersedes the old jug even dateless; among
+     same-day purchases the LONGEST date wins (you'd open the shorter-dated one first). Never feeds
+     either cadence rhythm.
+   - **Derived state, not a fired event.** `ReplenishmentPredictor.Predict(product, today,
+     honorExpirations)` computes it: past the label ("best by" day itself is still good) → pinned
+     Overdue with DueDate = the label date; `ExpiresOn`/`Expired`/`ExpirationOverridden` ride on
+     `PredictionResult`. No background sweeper exists to double-fire, miss a slept-through day, or
+     re-flag after an override. ⚠️ **`honorExpirations` defaults FALSE deliberately** — a forgotten
+     call site fails INERT (no expiry state for an opted-in household, a visible gap) rather than
+     LOUD (phantom pins for an opted-out one). Don't "fix" the default.
+   - **Restocked dated AFTER the label overrides it** ("I froze it" beats the sticker) — and the
+     Product Detail panel SAYS "overridden" (Jordan's requirement: the human must never wonder why
+     a date they set stopped counting). Restocked ON the label day is not an override (nothing had
+     shown expired yet). An explicit OutNow keeps its own due date; `Expired` still reports.
+   - **Toggle:** `SettingKeys.TrackExpirationDates` (Config; default off — it's the most
+     ritual-heavy field in the app). Off is DORMANT, not destructive: dates kept, nothing fires or
+     renders anywhere (grid column, panel, dashboard note, chat tool all gate on
+     `GetTrackExpirationDatesAsync` — THE one definition of "on"). `PantryOnHand` threads the flag
+     (expired chicken ≠ on-hand chicken); **the backtest stays expiration-blind on purpose** (it
+     scores the learned rhythm, and an expiry pin would overwrite DueDate with a label fact).
+   - **One write path:** `IPantryStore.SetExpirationAsync` stamps EVERY latest-day purchase (the
+     engine takes that day's longest date, so a stale longer sibling would silently outvote the
+     user) — shared by the Product Detail editor and the `set_expiration` chat tool. The tool
+     errors on unparseable dates instead of clearing ("Friday" passed raw must not wipe a date),
+     and the chat system prompt now includes **today's date with weekday** so the model resolves
+     relative dates itself (rule 6b: an expiration statement is never a `record_signal`).
+   - Live-verified end to end on the dev server (fresh household + sample data): toggle → panel →
+     past date pins with "Expired Jul 16" dashboard note → Restocked → visible override; review
+     grid Expires column → confirm → purchase carries it; quick-update chat "expires July 30th" →
+     resolved date → panel. 658 tests green (19 new).
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active
