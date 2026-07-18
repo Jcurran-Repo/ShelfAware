@@ -60,13 +60,15 @@ public class HouseholdIsolationTests : IDisposable
             db.Products.Add(NewProduct("Whole Milk"));
             db.GroceryExtras.Add(new GroceryExtra { Name = "birthday candles" });
             db.ExcludedFoods.Add(new ExcludedFood { Value = "mushrooms" });
-            db.Recipes.Add(new Recipe
+            var toast = new Recipe
             {
                 Name = "Milk Toast",
                 SavedAt = DateTimeOffset.Now,
                 Ingredients = [new RecipeIngredient { Name = "milk", IsMain = true }],
                 Steps = [new RecipeStep { Order = 1, Text = "Combine." }],
-            });
+            };
+            db.Recipes.Add(toast);
+            db.MealEvents.Add(new MealEvent { Recipe = toast, AteAt = new DateOnly(2026, 7, 10) });
             await db.SaveChangesAsync();
         }
 
@@ -80,6 +82,7 @@ public class HouseholdIsolationTests : IDisposable
             Assert.Empty(await db.Recipes.ToListAsync());
             Assert.Empty(await db.RecipeIngredients.ToListAsync());
             Assert.Empty(await db.RecipeSteps.ToListAsync());
+            Assert.Empty(await db.MealEvents.ToListAsync());
         }
 
         await using (var db = As(A))

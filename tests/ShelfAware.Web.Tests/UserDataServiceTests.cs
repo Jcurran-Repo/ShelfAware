@@ -65,12 +65,14 @@ public class UserDataServiceTests : IDisposable
         db.Products.Add(milk);
         await db.SaveChangesAsync(); // assigns milk.Id so the alias FK resolves
         db.ProductAliases.Add(new ProductAlias { Merchant = "Walmart", RawText = "GV MLK", ProductId = milk.Id });
-        db.Recipes.Add(new Recipe
+        var cereal = new Recipe
         {
             Name = "Cereal",
             Ingredients = { new RecipeIngredient { Name = "milk", IsMain = true } },
             Steps = { new RecipeStep { Order = 1, Text = "Pour the milk" } },
-        });
+        };
+        db.Recipes.Add(cereal);
+        db.MealEvents.Add(new MealEvent { Recipe = cereal, AteAt = new DateOnly(2026, 7, 10) });
         db.Receipts.Add(new Receipt
         {
             ImagePath = "receipts/x",
@@ -96,6 +98,7 @@ public class UserDataServiceTests : IDisposable
         Assert.Equal(0, await db.PurchaseEvents.CountAsync());
         Assert.Equal(0, await db.Recipes.CountAsync());
         Assert.Equal(0, await db.RecipeIngredients.CountAsync());
+        Assert.Equal(0, await db.MealEvents.CountAsync());
         Assert.Equal(0, await db.Receipts.CountAsync());
         Assert.Equal(0, await db.ReceiptLines.CountAsync());
         Assert.Equal(0, await db.GroceryExtras.CountAsync());
@@ -206,6 +209,7 @@ public class UserDataServiceTests : IDisposable
         Assert.Single(export.Products);
         Assert.Equal("Whole Milk", export.Products[0].Name);
         Assert.Single(export.Recipes);
+        Assert.Single(export.MealEvents);
         Assert.Single(export.Receipts);
         Assert.Single(export.GroceryExtras);
     }

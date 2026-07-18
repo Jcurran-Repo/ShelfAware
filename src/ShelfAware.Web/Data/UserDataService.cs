@@ -57,6 +57,7 @@ public sealed class UserDataService(
             Recipes = await db.Recipes.AsNoTracking().ToListAsync(ct),
             RecipeIngredients = await db.RecipeIngredients.AsNoTracking().ToListAsync(ct),
             RecipeSteps = await db.RecipeSteps.AsNoTracking().ToListAsync(ct),
+            MealEvents = await db.MealEvents.AsNoTracking().ToListAsync(ct),
             ExcludedFoods = await db.ExcludedFoods.AsNoTracking().ToListAsync(ct),
             GroceryExtras = await db.GroceryExtras.AsNoTracking().ToListAsync(ct),
         };
@@ -239,6 +240,7 @@ public sealed class UserDataService(
             + await db.Recipes.CountAsync(ct)
             + await db.RecipeIngredients.CountAsync(ct)
             + await db.RecipeSteps.CountAsync(ct)
+            + await db.MealEvents.CountAsync(ct)
             + await db.ExcludedFoods.CountAsync(ct)
             + await db.GroceryExtras.CountAsync(ct)
             + await db.AppSettings.CountAsync(s => SettingKeys.UserContent.Contains(s.Key), ct);
@@ -260,6 +262,7 @@ public sealed class UserDataService(
 
         await db.RecipeSteps.ExecuteDeleteAsync(ct);
         await db.RecipeIngredients.ExecuteDeleteAsync(ct);
+        await db.MealEvents.ExecuteDeleteAsync(ct); // references Recipe — before its parent, like the two above
         await db.Recipes.ExecuteDeleteAsync(ct);
         await db.ReceiptLines.ExecuteDeleteAsync(ct);
         await db.PurchaseEvents.ExecuteDeleteAsync(ct);   // references both Product and Receipt
@@ -347,6 +350,7 @@ public sealed class DataExport
     public IReadOnlyList<Recipe> Recipes { get; init; } = [];
     public IReadOnlyList<RecipeIngredient> RecipeIngredients { get; init; } = [];
     public IReadOnlyList<RecipeStep> RecipeSteps { get; init; } = [];
+    public IReadOnlyList<MealEvent> MealEvents { get; init; } = [];
     public IReadOnlyList<ExcludedFood> ExcludedFoods { get; init; } = [];
     public IReadOnlyList<GroceryExtra> GroceryExtras { get; init; } = [];
 }

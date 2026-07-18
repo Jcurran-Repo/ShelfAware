@@ -837,6 +837,9 @@
         var rec = await db.Recipes.FindAsync(r.Id);
         if (rec is null) return;
         rec.TimesEaten++;
+        // The counter answers "how reliable is this recipe" (Pick for me); the event answers "when did
+        // we eat it" (the Reports tab's meals/calories charts). Same tap writes both.
+        db.MealEvents.Add(new MealEvent { RecipeId = rec.Id, AteAt = DateOnly.FromDateTime(DateTime.Today) });
         await db.SaveChangesAsync();
         await LoadAsync();
     }

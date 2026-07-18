@@ -50,6 +50,11 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
         db.Recipes.Add(BuildChickenThighVariant(chicken.Id));
         await db.SaveChangesAsync(ct);
 
+        // A dated meal log matching each recipe's TimesEaten, spread over recent weeks, so the demo
+        // household's Reports tab (meals + calories over time) has something honest to chart.
+        db.MealEvents.AddRange(BuildMealLog(originals, DateOnly.FromDateTime(DateTime.Today)));
+        await db.SaveChangesAsync(ct);
+
         var purchases = products.Sum(p => p.Purchases.Count);
         var recipeCount = await db.Recipes.CountAsync(ct);
         return new Result(true, products.Count, purchases, recipeCount,
@@ -279,6 +284,25 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
     }
 
     // ---- Recipes ------------------------------------------------------------
+
+    /// <summary>One MealEvent per TimesEaten tap, walking back from a few days ago at a roughly weekly
+    /// rhythm per recipe (staggered per recipe so meals don't all land on the same weekday). Counts stay
+    /// consistent with the counters on the cards — the parity a real household only has going forward.</summary>
+    private static IEnumerable<MealEvent> BuildMealLog(IReadOnlyList<Recipe> recipes, DateOnly today)
+    {
+        for (var r = 0; r < recipes.Count; r++)
+        {
+            var recipe = recipes[r];
+            for (var i = 0; i < recipe.TimesEaten; i++)
+            {
+                yield return new MealEvent
+                {
+                    RecipeId = recipe.Id,
+                    AteAt = today.AddDays(-(2 + r * 2 + i * 7)),
+                };
+            }
+        }
+    }
 
     private static RecipeIngredient MainIngredient(string name, string? matched, string? quantity = null) =>
         new() { Name = name, IsMain = true, MatchedProduct = matched, Quantity = quantity };

@@ -25,6 +25,7 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
     public DbSet<RecipeIngredient> RecipeIngredients => Set<RecipeIngredient>();
     public DbSet<RecipeStep> RecipeSteps => Set<RecipeStep>();
     public DbSet<GroceryExtra> GroceryExtras => Set<GroceryExtra>();
+    public DbSet<MealEvent> MealEvents => Set<MealEvent>();
     public DbSet<AppSetting> AppSettings => Set<AppSetting>();
     public DbSet<AiUsage> AiUsages => Set<AiUsage>();
 
@@ -53,6 +54,7 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
         ApplyHousehold<RecipeIngredient>(modelBuilder);
         ApplyHousehold<RecipeStep>(modelBuilder);
         ApplyHousehold<GroceryExtra>(modelBuilder);
+        ApplyHousehold<MealEvent>(modelBuilder);
         ApplyHousehold<AiUsage>(modelBuilder);
 
         // One usage row per household per day (the upsert's race-safety anchor).
@@ -75,6 +77,10 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
 
         modelBuilder.Entity<PurchaseEvent>()
             .HasIndex(p => new { p.ProductId, p.PurchasedAt });
+
+        // Reports read meals by recipe and date range, same access shape as purchases above.
+        modelBuilder.Entity<MealEvent>()
+            .HasIndex(m => new { m.RecipeId, m.AteAt });
     }
 
     private void ApplyHousehold<TEntity>(ModelBuilder modelBuilder) where TEntity : class, IHouseholdOwned
