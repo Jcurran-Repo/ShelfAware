@@ -49,20 +49,25 @@ else
                 <strong>@product.Name</strong> onto the product you pick, then deletes
                 <strong>@product.Name</strong>. Use it when one item got split — e.g. flavors that
                 should be one product. This can't be undone.</p>
+            @if (mergeTagOptions.Count > 0)
+            {
+                <div class="tag-cloud" role="group" aria-label="Narrow the merge candidates by tag">
+                    <span class="muted">Narrow by tag:</span>
+                    @foreach (var (value, count) in mergeTagOptions)
+                    {
+                        var active = string.Equals(value, mergeTagFilter, StringComparison.OrdinalIgnoreCase);
+                        <button type="button" class="tag-chip tag-cloud-chip @(active ? "active" : "")"
+                                @onclick="() => ToggleMergeTag(value)" aria-pressed="@active">
+                            @value <span class="tag-count">@count</span>
+                        </button>
+                    }
+                    @if (mergeTagFilter.Length > 0)
+                    {
+                        <button type="button" class="tag-clear" @onclick="() => ToggleMergeTag(mergeTagFilter)">Clear ✕</button>
+                    }
+                </div>
+            }
             <div class="merge-controls">
-                @if (mergeTagOptions.Count > 0)
-                {
-                    <label>
-                        Narrow by tag
-                        <select @bind="mergeTagFilter" @bind:after="OnMergeTagFilterChanged" aria-label="Narrow the merge candidates by tag">
-                            <option value="">— any tag —</option>
-                            @foreach (var tag in mergeTagOptions)
-                            {
-                                <option value="@tag">@tag</option>
-                            }
-                        </select>
-                    </label>
-                }
                 <label>
                     Merge into
                     <select @bind="mergeTargetId" @bind:after="OnMergeTargetChanged" aria-label="Product to merge @product.Name into">
@@ -479,7 +484,7 @@ else
     private string? mergeVariety;
     private string? mergeError;
     private string mergeTagFilter = ""; // "" = any tag
-    private List<string> mergeTagOptions = [];
+    private List<(string Tag, int Count)> mergeTagOptions = [];
     private List<MergeCandidate> mergeCandidates = [];
     private record MergeCandidate(int Id, string Name, IReadOnlyList<string> Tags);
 
@@ -501,13 +506,17 @@ else
             .ToListAsync())
             .Select(p => new MergeCandidate(p.Id, p.Name, p.Tags))
             .ToList();
+        // Same cloud shape as the Products page: each tag with how many CANDIDATES carry it,
+        // busiest first — the count tells you whether a chip is worth tapping before you tap it.
         mergeTagOptions = mergeCandidates
             .SelectMany(c => c.Tags)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(t => t)
+            .GroupBy(t => t, StringComparer.OrdinalIgnoreCase)
+            .Select(g => (Tag: g.Key, Count: g.Count()))
+            .OrderByDescending(t => t.Count)
+            .ThenBy(t => t.Tag)
             .ToList();
         // Pre-filter to this product's own first tag when it has one — merging repairs a split
-        // ITEM, so its kin almost always share a tag. "— any tag —" is one tap away.
+        // ITEM, so its kin almost always share a tag. Clearing it is one tap on the active chip.
         mergeTagFilter = product.Tags.OrderBy(t => t.Value).FirstOrDefault() is { } own
             && mergeCandidates.Any(c => c.Tags.Contains(own.Value, StringComparer.OrdinalIgnoreCase))
             ? own.Value : "";
@@ -517,8 +526,10 @@ else
         merging = true;
     }
 
-    private void OnMergeTagFilterChanged()
+    private void ToggleMergeTag(string value)
     {
+        // Same toggle the Products cloud uses: tapping the active chip clears back to "any".
+        mergeTagFilter = string.Equals(value, mergeTagFilter, StringComparison.OrdinalIgnoreCase) ? "" : value;
         // A target hidden by the new filter must not stay silently selected — the user can no
         // longer see what the Merge button would hit.
         if (mergeTargetId != 0 && !FilteredMergeCandidates.Any(c => c.Id == mergeTargetId))
