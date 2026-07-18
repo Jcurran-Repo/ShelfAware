@@ -50,11 +50,24 @@ else
                 <strong>@product.Name</strong>. Use it when one item got split — e.g. flavors that
                 should be one product. This can't be undone.</p>
             <div class="merge-controls">
+                @if (mergeTagOptions.Count > 0)
+                {
+                    <label>
+                        Narrow by tag
+                        <select @bind="mergeTagFilter" @bind:after="OnMergeTagFilterChanged" aria-label="Narrow the merge candidates by tag">
+                            <option value="">— any tag —</option>
+                            @foreach (var tag in mergeTagOptions)
+                            {
+                                <option value="@tag">@tag</option>
+                            }
+                        </select>
+                    </label>
+                }
                 <label>
                     Merge into
                     <select @bind="mergeTargetId" @bind:after="OnMergeTargetChanged" aria-label="Product to merge @product.Name into">
                         <option value="0">— pick a product —</option>
-                        @foreach (var candidate in mergeCandidates)
+                        @foreach (var candidate in FilteredMergeCandidates)
                         {
                             <option value="@candidate.Id">@candidate.Name</option>
                         }
@@ -465,22 +478,54 @@ else
     private int mergeTargetId;
     private string? mergeVariety;
     private string? mergeError;
+    private string mergeTagFilter = ""; // "" = any tag
+    private List<string> mergeTagOptions = [];
     private List<MergeCandidate> mergeCandidates = [];
-    private record MergeCandidate(int Id, string Name);
+    private record MergeCandidate(int Id, string Name, IReadOnlyList<string> Tags);
+
+    // The candidate list can be a whole catalog; the tag filter narrows it to the aisle you're
+    // thinking of ("Snack" finds the other drink mixes). "" shows everything.
+    private IEnumerable<MergeCandidate> FilteredMergeCandidates =>
+        mergeTagFilter.Length == 0
+            ? mergeCandidates
+            : mergeCandidates.Where(c => c.Tags.Contains(mergeTagFilter, StringComparer.OrdinalIgnoreCase));
 
     private async Task OpenMerge()
     {
         if (product is null) return;
         await using var db = await DbFactory.CreateDbContextAsync();
-        mergeCandidates = await db.Products
+        mergeCandidates = (await db.Products
             .Where(p => p.Id != product.Id)
             .OrderBy(p => p.Name)
-            .Select(p => new MergeCandidate(p.Id, p.Name))
-            .ToListAsync();
+            .Select(p => new { p.Id, p.Name, Tags = p.Tags.Select(t => t.Value).ToList() })
+            .ToListAsync())
+            .Select(p => new MergeCandidate(p.Id, p.Name, p.Tags))
+            .ToList();
+        mergeTagOptions = mergeCandidates
+            .SelectMany(c => c.Tags)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(t => t)
+            .ToList();
+        // Pre-filter to this product's own first tag when it has one — merging repairs a split
+        // ITEM, so its kin almost always share a tag. "— any tag —" is one tap away.
+        mergeTagFilter = product.Tags.OrderBy(t => t.Value).FirstOrDefault() is { } own
+            && mergeCandidates.Any(c => c.Tags.Contains(own.Value, StringComparer.OrdinalIgnoreCase))
+            ? own.Value : "";
         mergeTargetId = 0;
         mergeVariety = null;
         mergeError = null;
         merging = true;
+    }
+
+    private void OnMergeTagFilterChanged()
+    {
+        // A target hidden by the new filter must not stay silently selected — the user can no
+        // longer see what the Merge button would hit.
+        if (mergeTargetId != 0 && !FilteredMergeCandidates.Any(c => c.Id == mergeTargetId))
+        {
+            mergeTargetId = 0;
+            mergeVariety = null;
+        }
     }
 
     private void CancelMerge()
