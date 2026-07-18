@@ -58,7 +58,11 @@ public class AnthropicPantryChat : IPantryChat
 
         var products = await _store.GetProductsAsync(cancellationToken);
         var knownTags = await _store.GetKnownTagsAsync(cancellationToken);
-        var system = SystemPrompt + "\n\nCurrent products:\n" + (products.Count == 0
+        // The date (with day-of-week) lets the model resolve relative dates itself — "expires Friday"
+        // → a concrete YYYY-MM-DD for set_expiration, "bought it yesterday" → add_purchase's date.
+        var system = SystemPrompt
+            + $"\n\nToday is {DateTime.Today:dddd, yyyy-MM-dd}."
+            + "\n\nCurrent products:\n" + (products.Count == 0
             ? "(none yet)"
             : string.Join("\n", products.OrderBy(p => p.Name).Select(p => $"- {p.Name} ({p.Category})")));
         if (knownTags.Count > 0)
@@ -204,24 +208,30 @@ public class AnthropicPantryChat : IPantryChat
                 var name = Str("product_name");
                 var today = DateOnly.FromDateTime(DateTime.Today);
                 var nameById = products.ToDictionary(p => p.Id, p => p.Name);
+                var trackExpirations = _settings is not null && await _settings.GetTrackExpirationDatesAsync(ct);
 
                 if (string.IsNullOrWhiteSpace(name))
                 {
                     var low = products.Where(p => p.IsTracked)
-                        .Select(p => ReplenishmentPredictor.Predict(p, today))
+                        .Select(p => ReplenishmentPredictor.Predict(p, today, trackExpirations))
                         .Where(r => r.Status is PredictionStatus.Overdue or PredictionStatus.DueSoon)
                         .OrderByDescending(r => r.Status)
                         .ToList();
                     if (low.Count == 0) return ("Nothing is running low right now.", false);
-                    var list = string.Join("; ", low.Select(r => $"{nameById[r.ProductId]} — {r.Status} ({r.Basis})"));
+                    // An expired item's honest reason is the label, not the cadence math.
+                    var list = string.Join("; ", low.Select(r =>
+                        $"{nameById[r.ProductId]} — {r.Status} ({(r.Expired ? $"expired {r.ExpiresOn:MMM d}" : r.Basis)})"));
                     return ($"Running low: {list}.", false);
                 }
 
                 var product = ProductMatcher.Resolve(name, products);
                 if (product is null) return ($"No product matches \"{name}\".", true);
-                var pr = ReplenishmentPredictor.Predict(product, today);
+                var pr = ReplenishmentPredictor.Predict(product, today, trackExpirations);
                 var due = pr.DueDate is { } dd ? $", due {dd:yyyy-MM-dd}" : "";
-                return ($"{product.Name}: {pr.Status} ({pr.Basis}){due}.", false);
+                var expiry = pr.Expired ? $" It expired {pr.ExpiresOn:yyyy-MM-dd}, so it's marked out."
+                    : pr.ExpirationOverridden ? $" Its label expired {pr.ExpiresOn:yyyy-MM-dd}, but the user marked it Restocked afterward — trust them."
+                    : pr.ExpiresOn is { } eo && eo >= today ? $" Expires {eo:yyyy-MM-dd}." : "";
+                return ($"{product.Name}: {pr.Status} ({pr.Basis}){due}.{expiry}", false);
             }
 
             case "set_tracking":
@@ -234,6 +244,32 @@ public class AnthropicPantryChat : IPantryChat
                 await _store.SetTrackingAsync(product.Id, tracked, ct);
                 actions.Add($"{(tracked ? "tracking" : "untracked")} → {product.Name}");
                 return ($"{(tracked ? "Now tracking" : "Stopped tracking")} {product.Name}.", false);
+            }
+
+            case "set_expiration":
+            {
+                // The toggle gates the whole feature, chat included — dormant means dormant.
+                if (_settings is null || !await _settings.GetTrackExpirationDatesAsync(ct))
+                    return ("Expiration tracking is turned off for this household — it can be switched on from the Settings page.", true);
+                var name = Str("product_name");
+                var product = ProductMatcher.Resolve(name, products);
+                if (product is null) return ($"No product matches \"{name}\".", true);
+                // An unparseable date must ERROR, not silently clear — "expires Friday" passed through
+                // raw would otherwise wipe a recorded date instead of setting one.
+                var raw = Str("expires_on");
+                DateOnly? expiresOn = null;
+                if (!string.IsNullOrWhiteSpace(raw))
+                {
+                    if (!DateOnly.TryParse(raw, out var parsed))
+                        return ($"Couldn't read \"{raw}\" as a date — pass it as YYYY-MM-DD.", true);
+                    expiresOn = parsed;
+                }
+                if (!await _store.SetExpirationAsync(product.Id, expiresOn, ct))
+                    return ($"{product.Name} has no recorded purchases to carry a date.", true);
+                actions.Add($"expiration → {product.Name}");
+                return (expiresOn is { } e
+                    ? $"Noted — {product.Name} expires {e:yyyy-MM-dd}; after that date it's marked out automatically."
+                    : $"Cleared the expiration date on {product.Name}.", false);
             }
 
             case "create_product":
@@ -322,9 +358,11 @@ public class AnthropicPantryChat : IPantryChat
                 var confirmed = Bool("confirmed") ?? false;
 
                 // Generate the recipe grounded on what's on hand (prefers existing products) and hard-
-                // excluding won't-eat foods — both are the advisor's job, unchanged.
+                // excluding won't-eat foods — both are the advisor's job, unchanged. Expired items are
+                // not on-hand when the household tracks expirations.
                 var today = DateOnly.FromDateTime(DateTime.Today);
-                var onHand = PantryOnHand.EdibleInStock(products, today).Select(p => p.Name).ToList();
+                var honorExpirations = _settings is not null && await _settings.GetTrackExpirationDatesAsync(ct);
+                var onHand = PantryOnHand.EdibleInStock(products, today, honorExpirations).Select(p => p.Name).ToList();
                 var excluded = await _store.GetExcludedFoodsAsync(ct);
                 var recipe = (await _recipeAdvisor.SuggestAsync(request, onHand, excluded, ct)).FirstOrDefault();
                 if (recipe is null)
@@ -513,6 +551,16 @@ public class AnthropicPantryChat : IPantryChat
                 }
                 """,
                 ["product_name", "tracked"]),
+
+            MakeTool("set_expiration",
+                "Record a product's expiration/best-by date ('the milk expires Friday') on its most recent purchase — once the date passes, the item marks itself out. Omit expires_on to clear a recorded date. Only works when the household has expiration tracking enabled in Settings; the tool says so if not.",
+                """
+                {
+                  "product_name": { "type": "string", "description": "Canonical product name from the list." },
+                  "expires_on": { "type": "string", "description": "The labeled date as YYYY-MM-DD (resolve relative dates like 'Friday' to a concrete date first). Omit to clear the recorded date." }
+                }
+                """,
+                ["product_name"]),
 
             MakeTool("create_product",
                 "Create a new product. Only when the referenced item has no fuzzy match in the list.",

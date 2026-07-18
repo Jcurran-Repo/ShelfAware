@@ -42,11 +42,86 @@ public class PantryChatTests
             string? preference = null, CancellationToken ct = default) => Task.FromResult<RecipeSuggestion?>(null);
     }
 
-    private sealed class StubSettings(string? recipeAddConfirm) : IAppSettings
+    private sealed class StubSettings(string? recipeAddConfirm, string? trackExpirations = null) : IAppSettings
     {
         public Task<string?> GetAsync(string key, CancellationToken ct = default) =>
-            Task.FromResult(key == SettingKeys.RecipeAddConfirm ? recipeAddConfirm : null);
+            Task.FromResult(
+                key == SettingKeys.RecipeAddConfirm ? recipeAddConfirm
+                : key == SettingKeys.TrackExpirationDates ? trackExpirations
+                : null);
         public Task SetAsync(string key, string? value, CancellationToken ct = default) => Task.CompletedTask;
+    }
+
+    // --- set_expiration ------------------------------------------------------
+
+    private static AnthropicPantryChat ChatWithSettings(FakeChatClient client, FakePantryStore store, IAppSettings settings) =>
+        new(client, Options.Create(new LlmOptions()), store, NullLogger<AnthropicPantryChat>.Instance, settings: settings);
+
+    private static Product Purchased(int id, string name, Category category = Category.Dairy) =>
+        new()
+        {
+            Id = id, Name = name, Category = category,
+            Purchases = [new PurchaseEvent { ProductId = id, PurchasedAt = new DateOnly(2026, 7, 10) }],
+        };
+
+    [Fact]
+    public async Task Set_expiration_records_the_date_when_tracking_is_on()
+    {
+        var store = new FakePantryStore(Purchased(5, "Whole Milk"));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("set_expiration", ("product_name", "milk"), ("expires_on", "2026-07-24"))),
+            () => Responses.Text("Noted."));
+
+        var result = await ChatWithSettings(client, store, new StubSettings(null, trackExpirations: "true"))
+            .HandleAsync("the milk expires on the 24th");
+
+        Assert.True(result.Success);
+        Assert.Contains((5, (DateOnly?)new DateOnly(2026, 7, 24)), store.Expirations);
+    }
+
+    [Fact]
+    public async Task Set_expiration_with_no_date_clears_the_recorded_one()
+    {
+        var store = new FakePantryStore(Purchased(5, "Whole Milk"));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("set_expiration", ("product_name", "milk"))),
+            () => Responses.Text("Cleared."));
+
+        await ChatWithSettings(client, store, new StubSettings(null, trackExpirations: "true"))
+            .HandleAsync("never mind the date on the milk");
+
+        Assert.Contains((5, (DateOnly?)null), store.Expirations);
+    }
+
+    [Fact]
+    public async Task Set_expiration_refuses_when_the_household_toggle_is_off()
+    {
+        // Dormant means dormant — chat included. The tool reports the toggle instead of writing.
+        var store = new FakePantryStore(Purchased(5, "Whole Milk"));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("set_expiration", ("product_name", "milk"), ("expires_on", "2026-07-24"))),
+            () => Responses.Text("Expiration tracking is off."));
+
+        var result = await Chat(client, store).HandleAsync("the milk expires on the 24th");
+
+        Assert.True(result.Success); // the chat handled it — by relaying, not by writing
+        Assert.Empty(store.Expirations);
+    }
+
+    [Fact]
+    public async Task Set_expiration_rejects_an_unparseable_date_instead_of_clearing()
+    {
+        // "Friday" passed through raw must ERROR back to the model — silently treating it as
+        // "no date" would WIPE a recorded date when the user meant to set one.
+        var store = new FakePantryStore(Purchased(5, "Whole Milk"));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("set_expiration", ("product_name", "milk"), ("expires_on", "Friday"))),
+            () => Responses.Text("Sorry — which date?"));
+
+        await ChatWithSettings(client, store, new StubSettings(null, trackExpirations: "true"))
+            .HandleAsync("the milk expires Friday");
+
+        Assert.Empty(store.Expirations);
     }
 
     [Fact]
