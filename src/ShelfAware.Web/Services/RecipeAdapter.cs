@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Recipes;
+using ShelfAware.Core.Settings;
 using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.Services;
@@ -15,7 +16,8 @@ namespace ShelfAware.Web.Services;
 /// as another sibling under the original, so the family stays a flat group — never a chain.
 /// </summary>
 public class RecipeAdapter(
-    IHouseholdDbFactory dbFactory, IRecipeAdvisor advisor, ILogger<RecipeAdapter> logger) : IRecipeAdapter
+    IHouseholdDbFactory dbFactory, IRecipeAdvisor advisor, IAppSettings settings,
+    ILogger<RecipeAdapter> logger) : IRecipeAdapter
 {
     public async Task<AdaptResult> AdaptToOnHandAsync(int recipeId, IngredientSwap? swap = null, CancellationToken cancellationToken = default)
     {
@@ -35,8 +37,10 @@ public class RecipeAdapter(
             .ToListAsync(cancellationToken);
         var today = DateOnly.FromDateTime(DateTime.Today);
         // Carry each product's curated "also works as" list so the advisor swaps to a stand-in the
-        // user has already vouched for before inventing its own.
-        var onHand = PantryOnHand.EdibleInStock(products, today)
+        // user has already vouched for before inventing its own. Expiration tracking rides along:
+        // when the household turned it on, an expired ingredient is NOT on hand to adapt toward.
+        var trackExpirations = await settings.GetTrackExpirationDatesAsync(cancellationToken);
+        var onHand = PantryOnHand.EdibleInStock(products, today, trackExpirations)
             .Select(p => new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList()))
             .OrderBy(p => p.Name)
             .ToList();

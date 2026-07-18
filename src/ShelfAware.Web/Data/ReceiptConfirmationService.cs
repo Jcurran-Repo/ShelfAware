@@ -14,9 +14,12 @@ namespace ShelfAware.Web.Data;
 public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
 {
     /// <param name="ProductId">Resolved product id; 0 means "create a new product" from this line.</param>
+    /// <param name="ExpirationDate">The label's expiration date the reviewer typed, or null. Defaulted so
+    /// the auto-importer's machine confirms never carry one — the date is human-entered by definition.</param>
     public record ConfirmLine(
         string RawText, string NormalizedName, string? Brand, string? Size, string? Variety,
-        decimal Quantity, Category Category, IReadOnlyList<string> Tags, int ProductId);
+        decimal Quantity, Category Category, IReadOnlyList<string> Tags, int ProductId,
+        DateOnly? ExpirationDate = null);
 
     /// <param name="Retracked">How many untracked products this receipt turned back on — buying an
     /// item again ends its "don't want it for a while" (the grocery list's Ignore-for-now untracks).</param>
@@ -116,6 +119,7 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
                 Brand = brand,
                 Size = size,
                 Variety = variety,
+                ExpirationDate = line.ExpirationDate,
                 Source = PurchaseSource.Receipt,
                 ReceiptId = receipt.Id,
             });
@@ -131,6 +135,7 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
                 dbLine.Brand = brand;
                 dbLine.Size = size;
                 dbLine.Variety = variety;
+                dbLine.ExpirationDate = line.ExpirationDate;
                 dbLine.Quantity = quantity;
                 dbLine.Category = line.Category;
                 dbLine.Product = product;

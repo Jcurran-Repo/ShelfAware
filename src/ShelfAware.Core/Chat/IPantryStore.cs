@@ -32,6 +32,11 @@ public interface IPantryStore
 
     Task RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default);
 
+    /// <summary>Set (or clear, with null) the expiration date on a product's LATEST purchase — the only
+    /// purchase whose date can mark the item out (rebuying supersedes the old jug). Returns false when
+    /// the product has no purchases to carry a date.</summary>
+    Task<bool> SetExpirationAsync(int productId, DateOnly? expiresOn, CancellationToken cancellationToken = default);
+
     /// <summary>Start or stop tracking a product for replenishment (untracked = kept in the catalog
     /// but not predicted or shown as running low).</summary>
     Task SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default);

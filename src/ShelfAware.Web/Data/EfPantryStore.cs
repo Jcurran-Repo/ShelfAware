@@ -100,6 +100,28 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory) : IPantryStore
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task<bool> SetExpirationAsync(int productId, DateOnly? expiresOn, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        // Same in-household existence rule as the other mutations, enforced by the filtered query. The
+        // date lands on EVERY purchase from the latest buy date, not just the newest row: the engine
+        // takes the longest date among that day's purchases, so a stale longer date on a same-day
+        // sibling would silently outvote what the user just said ("the milk expires Friday" means the
+        // milk they have, all of it).
+        var latestBuy = await db.PurchaseEvents
+            .Where(p => p.ProductId == productId)
+            .OrderByDescending(p => p.PurchasedAt)
+            .Select(p => (DateOnly?)p.PurchasedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (latestBuy is not { } day) return false;
+        var stock = await db.PurchaseEvents
+            .Where(p => p.ProductId == productId && p.PurchasedAt == day)
+            .ToListAsync(cancellationToken);
+        foreach (var purchase in stock) purchase.ExpirationDate = expiresOn;
+        await db.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
     public async Task SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);

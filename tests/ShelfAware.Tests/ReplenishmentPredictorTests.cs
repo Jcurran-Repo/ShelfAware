@@ -571,4 +571,151 @@ public class ReplenishmentPredictorTests
         Assert.Equal(D(40), r.DueDate);
         Assert.Equal("11 oz", r.RecommendedSize);
     }
+
+    // --- Expiration dates (opt-in): a label fact layered over the rhythms ---
+    // The feature is a derived STATE, not a fired event — nothing writes signals, so nothing can
+    // double-fire, miss a day the server slept through, or re-flag after a human override.
+
+    private static Product Expiring(params (DateOnly Bought, DateOnly? Expires)[] purchases) =>
+        new()
+        {
+            Id = 1,
+            Name = "Milk",
+            Purchases = purchases
+                .Select(p => new PurchaseEvent { ProductId = 1, PurchasedAt = p.Bought, ExpirationDate = p.Expires })
+                .ToList(),
+        };
+
+    [Fact]
+    public void PassedExpiration_PinsOverdue_WithTheLabelAsDueDate()
+    {
+        var r = ReplenishmentPredictor.Predict(Expiring((D(0), D(5))), D(6), honorExpirations: true);
+
+        Assert.Equal(PredictionStatus.Overdue, r.Status);
+        Assert.True(r.Pinned);
+        Assert.Equal(D(5), r.DueDate); // "due" = the day it went bad, like OutNow's outage date
+        Assert.True(r.Expired);
+        Assert.Equal(D(5), r.ExpiresOn);
+        Assert.False(r.ExpirationOverridden);
+    }
+
+    [Fact]
+    public void TheLabeledDayItself_IsStillGood()
+    {
+        // "Best by Jul 5" milk is fine ON Jul 5 — expired means today is PAST the label.
+        var r = ReplenishmentPredictor.Predict(Expiring((D(0), D(5))), D(5), honorExpirations: true);
+
+        Assert.False(r.Expired);
+        Assert.Equal(D(5), r.ExpiresOn);
+        Assert.Equal(PredictionStatus.Unknown, r.Status); // one purchase — the rhythm is untouched
+    }
+
+    [Fact]
+    public void FutureExpiration_SurfacesTheDate_WithoutTouchingStatus()
+    {
+        var r = ReplenishmentPredictor.Predict(Expiring((D(0), D(9))), D(2), honorExpirations: true);
+
+        Assert.Equal(D(9), r.ExpiresOn); // the UI can say "expires Jan 10"
+        Assert.False(r.Expired);
+        Assert.Equal(PredictionStatus.Unknown, r.Status);
+    }
+
+    [Fact]
+    public void HonorFalse_KeepsTheFeatureFullyDormant()
+    {
+        // The Settings toggle off: recorded dates neither fire NOR surface — the default parameter is
+        // the dormant direction on purpose (a forgotten call site fails inert, not loud).
+        var r = ReplenishmentPredictor.Predict(Expiring((D(0), D(5))), D(10));
+
+        Assert.False(r.Expired);
+        Assert.Null(r.ExpiresOn);
+        Assert.Equal(PredictionStatus.Unknown, r.Status);
+    }
+
+    [Fact]
+    public void OnlyTheLatestPurchase_CanExpire()
+    {
+        // Rebuying supersedes the old jug even when the new purchase carries no date at all.
+        var r = ReplenishmentPredictor.Predict(
+            Expiring((D(0), D(3)), (D(10), null)), D(12), honorExpirations: true);
+
+        Assert.False(r.Expired);
+        Assert.Null(r.ExpiresOn);
+    }
+
+    [Fact]
+    public void SameDayPurchases_TheLongestDateGoverns()
+    {
+        // Two jugs bought together: you'd open the shorter-dated one first, so the stock as a whole
+        // lasts until the LONGER date.
+        var product = Expiring((D(0), D(5)), (D(0), D(9)));
+
+        var atSix = ReplenishmentPredictor.Predict(product, D(6), honorExpirations: true);
+        Assert.False(atSix.Expired);
+        Assert.Equal(D(9), atSix.ExpiresOn);
+
+        var atTen = ReplenishmentPredictor.Predict(product, D(10), honorExpirations: true);
+        Assert.True(atTen.Expired);
+    }
+
+    [Fact]
+    public void RestockedAfterTheLabel_Overrides_AndSaysSo()
+    {
+        // "I froze it — it's fine": the human's statement, made after the label date, beats the label.
+        // The flag is exposed so the expiration panel can SAY it was overridden instead of silently
+        // not firing (Jordan's override-indicator requirement).
+        var product = Expiring((D(0), D(5)));
+        product.Signals = [Signal(SignalKind.Restocked, D(7))];
+
+        var r = ReplenishmentPredictor.Predict(product, D(8), honorExpirations: true);
+
+        Assert.False(r.Expired);
+        Assert.True(r.ExpirationOverridden);
+        Assert.Equal(D(5), r.ExpiresOn); // the panel still shows which label was overridden
+        Assert.False(r.Pinned);
+    }
+
+    [Fact]
+    public void RestockedOnTheLabeledDay_IsNotAnOverride()
+    {
+        // On the labeled day nothing showed expired yet — that Restocked was plain "I have it",
+        // not a decision to overrule a label the user hadn't been confronted with.
+        var product = Expiring((D(0), D(5)));
+        product.Signals = [Signal(SignalKind.Restocked, D(5))];
+
+        var r = ReplenishmentPredictor.Predict(product, D(6), honorExpirations: true);
+
+        Assert.True(r.Expired);
+        Assert.False(r.ExpirationOverridden);
+    }
+
+    [Fact]
+    public void ExplicitOutNow_KeepsItsOwnDueDate_WhenAlsoExpired()
+    {
+        // Both facts hold: the user said "out" on D(7), the label ran out on D(5). The pin's due date
+        // stays the user's own statement (the more recent human fact); Expired still reports true so
+        // the UI can mention the label too.
+        var product = Expiring((D(0), D(5)));
+        product.Signals = [Signal(SignalKind.OutNow, D(7))];
+
+        var r = ReplenishmentPredictor.Predict(product, D(8), honorExpirations: true);
+
+        Assert.True(r.Pinned);
+        Assert.Equal(D(7), r.DueDate);
+        Assert.True(r.Expired);
+    }
+
+    [Fact]
+    public void Expiration_NeverFeedsEitherRhythm()
+    {
+        // Identical purchase history with and without labels must learn identical cadences — the
+        // label is a fact about the food, not about buying behavior.
+        var plain = ReplenishmentPredictor.Predict(ProductWith([D(0), D(10), D(20)]), D(21));
+        var dated = ReplenishmentPredictor.Predict(
+            Expiring((D(0), D(4)), (D(10), D(14)), (D(20), D(24))), D(21), honorExpirations: true);
+
+        Assert.Equal(plain.RebuyIntervalDays, dated.RebuyIntervalDays);
+        Assert.Equal(plain.BurnRateDays, dated.BurnRateDays);
+        Assert.Equal(plain.MedianIntervalDays, dated.MedianIntervalDays);
+    }
 }

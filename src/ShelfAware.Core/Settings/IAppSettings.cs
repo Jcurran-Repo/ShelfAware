@@ -46,13 +46,29 @@ public static class SettingKeys
     /// re-spending a vision call per receipt.</summary>
     public const string SelfEvalResults = "SelfEvalResults";
 
+    /// <summary>"true" to track expiration dates: the review screen gains an optional per-line date, the
+    /// product page gains an expiration panel, and a passed date marks the item out (a "timed OutNow").
+    /// Absent/other = OFF (the default — it's the most ritual-heavy field in the app, so households opt
+    /// in). Off is DORMANT, not destructive: recorded dates are kept but never fire and never render.
+    /// One definition of "on": <see cref="AppSettingsExtensions.GetTrackExpirationDatesAsync"/>.</summary>
+    public const string TrackExpirationDates = "TrackExpirationDates";
+
     /// <summary>How the app is set up. Survives "delete my data": wiping your pantry shouldn't forget
     /// which folder your receipts arrive in.</summary>
     public static readonly IReadOnlyList<string> Config =
-        [ReceiptFolder, ImportMode, AutoConfirmImports, RecipeAddConfirm];
+        [ReceiptFolder, ImportMode, AutoConfirmImports, RecipeAddConfirm, TrackExpirationDates];
 
     /// <summary>Derived from the household's own pantry and receipts, and therefore theirs: removed by
     /// "delete my data" like any other content.</summary>
     public static readonly IReadOnlyList<string> UserContent =
         [LastRecipeSuggestions, SelfEvalResults];
+}
+
+public static class AppSettingsExtensions
+{
+    /// <summary>THE definition of "expiration tracking is on" for this household — every page, the chat
+    /// tools, and the recipe adapter ask this one method, so the toggle can't half-apply. Absent or
+    /// anything but "true" = off.</summary>
+    public static async Task<bool> GetTrackExpirationDatesAsync(this IAppSettings settings, CancellationToken cancellationToken = default) =>
+        string.Equals(await settings.GetAsync(SettingKeys.TrackExpirationDates, cancellationToken), "true", StringComparison.OrdinalIgnoreCase);
 }

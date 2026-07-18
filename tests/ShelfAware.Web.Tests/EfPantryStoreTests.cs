@@ -36,6 +36,49 @@ public class EfPantryStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Set_expiration_lands_on_every_latest_day_purchase_and_leaves_history_alone()
+    {
+        // The engine takes the LONGEST date among the latest day's purchases, so the date must land on
+        // all of them — a stale longer date on a same-day sibling would silently outvote the user.
+        int milkId;
+        await using (var db = _db.CreateDbContext())
+        {
+            var milk = new Product { Name = "Whole Milk" };
+            db.Products.Add(milk);
+            db.PurchaseEvents.Add(new PurchaseEvent { Product = milk, PurchasedAt = new DateOnly(2026, 7, 1), ExpirationDate = new DateOnly(2026, 7, 9) });
+            db.PurchaseEvents.Add(new PurchaseEvent { Product = milk, PurchasedAt = new DateOnly(2026, 7, 10) });
+            db.PurchaseEvents.Add(new PurchaseEvent { Product = milk, PurchasedAt = new DateOnly(2026, 7, 10) });
+            await db.SaveChangesAsync();
+            milkId = milk.Id;
+        }
+
+        var ok = await _store.SetExpirationAsync(milkId, new DateOnly(2026, 7, 17));
+
+        Assert.True(ok);
+        await using var read = _db.CreateDbContext();
+        var purchases = await read.PurchaseEvents.Where(p => p.ProductId == milkId).ToListAsync();
+        Assert.All(purchases.Where(p => p.PurchasedAt == new DateOnly(2026, 7, 10)),
+            p => Assert.Equal(new DateOnly(2026, 7, 17), p.ExpirationDate));
+        // The 7/1 purchase keeps ITS history untouched — old jugs' dates are a record, not stock state.
+        Assert.Equal(new DateOnly(2026, 7, 9),
+            purchases.Single(p => p.PurchasedAt == new DateOnly(2026, 7, 1)).ExpirationDate);
+
+        // And null clears the same rows.
+        Assert.True(await _store.SetExpirationAsync(milkId, null));
+        await using var read2 = _db.CreateDbContext();
+        Assert.All(await read2.PurchaseEvents.Where(p => p.ProductId == milkId && p.PurchasedAt == new DateOnly(2026, 7, 10)).ToListAsync(),
+            p => Assert.Null(p.ExpirationDate));
+    }
+
+    [Fact]
+    public async Task Set_expiration_reports_false_when_there_is_no_purchase_to_carry_it()
+    {
+        var id = await _store.CreateProductAsync("Brand New Thing", Category.Pantry, []);
+
+        Assert.False(await _store.SetExpirationAsync(id, new DateOnly(2026, 8, 1)));
+    }
+
+    [Fact]
     public async Task Creating_with_tags_canonicalizes_against_the_vocabulary()
     {
         // Chat-applied tags go through the same dedup as receipt confirmation: "proteins" is a

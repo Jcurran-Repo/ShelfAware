@@ -17,6 +17,10 @@ public class ReceiptLine : IHouseholdOwned
     /// <see cref="PurchaseEvent.Variety"/> the way Brand and Size do — metadata, not identity, so
     /// every flavor of an item rolls up into one product and one cadence.</summary>
     public string? Variety { get; set; }
+    /// <summary>Expiration/best-by date the user typed during review, or null. Mirrors
+    /// <see cref="PurchaseEvent.ExpirationDate"/> (as Brand/Size/Variety are mirrored) so a queued
+    /// receipt keeps the date through review. Never extracted — receipts don't print it.</summary>
+    public DateOnly? ExpirationDate { get; set; }
     public decimal Quantity { get; set; } = 1;
     public decimal? UnitPrice { get; set; }
     public Category Category { get; set; }

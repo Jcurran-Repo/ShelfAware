@@ -40,7 +40,7 @@ public class RecipeAdapterTests : IDisposable
     private RecipeAdapter Adapter(RecipeSuggestion? adaptResult, out FakeRecipeAdvisor advisor)
     {
         advisor = new FakeRecipeAdvisor(adaptResult);
-        return new RecipeAdapter(_db, advisor, NullLogger<RecipeAdapter>.Instance);
+        return new RecipeAdapter(_db, advisor, new FakeAppSettings(), NullLogger<RecipeAdapter>.Instance);
     }
 
     [Fact]

@@ -37,8 +37,9 @@ public class ReceiptConfirmationServiceTests : IDisposable
 
     private static ReceiptConfirmationService.ConfirmLine C(
         string raw, string name, int productId = 0, decimal qty = 1, string? brand = null,
-        string? size = null, string? variety = null, string[]? tags = null, Category category = Category.Other) =>
-        new(raw, name, brand, size, variety, qty, category, tags ?? [], productId);
+        string? size = null, string? variety = null, string[]? tags = null, Category category = Category.Other,
+        DateOnly? expires = null) =>
+        new(raw, name, brand, size, variety, qty, category, tags ?? [], productId, expires);
 
     // --- the happy path ------------------------------------------------------
 
@@ -92,6 +93,32 @@ public class ReceiptConfirmationServiceTests : IDisposable
         await using var db = _db.CreateDbContext();
         Assert.Equal("Strawberry", (await db.PurchaseEvents.SingleAsync()).Variety); // trimmed
         Assert.Equal("Strawberry", (await db.ReceiptLines.SingleAsync()).Variety);
+    }
+
+    // --- expiration mirrors the same per-purchase pattern --------------------
+
+    [Fact]
+    public async Task Copies_the_expiration_date_onto_the_purchase_and_the_stored_line()
+    {
+        var receipt = await SeedPending("Walmart",
+            L("GV WHL MLK", "Whole Milk"), L("RIBS", "Pork Ribs"));
+
+        await _service.ConfirmAsync(receipt.Id, new DateOnly(2026, 7, 1),
+            [
+                C("GV WHL MLK", "Whole Milk", expires: new DateOnly(2026, 7, 14)),
+                C("RIBS", "Pork Ribs"), // no date typed → stays null, not defaulted
+            ],
+            writeAliases: false);
+
+        await using var db = _db.CreateDbContext();
+        var purchases = await db.PurchaseEvents.Include(p => p.Product).ToListAsync();
+        Assert.Equal(new DateOnly(2026, 7, 14),
+            purchases.Single(p => p.Product!.Name == "Whole Milk").ExpirationDate);
+        Assert.Null(purchases.Single(p => p.Product!.Name == "Pork Ribs").ExpirationDate);
+
+        var lines = await db.ReceiptLines.ToListAsync();
+        Assert.Equal(new DateOnly(2026, 7, 14), lines.Single(l => l.RawText == "GV WHL MLK").ExpirationDate);
+        Assert.Null(lines.Single(l => l.RawText == "RIBS").ExpirationDate);
     }
 
     // --- idempotency (the double-click bug) ----------------------------------

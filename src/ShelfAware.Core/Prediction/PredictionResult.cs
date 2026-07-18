@@ -49,6 +49,22 @@ public record PredictionResult
     /// True when an active OutNow signal pins this item to the top of the list (§6.6 / §8).
     public bool Pinned { get; init; }
 
+    /// The governing expiration date — the LATEST purchase's labeled date (same-day purchases: the
+    /// longest, since you'd open the shorter-dated one first). Null when the latest purchase carries no
+    /// date or expiration tracking is off. A future value lets the UI say "expires Jul 22".
+    public DateOnly? ExpiresOn { get; init; }
+
+    /// True when <see cref="ExpiresOn"/> has passed and no later Restocked overrode it: the item is
+    /// pinned Overdue with DueDate = the labeled date. Kept distinct from a user's OutNow so the UI can
+    /// say "expired Jul 18" rather than "marked out" — the user can see the jug in the fridge, and a
+    /// state that explains itself is the difference between trusted and gaslighting.
+    public bool Expired { get; init; }
+
+    /// True when the label has passed but a Restocked signal dated AFTER the labeled date suppressed it —
+    /// the human overriding the label ("I froze it; it's fine"). Surfaced so the expiration panel can say
+    /// the label was overridden instead of silently not firing.
+    public bool ExpirationOverridden { get; init; }
+
     // ---- Derived: the two-stream gap (rebuy rhythm vs. burn rate) ----
 
     /// <summary>Rebuy rhythm minus burn rate in days, when both are known. Positive means you run out this

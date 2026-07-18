@@ -15,7 +15,12 @@ namespace ShelfAware.Core.Prediction;
 /// </summary>
 public static class ReplenishmentPredictor
 {
-    public static PredictionResult Predict(Product product, DateOnly today)
+    /// <param name="honorExpirations">Whether purchase expiration dates may mark the item out (the
+    /// per-household Settings toggle, default OFF — see <c>SettingKeys.TrackExpirationDates</c>).
+    /// Defaulting to false makes a call site that forgets the flag fail INERT (no expiry state for a
+    /// household that turned it on — a visible gap) rather than fail loud (phantom "expired" pins for
+    /// one that turned it off).</param>
+    public static PredictionResult Predict(Product product, DateOnly today, bool honorExpirations = false)
     {
         // 1. Distinct purchase dates — same-day events collapse (§6.1). Size is metadata, not identity: an
         //    item bought in random sizes (milk as a half-gallon or a gallon) is ONE product. Learn the
@@ -117,6 +122,40 @@ public static class ReplenishmentPredictor
             status = PredictionStatus.DueSoon; // "at least DueSoon"
         }
 
+        // 7. Expiration on top of everything: a dated label is a FACT the two rhythms can't see — milk
+        //    goes bad whether or not you drank it. Only the LATEST purchase's date governs (rebuying
+        //    supersedes the old jug, whether or not the new one carries a date); among same-day
+        //    purchases the LONGEST date wins (you'd open the shorter-dated one first). "Best by"
+        //    convention: the labeled day itself is still good — expired means today is PAST it. A
+        //    Restocked dated after the label is the human overriding it ("I froze it") and wins;
+        //    Restocked ON the labeled day is just "I have it" (nothing showed expired yet), not an
+        //    override. Escalate-only: a future date never softens a cadence-based warning, and nothing
+        //    here feeds either rhythm.
+        DateOnly? expiresOn = null;
+        bool expired = false, expirationOverridden = false;
+        if (honorExpirations && product.Purchases.Count > 0)
+        {
+            var latestBuy = product.Purchases.Max(p => p.PurchasedAt);
+            expiresOn = product.Purchases
+                .Where(p => p.PurchasedAt == latestBuy)
+                .Max(p => p.ExpirationDate);
+            if (expiresOn is { } label && today > label)
+            {
+                expirationOverridden = product.Signals.Any(s =>
+                    s.Kind == SignalKind.Restocked && DateOnly.FromDateTime(s.SignaledAt.Date) > label);
+                if (!expirationOverridden)
+                {
+                    expired = true;
+                    if (!pinned) // an explicit OutNow already pins; the user's own outage date stands
+                    {
+                        status = PredictionStatus.Overdue;
+                        pinned = true;
+                        dueDate = label; // "due" = the day it went bad, like OutNow's outage date
+                    }
+                }
+            }
+        }
+
         return new PredictionResult
         {
             ProductId = product.Id,
@@ -131,6 +170,9 @@ public static class ReplenishmentPredictor
             SignalNote = SignalNoteFor(activeSignal?.Kind),
             RecommendedSize = dominantSize,
             Pinned = pinned,
+            ExpiresOn = expiresOn,
+            Expired = expired,
+            ExpirationOverridden = expirationOverridden,
         };
     }
 

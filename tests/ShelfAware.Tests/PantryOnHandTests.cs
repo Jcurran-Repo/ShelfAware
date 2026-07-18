@@ -91,4 +91,30 @@ public class PantryOnHandTests
         Assert.Empty(PantryOnHand.EdibleInStock([products[0]], Today).ToList());
         Assert.Empty(PantryOnHand.EdibleOutOfStock([products[0]], Today).ToList());
     }
+
+    [Fact]
+    public void Expired_items_move_from_on_hand_to_out_of_stock_only_when_expirations_are_honored()
+    {
+        // Bought yesterday (recent, so the cadence says "stocked"), but the label ran out today-1:
+        // an expired chicken must not count as on-hand chicken for recipes — yet ONLY when the
+        // household opted into expiration tracking; off means fully dormant, matching the engine.
+        var chicken = new Product
+        {
+            Name = "Chicken Breast",
+            Category = Category.Meat,
+            Purchases =
+            [
+                new PurchaseEvent { PurchasedAt = Today.AddDays(-10), ExpirationDate = Today.AddDays(-1) },
+                new PurchaseEvent { PurchasedAt = Today.AddDays(-20) },
+            ],
+        };
+
+        Assert.Empty(PantryOnHand.EdibleInStock([chicken], Today, honorExpirations: true));
+        Assert.Equal(["Chicken Breast"],
+            PantryOnHand.EdibleOutOfStock([chicken], Today, honorExpirations: true).Select(p => p.Name).ToList());
+
+        Assert.Equal(["Chicken Breast"],
+            PantryOnHand.EdibleInStock([chicken], Today).Select(p => p.Name).ToList());
+        Assert.Empty(PantryOnHand.EdibleOutOfStock([chicken], Today));
+    }
 }

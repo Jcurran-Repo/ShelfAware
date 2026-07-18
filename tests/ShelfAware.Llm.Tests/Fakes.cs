@@ -174,6 +174,17 @@ internal sealed class FakePantryStore : IPantryStore
         return Task.CompletedTask;
     }
 
+    public List<(int ProductId, DateOnly? ExpiresOn)> Expirations { get; } = [];
+
+    public Task<bool> SetExpirationAsync(int productId, DateOnly? expiresOn, CancellationToken cancellationToken = default)
+    {
+        // Mirror the real store's contract: no purchases → nothing to carry a date → false.
+        if (Products.FirstOrDefault(p => p.Id == productId) is not { Purchases.Count: > 0 })
+            return Task.FromResult(false);
+        Expirations.Add((productId, expiresOn));
+        return Task.FromResult(true);
+    }
+
     public Task<IReadOnlyList<string>> AddSubstitutesAsync(int productId, IReadOnlyList<string> values, CancellationToken cancellationToken = default)
     {
         var have = new HashSet<string>(
@@ -216,6 +227,8 @@ internal sealed class ThrowingPantryStore(params Product[] products) : IPantrySt
     public Task<IReadOnlyList<string>> GetKnownTagsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<string>>([]);
     public Task RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<bool> SetExpirationAsync(int productId, DateOnly? expiresOn, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("simulated DB write failure");
     public Task<IReadOnlyList<RecipeRef>> GetRecipesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<string>> AddSubstitutesAsync(int productId, IReadOnlyList<string> values, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<string>> GetExcludedFoodsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<string>>([]);

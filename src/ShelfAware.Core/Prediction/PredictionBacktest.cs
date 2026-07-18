@@ -50,6 +50,9 @@ public static class PredictionBacktest
                     Purchases = product.Purchases.Where(p => p.PurchasedAt < actual).ToList(),
                     Signals = product.Signals.Where(s => DateOnly.FromDateTime(s.SignaledAt.Date) < actual).ToList(),
                 };
+                // Deliberately expiration-blind (the honorExpirations default): the backtest scores the
+                // LEARNED rhythm against real rebuy dates, and an expiry pin would overwrite DueDate
+                // with a label fact — grading the model on answers it didn't predict.
                 if (ReplenishmentPredictor.Predict(snapshot, dates[i - 1]).DueDate is not { } due) continue;
                 absErrors.Add(Math.Abs(actual.DayNumber - due.DayNumber));
             }

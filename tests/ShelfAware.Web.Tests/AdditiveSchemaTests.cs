@@ -25,4 +25,20 @@ public class AdditiveSchemaTests : IDisposable
         // EF can query through the column again, and the DEFAULT backfilled existing rows as false.
         Assert.Empty(await db.Receipts.Where(r => r.VerifiedForEval).ToListAsync());
     }
+
+    [Fact]
+    public async Task Adds_the_expiration_columns_to_a_pre_expiration_db()
+    {
+        await using var db = _db.CreateDbContext();
+        // Simulate a pre-2026-07-18 DB (built before the expiration-date feature).
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE ReceiptLines DROP COLUMN ExpirationDate;");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE PurchaseEvents DROP COLUMN ExpirationDate;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        // EF queries through both columns again; pre-existing rows read as NULL (no date recorded).
+        Assert.Empty(await db.ReceiptLines.Where(l => l.ExpirationDate != null).ToListAsync());
+        Assert.Empty(await db.PurchaseEvents.Where(p => p.ExpirationDate != null).ToListAsync());
+    }
 }

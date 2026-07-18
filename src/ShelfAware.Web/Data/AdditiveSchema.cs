@@ -25,6 +25,11 @@ public static class AdditiveSchema
         // feature. Pre-existing rows get NULL: their variety, if any, is baked into the product name.
         EnsureColumn(db, table: "ReceiptLines", column: "Variety", definition: "TEXT NULL");
         EnsureColumn(db, table: "PurchaseEvents", column: "Variety", definition: "TEXT NULL");
+
+        // 2026-07-18: human-entered expiration dates as per-purchase metadata — the expiration-tracking
+        // feature (opt-in per household via SettingKeys.TrackExpirationDates). NULL = no date recorded.
+        EnsureColumn(db, table: "ReceiptLines", column: "ExpirationDate", definition: "TEXT NULL");
+        EnsureColumn(db, table: "PurchaseEvents", column: "ExpirationDate", definition: "TEXT NULL");
     }
 
     public static void Apply(AuthDbContext db)
