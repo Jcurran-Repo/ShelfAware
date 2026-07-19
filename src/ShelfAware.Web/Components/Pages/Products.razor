@@ -73,11 +73,38 @@ else
                     @value <span class="tag-count">@count</span>
                 </button>
             }
+            @if (UntaggedCount > 0)
+            {
+                @* The cleanup chip: the products no tag describes yet — "everything not categorized".
+                   Also where the Reports charts' "(untagged)" series lands. *@
+                <button type="button" class="tag-chip tag-cloud-chip untagged-chip @(untaggedOnly ? "active" : "")"
+                        @onclick="ToggleUntagged" aria-pressed="@(untaggedOnly ? "true" : "false")">
+                    Untagged <span class="tag-count">@UntaggedCount</span>
+                </button>
+            }
+            @if (OtherAisleCount > 0)
+            {
+                @* Its sibling cleanup chip: products filed in the catch-all Other aisle. *@
+                <button type="button" class="tag-chip tag-cloud-chip untagged-chip @(categoryFilter == "Other" ? "active" : "")"
+                        @onclick="ToggleOtherAisle" aria-pressed="@(categoryFilter == "Other" ? "true" : "false")">
+                    Other aisle <span class="tag-count">@OtherAisleCount</span>
+                </button>
+            }
             @if (tagFilter is not null)
             {
                 <button type="button" class="tag-clear" @onclick="() => ToggleTag(tagFilter!)">Clear ✕</button>
             }
         </div>
+    }
+
+    @if (categoriesFilter is { Count: > 0 })
+    {
+        @* The multi-aisle deep link (the aisle chart's pooled "Everything else"). Invisible filtering
+           reads as missing products, so the active set is named and one tap clears it. *@
+        <p class="active-aisle-filter">
+            Showing aisles: <strong>@string.Join(", ", categoriesFilter.OrderBy(c => c.ToString()))</strong>
+            <button type="button" class="tag-clear" @onclick="() => categoriesFilter = null">Clear ✕</button>
+        </p>
     }
 
     <table>
@@ -238,6 +265,28 @@ else
     /// Same first-load-only honoring as the tag param; an unknown name just leaves the filter open.</summary>
     [SupplyParameterFromQuery(Name = "category")] public string? CategoryParam { get; set; }
 
+    /// <summary>Deep-link to the untagged products (?untagged=1) — the Reports "(untagged)" series.</summary>
+    [SupplyParameterFromQuery(Name = "untagged")] public string? UntaggedParam { get; set; }
+
+    /// <summary>Deep-link to SEVERAL aisles at once (?categories=Frozen,Produce,Other) — the aisle
+    /// chart's pooled "Everything else". Unknown names are skipped, not errors.</summary>
+    [SupplyParameterFromQuery(Name = "categories")] public string? CategoriesParam { get; set; }
+
+    private bool untaggedOnly;
+    private HashSet<Category>? categoriesFilter;
+
+    private int UntaggedCount => (products ?? []).Count(p => p.Tags.Count == 0);
+    private int OtherAisleCount => (products ?? []).Count(p => p.Category == Category.Other);
+
+    private void ToggleUntagged()
+    {
+        untaggedOnly = !untaggedOnly;
+        if (untaggedOnly) tagFilter = null; // "has no tags" and "has this tag" can't both be true
+    }
+
+    private void ToggleOtherAisle() =>
+        categoryFilter = categoryFilter == "Other" ? "" : "Other"; // rides the existing aisle select
+
     private IEnumerable<Product> FilteredProducts => (products ?? Enumerable.Empty<Product>()).Where(p =>
     {
         if (searchText.Trim() is { Length: > 0 } q && !p.Name.Contains(q, StringComparison.OrdinalIgnoreCase)) return false;
@@ -245,11 +294,16 @@ else
         if (trackedFilter.Length > 0 && p.IsTracked != bool.Parse(trackedFilter)) return false;
         if (statusFilter.Length > 0 && (!predictions.TryGetValue(p.Id, out var r) || r.Status.ToString() != statusFilter)) return false;
         if (tagFilter is { Length: > 0 } && !p.Tags.Any(t => string.Equals(t.Value, tagFilter, StringComparison.OrdinalIgnoreCase))) return false;
+        if (untaggedOnly && p.Tags.Count > 0) return false;
+        if (categoriesFilter is { Count: > 0 } && !categoriesFilter.Contains(p.Category)) return false;
         return true;
     });
 
-    private void ToggleTag(string value) =>
+    private void ToggleTag(string value)
+    {
         tagFilter = string.Equals(value, tagFilter, StringComparison.OrdinalIgnoreCase) ? null : value;
+        if (tagFilter is not null) untaggedOnly = false; // the mirror of ToggleUntagged's exclusivity
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -257,6 +311,15 @@ else
         if (Tag is { Length: > 0 }) tagFilter = Tag; // honor the deep-link on first load
         if (Enum.TryParse<Category>(CategoryParam, ignoreCase: true, out var linked) && Enum.IsDefined(linked))
             categoryFilter = linked.ToString();
+        if (UntaggedParam == "1") untaggedOnly = true;
+        if (CategoriesParam is { Length: > 0 })
+        {
+            var parsed = CategoriesParam.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => Enum.TryParse<Category>(s, ignoreCase: true, out var c) && Enum.IsDefined(c) ? c : (Category?)null)
+                .OfType<Category>()
+                .ToHashSet();
+            if (parsed.Count > 0) categoriesFilter = parsed;
+        }
     }
 
     private async Task LoadAsync()

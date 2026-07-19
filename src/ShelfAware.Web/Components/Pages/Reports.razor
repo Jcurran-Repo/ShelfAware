@@ -1015,7 +1015,27 @@ else
                 case ReportSplit.ByCategory when Enum.TryParse<Category>(series.Label, out _):
                     links[series.Label] = $"/products?category={series.Label}";
                     break;
-                case ReportSplit.ByTag when series.Label != "(untagged)":
+                case ReportSplit.ByCategory when series.Label == "Everything else":
+                    // The pooled small aisles are knowable: every aisle in the window minus the ones
+                    // that earned their own series. Products can open exactly that set.
+                    var kept = result.Series
+                        .Where(s => Enum.TryParse<Category>(s.Label, out _))
+                        .Select(s => s.Label)
+                        .ToHashSet();
+                    var pooled = source!.Purchases
+                        .Where(f => f.Date >= spec.From && f.Date <= spec.To)
+                        .Select(f => f.Category.ToString())
+                        .Distinct()
+                        .Where(c => !kept.Contains(c))
+                        .OrderBy(c => c)
+                        .ToList();
+                    if (pooled.Count > 0)
+                        links[series.Label] = $"/products?categories={string.Join(',', pooled)}";
+                    break;
+                case ReportSplit.ByTag when series.Label == "(untagged)":
+                    links[series.Label] = "/products?untagged=1";
+                    break;
+                case ReportSplit.ByTag:
                     links[series.Label] = $"/products?tag={Uri.EscapeDataString(series.Label)}";
                     break;
                 case ReportSplit.ByProduct:

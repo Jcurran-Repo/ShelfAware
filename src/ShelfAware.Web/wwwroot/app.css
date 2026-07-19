@@ -2077,6 +2077,18 @@ tfoot td {
 
 .chart-legend a:hover { color: var(--accent); }
 
+/* The Products cleanup chips (Untagged / Other aisle) sit apart from real tags. */
+.untagged-chip { border-style: dashed; }
+
+.active-aisle-filter {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    color: var(--ink-soft);
+    font-size: 0.9rem;
+}
+
 /* A linked chart segment behaves like the link it is. */
 .report-chart a { cursor: pointer; }
 .report-chart a:hover rect,
