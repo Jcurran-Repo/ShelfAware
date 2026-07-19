@@ -2074,6 +2074,12 @@ tfoot td {
     height: 12px;
     border-radius: 3px;
     flex: none;
+    /* Browsers strip HTML background colors when printing (the SVG chart keeps its fills, so a
+       printed page had a colored chart beside a legend of blank squares). exact opts the swatch
+       out; the hairline border is the grayscale-printer fallback so a square still shows. */
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    border: 1px solid var(--line);
 }
 
 .report-data table { font-size: 0.85rem; }
@@ -2093,6 +2099,10 @@ tfoot td {
     background: var(--chart-1);
     min-width: 2px;
     vertical-align: middle;
+    /* Same printed-background stripping as the legend swatches — a share bar that vanishes on
+       paper turns the top-items table into an empty column. */
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
 }
 
 .report-empty { padding: 1.25rem; }
@@ -2193,7 +2203,10 @@ tfoot td {
     .restock-btn,
     .report-presets,
     .report-print-btn,
-    .report-builder {
+    .report-builder,
+    .voice-agent {
+        /* .voice-agent: the assistant is a floating control on every page — screen furniture,
+           never document content. Global, not report-only: no printout wants it. */
         display: none !important;
     }
 
