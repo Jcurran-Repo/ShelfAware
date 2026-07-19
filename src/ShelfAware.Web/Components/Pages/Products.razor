@@ -68,8 +68,10 @@ else
             @foreach (var (value, count) in tagCounts)
             {
                 var active = string.Equals(value, tagFilter, StringComparison.OrdinalIgnoreCase);
+                @* aria-pressed needs the literal strings — a bound bool renders as an EMPTY attribute
+                   when true (invalid ARIA) and vanishes when false. Same fix in ProductDetail/PushToTalk. *@
                 <button type="button" class="tag-chip tag-cloud-chip @(active ? "active" : "")"
-                        @onclick="() => ToggleTag(value)" aria-pressed="@active">
+                        @onclick="() => ToggleTag(value)" aria-pressed="@(active ? "true" : "false")">
                     @value <span class="tag-count">@count</span>
                 </button>
             }

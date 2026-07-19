@@ -22,7 +22,7 @@
             @onkeydown="OnKeyDown"
             @onkeyup="OnKeyUp"
             aria-label="@ButtonAria"
-            aria-pressed="@(State == VoiceState.Recording)"
+            aria-pressed="@(State == VoiceState.Recording ? "true" : "false")"
             title="Press and hold, say what you bought or ran low on, then release.">
         <span class="mic-glyph" aria-hidden="true">@(State == VoiceState.Recording ? "●" : "🎙")</span>
         <span class="mic-label">@ButtonLabel</span>

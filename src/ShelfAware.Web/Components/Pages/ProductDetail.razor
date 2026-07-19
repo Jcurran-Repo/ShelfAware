@@ -61,7 +61,7 @@ else
                     {
                         var active = string.Equals(value, mergeTagFilter, StringComparison.OrdinalIgnoreCase);
                         <button type="button" class="tag-chip tag-cloud-chip @(active ? "active" : "")"
-                                @onclick="() => ToggleMergeTag(value)" aria-pressed="@active">
+                                @onclick="() => ToggleMergeTag(value)" aria-pressed="@(active ? "true" : "false")">
                             @value <span class="tag-count">@count</span>
                         </button>
                     }
