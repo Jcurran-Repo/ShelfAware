@@ -2069,6 +2069,20 @@ tfoot td {
     gap: 0.4rem;
 }
 
+.chart-legend a {
+    color: inherit;
+    text-decoration-style: dotted;
+    text-underline-offset: 2px;
+}
+
+.chart-legend a:hover { color: var(--accent); }
+
+/* A linked chart segment behaves like the link it is. */
+.report-chart a { cursor: pointer; }
+.report-chart a:hover rect,
+.report-chart a:focus-visible rect { opacity: 0.8; }
+.report-chart a:focus-visible rect { stroke: var(--accent); stroke-width: 2; }
+
 .chart-legend-swatch {
     width: 12px;
     height: 12px;

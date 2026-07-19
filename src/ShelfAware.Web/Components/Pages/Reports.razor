@@ -196,7 +196,7 @@ else
                             }
                         </div>
                     }
-                    <ChartLegend Series="result.Series" />
+                    <ChartLegend Series="result.Series" Links="customLinks" />
                     @if (customSpec!.Chart == ReportChart.Line)
                     {
                         <TimeSeriesChart Buckets="result.Buckets" Series="result.Series" Unit="result.Unit"
@@ -206,7 +206,7 @@ else
                     {
                         <BarChart Buckets="result.Buckets" Series="result.Series" Unit="result.Unit"
                                   Stacked="customSpec.Chart == ReportChart.StackedBars && result.Stackable"
-                                  AriaLabel="@CustomTitle" />
+                                  AriaLabel="@CustomTitle" Links="customLinks" />
                     }
                     @if (result.Note is { } note)
                     {
@@ -522,9 +522,10 @@ else
 
             <section class="report-section">
                 <h2>Spend by aisle</h2>
-                <ChartLegend Series="categorySpend!.Series" />
+                <ChartLegend Series="categorySpend!.Series" Links="categorySpendLinks" />
                 <BarChart Buckets="categorySpend.Buckets" Series="categorySpend.Series" Unit="categorySpend.Unit"
-                          Stacked="categorySpend.Stackable" AriaLabel="Monthly spend stacked by category" />
+                          Stacked="categorySpend.Stackable" AriaLabel="Monthly spend stacked by category"
+                          Links="categorySpendLinks" />
                 @if (categorySpend.Note is { } catNote)
                 {
                     <p class="muted small">@catNote</p>
@@ -612,6 +613,8 @@ else
     private bool loaded;
     private ReportSourceData? source;
     private ReportResult? thisMonth, lastMonth, mealsThisMonth, categorySpend;
+    private IReadOnlyDictionary<string, string> categorySpendLinks = new Dictionary<string, string>();
+    private IReadOnlyDictionary<string, string> customLinks = new Dictionary<string, string>();
     private int tripsThisMonth;
     private List<(string Label, decimal Total)> topItems = [];
     private decimal topItemMax;
@@ -892,6 +895,7 @@ else
             {
                 customSpec = parsed;
                 customResult = ReportEngine.Run(parsed, source.Purchases, source.Meals);
+                customLinks = SeriesLinksFor(parsed, customResult);
             }
         }
     }
@@ -902,6 +906,7 @@ else
         if (ReportSpecRules.Check(spec).Count > 0) return; // the button is disabled; belt and braces
         customSpec = spec;
         customResult = ReportEngine.Run(spec, source!.Purchases, source.Meals);
+        customLinks = SeriesLinksFor(spec, customResult);
         saveNote = null;
         // replace:true — tuning a report shouldn't bury the back button under every attempt.
         Nav.NavigateTo($"/reports?preset=custom&{ReportSpecUrl.ToQuery(spec)}", replace: true);
@@ -972,13 +977,15 @@ else
             .Where(f => f.Date >= monthStart && f.Date <= Today)
             .Select(f => f.Date).Distinct().Count();
 
-        categorySpend = Run(new ReportSpec
+        var categorySpec = new ReportSpec
         {
             Split = ReportSplit.ByCategory,
             Chart = ReportChart.StackedBars,
             From = SixMonthsBack,
             To = Today,
-        });
+        };
+        categorySpend = Run(categorySpec);
+        categorySpendLinks = SeriesLinksFor(categorySpec, categorySpend);
 
         var top30 = Run(new ReportSpec
         {
@@ -993,6 +1000,32 @@ else
     }
 
     private ReportResult Run(ReportSpec spec) => ReportEngine.Run(spec, source!.Purchases, source.Meals);
+
+    /// <summary>Where each series can take you: an aisle series opens Products filtered to that
+    /// category, a tag series to that tag, a product series to its detail page. Pooled and synthetic
+    /// series ("Everything else", "(untagged)") have no destination and stay plain — a link that
+    /// opens the wrong thing is worse than no link.</summary>
+    private IReadOnlyDictionary<string, string> SeriesLinksFor(ReportSpec spec, ReportResult result)
+    {
+        var links = new Dictionary<string, string>();
+        foreach (var series in result.Series)
+        {
+            switch (spec.Split)
+            {
+                case ReportSplit.ByCategory when Enum.TryParse<Category>(series.Label, out _):
+                    links[series.Label] = $"/products?category={series.Label}";
+                    break;
+                case ReportSplit.ByTag when series.Label != "(untagged)":
+                    links[series.Label] = $"/products?tag={Uri.EscapeDataString(series.Label)}";
+                    break;
+                case ReportSplit.ByProduct:
+                    var product = source!.Products.FirstOrDefault(p => p.Name == series.Label);
+                    if (product.Id != 0) links[series.Label] = $"/product/{product.Id}";
+                    break;
+            }
+        }
+        return links;
+    }
 
     /// <summary>The gap rows need full products (purchases + signals) for the predictor — loaded only
     /// when the gap preset is actually opened, not on every report visit.</summary>

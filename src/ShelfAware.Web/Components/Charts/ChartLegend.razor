@@ -1,6 +1,8 @@
 @* Legend chips in HTML (not SVG) so they wrap, reflow, and read to screen readers as a plain list.
    Rendered whenever a chart has two or more series; a single series is named by its section title.
-   Identity is never color-alone: the chip pairs every swatch with its label in ink-colored text. *@
+   Identity is never color-alone: the chip pairs every swatch with its label in ink-colored text.
+   A chip whose series has a real destination (an aisle, a tag, a product) renders as a link into
+   the filtered Products view; pooled/synthetic series stay plain text — there's nothing to open. *@
 @using ShelfAware.Core.Reporting
 
 @if (Series.Count > 1)
@@ -11,7 +13,14 @@
             <li>
                 <span class="chart-legend-swatch" style="background:@ChartFormat.SeriesColor(series, i)"
                       aria-hidden="true"></span>
-                @series.Label
+                @if (Links.TryGetValue(series.Label, out var href))
+                {
+                    <a href="@href" title="See these products">@series.Label</a>
+                }
+                else
+                {
+                    @series.Label
+                }
             </li>
         }
     </ul>
@@ -19,4 +28,7 @@
 
 @code {
     [Parameter, EditorRequired] public IReadOnlyList<ReportSeries> Series { get; set; } = [];
+    /// <summary>Series label → destination URL. Absent label = plain text chip.</summary>
+    [Parameter] public IReadOnlyDictionary<string, string> Links { get; set; } =
+        System.Collections.Immutable.ImmutableDictionary<string, string>.Empty;
 }

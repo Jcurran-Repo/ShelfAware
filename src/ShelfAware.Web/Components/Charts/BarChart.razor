@@ -21,10 +21,24 @@
 
     @foreach (var bar in Bars())
     {
-        <rect x="@F(bar.X)" y="@F(bar.Y)" width="@F(bar.Width)" height="@F(bar.Height)"
-              rx="@F(bar.Rounded ? 2 : 0)" fill="@bar.Color">
-            <title>@bar.Tooltip</title>
-        </rect>
+        @if (bar.Href is { } href)
+        {
+            @* An SVG <a>: the segment itself navigates (and is keyboard-focusable), so "which aisle
+               is this?" and "show me those products" are the same gesture. *@
+            <a href="@href" aria-label="@bar.Tooltip — see these products">
+                <rect x="@F(bar.X)" y="@F(bar.Y)" width="@F(bar.Width)" height="@F(bar.Height)"
+                      rx="@F(bar.Rounded ? 2 : 0)" fill="@bar.Color">
+                    <title>@bar.Tooltip</title>
+                </rect>
+            </a>
+        }
+        else
+        {
+            <rect x="@F(bar.X)" y="@F(bar.Y)" width="@F(bar.Width)" height="@F(bar.Height)"
+                  rx="@F(bar.Rounded ? 2 : 0)" fill="@bar.Color">
+                <title>@bar.Tooltip</title>
+            </rect>
+        }
     }
 
     <line x1="@F(PadL)" y1="@F(H - PadB)" x2="@F(W - PadR)" y2="@F(H - PadB)"
@@ -37,6 +51,9 @@
     [Parameter] public ReportUnit Unit { get; set; }
     [Parameter] public bool Stacked { get; set; }
     [Parameter] public string AriaLabel { get; set; } = "Report chart";
+    /// <summary>Series label → destination URL; a bar whose series has one becomes a link.</summary>
+    [Parameter] public IReadOnlyDictionary<string, string> Links { get; set; } =
+        System.Collections.Immutable.ImmutableDictionary<string, string>.Empty;
 
     private const double W = 720, H = 280;
     private const double PadL = 56, PadR = 12, PadT = 14, PadB = 26;
@@ -45,7 +62,8 @@
     private double PlotH => H - PadT - PadB;
 
     private readonly record struct Bar(
-        double X, double Y, double Width, double Height, bool Rounded, string Color, string Tooltip);
+        double X, double Y, double Width, double Height, bool Rounded, string Color, string Tooltip,
+        string? Href);
 
     private static string F(double v) => v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
 
@@ -113,7 +131,8 @@
                     var inset = running > 0 ? Gap : 0; // no gap below the baseline segment
                     var height = Math.Max(0.5, yBottom - yTop - inset);
                     yield return new Bar(x, yBottom - inset - height, width, height,
-                        Rounded: s == top, ChartFormat.SeriesColor(Series[s], s), Tooltip(s, b, value));
+                        Rounded: s == top, ChartFormat.SeriesColor(Series[s], s), Tooltip(s, b, value),
+                        HrefFor(s));
                     running += value;
                 }
             }
@@ -129,7 +148,7 @@
                     var y = YOf(value);
                     yield return new Bar(left + s * lane, y, Math.Max(1, lane - Gap),
                         Math.Max(0.5, H - PadB - y), Rounded: true,
-                        ChartFormat.SeriesColor(Series[s], s), Tooltip(s, b, value));
+                        ChartFormat.SeriesColor(Series[s], s), Tooltip(s, b, value), HrefFor(s));
                 }
             }
         }
@@ -150,6 +169,9 @@
 
     private string Tooltip(int series, int bucket, decimal value) =>
         $"{Buckets[bucket].Label} · {Series[series].Label}: {ChartFormat.Value(Unit, value)}";
+
+    private string? HrefFor(int series) =>
+        Links.TryGetValue(Series[series].Label, out var href) ? href : null;
 
     private IEnumerable<(string Label, double X)> XLabels()
     {

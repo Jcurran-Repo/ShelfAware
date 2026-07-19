@@ -234,6 +234,10 @@ else
     /// <summary>Deep-link from a tag chip elsewhere (e.g. Product Detail) → /products?tag=Condiment.</summary>
     [SupplyParameterFromQuery(Name = "tag")] public string? Tag { get; set; }
 
+    /// <summary>Deep-link into the aisle filter (e.g. a Reports chart segment) → /products?category=Dairy.
+    /// Same first-load-only honoring as the tag param; an unknown name just leaves the filter open.</summary>
+    [SupplyParameterFromQuery(Name = "category")] public string? CategoryParam { get; set; }
+
     private IEnumerable<Product> FilteredProducts => (products ?? Enumerable.Empty<Product>()).Where(p =>
     {
         if (searchText.Trim() is { Length: > 0 } q && !p.Name.Contains(q, StringComparison.OrdinalIgnoreCase)) return false;
@@ -251,6 +255,8 @@ else
     {
         await LoadAsync();
         if (Tag is { Length: > 0 }) tagFilter = Tag; // honor the deep-link on first load
+        if (Enum.TryParse<Category>(CategoryParam, ignoreCase: true, out var linked) && Enum.IsDefined(linked))
+            categoryFilter = linked.ToString();
     }
 
     private async Task LoadAsync()
