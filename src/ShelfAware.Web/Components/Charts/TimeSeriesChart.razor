@@ -1,7 +1,14 @@
 @* Multi-series line chart over the report engine's buckets — dependency-free SVG like the LineChart
-   sparkline, but a full figure: zero-based value axis, hairline grid, thinned date ticks, gap-aware
-   lines (a null is drawn as a hole in the line, never as zero), hoverable point markers with native
-   <title> tooltips. Colors come from the validated --chart-N slots; all text wears ink tokens. *@
+   sparkline, but a full figure: zero-based value axis, hairline grid, thinned date ticks, hoverable
+   point markers with native <title> tooltips. Colors come from the validated --chart-N slots; all
+   text wears ink tokens.
+
+   Gap semantics (UnitPrice is the only metric that produces nulls): an empty bucket NEVER reads as
+   zero — the table shows a dash and no marker is drawn — but consecutive observations DO connect,
+   the convention every price chart uses (and the Trends sparkline already follows). A segment that
+   crosses one or more empty buckets is drawn DASHED: the trend line continues, and "no purchases in
+   between" stays visible. Items bought less often than the grain (eggs every two weeks on a weekly
+   axis) previously degenerated into a bare scatter — Jordan's catch. *@
 @using ShelfAware.Core.Reporting
 
 <svg class="report-chart" viewBox="0 0 @F(W) @F(H)" xmlns="http://www.w3.org/2000/svg"
@@ -21,14 +28,11 @@
     @foreach (var (series, si) in Series.Select((s, i) => (s, i)))
     {
         var color = ChartFormat.SeriesColor(series, si);
-        @foreach (var run in Runs(series))
+        @foreach (var segment in Segments(series))
         {
-            @if (run.Count > 1)
-            {
-                <polyline fill="none" stroke="@color" stroke-width="2" stroke-linejoin="round"
-                          stroke-linecap="round"
-                          points="@string.Join(' ', run.Select(p => $"{F(p.X)},{F(p.Y)}"))" />
-            }
+            <line x1="@F(segment.From.X)" y1="@F(segment.From.Y)" x2="@F(segment.To.X)" y2="@F(segment.To.Y)"
+                  stroke="@color" stroke-width="2" stroke-linecap="round"
+                  stroke-dasharray="@(segment.Bridged ? "5 5" : null)" />
         }
         @foreach (var point in Points(series))
         {
@@ -102,24 +106,19 @@
         }
     }
 
-    /// <summary>Unbroken stretches of data. A null bucket splits the line — a month with no purchase
-    /// of the item is a gap in knowledge, and drawing through it would invent a price.</summary>
-    private IEnumerable<List<PlotPoint>> Runs(ReportSeries series)
+    /// <summary>Consecutive observations, pairwise. Bridged = the pair spans one or more empty
+    /// buckets, so the segment draws dashed — the trend connects (a price series is an EVENT series;
+    /// there is no value between purchases to falsify) while the sparseness stays legible. The
+    /// bucket VALUES stay null throughout: the table dashes, and no marker appears in the gap.</summary>
+    private IEnumerable<(PlotPoint From, PlotPoint To, bool Bridged)> Segments(ReportSeries series)
     {
-        var run = new List<PlotPoint>();
-        for (var i = 0; i < Buckets.Count && i < series.Values.Count; i++)
+        PlotPoint? previous = null;
+        foreach (var point in Points(series))
         {
-            if (series.Values[i] is { } value)
-            {
-                run.Add(new PlotPoint(XOf(i), YOf(value), i, value));
-            }
-            else if (run.Count > 0)
-            {
-                yield return run;
-                run = [];
-            }
+            if (previous is { } from)
+                yield return (from, point, Bridged: point.Bucket - from.Bucket > 1);
+            previous = point;
         }
-        if (run.Count > 0) yield return run;
     }
 
     /// <summary>Bucket labels thinned to at most ten, evenly, so long weekly windows never collide.</summary>
