@@ -239,6 +239,7 @@ _Last updated: 7/7/2026_
 - [x] Custom builder + saved reports + deep links — by-product AND by-tag reports, live rule objections that disable Run, spec ⇄ URL round-trip (ReportSpecUrl is THE one serializer; saved rows store the query form), SavedReport walks the full tenancy/export/delete drill — 7/18/2026
 - [x] Chat/voice: `open_page` reports + named report ("show me the waste report" navigates; unknown names degrade to the report card) — 7/18/2026
 - [x] Pre-push gate findings fixed pre-merge (empty-series chart crash; TopN chart-color cap — which itself 500'd the report card's top-10 TABLE until the cap learned tables have no colors; printed legend swatches stripped by the browser → print-color-adjust + hairline border; the assistant button never prints) — 7/18/2026
+- [x] Charts answer clicks — aisle segments/legend chips → /products?category=, tag series → ?tag=, top-item rows → /product/{id}; the three "everything else"s open (Untagged cleanup chip + ?untagged=1, pooled small aisles → ?categories= multi-filter with a visible named-and-clearable note, Other-aisle chip); pooled/synthetic series with no honest destination stay plain; + app-wide aria-pressed sweep (literal true/false — a bound bool renders an empty attribute) — 7/18/2026
 
 ---
 
