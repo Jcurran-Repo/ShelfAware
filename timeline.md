@@ -231,6 +231,17 @@ _Last updated: 7/7/2026_
 
 ---
 
+## v3.7 — Reports tab (printable, configurable)
+- [x] `MealEvent` — "Ate it" records WHEN, not just how often (the counter stays for Pick-for-me and carries pre-log history the event log honestly can't); demo seeder writes a dated meal log; first post-v3 NEW TABLE via AdditiveSchema.EnsureTable (DDL lifted from EF's own create script + schema-parity test, so migrated and fresh DBs cannot drift) — 7/18/2026
+- [x] Report engine (Core, pure, zero LLM) — ReportSpec in, honest series out: continuous calendar buckets (Mon weeks/months/quarters), and the honesty rules as CODE shared by the builder UI and the engine (quantity never sums across products; unit price = dominant-size PAID only, gaps not zeros; tag series overlap by design so they never stack or total; partitioning splits POOL their remainder — dropping small categories from a stacked chart falsified its total, caught live; every exclusion disclosed in a note) — 7/18/2026
+- [x] Hand-rolled SVG charts (no vendor) — TimeSeriesChart + BarChart (grouped/stacked) + legend + always-rendered data table (the a11y/print relief); 8 validated categorical color slots vs the app's real surfaces in both modes, fixed order = the colorblind mechanism, 2px surface gaps between fills, zero-based axes always — 7/18/2026
+- [x] `/reports` presets, print-first — Monthly report card (tiles + stacked aisle spend + top items + movers), What's costing more? (PriceWatch: spend-weighted personal grocery inflation with honest "based on N of M items" disclosure + refusal below 3), What we actually eat (meals/week + cost-per-meal at today's receipt prices), Waist watch (kcal/week from the meal log, "ballpark by design"), Waste watch (ExpirationOutcomes judges dated purchases from EVIDENCE — Superseded/MarkedOut/Overridden/PassedQuietly; says "worth checking" with $ at stake, NEVER "wasted"; gated on the expiration opt-in), Gap report (burn vs rebuy across the household — "out ~N days before you rebuy") — 7/18/2026
+- [x] Custom builder + saved reports + deep links — by-product AND by-tag reports, live rule objections that disable Run, spec ⇄ URL round-trip (ReportSpecUrl is THE one serializer; saved rows store the query form), SavedReport walks the full tenancy/export/delete drill — 7/18/2026
+- [x] Chat/voice: `open_page` reports + named report ("show me the waste report" navigates; unknown names degrade to the report card) — 7/18/2026
+- [x] Pre-push gate findings fixed pre-merge (empty-series chart crash; TopN chart-color cap — which itself 500'd the report card's top-10 TABLE until the cap learned tables have no colors; printed legend swatches stripped by the browser → print-color-adjust + hairline border; the assistant button never prints) — 7/18/2026
+
+---
+
 ## Backlog (unscheduled)
 - [x] Double-scroll fix (Grocery List + Upload review) — 7/2/2026
 - [ ] CSV history importer — Parked (blocked on an itemized data export)

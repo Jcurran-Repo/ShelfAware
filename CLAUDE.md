@@ -432,6 +432,35 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      grid Expires column → confirm → purchase carries it; quick-update chat "expires July 30th" →
      resolved date → panel. 658 tests green (19 new).
 
+16. **v3.7 — Reports tab (2026-07-18, branch `feature/reports`):** printable, configurable reports —
+   wife-envisioned, preset-first (a form is never the front door). As-built decisions the code can't say:
+   - **`AdditiveSchema.EnsureTable` is the pattern for post-v3 NEW TABLES** (MealEvents, SavedReports):
+     the DDL is lifted from EF's `GenerateCreateScript()` at runtime — no hand-written second copy of the
+     schema — and a schema-parity test compares sqlite_master fingerprints of the migrated vs fresh paths.
+     Every new table also walks the full drill: query filter + stamping, isolation tests, export
+     `data.json`, delete-my-data, CountAll. There is no reflection test that enforces this — it's manual.
+   - **`ReportSpecRules` is the one home of the chart honesty rules**, consumed by BOTH the builder UI
+     (human-readable objections, Run disabled) and `ReportEngine.Run` (throws). Don't let a new surface
+     run a spec without it. The rules encode: quantity never sums across products; unit price is
+     dominant-size PAID prices only (gaps, not zeros); tag series OVERLAP by design and never
+     stack/total; partitioning splits POOL their remainder (dropping = falsifying the stack — caught
+     live); TopN's ≤8 cap is about chart COLOR SLOTS so it deliberately spares `Chart=Table` (the
+     report card's top-10 items — the overbroad version 500'd the page).
+   - **`ReportSpecUrl` is THE spec serialization** — URL, saved report row, and chat nav are all the
+     same string; parsing is forgiving by design (old links degrade to defaults, never fail the page).
+   - **Charts are hand-rolled SVG** (Jordan's call: no vendor) — validated 8-slot palette
+     (`--chart-1..8`, fixed order = the CVD mechanism, re-stepped for dark, `--chart-pooled` gray for
+     pooled series), data table always rendered beneath (three light slots are sub-3:1 contrast; the
+     table is the relief rule, the reader surface, and what makes print a document). ⚠️ Razor reserves
+     lowercase `<text>` (RZ1023) — SVG text renders via `ChartFormat.SvgText` (encoding MarkupString).
+     ⚠️ Browsers strip HTML backgrounds in print — legend swatches/rank bars carry
+     `print-color-adjust: exact` + a hairline border; `.voice-agent` is hidden in GLOBAL print rules.
+   - **Waste watch never claims waste**: `ExpirationOutcomes` (Core) judges dated purchases from
+     evidence only — a quiet label-pass is "worth checking, $ at stake". Don't strengthen the claim.
+   - **`MealEvent` vs `TimesEaten`**: the counter is lifetime (Pick-for-me) and keeps pre-log history;
+     the event log is dated and started 7/18 — they legitimately disagree by the pre-log remainder.
+     Never backfill dates.
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active
