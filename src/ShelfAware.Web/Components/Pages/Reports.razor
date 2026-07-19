@@ -1034,8 +1034,14 @@ else
                         .Where(s => Enum.TryParse<Category>(s.Label, out _))
                         .Select(s => s.Label)
                         .ToHashSet();
+                    // Mirror the engine's subject filters, not just the window — a ByCategory split
+                    // under a tag filter pools the tag's small aisles, and the link must name THOSE,
+                    // not every quiet aisle in the whole window (gate finding, 7/18).
                     var pooled = source!.Purchases
                         .Where(f => f.Date >= spec.From && f.Date <= spec.To)
+                        .Where(f => spec.Category is null || f.Category == spec.Category)
+                        .Where(f => spec.ProductId is null || f.ProductId == spec.ProductId)
+                        .Where(f => spec.Tag is null || f.Tags.Contains(spec.Tag, StringComparer.OrdinalIgnoreCase))
                         .Select(f => f.Category.ToString())
                         .Distinct()
                         .Where(c => !kept.Contains(c))
