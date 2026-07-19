@@ -550,7 +550,16 @@ else
                             @foreach (var (label, total) in topItems)
                             {
                                 <tr>
-                                    <td>@label</td>
+                                    <td>
+                                        @if (topItemLinks.TryGetValue(label, out var itemHref))
+                                        {
+                                            <a href="@itemHref">@label</a>
+                                        }
+                                        else
+                                        {
+                                            @label
+                                        }
+                                    </td>
                                     <td class="num">@total.ToString("C")</td>
                                     <td class="rank-bar-col">
                                         <span class="rank-bar" style="width:@(RankWidth(total))%" aria-hidden="true"></span>
@@ -615,6 +624,7 @@ else
     private ReportResult? thisMonth, lastMonth, mealsThisMonth, categorySpend;
     private IReadOnlyDictionary<string, string> categorySpendLinks = new Dictionary<string, string>();
     private IReadOnlyDictionary<string, string> customLinks = new Dictionary<string, string>();
+    private IReadOnlyDictionary<string, string> topItemLinks = new Dictionary<string, string>();
     private int tripsThisMonth;
     private List<(string Label, decimal Total)> topItems = [];
     private decimal topItemMax;
@@ -987,16 +997,18 @@ else
         categorySpend = Run(categorySpec);
         categorySpendLinks = SeriesLinksFor(categorySpec, categorySpend);
 
-        var top30 = Run(new ReportSpec
+        var topSpec = new ReportSpec
         {
             Split = ReportSplit.ByProduct,
             TopN = 10,
             Chart = ReportChart.Table, // rendered as the ranked table — over the chart cap is fine
             From = Today.AddDays(-29),
             To = Today,
-        });
+        };
+        var top30 = Run(topSpec);
         topItems = top30.Series.Select(s => (s.Label, s.Total)).Where(t => t.Total > 0).ToList();
         topItemMax = topItems.Count > 0 ? topItems.Max(t => t.Total) : 0;
+        topItemLinks = SeriesLinksFor(topSpec, top30); // product rows link to their detail pages
     }
 
     private ReportResult Run(ReportSpec spec) => ReportEngine.Run(spec, source!.Purchases, source.Meals);
