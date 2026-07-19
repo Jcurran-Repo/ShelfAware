@@ -984,6 +984,7 @@ else
         {
             Split = ReportSplit.ByProduct,
             TopN = 10,
+            Chart = ReportChart.Table, // rendered as the ranked table — over the chart cap is fine
             From = Today.AddDays(-29),
             To = Today,
         });

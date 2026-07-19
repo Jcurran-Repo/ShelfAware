@@ -117,8 +117,13 @@ public static class ReportSpecRules
                 ? "Tag series overlap (one product can carry several tags), so stacking them would double-count — compare them side by side instead."
                 : "Only a split that partitions the data (by category, product, or recipe) can stack to an honest total.");
 
-        if (spec.TopN is < 1 or > MaxTopN)
-            problems.Add($"Keep between 1 and {MaxTopN} series — there are exactly {MaxTopN} validated chart colors, and a ninth series would silently wear the eighth's.");
+        if (spec.TopN < 1)
+            problems.Add("Keep at least one series.");
+
+        // The cap is about chart color slots, so it binds CHARTS: a table has no colors and may
+        // list more (the report card's top-10 items table is exactly that).
+        if (spec.TopN > MaxTopN && spec.Chart != ReportChart.Table)
+            problems.Add($"A chart can keep at most {MaxTopN} series — there are exactly {MaxTopN} validated chart colors, and a ninth series would silently wear the eighth's. Switch to a table to list more.");
 
         return problems;
     }

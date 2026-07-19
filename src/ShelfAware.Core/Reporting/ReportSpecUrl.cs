@@ -49,7 +49,10 @@ public static class ReportSpecUrl
             Metric = Enum<ReportMetric>("metric") ?? Defaults.Metric,
             Grain = Enum<ReportGrain>("grain") ?? Defaults.Grain,
             Split = Enum<ReportSplit>("split") ?? Defaults.Split,
-            TopN = Int("top") is { } top && top >= 1 && top <= ReportSpecRules.MaxTopN ? top : Defaults.TopN,
+            // A sanity bound only — whether a value over the chart color cap is legal depends on the
+            // chart kind, and that's ReportSpecRules' call, not the parser's (a saved table report
+            // with top=10 must survive the round trip).
+            TopN = Int("top") is { } top and >= 1 and <= 50 ? top : Defaults.TopN,
             Category = Enum<Category>("category"),
             ProductId = Int("product"),
             Tag = Text("tag"),

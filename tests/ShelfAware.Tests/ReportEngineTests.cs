@@ -271,9 +271,11 @@ public class ReportEngineTests
         Assert.NotEmpty(ReportSpecRules.Check(Spec() with { To = Jun1.AddDays(-1) }));
         Assert.NotEmpty(ReportSpecRules.Check(Spec(ReportMetric.Spend) with { RecipeId = 3 }));
 
-        // TopN is bounded above as well as below: eight validated color slots, no ninth series.
+        // TopN's upper bound is about chart color slots, so it binds charts and spares tables —
+        // regression pin: the first version of this rule 500'd the report card's top-10 table.
         Assert.NotEmpty(ReportSpecRules.Check(Spec(split: ReportSplit.ByProduct) with { TopN = 9 }));
         Assert.Empty(ReportSpecRules.Check(Spec(split: ReportSplit.ByProduct) with { TopN = ReportSpecRules.MaxTopN }));
+        Assert.Empty(ReportSpecRules.Check(Spec(split: ReportSplit.ByProduct) with { TopN = 10, Chart = ReportChart.Table }));
 
         Assert.Empty(ReportSpecRules.Check(Spec()));
         Assert.Empty(ReportSpecRules.Check(Spec(ReportMetric.Quantity, ReportSplit.ByProduct)));
