@@ -245,6 +245,7 @@ _Last updated: 7/7/2026_
 
 ## Backlog (unscheduled)
 - [x] Double-scroll fix (Grocery List + Upload review) — 7/2/2026
+- [x] Photo-upload fix (CSP `img-src blob:` + bounded resize) — 7/21/2026 (the first real photo upload hung forever: the strict CSP blocked Blazor's in-browser resize and its JS never settles the promise; PDFs skip the path, so it hid since 7/5)
 - [ ] CSV history importer — Parked (blocked on an itemized data export)
 - [ ] More eval fixtures (paper / Edwards receipts) — Not complete
 - [x] Per-size Trends price chart — 7/8/2026 (dominant-size ticker/chart; see v3.1)
