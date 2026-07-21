@@ -425,7 +425,11 @@ app.Use(async (context, next) =>
         "default-src 'self'; " +
         cspScriptSrc +
         "style-src 'self' 'unsafe-inline'; " +
-        "img-src 'self' data:; " +
+        // blob: is required by Blazor's InputFile image resize (RequestImageFileAsync loads the picked
+        // photo into an <img> via a blob: URL to draw it on a canvas). Without it the load is blocked
+        // and Blazor's JS never settles the interop promise, so photo uploads hang forever. blob: URLs
+        // are same-origin objects mintable only by our own scripts, which script-src already locks down.
+        "img-src 'self' data: blob:; " +
         "font-src 'self'; " +
         "media-src 'self' data:; " +
         cspConnectSrc +

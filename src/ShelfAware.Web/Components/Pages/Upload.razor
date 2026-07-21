@@ -705,7 +705,12 @@ else if (phase == Phase.Done)
         if (file.ContentType == "application/pdf")
             return new ReceiptAttachment(await ReadAllAsync(file.OpenReadStream(MaxUploadBytes)), "application/pdf");
         var maxEdge = LlmOptions.Value.MaxImageEdgePx;
-        var resized = await file.RequestImageFileAsync("image/jpeg", maxEdge, maxEdge);
+        // The resize runs in the browser, and Blazor's JS never settles the interop promise when the
+        // image fails to load there (seen live: a CSP without img-src blob: blocked it and the upload
+        // hung forever on the spinner). Bound it so a browser-side failure becomes this file's normal
+        // "couldn't be read" handling instead of a hang.
+        var resized = await file.RequestImageFileAsync("image/jpeg", maxEdge, maxEdge)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(30));
         return new ReceiptAttachment(await ReadAllAsync(resized.OpenReadStream(MaxUploadBytes)), "image/jpeg");
     }
 
