@@ -48,7 +48,9 @@ public sealed class ReceiptAutoConfirmer(
     /// alias or a confident match — and, stricter than the retired folder importer, only when the
     /// extraction found a purchase date: the date drives every prediction, and "no date, assume
     /// today" is exactly the silent guess review exists to catch. Auto keeps its all-or-nothing
-    /// contract (undated confirms as today).
+    /// contract (undated confirms as today) with ONE exception shared by every mode: a receipt the
+    /// <see cref="ReceiptDuplicateDetector"/> flags as an exact re-upload always queues — silently
+    /// double-recording is the mistake this router exists to not automate.
     /// </summary>
     public async Task<Outcome> TryConfirmAsync(int receiptId, CancellationToken cancellationToken = default)
     {
