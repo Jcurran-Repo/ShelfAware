@@ -258,7 +258,8 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      folder. Unvalidated, it's an arbitrary-path read of every image/PDF the server can see. `ReceiptFolderPolicy`
      is asked by Settings (friendly refusal) **and** by the inbox (the real boundary — a stored setting can
      outlive the rules it was written under). GetFullPath first; trailing-separator compare so `<root>-old`
-     isn't "inside" `<root>`; UNC refused when confined.
+     isn't "inside" `<root>`; UNC refused when confined. **[GONE 2026-07-22: the whole folder-import feature
+     was retired (item 17), taking the policy, the inbox, and the read it confined with it.]**
    - **Invite codes are no longer permanent bearer credentials**: `Auth:InviteCodeLifetimeDays` (unset = never),
      `InviteMaxUses`/`InviteUseCount` (a "single use" checkbox), and **member removal** — which never existed.
      The use is claimed with a **conditional update**, not read-then-increment, or two people redeeming a
@@ -460,6 +461,31 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
    - **`MealEvent` vs `TimesEaten`**: the counter is lifetime (Pick-for-me) and keeps pre-log history;
      the event log is dated and started 7/18 — they legitimately disagree by the pre-log remainder.
      Never backfill dates.
+
+17. **v3.8 — Folder import retired; Smart confirm moved to uploads (2026-07-22, branch
+   `feature/upload-smart-confirm`):** the folder-watching auto-importer was built for the bootstrap
+   era's mass imports; multi-receipt upload superseded it, and on a box shared beyond the household it
+   was the app's one arbitrary-path filesystem read. The transport was DELETED (inbox seam,
+   `ReceiptFolder` setting, startup scan, Settings "Scan now", `import_receipts` chat tool,
+   `Receipts:AllowedRoot` + `ReceiptFolderPolicy`) — deleting the surface beats confining it. The
+   graduated-trust brain survived as **`ReceiptAutoConfirmer`** (Web/Ingest):
+   - **Every upload path routes through it AFTER persisting the PendingReview receipt** — single,
+     combined-pages, and per-file in a batch. It works off the STORED lines (same rows the review
+     pre-fill reads), resolves by the same trust order (alias → model suggestion → matcher), and
+     confirms via the ONE confirmation service with `writeAliases: false`. `ImportMode`
+     (Review/Smart/Auto, per household, legacy `AutoConfirmImports` still parsed) kept its name, its
+     setting key, and its Settings UI (reworded for uploads).
+   - **Deliberate tightening vs the old importer: Smart queues an UNDATED receipt.** The purchase
+     date drives every prediction; "assume today" is the silent guess review exists to catch. Auto
+     keeps its all-or-nothing contract (undated = today). Pinned by a test.
+   - **The Upload page says what will happen and what happened**: an active-mode hint before upload,
+     per-file "recorded automatically" vs "in the review queue below" in the batch readout, and an
+     auto-confirm Done panel that mirrors the manual summary + links to /receipts and Settings.
+   - `Receipt.SourceFile` column stays (dropping a SQLite column is a structural rebuild old rows
+     aren't worth) — documented HISTORICAL on the entity. Stray `ReceiptFolder` AppSettings rows in
+     live DBs are inert; nothing reads the key.
+   - "Import my receipts" in chat/voice now lands on the Upload page via `open_page` (which already
+     mapped "upload"/"receipt") — no prompt change needed.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
@@ -663,10 +689,13 @@ the same item bought across brands/sizes rolls up into one product.
   `EfPantryStore`, so the chat layer touches no EF. Fuzzy name→product resolution in
   `ProductMatcher` (Core, unit-tested): exact → substring → IDF-weighted token-overlap ≥ 0.5
   (IDF so brand/qualifier words like "great","value" carry ~0 weight and don't false-merge).
-- **Chat has grown well beyond §7's tool set.** Live tools: `record_signal`, `add_purchase`,
-  `query_status`, `create_product`, `set_tracking` (start/stop tracking → `IPantryStore.SetTrackingAsync`),
-  `suggest_substitutes`, `adapt_recipe`, `add_missing_to_list`, `import_receipts`, `open_page`,
-  `read_recipe`, and `go_to_step`. The last three don't touch data — they write into a mutable
+- **Chat has grown well beyond §7's tool set.** Live tools (matches `MakeTool` calls in
+  `AnthropicPantryChat` — this list had drifted): `record_signal`, `add_purchase`, `query_status`,
+  `set_tracking` (start/stop tracking → `IPantryStore.SetTrackingAsync`), `set_expiration`,
+  `create_product`, `add_tags`, `suggest_substitutes`, `adapt_recipe`, `add_recipe_to_list`,
+  `open_page`, `read_recipe`, and `go_to_step`. (`import_receipts` was removed with the
+  folder-import feature, item 17 — "import my receipts" now opens the Upload page via `open_page`.)
+  The last three don't touch data — they write into a mutable
   `NavigationTarget` slot that rides out on `ChatResult` (`NavigateTo` / `HandsOff` / `StepTarget`) for
   the UI to carry out. **`go_to_step` is the safety net under the cook-along grammar** (see Voice below):
   it moves the hands-free reader, which is what lets that grammar stay conservative.

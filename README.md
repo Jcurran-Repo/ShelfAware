@@ -12,7 +12,7 @@ there's no coffee.
 
 > **Live demo:** _coming soon_ — `<!-- LIVE_DEMO_URL -->` (Azure App Service; one-line swap once deployed)
 
-![30-second tour: a receipt imports itself, the dashboard says what's low, "we're out of dog food" updates it, and the grocery list is ready by aisle](docs/demo.gif)
+![30-second tour: a receipt confirms itself, the dashboard says what's low, "we're out of dog food" updates it, and the grocery list is ready by aisle](docs/demo.gif)
 
 ---
 
@@ -20,12 +20,12 @@ there's no coffee.
 
 I built this for my wife and me, so it's shaped around a real weekly rhythm, not a feature list:
 
-**Receipts mostly import themselves.** Order screenshots and print-to-PDFs land in a folder;
-Shelf Aware picks up new ones on its own (or when I say *"import my receipts"*). Trust is
+**Receipts mostly confirm themselves.** Photograph a stack of paper receipts (or upload order
+screenshots and print-to-PDFs — several at once is fine, each reads as its own receipt). Trust is
 graduated: a receipt is recorded automatically only when every line matches something we already
-buy — anything new or uncertain waits in a quick review queue where I can fix it first. Manual
-upload still works the same way: photo in, editable review table out, nothing recorded until it's
-either confirmed by me or confidently matched to products I've confirmed before.
+buy — anything new or uncertain waits in a quick review queue where I can fix it first. Nothing
+enters history until it's either confirmed by me or confidently matched to products I've
+confirmed before.
 
 **It quietly learns our rhythm — two of them.** How often we *rebuy* a thing, and how long one
 *lasts* before we say "we're out". After a couple of trips it knows milk is ~every five days and
@@ -119,8 +119,7 @@ voice. Different tools, honest trade, and the cheap one is the default.
 
 ```mermaid
 flowchart TD
-    R["Receipt image / PDF"]
-    IN["Receipt drop-folder<br/>(auto-import, graduated trust)"]
+    R["Receipt image / PDF<br/>(upload, graduated trust)"]
     NL["Typed or spoken update<br/>'we're out of dog food'"]
 
     subgraph LLM["ShelfAware.Llm — language understanding"]
@@ -146,7 +145,6 @@ flowchart TD
     end
 
     R --> EX
-    IN --> EX
     EX --> RV --> DB
     NL --> VO --> CH
     NL --> CH --> DB
@@ -159,7 +157,7 @@ flowchart TD
 ```
 
 Three projects, one clean rule: **`Web → Core ← Llm`**. `Core` holds the domain, the prediction
-engine, and the interfaces (`IReceiptExtractor`, `IPantryChat`, `ISpeechToText`, `IReceiptInbox`, …)
+engine, and the interfaces (`IReceiptExtractor`, `IPantryChat`, `ISpeechToText`, …)
 — and has no dependency on any AI SDK or on EF Core. That seam is what makes the engine testable
 without API calls, the whole AI layer testable through a faked `IChatClient`, and every provider a
 DI swap.
@@ -210,10 +208,13 @@ of assuming it.
 
 ## A few design calls I'm happy with
 
-- **Trust is graduated, not binary.** Auto-import confirms only what it can vouch for — a learned
+- **Trust is graduated, not binary.** Smart confirm records only what it can vouch for — a learned
   alias or a confident match to a product we already buy — and queues the rest for human eyes. And
   a machine-made match can never become a sticky merchant alias; only human-reviewed pairings teach
-  the matcher. Attention goes exactly where the pipeline is unsure.
+  the matcher. Attention goes exactly where the pipeline is unsure. (This started life on a
+  folder-watching auto-importer; when uploads superseded the folder, the feature was retired and
+  its trust logic moved to the upload path — deleting an arbitrary-path filesystem read the server
+  no longer needs to carry.)
 - **Products are brand-agnostic; brand and size ride along on each purchase.** Milk is milk whether
   it's the store-brand gallon or a name-brand half-gallon — one product, one cadence, and the app
   recommends the one size you actually buy most.
@@ -304,7 +305,7 @@ take my word for it.
 
 ```
 ShelfAware.slnx
-  src/ShelfAware.Web/        Blazor app — pages, review/confirm, auto-import, DI, EF DbContext
+  src/ShelfAware.Web/        Blazor app — pages, review/confirm, upload smart-confirm, DI, EF DbContext
   src/ShelfAware.Core/       Domain, prediction engine + backtest, interfaces  (no LLM, no EF)
   src/ShelfAware.Llm/        Receipt extractor · pantry chat · tag + recipe advisors · ElevenLabs voice · prompts
   tests/ShelfAware.Tests/    xUnit — prediction engine, backtest, estimator, tag dedup  (pure)
@@ -317,10 +318,9 @@ ShelfAware.slnx
 
 ## What's next
 
-Up next is the **Azure deploy** (SQLite under `/home/data`) — the live-demo link at the top is a
-one-line swap once it's live. After that: a cloud/email receipt inbox (the `IReceiptInbox` seam is
-already there), more eval fixtures beyond one merchant, and password-reset emails (there's no mail
-server behind it yet — Settings admits as much).
+Up next is the **cloud deploy** (SQLite on a small VM) — the live-demo link at the top is a
+one-line swap once it's live. After that: more eval fixtures beyond one merchant, and
+password-reset emails (there's no mail server behind it yet — Settings admits as much).
 
 ## License
 

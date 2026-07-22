@@ -243,6 +243,14 @@ _Last updated: 7/7/2026_
 
 ---
 
+## v3.8 — Folder import retired; Smart confirm moves to uploads
+- [x] `ReceiptAutoConfirmer` — the folder importer's graduated-trust brain, kept and re-aimed at uploads: single, combined, and batch uploads all route through the household's ImportMode (Review/Smart/Auto) after the pending receipt is persisted, so a trusted receipt records itself and review never appears. Same contract as before: alias or ≥0.8-confidence match to a known product, machine confirms never write aliases and are never eval ground truth — 7/22/2026
+- [x] One deliberate tightening: Smart now queues a receipt with NO detected purchase date (the date drives every prediction; "assume today" is the silent guess review exists to catch). Auto keeps its all-or-nothing contract (undated = today) — 7/22/2026
+- [x] Folder-import transport REMOVED (inbox, drop-folder setting, startup scan, Settings "Scan now", `import_receipts` chat tool, `Receipts:AllowedRoot` policy) — built for the bootstrap era's mass imports, superseded by multi-receipt upload, and on a box shared beyond the household it was the app's one arbitrary-path filesystem read. Deleting the surface beats confining it; "import my receipts" now lands on the Upload page via open_page — 7/22/2026
+- [x] Upload page says what will happen (active-mode hint) and what happened (per-receipt "recorded automatically" vs "in the review queue"; auto-confirm summary matches the manual one) — 7/22/2026
+
+---
+
 ## Backlog (unscheduled)
 - [x] Double-scroll fix (Grocery List + Upload review) — 7/2/2026
 - [x] Photo-upload fix (CSP `img-src blob:` + bounded resize) — 7/21/2026 (the first real photo upload hung forever: the strict CSP blocked Blazor's in-browser resize and its JS never settles the promise; PDFs skip the path, so it hid since 7/5)
