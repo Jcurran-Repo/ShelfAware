@@ -21,10 +21,9 @@ public interface IAppSettings
 /// </summary>
 public static class SettingKeys
 {
-    /// <summary>Folder the assistant scans for new receipt files to auto-import.</summary>
-    public const string ReceiptFolder = "ReceiptFolder";
-
-    /// <summary>An <see cref="Ingest.ImportMode"/> name: Review, Smart (default), or Auto.</summary>
+    /// <summary>An <see cref="Ingest.ImportMode"/> name: Review, Smart (default), or Auto — how an
+    /// uploaded receipt gets from "extracted" to "recorded". (Rows keyed "ReceiptFolder" may linger in
+    /// older DBs from the retired folder-import feature; nothing reads them.)</summary>
     public const string ImportMode = "ImportMode";
 
     /// <summary>LEGACY "true"/"false" from before the three-way <see cref="ImportMode"/> existed —
@@ -54,9 +53,9 @@ public static class SettingKeys
     public const string TrackExpirationDates = "TrackExpirationDates";
 
     /// <summary>How the app is set up. Survives "delete my data": wiping your pantry shouldn't forget
-    /// which folder your receipts arrive in.</summary>
+    /// how you like receipts confirmed.</summary>
     public static readonly IReadOnlyList<string> Config =
-        [ReceiptFolder, ImportMode, AutoConfirmImports, RecipeAddConfirm, TrackExpirationDates];
+        [ImportMode, AutoConfirmImports, RecipeAddConfirm, TrackExpirationDates];
 
     /// <summary>Derived from the household's own pantry and receipts, and therefore theirs: removed by
     /// "delete my data" like any other content.</summary>

@@ -180,8 +180,8 @@ public class UserDataServiceTests : IDisposable
     {
         await using (var db = _db.CreateDbContext())
         {
-            db.AppSettings.Add(new AppSetting { Key = SettingKeys.ReceiptFolder, Value = @"C:\receipts" });
             db.AppSettings.Add(new AppSetting { Key = SettingKeys.ImportMode, Value = "Smart" });
+            db.AppSettings.Add(new AppSetting { Key = SettingKeys.RecipeAddConfirm, Value = "Auto" });
             db.AppSettings.Add(new AppSetting { Key = SettingKeys.LastRecipeSuggestions, Value = "[{\"name\":\"Chicken\"}]" });
             db.AppSettings.Add(new AppSetting { Key = SettingKeys.SelfEvalResults, Value = "{\"Fixtures\":[{\"Name\":\"Walmart 2026-07-04\"}]}" });
             await db.SaveChangesAsync();
@@ -195,9 +195,9 @@ public class UserDataServiceTests : IDisposable
         // Their recipe ideas and their receipts' merchant names are content, and content goes...
         Assert.DoesNotContain(SettingKeys.LastRecipeSuggestions, left);
         Assert.DoesNotContain(SettingKeys.SelfEvalResults, left);
-        // ...but wiping the pantry shouldn't forget which folder the receipts arrive in.
-        Assert.Contains(SettingKeys.ReceiptFolder, left);
+        // ...but wiping the pantry shouldn't forget how they like receipts confirmed.
         Assert.Contains(SettingKeys.ImportMode, left);
+        Assert.Contains(SettingKeys.RecipeAddConfirm, left);
     }
 
     [Fact]
@@ -225,7 +225,7 @@ public class UserDataServiceTests : IDisposable
         // reset) — which is the reason they have to be readable here.
         await using (var db = _db.CreateDbContext())
         {
-            db.AppSettings.Add(new AppSetting { Key = SettingKeys.ReceiptFolder, Value = @"C:\receipts" });
+            db.AppSettings.Add(new AppSetting { Key = SettingKeys.ImportMode, Value = "Smart" });
             db.AppSettings.Add(new AppSetting { Key = SettingKeys.LastRecipeSuggestions, Value = "[{\"name\":\"Chicken\"}]" });
             db.AiUsages.Add(new AiUsage { Day = new DateOnly(2026, 7, 15), Calls = 3, InputTokens = 100, OutputTokens = 20 });
             await db.SaveChangesAsync();
@@ -235,7 +235,7 @@ public class UserDataServiceTests : IDisposable
 
         Assert.Equal(2, export.Settings.Count);
         Assert.Contains(export.Settings, s => s.Key == SettingKeys.LastRecipeSuggestions);
-        Assert.Contains(export.Settings, s => s.Key == SettingKeys.ReceiptFolder);
+        Assert.Contains(export.Settings, s => s.Key == SettingKeys.ImportMode);
         Assert.Equal(3, Assert.Single(export.AiUsage).Calls);
     }
 

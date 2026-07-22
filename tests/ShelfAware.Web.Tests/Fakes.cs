@@ -1,5 +1,3 @@
-using ShelfAware.Core.Extraction;
-using ShelfAware.Core.Ingest;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Settings;
 using ShelfAware.Web.Data;
@@ -59,50 +57,3 @@ internal sealed class FakeAppSettings : IAppSettings
     }
 }
 
-/// <summary>In-memory <see cref="IReceiptInbox"/> — file name → bytes.</summary>
-internal sealed class FakeInbox : IReceiptInbox
-{
-    public Dictionary<string, byte[]> Files { get; } = new(StringComparer.OrdinalIgnoreCase);
-    public bool Configured { get; set; } = true;
-
-    public Task<bool> IsConfiguredAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult(Configured);
-
-    public Task<IReadOnlyList<InboxItem>> ListAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult<IReadOnlyList<InboxItem>>(
-            Files.Keys.OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
-                .Select(n => new InboxItem(n, n, "image/jpeg")).ToList());
-
-    public Task<byte[]> ReadAsync(string id, CancellationToken cancellationToken = default) =>
-        Task.FromResult(Files[id]);
-}
-
-/// <summary>
-/// Scripted <see cref="IReceiptExtractor"/>: hands back queued results in order (repeating the last
-/// one) and records what it was called with — including the tag vocabulary, so tests can assert the
-/// importer feeds it. Optional <see cref="Delay"/> lets the concurrency test hold a scan open.
-/// </summary>
-internal sealed class FakeExtractor(params ExtractionResult[] script) : IReceiptExtractor
-{
-    private readonly Queue<ExtractionResult> _script = new(script);
-    private ExtractionResult? _last;
-
-    public int Calls { get; private set; }
-    public IReadOnlyList<string>? LastKnownProductNames { get; private set; }
-    public IReadOnlyList<string>? LastKnownTags { get; private set; }
-    public TimeSpan Delay { get; set; } = TimeSpan.Zero;
-
-    public async Task<ExtractionResult> ExtractAsync(
-        IReadOnlyList<ReceiptAttachment> attachments,
-        IReadOnlyList<string>? knownProductNames = null,
-        IReadOnlyList<string>? knownTags = null,
-        CancellationToken cancellationToken = default)
-    {
-        Calls++;
-        LastKnownProductNames = knownProductNames;
-        LastKnownTags = knownTags;
-        if (Delay > TimeSpan.Zero) await Task.Delay(Delay, cancellationToken);
-        if (_script.Count > 0) _last = _script.Dequeue();
-        return _last ?? throw new InvalidOperationException("FakeExtractor has no scripted result.");
-    }
-}

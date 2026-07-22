@@ -221,27 +221,12 @@ builder.Services.AddScoped<IProductSubstituteAdvisor, AnthropicProductSubstitute
 builder.Services.AddScoped<IIngredientAlternativesAdvisor, AnthropicIngredientAlternativesAdvisor>();
 builder.Services.AddScoped<IRecipeAdapter, RecipeAdapter>();
 
-// Receipt auto-import: a swappable inbox (local folder now, cloud later) + the importer the chat/voice
-// agent triggers, plus the runtime settings store behind the /settings page. Both the importer and the
-// manual Upload review confirm receipts through the ONE shared confirmation service.
+// Receipts arrive by upload only (the folder inbox was retired 2026-07-22 — an arbitrary-path read the
+// box shouldn't carry once it's shared, and uploads had superseded it). The settings store backs the
+// /settings page; both the upload Smart/Auto router and the manual review confirm receipts through the
+// ONE shared confirmation service.
 builder.Services.AddScoped<IAppSettings, EfAppSettings>();          // settings are per household now
-// Where a household may point its receipt folder. Unset (the self-host default) allows any local path —
-// that's the feature there, and the owner is the only tenant. Set it on any multi-household deployment:
-// without it the folder setting is an arbitrary-path read of everything the server process can see.
-//
-// Validated at startup because the failure mode is silent: a root that doesn't resolve leaves the policy
-// with nothing to enforce, and "nothing to enforce" is spelled the same as "not configured" — so a typo in
-// the security setting would turn confinement off and look exactly like a deployment that never wanted it.
-// Refusing to boot is the only way that mistake gets noticed.
-builder.Services.AddOptions<ReceiptFolderOptions>()
-    .Bind(builder.Configuration.GetSection(ReceiptFolderOptions.SectionName))
-    .Validate(o => ReceiptFolderPolicy.RootIsUsable(o.AllowedRoot),
-        "Receipts:AllowedRoot is set but isn't a usable path, so receipt folders would silently stop being " +
-        "confined. Fix the path, or remove the setting if this deployment doesn't want confinement.")
-    .ValidateOnStart();
-builder.Services.AddSingleton<ReceiptFolderPolicy>();               // config-only, no per-household state
-builder.Services.AddScoped<IReceiptInbox, LocalFolderReceiptInbox>(); // reads the household's folder setting
-builder.Services.AddScoped<IReceiptImporter, ReceiptImporter>(); // depends on the scoped IReceiptExtractor
+builder.Services.AddScoped<ReceiptAutoConfirmer>(); // routes an uploaded receipt per the household's ImportMode
 builder.Services.AddScoped<ReceiptConfirmationService>();
 builder.Services.AddScoped<ReceiptSelfEval>(); // grades verified receipts on the circuit's key
 
@@ -334,59 +319,6 @@ using (var scope = app.Services.CreateScope())
     db.Database.EnsureCreated();
     // Columns added after v3 shipped (EnsureCreated never alters an existing DB).
     AdditiveSchema.Apply(db);
-}
-
-// Auto-scan the receipt inbox on startup (in the background; a no-op when no folder is configured), so
-// dropped receipts get imported with no manual step — the low-input path.
-app.Lifetime.ApplicationStarted.Register(() => _ = ScanReceiptsAsync(app));
-
-static async Task ScanReceiptsAsync(WebApplication app)
-{
-    // The background startup scan has no browser/circuit, so it can only run on the server-config key —
-    // a local-dev or self-hosted owner key. On the public BYOK deploy there's no owner key, so skip it;
-    // imports there happen per-visitor via the Settings "Scan now" button, under that visitor's own key.
-    var llm = app.Services.GetRequiredService<IOptions<LlmOptions>>().Value;
-    if (string.IsNullOrWhiteSpace(llm.ApiKey)) return;
-    var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("ReceiptAutoScan");
-
-    // Since v3 the receipt folder is a per-HOUSEHOLD setting, so the scan runs once per household that
-    // configured one. Enumerating them needs the raw (unscoped) factory + IgnoreQueryFilters — the one
-    // legitimate cross-tenant read here, and it only reads which households to serve, not their data.
-    List<string> households;
-    try
-    {
-        using var scope = app.Services.CreateScope();
-        var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<ShelfAwareDbContext>>();
-        await using var db = await factory.CreateDbContextAsync();
-        households = await db.AppSettings.IgnoreQueryFilters()
-            .Where(s => s.Key == SettingKeys.ReceiptFolder && s.Value != "" && s.HouseholdId != "")
-            .Select(s => s.HouseholdId)
-            .Distinct()
-            .ToListAsync();
-    }
-    catch (Exception ex)
-    {
-        logger.LogError(ex, "Startup receipt auto-scan failed while listing households.");
-        return;
-    }
-
-    foreach (var householdId in households)
-    {
-        try
-        {
-            // Each household gets its own scope, pinned via UseFixed so the whole import pipeline
-            // (settings → inbox → extractor → confirmation) reads and writes only that pantry. With no
-            // browser attached, CircuitAiSettings keeps its server-config fallback — the owner key.
-            using var scope = app.Services.CreateScope();
-            scope.ServiceProvider.GetRequiredService<ICurrentHousehold>().UseFixed(householdId);
-            await scope.ServiceProvider.GetRequiredService<IReceiptImporter>().ImportNewAsync();
-        }
-        catch (Exception ex)
-        {
-            // Per household, so one bad folder or receipt doesn't sink the other households' scans.
-            logger.LogError(ex, "Startup receipt auto-scan failed for household {HouseholdId}.", householdId);
-        }
-    }
 }
 
 // Behind a TLS-terminating reverse proxy (Tailscale Serve for the private self-host, Azure later), honor

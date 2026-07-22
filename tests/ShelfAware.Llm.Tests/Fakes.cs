@@ -4,7 +4,6 @@ using System.Text;
 using Microsoft.Extensions.AI;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
-using ShelfAware.Core.Ingest;
 using ShelfAware.Core.Recipes;
 
 namespace ShelfAware.Llm.Tests;
@@ -34,19 +33,6 @@ internal sealed class FakeRecipeAdapter(AdaptResult result) : IRecipeAdapter
         LastRecipeId = recipeId;
         LastSwap = swap;
         return Task.FromResult(result);
-    }
-}
-
-/// <summary>Records import calls and returns a canned summary — drives the import_receipts chat tool.</summary>
-internal sealed class FakeReceiptImporter(ImportSummary summary) : IReceiptImporter
-{
-    public int Calls { get; private set; }
-
-    public Task<ImportSummary> ImportNewAsync(
-        IProgress<ImportProgress>? progress = null, CancellationToken cancellationToken = default)
-    {
-        Calls++;
-        return Task.FromResult(summary);
     }
 }
 

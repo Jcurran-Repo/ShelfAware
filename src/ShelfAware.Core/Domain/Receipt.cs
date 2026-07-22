@@ -9,8 +9,10 @@ public class Receipt : IHouseholdOwned
     public required string ImagePath { get; set; }
     public string RawModelJson { get; set; } = "";
     public ReceiptStatus Status { get; set; } = ReceiptStatus.PendingReview;
-    /// <summary>Inbox item id (e.g. file name) this receipt was auto-imported from — so a folder scan never
-    /// double-imports the same file. Null for manually uploaded receipts.</summary>
+    /// <summary>HISTORICAL: the inbox file name this receipt was auto-imported from, back when the
+    /// folder-import feature existed (retired 2026-07-22 — uploads are the one way in now). Nothing
+    /// writes or reads it; the column stays because dropping one is a structural SQLite rebuild that
+    /// pre-existing rows aren't worth.</summary>
     public string? SourceFile { get; set; }
 
     /// <summary>The user's explicit assertion that they checked every line, making this receipt's

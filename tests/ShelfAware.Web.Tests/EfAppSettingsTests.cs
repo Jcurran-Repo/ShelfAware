@@ -42,7 +42,7 @@ public class EfAppSettingsTests : IDisposable
     [Fact]
     public async Task Stamping_fills_the_household_key_member_on_insert()
     {
-        await SetAsync("hh-a", "ReceiptFolder", @"C:\receipts");
+        await SetAsync("hh-a", "ImportMode", "Smart");
 
         await using var raw = _db.CreateUnscopedContext();
         var row = await raw.AppSettings.IgnoreQueryFilters().SingleAsync();

@@ -7,11 +7,7 @@
 @using ShelfAware.Web.Auth
 @using Microsoft.Extensions.Options
 @using System.Security.Claims
-@using ShelfAware.Web.Ingest
 @inject IAppSettings SettingsStore
-@inject ReceiptFolderPolicy FolderPolicy
-@inject IReceiptInbox Inbox
-@inject IReceiptImporter Importer
 @inject IHouseholdDbFactory DbFactory
 @inject HouseholdService Households
 @inject IJSRuntime JS
@@ -375,66 +371,33 @@
 </section>
 
 <section class="panel">
-    <h2>Receipt auto-import</h2>
+    <h2>Receipt confirmation</h2>
     <p class="muted">
-        Point this at a folder of receipt images or PDFs. The assistant imports new ones — on startup,
-        when you press “Scan now”, or when you tell it <em>“import my receipts”</em>. The folder is a
-        per-household setting; if two households point at the same folder, each imports its own copy.
+        How a receipt you upload gets recorded — photograph or select receipts on the
+        <a href="/receipt">Upload</a> page, one or a whole stack at a time.
     </p>
 
     <fieldset class="import-mode">
-        <legend>When a receipt is imported</legend>
+        <legend>When a receipt is uploaded</legend>
         <label>
             <input type="radio" name="import-mode" checked="@(mode == ImportMode.Smart)"
                    @onchange="() => SetMode(ImportMode.Smart)" />
             <span><strong>Smart</strong> <span class="muted">(recommended)</span> — confirm automatically only when
             every line matches a product you already have (a learned alias or a confident match); anything
-            uncertain — a new product, a shaky read — waits for your review.</span>
+            uncertain — a new product, a shaky read, a missing purchase date — waits for your review.</span>
         </label>
         <label>
             <input type="radio" name="import-mode" checked="@(mode == ImportMode.Review)"
                    @onchange="() => SetMode(ImportMode.Review)" />
-            <span><strong>Review everything</strong> — every import waits as pending for you to review and
+            <span><strong>Review everything</strong> — every upload waits as pending for you to review and
             approve (or fix) on the <a href="/receipt">Upload</a> page.</span>
         </label>
         <label>
             <input type="radio" name="import-mode" checked="@(mode == ImportMode.Auto)"
                    @onchange="() => SetMode(ImportMode.Auto)" />
-            <span><strong>Confirm everything</strong> — imports go straight into your history, new products included.</span>
+            <span><strong>Confirm everything</strong> — uploads go straight into your history, new products included.</span>
         </label>
     </fieldset>
-
-    <div class="tag-add">
-        <input @bind="folder" @bind:event="oninput" placeholder="e.g. C:\Users\you\Documents\Receipts"
-               aria-label="Receipt folder path" size="48" aria-describedby="folder-limit" />
-        <button @onclick="SaveFolder" disabled="@saving">@(saving ? "Saving…" : "Save")</button>
-    </div>
-    @if (FolderPolicy.IsConfined)
-    {
-        <p class="muted" id="folder-limit">On this deployment, receipt folders have to be inside <code>@FolderPolicy.AllowedRoot</code>.</p>
-    }
-    @if (folderError is not null)
-    {
-        <p class="error" role="alert">@folderError</p>
-    }
-    @if (savedNote is not null)
-    {
-        <p class="chat-reply" role="status">@savedNote</p>
-    }
-
-    <p class="@(configured ? "muted" : "error")">@FolderStatus</p>
-
-    <div class="review-actions">
-        <button @onclick="ScanNow" disabled="@(scanning || !configured)">@(scanning ? "Scanning…" : "Scan now")</button>
-    </div>
-    @if (scanning && scanProgress is not null)
-    {
-        <p class="muted" role="status" aria-live="polite">@scanProgress</p>
-    }
-    @if (scanResult is not null)
-    {
-        <p class="chat-reply" role="status">@scanResult</p>
-    }
 </section>
 
 <section class="panel">
@@ -563,21 +526,11 @@
         }
     }
 
-    private string folder = "";
     private ImportMode mode = ImportMode.Smart;
     private string recipeAddConfirm = "Confirm";
     private bool trackExpirations;
     // Only used for the "your old dates are dormant, not deleted" reassurance under an unticked box.
     private bool hasStoredExpirations;
-    private bool configured;
-    private int fileCount;
-    private int newCount;
-    private bool saving;
-    private bool scanning;
-    private string? savedNote;
-    private string? folderError;
-    private string? scanResult;
-    private string? scanProgress;
 
     private bool confirmingDelete;
     private string deleteConfirmText = "";
@@ -957,7 +910,6 @@
         // Usage is recorded in every key mode now (BYOK included), so the readouts always load.
         todayUsage = await UsageMeter.GetTodayAsync();
         usageHistory = await UsageMeter.GetRecentAsync(days: 14);
-        folder = await SettingsStore.GetAsync(SettingKeys.ReceiptFolder) ?? "";
         mode = ImportModes.Parse(
             await SettingsStore.GetAsync(SettingKeys.ImportMode),
             await SettingsStore.GetAsync(SettingKeys.AutoConfirmImports)); // legacy toggle honored
@@ -967,7 +919,6 @@
         {
             hasStoredExpirations = await db.PurchaseEvents.AnyAsync(p => p.ExpirationDate != null);
         }
-        await RefreshStatus();
     }
 
     // ---- AI usage readouts (recorded in every key mode; limits apply only in managed mode) ----
@@ -1117,76 +1068,6 @@
 
     private async Task SaveRecipeAddConfirm() =>
         await SettingsStore.SetAsync(SettingKeys.RecipeAddConfirm, recipeAddConfirm);
-
-    private string FolderStatus => !configured
-        ? (string.IsNullOrWhiteSpace(folder) ? "No folder set yet." : "That folder isn't set or doesn't exist yet.")
-        : $"{fileCount} receipt file(s) in the folder · {newCount} not yet imported.";
-
-    private async Task RefreshStatus()
-    {
-        configured = await Inbox.IsConfiguredAsync();
-        if (!configured) { fileCount = 0; newCount = 0; return; }
-
-        var items = await Inbox.ListAsync();
-        fileCount = items.Count;
-        await using var db = await DbFactory.CreateDbContextAsync();
-        var imported = (await db.Receipts.Where(r => r.SourceFile != null).Select(r => r.SourceFile!).ToListAsync())
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        newCount = items.Count(i => !imported.Contains(i.Id));
-    }
-
-    private async Task SaveFolder()
-    {
-        saving = true;
-        savedNote = null;
-        folderError = null;
-        scanResult = null;
-        try
-        {
-            // Refused here so the user gets a sentence they can act on. The inbox refuses it again when it
-            // actually reads — that's the boundary; this is the manners.
-            if (FolderPolicy.Reject(folder) is { } why)
-            {
-                folderError = why;
-                return;
-            }
-            await SettingsStore.SetAsync(SettingKeys.ReceiptFolder, folder.Trim());
-            await RefreshStatus();
-            savedNote = "Saved.";
-        }
-        finally
-        {
-            saving = false;
-        }
-    }
-
-    private async Task ScanNow()
-    {
-        scanning = true;
-        scanResult = null;
-        scanProgress = null;
-        try
-        {
-            // Blazor Server: Progress<T> marshals each report back onto the circuit's sync context, so the
-            // live per-receipt line updates as the scan works through the folder rather than jumping from a
-            // blank spinner straight to the summary.
-            var progress = new Progress<ImportProgress>(p =>
-            {
-                scanProgress = p.Total > 1
-                    ? $"Reading {p.CurrentFile} — {p.Current} of {p.Total}…"
-                    : $"Reading {p.CurrentFile}…";
-                InvokeAsync(StateHasChanged);
-            });
-            var summary = await Importer.ImportNewAsync(progress);
-            scanResult = summary.Describe();
-            await RefreshStatus();
-        }
-        finally
-        {
-            scanning = false;
-            scanProgress = null;
-        }
-    }
 
     private void StartDelete()
     {

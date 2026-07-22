@@ -6,7 +6,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
-using ShelfAware.Core.Ingest;
 using ShelfAware.Core.Prediction;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Settings;
@@ -27,7 +26,6 @@ public class AnthropicPantryChat : IPantryChat
     private readonly IChatClient _chat;
     private readonly LlmOptions _options;
     private readonly IPantryStore _store;
-    private readonly IReceiptImporter? _importer;
     private readonly IProductSubstituteAdvisor? _substituteAdvisor;
     private readonly IRecipeAdapter? _recipeAdapter;
     private readonly IRecipeAdvisor? _recipeAdvisor;
@@ -36,13 +34,12 @@ public class AnthropicPantryChat : IPantryChat
 
     public AnthropicPantryChat(
         IChatClient chat, IOptions<LlmOptions> options, IPantryStore store, ILogger<AnthropicPantryChat> logger,
-        IReceiptImporter? importer = null, IProductSubstituteAdvisor? substituteAdvisor = null,
+        IProductSubstituteAdvisor? substituteAdvisor = null,
         IRecipeAdapter? recipeAdapter = null, IRecipeAdvisor? recipeAdvisor = null, IAppSettings? settings = null)
     {
         _chat = chat;
         _options = options.Value;
         _store = store;
-        _importer = importer;
         _substituteAdvisor = substituteAdvisor;
         _recipeAdapter = recipeAdapter;
         _recipeAdvisor = recipeAdvisor;
@@ -293,15 +290,6 @@ public class AnthropicPantryChat : IPantryChat
                 await _store.CreateProductAsync(name, category, tags, ct);
                 actions.Add($"created {name}");
                 return ($"Created {name} ({category}){(tags.Count > 0 ? $", tagged {string.Join(", ", tags)}" : "")}.", false);
-            }
-
-            case "import_receipts":
-            {
-                if (_importer is null)
-                    return ("Receipt import isn't set up.", true);
-                var summary = await _importer.ImportNewAsync(cancellationToken: ct);
-                if (summary.Imported > 0) actions.Add($"imported {summary.Imported} receipt(s)");
-                return (summary.Describe(), false);
             }
 
             case "suggest_substitutes":
@@ -594,14 +582,6 @@ public class AnthropicPantryChat : IPantryChat
                 }
                 """,
                 ["product_name", "tags"]),
-
-            MakeTool("import_receipts",
-                "Scan the configured receipt folder and process any NEW receipt files — depending on the import-mode setting each is recorded directly or queued for review. Use when the user asks to import, upload, scan, or process their receipts.",
-                """
-                {
-                }
-                """,
-                []),
 
             MakeTool("open_page",
                 "Navigate the user's screen to a page of the app. Use when they ask to see, open, go to, or show a page. For a specific product's detail page use page='product' + product_name. To show the recipes that use a specific product ('what can I make with the chicken', 'recipes using the salmon'), use page='recipes' + product_name. For reports ('show me what's costing more', 'the waste report', 'our monthly report'), use page='reports' + the matching report.",

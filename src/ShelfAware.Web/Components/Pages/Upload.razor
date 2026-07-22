@@ -1,15 +1,18 @@
 @page "/receipt"
 @using ShelfAware.Core.Chat
 @using ShelfAware.Core.Extraction
+@using ShelfAware.Core.Ingest
 @using ShelfAware.Core.Settings
 @using ShelfAware.Core.Tagging
 @using Microsoft.Extensions.Options
+@using ShelfAware.Web.Ingest
 @inject IHouseholdDbFactory DbFactory
 @inject IReceiptExtractor Extractor
 @inject ITagAdvisor Advisor
 @inject ReceiptStorage Storage
 @inject IOptions<ShelfAware.Llm.LlmOptions> LlmOptions
 @inject ReceiptConfirmationService Confirmer
+@inject ReceiptAutoConfirmer AutoConfirmer
 @inject IAppSettings SettingsStore
 @inject ILogger<Upload> Logger
 
@@ -27,6 +30,21 @@
             Screenshots and print-to-PDF order pages also work. For one long receipt split across
             several photos, tick the box below and they'll be merged.
         </p>
+        @if (uploadMode == ImportMode.Smart)
+        {
+            <p class="muted">
+                Smart confirm is on: a receipt is recorded automatically when every line matches
+                something you already buy — anything uncertain waits for your review below.
+                Change this in <a href="/settings">Settings</a>.
+            </p>
+        }
+        else if (uploadMode == ImportMode.Auto)
+        {
+            <p class="muted">
+                Confirm-everything is on: uploads are recorded straight away, new products included.
+                Change this in <a href="/settings">Settings</a>.
+            </p>
+        }
         <div hidden="@(phase == Phase.Extracting)">
             <InputFile OnChange="OnFilesSelected" multiple accept="image/jpeg,image/png,image/gif,image/webp,application/pdf" aria-label="Upload receipt images or PDF" />
             @if (selectedFiles.Count > 0)
@@ -271,6 +289,14 @@ else if (phase == Phase.Done)
 {
     <section class="panel">
         <p>✅ @confirmSummary</p>
+        @if (autoConfirmed)
+        {
+            <p class="muted">
+                Confirmed automatically — every line matched something you already buy. Check it any
+                time on the <a href="/receipts">Receipts</a> page, or switch to review-everything in
+                <a href="/settings">Settings</a>.
+            </p>
+        }
         <button @onclick="Reset">Upload another</button>
     </section>
 }
@@ -290,6 +316,8 @@ else if (phase == Phase.Done)
     private string confirmSummary = "";
     private string? confirmError;
     private bool confirming;
+    private bool autoConfirmed;                    // the Done panel explains an automatic confirm
+    private ImportMode uploadMode = ImportMode.Review; // the household's active mode, shown pre-upload
     // The user's explicit "I checked every line" opt-in — makes the confirmed lines extraction ground
     // truth (Receipt.VerifiedForEval). Off by default and reset per review; never set by machine confirms.
     private bool verifiedForEval;
@@ -330,6 +358,7 @@ else if (phase == Phase.Done)
     protected override async Task OnInitializedAsync()
     {
         trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
+        uploadMode = await AutoConfirmer.ModeAsync();
         await LoadPendingAsync();
     }
 
@@ -495,6 +524,7 @@ else if (phase == Phase.Done)
         public DateOnly? PurchasedAt { get; set; }
         public int LineCount { get; set; }
         public bool InQueue { get; set; } // a receipt row exists, so the pending list's Retry applies
+        public bool AutoConfirmed { get; set; } // Smart/Auto recorded it; it never enters the queue
     }
 
     private List<BatchItem> batch = [];
@@ -511,7 +541,8 @@ else if (phase == Phase.Done)
     {
         BatchStatus.Waiting => "waiting…",
         BatchStatus.Reading => "reading…",
-        BatchStatus.Done => $"{b.Merchant ?? "Unknown merchant"} · {(b.PurchasedAt is { } d ? d.ToString("MMM d, yyyy") : "no date")} · {b.LineCount} item{(b.LineCount == 1 ? "" : "s")} — in the review queue below",
+        BatchStatus.Done => $"{b.Merchant ?? "Unknown merchant"} · {(b.PurchasedAt is { } d ? d.ToString("MMM d, yyyy") : "no date")} · {b.LineCount} item{(b.LineCount == 1 ? "" : "s")}" +
+            (b.AutoConfirmed ? " — recorded automatically" : " — in the review queue below"),
         _ => b.InQueue
             ? "couldn't be read — retry it from the queue below"
             : "something went wrong reading this file — try selecting it again",
@@ -571,8 +602,19 @@ else if (phase == Phase.Done)
                 return;
             }
 
-            // The stored lines carry everything review needs (tags + suggestion included), so the
-            // fresh-extraction path and the auto-import queue share one pre-fill.
+            // Smart/Auto route first: a trusted receipt records itself and review never appears.
+            // Anything the router won't vouch for falls through to the normal review grid — the
+            // stored lines carry everything review needs (tags + suggestion included), so the
+            // fresh-extraction path and the queued path share one pre-fill.
+            var auto = await AutoConfirmer.TryConfirmAsync(receipt.Id);
+            if (auto.Confirmed)
+            {
+                confirmSummary = AutoSummary(auto, receipt.Merchant, receipt.PurchasedAt);
+                autoConfirmed = true;
+                await LoadPendingAsync();
+                phase = Phase.Done;
+                return;
+            }
             await LoadReviewAsync(receipt.Id);
         }
         catch (OperationCanceledException) { throw; }
@@ -626,6 +668,9 @@ else if (phase == Phase.Done)
                         item.Merchant = saved.Merchant;
                         item.PurchasedAt = saved.PurchasedAt;
                         item.LineCount = saved.Lines.Count;
+                        // Smart/Auto route per receipt: trusted ones record themselves and skip the
+                        // queue; the rest wait below exactly as before.
+                        item.AutoConfirmed = (await AutoConfirmer.TryConfirmAsync(saved.Id)).Confirmed;
                     }
                     else
                     {
@@ -648,6 +693,16 @@ else if (phase == Phase.Done)
             await LoadPendingAsync(); // the batch just filled the review queue
             phase = Phase.Idle;
         }
+    }
+
+    // Same shape as ConfirmAll's summary, so an automatic confirm reads like the manual one.
+    private static string AutoSummary(ReceiptAutoConfirmer.Outcome auto, string? merchant, DateOnly? purchasedAt)
+    {
+        var date = purchasedAt ?? DateOnly.FromDateTime(DateTime.Today);
+        return $"Recorded {auto.Purchases} purchases" +
+               (auto.NewProducts > 0 ? $" ({auto.NewProducts} new product{(auto.NewProducts == 1 ? "" : "s")})" : "") +
+               $" from {(string.IsNullOrEmpty(merchant) ? "unknown merchant" : merchant)} on {date:yyyy-MM-dd}." +
+               (auto.Retracked > 0 ? $" Started tracking {auto.Retracked} previously ignored item{(auto.Retracked == 1 ? "" : "s")} again." : "");
     }
 
     /// <summary>Persist ANY extraction outcome as a PendingReview receipt — a successful read keeps its
@@ -844,6 +899,7 @@ else if (phase == Phase.Done)
         combineAsOne = false;
         errorMessage = null;
         confirmError = null;
+        autoConfirmed = false;
     }
 
     private static async Task<byte[]> ReadAllAsync(Stream stream)
