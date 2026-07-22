@@ -95,7 +95,9 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
             }
             else
             {
-                product = new Product { Name = name, Category = line.Category };
+                // CreatedByReceiptId is the provenance "remove this receipt" needs to know which
+                // products the receipt introduced (vs merely bought again).
+                product = new Product { Name = name, Category = line.Category, CreatedByReceiptId = receipt.Id };
                 db.Products.Add(product);
                 products.Add(product); // later lines in this receipt can resolve to it
                 createdByName[name] = product;
@@ -146,11 +148,24 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
             {
                 if (aliasesByRaw.TryGetValue(line.RawText, out var alias))
                 {
-                    alias.Product = product;
+                    // Re-POINTING is new teaching (stamp the teacher); re-walking the same pairing
+                    // is not — a duplicate confirm must not inherit credit for an earlier receipt's
+                    // lesson, or removing the dupe would un-teach what the original taught. A product
+                    // created THIS confirm has Id 0 here, which never equals a stored alias's real
+                    // ProductId — so pointing an alias at a new product always counts as teaching.
+                    if (alias.ProductId != product.Id)
+                    {
+                        alias.Product = product;
+                        alias.TaughtByReceiptId = receipt.Id;
+                    }
                 }
                 else
                 {
-                    var newAlias = new ProductAlias { Merchant = merchant, RawText = line.RawText, Product = product };
+                    var newAlias = new ProductAlias
+                    {
+                        Merchant = merchant, RawText = line.RawText, Product = product,
+                        TaughtByReceiptId = receipt.Id,
+                    };
                     db.ProductAliases.Add(newAlias);
                     aliasesByRaw[line.RawText] = newAlias;
                 }

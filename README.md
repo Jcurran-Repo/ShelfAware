@@ -25,7 +25,10 @@ screenshots and print-to-PDFs — several at once is fine, each reads as its own
 graduated: a receipt is recorded automatically only when every line matches something we already
 buy — anything new or uncertain waits in a quick review queue where I can fix it first. Nothing
 enters history until it's either confirmed by me or confidently matched to products I've
-confirmed before.
+confirmed before. And mistakes aren't permanent: removing a receipt takes everything it recorded
+with it — its purchases, any products it introduced that never gathered other history, the
+merchant matches it taught — so an accidental double-upload is one click to undo, not a
+permanently skewed cadence.
 
 **It quietly learns our rhythm — two of them.** How often we *rebuy* a thing, and how long one
 *lasts* before we say "we're out". After a couple of trips it knows milk is ~every five days and

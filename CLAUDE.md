@@ -487,6 +487,32 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
    - "Import my receipts" in chat/voice now lands on the Upload page via `open_page` (which already
      mapped "upload"/"receipt") — no prompt change needed.
 
+18. **v3.9 — Remove a receipt (2026-07-22, same branch as v3.8):** `ReceiptRemovalService` (Web/Data)
+   is the confirm's inverse — one transaction that removes a receipt and everything its confirm did.
+   Built because v3.8 sharpened a pre-existing risk: uploads have no file dedup, and Smart confirm
+   commits a trusted duplicate without the review pause where a human used to notice.
+   - **Provenance, never value-matching.** Purchases come back by `PurchaseEvent.ReceiptId` (already
+     stamped); two NEW additive columns carry the rest: `Product.CreatedByReceiptId` (the confirm
+     that created it) and `ProductAlias.TaughtByReceiptId` (the confirm that taught/last re-pointed
+     it). A receipt with zero provenance-linked purchases REFUSES removal ("can't be safely
+     identified") rather than guessing — pre-provenance history is not undoable, by design.
+   - **⚠️ An alias is re-stamped only when re-POINTED to a different product** (see the condition in
+     `ReceiptConfirmationService`): a duplicate confirm re-walking the same pairing must not become
+     its teacher, or removing the dupe un-teaches what the original taught. This was a REAL bug the
+     removal test suite caught pre-commit (`The_duplicate_upload_scenario…` failed on exactly this)
+     — don't simplify the stamp back to "always".
+   - **A product the receipt introduced is deleted only while it has NO other history** — a purchase
+     from any other source (including chat, which has no ReceiptId) or any inventory signal means
+     the household invested in it: it stays, with the breadcrumb nulled (no pointing at ghosts).
+     Deliberately NOT undone: re-tracking, and tags added to pre-existing products (no provenance;
+     cosmetic residue at worst).
+   - **Files after the commit**: the image folder is deleted via `ReceiptStorage.DeleteFolder` only
+     once SaveChanges succeeds — an orphaned folder beats a row whose image is gone.
+   - UI: /receipts gets "Remove receipt…" (inline consequences-first confirm; per-row `Removable`
+     from one provenance query), and the Upload done-panel gets ↩ Undo (offered after auto AND
+     manual confirms; hidden on AlreadyConfirmed — nothing coherent to undo). Both live-verified,
+     including the AdditiveSchema pass on an existing DB.
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active

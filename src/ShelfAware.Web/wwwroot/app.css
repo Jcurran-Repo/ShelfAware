@@ -974,7 +974,8 @@ button.mic-speaking {
     margin-top: 0.75rem;
 }
 
-.receipt-eval-actions {
+.receipt-eval-actions,
+.receipt-remove-actions {
     display: flex;
     align-items: center;
     gap: 0.75rem;

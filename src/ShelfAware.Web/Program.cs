@@ -228,6 +228,7 @@ builder.Services.AddScoped<IRecipeAdapter, RecipeAdapter>();
 builder.Services.AddScoped<IAppSettings, EfAppSettings>();          // settings are per household now
 builder.Services.AddScoped<ReceiptAutoConfirmer>(); // routes an uploaded receipt per the household's ImportMode
 builder.Services.AddScoped<ReceiptConfirmationService>();
+builder.Services.AddScoped<ReceiptRemovalService>(); // the confirm's inverse — the duplicate-upload escape hatch
 builder.Services.AddScoped<ReceiptSelfEval>(); // grades verified receipts on the circuit's key
 
 // Owns where receipt images live on disk (per household), so "delete my data" can reach them and no

@@ -10,6 +10,11 @@ public class Product : IHouseholdOwned
     public Category Category { get; set; }
     public string? DefaultUnit { get; set; }
     public bool IsTracked { get; set; } = true;
+    /// <summary>The receipt whose confirm CREATED this product, or null (created by hand, by the demo
+    /// seeder, or before 2026-07-22). Provenance for "remove this receipt": a product the receipt
+    /// introduced — and that gathered no other history since — goes with it. A plain breadcrumb, not
+    /// an FK (no navigation): the receipt may be long gone while the product lives on.</summary>
+    public int? CreatedByReceiptId { get; set; }
 
     public List<PurchaseEvent> Purchases { get; set; } = [];
     public List<InventorySignal> Signals { get; set; } = [];

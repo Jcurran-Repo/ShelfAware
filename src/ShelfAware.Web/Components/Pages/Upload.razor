@@ -13,6 +13,7 @@
 @inject IOptions<ShelfAware.Llm.LlmOptions> LlmOptions
 @inject ReceiptConfirmationService Confirmer
 @inject ReceiptAutoConfirmer AutoConfirmer
+@inject ReceiptRemovalService Removal
 @inject IAppSettings SettingsStore
 @inject ILogger<Upload> Logger
 
@@ -297,7 +298,19 @@ else if (phase == Phase.Done)
                 <a href="/settings">Settings</a>.
             </p>
         }
-        <button @onclick="Reset">Upload another</button>
+        <div class="review-actions">
+            <button @onclick="Reset">Upload another</button>
+            @if (confirmedReceiptId is not null)
+            {
+                <button class="secondary" @onclick="UndoConfirm" disabled="@undoing">
+                    @(undoing ? "Undoing…" : "↩ Undo — remove this receipt and its purchases")
+                </button>
+            }
+        </div>
+        @if (undoError is not null)
+        {
+            <p class="error" role="alert">@undoError</p>
+        }
     </section>
 }
 
@@ -318,6 +331,11 @@ else if (phase == Phase.Done)
     private bool confirming;
     private bool autoConfirmed;                    // the Done panel explains an automatic confirm
     private ImportMode uploadMode = ImportMode.Review; // the household's active mode, shown pre-upload
+    // The receipt the Done panel is ABOUT — what its Undo removes. Null when there's nothing
+    // coherent to undo (an AlreadyConfirmed re-confirm, or after an undo ran).
+    private int? confirmedReceiptId;
+    private bool undoing;
+    private string? undoError;
     // The user's explicit "I checked every line" opt-in — makes the confirmed lines extraction ground
     // truth (Receipt.VerifiedForEval). Off by default and reset per review; never set by machine confirms.
     private bool verifiedForEval;
@@ -625,6 +643,7 @@ else if (phase == Phase.Done)
                 confirmSummary = Summary(auto.Purchases, auto.NewProducts, auto.Retracked,
                     receipt.Merchant, receipt.PurchasedAt ?? DateOnly.FromDateTime(DateTime.Today));
                 autoConfirmed = true;
+                confirmedReceiptId = receipt.Id;
                 await LoadPendingAsync();
                 phase = Phase.Done;
                 return;
@@ -812,6 +831,9 @@ else if (phase == Phase.Done)
             confirmSummary = outcome.AlreadyConfirmed
                 ? "These purchases were already recorded."
                 : Summary(outcome.Purchases, outcome.NewProducts, outcome.Retracked, receipt.Merchant, reviewDate);
+            // Undo is offered only for the confirm that just happened — re-confirming an already-
+            // confirmed receipt records nothing, so there's nothing coherent for Undo to mean.
+            confirmedReceiptId = outcome.AlreadyConfirmed ? null : receipt.Id;
             await LoadPendingAsync(); // a queued receipt just left the pending list
             phase = Phase.Done;
         }
@@ -906,6 +928,41 @@ else if (phase == Phase.Done)
         Reset();
     }
 
+    // The escape hatch under Smart confirm: a duplicate upload records duplicate purchases (uploads
+    // have no file dedup), and the freshest moment to catch one is right here on the Done panel.
+    private async Task UndoConfirm()
+    {
+        if (confirmedReceiptId is not { } id || undoing) return;
+        undoing = true;
+        undoError = null;
+        try
+        {
+            var outcome = await Removal.RemoveAsync(id);
+            if (outcome is { Found: true, Untraceable: false })
+            {
+                confirmSummary = $"Undone — the receipt and its {outcome.Purchases} purchase{(outcome.Purchases == 1 ? "" : "s")} were removed." +
+                    (outcome.ProductsKept > 0 ? $" ({outcome.ProductsKept} product{(outcome.ProductsKept == 1 ? "" : "s")} kept — they have other history.)" : "");
+                confirmedReceiptId = null;
+                autoConfirmed = false;
+                await LoadPendingAsync();
+            }
+            else
+            {
+                undoError = "Couldn't undo this receipt — manage it from the Receipts page instead.";
+            }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Undo of receipt {ReceiptId} failed.", id);
+            undoError = "Couldn't undo — nothing was changed. Try again, or use the Receipts page.";
+        }
+        finally
+        {
+            undoing = false;
+        }
+    }
+
     private void Reset()
     {
         phase = Phase.Idle;
@@ -917,6 +974,8 @@ else if (phase == Phase.Done)
         errorMessage = null;
         confirmError = null;
         autoConfirmed = false;
+        confirmedReceiptId = null;
+        undoError = null;
     }
 
     private static async Task<byte[]> ReadAllAsync(Stream stream)

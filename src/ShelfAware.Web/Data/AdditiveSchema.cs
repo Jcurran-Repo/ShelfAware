@@ -40,6 +40,12 @@ public static class AdditiveSchema
 
         // 2026-07-18: named report configurations (the Reports tab's "Save this report").
         EnsureTable(db, table: "SavedReports");
+
+        // 2026-07-22: which receipt's confirm created the product / taught the alias — provenance
+        // for "remove this receipt". Pre-existing rows get NULL (unknown origin), which removal
+        // reads as "keep": it only ever deletes what it can prove the receipt did.
+        EnsureColumn(db, table: "Products", column: "CreatedByReceiptId", definition: "INTEGER NULL");
+        EnsureColumn(db, table: "ProductAliases", column: "TaughtByReceiptId", definition: "INTEGER NULL");
     }
 
     public static void Apply(AuthDbContext db)

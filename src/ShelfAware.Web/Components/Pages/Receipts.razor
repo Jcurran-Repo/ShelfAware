@@ -4,6 +4,7 @@
 @implements IAsyncDisposable
 @inject IHouseholdDbFactory DbFactory
 @inject ReceiptStorage Storage
+@inject ReceiptRemovalService Removal
 @inject IJSRuntime JS
 @inject ILogger<Receipts> Logger
 
@@ -33,8 +34,7 @@ else if (receipts is null)
 else if (receipts.Count == 0)
 {
     <section class="panel">
-        <p class="muted">No receipts yet. <a href="/receipt">Upload one</a> — or point the auto-import
-        at a receipts folder in <a href="/settings">Settings</a> — and it'll show up here.</p>
+        <p class="muted">No receipts yet. <a href="/receipt">Upload one</a> and it'll show up here.</p>
     </section>
 }
 else
@@ -124,9 +124,38 @@ else
                             <span class="muted">No saved image for this receipt, so it can't be re-read for an accuracy check.</span>
                         }
                     </div>
+                    <div class="receipt-remove-actions">
+                        @if (!row.Removable)
+                        {
+                            <span class="muted">Recorded before ShelfAware tracked which purchases came from which
+                            receipt, so it can't be removed as a unit — adjust its purchases from each product's page.</span>
+                        }
+                        else if (removingId != row.Receipt.Id)
+                        {
+                            <button class="secondary" @onclick="() => StartRemove(row.Receipt.Id)" disabled="@removeBusy">
+                                Remove receipt…
+                            </button>
+                        }
+                        else
+                        {
+                            <span class="error">Removes this receipt <strong>and everything it recorded</strong> —
+                            its purchases, any products it introduced that gathered no other history, and the
+                            merchant matches it taught. This can't be undone.</span>
+                            <button @onclick="() => RemoveAsync(row)" disabled="@removeBusy">@(removeBusy ? "Removing…" : "Remove it")</button>
+                            <button class="secondary" @onclick="CancelRemove" disabled="@removeBusy">Cancel</button>
+                        }
+                    </div>
                 }
             </details>
         </section>
+    }
+    @if (removeResult is not null)
+    {
+        <p class="chat-reply" role="status">@removeResult</p>
+    }
+    @if (removeError is not null)
+    {
+        <p class="error" role="alert">@removeError</p>
     }
 }
 
@@ -137,7 +166,13 @@ else
 
     // Receipt is the tracked mutable entity so the verify toggle can flip in place; HasImage gates
     // verification — a receipt with no audit copy (e.g. demo data) can never be re-read for grading.
-    private sealed record ReceiptRow(Receipt Receipt, ReceiptTotal Summary, bool HasImage);
+    // Removable = its purchases carry provenance (ReceiptId), so "remove everything it did" is safe.
+    private sealed record ReceiptRow(Receipt Receipt, ReceiptTotal Summary, bool HasImage, bool Removable);
+
+    private int? removingId;      // the row whose inline remove-confirm is open
+    private bool removeBusy;
+    private string? removeResult;
+    private string? removeError;
 
     protected override async Task OnInitializedAsync()
     {
@@ -150,8 +185,18 @@ else
                 .Include(r => r.Lines)
                 .ToListAsync();
 
+            // One query answers "which receipts can be removed as a unit": those with provenance-
+            // stamped purchases. Confirms before the stamp existed aren't traceable and say so.
+            var traceable = (await db.PurchaseEvents
+                    .Where(p => p.ReceiptId != null)
+                    .Select(p => p.ReceiptId!.Value)
+                    .Distinct()
+                    .ToListAsync())
+                .ToHashSet();
+
             receipts = loaded
-                .Select(r => new ReceiptRow(r, ReceiptTotals.Summarize(r.Lines), HasAuditImage(r)))
+                .Select(r => new ReceiptRow(r, ReceiptTotals.Summarize(r.Lines), HasAuditImage(r),
+                    traceable.Contains(r.Id)))
                 .OrderByDescending(row => row.Receipt.PurchasedAt ?? DateOnly.MinValue)
                 .ThenByDescending(row => row.Receipt.Id)
                 .ToList();
@@ -161,6 +206,52 @@ else
         {
             Logger.LogError(ex, "Failed to load receipts");
             loadError = "Couldn't load receipts — try reloading the page.";
+        }
+    }
+
+    private void StartRemove(int receiptId)
+    {
+        removingId = receiptId;
+        removeResult = null;
+        removeError = null;
+    }
+
+    private void CancelRemove() => removingId = null;
+
+    private async Task RemoveAsync(ReceiptRow row)
+    {
+        if (removeBusy) return;
+        removeBusy = true;
+        removeError = null;
+        try
+        {
+            var outcome = await Removal.RemoveAsync(row.Receipt.Id);
+            if (!outcome.Found)
+            {
+                removeError = "That receipt no longer exists — reload the page.";
+                return;
+            }
+            if (outcome.Untraceable)
+            {
+                removeError = "This receipt's purchases can't be safely identified, so nothing was removed.";
+                return;
+            }
+            receipts?.Remove(row);
+            removeResult = $"Removed the receipt and its {outcome.Purchases} purchase{(outcome.Purchases == 1 ? "" : "s")}" +
+                (outcome.ProductsRemoved > 0 ? $", plus {outcome.ProductsRemoved} product{(outcome.ProductsRemoved == 1 ? "" : "s")} it introduced" : "") +
+                (outcome.ProductsKept > 0 ? $" ({outcome.ProductsKept} kept — they have other history)" : "") +
+                (outcome.AliasesRemoved > 0 ? $"; untaught {outcome.AliasesRemoved} merchant match{(outcome.AliasesRemoved == 1 ? "" : "es")}" : "") + ".";
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Removing receipt {ReceiptId} failed.", row.Receipt.Id);
+            removeError = "Couldn't remove the receipt — nothing was changed. Try again.";
+        }
+        finally
+        {
+            removeBusy = false;
+            removingId = null;
         }
     }
 

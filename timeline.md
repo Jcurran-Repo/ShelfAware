@@ -251,6 +251,13 @@ _Last updated: 7/7/2026_
 
 ---
 
+## v3.9 — Remove a receipt (the confirm's inverse)
+- [x] `ReceiptRemovalService` — removes a confirmed receipt AND everything its confirm did, in one transaction: its purchases (by `PurchaseEvent.ReceiptId` provenance, never value-matching), products it INTRODUCED that gathered no other history (a purchase from elsewhere or a signal = kept, breadcrumb cleared), the aliases it TAUGHT, the row, the lines, the saved image. Exists because uploads have no file dedup and Smart confirm commits a trusted dupe without a review pause — one mis-click was permanently skewing cadences — 7/22/2026
+- [x] Provenance columns (AdditiveSchema): `Product.CreatedByReceiptId` + `ProductAlias.TaughtByReceiptId` — stamped by the ONE confirm path; an alias is re-stamped only when re-POINTED (a dupe re-walking a pairing must not inherit credit for an earlier receipt's lesson — a test caught removal un-teaching the original's alias before this rule existed). Pre-provenance receipts REFUSE removal honestly instead of guessing — 7/22/2026
+- [x] UI: "Remove receipt…" with inline consequences-first confirm on /receipts (pre-provenance rows explain why they can't), and ↩ Undo on the Upload done-panel — the freshest moment to catch a dupe, offered after auto AND manual confirms — 7/22/2026
+
+---
+
 ## Backlog (unscheduled)
 - [x] Double-scroll fix (Grocery List + Upload review) — 7/2/2026
 - [x] Photo-upload fix (CSP `img-src blob:` + bounded resize) — 7/21/2026 (the first real photo upload hung forever: the strict CSP blocked Blazor's in-browser resize and its JS never settles the promise; PDFs skip the path, so it hid since 7/5)
