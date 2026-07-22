@@ -19,6 +19,7 @@ public sealed class ReceiptAutoConfirmer(
     IHouseholdDbFactory dbFactory,
     IAppSettings settings,
     ReceiptConfirmationService confirmer,
+    ReceiptDuplicateDetector duplicates,
     ILogger<ReceiptAutoConfirmer> logger)
 {
     /// <summary>A line auto-confirms only at/above this extraction confidence (unless an alias vouches
@@ -26,8 +27,10 @@ public sealed class ReceiptAutoConfirmer(
     public const decimal SmartConfidenceFloor = 0.8m;
 
     /// <summary>What happened to the receipt: confirmed with the counts the UI reports, or left
-    /// pending for review (all-zero counts).</summary>
-    public sealed record Outcome(bool Confirmed, int Purchases, int NewProducts, int Retracked)
+    /// pending for review (all-zero counts). <paramref name="Duplicate"/> names the confirmed
+    /// receipt this one looks like when THAT is why it queued.</summary>
+    public sealed record Outcome(bool Confirmed, int Purchases, int NewProducts, int Retracked,
+        ReceiptDuplicateDetector.Match? Duplicate = null)
     {
         public static readonly Outcome Queued = new(false, 0, 0, 0);
     }
@@ -67,6 +70,17 @@ public sealed class ReceiptAutoConfirmer(
             logger.LogInformation("Queued receipt {ReceiptId} for review: no purchase date detected (Smart mode).",
                 receipt.Id);
             return Outcome.Queued;
+        }
+
+        // A detected duplicate NEVER auto-confirms — not even in Confirm-everything mode. Silently
+        // double-recording is the exact failure this router must not automate; recording a genuine
+        // twin trip anyway is one human click on the review it queues into.
+        if (await duplicates.FindDuplicateAsync(receipt.Id, cancellationToken) is { } dupe)
+        {
+            logger.LogInformation(
+                "Queued receipt {ReceiptId} for review: looks like an exact duplicate of confirmed receipt {DuplicateId} ({Mode} mode).",
+                receipt.Id, dupe.ReceiptId, mode);
+            return Outcome.Queued with { Duplicate = dupe };
         }
 
         var merchant = receipt.Merchant ?? "";

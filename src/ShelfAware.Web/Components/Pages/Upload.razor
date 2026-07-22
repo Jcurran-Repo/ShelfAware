@@ -13,6 +13,7 @@
 @inject IOptions<ShelfAware.Llm.LlmOptions> LlmOptions
 @inject ReceiptConfirmationService Confirmer
 @inject ReceiptAutoConfirmer AutoConfirmer
+@inject ReceiptDuplicateDetector Duplicates
 @inject ReceiptRemovalService Removal
 @inject IAppSettings SettingsStore
 @inject ILogger<Upload> Logger
@@ -107,6 +108,10 @@
                             {
                                 <span class="muted"> · @(pr.PurchasedAt?.ToString("MMM d, yyyy") ?? "no date") · @pr.LineCount item(s)</span>
                             }
+                            @if (pr.PossibleDuplicate)
+                            {
+                                <span class="chip chip-duesoon" title="Same date, items, and prices as a receipt you already confirmed">possible duplicate</span>
+                            }
                         </span>
                         <span class="pending-actions">
                             @if (pr.LineCount == 0)
@@ -138,6 +143,16 @@ else if (phase == Phase.Review && receipt is not null)
         <p>
             <strong>@(receipt.Merchant ?? "Unknown merchant")</strong> — @reviewLines.Count item(s). Review and correct before confirming.
         </p>
+        @if (duplicateOf is { } dupe)
+        {
+            <p class="error" role="alert">
+                ⚠️ This looks like an <strong>exact duplicate</strong> of the
+                @(dupe.Merchant is { Length: > 0 } dm ? dm : "confirmed") receipt from
+                @(dupe.PurchasedAt?.ToString("MMM d, yyyy") ?? "the same day") — same items, same prices
+                (see it on the <a href="/receipts">Receipts</a> page). If you really bought this twice,
+                “Confirm all” records it anyway; otherwise Discard it below.
+            </p>
+        }
         <p class="review-date">
             <label for="receipt-date"><strong>Purchase date</strong></label>
             <input id="receipt-date" type="date" @bind="reviewDate"
@@ -341,7 +356,10 @@ else if (phase == Phase.Done)
     private bool verifiedForEval;
 
     private List<PendingRow> pendingReceipts = [];
-    private record PendingRow(int Id, string? Merchant, DateOnly? PurchasedAt, int LineCount);
+    private record PendingRow(int Id, string? Merchant, DateOnly? PurchasedAt, int LineCount, bool PossibleDuplicate);
+    // The confirmed receipt the CURRENT review looks like a re-upload of (null = no match) — drives
+    // the review screen's duplicate warning. Recomputed on every review load.
+    private ReceiptDuplicateDetector.Match? duplicateOf;
     private int? retryingId;
     private string? pendingError;
 
@@ -385,12 +403,26 @@ else if (phase == Phase.Done)
     // invisible forever (the only recovery was reading the server logs).
     private async Task LoadPendingAsync()
     {
-        await using var db = await DbFactory.CreateDbContextAsync();
-        pendingReceipts = await db.Receipts
-            .Where(r => r.Status == ReceiptStatus.PendingReview)
-            .OrderBy(r => r.Id)
-            .Select(r => new PendingRow(r.Id, r.Merchant, r.PurchasedAt, r.Lines.Count))
-            .ToListAsync();
+        List<(int Id, string? Merchant, DateOnly? PurchasedAt, int LineCount)> rows;
+        await using (var db = await DbFactory.CreateDbContextAsync())
+        {
+            rows = (await db.Receipts
+                    .Where(r => r.Status == ReceiptStatus.PendingReview)
+                    .OrderBy(r => r.Id)
+                    .Select(r => new { r.Id, r.Merchant, r.PurchasedAt, LineCount = r.Lines.Count })
+                    .ToListAsync())
+                .Select(r => (r.Id, r.Merchant, r.PurchasedAt, r.LineCount))
+                .ToList();
+        }
+        // The queue is short and the detector's prefilter almost always returns nothing, so a
+        // per-row check is cheap — and a "possible duplicate" chip is why a queued dupe gets
+        // discarded instead of rubber-stamped.
+        pendingReceipts = [];
+        foreach (var r in rows)
+        {
+            var dupe = r.LineCount > 0 && await Duplicates.FindDuplicateAsync(r.Id) is not null;
+            pendingReceipts.Add(new PendingRow(r.Id, r.Merchant, r.PurchasedAt, r.LineCount, dupe));
+        }
     }
 
     // Load a queued receipt into the SAME editable review table the manual upload uses, so it can be
@@ -447,6 +479,7 @@ else if (phase == Phase.Done)
 
         confirmError = null;
         verifiedForEval = false; // a fresh review starts unasserted
+        duplicateOf = await Duplicates.FindDuplicateAsync(receiptId);
         phase = Phase.Review;
     }
 
@@ -543,6 +576,7 @@ else if (phase == Phase.Done)
         public int LineCount { get; set; }
         public bool InQueue { get; set; } // a receipt row exists, so the pending list's Retry applies
         public bool AutoConfirmed { get; set; } // Smart/Auto recorded it; it never enters the queue
+        public bool PossibleDuplicate { get; set; } // queued because it matches a confirmed receipt
     }
 
     private List<BatchItem> batch = [];
@@ -560,7 +594,9 @@ else if (phase == Phase.Done)
         BatchStatus.Waiting => "waiting…",
         BatchStatus.Reading => "reading…",
         BatchStatus.Done => $"{b.Merchant ?? "Unknown merchant"} · {(b.PurchasedAt is { } d ? d.ToString("MMM d, yyyy") : "no date")} · {b.LineCount} item{(b.LineCount == 1 ? "" : "s")}" +
-            (b.AutoConfirmed ? " — recorded automatically" : " — in the review queue below"),
+            (b.AutoConfirmed ? " — recorded automatically"
+                : b.PossibleDuplicate ? " — ⚠️ possible duplicate, waiting for your review below"
+                : " — in the review queue below"),
         _ => b.InQueue
             ? "couldn't be read — retry it from the queue below"
             : "something went wrong reading this file — try selecting it again",
@@ -707,7 +743,9 @@ else if (phase == Phase.Done)
                         // so it just stays in the queue like any untrusted one.
                         try
                         {
-                            item.AutoConfirmed = (await AutoConfirmer.TryConfirmAsync(saved.Id)).Confirmed;
+                            var routed = await AutoConfirmer.TryConfirmAsync(saved.Id);
+                            item.AutoConfirmed = routed.Confirmed;
+                            item.PossibleDuplicate = routed.Duplicate is not null;
                         }
                         catch (OperationCanceledException) { throw; }
                         catch (Exception ex)
@@ -976,6 +1014,7 @@ else if (phase == Phase.Done)
         autoConfirmed = false;
         confirmedReceiptId = null;
         undoError = null;
+        duplicateOf = null;
     }
 
     private static async Task<byte[]> ReadAllAsync(Stream stream)

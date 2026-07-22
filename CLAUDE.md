@@ -512,6 +512,16 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      from one provenance query), and the Upload done-panel gets ↩ Undo (offered after auto AND
      manual confirms; hidden on AlreadyConfirmed — nothing coherent to undo). Both live-verified,
      including the AdditiveSchema pass on an existing DB.
+   - **`ReceiptDuplicateDetector` (Web/Ingest) is the front door to the same problem**: a detected
+     exact duplicate NEVER auto-confirms, in ANY mode — Auto included, deliberately breaking its
+     "confirm everything" contract for this one case (silent double-recording is the mistake the
+     router exists to not automate). Strict match = same date + merchant + line count + lines +
+     prices; cheapest-first (one indexed SQL prefilter, then sorted-multiset comparison with
+     early-outs). ⚠️ **Lines compare on RawText FIRST, normalized names second** — review edits
+     never touch RawText, so a re-scan of the same photo matches even after the original's names
+     were corrected; don't "simplify" to names-only. Prediction impact of removal needs no code:
+     cadences are derived from live PurchaseEvents on every read, so deleted purchases stop
+     counting immediately.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

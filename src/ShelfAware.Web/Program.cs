@@ -227,6 +227,7 @@ builder.Services.AddScoped<IRecipeAdapter, RecipeAdapter>();
 // ONE shared confirmation service.
 builder.Services.AddScoped<IAppSettings, EfAppSettings>();          // settings are per household now
 builder.Services.AddScoped<ReceiptAutoConfirmer>(); // routes an uploaded receipt per the household's ImportMode
+builder.Services.AddScoped<ReceiptDuplicateDetector>(); // "is this a re-upload?" — a detected dupe never auto-confirms
 builder.Services.AddScoped<ReceiptConfirmationService>();
 builder.Services.AddScoped<ReceiptRemovalService>(); // the confirm's inverse — the duplicate-upload escape hatch
 builder.Services.AddScoped<ReceiptSelfEval>(); // grades verified receipts on the circuit's key

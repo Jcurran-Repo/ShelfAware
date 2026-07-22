@@ -21,7 +21,8 @@ public class ReceiptAutoConfirmerTests : IDisposable
     public void Dispose() => _db.Dispose();
 
     private ReceiptAutoConfirmer Confirmer() => new(
-        _db, _settings, new ReceiptConfirmationService(_db), NullLogger<ReceiptAutoConfirmer>.Instance);
+        _db, _settings, new ReceiptConfirmationService(_db), new ReceiptDuplicateDetector(_db),
+        NullLogger<ReceiptAutoConfirmer>.Instance);
 
     private async Task<int> SeedProduct(string name)
     {
@@ -184,6 +185,33 @@ public class ReceiptAutoConfirmerTests : IDisposable
     }
 
     // --- guard rails ----------------------------------------------------------------
+
+    [Fact]
+    public async Task An_exact_duplicate_queues_even_in_Auto_mode()
+    {
+        // Auto means "confirm everything" — everything except a silent double-recording, which is
+        // the one mistake this router must never automate.
+        await _settings.SetAsync(SettingKeys.ImportMode, "Auto");
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Receipts.Add(new Receipt
+            {
+                Merchant = "Walmart", PurchasedAt = Dated, ImagePath = "original",
+                Status = ReceiptStatus.Confirmed,
+                Lines = [new ReceiptLine { RawText = "GV WHL MLK", NormalizedName = "Whole Milk", Quantity = 1 }],
+            });
+            await db.SaveChangesAsync();
+        }
+        var upload = await SeedReceipt(Dated, new SeedLine("GV WHL MLK", "Whole Milk", 0.95m));
+
+        var outcome = await Confirmer().TryConfirmAsync(upload);
+
+        Assert.False(outcome.Confirmed);
+        Assert.NotNull(outcome.Duplicate);
+        await using var check = _db.CreateDbContext();
+        Assert.Equal(ReceiptStatus.PendingReview,
+            (await check.Receipts.SingleAsync(r => r.Id == upload)).Status);
+    }
 
     [Fact]
     public async Task A_zero_line_receipt_always_queues_even_in_Auto_mode()
