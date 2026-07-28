@@ -377,6 +377,10 @@ public class ReplenishmentPredictorTests
         // 10-day rhythm × 500 would be 5,000 days; the bound holds it to 730.
         Assert.Equal(D(750), ReplenishmentPredictor.Predict(silent, D(25)).DueDate);
         Assert.Equal(D(750), ReplenishmentPredictor.Predict(crashing, D(25)).DueDate);
+
+        // And the REPORTED factor is the one applied, not the raw ratio: Product Detail says "due date
+        // pushed out to match", so a 500× claim beside a 73× stretch would be a lie on the page.
+        Assert.Equal(73.0, ReplenishmentPredictor.Predict(silent, D(25)).StockUpFactor);
     }
 
     [Fact]

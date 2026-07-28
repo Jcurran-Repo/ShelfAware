@@ -206,7 +206,8 @@ public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
     /// full buy/outage histories, money from the facts, and — the load-bearing one — the ENGINE's own
     /// rhythm and due date, never a median recomputed here.</summary>
     public async Task<BacklogReport> LoadBacklogAsync(
-        ReportSourceData source, DateOnly today, int recentMealWindowDays, CancellationToken ct = default)
+        ReportSourceData source, DateOnly today, bool honorExpirations, int recentMealWindowDays,
+        CancellationToken ct = default)
     {
         var products = await LoadHistoriesAsync(ct);
         var mealUses = RecentMealUsesByProductName(source, await LoadRecipeMainsAsync(ct), today, recentMealWindowDays);
@@ -226,9 +227,13 @@ public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
             {
                 var money = moneyByProduct.GetValueOrDefault(p.Id);
                 // ONE prediction, both numbers: the rhythm to show and the due date to test against.
-                // Expiration-blind on purpose, like the backtest — a label date caps a due date, and
-                // "you may already have plenty" is a claim about buying, not about a sticker.
-                var prediction = ReplenishmentPredictor.Predict(p, today);
+                // It honours the household's expiration setting because the report's whole claim is
+                // "the app says this is due" — so it must ask the question the dashboard asks. Running
+                // expiration-blind here (an earlier version did) makes the page's own "the same number
+                // the dashboard shows" footnote false for exactly the households that opted in.
+                // Unlike the BACKTEST, which stays blind on purpose: that one grades the learned
+                // rhythm, and a label is not a thing the rhythm predicted.
+                var prediction = ReplenishmentPredictor.Predict(p, today, honorExpirations);
                 return new BacklogInput(
                     p.Id,
                     p.Name,

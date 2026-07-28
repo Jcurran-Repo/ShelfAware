@@ -80,12 +80,12 @@ public class DemoDataSeederTests
 
         var today = DateOnly.FromDateTime(DateTime.Today);
         var service = new ReportDataService(db);
-        var report = await service.LoadBacklogAsync(await service.LoadAsync(), today, 60);
+        var report = await service.LoadBacklogAsync(await service.LoadAsync(), today, honorExpirations: false, 60);
 
         var roast = Assert.Single(report.Findings, f => f.ProductName == "Beef Chuck Roast");
         Assert.Equal(5, roast.Trips);
-        // A 6× buy outruns StockUpFactor's 3× cap, so it still runs long past due — which is exactly why
-        // the report is needed, and why this hero can't be replaced by a smaller stock-up.
+        // The 6× buy stretches the projection ~84 days and the hero is still well past THAT — which is
+        // what makes it a finding rather than an item merely bought in bulk.
         Assert.True(roast.OverdueDays > 30,
             $"the freezer-filling trip should have run long past due, got {roast.OverdueDays} days");
         // The deliberately missing half of the fixture: a household eating through a hoard reports nothing.

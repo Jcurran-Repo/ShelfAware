@@ -1,6 +1,5 @@
 @page "/reports"
 @using ShelfAware.Core.Domain
-@using ShelfAware.Core.Prediction
 @using ShelfAware.Core.Reporting
 @using ShelfAware.Core.Settings
 @using ShelfAware.Web.Components.Charts
@@ -767,7 +766,8 @@ else
         }
         if (ActivePreset == "waste") await BuildWasteRowsAsync();
         if (ActivePreset == "piling-up" && backlog is null)
-            backlog = await ReportData.LoadBacklogAsync(source, Today, RecentMealWindowDays);
+            backlog = await ReportData.LoadBacklogAsync(
+                source, Today, await SettingsStore.GetTrackExpirationDatesAsync(), RecentMealWindowDays);
         if (ActivePreset == "custom") await EnterCustomAsync();
         loaded = true;
     }

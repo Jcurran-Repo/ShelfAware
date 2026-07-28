@@ -283,6 +283,12 @@ dominant-size anchoring, outlier trimming, and restock handling that `Predict` a
 surfaces of one app must not disagree about whether you need to buy something. Pinned by
 `A_stock_up_that_pushed_the_due_date_out_is_respected`.
 
+Same rule, second application: it **honours the household's expiration setting**, because the report's
+entire claim is "the app says this is due", so it has to ask the question the dashboard asks. A first
+version ran expiration-blind and made the page's own "the same number the dashboard shows" footnote
+false for exactly the households that opted in. **The backtest is the deliberate opposite** and stays
+blind — that one grades the learned rhythm, and a label is not something the rhythm predicted.
+
 **Coverage is disclosed, not gated.** `BacklogReport.OutageCoverage` = what share of judgable products
 have ever really closed a cycle. Below ~25% the report says so plainly ("this list is mostly reading
 your buying pattern"), because at that point condition 2 is barely evidence — but the finding still

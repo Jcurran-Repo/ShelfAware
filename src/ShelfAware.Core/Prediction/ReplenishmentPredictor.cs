@@ -91,6 +91,11 @@ public static class ReplenishmentPredictor
             // the floor is the unstretched median itself. Clamped as a double so the int cast below
             // can't overflow either (500,000,000 threw ArgumentOutOfRangeException before this).
             var projected = Math.Min(median * stockUp, Math.Max(median, MaxProjectionDays));
+            // Report the factor that was APPLIED, not the raw ratio. Product Detail renders this as
+            // "last buy was ~N× the usual — due date pushed out to match", and once the bound above can
+            // bite, those two stop being the same number: a 500× misread that projects 730 days would
+            // otherwise claim a 500× stretch the engine never made.
+            if (median > 0) stockUp = projected / median;
             var interval = Floor(projected);
             dueDate = anchor.AddDays(interval);
             // The DueSoon window earns its width from the cadence's real variance: a noisy rhythm

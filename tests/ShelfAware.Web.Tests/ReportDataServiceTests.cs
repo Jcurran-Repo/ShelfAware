@@ -103,7 +103,7 @@ public class ReportDataServiceTests
         await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(lastBuyDaysAgo: 20, bulkQty: 6));
 
         var service = new ReportDataService(db);
-        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, 60);
+        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, honorExpirations: false, 60);
 
         Assert.Equal(1, report.Considered); // judged, and deliberately rejected
         Assert.DoesNotContain(report.Findings, f => f.ProductName == "Beef Chuck Roast");
@@ -112,19 +112,49 @@ public class ReportDataServiceTests
     [Fact]
     public async Task A_real_hoard_is_found_once_even_the_stretched_due_date_has_passed()
     {
-        // Same shape, three months older: the 3× stretch has run out, so the grocery list is asking for
-        // a roast the freezer may still be full of. That's the finding.
+        // Same shape, months older: the ~84-day stretch has run out, so the grocery list is asking for a
+        // roast the freezer may still be full of. That's the finding.
         using var db = new TestDb();
         await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(lastBuyDaysAgo: 130, bulkQty: 6));
 
         var service = new ReportDataService(db);
-        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, 60);
+        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, honorExpirations: false, 60);
 
         var finding = Assert.Single(report.Findings);
         Assert.Equal("Beef Chuck Roast", finding.ProductName);
         Assert.Equal(5, finding.Trips);
         Assert.True(finding.OverdueDays > 30, $"expected long overdue, got {finding.OverdueDays}");
         Assert.Equal(0, report.EverRanOut);
+    }
+
+    [Fact]
+    public async Task The_backlog_check_answers_the_same_due_question_the_dashboard_asks()
+    {
+        // The page tells the reader "Overdue by is the same number the dashboard and the item's own page
+        // show". That's only true if this asks the question the same way — so it threads the household's
+        // expiration setting rather than running blind. Here the rhythm says two more months, but the
+        // label passed ten days ago: an opted-in household sees the item as due everywhere, and this
+        // report must agree with the rest of the app rather than quietly disagreeing.
+        using var db = new TestDb();
+        var roast = await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(lastBuyDaysAgo: 20, bulkQty: 6));
+        await using (var ctx = db.CreateDbContext())
+        {
+            var latest = ctx.PurchaseEvents
+                .Where(p => p.ProductId == roast.Id)
+                .OrderByDescending(p => p.PurchasedAt)
+                .First();
+            latest.ExpirationDate = DaysAgo(10);
+            await ctx.SaveChangesAsync();
+        }
+
+        var service = new ReportDataService(db);
+        var source = await service.LoadAsync();
+
+        var optedOut = await service.LoadBacklogAsync(source, Today, honorExpirations: false, 60);
+        var optedIn = await service.LoadBacklogAsync(source, Today, honorExpirations: true, 60);
+
+        Assert.Empty(optedOut.Findings); // the rhythm alone says it isn't due for two more months
+        Assert.Equal(10, Assert.Single(optedIn.Findings).OverdueDays); // the label the rest of the app honours
     }
 
     [Fact]
@@ -136,7 +166,7 @@ public class ReportDataServiceTests
         await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(130, 6), tracked: false);
 
         var service = new ReportDataService(db);
-        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, 60);
+        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, honorExpirations: false, 60);
 
         Assert.Equal(0, report.Considered);
         Assert.Empty(report.Findings);
@@ -151,7 +181,7 @@ public class ReportDataServiceTests
         await SeedProductAsync(db, "Ground Coffee", StockUpHistory(130, 6), outageDaysAgo: [137]);
 
         var service = new ReportDataService(db);
-        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, 60);
+        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, honorExpirations: false, 60);
 
         Assert.Equal(1, report.Considered);
         Assert.Equal(1, report.EverRanOut);
@@ -167,7 +197,7 @@ public class ReportDataServiceTests
         await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(130, 6), unitPrice: 10m);
 
         var service = new ReportDataService(db);
-        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, 60);
+        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, honorExpirations: false, 60);
 
         var finding = Assert.Single(report.Findings);
         Assert.Equal(10m, finding.TotalQuantity); // 6 + 1 + 1 + 1 + 1
@@ -182,7 +212,7 @@ public class ReportDataServiceTests
         await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(130, 6)); // no receipt lines at all
 
         var service = new ReportDataService(db);
-        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, 60);
+        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, honorExpirations: false, 60);
 
         Assert.True(Assert.Single(report.Findings).SpendIncomplete);
     }
@@ -214,7 +244,7 @@ public class ReportDataServiceTests
         }
 
         var service = new ReportDataService(db);
-        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, 60);
+        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, honorExpirations: false, 60);
 
         Assert.Equal(2, Assert.Single(report.Findings).RecentMealUses);
     }
