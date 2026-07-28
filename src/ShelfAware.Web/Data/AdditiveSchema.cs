@@ -46,6 +46,14 @@ public static class AdditiveSchema
         // reads as "keep": it only ever deletes what it can prove the receipt did.
         EnsureColumn(db, table: "Products", column: "CreatedByReceiptId", definition: "INTEGER NULL");
         EnsureColumn(db, table: "ProductAliases", column: "TaughtByReceiptId", definition: "INTEGER NULL");
+
+        // 2026-07-28: quantity on hand (DESIGN.md §13) — the first thing in the model that measures STOCK
+        // rather than flow. Opt-in per product, so every existing row lands on TrackQuantity = 0 and
+        // behaves exactly as it did; NULL QuantityOnHand means UNKNOWN, which is the honest state for a
+        // pantry nobody has counted yet.
+        EnsureColumn(db, table: "Products", column: "TrackQuantity", definition: "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(db, table: "Products", column: "QuantityOnHand", definition: "TEXT NULL");
+        EnsureColumn(db, table: "Products", column: "QuantityCountedAt", definition: "TEXT NULL");
     }
 
     public static void Apply(AuthDbContext db)

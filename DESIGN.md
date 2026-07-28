@@ -260,6 +260,22 @@ No change-log table in v4.0: purchases and `MealEvent`s are already dated, so ev
 self-documenting and only manual edits are unrecorded. Add the log if the household ever needs to ask
 "why does it say 3?" and can't answer it.
 
+**Owed here: editing a purchase's quantity after the fact.** There is no way to correct one today.
+`Quantity` is typed once in the Upload review grid (or set by `add_purchase`), and after confirm
+nothing edits a `PurchaseEvent` — Product Detail's "Recent purchases" table is read-only, so the only
+recourse is removing the whole receipt (v3.9) and re-uploading it, or adding a second purchase to
+average out the mistake. Neither is "fix that number".
+
+That was survivable while `StockUpFactor` capped at 3×. It stopped being, the moment the ceiling came
+off (CLAUDE.md item 19): a quantity misread on a receipt you already confirmed now stretches the due
+date in proportion — bounded at `MaxProjectionDays`, but with no granular way to undo it. And the
+counting feature makes it worse before it makes it better, because a wrong purchase quantity will now
+also land in `QuantityOnHand` via §13.2's increment.
+
+So this phase owns the edit. **One write path**, the way `SetExpirationAsync` is: it has to adjust the
+count too, or the correction fixes the history and leaves the shelf wrong. Same lesson as §13.2's
+confirm/remove symmetry — every road that moves a purchase quantity moves the count with it.
+
 ### 13.7 The backlog check — first, and free ✅ *built: "What's piling up"*
 Pure Core (`BacklogSignals`), **no schema change and no data entry at all** — the signature is already
 sitting in data the household collected for other reasons. Ships as a `/reports` preset beside the Gap

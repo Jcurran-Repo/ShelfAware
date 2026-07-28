@@ -89,6 +89,70 @@ public class AdditiveSchemaTests : IDisposable
         Assert.Single(await db.SavedReports.ToListAsync());
     }
 
+    [Fact]
+    public async Task Adds_the_quantity_columns_to_a_pre_counting_db()
+    {
+        await using var db = _db.CreateDbContext();
+        // The schema EnsureCreated just built is the reference for what these columns should BE.
+        var fresh = await ColumnTypesAsync(db, "Products");
+
+        // Simulate a pre-2026-07-28 DB (built before quantity on hand existed).
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Products DROP COLUMN TrackQuantity;");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Products DROP COLUMN QuantityOnHand;");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Products DROP COLUMN QuantityCountedAt;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // second boot — a no-op, not a duplicate-column error
+
+        // Same DECLARED TYPES as a fresh file. This is the pin a can-EF-query check alone would miss:
+        // an ALTER whose type guess differs from EF's generated DDL still "works" under SQLite's dynamic
+        // typing right up until it silently truncates something. Compared per column rather than as a
+        // whole CREATE TABLE because ADD COLUMN appends, so the column ORDER legitimately differs.
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "Products"));
+
+        // Existing rows land opted-out with an unknown count — today's behaviour, exactly.
+        var product = new Product { Name = "Beef Chuck Roast", Category = Category.Meat };
+        db.Products.Add(product);
+        await db.SaveChangesAsync();
+        var stored = await db.Products.AsNoTracking().SingleAsync(p => p.Id == product.Id);
+        Assert.False(stored.TrackQuantity);
+        Assert.Null(stored.QuantityOnHand);
+        Assert.Null(stored.QuantityCountedAt);
+
+        // And the count round-trips a DECIMAL rather than truncating to a whole number — the failure a
+        // wrong column type would actually produce, on exactly the weight items counting is for.
+        product.TrackQuantity = true;
+        product.QuantityOnHand = 2.34m;
+        product.QuantityCountedAt = new DateTimeOffset(2026, 7, 28, 9, 0, 0, TimeSpan.FromHours(-5));
+        await db.SaveChangesAsync();
+
+        var counted = await db.Products.AsNoTracking().SingleAsync(p => p.Id == product.Id);
+        Assert.True(counted.TrackQuantity);
+        Assert.Equal(2.34m, counted.QuantityOnHand);
+        Assert.Equal(new DateTimeOffset(2026, 7, 28, 9, 0, 0, TimeSpan.FromHours(-5)), counted.QuantityCountedAt);
+    }
+
+    /// <summary>Each column's declared type, keyed by name — order-independent, so it survives the fact
+    /// that ADD COLUMN appends while EnsureCreated writes the model's order.</summary>
+    private static async Task<Dictionary<string, string>> ColumnTypesAsync(ShelfAwareDbContext db, string table)
+    {
+        var conn = db.Database.GetDbConnection();
+        if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync();
+        using var cmd = conn.CreateCommand();
+        // Type and nullability only — deliberately NOT the DEFAULT clause. SQLite requires a default to
+        // ADD a NOT NULL column, while EnsureCreated has no reason to emit one, so that difference is
+        // inherent to migrating rather than a drift worth failing on. Type and notnull are the parts that
+        // change behaviour.
+        cmd.CommandText = $"SELECT name, type, \"notnull\" FROM pragma_table_info('{table}');";
+        var columns = new Dictionary<string, string>(StringComparer.Ordinal);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            columns[reader.GetString(0)] = $"{reader.GetString(1)}|notnull={reader.GetInt32(2)}";
+        }
+        return columns;
+    }
+
     /// <summary>Every sqlite_master row about the table (itself and each index), name-ordered,
     /// whitespace-normalized — a comparable fingerprint of the physical schema.</summary>
     private static async Task<List<string>> TableSchemaAsync(ShelfAwareDbContext db, string table)
