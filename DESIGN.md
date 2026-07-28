@@ -251,15 +251,45 @@ No change-log table in v4.0: purchases and `MealEvent`s are already dated, so ev
 self-documenting and only manual edits are unrecorded. Add the log if the household ever needs to ask
 "why does it say 3?" and can't answer it.
 
-### 13.7 The hoard report — first, and free
-Pure Core, **no schema change and no data entry at all.** The signature of a backlog is already sitting
-in the data: repeat purchases, **zero completed burn cycles** (§6.3 never pairs a purchase with a
-following `OutNow`, so `BurnRateDays` stays null), and no recent `MealEvent`s. Ships as a `/reports`
-preset beside the Gap report, ranked by suspicion × spend.
+### 13.7 The backlog check — first, and free ✅ *built: "What's piling up"*
+Pure Core (`BacklogSignals`), **no schema change and no data entry at all** — the signature is already
+sitting in data the household collected for other reasons. Ships as a `/reports` preset beside the Gap
+report. Its job is to name the handful of products worth turning `TrackQuantity` on for, which is what
+makes every later phase cheap.
+
+**Three conditions, all required:**
+1. **≥3 distinct purchase dates** — at two, "never ran out" reads the same whether you're stockpiling or
+   simply bought it twice.
+2. **Zero completed burn cycles** — §6.3 never once paired a purchase with a following `OutNow`. Note
+   this is *not* `BurnRateDays is null`, which is also true at ONE cycle; the count comes from
+   `ReplenishmentPredictor.BurnCycles`, made public so there is exactly one definition of a cycle.
+3. **Past its own rebuy rhythm** — bought like clockwork, then stopped, with no restock.
+
+**Condition 3 was added after measuring, and it is what makes the report mean anything.** On real data
+conditions 1–2 alone flagged **26 of 27** regularly-bought products, because a household that rarely
+taps `OutNow` leaves *everything* silent — the check was reporting an unused button as a pantry full of
+backlogs. Condition 3 reads buying behaviour, which needs no button, and cut the same household to **2**.
+An item you bought on a rhythm and then stopped rebuying, without ever saying you ran out, is the one
+you are most likely still eating through.
+
+**Coverage is disclosed, not gated.** `BacklogReport.OutageCoverage` = what share of judgable products
+have ever really closed a cycle. Below ~25% the report says so plainly ("this list is mostly reading
+your buying pattern"), because at that point condition 2 is barely evidence — but the finding still
+stands on condition 3, so hiding it would be the bigger lie. (Contrast PriceWatch, which *refuses*
+below 3 items: there the math itself is meaningless, here only one input is weak.)
+
+**Ranked by money committed** — spend already carries both how often you buy a thing and what it costs,
+and it is one explainable number in dollars. (The earlier "suspicion × spend" was dropped: a product of
+two different units ranks fine and explains nothing, and every other number in Reports is arithmetic a
+reader can follow.) Trips break ties as the evidence column.
+
+**Meals are reported, never scored.** "Cooked with" counts recent `MealEvent`s whose recipe lists the
+item as a main ingredient — evidence it's moving. It doesn't suppress a finding: the meal log only sees
+cooking that went through a saved recipe, so its absence proves nothing.
 
 **It says "worth checking", never "you have 6"** — the same honesty rule as Waste watch, and for a real
-reason: a missing `OutNow` may only mean nobody taps the button. Its job is to name the ~30 products
-worth turning `TrackQuantity` on for, which is what makes every later phase cheap.
+reason: none of the three conditions is proof. A missing `OutNow` may only mean nobody taps the button,
+and a rhythm that stopped may only mean tastes changed.
 
 ### 13.8 Shelf-photo census (later phase)
 The intake answer for stock that receipts can never know about — bought pre-app, bought elsewhere,

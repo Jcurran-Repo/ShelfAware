@@ -497,6 +497,88 @@ else
             </section>
             break;
 
+        case "piling-up":
+            <section class="report-section">
+                <h2>What's piling up</h2>
+                @if (backlog is null || backlog.Considered == 0)
+                {
+                    <p class="muted">Nothing has been bought often enough to say yet. An item needs at least
+                        @BacklogSignals.MinPurchases separate buys before it has a rhythm to go quiet against —
+                        keep importing receipts and this fills in.</p>
+                }
+                else if (backlog.Findings.Count == 0)
+                {
+                    <p class="muted">Nothing looks backed up — everything you buy regularly is either still on
+                        its usual rhythm or has run out at least once.
+                        @backlog.Considered item@(backlog.Considered == 1 ? "" : "s") had enough history to check.</p>
+                }
+                else
+                {
+                    <p class="muted">Items you bought like clockwork, then stopped — without ever once reporting
+                        that you ran out. The likeliest reason is that you're still eating through what's in the
+                        cupboard. The app can't see in there, so this reads "worth checking", never "you have six
+                        of these".</p>
+                    <div class="portfolio">
+                        <div class="stat">
+                            <span class="stat-label">Worth checking</span>
+                            <span class="stat-value">@backlog.Findings.Count of @backlog.Considered</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Money in them</span>
+                            <span class="stat-value">@BacklogSpend.ToString("C")</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Ever marked out</span>
+                            <span class="stat-value">@backlog.EverRanOut of @backlog.Considered</span>
+                        </div>
+                    </div>
+
+                    @if (backlog.OutageCoverage < LowOutageCoverage)
+                    {
+                        <p class="muted small">Only @backlog.EverRanOut of @backlog.Considered regularly-bought
+                            items @(backlog.EverRanOut == 1 ? "has" : "have") ever been marked <strong>Out</strong>,
+                            so "never ran out" isn't carrying much weight here — this list is mostly reading your
+                            buying pattern. Marking things out as they run out sharpens both this report and the
+                            run-out predictions.</p>
+                    }
+
+                    <div class="table-scroll">
+                        <table>
+                            <caption class="visually-hidden">Items bought repeatedly, never reported out, and now past their usual rebuy rhythm — most money first.</caption>
+                            <thead>
+                                <tr>
+                                    <th scope="col">Item</th>
+                                    <th scope="col" class="num">Bought</th>
+                                    <th scope="col" class="num">Usually every</th>
+                                    <th scope="col" class="num">Quiet for</th>
+                                    <th scope="col" class="num">Spent</th>
+                                    <th scope="col" class="num">Cooked with</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var row in backlog.Findings)
+                                {
+                                    <tr>
+                                        <td><a href="/product/@row.ProductId">@row.ProductName</a></td>
+                                        <td class="num">@(row.Trips)× over @row.SpanDays d</td>
+                                        <td class="num">~@row.RebuyIntervalDays.ToString("0.#") days</td>
+                                        <td class="num change-up">@row.OverdueDays days over</td>
+                                        <td class="num">@row.Spend.ToString("C")@(row.SpendIncomplete ? "+" : "")</td>
+                                        <td class="num">@(row.RecentMealUses > 0 ? $"{row.RecentMealUses}×" : "—")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <p class="muted small">"Quiet for" is how far past the item's own rebuy rhythm you are without
+                        buying it again. "Cooked with" counts meals from the last @RecentMealWindowDays days whose
+                        recipe lists it as a main ingredient — a sign it's moving, though the log only sees cooking
+                        that went through a saved recipe, so a dash proves nothing. A <strong>+</strong> on the
+                        money means some of that item's purchases had no price, so the figure is a floor.</p>
+                }
+            </section>
+            break;
+
         default: @* report-card *@
             <section class="report-section">
                 <h2>This month</h2>
@@ -616,6 +698,7 @@ else
         ("waist", "Waist watch"),
         ("waste", "Waste watch"),
         ("gap", "The gap report"),
+        ("piling-up", "What's piling up"),
         ("custom", "Custom report"),
     ];
 
@@ -632,6 +715,18 @@ else
     private (string Name, ReportResult Result)? topMoverPrices;
     private List<(int ProductId, string Name, double Burn, double Rebuy, double Gap)> gapRows = [];
 
+    private BacklogReport? backlog;
+    private decimal BacklogSpend => backlog?.Findings.Sum(f => f.Spend) ?? 0;
+
+    /// <summary>How far back "cooked with" looks. Two months is long enough for a fortnightly staple to
+    /// register and short enough to describe what the household is eating NOW.</summary>
+    private const int RecentMealWindowDays = 60;
+
+    /// <summary>Below this share of judgable items having ever been marked Out, the "never ran out" half
+    /// of the backlog check is barely evidence and the report says so. A caveat, not a gate — the other
+    /// half reads buying behaviour, which needs no button.</summary>
+    private const double LowOutageCoverage = 0.25;
+
     private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
     private string ActivePreset =>
         PresetDefs.Any(p => p.Key == Preset) ? Preset! : "report-card";
@@ -640,7 +735,7 @@ else
     {
         "price-watch" => $"{Today.AddMonths(-3):MMM d} – {Today:MMM d, yyyy}",
         "eat" or "waist" => $"{Today.AddMonths(-2):MMM d} – {Today:MMM d, yyyy}",
-        "gap" or "waste" => "all history",
+        "gap" or "waste" or "piling-up" => "all history",
         "custom" when customSpec is { } s => $"{s.From:MMM d} – {s.To:MMM d, yyyy}",
         _ => $"{SixMonthsBack:MMM yyyy} – {Today:MMM yyyy}",
     };
@@ -668,6 +763,7 @@ else
             BuildMealPresets();
         }
         if (ActivePreset == "waste") await BuildWasteRowsAsync();
+        if (ActivePreset == "piling-up" && backlog is null) await BuildBacklogRowsAsync();
         if (ActivePreset == "custom") await EnterCustomAsync();
         loaded = true;
     }
@@ -1089,6 +1185,83 @@ else
             .OrderByDescending(x => x.Gap)
             .ThenBy(x => x.Name)
             .ToList();
+    }
+
+    /// <summary>The backlog check needs full products (purchases + signals) for the same reason the gap
+    /// rows do — the rebuy rhythm comes from the engine, not from a second copy of the median — plus the
+    /// recipe mains behind "cooked with". Loaded only when this preset is actually opened.</summary>
+    private async Task BuildBacklogRowsAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        // Tracked only, like the gap rows. Untracking means "don't want it for a while" — an untracked
+        // item is quiet past its rhythm BY CONSTRUCTION, so including them would re-nag about exactly
+        // what the household asked to stop hearing about.
+        var products = await db.Products.AsNoTracking()
+            .Where(p => p.IsTracked)
+            .Include(p => p.Purchases)
+            .Include(p => p.Signals)
+            .ToListAsync();
+
+        await LoadRecipeMainsAsync();
+        var mealUses = RecentMealUsesByProductName();
+
+        // Money comes from the report facts, priced exactly the way the Spend metric prices it
+        // (ReportEngine.PurchaseValue): unit price × quantity, unpriced purchases counted not guessed.
+        var moneyByProduct = source!.Purchases
+            .GroupBy(f => f.ProductId)
+            .ToDictionary(
+                g => g.Key,
+                g => (Spend: g.Sum(f => (f.Price ?? 0) * f.Quantity),
+                      Quantity: g.Sum(f => f.Quantity),
+                      Unpriced: g.Count(f => f.Price is null)));
+
+        backlog = BacklogSignals.Find(
+            products.Select(p =>
+            {
+                var money = moneyByProduct.GetValueOrDefault(p.Id);
+                return new BacklogInput(
+                    p.Id,
+                    p.Name,
+                    p.Purchases.Select(x => x.PurchasedAt).ToList(),
+                    // DateOnly.FromDateTime(.Date) — the PREDICTOR's convention, deliberately, because
+                    // the cycle pairing this feeds is the predictor's own. A different reading of the
+                    // same instant could pair a cycle here that the engine never sees.
+                    p.Signals.Where(s => s.Kind == SignalKind.OutNow)
+                        .Select(s => DateOnly.FromDateTime(s.SignaledAt.Date)).ToList(),
+                    money.Quantity,
+                    money.Spend,
+                    money.Unpriced,
+                    // Expiration-blind on purpose, like the backtest: this reads the LEARNED rebuy
+                    // rhythm, which a label date never feeds (it only caps a due date).
+                    ReplenishmentPredictor.Predict(p, Today).RebuyIntervalDays,
+                    mealUses.GetValueOrDefault(p.Name));
+            }),
+            Today);
+    }
+
+    /// <summary>Meals in the recent window, counted per main-ingredient product NAME — the same key
+    /// <c>RecipeIngredient.MatchedProduct</c> stores, so the join is a name lookup, not an id one. A
+    /// recipe cooked twice counts twice for each of its mains, once per meal.</summary>
+    private Dictionary<string, int> RecentMealUsesByProductName()
+    {
+        var since = Today.AddDays(-RecentMealWindowDays);
+        var mainsByRecipe = recipeMains.ToDictionary(r => r.RecipeId, r => r.Mains);
+        var uses = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var meal in source!.Meals.Where(m => m.Date >= since))
+        {
+            if (!mainsByRecipe.TryGetValue(meal.RecipeId, out var mains)) continue;
+            foreach (var name in mains
+                .Select(m => m.MatchedProduct)
+                .OfType<string>()
+                .Where(n => n.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                uses[name] = uses.GetValueOrDefault(name) + 1;
+            }
+        }
+
+        return uses;
     }
 
     private decimal RankWidth(decimal total) =>
