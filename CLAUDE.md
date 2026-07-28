@@ -29,6 +29,19 @@ as overkill "because it's single-user."
   and was only caught by running the app. Green tests are not a review. Report the findings and then
   **stop: pushing is Jordan's call, always.**
 
+- **One prediction, one story — never let a screen state something the engine didn't do.** Anything a
+  surface says *about* a prediction must come from the same `PredictionResult` that produced the due
+  date it sits beside. Don't re-derive "is it due" from a median, don't render a factor you computed
+  before the engine clamped it, don't ask `Predict` with different flags than the page next door.
+  **This is a rule because it has been broken four times in one branch** (v4.0's backlog work): a
+  report re-deriving a due date from the rebuy median called an item overdue while its own product
+  page called it Stocked; `StockUpFactor` reported a raw ratio beside a bounded projection, so Product
+  Detail claimed a 500× stretch the engine never made; the backlog check ran expiration-blind while
+  the dashboard didn't; and a row said "1 days over". Every one shipped past a fully green suite, and
+  every one was found by a human noticing two screens disagreeing. **Green tests cannot catch this
+  class** — only asking "where did this number come from, and did the due date beside it come from
+  the same place?" can.
+
 - **Craftsmanship — take pride in every change; no shortcuts.** Always do the polished,
   professional thing, not the quickest thing that happens to pass. Concretely: **no empty
   or catch-all `catch` blocks that swallow errors** — catch specific exceptions, log via
@@ -843,6 +856,14 @@ the same item bought across brands/sizes rolls up into one product.
   `Jcurran-Repo`. Remote: https://github.com/Jcurran-Repo/ShelfAware (public).
 - Shell is Windows PowerShell 5.1 — no `&&`, no ternary; state-probing commands
   (`Get-NetTCPConnection` finding nothing) can exit 1 without being failures.
+- ⚠️ **Never round-trip a source file through PowerShell 5.1 `Get-Content` → `Set-Content`.** Every file
+  in this repo is UTF-8 **without a BOM**, and BOM-less is exactly the case PS 5.1 guesses wrong: it
+  reads as the ANSI codepage and writes back as UTF-8, double-encoding every non-ASCII byte. One
+  bulk-edit of two test files turned every `—` into `â€"` and every `×` into `Ã—` (2026-07-28, caught
+  immediately and reverted from HEAD). This codebase is full of em-dashes, `×`, `≥` and `→` in comments
+  and UI copy, so the damage is wide and a compile won't flag any of it. Use the editing tools for text
+  edits; if a scripted rewrite is genuinely needed, `git diff` it before staging and grep the diff for
+  `â€` / `Ã` as a tripwire.
 - **Commit with a message file:** write the full message (incl. `Co-Authored-By` trailer) to a temp
   file and run `git commit -F <file>` from PowerShell. Multi-line `-m`/heredoc commits via the Bash
   tool silently no-op'd here (staging worked, commit never happened, no error). Commit per task/phase;

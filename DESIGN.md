@@ -247,6 +247,15 @@ Product   + TrackQuantity (bool, default false)      # opt-in; false = today's b
           + QuantityOnHand (decimal?)                 # packages, or the item's own unit for weight items
           + QuantityCountedAt (DateTimeOffset?)       # last HUMAN attestation (§13.1), not last change
 ```
+
+**Owed to this phase: unit labelling, which §13.7 already deferred to it.** The backlog check's Qty
+column renders a **bare number** today, because `TotalQuantity` sums `PurchaseEvent.Quantity` — packages
+for a counted item, a *weight* for a weight item (2.34 lb of beef is one package, not 2.34 of anything)
+— and the honesty lives in the footnote instead of the cell. That was the right call for one column, and
+the wrong shape to keep: §13.1's rule is that display follows `Product.DefaultUnit`. So this phase, which
+adds the counts, is where `DefaultUnit` gets threaded to the surfaces that show a quantity, and the Qty
+column starts saying "4 packages" / "2.34 lb" per row. **Do not build a second unit-formatting rule for
+the count while the report keeps its bare number** — one helper, both surfaces, or the two drift.
 No change-log table in v4.0: purchases and `MealEvent`s are already dated, so every automated path is
 self-documenting and only manual edits are unrecorded. Add the log if the household ever needs to ask
 "why does it say 3?" and can't answer it.
