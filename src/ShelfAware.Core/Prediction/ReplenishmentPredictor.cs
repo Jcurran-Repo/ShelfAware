@@ -287,7 +287,17 @@ public static class ReplenishmentPredictor
     // A stock-up stretches the projection: when the anchor (last stock-back) is a purchase date whose
     // same-day summed quantity is above the typical per-trip quantity, scale the interval by the ratio.
     // Extend-only — buying LESS than usual doesn't shorten the projection (too twitchy on noisy
-    // quantities) — and capped at 3× so one bulk run can't push an item out of sight for a year.
+    // quantities).
+    //
+    // NOT capped (the 3× ceiling was removed 2026-07-28). Buy twelve when you usually buy one and you
+    // have twelve; a ceiling meant the app started asking for more while nine were still in the freezer,
+    // which is the exact behaviour v4.0 exists to stop. Nothing in the data ever justified "3" — it was
+    // a guard against one bulk run silencing an item for a year, and that guard is better served
+    // elsewhere: a DATED item can't stretch past its label either way (the expiration cap is
+    // escalate-only and applies on top of this), so the uncapped range only ever covers undated
+    // non-perishables — precisely the things it IS safe to stay quiet about. The honest limit remains:
+    // this can't tell a freezer stock-up from twenty sodas bought for a party, and neither could the
+    // cap; a real count (§13) is what actually answers it.
     private static double StockUpFactor(IReadOnlyCollection<PurchaseEvent> purchases, DateOnly anchor)
     {
         var totalsByDate = purchases
@@ -297,7 +307,7 @@ public static class ReplenishmentPredictor
         if (!totalsByDate.TryGetValue(anchor, out var lastQty)) return 1.0; // anchor is a restock, not a buy
         var typical = MedianDecimal([.. totalsByDate.Values]);
         if (typical <= 0 || lastQty <= typical) return 1.0;
-        return Math.Min((double)(lastQty / typical), 3.0);
+        return (double)(lastQty / typical);
     }
 
     private static decimal MedianDecimal(List<decimal> values)

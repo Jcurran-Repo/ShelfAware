@@ -97,7 +97,8 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      match to an existing product. Importer holds a static scan lock; failed imports are listed on
      Upload ("couldn't be read") with Retry (re-extracts from the saved audit copy) and Discard.
    - **Engine:** `IntervalSpreadDays` (IQR of the driving samples) widens the DueSoon window;
-     `StockUpFactor` (extend-only, ≤ 3×) stretches the due date after a bigger-than-usual buy;
+     `StockUpFactor` (extend-only, **uncapped since 2026-07-28** — see item 19) stretches the due date
+     after a bigger-than-usual buy;
      same-day signal ties deliberately lose to the purchase (documented + pinned by a test).
    - **`PredictionBacktest` (Core)** — walk-forward self-scoring of the engine, rendered live on
      `/accuracy` next to the extraction eval.
@@ -522,6 +523,25 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      were corrected; don't "simplify" to names-only. Prediction impact of removal needs no code:
      cadences are derived from live PurchaseEvents on every read, so deleted purchases stop
      counting immediately.
+
+19. **The stock-up ceiling is gone (2026-07-28, branch `feature/quantity-on-hand`).** `StockUpFactor`
+   used to be `Math.Min(ratio, 3.0)`. Jordan's call, and right: buy twelve when you usually buy one and
+   you *have* twelve — the ceiling meant the app started asking for more while nine were still in the
+   freezer, which is the exact behaviour v4.0 exists to stop. Nothing in the data ever justified "3".
+   - **What the cap was really guarding, and why it's now redundant.** The comment said "so one bulk run
+     can't push an item out of sight for a year". But a **dated** item can't stretch past its label
+     either way — v3.6's expiration cap is escalate-only and applies on top of the stock-up (pinned by
+     `AStockUp_CannotStretchTheProjectionPastTheLabel`). So the uncapped range only ever covers undated
+     non-perishables, which are precisely the things it IS safe to be quiet about. The risk it removed
+     was concentrated where the risk doesn't live.
+   - **The honest limit that remains, and the cap never fixed:** the engine can't tell a freezer
+     stock-up from twenty sodas bought for a party. A ratio of 20 is right for one and badly wrong for
+     the other, and a ceiling of 3 was merely wrong for both. A real count (DESIGN.md §13) is what
+     actually answers it.
+   - Ripple worth knowing: fixtures tuned around the ceiling had to be re-aged, including the demo
+     seeder's hoard hero. A 6× buy now projects ~84 days on a 14-day rhythm, so the hero's last trip
+     moved to 130 days ago to still read as overdue. **Its dates are load-bearing** — shorten the
+     silence and the grocery list is right to ask again.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

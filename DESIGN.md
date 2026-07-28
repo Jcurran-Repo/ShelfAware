@@ -303,7 +303,8 @@ reason: none of the three conditions is proof. A missing `OutNow` may only mean 
 and a rhythm that stopped may only mean tastes changed.
 
 **Sample data:** the demo seeder's "Beef Chuck Roast" is the hoard hero — bought one at a time, then a
-six-at-once freezer trip, then three months of silence with nothing ever marked out. It exists because
+six-at-once freezer trip, then silence long past even the sixfold stretched projection, with nothing
+ever marked out (its dates are load-bearing; see CLAUDE.md item 19). It exists because
 every other seeded household is well behaved, so this report had no sample data showing the case it was
 built for. `Seeds_a_hoard_hero_so_the_backlog_check_has_something_to_find` asserts the seed really reads
 as a hoard once it's been through the engine, not merely that the rows exist.

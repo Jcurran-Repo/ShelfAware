@@ -350,14 +350,17 @@ public class ReplenishmentPredictorTests
     }
 
     [Fact]
-    public void StockUpFactor_IsCappedAtThree()
+    public void StockUpFactor_ScalesByTheWholeRatio_WithNoCeiling()
     {
+        // The 3× ceiling was removed 2026-07-28: buy twelve when you usually buy one and you HAVE
+        // twelve, so the projection stretches twelvefold. Capping it made the app ask for more while
+        // nine were still in the freezer — the behaviour v4.0 exists to stop.
         var product = ProductWithQuantities((0, 1), (10, 1), (20, 12));
 
         var r = ReplenishmentPredictor.Predict(product, D(25));
 
-        Assert.Equal(3.0, r.StockUpFactor);
-        Assert.Equal(D(50), r.DueDate); // capped: not D(20) + 120
+        Assert.Equal(12.0, r.StockUpFactor);
+        Assert.Equal(D(140), r.DueDate); // D(20) + floor(10 × 12), not the old D(50)
     }
 
     [Fact]

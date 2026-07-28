@@ -97,8 +97,8 @@ public class ReportDataServiceTests
     {
         // THE REGRESSION, at the layer it actually shipped in. Last bought 20 days ago on a 14-day
         // rebuy rhythm, so "days since last buy > rebuy median" says overdue — but the buy was 6× the
-        // usual, StockUpFactor stretched the due date (capped at 3× → 42 days), and the engine says it
-        // isn't due for another three weeks. Asking the engine is the only thing that gets this right.
+        // usual, so StockUpFactor stretched the projection to ~84 days and the engine says it isn't due
+        // for another two months. Asking the engine is the only thing that gets this right.
         using var db = new TestDb();
         await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(lastBuyDaysAgo: 20, bulkQty: 6));
 
@@ -115,7 +115,7 @@ public class ReportDataServiceTests
         // Same shape, three months older: the 3× stretch has run out, so the grocery list is asking for
         // a roast the freezer may still be full of. That's the finding.
         using var db = new TestDb();
-        await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(lastBuyDaysAgo: 88, bulkQty: 6));
+        await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(lastBuyDaysAgo: 130, bulkQty: 6));
 
         var service = new ReportDataService(db);
         var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, 60);
@@ -133,7 +133,7 @@ public class ReportDataServiceTests
         // Untracking means "don't want it for a while", so it's quiet past its rhythm by construction —
         // listing it would re-nag about exactly what the household asked to stop hearing about.
         using var db = new TestDb();
-        await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(88, 6), tracked: false);
+        await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(130, 6), tracked: false);
 
         var service = new ReportDataService(db);
         var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, 60);
@@ -148,7 +148,7 @@ public class ReportDataServiceTests
         using var db = new TestDb();
         // 137 days ago sits BETWEEN the buys at 144 and 130, so it closes a cycle. (On the same day as a
         // buy it wouldn't: same-day ties go to the purchase, which is the engine's documented rule.)
-        await SeedProductAsync(db, "Ground Coffee", StockUpHistory(88, 6), outageDaysAgo: [137]);
+        await SeedProductAsync(db, "Ground Coffee", StockUpHistory(130, 6), outageDaysAgo: [137]);
 
         var service = new ReportDataService(db);
         var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, 60);
@@ -164,7 +164,7 @@ public class ReportDataServiceTests
         // The Spend metric's rule (ReportEngine.PurchaseValue). Ten packages at $10 is $100, and a
         // report that quoted $10 would understate the money sitting in the freezer tenfold.
         using var db = new TestDb();
-        await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(88, 6), unitPrice: 10m);
+        await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(130, 6), unitPrice: 10m);
 
         var service = new ReportDataService(db);
         var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, 60);
@@ -179,7 +179,7 @@ public class ReportDataServiceTests
     public async Task An_unpriced_purchase_marks_the_spend_as_a_floor()
     {
         using var db = new TestDb();
-        await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(88, 6)); // no receipt lines at all
+        await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(130, 6)); // no receipt lines at all
 
         var service = new ReportDataService(db);
         var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, 60);
@@ -193,7 +193,7 @@ public class ReportDataServiceTests
         // The join that isn't obvious: recipes point at products by NAME (RecipeIngredient.MatchedProduct),
         // not by id, and each meal counts once per main ingredient. The window is the caller's.
         using var db = new TestDb();
-        var roast = await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(88, 6));
+        var roast = await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(130, 6));
 
         await using (var ctx = db.CreateDbContext())
         {
