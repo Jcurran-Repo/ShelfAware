@@ -14,7 +14,7 @@ public static class PantryOnHand
         products.Where(p =>
             p.IsTracked &&
             p.Category.IsEdible() &&
-            ReplenishmentPredictor.Predict(p, today, honorExpirations).Status != PredictionStatus.Overdue);
+            ReplenishmentPredictor.Predict(p, today, honorExpirations, honorQuantity: true).Status != PredictionStatus.Overdue);
 
     /// <summary>The other side of the same rule: tracked, edible products the engine thinks you've RUN OUT
     /// of. These are exactly the items <see cref="EdibleInStock"/> silently drops — surfaced so a recipe
@@ -25,7 +25,7 @@ public static class PantryOnHand
         products.Where(p =>
             p.IsTracked &&
             p.Category.IsEdible() &&
-            ReplenishmentPredictor.Predict(p, today, honorExpirations).Status == PredictionStatus.Overdue);
+            ReplenishmentPredictor.Predict(p, today, honorExpirations, honorQuantity: true).Status == PredictionStatus.Overdue);
 
     /// <summary>The third way a covering product can be invisible: edible but UNTRACKED. Untracked items
     /// are excluded from on-hand and run-out alike (the engine isn't allowed to watch them), which

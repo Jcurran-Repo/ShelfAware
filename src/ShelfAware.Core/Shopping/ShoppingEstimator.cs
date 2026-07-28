@@ -22,6 +22,19 @@ public record ProductEstimate
     /// <summary>Days until the predicted run-out; negative means overdue. Null when status is Unknown.</summary>
     public int? DaysUntil { get; init; }
 
+    /// <summary>This item is Stocked because the household COUNTED it, not because its rhythm says so
+    /// (§13.5). A list has to say which: the due date is deliberately left untouched by suppression, so
+    /// a row would otherwise read "Stocked · 3 days overdue" and contradict itself. Caught by running
+    /// it — the numbers were right and the sentence they formed together wasn't.</summary>
+    public bool SuppressedByCount { get; init; }
+
+    /// <summary>How much was counted, for the row that explains the suppression above.</summary>
+    public decimal? CountOnHand { get; init; }
+
+    /// <summary>The product's declared unit, so a count renders through
+    /// <see cref="QuantityFormat.Describe"/> rather than as a bare number ("2.34 lb", not "2.34").</summary>
+    public string? DefaultUnit { get; init; }
+
     /// <summary>The statistical typical (median) purchase quantity — kept for analysis. For a shopping
     /// number, prefer <see cref="RecommendedQuantity"/>.</summary>
     public decimal TypicalQuantity { get; init; } = 1m;
@@ -85,6 +98,9 @@ public static class ShoppingEstimator
             LastPurchased = purchaseDates.Count > 0 ? purchaseDates.Max() : null,
             NextBuyDate = prediction.DueDate,
             DaysUntil = prediction.DueDate is { } due ? due.DayNumber - today.DayNumber : null,
+            SuppressedByCount = prediction.SuppressedByCount,
+            CountOnHand = prediction.SuppressedByCount ? product.QuantityOnHand : null,
+            DefaultUnit = product.DefaultUnit,
             TypicalQuantity = typicalQuantity,
             RecommendedQuantity = recommendedQuantity,
             UnitPrice = unitPrice,

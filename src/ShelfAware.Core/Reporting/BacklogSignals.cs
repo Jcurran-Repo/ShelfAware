@@ -26,10 +26,17 @@ namespace ShelfAware.Core.Reporting;
 /// <param name="DefaultUnit">The product's declared unit, or null. Carried so the report can say
 /// "2.34 lb" rather than a bare number — see <see cref="Shopping.QuantityFormat"/>, and note that null
 /// means UNKNOWN, not "packages".</param>
+/// <param name="AlreadyCounted">Whether the household counts this item. Such a product is out of scope
+/// here entirely: this report exists to NAME things worth counting, and once one is counted the count
+/// answers the question better than any inference over purchase history could. Leaving it in also read
+/// as a contradiction — the engine was suppressing its buy recommendation while this list went on
+/// calling it "due for a rebuy", because the check reads DueDate and suppression deliberately doesn't
+/// move it.</param>
 public sealed record BacklogInput(
     int ProductId,
     string ProductName,
     string? DefaultUnit,
+    bool AlreadyCounted,
     IReadOnlyList<DateOnly> PurchaseDates,
     IReadOnlyList<DateOnly> OutageDates,
     decimal TotalQuantity,
@@ -113,6 +120,11 @@ public static class BacklogSignals
 
         foreach (var input in inputs)
         {
+            // Already counted → not a candidate, and not part of the denominator either: this report
+            // measures how many judgable items are worth a look, and one with a real count isn't
+            // waiting on a look. (§13.5's suppression is why it also must not appear as "due".)
+            if (input.AlreadyCounted) continue;
+
             var dates = input.PurchaseDates.Distinct().OrderBy(d => d).ToList();
             if (dates.Count < MinPurchases) continue;
             considered++;

@@ -240,11 +240,12 @@ public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
                 // the dashboard shows" footnote false for exactly the households that opted in.
                 // Unlike the BACKTEST, which stays blind on purpose: that one grades the learned
                 // rhythm, and a label is not a thing the rhythm predicted.
-                var prediction = ReplenishmentPredictor.Predict(p, today, honorExpirations);
+                var prediction = ReplenishmentPredictor.Predict(p, today, honorExpirations, honorQuantity: true);
                 return new BacklogInput(
                     p.Id,
                     p.Name,
                     p.DefaultUnit,
+                    AlreadyCounted: p.TrackQuantity,
                     p.Purchases.Select(x => x.PurchasedAt).ToList(),
                     // SignalDate.Of — the one reading, shared with the engine. The cycle pairing this
                     // feeds is the predictor's own, so a different reading of the same instant could

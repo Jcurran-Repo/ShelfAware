@@ -133,7 +133,7 @@ else
         var trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
         var all = products.Select(p =>
         {
-            var prediction = ReplenishmentPredictor.Predict(p, today, trackExpirations);
+            var prediction = ReplenishmentPredictor.Predict(p, today, trackExpirations, honorQuantity: true);
             return ShoppingEstimator.For(p, prediction, today, prices.PriceFor(p.Id, prediction.RecommendedSize));
         }).ToList();
 
@@ -206,10 +206,20 @@ else
                             <td>@e.Category</td>
                             <td><span class="chip chip-@ChipClass(e.Status)">@StatusLabel(e.Status)</span></td>
                             <td>
-                                @(e.NextBuyDate is { } d ? d.ToString("MMM d") : "—")
-                                @if (e.DaysUntil is { } du)
+                                @if (e.SuppressedByCount)
                                 {
-                                    <span class="muted"> (@Relative(du))</span>
+                                    @* The due date is deliberately left untouched by suppression, so
+                                       printing it raw here would read "Stocked · 3 days overdue" on one
+                                       row. Say what's actually holding it back instead. *@
+                                    <span>You have @QuantityFormat.Describe(e.CountOnHand ?? 0, e.DefaultUnit)</span>
+                                }
+                                else
+                                {
+                                    @(e.NextBuyDate is { } d ? d.ToString("MMM d") : "—")
+                                    @if (e.DaysUntil is { } du)
+                                    {
+                                        <span class="muted"> (@Relative(du))</span>
+                                    }
                                 }
                             </td>
                             <td>@e.RecommendedQuantity.ToString("0.##")</td>

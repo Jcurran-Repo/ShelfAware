@@ -221,7 +221,7 @@ else
 
         today = DateOnly.FromDateTime(DateTime.Today);
         var trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
-        predictions = products.ToDictionary(p => p.Id, p => ReplenishmentPredictor.Predict(p, today, trackExpirations));
+        predictions = products.ToDictionary(p => p.Id, p => ReplenishmentPredictor.Predict(p, today, trackExpirations, honorQuantity: true));
 
         // Running Low = Overdue + DueSoon, signal-pinned first, then most overdue first (§8).
         runningLow = products

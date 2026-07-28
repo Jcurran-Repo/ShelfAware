@@ -153,7 +153,7 @@ else
         var trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
         foreach (var p in products.Where(p => p.IsTracked))
         {
-            var prediction = ReplenishmentPredictor.Predict(p, today, trackExpirations);
+            var prediction = ReplenishmentPredictor.Predict(p, today, trackExpirations, honorQuantity: true);
             if (prediction.MedianIntervalDays is not { } m || prediction.DueDate is not { } due) continue;
             // Price the size we'd actually tell the user to buy (same idea as the grocery list),
             // falling back to the all-sizes average when that size has no priced line.

@@ -210,7 +210,7 @@ public class AnthropicPantryChat : IPantryChat
                 if (string.IsNullOrWhiteSpace(name))
                 {
                     var low = products.Where(p => p.IsTracked)
-                        .Select(p => ReplenishmentPredictor.Predict(p, today, trackExpirations))
+                        .Select(p => ReplenishmentPredictor.Predict(p, today, trackExpirations, honorQuantity: true))
                         .Where(r => r.Status is PredictionStatus.Overdue or PredictionStatus.DueSoon)
                         .OrderByDescending(r => r.Status)
                         .ToList();
@@ -223,7 +223,7 @@ public class AnthropicPantryChat : IPantryChat
 
                 var product = ProductMatcher.Resolve(name, products);
                 if (product is null) return ($"No product matches \"{name}\".", true);
-                var pr = ReplenishmentPredictor.Predict(product, today, trackExpirations);
+                var pr = ReplenishmentPredictor.Predict(product, today, trackExpirations, honorQuantity: true);
                 var due = pr.DueDate is { } dd ? $", due {dd:yyyy-MM-dd}" : "";
                 var expiry = pr.Expired ? $" It expired {pr.ExpiresOn:yyyy-MM-dd}, so it's marked out."
                     : pr.ExpirationOverridden ? $" Its label expired {pr.ExpiresOn:yyyy-MM-dd}, but the user marked it Restocked afterward — trust them."
@@ -267,6 +267,38 @@ public class AnthropicPantryChat : IPantryChat
                 return (expiresOn is { } e
                     ? $"Noted — {product.Name} expires {e:yyyy-MM-dd}; after that date it's marked out automatically."
                     : $"Cleared the expiration date on {product.Name}.", false);
+            }
+
+            case "set_quantity":
+            {
+                var name = Str("product_name");
+                var product = ProductMatcher.Resolve(name, products);
+                if (product is null) return ($"No product matches \"{name}\".", true);
+
+                if (Bool("stop_counting") == true)
+                {
+                    await _store.SetQuantityAsync(product.Id, 0, stopCounting: true, cancellationToken: ct);
+                    actions.Add($"stopped counting {product.Name}");
+                    return ($"Stopped counting {product.Name} — it goes back to running on its usual rhythm.", false);
+                }
+
+                // A relative move ("used two") needs something to be relative TO. Refusing beats
+                // inventing a baseline: a count nobody established isn't zero, it's unknown.
+                var relative = Bool("relative") == true;
+                if (Dec("quantity") is not { } quantity)
+                    return ("How many? Pass a quantity.", true);
+                if (!await _store.SetQuantityAsync(product.Id, quantity, relative, cancellationToken: ct))
+                    return relative
+                        ? ($"{product.Name} has no count yet to adjust — say how many there are and I'll start from that.", true)
+                        : ($"Couldn't set a count for {product.Name}.", true);
+
+                actions.Add($"count → {product.Name}");
+                // Deliberately not echoing a computed total for a relative move: this method doesn't
+                // read the result back, and stating a number the engine might have clamped would be
+                // exactly the "screen says something the engine didn't do" mistake.
+                return (relative
+                    ? $"Noted — adjusted what's on hand for {product.Name}."
+                    : $"Noted — {product.Name}: {quantity:0.##} on hand.", false);
             }
 
             case "create_product":
@@ -557,6 +589,18 @@ public class AnthropicPantryChat : IPantryChat
                 {
                   "product_name": { "type": "string", "description": "Canonical product name from the list." },
                   "expires_on": { "type": "string", "description": "The labeled date as YYYY-MM-DD (resolve relative dates like 'Friday' to a concrete date first). Omit to clear the recorded date." }
+                }
+                """,
+                ["product_name"]),
+
+            MakeTool("set_quantity",
+                "Record how much of a product is on hand ('we have six roasts left', 'used two cans'). This is a COUNT of what's on the shelf, not a purchase — use add_purchase for buying. Setting a count to 0 records that the item ran out. Pass relative=true for a change rather than a total, and stop_counting=true to stop tracking the number at all.",
+                """
+                {
+                  "product_name": { "type": "string", "description": "Canonical product name from the list." },
+                  "quantity": { "type": "number", "description": "The total on hand, or the change when relative is true (negative for used)." },
+                  "relative": { "type": "boolean", "description": "True when quantity is a change ('used two' → -2) rather than the total." },
+                  "stop_counting": { "type": "boolean", "description": "True to stop counting this product entirely." }
                 }
                 """,
                 ["product_name"]),

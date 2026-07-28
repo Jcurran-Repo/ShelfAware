@@ -209,6 +209,65 @@ else
     }
 
     <section class="panel">
+        <h2>How many you have</h2>
+        @if (product.TrackQuantity && product.QuantityOnHand is { } onHand)
+        {
+            <p>
+                <strong>@QuantityFormat.Describe(onHand, product.DefaultUnit)</strong> on hand
+                @if (product.QuantityCountedAt is { } counted)
+                {
+                    <span class="muted">· you last counted @counted.LocalDateTime.ToString("MMM d, yyyy")</span>
+                }
+            </p>
+            @if (prediction.SuppressedByCount)
+            {
+                <p class="muted">Not on the grocery list because of this count — its rhythm would otherwise
+                    have asked for it @(prediction.DueDate is { } askedOn ? $"on {askedOn:MMM d}" : "by now").</p>
+            }
+            else if (prediction.CountLooksStale)
+            {
+                <p class="error">That count is older than it should have lasted — by this item's own rhythm
+                    it would be gone by now, so it's back on the list. <strong>Still got some?</strong>
+                    Set the number again and it'll be believed afresh.</p>
+            }
+            else if (onHand == 0)
+            {
+                <p class="muted">Down to none. If that's right, say so and it counts as running out (which
+                    is what teaches the burn rate) — otherwise correct the number.</p>
+            }
+        }
+        else
+        {
+            <p class="muted">Not counted. Enter a number and Shelf Aware keeps it up to date from your
+                receipts — and stops asking you to buy more while you still have some.</p>
+        }
+
+        <div class="tag-add">
+            <input type="number" step="0.01" min="0" @bind="editQuantity"
+                   aria-label="How many @product.Name you have" />
+            <button type="button" @onclick="SaveQuantity" disabled="@quantityBusy">
+                @(quantityBusy ? "Saving…" : "Set count")
+            </button>
+            @if (product.TrackQuantity && product.QuantityOnHand is > 0)
+            {
+                <button type="button" class="secondary" @onclick="() => AdjustQuantity(-1)" disabled="@quantityBusy"
+                        title="Used one">−1</button>
+            }
+            @if (product.TrackQuantity)
+            {
+                <button type="button" class="secondary" @onclick="StopCounting" disabled="@quantityBusy">Stop counting</button>
+            }
+        </div>
+        <p class="muted small">A count is what you saw on the shelf. Receipts add to it and cooking takes
+            from it, but only you can say what's actually there — so when it drifts, Shelf Aware asks
+            rather than guessing.</p>
+        @if (quantityError is not null)
+        {
+            <p class="error" role="alert">@quantityError</p>
+        }
+    </section>
+
+    <section class="panel">
         <h2>Also works as</h2>
         <p class="muted">Recipe ingredients this can stand in for — so a recipe stays specific (real cook times) but still counts what you have. Editable.</p>
         <div class="tag-list">
@@ -413,7 +472,10 @@ else
 
         var today = DateOnly.FromDateTime(DateTime.Today);
         trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
-        prediction = ReplenishmentPredictor.Predict(product, today, trackExpirations);
+        // honorQuantity: true — this page is where a count is set, so it must show what that count is
+        // actually doing to the prediction sitting beside it.
+        prediction = ReplenishmentPredictor.Predict(product, today, trackExpirations, honorQuantity: true);
+        editQuantity = product.QuantityOnHand;
         editExpiration = prediction.ExpiresOn; // the panel's date input starts at the governing date
         expirationError = null;
 
@@ -664,6 +726,48 @@ else
             }
         }
         finally { expirationBusy = false; }
+    }
+
+    // Counting. Every write goes through the ONE path (IPantryStore.SetQuantityAsync — the same method
+    // the set_quantity chat tool uses) so §13.4's rule that only a HUMAN'S zero writes an OutNow can't
+    // drift between surfaces. A save reloads the page state, so the count, the status chip and the
+    // suppression note all move together.
+    private decimal? editQuantity;
+    private bool quantityBusy;
+    private string? quantityError;
+
+    private Task SaveQuantity() => ApplyQuantityAsync(editQuantity ?? 0, relative: false);
+
+    /// <summary>"Used one" — one tap off the shelf. Relative and human-attested, which is the difference
+    /// between this and an "Ate it" decrement: the person is looking at the cupboard, so their zero
+    /// counts as running out.</summary>
+    private Task AdjustQuantity(decimal delta) => ApplyQuantityAsync(delta, relative: true);
+
+    private Task StopCounting() => ApplyQuantityAsync(0, relative: false, stop: true);
+
+    private async Task ApplyQuantityAsync(decimal value, bool relative, bool stop = false)
+    {
+        if (product is null || quantityBusy) return;
+        quantityBusy = true;
+        quantityError = null;
+        try
+        {
+            if (await Store.SetQuantityAsync(product.Id, value, relative, stop))
+            {
+                loadedId = null; // force the OnParametersSet load to run again for this product
+                await OnParametersSetAsync();
+            }
+            else
+            {
+                quantityError = "Couldn't save — set a starting count before adjusting it up or down.";
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogError(ex, "Setting quantity for product {ProductId} failed.", product.Id);
+            quantityError = "That didn't save. Reload the page and try again.";
+        }
+        finally { quantityBusy = false; }
     }
 
     // "Also works as" editing. Each change persists immediately and reloads the list (so removes have ids).

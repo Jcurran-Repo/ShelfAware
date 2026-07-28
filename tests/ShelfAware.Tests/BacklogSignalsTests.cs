@@ -24,9 +24,10 @@ public class BacklogSignalsTests
         double? rebuy = 13.5,
         DateOnly? due = null,
         string? unit = null,
+        bool alreadyCounted = false,
         int meals = 0) =>
-        new(id, name, unit, buys ?? [Day(1), Day(14), Day(28)], outages ?? [], quantity, spend, unpriced,
-            rebuy, due ?? Day(41), meals);
+        new(id, name, unit, alreadyCounted, buys ?? [Day(1), Day(14), Day(28)], outages ?? [], quantity,
+            spend, unpriced, rebuy, due ?? Day(41), meals);
 
     private static BacklogReport Find(params BacklogInput[] inputs) => BacklogSignals.Find(inputs, Today);
 
@@ -41,6 +42,19 @@ public class BacklogSignalsTests
         Assert.Equal(Day(1), finding.FirstBought);
         Assert.Equal(Day(28), finding.LastBought);
         Assert.Equal(1, report.Considered);
+    }
+
+    [Fact]
+    public void An_item_you_already_count_is_out_of_scope_entirely()
+    {
+        // This report's job is to NAME things worth counting; once one is counted, the count answers the
+        // question better than any inference over purchase history. Leaving it in also contradicted the
+        // engine, which was already suppressing that item's buy recommendation while this list went on
+        // calling it "due for a rebuy" — the check reads DueDate, and suppression doesn't move it.
+        var report = Find(Item(alreadyCounted: true));
+
+        Assert.Empty(report.Findings);
+        Assert.Equal(0, report.Considered); // not a candidate, so not in the denominator either
     }
 
     [Fact]

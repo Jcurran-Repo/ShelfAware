@@ -353,7 +353,7 @@ else
 
         var today = DateOnly.FromDateTime(DateTime.Today);
         var trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
-        predictions = products.ToDictionary(p => p.Id, p => ReplenishmentPredictor.Predict(p, today, trackExpirations));
+        predictions = products.ToDictionary(p => p.Id, p => ReplenishmentPredictor.Predict(p, today, trackExpirations, honorQuantity: true));
         estimates = products.ToDictionary(
             p => p.Id,
             p => ShoppingEstimator.For(p, predictions[p.Id], today, prices.PriceFor(p.Id, predictions[p.Id].RecommendedSize)));
