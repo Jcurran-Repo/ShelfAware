@@ -223,12 +223,18 @@ public static class ReplenishmentPredictor
         return MedianWithTrim(intervals);
     }
 
-    // Burn rate: for each purchase, the days to the FIRST outage after it (before the next purchase) — one
-    // cycle per purchase. Median of those cycles. Needs ≥2 completed cycles; null otherwise. Restocks are
-    // ignored here too — only a real purchase starts a burn cycle.
-    private static Rhythm? BurnRate(IReadOnlyList<DateOnly> purchaseDates, IReadOnlyList<DateOnly> outageDates)
+    /// <summary>Every COMPLETED burn cycle: for each purchase, the days to the first outage after it and
+    /// before the next purchase — one cycle per purchase. Restocks are ignored here too; only a real
+    /// purchase starts a cycle.
+    /// <para>Public because "has this item EVER actually run out?" is a question from outside the
+    /// prediction path — v4.0's backlog check (DESIGN.md §13.7) reads the COUNT, where
+    /// <see cref="PredictionResult.BurnRateDays"/> can't answer it (that stays null at one cycle as
+    /// well as none). There must be exactly one definition of a completed cycle, so this is it.</para>
+    /// Expects <paramref name="purchaseDates"/> distinct + ascending and <paramref name="outageDates"/>
+    /// ascending, as <see cref="Predict"/> and <see cref="Reporting.BacklogSignals"/> both prepare them.</summary>
+    public static IReadOnlyList<int> BurnCycles(IReadOnlyList<DateOnly> purchaseDates, IReadOnlyList<DateOnly> outageDates)
     {
-        if (purchaseDates.Count == 0 || outageDates.Count == 0) return null;
+        if (purchaseDates.Count == 0 || outageDates.Count == 0) return [];
 
         var cycles = new List<int>();
         for (var i = 0; i < purchaseDates.Count; i++)
@@ -242,7 +248,14 @@ public static class ReplenishmentPredictor
             if (outage is { } o) cycles.Add(o.DayNumber - start.DayNumber);
         }
 
-        return cycles.Count >= 2 ? MedianWithTrim(cycles) : null;
+        return cycles;
+    }
+
+    // Burn rate: the median of the completed cycles. Needs ≥2 of them; null otherwise.
+    private static Rhythm? BurnRate(IReadOnlyList<DateOnly> purchaseDates, IReadOnlyList<DateOnly> outageDates)
+    {
+        var cycles = BurnCycles(purchaseDates, outageDates);
+        return cycles.Count >= 2 ? MedianWithTrim([.. cycles]) : null;
     }
 
     private static Rhythm MedianWithTrim(List<int> intervals)
