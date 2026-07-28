@@ -13,6 +13,153 @@ public class EfPantryStoreTests : IDisposable
 
     public void Dispose() => _db.Dispose();
 
+    /// <summary>A counted product with an established count and one recorded purchase.</summary>
+    private async Task<(int ProductId, int PurchaseId)> CountedWithPurchase(decimal onHand, decimal bought)
+    {
+        await using var db = _db.CreateDbContext();
+        var product = new Product
+        {
+            Name = "Beef Chuck Roast",
+            Category = Category.Meat,
+            TrackQuantity = true,
+            QuantityOnHand = onHand,
+            QuantityCountedAt = new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero),
+        };
+        db.Products.Add(product);
+        await db.SaveChangesAsync();
+        var purchase = new PurchaseEvent
+        {
+            ProductId = product.Id,
+            PurchasedAt = new DateOnly(2026, 7, 1),
+            Quantity = bought,
+            Source = PurchaseSource.Receipt,
+        };
+        db.PurchaseEvents.Add(purchase);
+        await db.SaveChangesAsync();
+        return (product.Id, purchase.Id);
+    }
+
+    private async Task<Product> Reload(int productId)
+    {
+        await using var db = _db.CreateDbContext();
+        return await db.Products.AsNoTracking().SingleAsync(p => p.Id == productId);
+    }
+
+    [Fact]
+    public async Task Correcting_a_purchase_moves_the_count_by_the_difference()
+    {
+        // §13.6: a misread 12 that should have been 2 takes ten off the shelf as well as the history.
+        // Fixing one and not the other would just relocate the error.
+        var (productId, purchaseId) = await CountedWithPurchase(onHand: 14, bought: 12);
+
+        Assert.True(await _store.SetPurchaseQuantityAsync(purchaseId, 2));
+
+        var product = await Reload(productId);
+        Assert.Equal(4m, product.QuantityOnHand);
+        // NOT an attestation: the person corrected what the RECEIPT said, not what they can see, so the
+        // staleness check keeps measuring from their last real look.
+        Assert.Equal(new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero), product.QuantityCountedAt);
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(2m, (await db.PurchaseEvents.AsNoTracking().SingleAsync(p => p.Id == purchaseId)).Quantity);
+    }
+
+    [Fact]
+    public async Task Correcting_upward_adds_the_difference()
+    {
+        var (productId, purchaseId) = await CountedWithPurchase(onHand: 3, bought: 1);
+
+        Assert.True(await _store.SetPurchaseQuantityAsync(purchaseId, 4));
+
+        Assert.Equal(6m, (await Reload(productId)).QuantityOnHand);
+    }
+
+    [Fact]
+    public async Task A_purchase_of_none_is_refused_rather_than_clamped()
+    {
+        // Silently turning a typed 0 into 1 is how the app would start disagreeing with the person who
+        // typed it. Removing a purchase entirely is the receipt's job.
+        var (productId, purchaseId) = await CountedWithPurchase(onHand: 5, bought: 2);
+
+        Assert.False(await _store.SetPurchaseQuantityAsync(purchaseId, 0));
+        Assert.False(await _store.SetPurchaseQuantityAsync(purchaseId, -3));
+
+        Assert.Equal(5m, (await Reload(productId)).QuantityOnHand); // untouched
+    }
+
+    [Fact]
+    public async Task Correcting_a_purchase_on_an_uncounted_product_only_fixes_the_history()
+    {
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Products.Add(new Product { Name = "Bananas", Category = Category.Produce });
+            await db.SaveChangesAsync();
+        }
+        int productId, purchaseId;
+        await using (var db = _db.CreateDbContext())
+        {
+            productId = (await db.Products.SingleAsync(p => p.Name == "Bananas")).Id;
+            var purchase = new PurchaseEvent
+            {
+                ProductId = productId,
+                PurchasedAt = new DateOnly(2026, 7, 1),
+                Quantity = 9,
+                Source = PurchaseSource.Receipt,
+            };
+            db.PurchaseEvents.Add(purchase);
+            await db.SaveChangesAsync();
+            purchaseId = purchase.Id;
+        }
+
+        Assert.True(await _store.SetPurchaseQuantityAsync(purchaseId, 3));
+
+        Assert.Null((await Reload(productId)).QuantityOnHand); // never opted in, still unknown
+        await using var read = _db.CreateDbContext();
+        Assert.Equal(3m, (await read.PurchaseEvents.AsNoTracking().SingleAsync(p => p.Id == purchaseId)).Quantity);
+    }
+
+    [Fact]
+    public async Task A_human_setting_the_count_to_zero_records_running_out()
+    {
+        // §13.4 through the real store: a person's zero writes the OutNow the burn rate learns from.
+        var (productId, _) = await CountedWithPurchase(onHand: 2, bought: 2);
+
+        Assert.True(await _store.SetQuantityAsync(productId, 0));
+
+        await using var db = _db.CreateDbContext();
+        var signal = Assert.Single(await db.InventorySignals.Where(s => s.ProductId == productId).ToListAsync());
+        Assert.Equal(SignalKind.OutNow, signal.Kind);
+    }
+
+    [Fact]
+    public async Task A_count_above_zero_records_no_outage()
+    {
+        var (productId, _) = await CountedWithPurchase(onHand: 2, bought: 2);
+
+        Assert.True(await _store.SetQuantityAsync(productId, 5));
+
+        await using var db = _db.CreateDbContext();
+        Assert.Empty(await db.InventorySignals.Where(s => s.ProductId == productId).ToListAsync());
+    }
+
+    [Fact]
+    public async Task A_relative_move_refuses_against_a_count_that_was_never_established()
+    {
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Products.Add(new Product { Name = "Rice", Category = Category.Pantry, TrackQuantity = true });
+            await db.SaveChangesAsync();
+        }
+        int riceId;
+        await using (var db = _db.CreateDbContext())
+        {
+            riceId = (await db.Products.SingleAsync(p => p.Name == "Rice")).Id;
+        }
+
+        // "Used two" needs something to be relative TO; inventing a baseline is the error §13.2 avoids.
+        Assert.False(await _store.SetQuantityAsync(riceId, -2, relative: true));
+        Assert.Null((await Reload(riceId)).QuantityOnHand);
+    }
+
     [Fact]
     public async Task Adding_a_purchase_retracks_an_ignored_product_and_reports_it()
     {

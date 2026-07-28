@@ -37,6 +37,14 @@ public interface IPantryStore
     /// the product has no purchases to carry a date.</summary>
     Task<bool> SetExpirationAsync(int productId, DateOnly? expiresOn, CancellationToken cancellationToken = default);
 
+    /// <summary>Correct a recorded purchase's quantity (§13.6) — a misread receipt line, typically. THE
+    /// write path for it, because the correction has to move the on-hand count by the DIFFERENCE too:
+    /// fixing the history and leaving the shelf wrong would just relocate the error. Refuses a
+    /// non-positive quantity rather than clamping — this is a number a person typed on purpose, and
+    /// silently changing it is how the app would start disagreeing with them.</summary>
+    Task<bool> SetPurchaseQuantityAsync(
+        int purchaseId, decimal quantity, CancellationToken cancellationToken = default);
+
     /// <summary>THE write path for a human's count (§13.3). Shared by the product page, the one-tap
     /// adjusters and the <c>set_quantity</c> tool, because §13.4's asserted-zero rule has to hold on
     /// every road in: a person saying "none left" writes a real OutNow, and only a person's does.

@@ -376,7 +376,23 @@ else
                         <tr>
                             <td>@h.Date.ToString("MMM d, yyyy")</td>
                             <td>@(h.GapDays is { } g ? $"{g} day{(g == 1 ? "" : "s")}" : "—")</td>
-                            <td>@h.Quantity.ToString("0.##")</td>
+                            <td>
+                                @if (editingPurchaseId == h.Id)
+                                {
+                                    <input type="number" step="0.01" min="0.01" @bind="editPurchaseQuantity"
+                                           aria-label="Corrected quantity for the @h.Date.ToString("MMM d") purchase" size="4" />
+                                    <button type="button" @onclick="SavePurchaseQuantity" disabled="@purchaseBusy">Save</button>
+                                    <button type="button" class="secondary" @onclick="() => editingPurchaseId = null"
+                                            disabled="@purchaseBusy">Cancel</button>
+                                }
+                                else
+                                {
+                                    <button type="button" class="linkish" @onclick="() => EditPurchase(h)"
+                                            title="Correct the quantity recorded for this purchase">
+                                        @h.Quantity.ToString("0.##") ✏️
+                                    </button>
+                                }
+                            </td>
                             <td>@(SizeFormat.Normalize(h.Size) is { Length: > 0 } s ? s : "—")</td>
                             <td>@(h.Variety is { Length: > 0 } v ? v : "—")</td>
                             <td>@(h.UnitPrice is { } up ? up.ToString("C") : "—")</td>
@@ -384,6 +400,13 @@ else
                     }
                 </tbody>
             </table>
+            <p class="muted small">Tap a quantity to correct a misread line. The receipt itself keeps what
+                was read — this is the pantry's record, not the receipt's — and correcting a quantity also
+                moves what's on hand by the difference.</p>
+            @if (purchaseError is not null)
+            {
+                <p class="error" role="alert">@purchaseError</p>
+            }
         }
     </section>
 }
@@ -408,7 +431,49 @@ else
     private const string Unbranded = "Unbranded";
     private const string Unlabeled = "Unlabeled";
 
-    private record PurchaseRow(DateOnly Date, int? GapDays, decimal Quantity, string? Size, string? Variety, decimal? UnitPrice);
+    private record PurchaseRow(int Id, DateOnly Date, int? GapDays, decimal Quantity, string? Size, string? Variety, decimal? UnitPrice);
+
+    // Correcting a recorded quantity (§13.6) — a misread receipt line is otherwise uncorrectable short
+    // of removing the whole receipt, and since the ceiling came off StockUpFactor a wrong quantity
+    // stretches a due date in proportion. Writes go through the ONE path, which also moves the on-hand
+    // count by the difference: fixing the history and leaving the shelf wrong just relocates the error.
+    private int? editingPurchaseId;
+    private decimal editPurchaseQuantity;
+    private bool purchaseBusy;
+    private string? purchaseError;
+
+    private void EditPurchase(PurchaseRow row)
+    {
+        editingPurchaseId = row.Id;
+        editPurchaseQuantity = row.Quantity;
+        purchaseError = null;
+    }
+
+    private async Task SavePurchaseQuantity()
+    {
+        if (editingPurchaseId is not { } id || purchaseBusy) return;
+        purchaseBusy = true;
+        purchaseError = null;
+        try
+        {
+            if (await Store.SetPurchaseQuantityAsync(id, editPurchaseQuantity))
+            {
+                editingPurchaseId = null;
+                loadedId = null; // reload: the rhythm, the count and the chart all move with it
+                await OnParametersSetAsync();
+            }
+            else
+            {
+                purchaseError = "A purchase has to be more than zero — to remove it entirely, remove its receipt.";
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogError(ex, "Correcting purchase {PurchaseId} failed.", id);
+            purchaseError = "That didn't save. Reload the page and try again.";
+        }
+        finally { purchaseBusy = false; }
+    }
     private record BrandRow(string Brand, int Count, decimal? AvgPrice);
     private record VarietyRow(string Variety, int Count, DateOnly LastBought, decimal? AvgPrice);
     private record RecipeLink(int Id, string Name);
@@ -493,7 +558,7 @@ else
             int? gap = i > 0 ? pe.PurchasedAt.DayNumber - ordered[i - 1].PurchasedAt.DayNumber : null;
             decimal? price = pe.ReceiptId is { } rid && priceLookup.TryGetValue(rid, out var pr) ? pr : null;
             if (price is { } pv) pricePoints.Add(new PricePoint(pe.Size, pe.PurchasedAt, pv));
-            history.Add(new PurchaseRow(pe.PurchasedAt, gap, pe.Quantity, pe.Size, pe.Variety, price));
+            history.Add(new PurchaseRow(pe.Id, pe.PurchasedAt, gap, pe.Quantity, pe.Size, pe.Variety, price));
         }
         history.Reverse(); // most recent first
 

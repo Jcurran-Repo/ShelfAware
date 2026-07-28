@@ -171,6 +171,11 @@ internal sealed class FakePantryStore : IPantryStore
         return Task.FromResult(true);
     }
 
+    // Not a chat tool — the product page owns correcting a recorded quantity. Present so the fake
+    // satisfies the port; nothing in the chat loop should reach it.
+    public Task<bool> SetPurchaseQuantityAsync(int purchaseId, decimal quantity, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     public List<(int ProductId, decimal Quantity, bool Relative, bool StopCounting)> Quantities { get; } = [];
 
     public Task<bool> SetQuantityAsync(
@@ -229,6 +234,8 @@ internal sealed class ThrowingPantryStore(params Product[] products) : IPantrySt
     public Task<bool> SetQuantityAsync(
         int productId, decimal quantity, bool relative = false, bool stopCounting = false,
         CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("simulated DB write failure");
+    public Task<bool> SetPurchaseQuantityAsync(int purchaseId, decimal quantity, CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("simulated DB write failure");
     public Task<IReadOnlyList<RecipeRef>> GetRecipesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<string>> AddSubstitutesAsync(int productId, IReadOnlyList<string> values, CancellationToken cancellationToken = default) => throw new NotSupportedException();

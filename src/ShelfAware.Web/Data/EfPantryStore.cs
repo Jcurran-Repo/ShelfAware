@@ -105,6 +105,34 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory) : IPantryStore
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task<bool> SetPurchaseQuantityAsync(
+        int purchaseId, decimal quantity, CancellationToken cancellationToken = default)
+    {
+        if (quantity <= 0) return false;
+
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        // Include the product: the correction has to move its count, and the filtered lookup is what
+        // keeps a raw id from reaching another household's purchase.
+        var purchase = await db.PurchaseEvents
+            .Include(p => p.Product)
+            .FirstOrDefaultAsync(p => p.Id == purchaseId, cancellationToken);
+        if (purchase?.Product is not { } product) return false;
+
+        // The count moves by the DIFFERENCE, through the same ledger a confirm and a removal use — a
+        // 12 corrected to 2 takes ten off the shelf. Not an attestation: the person is fixing what the
+        // RECEIPT said, not reporting what they can see, so QuantityCountedAt stays where it was and
+        // the staleness check keeps measuring from the last real look.
+        StockLedger.Add(product, quantity - purchase.Quantity);
+        purchase.Quantity = quantity;
+
+        // The receipt's own line is deliberately left alone: it's the audit copy of what was read, and
+        // a PurchaseEvent points at a receipt rather than at a line, so a receipt with two lines for
+        // one product couldn't be updated unambiguously anyway. /receipts stays a record of the
+        // receipt; this page is the record of the pantry.
+        await db.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
     public async Task<bool> SetQuantityAsync(
         int productId, decimal quantity, bool relative = false, bool stopCounting = false,
         CancellationToken cancellationToken = default)

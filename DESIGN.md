@@ -260,7 +260,8 @@ No change-log table in v4.0: purchases and `MealEvent`s are already dated, so ev
 self-documenting and only manual edits are unrecorded. Add the log if the household ever needs to ask
 "why does it say 3?" and can't answer it.
 
-**Owed here: editing a purchase's quantity after the fact.** There is no way to correct one today.
+**Editing a purchase's quantity after the fact** ✅ *built: tap a quantity in Product Detail's "Recent
+purchases"; `IPantryStore.SetPurchaseQuantityAsync` is the one write path.* There was no way to correct one.
 `Quantity` is typed once in the Upload review grid (or set by `add_purchase`), and after confirm
 nothing edits a `PurchaseEvent` — Product Detail's "Recent purchases" table is read-only, so the only
 recourse is removing the whole receipt (v3.9) and re-uploading it, or adding a second purchase to
@@ -272,9 +273,20 @@ date in proportion — bounded at `MaxProjectionDays`, but with no granular way 
 counting feature makes it worse before it makes it better, because a wrong purchase quantity will now
 also land in `QuantityOnHand` via §13.2's increment.
 
-So this phase owns the edit. **One write path**, the way `SetExpirationAsync` is: it has to adjust the
-count too, or the correction fixes the history and leaves the shelf wrong. Same lesson as §13.2's
-confirm/remove symmetry — every road that moves a purchase quantity moves the count with it.
+**One write path**, the way `SetExpirationAsync` is, and it moves the count by the DIFFERENCE — a misread
+12 corrected to 2 takes ten off the shelf as well as the history, because fixing one and not the other
+just relocates the error. Same lesson as §13.2's confirm/remove symmetry.
+
+Three calls the code can't say for itself:
+- **Not an attestation.** The person is correcting what the RECEIPT said, not reporting what they can
+  see, so `QuantityCountedAt` stays put and the staleness check keeps measuring from their last real look.
+- **A non-positive quantity is refused, not clamped** (unlike the confirm path, which clamps ≤0 → 1 on
+  machine-read lines). This number was typed on purpose; silently changing it is how the app starts
+  disagreeing with the person who typed it. Removing a purchase entirely is the receipt's job.
+- **The receipt's own line is left alone** — it's the audit copy of what was read, and a `PurchaseEvent`
+  points at a receipt rather than a line, so a receipt with two lines for one product couldn't be updated
+  unambiguously anyway. `/receipts` stays the record of the receipt; Product Detail is the record of the
+  pantry.
 
 ### 13.7 The backlog check — first, and free ✅ *built: "What's piling up"*
 Pure Core (`BacklogSignals`), **no schema change and no data entry at all** — the signature is already
