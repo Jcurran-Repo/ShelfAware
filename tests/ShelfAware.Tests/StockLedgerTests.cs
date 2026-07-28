@@ -7,6 +7,68 @@ public class StockLedgerTests
     private static Product Counted(decimal? onHand) =>
         new() { Name = "Beef Chuck Roast", TrackQuantity = true, QuantityOnHand = onHand };
 
+    private static readonly DateTimeOffset Now = new(2026, 7, 28, 9, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public void Typing_a_count_opts_the_product_in_and_stamps_the_attestation()
+    {
+        // Typing a number IS asking for the item to be counted — making you find a separate switch first
+        // would be ceremony. And unlike automated movement, a human's count moves the date the staleness
+        // check reads.
+        var product = new Product { Name = "Beef Chuck Roast" };
+
+        var assertedOut = StockLedger.Attest(product, 6, Now);
+
+        Assert.True(product.TrackQuantity);
+        Assert.Equal(6m, product.QuantityOnHand);
+        Assert.Equal(Now, product.QuantityCountedAt);
+        Assert.False(assertedOut);
+    }
+
+    [Fact]
+    public void A_human_saying_zero_is_an_asserted_out()
+    {
+        // §13.4: real evidence, so the caller owes an OutNow — dated by running out rather than by
+        // remembering to report it, which makes it BETTER burn-rate data than the button.
+        var product = Counted(2);
+
+        Assert.True(StockLedger.Attest(product, 0, Now));
+        Assert.Equal(0m, product.QuantityOnHand);
+    }
+
+    [Fact]
+    public void Arithmetic_arriving_at_zero_asserts_nothing()
+    {
+        // The other half of §13.4, and the one that protects the cadence engine: an approximate "Ate it"
+        // decrement can empty a count, and that must not mint an OutNow the human never gave. The UI
+        // asks; only the answer writes.
+        var product = Counted(1);
+
+        StockLedger.Remove(product, 1); // returns void — there is no path here that reports an outage
+
+        Assert.Equal(0m, product.QuantityOnHand);
+    }
+
+    [Fact]
+    public void A_negative_attested_count_is_clamped_not_stored()
+    {
+        Assert.True(StockLedger.Attest(Counted(3), -2, Now));
+    }
+
+    [Fact]
+    public void Stopping_clears_the_number_rather_than_leaving_it_to_rot()
+    {
+        // A count nobody maintains is worse than none: the engine would go on trusting it.
+        var product = Counted(6);
+        product.QuantityCountedAt = Now;
+
+        StockLedger.StopCounting(product);
+
+        Assert.False(product.TrackQuantity);
+        Assert.Null(product.QuantityOnHand);
+        Assert.Null(product.QuantityCountedAt);
+    }
+
     [Fact]
     public void A_purchase_adds_the_quantity_actually_bought()
     {

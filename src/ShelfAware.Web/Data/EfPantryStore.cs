@@ -105,6 +105,52 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory) : IPantryStore
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task<bool> SetQuantityAsync(
+        int productId, decimal quantity, bool relative = false, bool stopCounting = false,
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        // Same in-household existence rule as every other mutation, enforced by the filtered lookup.
+        var product = await db.Products.FindAsync([productId], cancellationToken);
+        if (product is null) return false;
+
+        if (stopCounting)
+        {
+            StockLedger.StopCounting(product);
+            await db.SaveChangesAsync(cancellationToken);
+            return true;
+        }
+
+        // A relative move still lands as an ATTESTATION: "used two" is a person telling us about the
+        // shelf, so it stamps the date and can assert an out — unlike the automated -1 an "Ate it"
+        // applies. It needs a baseline to be relative TO, though; against an unknown count there is
+        // nothing to subtract from, and inventing one is the error §13.2 exists to avoid.
+        var target = quantity;
+        if (relative)
+        {
+            if (product.QuantityOnHand is not { } onHand) return false;
+            target = onHand + quantity;
+        }
+
+        var assertedOut = StockLedger.Attest(product, target, DateTimeOffset.Now);
+
+        // §13.4: a HUMAN'S zero is real evidence, so it writes the outage the burn-rate rhythm learns
+        // from — dated by running out rather than by remembering to report it. A zero that automated
+        // decrements merely arrived at never reaches this method.
+        if (assertedOut)
+        {
+            db.InventorySignals.Add(new InventorySignal
+            {
+                ProductId = productId,
+                Kind = SignalKind.OutNow,
+                SignaledAt = DateTimeOffset.Now,
+            });
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
     public async Task<bool> SetExpirationAsync(int productId, DateOnly? expiresOn, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);

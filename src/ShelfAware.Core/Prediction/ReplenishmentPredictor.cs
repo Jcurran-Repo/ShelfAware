@@ -25,7 +25,14 @@ public static class ReplenishmentPredictor
     /// Defaulting to false makes a call site that forgets the flag fail INERT (no expiry state for a
     /// household that turned it on — a visible gap) rather than fail loud (phantom "expired" pins for
     /// one that turned it off).</param>
-    public static PredictionResult Predict(Product product, DateOnly today, bool honorExpirations = false)
+    /// <param name="honorQuantity">Whether a counted product's stock may suppress its buy recommendation
+    /// (§13.5). Defaults FALSE for the same reason <paramref name="honorExpirations"/> does, and the
+    /// direction matters more here: a call site that forgets the flag under-suppresses — it recommends
+    /// something you may already have, which is annoying and visible — where defaulting true would let a
+    /// forgotten call site SILENCE an item nobody meant to count. Under-nagging is a bug you notice;
+    /// over-silence is one you find when you run out. Don't "fix" the default.</param>
+    public static PredictionResult Predict(
+        Product product, DateOnly today, bool honorExpirations = false, bool honorQuantity = false)
     {
         // 1. Distinct purchase dates — same-day events collapse (§6.1). Size is metadata, not identity: an
         //    item bought in random sizes (milk as a half-gallon or a gallon) is ONE product. Learn the
@@ -203,11 +210,46 @@ public static class ReplenishmentPredictor
             }
         }
 
+        // 8. The count, last — because it SUPPRESSES a recommendation rather than rewriting a
+        //    prediction. Real evidence beats a learned guess, so a counted item with stock on the shelf
+        //    drops to Stocked and off the buy lists; everything else on the result (the due date, the
+        //    rhythms, the expiry state) is left exactly as computed, so the surfaces can still say WHEN
+        //    it would otherwise have been due and why it isn't being asked for.
+        //    Never the other way: a count of zero doesn't PIN anything. Reaching zero by arithmetic is a
+        //    hypothesis (§13.4) — only a human's "we're out" writes the OutNow that pins, and that runs
+        //    through the ordinary signal path above like any other.
+        var statusBeforeCount = status;
+        var suppressed = false;
+        var staleCount = false;
+        if (honorQuantity && product is { TrackQuantity: true, QuantityOnHand: > 0 } && !pinned)
+        {
+            suppressed = true;
+            status = PredictionStatus.Stocked;
+
+            // …unless the count has gone quiet long enough that the rhythm says it should be gone. The
+            // answer to "an inventory decays": expected exhaustion = the last time a human vouched for
+            // the number + (how long one lasts × how many they said). Past that, the app stops
+            // suppressing and asks, rather than trusting a March count forever.
+            if (drivingMedian is { } perUnit && perUnit > 0 && product.QuantityCountedAt is { } countedAt)
+            {
+                var expectedGone = DateOnly.FromDateTime(countedAt.Date)
+                    .AddDays(Floor(Math.Min(perUnit * (double)product.QuantityOnHand.Value, MaxProjectionDays)));
+                if (today > expectedGone)
+                {
+                    staleCount = true;
+                    suppressed = false;
+                    status = statusBeforeCount;
+                }
+            }
+        }
+
         return new PredictionResult
         {
             ProductId = product.Id,
             Status = status,
             DueDate = dueDate,
+            SuppressedByCount = suppressed,
+            CountLooksStale = staleCount,
             MedianIntervalDays = drivingMedian, // the winning number — shown everywhere
             RebuyIntervalDays = rebuy?.Median,
             BurnRateDays = burn?.Median,

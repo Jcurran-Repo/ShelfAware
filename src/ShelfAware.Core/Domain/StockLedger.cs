@@ -9,6 +9,34 @@ namespace ShelfAware.Core.Domain;
 /// </summary>
 public static class StockLedger
 {
+    /// <summary>A HUMAN states the count — typing it on the product page, answering the app's "still got
+    /// them?", correcting a decrement. Unlike <see cref="Add"/>/<see cref="Remove"/> this is an
+    /// attestation, so it stamps the date the staleness check reads, and it opts the product in: typing
+    /// a number IS asking for it to be counted, and making you find a separate switch first would be
+    /// ceremony for its own sake. <see cref="StopCounting"/> is the way back out.
+    /// <para><b>Returns true when this is an ASSERTED ZERO</b> — a human saying "we're out". §13.4: that
+    /// is real evidence and the caller owes an <c>OutNow</c> signal for it, which feeds the burn-rate
+    /// rhythm exactly like the button does — better, even, because it's dated by running out rather than
+    /// by remembering to report it. A zero that arithmetic merely ARRIVED at (see <see cref="Remove"/>)
+    /// returns nothing and writes nothing.</para></summary>
+    public static bool Attest(Product product, decimal quantity, DateTimeOffset at)
+    {
+        product.TrackQuantity = true;
+        product.QuantityOnHand = Math.Max(0m, quantity);
+        product.QuantityCountedAt = at;
+        return product.QuantityOnHand == 0m;
+    }
+
+    /// <summary>Stop counting this item: the number and its attestation go, and the product returns to
+    /// running on the learned cadence alone. Clearing rather than keeping a stale number is the point —
+    /// a count nobody maintains is worse than none, because the engine would go on trusting it.</summary>
+    public static void StopCounting(Product product)
+    {
+        product.TrackQuantity = false;
+        product.QuantityOnHand = null;
+        product.QuantityCountedAt = null;
+    }
+
     /// <summary>Stock arrived: a receipt line was confirmed, or a purchase was recorded by hand.</summary>
     public static void Add(Product product, decimal quantity) => Move(product, quantity);
 

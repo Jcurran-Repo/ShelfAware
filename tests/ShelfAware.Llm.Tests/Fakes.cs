@@ -171,6 +171,17 @@ internal sealed class FakePantryStore : IPantryStore
         return Task.FromResult(true);
     }
 
+    public List<(int ProductId, decimal Quantity, bool Relative, bool StopCounting)> Quantities { get; } = [];
+
+    public Task<bool> SetQuantityAsync(
+        int productId, decimal quantity, bool relative = false, bool stopCounting = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (Products.All(p => p.Id != productId)) return Task.FromResult(false);
+        Quantities.Add((productId, quantity, relative, stopCounting));
+        return Task.FromResult(true);
+    }
+
     public Task<IReadOnlyList<string>> AddSubstitutesAsync(int productId, IReadOnlyList<string> values, CancellationToken cancellationToken = default)
     {
         var have = new HashSet<string>(
@@ -214,6 +225,10 @@ internal sealed class ThrowingPantryStore(params Product[] products) : IPantrySt
     public Task RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<bool> SetExpirationAsync(int productId, DateOnly? expiresOn, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("simulated DB write failure");
+    public Task<bool> SetQuantityAsync(
+        int productId, decimal quantity, bool relative = false, bool stopCounting = false,
+        CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("simulated DB write failure");
     public Task<IReadOnlyList<RecipeRef>> GetRecipesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<string>> AddSubstitutesAsync(int productId, IReadOnlyList<string> values, CancellationToken cancellationToken = default) => throw new NotSupportedException();

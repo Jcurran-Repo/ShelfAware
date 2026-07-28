@@ -37,6 +37,15 @@ public interface IPantryStore
     /// the product has no purchases to carry a date.</summary>
     Task<bool> SetExpirationAsync(int productId, DateOnly? expiresOn, CancellationToken cancellationToken = default);
 
+    /// <summary>THE write path for a human's count (§13.3). Shared by the product page, the one-tap
+    /// adjusters and the <c>set_quantity</c> tool, because §13.4's asserted-zero rule has to hold on
+    /// every road in: a person saying "none left" writes a real OutNow, and only a person's does.
+    /// <paramref name="relative"/> adds a delta ("used two" → -2) instead of setting a total.
+    /// <paramref name="stopCounting"/> clears the count entirely rather than storing a number.</summary>
+    Task<bool> SetQuantityAsync(
+        int productId, decimal quantity, bool relative = false, bool stopCounting = false,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Start or stop tracking a product for replenishment (untracked = kept in the catalog
     /// but not predicted or shown as running low).</summary>
     Task SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default);

@@ -72,6 +72,18 @@ public record PredictionResult
     /// label bounds how long it can. Lets the detail page say why the next-buy date moved.
     public bool DueCappedByExpiration { get; init; }
 
+    /// <summary>The buy recommendation is being held back because the household counted stock on the
+    /// shelf (§13.5) — the item would otherwise be due or overdue. <see cref="DueDate"/> and the rhythms
+    /// are untouched, so a surface can still say when it WOULD have asked and why it isn't: suppression
+    /// must always be visible with a one-tap correction, never a silent disappearance.</summary>
+    public bool SuppressedByCount { get; init; }
+
+    /// <summary>The count is past the date its own rhythm says it should have run out — a March count of
+    /// three on a nine-day burn is long spent. Suppression stands down and the item is asked for again,
+    /// and the surface should ask the human to confirm rather than quietly correcting a number only they
+    /// can actually see. This is what stops a stale inventory silencing an item forever.</summary>
+    public bool CountLooksStale { get; init; }
+
     // ---- Derived: the two-stream gap (rebuy rhythm vs. burn rate) ----
 
     /// <summary>Rebuy rhythm minus burn rate in days, when both are known. Positive means you run out this

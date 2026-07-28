@@ -409,6 +409,96 @@ public class ReplenishmentPredictorTests
         Assert.Equal(D(140), r.DueDate);
     }
 
+    // ---- §13.5: a count suppresses the recommendation -------------------------------------------
+
+    /// <summary>An overdue item (bought on a ~10-day rhythm, nothing since D(20)) that the household has
+    /// also counted. Without the count it is Overdue on D(45).</summary>
+    private static Product CountedAndOverdue(decimal onHand, int countedOnDay)
+    {
+        var product = ProductWithQuantities((0, 1), (10, 1), (20, 1));
+        product.TrackQuantity = true;
+        product.QuantityOnHand = onHand;
+        product.QuantityCountedAt = new DateTimeOffset(D(countedOnDay).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        return product;
+    }
+
+    [Fact]
+    public void AFreshCount_SuppressesTheBuyRecommendation()
+    {
+        // Real evidence beats a learned guess: the rhythm says buy, the shelf says there are three.
+        var r = ReplenishmentPredictor.Predict(CountedAndOverdue(3, countedOnDay: 44), D(45), honorQuantity: true);
+
+        Assert.Equal(PredictionStatus.Stocked, r.Status);
+        Assert.True(r.SuppressedByCount);
+        Assert.False(r.CountLooksStale);
+        // The due date and rhythms are UNTOUCHED, so a surface can still say when it would have asked —
+        // suppression has to be visible and correctable, never a silent disappearance.
+        Assert.Equal(D(30), r.DueDate);
+        Assert.Equal(10, r.MedianIntervalDays);
+    }
+
+    [Fact]
+    public void TheFlagIsInert_ByDefault()
+    {
+        // Same product, no flag: a call site that forgets it under-suppresses (recommends something you
+        // may already have — annoying and visible) rather than silencing an item nobody meant to count.
+        var r = ReplenishmentPredictor.Predict(CountedAndOverdue(3, countedOnDay: 44), D(45));
+
+        Assert.Equal(PredictionStatus.Overdue, r.Status);
+        Assert.False(r.SuppressedByCount);
+    }
+
+    [Fact]
+    public void ACountGoneStale_StopsSuppressingAndSaysSo()
+    {
+        // Three counted on D(0), one lasts ~10 days: they should have run out around D(30). On D(45) the
+        // engine stops trusting the number and asks again — the answer to "an inventory decays".
+        var r = ReplenishmentPredictor.Predict(CountedAndOverdue(3, countedOnDay: 0), D(45), honorQuantity: true);
+
+        Assert.Equal(PredictionStatus.Overdue, r.Status);
+        Assert.False(r.SuppressedByCount);
+        Assert.True(r.CountLooksStale);
+    }
+
+    [Fact]
+    public void AZeroCount_DoesNotPin_BecauseOnlyAHumanCanReportAnOutage()
+    {
+        // §13.4 seen from the engine: reaching zero is a hypothesis, not evidence. It merely stops
+        // suppressing — the item falls back to whatever the rhythm already said.
+        var product = CountedAndOverdue(0, countedOnDay: 44);
+
+        var r = ReplenishmentPredictor.Predict(product, D(45), honorQuantity: true);
+
+        Assert.Equal(PredictionStatus.Overdue, r.Status); // the rhythm's verdict, not a pin
+        Assert.False(r.Pinned);
+        Assert.False(r.SuppressedByCount);
+    }
+
+    [Fact]
+    public void AnExplicitOutNow_BeatsTheCount()
+    {
+        // The human said they're out while the number still says two. The person wins: a count is a
+        // memory of a past look, an OutNow is a statement about now.
+        var product = CountedAndOverdue(2, countedOnDay: 20);
+        product.Signals.Add(Signal(SignalKind.OutNow, D(40)));
+
+        var r = ReplenishmentPredictor.Predict(product, D(45), honorQuantity: true);
+
+        Assert.Equal(PredictionStatus.Overdue, r.Status);
+        Assert.True(r.Pinned);
+        Assert.False(r.SuppressedByCount);
+    }
+
+    [Fact]
+    public void AnUncountedProduct_IsUntouchedByTheFlag()
+    {
+        var r = ReplenishmentPredictor.Predict(ProductWithQuantities((0, 1), (10, 1), (20, 1)), D(45), honorQuantity: true);
+
+        Assert.Equal(PredictionStatus.Overdue, r.Status);
+        Assert.False(r.SuppressedByCount);
+        Assert.False(r.CountLooksStale);
+    }
+
     [Fact]
     public void SmallerThanUsualBuy_DoesNotShortenTheDueDate()
     {
