@@ -815,6 +815,13 @@ the same item bought across brands/sizes rolls up into one product.
   only ever exercised by CI, so **let a failed CI teach you rather than re-running locally and shrugging**.
   (Caught 2026-07-15: `Unconfigured_allows_any_local_path`, green on Windows 609/609, red on CI.)
 
+- ⚠️ **Open `ShelfAware/` as the workspace — NOT the parent `ClaudeCodeSessions/`.** Claude Code scans
+  for `.claude/` and looks for a git repo at whatever folder the session opened, so rooting a session at
+  the parent silently disables things with errors that don't name the cause: `/code-review ultra` refuses
+  ("not inside a git repository" — it clones the session's folder), `.claude/commands/pre-push.md` and
+  `.claude/launch.json` aren't discovered, and every path has to be spelled out in full. The commands
+  file at the PARENT is a pointer to this one for exactly that reason — it exists to survive the mistake,
+  not to make it fine. Cost ~20 minutes on 2026-07-28 before the workspace was switched mid-session.
 - **Stop the dev server before `dotnet build`** — a running server locks the DLLs (MSB3027 after
   10 retries). Started outside the preview tooling it won't show in `preview_list`; find/kill the
   `ShelfAware.Web` process (it names itself in the lock error).
