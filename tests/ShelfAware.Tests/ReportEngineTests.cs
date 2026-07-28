@@ -11,11 +11,13 @@ public class ReportEngineTests
     /// <summary>One fact, priced $3.50 unless said otherwise. Paid price defaults to the price;
     /// <paramref name="estimateOnly"/> models a purchase whose price is an index estimate (counts
     /// for spend, never for the UnitPrice metric).</summary>
+    private static int nextPurchaseId;
+
     private static PurchaseFact Buy(
         int day, int month = 6, int productId = 1, string name = "Whole Milk",
         Category category = Category.Dairy, decimal qty = 1, decimal? price = 3.50m,
         decimal? paid = null, bool estimateOnly = false, bool dominant = true, string[]? tags = null) =>
-        new(new DateOnly(2026, month, day), productId, name, category, qty, price,
+        new(++nextPurchaseId, new DateOnly(2026, month, day), productId, name, category, qty, price,
             estimateOnly ? null : paid ?? price, dominant, tags ?? []);
 
     private static MealFact Meal(int day, int month = 6, int recipeId = 1, string name = "Tacos", int? kcal = 600) =>

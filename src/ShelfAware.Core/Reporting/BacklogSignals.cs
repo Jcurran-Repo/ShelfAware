@@ -23,9 +23,13 @@ namespace ShelfAware.Core.Reporting;
 /// <param name="RecentMealUses">How many logged meals in the caller's recent window listed this product
 /// as a main ingredient. REPORTED, never scored: it's evidence the item is moving, but the meal log
 /// only sees cooking that went through a saved recipe, so its absence proves nothing.</param>
+/// <param name="DefaultUnit">The product's declared unit, or null. Carried so the report can say
+/// "2.34 lb" rather than a bare number — see <see cref="Shopping.QuantityFormat"/>, and note that null
+/// means UNKNOWN, not "packages".</param>
 public sealed record BacklogInput(
     int ProductId,
     string ProductName,
+    string? DefaultUnit,
     IReadOnlyList<DateOnly> PurchaseDates,
     IReadOnlyList<DateOnly> OutageDates,
     decimal TotalQuantity,
@@ -49,6 +53,7 @@ public sealed record BacklogInput(
 public sealed record BacklogFinding(
     int ProductId,
     string ProductName,
+    string? DefaultUnit,
     int Trips,
     DateOnly FirstBought,
     DateOnly LastBought,
@@ -131,6 +136,7 @@ public static class BacklogSignals
             findings.Add(new BacklogFinding(
                 input.ProductId,
                 input.ProductName,
+                input.DefaultUnit,
                 Trips: dates.Count,
                 FirstBought: dates[0],
                 LastBought: dates[^1],

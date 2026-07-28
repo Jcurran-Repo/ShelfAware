@@ -8,10 +8,12 @@ public class PriceWatchTests
     private static readonly DateOnly From = new(2026, 5, 1);
     private static readonly DateOnly To = new(2026, 6, 30); // midpoint = May 31
 
+    private static int nextPurchaseId;
+
     private static PurchaseFact Buy(
         int month, int day, int productId, string name, decimal paid,
         decimal qty = 1, bool dominant = true) =>
-        new(new DateOnly(2026, month, day), productId, name, Category.Dairy, qty,
+        new(++nextPurchaseId, new DateOnly(2026, month, day), productId, name, Category.Dairy, qty,
             paid, paid, dominant, []);
 
     [Fact]

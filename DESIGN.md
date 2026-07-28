@@ -248,14 +248,14 @@ Product   + TrackQuantity (bool, default false)      # opt-in; false = today's b
           + QuantityCountedAt (DateTimeOffset?)       # last HUMAN attestation (§13.1), not last change
 ```
 
-**Owed to this phase: unit labelling, which §13.7 already deferred to it.** The backlog check's Qty
-column renders a **bare number** today, because `TotalQuantity` sums `PurchaseEvent.Quantity` — packages
-for a counted item, a *weight* for a weight item (2.34 lb of beef is one package, not 2.34 of anything)
-— and the honesty lives in the footnote instead of the cell. That was the right call for one column, and
-the wrong shape to keep: §13.1's rule is that display follows `Product.DefaultUnit`. So this phase, which
-adds the counts, is where `DefaultUnit` gets threaded to the surfaces that show a quantity, and the Qty
-column starts saying "4 packages" / "2.34 lb" per row. **Do not build a second unit-formatting rule for
-the count while the report keeps its bare number** — one helper, both surfaces, or the two drift.
+**`QuantityFormat.Describe` (Core/Shopping) already exists — use it, don't write a second one.** §13.1's
+display rule is built: it labels a quantity with `Product.DefaultUnit` when the product declares one
+("2.34 lb") and prints a bare number when it doesn't ("4"). **Null means UNKNOWN, never "packages"** —
+`PurchaseEvent.Quantity` is a package count for a counted item and a *weight* for a weight item, so
+"2.34 packages" of beef would be a confident lie where "2.34" is merely incomplete, and most products
+have no unit set. The backlog check's Qty column runs through it now; the count's own display must too,
+or the two surfaces drift the way the due dates did. Format is `0.##`, matching the recommended-quantity
+displays — `0.#` silently rounds 2.34 lb to 2.3, which a test pins.
 No change-log table in v4.0: purchases and `MealEvent`s are already dated, so every automated path is
 self-documenting and only manual edits are unrecorded. Add the log if the household ever needs to ask
 "why does it say 3?" and can't answer it.

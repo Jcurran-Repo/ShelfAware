@@ -96,6 +96,7 @@ public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
                 && SizeBucket.Key(pe.Size) == dominant.SizeKey;
 
             purchaseFacts.Add(new PurchaseFact(
+                pe.Id,
                 pe.PurchasedAt,
                 pe.ProductId,
                 product.Name,
@@ -162,7 +163,7 @@ public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
 
         var dated = await db.PurchaseEvents.AsNoTracking()
             .Where(p => p.ExpirationDate != null)
-            .Select(p => new { p.ProductId, p.Product!.Name, p.PurchasedAt, Label = p.ExpirationDate!.Value })
+            .Select(p => new { p.Id, p.ProductId, p.Product!.Name, p.PurchasedAt, Label = p.ExpirationDate!.Value })
             .ToListAsync(ct);
         if (dated.Count == 0) return [];
 
@@ -183,15 +184,17 @@ public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
                 g => (IReadOnlyCollection<(DateOnly, SignalKind)>)g
                     .Select(s => (SignalDate.Of(s.SignaledAt), s.Kind)).ToList());
 
-        var priceByPurchase = source.Purchases
-            .GroupBy(f => (f.ProductId, f.Date))
-            .ToDictionary(g => g.Key, g => g.First().Price);
+        // Keyed on the PURCHASE, not on (product, date): two buys of one item on the same day are a real
+        // shape (two trips), and keying by date priced both rows from whichever fact came first.
+        // Residual limit the model can't beat: two lines for one product on ONE receipt already share an
+        // averaged price upstream, because a PurchaseEvent points at a receipt and not at a line.
+        var priceByPurchase = source.Purchases.ToDictionary(f => f.PurchaseId, f => f.Price);
 
         return dated
             .Select(d =>
             {
                 var purchase = new LabeledPurchase(d.ProductId, d.Name, d.PurchasedAt, d.Label,
-                    priceByPurchase.GetValueOrDefault((d.ProductId, d.PurchasedAt)));
+                    priceByPurchase.GetValueOrDefault(d.Id));
                 return new LabelJudgement(purchase, ExpirationOutcomes.Judge(
                     purchase,
                     purchaseDates.GetValueOrDefault(d.ProductId) ?? [],
@@ -241,6 +244,7 @@ public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
                 return new BacklogInput(
                     p.Id,
                     p.Name,
+                    p.DefaultUnit,
                     p.Purchases.Select(x => x.PurchasedAt).ToList(),
                     // SignalDate.Of — the one reading, shared with the engine. The cycle pairing this
                     // feeds is the predictor's own, so a different reading of the same instant could

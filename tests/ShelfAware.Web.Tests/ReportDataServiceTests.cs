@@ -302,6 +302,60 @@ public class ReportDataServiceTests
     }
 
     [Fact]
+    public async Task Two_dated_buys_on_one_day_keep_their_own_prices()
+    {
+        // Two trips in a day is a real shape, and pricing the facts by (product, date) collapsed them:
+        // both rows took whichever came first. The join keys on the PURCHASE now.
+        using var db = new TestDb();
+        var milk = await SeedProductAsync(db, "Whole Milk", [(30, 1)], unitPrice: 3.49m, category: Category.Dairy);
+        await SeedSecondSameDayBuyAsync(db, milk, DaysAgo(30), unitPrice: 1.99m);
+        await using (var ctx = db.CreateDbContext())
+        {
+            foreach (var p in ctx.PurchaseEvents.Where(p => p.ProductId == milk.Id).ToList())
+                p.ExpirationDate = DaysAgo(20);
+            await ctx.SaveChangesAsync();
+        }
+
+        var service = new ReportDataService(db);
+        var outcomes = await service.LoadLabelOutcomesAsync(await service.LoadAsync(), Today);
+
+        Assert.Equal(2, outcomes.Count);
+        Assert.Equal(
+            new[] { 1.99m, 3.49m },
+            outcomes.Select(o => o.Purchase.Price!.Value).OrderBy(p => p).ToArray());
+    }
+
+    /// <summary>A second trip on the same day at a different price — its own receipt, because a
+    /// PurchaseEvent points at a receipt rather than a line, so two lines on ONE receipt genuinely
+    /// share an averaged price and no join can separate them.</summary>
+    private static async Task SeedSecondSameDayBuyAsync(TestDb db, Product product, DateOnly date, decimal unitPrice)
+    {
+        await using var ctx = db.CreateDbContext();
+        var receipt = new Receipt { ImagePath = $"{product.Name}-second", PurchasedAt = date, Status = ReceiptStatus.Confirmed };
+        ctx.Receipts.Add(receipt);
+        await ctx.SaveChangesAsync();
+        ctx.ReceiptLines.Add(new ReceiptLine
+        {
+            ReceiptId = receipt.Id,
+            RawText = product.Name,
+            NormalizedName = product.Name,
+            Quantity = 1,
+            UnitPrice = unitPrice,
+            ProductId = product.Id,
+            Category = product.Category,
+        });
+        ctx.PurchaseEvents.Add(new PurchaseEvent
+        {
+            ProductId = product.Id,
+            PurchasedAt = date,
+            Quantity = 1,
+            ReceiptId = receipt.Id,
+            Source = PurchaseSource.Receipt,
+        });
+        await ctx.SaveChangesAsync();
+    }
+
+    [Fact]
     public async Task A_purchase_marked_out_before_its_label_was_finished_not_lost()
     {
         using var db = new TestDb();

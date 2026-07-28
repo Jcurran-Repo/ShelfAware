@@ -23,8 +23,9 @@ public class BacklogSignalsTests
         int unpriced = 0,
         double? rebuy = 13.5,
         DateOnly? due = null,
+        string? unit = null,
         int meals = 0) =>
-        new(id, name, buys ?? [Day(1), Day(14), Day(28)], outages ?? [], quantity, spend, unpriced,
+        new(id, name, unit, buys ?? [Day(1), Day(14), Day(28)], outages ?? [], quantity, spend, unpriced,
             rebuy, due ?? Day(41), meals);
 
     private static BacklogReport Find(params BacklogInput[] inputs) => BacklogSignals.Find(inputs, Today);

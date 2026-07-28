@@ -12,7 +12,12 @@ using ShelfAware.Core.Domain;
 /// <param name="InDominantSizeBucket">Whether this purchase's size is in the product's most-bought
 /// size bucket (stamped by the caller via PriceSeries.Dominant). The UnitPrice metric only reads
 /// these, the Trends like-with-like rule.</param>
+/// <param name="PurchaseId">The <see cref="PurchaseEvent"/> this came from. Aggregate metrics never need
+/// it, but anything that has to line a fact back up with ONE purchase does: keying on (product, date)
+/// silently collapses two buys of the same item on the same day, which is a real shape (two trips) and
+/// used to price both of Waste watch's rows from whichever came first.</param>
 public sealed record PurchaseFact(
+    int PurchaseId,
     DateOnly Date,
     int ProductId,
     string ProductName,

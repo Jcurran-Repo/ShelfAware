@@ -1,9 +1,13 @@
 @page "/reports"
+@implements IDisposable
 @using ShelfAware.Core.Domain
 @using ShelfAware.Core.Reporting
 @using ShelfAware.Core.Settings
+@using ShelfAware.Core.Shopping
 @using ShelfAware.Web.Components.Charts
 @using ShelfAware.Web.Data
+@using ShelfAware.Web.Services
+@inject VoiceCoordinator Coordinator
 @inject ReportDataService ReportData
 @inject IHouseholdDbFactory DbFactory
 @inject IAppSettings SettingsStore
@@ -561,7 +565,7 @@ else
                                     <tr>
                                         <td><a href="/product/@row.ProductId">@row.ProductName</a></td>
                                         <td class="num">@(row.Trips)× over @row.SpanDays d</td>
-                                        <td class="num">@row.TotalQuantity.ToString("0.#")</td>
+                                        <td class="num">@QuantityFormat.Describe(row.TotalQuantity, row.DefaultUnit)</td>
                                         <td class="num">@(row.RebuyIntervalDays is { } r ? $"~{r:0.#} days" : "—")</td>
                                         <td class="num change-up">@row.OverdueDays day@(row.OverdueDays == 1 ? "" : "s") over</td>
                                         <td class="num">@row.Spend.ToString("C")@(row.SpendIncomplete ? "+" : "")</td>
@@ -571,9 +575,10 @@ else
                             </tbody>
                         </table>
                     </div>
-                    <p class="muted small">"Qty" is everything bought across those trips, in whatever unit the
-                        item is bought in — packages for things you count, weight for things you weigh, never the
-                        two added together. "Overdue by" is the same number the dashboard and the item's own page
+                    <p class="muted small">"Qty" is everything bought across those trips. It carries the item's
+                        unit when the product has one set (2.34 lb) and stays a bare count when it doesn't —
+                        quantity means packages for things you count and weight for things you weigh, so an
+                        unlabelled number is the honest form rather than a guess. "Overdue by" is the same number the dashboard and the item's own page
                         show — this report asks the engine rather than doing its own arithmetic, so the two can
                         never disagree about whether you need to buy something.
                         "Cooked with" counts meals from the last @RecentMealWindowDays days whose
@@ -755,7 +760,29 @@ else
         }
     }
 
-    protected override async Task OnParametersSetAsync()
+    protected override void OnInitialized() => Coordinator.PantryChanged += OnPantryChangedAsync;
+
+    /// <summary>A voice/chat data change lands while a report is on screen. Every preset here caches its
+    /// result for the component's lifetime, so without this the page keeps printing the pantry as it was
+    /// — telling the assistant "we're out of lemons" and watching "What's piling up" still list lemons as
+    /// never-reported-out. Drop every cache, including the shared fact load, and re-run the active preset:
+    /// the guards are all "load if empty", so clearing is the whole invalidation.</summary>
+    private async Task OnPantryChangedAsync()
+    {
+        source = null;
+        gapRows = [];
+        labelOutcomes = [];
+        backlog = null;
+        recipeMains = [];
+        await LoadActivePresetAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose() => Coordinator.PantryChanged -= OnPantryChangedAsync;
+
+    protected override Task OnParametersSetAsync() => LoadActivePresetAsync();
+
+    private async Task LoadActivePresetAsync()
     {
         // Loads on first visit AND on preset switch (same component instance, new query string —
         // the ProductDetail id-change lesson). The heavy fact load runs once; presets reuse it.
