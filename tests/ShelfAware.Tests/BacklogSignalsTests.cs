@@ -97,6 +97,30 @@ public class BacklogSignalsTests
     }
 
     [Fact]
+    public void The_canonical_hoard_three_months_of_beef_is_found()
+    {
+        // The case the whole report exists for, written out so the intent can't drift: bought one at a
+        // time, then a freezer-filling trip, then months of silence with nothing ever marked out. The
+        // engine stretches the due date for a stock-up but caps at 3×, so a 6× buy still goes overdue —
+        // the grocery list starts asking for a roast the freezer is still full of, and this is what
+        // argues back.
+        var report = Find(Item(
+            name: "Beef Chuck Roast",
+            buys: [Day(1), Day(15), Day(29), Day(43), Day(71)],
+            outages: [],
+            quantity: 10,
+            spend: 189.40m,
+            rebuy: 14,
+            due: Today.AddDays(-46)));
+
+        var finding = Assert.Single(report.Findings);
+        Assert.Equal(5, finding.Trips);
+        Assert.Equal(46, finding.OverdueDays);
+        Assert.Equal(189.40m, finding.Spend);
+        Assert.Equal(0, report.EverRanOut);
+    }
+
+    [Fact]
     public void A_stock_up_that_pushed_the_due_date_out_is_respected()
     {
         // The regression. A hand-rolled "days since last buy > rebuy median" called an item overdue

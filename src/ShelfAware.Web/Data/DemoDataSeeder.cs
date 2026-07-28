@@ -117,6 +117,16 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
             new("Paper Towels", Category.Household, "Bounty", "6 rolls", 15.97m, ["Paper"],
                 [(5, 3), (26, 1), (48, 1), (70, 1)]),
 
+            // THE HOARD (v4.0's "What's piling up" hero): a freezer-filling trip — six roasts at once,
+            // on an item previously bought one at a time — and then nothing for three months, with no
+            // "out" ever signalled. It's the case the backlog check exists for, and it needs the whole
+            // report to spot: the engine already stretches the due date for a stock-up, but StockUpFactor
+            // caps at 3× and this buy was 6×, so the item goes overdue anyway and the grocery list starts
+            // asking for a roast the freezer is still full of. Deliberately NO OutNow signal — a household
+            // eating through a hoard has nothing to report.
+            new("Beef Chuck Roast", Category.Meat, null, "3 lb", 18.94m, ["Protein", "Freezer"],
+                [(88, 6), (116, 1), (130, 1), (144, 1), (158, 1)]),
+
             // Vacation gap: one 45-day interval among ~12-day ones. MedianWithTrim drops it (> 3× median) so
             // the cadence stays honest at ~12 days. Also the Trends "price is climbing" hero: ~15% cheaper
             // 100 days ago, so its ticker shows a steady red ▲.
