@@ -8,7 +8,7 @@ done yet — survives even if everything else is lost.
 **Terminology:** Phases 1–5 are the original v1 build milestones. v2 / v3 are later versions.
 `[x]` + date = shipped · `[ ]` = not done yet.
 
-_Last updated: 7/7/2026_
+_Last updated: 7/28/2026_
 
 ---
 
@@ -256,6 +256,20 @@ _Last updated: 7/7/2026_
 - [x] Provenance columns (AdditiveSchema): `Product.CreatedByReceiptId` + `ProductAlias.TaughtByReceiptId` — stamped by the ONE confirm path; an alias is re-stamped only when re-POINTED (a dupe re-walking a pairing must not inherit credit for an earlier receipt's lesson — a test caught removal un-teaching the original's alias before this rule existed). Pre-provenance receipts REFUSE removal honestly instead of guessing — 7/22/2026
 - [x] UI: "Remove receipt…" with inline consequences-first confirm on /receipts (pre-provenance rows explain why they can't), and ↩ Undo on the Upload done-panel — the freshest moment to catch a dupe, offered after auto AND manual confirms — 7/22/2026
 - [x] `ReceiptDuplicateDetector` — a detected exact duplicate NEVER auto-confirms, in ANY mode (even Confirm-everything: silent double-recording is the one mistake the router must not automate). Strict on purpose (same date+merchant+line count+lines+prices; a twin milk-run costs one review click, a lax match would nag) and cheapest-check-first: one indexed SQL prefilter on date/merchant/count almost always returns nothing, survivors get a sorted-multiset line comparison — RawText first (review edits never touch it, so a re-scan of the same photo matches even after the original's names were corrected), normalized names as fallback. Warning banner on review, "possible duplicate" chip in the queue, per-file batch note — 7/22/2026
+
+---
+
+## v4.0 — Quantity on hand (planned; spec = DESIGN.md §13)
+*The first thing in the model that measures **stock** rather than **flow**. Goal, in the household's own words: answer "do we have it?" without walking to the garage freezer.*
+- [ ] Hoard report — a `/reports` preset that finds the backlog in data already collected (repeat purchases + zero completed burn cycles + no recent meals), ranked by suspicion × spend; says "worth checking", never "you have 6" (a missing OutNow may only mean nobody taps the button). No schema change, no data entry — its job is to name the ~30 products worth counting — Not complete
+- [ ] Quantity core — opt-in `Product.TrackQuantity` (default false; everything else runs on the cadence engine exactly as today) + `QuantityOnHand` (decimal packages, or the item's own unit for weight items) + `QuantityCountedAt` (last HUMAN attestation, not last change). Additive columns, so live DBs migrate on boot — Not complete
+- [ ] Receipts move the count by the quantity actually bought — the ONE confirm path adds the confirmed line's own quantity (three cans adds 3, never 1; a weight line adds its weight), and v3.9 removal subtracts exactly what it added or a removed duplicate leaves the count permanently inflated. Confirm-then-remove returning every count to where it started is the invariant to test — Not complete
+- [ ] Decrements, made cheap — "Ate it" auto-decrements each main ingredient by one package (recipe quantities are free-form strings by design and must not be parsed; approximate but fails SAFE — half a package still costs a whole one, so you rebuy early — and it shows what it's about to do, correctable at the tap); `set_quantity` chat/voice tool (absolute or relative, "used two"); one tap on the card. Household-wide, which is the point and the biggest accuracy risk — Not complete
+- [ ] "One package" for a weight item = the median of that product's PER-PURCHASE quantities (1.24 lb packs deduct 1.24), not a round pound — and deliberately not v3.5's trip-summed buy median, which answers a different question (two packs in one trip is 2.48 lb of shopping, 1.24 lb of package). Median not mode: continuous weights rarely repeat exactly. No history → the one known quantity → 1 — Not complete
+- [ ] Asserted zero vs derived zero — a human's zero writes a real OutNow and feeds the burn-rate rhythm (better evidence than the button: dated by running out, not by remembering to report it); a zero reached purely by automated decrements writes NOTHING and asks once. Third instance of the standing rule — machine inference never becomes ground truth without a human touch (cf. `writeAliases`, `VerifiedForEval`) — Not complete
+- [ ] A positive count suppresses the buy recommendation, visibly ("you have 3, counted Jul 28" + one-tap correction — an item that vanishes without explanation is how a household stops trusting the app); `honorQuantity` threaded and inert by default like `honorExpirations`; the backtest stays count-blind — Not complete
+- [ ] The rhythms audit the count — expected exhaustion = counted-at + (driving median × quantity); past it with stock still claimed, the app asks once. The answer to "an inventory decays": drift is detected instead of assumed away, and being wrong costs one tap, not a re-census. The engine never silently corrects a count — Not complete
+- [ ] Shelf-photo census — the intake path for stock receipts can never know about (pre-app, elsewhere, gifted, bulk): photo → candidates → the review-grid shape → confirm. ★ Never creates PurchaseEvents (invented purchases would poison every rhythm); proposes a front-row count the human corrects, with occlusion/stacking designed for rather than papered over — Not complete
 
 ---
 
