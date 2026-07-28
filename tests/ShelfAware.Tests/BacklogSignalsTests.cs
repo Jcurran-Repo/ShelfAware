@@ -10,8 +10,9 @@ public class BacklogSignalsTests
     /// and the numbers in the tests read as a calendar rather than as arithmetic.</summary>
     private static DateOnly Day(int day) => new DateOnly(2026, 6, 1).AddDays(day - 1);
 
-    /// <summary>The default item: bought on days 1, 14 and 28 (so a ~13-day rhythm), last bought 30 days
-    /// before "today", and therefore well past due — the shape every condition is varied against.</summary>
+    /// <summary>The default item: bought on days 1, 14 and 28 with a ~13-day rhythm, and a due date the
+    /// engine put on day 41 — a fortnight before "today", so it is well past due. The shape every
+    /// condition is varied against.</summary>
     private static BacklogInput Item(
         int id = 1,
         string name = "Black Beans",
@@ -21,8 +22,10 @@ public class BacklogSignalsTests
         decimal spend = 30m,
         int unpriced = 0,
         double? rebuy = 13.5,
+        DateOnly? due = null,
         int meals = 0) =>
-        new(id, name, buys ?? [Day(1), Day(14), Day(28)], outages ?? [], quantity, spend, unpriced, rebuy, meals);
+        new(id, name, buys ?? [Day(1), Day(14), Day(28)], outages ?? [], quantity, spend, unpriced,
+            rebuy, due ?? Day(41), meals);
 
     private static BacklogReport Find(params BacklogInput[] inputs) => BacklogSignals.Find(inputs, Today);
 
@@ -83,29 +86,44 @@ public class BacklogSignalsTests
     }
 
     [Fact]
-    public void An_item_still_inside_its_rhythm_is_not_a_finding()
+    public void An_item_the_engine_does_not_call_due_is_not_a_finding()
     {
         // The condition that makes this report mean anything. Against real data "never ran out" alone
         // flagged 26 of 27 regularly-bought products, because a household that rarely taps Out leaves
-        // everything silent. Buying on schedule is not a backlog — going quiet is.
-        Assert.Empty(Find(Item(rebuy: 45)).Findings);
-        Assert.Single(Find(Item(rebuy: 29)).Findings); // last bought 30 days ago: one day past due
+        // everything silent. Being due is the half that needs no button.
+        Assert.Empty(Find(Item(due: Today.AddDays(5))).Findings);
+        Assert.Empty(Find(Item(due: Today)).Findings);           // due TODAY is not yet overdue
+        Assert.Single(Find(Item(due: Today.AddDays(-1))).Findings);
     }
 
     [Fact]
-    public void Without_a_learned_rhythm_there_is_nothing_to_have_gone_quiet_against()
+    public void A_stock_up_that_pushed_the_due_date_out_is_respected()
     {
-        Assert.Empty(Find(Item(rebuy: null)).Findings);
+        // The regression. A hand-rolled "days since last buy > rebuy median" called an item overdue
+        // while the product page called it Stocked for five more days, because the engine's StockUpFactor
+        // had stretched its due date for a 1.5× buy — the app's own "you bought extra, it lasts longer"
+        // logic, which is exactly what a backlog report must not override. Ask the engine; never
+        // re-derive. Here: last bought 30 days ago on a ~13-day rhythm, but the engine says due in 5.
+        Assert.Empty(Find(Item(rebuy: 13.5, due: Today.AddDays(5))).Findings);
     }
 
     [Fact]
-    public void Overdue_days_measure_the_silence_past_the_rhythm()
+    public void Without_a_due_date_the_engine_is_still_learning_and_there_is_nothing_to_say()
     {
-        // Last bought 30 days ago on a 13.5-day rhythm: 30 − 13 = 17 days of silence.
+        // `with` rather than the helper's optional parameter: `due ?? Day(41)` can't tell "not specified"
+        // from "explicitly none", and this test is about the second one.
+        Assert.Empty(Find(Item() with { DueDate = null }).Findings);
+    }
+
+    [Fact]
+    public void Overdue_days_come_from_the_engines_due_date()
+    {
+        // Due on day 41 (11 July), today is 28 July: 17 days overdue — the same number the dashboard
+        // and product page show. Days since the last buy is a separate, larger number.
         var finding = Assert.Single(Find(Item()).Findings);
 
-        Assert.Equal(30, finding.DaysSinceLastBought);
         Assert.Equal(17, finding.OverdueDays);
+        Assert.Equal(30, finding.DaysSinceLastBought);
     }
 
     [Fact]

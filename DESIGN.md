@@ -263,14 +263,25 @@ makes every later phase cheap.
 2. **Zero completed burn cycles** — §6.3 never once paired a purchase with a following `OutNow`. Note
    this is *not* `BurnRateDays is null`, which is also true at ONE cycle; the count comes from
    `ReplenishmentPredictor.BurnCycles`, made public so there is exactly one definition of a cycle.
-3. **Past its own rebuy rhythm** — bought like clockwork, then stopped, with no restock.
+3. **Past the engine's `DueDate`** — §6 says it's time to rebuy this.
+
+Together they make the report **the grocery list's skeptic**: everything on it is already on the buy
+list, and this is the evidence some of it may not need to be. That's the v4.0 goal in miniature — stop
+restocking what's already deep — and it's a claim neither condition makes alone.
 
 **Condition 3 was added after measuring, and it is what makes the report mean anything.** On real data
 conditions 1–2 alone flagged **26 of 27** regularly-bought products, because a household that rarely
 taps `OutNow` leaves *everything* silent — the check was reporting an unused button as a pantry full of
-backlogs. Condition 3 reads buying behaviour, which needs no button, and cut the same household to **2**.
-An item you bought on a rhythm and then stopped rebuying, without ever saying you ran out, is the one
-you are most likely still eating through.
+backlogs. Being due needs no button, and cut the same household to **1**.
+
+⚠️ **Condition 3 ASKS the engine; it must never re-derive the date.** The first build compared days
+since the last buy against the rebuy median and called an item overdue that the product page was
+calling **Stocked for another five days** — its last buy was ~1.5× the usual, so `StockUpFactor` had
+stretched the due date. That is the app's own "you bought extra, it lasts longer" logic, which is
+precisely what a backlog report must not override, and the hand-rolled median also missed the
+dominant-size anchoring, outlier trimming, and restock handling that `Predict` already does. Two
+surfaces of one app must not disagree about whether you need to buy something. Pinned by
+`A_stock_up_that_pushed_the_due_date_out_is_respected`.
 
 **Coverage is disclosed, not gated.** `BacklogReport.OutageCoverage` = what share of judgable products
 have ever really closed a cycle. Below ~25% the report says so plainly ("this list is mostly reading

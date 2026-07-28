@@ -514,10 +514,10 @@ else
                 }
                 else
                 {
-                    <p class="muted">Items you bought like clockwork, then stopped — without ever once reporting
-                        that you ran out. The likeliest reason is that you're still eating through what's in the
-                        cupboard. The app can't see in there, so this reads "worth checking", never "you have six
-                        of these".</p>
+                    <p class="muted">The grocery list's skeptic. Everything here is due for a rebuy —
+                        <em>and</em> you have never once reported running out of it, which is the reason to look
+                        in the cupboard before you buy another. The app can't see in there, so this reads "worth
+                        checking", never "you have six of these".</p>
                     <div class="portfolio">
                         <div class="stat">
                             <span class="stat-label">Worth checking</span>
@@ -544,13 +544,13 @@ else
 
                     <div class="table-scroll">
                         <table>
-                            <caption class="visually-hidden">Items bought repeatedly, never reported out, and now past their usual rebuy rhythm — most money first.</caption>
+                            <caption class="visually-hidden">Items due for a rebuy that have never been reported out — most money first.</caption>
                             <thead>
                                 <tr>
                                     <th scope="col">Item</th>
                                     <th scope="col" class="num">Bought</th>
                                     <th scope="col" class="num">Usually every</th>
-                                    <th scope="col" class="num">Quiet for</th>
+                                    <th scope="col" class="num">Overdue by</th>
                                     <th scope="col" class="num">Spent</th>
                                     <th scope="col" class="num">Cooked with</th>
                                 </tr>
@@ -561,8 +561,8 @@ else
                                     <tr>
                                         <td><a href="/product/@row.ProductId">@row.ProductName</a></td>
                                         <td class="num">@(row.Trips)× over @row.SpanDays d</td>
-                                        <td class="num">~@row.RebuyIntervalDays.ToString("0.#") days</td>
-                                        <td class="num change-up">@row.OverdueDays days over</td>
+                                        <td class="num">@(row.RebuyIntervalDays is { } r ? $"~{r:0.#} days" : "—")</td>
+                                        <td class="num change-up">@row.OverdueDays day@(row.OverdueDays == 1 ? "" : "s") over</td>
                                         <td class="num">@row.Spend.ToString("C")@(row.SpendIncomplete ? "+" : "")</td>
                                         <td class="num">@(row.RecentMealUses > 0 ? $"{row.RecentMealUses}×" : "—")</td>
                                     </tr>
@@ -570,8 +570,10 @@ else
                             </tbody>
                         </table>
                     </div>
-                    <p class="muted small">"Quiet for" is how far past the item's own rebuy rhythm you are without
-                        buying it again. "Cooked with" counts meals from the last @RecentMealWindowDays days whose
+                    <p class="muted small">"Overdue by" is the same number the dashboard and the item's own page
+                        show — this report asks the engine rather than doing its own arithmetic, so the two can
+                        never disagree about whether you need to buy something.
+                        "Cooked with" counts meals from the last @RecentMealWindowDays days whose
                         recipe lists it as a main ingredient — a sign it's moving, though the log only sees cooking
                         that went through a saved recipe, so a dash proves nothing. A <strong>+</strong> on the
                         money means some of that item's purchases had no price, so the figure is a floor.</p>
@@ -1219,6 +1221,7 @@ else
             products.Select(p =>
             {
                 var money = moneyByProduct.GetValueOrDefault(p.Id);
+                var prediction = ReplenishmentPredictor.Predict(p, Today);
                 return new BacklogInput(
                     p.Id,
                     p.Name,
@@ -1231,9 +1234,11 @@ else
                     money.Quantity,
                     money.Spend,
                     money.Unpriced,
-                    // Expiration-blind on purpose, like the backtest: this reads the LEARNED rebuy
-                    // rhythm, which a label date never feeds (it only caps a due date).
-                    ReplenishmentPredictor.Predict(p, Today).RebuyIntervalDays,
+                    // ONE prediction, both numbers: the rhythm to show and the due date to test against.
+                    // Expiration-blind on purpose, like the backtest — a label date caps a due date, and
+                    // "you may already have plenty" is a claim about buying, not about a sticker.
+                    prediction.RebuyIntervalDays,
+                    prediction.DueDate,
                     mealUses.GetValueOrDefault(p.Name));
             }),
             Today);
