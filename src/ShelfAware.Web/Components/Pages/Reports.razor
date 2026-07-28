@@ -715,7 +715,7 @@ else
     private decimal topItemMax;
     private PriceWatchResult? priceWatch;
     private (string Name, ReportResult Result)? topMoverPrices;
-    private List<(int ProductId, string Name, double Burn, double Rebuy, double Gap)> gapRows = [];
+    private IReadOnlyList<GapRow> gapRows = [];
 
     private BacklogReport? backlog;
     private decimal BacklogSpend => backlog?.Findings.Sum(f => f.Spend) ?? 0;
@@ -758,14 +758,16 @@ else
         // the ProductDetail id-change lesson). The heavy fact load runs once; presets reuse it.
         source ??= await ReportData.LoadAsync();
         BuildActivePreset();
-        if (ActivePreset == "gap" && gapRows.Count == 0) await BuildGapRowsAsync();
+        if (ActivePreset == "gap" && gapRows.Count == 0)
+            gapRows = await ReportData.LoadGapRowsAsync(Today, await SettingsStore.GetTrackExpirationDatesAsync());
         if (ActivePreset is "eat" or "waist" && source.Purchases.Count > 0)
         {
             await LoadRecipeMainsAsync();
             BuildMealPresets();
         }
         if (ActivePreset == "waste") await BuildWasteRowsAsync();
-        if (ActivePreset == "piling-up" && backlog is null) await BuildBacklogRowsAsync();
+        if (ActivePreset == "piling-up" && backlog is null)
+            backlog = await ReportData.LoadBacklogAsync(source, Today, RecentMealWindowDays);
         if (ActivePreset == "custom") await EnterCustomAsync();
         loaded = true;
     }
@@ -775,7 +777,7 @@ else
     private ReportResult? mealsByRecipe, caloriesByRecipe;
     private List<(string Name, int TimesCooked, decimal? Cost, int PricedMains, int TotalMains)> mealCosts = [];
     private bool trackExpirations;
-    private List<(LabeledPurchase Purchase, LabelOutcome Outcome)> labelOutcomes = [];
+    private IReadOnlyList<LabelJudgement> labelOutcomes = [];
 
     private decimal ThisWeekCalories => WeekTotal(caloriesByRecipe, 0);
     private decimal LastWeekCalories => WeekTotal(caloriesByRecipe, 1);
@@ -838,67 +840,22 @@ else
 
     /// <summary>Recipe main ingredients, loaded once alongside the meal presets (the fact load keeps
     /// Core EF-free, but ingredient rows belong to this page's cost table, not to every report).</summary>
-    private List<(int RecipeId, string Name, List<RecipeIngredient> Mains)> recipeMains = [];
+    private IReadOnlyList<RecipeMains> recipeMains = [];
 
     private async Task LoadRecipeMainsAsync()
     {
         if (recipeMains.Count > 0) return;
-        await using var db = await DbFactory.CreateDbContextAsync();
-        var recipes = await db.Recipes.AsNoTracking()
-            .Include(r => r.Ingredients)
-            .ToListAsync();
-        recipeMains = recipes
-            .Select(r => (r.Id, r.Name, r.MainIngredients.ToList()))
-            .ToList();
+        recipeMains = await ReportData.LoadRecipeMainsAsync();
     }
 
+    /// <summary>Waste watch is GATED here, loaded in the service: whether expiration tracking is on is a
+    /// question about this household's settings, not about the data.</summary>
     private async Task BuildWasteRowsAsync()
     {
         trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
         if (!trackExpirations || labelOutcomes.Count > 0) return;
 
-        await using var db = await DbFactory.CreateDbContextAsync();
-        var dated = await db.PurchaseEvents.AsNoTracking()
-            .Where(p => p.ExpirationDate != null)
-            .Select(p => new { p.ProductId, p.Product!.Name, p.PurchasedAt, Label = p.ExpirationDate!.Value })
-            .ToListAsync();
-        if (dated.Count == 0) return;
-
-        var productIds = dated.Select(d => d.ProductId).Distinct().ToList();
-        var purchaseDates = (await db.PurchaseEvents.AsNoTracking()
-                .Where(p => productIds.Contains(p.ProductId))
-                .Select(p => new { p.ProductId, p.PurchasedAt })
-                .ToListAsync())
-            .GroupBy(p => p.ProductId)
-            .ToDictionary(g => g.Key, g => (IReadOnlyCollection<DateOnly>)g.Select(p => p.PurchasedAt).ToList());
-        var signals = (await db.InventorySignals.AsNoTracking()
-                .Where(s => productIds.Contains(s.ProductId))
-                .Select(s => new { s.ProductId, s.SignaledAt, s.Kind })
-                .ToListAsync())
-            .GroupBy(s => s.ProductId)
-            .ToDictionary(
-                g => g.Key,
-                g => (IReadOnlyCollection<(DateOnly, SignalKind)>)g
-                    .Select(s => (DateOnly.FromDateTime(s.SignaledAt.LocalDateTime), s.Kind)).ToList());
-
-        // Price each dated purchase from the report facts (same paid-then-estimate rule as spend).
-        var priceByPurchase = source!.Purchases
-            .GroupBy(f => (f.ProductId, f.Date))
-            .ToDictionary(g => g.Key, g => g.First().Price);
-
-        labelOutcomes = dated
-            .Select(d =>
-            {
-                var purchase = new LabeledPurchase(d.ProductId, d.Name, d.PurchasedAt, d.Label,
-                    priceByPurchase.GetValueOrDefault((d.ProductId, d.PurchasedAt)));
-                return (purchase, ExpirationOutcomes.Judge(
-                    purchase,
-                    purchaseDates.GetValueOrDefault(d.ProductId) ?? [],
-                    signals.GetValueOrDefault(d.ProductId) ?? [],
-                    Today));
-            })
-            .OrderByDescending(o => o.Item1.Label)
-            .ToList();
+        labelOutcomes = await ReportData.LoadLabelOutcomesAsync(source!, Today);
     }
 
     // ---- Custom report builder ----------------------------------------------------------------
@@ -1165,110 +1122,6 @@ else
 
     /// <summary>The gap rows need full products (purchases + signals) for the predictor — loaded only
     /// when the gap preset is actually opened, not on every report visit.</summary>
-    private async Task BuildGapRowsAsync()
-    {
-        await using var db = await DbFactory.CreateDbContextAsync();
-        var products = await db.Products.AsNoTracking()
-            .Where(p => p.IsTracked)
-            .Include(p => p.Purchases)
-            .Include(p => p.Signals)
-            .ToListAsync();
-        var trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
-
-        gapRows = products
-            .Select(p => (Product: p, Prediction: ReplenishmentPredictor.Predict(p, Today, trackExpirations)))
-            .Where(x => x.Prediction is { RebuyIntervalDays: not null, BurnRateDays: not null })
-            .Select(x => (
-                x.Product.Id,
-                x.Product.Name,
-                Burn: x.Prediction.BurnRateDays!.Value,
-                Rebuy: x.Prediction.RebuyIntervalDays!.Value,
-                Gap: x.Prediction.RebuyIntervalDays.Value - x.Prediction.BurnRateDays.Value))
-            .OrderByDescending(x => x.Gap)
-            .ThenBy(x => x.Name)
-            .ToList();
-    }
-
-    /// <summary>The backlog check needs full products (purchases + signals) for the same reason the gap
-    /// rows do — the rebuy rhythm comes from the engine, not from a second copy of the median — plus the
-    /// recipe mains behind "cooked with". Loaded only when this preset is actually opened.</summary>
-    private async Task BuildBacklogRowsAsync()
-    {
-        await using var db = await DbFactory.CreateDbContextAsync();
-        // Tracked only, like the gap rows. Untracking means "don't want it for a while" — an untracked
-        // item is quiet past its rhythm BY CONSTRUCTION, so including them would re-nag about exactly
-        // what the household asked to stop hearing about.
-        var products = await db.Products.AsNoTracking()
-            .Where(p => p.IsTracked)
-            .Include(p => p.Purchases)
-            .Include(p => p.Signals)
-            .ToListAsync();
-
-        await LoadRecipeMainsAsync();
-        var mealUses = RecentMealUsesByProductName();
-
-        // Money comes from the report facts, priced exactly the way the Spend metric prices it
-        // (ReportEngine.PurchaseValue): unit price × quantity, unpriced purchases counted not guessed.
-        var moneyByProduct = source!.Purchases
-            .GroupBy(f => f.ProductId)
-            .ToDictionary(
-                g => g.Key,
-                g => (Spend: g.Sum(f => (f.Price ?? 0) * f.Quantity),
-                      Quantity: g.Sum(f => f.Quantity),
-                      Unpriced: g.Count(f => f.Price is null)));
-
-        backlog = BacklogSignals.Find(
-            products.Select(p =>
-            {
-                var money = moneyByProduct.GetValueOrDefault(p.Id);
-                var prediction = ReplenishmentPredictor.Predict(p, Today);
-                return new BacklogInput(
-                    p.Id,
-                    p.Name,
-                    p.Purchases.Select(x => x.PurchasedAt).ToList(),
-                    // DateOnly.FromDateTime(.Date) — the PREDICTOR's convention, deliberately, because
-                    // the cycle pairing this feeds is the predictor's own. A different reading of the
-                    // same instant could pair a cycle here that the engine never sees.
-                    p.Signals.Where(s => s.Kind == SignalKind.OutNow)
-                        .Select(s => DateOnly.FromDateTime(s.SignaledAt.Date)).ToList(),
-                    money.Quantity,
-                    money.Spend,
-                    money.Unpriced,
-                    // ONE prediction, both numbers: the rhythm to show and the due date to test against.
-                    // Expiration-blind on purpose, like the backtest — a label date caps a due date, and
-                    // "you may already have plenty" is a claim about buying, not about a sticker.
-                    prediction.RebuyIntervalDays,
-                    prediction.DueDate,
-                    mealUses.GetValueOrDefault(p.Name));
-            }),
-            Today);
-    }
-
-    /// <summary>Meals in the recent window, counted per main-ingredient product NAME — the same key
-    /// <c>RecipeIngredient.MatchedProduct</c> stores, so the join is a name lookup, not an id one. A
-    /// recipe cooked twice counts twice for each of its mains, once per meal.</summary>
-    private Dictionary<string, int> RecentMealUsesByProductName()
-    {
-        var since = Today.AddDays(-RecentMealWindowDays);
-        var mainsByRecipe = recipeMains.ToDictionary(r => r.RecipeId, r => r.Mains);
-        var uses = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var meal in source!.Meals.Where(m => m.Date >= since))
-        {
-            if (!mainsByRecipe.TryGetValue(meal.RecipeId, out var mains)) continue;
-            foreach (var name in mains
-                .Select(m => m.MatchedProduct)
-                .OfType<string>()
-                .Where(n => n.Length > 0)
-                .Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                uses[name] = uses.GetValueOrDefault(name) + 1;
-            }
-        }
-
-        return uses;
-    }
-
     private decimal RankWidth(decimal total) =>
         topItemMax > 0 ? Math.Round(total / topItemMax * 100, 1) : 0;
 

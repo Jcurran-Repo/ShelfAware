@@ -1,9 +1,20 @@
 using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Domain;
+using ShelfAware.Core.Prediction;
 using ShelfAware.Core.Reporting;
 using ShelfAware.Core.Shopping;
 
 namespace ShelfAware.Web.Data;
+
+/// <summary>One row of the gap report: how long one of something lasts versus how often it's rebought.
+/// Both rhythms required — an item missing either has no gap to state.</summary>
+public sealed record GapRow(int ProductId, string Name, double Burn, double Rebuy, double Gap);
+
+/// <summary>One dated purchase and what the evidence says became of it (Waste watch).</summary>
+public sealed record LabelJudgement(LabeledPurchase Purchase, LabelOutcome Outcome);
+
+/// <summary>A recipe's main ingredients, with the product names they were matched to at save time.</summary>
+public sealed record RecipeMains(int RecipeId, string Name, IReadOnlyList<RecipeIngredient> Mains);
 
 /// <summary>Everything a report render needs, loaded once. Kept separate from the ReportFacts rows
 /// so the builder UI can offer real choices (which products exist, which tags, how far back data
@@ -25,6 +36,12 @@ public sealed record ReportSourceData(
 /// price is the paid truth, the size-aware index estimate fills spend gaps, and dominant-size
 /// membership is stamped here (via the shared PriceSeries/SizeBucket) so the engine's UnitPrice
 /// metric compares like with like without knowing what a "size" is.
+/// <para><see cref="LoadAsync"/> is the shared fact load every preset reuses; the three Load*
+/// methods below serve presets that need rows the facts don't carry (full purchase and signal
+/// histories, expiration labels, recipe mains). They live here rather than in the page because the
+/// page can't be reached by a test: the one real bug in this layer — a backlog row re-deriving a due
+/// date instead of asking the engine — shipped past a fully green suite and was caught only by
+/// noticing that two screens disagreed.</para>
 /// </summary>
 public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
 {
@@ -113,5 +130,169 @@ public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
                 .OrderBy(t => t, StringComparer.OrdinalIgnoreCase).ToList(),
             purchaseFacts.Count > 0 ? purchaseFacts.Min(f => f.Date) : null,
             currentPriceByName);
+    }
+
+    /// <summary>The gap report: both learned rhythms per tracked item, widest gap first. An item with
+    /// only one rhythm is dropped — a gap between a number and nothing isn't a number.</summary>
+    public async Task<IReadOnlyList<GapRow>> LoadGapRowsAsync(
+        DateOnly today, bool honorExpirations, CancellationToken ct = default)
+    {
+        var products = await LoadHistoriesAsync(ct);
+
+        return products
+            .Select(p => (Product: p, Prediction: ReplenishmentPredictor.Predict(p, today, honorExpirations)))
+            .Where(x => x.Prediction is { RebuyIntervalDays: not null, BurnRateDays: not null })
+            .Select(x => new GapRow(
+                x.Product.Id,
+                x.Product.Name,
+                Burn: x.Prediction.BurnRateDays!.Value,
+                Rebuy: x.Prediction.RebuyIntervalDays!.Value,
+                Gap: x.Prediction.RebuyIntervalDays.Value - x.Prediction.BurnRateDays.Value))
+            .OrderByDescending(x => x.Gap)
+            .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>Waste watch: every dated purchase, judged from evidence by <see cref="ExpirationOutcomes"/>,
+    /// newest label first. Priced from the facts (the same paid-then-estimate rule as spend).</summary>
+    public async Task<IReadOnlyList<LabelJudgement>> LoadLabelOutcomesAsync(
+        ReportSourceData source, DateOnly today, CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+
+        var dated = await db.PurchaseEvents.AsNoTracking()
+            .Where(p => p.ExpirationDate != null)
+            .Select(p => new { p.ProductId, p.Product!.Name, p.PurchasedAt, Label = p.ExpirationDate!.Value })
+            .ToListAsync(ct);
+        if (dated.Count == 0) return [];
+
+        var productIds = dated.Select(d => d.ProductId).Distinct().ToList();
+        var purchaseDates = (await db.PurchaseEvents.AsNoTracking()
+                .Where(p => productIds.Contains(p.ProductId))
+                .Select(p => new { p.ProductId, p.PurchasedAt })
+                .ToListAsync(ct))
+            .GroupBy(p => p.ProductId)
+            .ToDictionary(g => g.Key, g => (IReadOnlyCollection<DateOnly>)g.Select(p => p.PurchasedAt).ToList());
+        var signals = (await db.InventorySignals.AsNoTracking()
+                .Where(s => productIds.Contains(s.ProductId))
+                .Select(s => new { s.ProductId, s.SignaledAt, s.Kind })
+                .ToListAsync(ct))
+            .GroupBy(s => s.ProductId)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyCollection<(DateOnly, SignalKind)>)g
+                    .Select(s => (DateOnly.FromDateTime(s.SignaledAt.LocalDateTime), s.Kind)).ToList());
+
+        var priceByPurchase = source.Purchases
+            .GroupBy(f => (f.ProductId, f.Date))
+            .ToDictionary(g => g.Key, g => g.First().Price);
+
+        return dated
+            .Select(d =>
+            {
+                var purchase = new LabeledPurchase(d.ProductId, d.Name, d.PurchasedAt, d.Label,
+                    priceByPurchase.GetValueOrDefault((d.ProductId, d.PurchasedAt)));
+                return new LabelJudgement(purchase, ExpirationOutcomes.Judge(
+                    purchase,
+                    purchaseDates.GetValueOrDefault(d.ProductId) ?? [],
+                    signals.GetValueOrDefault(d.ProductId) ?? [],
+                    today));
+            })
+            .OrderByDescending(o => o.Purchase.Label)
+            .ToList();
+    }
+
+    /// <summary>The backlog check (DESIGN.md §13.7). Assembles what <see cref="BacklogSignals"/> needs:
+    /// full buy/outage histories, money from the facts, and — the load-bearing one — the ENGINE's own
+    /// rhythm and due date, never a median recomputed here.</summary>
+    public async Task<BacklogReport> LoadBacklogAsync(
+        ReportSourceData source, DateOnly today, int recentMealWindowDays, CancellationToken ct = default)
+    {
+        var products = await LoadHistoriesAsync(ct);
+        var mealUses = RecentMealUsesByProductName(source, await LoadRecipeMainsAsync(ct), today, recentMealWindowDays);
+
+        // Money comes from the report facts, priced exactly the way the Spend metric prices it
+        // (ReportEngine.PurchaseValue): unit price × quantity, unpriced purchases counted not guessed.
+        var moneyByProduct = source.Purchases
+            .GroupBy(f => f.ProductId)
+            .ToDictionary(
+                g => g.Key,
+                g => (Spend: g.Sum(f => (f.Price ?? 0) * f.Quantity),
+                      Quantity: g.Sum(f => f.Quantity),
+                      Unpriced: g.Count(f => f.Price is null)));
+
+        return BacklogSignals.Find(
+            products.Select(p =>
+            {
+                var money = moneyByProduct.GetValueOrDefault(p.Id);
+                // ONE prediction, both numbers: the rhythm to show and the due date to test against.
+                // Expiration-blind on purpose, like the backtest — a label date caps a due date, and
+                // "you may already have plenty" is a claim about buying, not about a sticker.
+                var prediction = ReplenishmentPredictor.Predict(p, today);
+                return new BacklogInput(
+                    p.Id,
+                    p.Name,
+                    p.Purchases.Select(x => x.PurchasedAt).ToList(),
+                    // DateOnly.FromDateTime(.Date) — the PREDICTOR's convention, deliberately, because
+                    // the cycle pairing this feeds is the predictor's own. A different reading of the
+                    // same instant could pair a cycle here that the engine never sees.
+                    p.Signals.Where(s => s.Kind == SignalKind.OutNow)
+                        .Select(s => DateOnly.FromDateTime(s.SignaledAt.Date)).ToList(),
+                    money.Quantity,
+                    money.Spend,
+                    money.Unpriced,
+                    prediction.RebuyIntervalDays,
+                    prediction.DueDate,
+                    mealUses.GetValueOrDefault(p.Name));
+            }),
+            today);
+    }
+
+    /// <summary>Saved recipes with their main ingredients — shared by the meal presets and the backlog
+    /// check's "cooked with" column, so there's one definition of the query.</summary>
+    public async Task<IReadOnlyList<RecipeMains>> LoadRecipeMainsAsync(CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var recipes = await db.Recipes.AsNoTracking().Include(r => r.Ingredients).ToListAsync(ct);
+        return recipes.Select(r => new RecipeMains(r.Id, r.Name, r.MainIngredients.ToList())).ToList();
+    }
+
+    /// <summary>Tracked products with the full histories the predictor needs. Untracked are excluded on
+    /// purpose: untracking means "don't want it for a while", so such an item is quiet past its rhythm by
+    /// construction and would re-nag about exactly what the household asked to stop hearing about.</summary>
+    private async Task<List<Product>> LoadHistoriesAsync(CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        return await db.Products.AsNoTracking()
+            .Where(p => p.IsTracked)
+            .Include(p => p.Purchases)
+            .Include(p => p.Signals)
+            .ToListAsync(ct);
+    }
+
+    /// <summary>Meals in the recent window, counted per main-ingredient product NAME — the same key
+    /// <c>RecipeIngredient.MatchedProduct</c> stores, so the join is a name lookup, not an id one. A
+    /// recipe cooked twice counts twice for each of its mains, once per meal.</summary>
+    private static Dictionary<string, int> RecentMealUsesByProductName(
+        ReportSourceData source, IReadOnlyList<RecipeMains> recipeMains, DateOnly today, int windowDays)
+    {
+        var since = today.AddDays(-windowDays);
+        var mainsByRecipe = recipeMains.ToDictionary(r => r.RecipeId, r => r.Mains);
+        var uses = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var meal in source.Meals.Where(m => m.Date >= since))
+        {
+            if (!mainsByRecipe.TryGetValue(meal.RecipeId, out var mains)) continue;
+            foreach (var name in mains
+                .Select(m => m.MatchedProduct)
+                .OfType<string>()
+                .Where(n => n.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                uses[name] = uses.GetValueOrDefault(name) + 1;
+            }
+        }
+
+        return uses;
     }
 }

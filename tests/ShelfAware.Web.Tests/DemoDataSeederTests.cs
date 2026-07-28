@@ -72,35 +72,15 @@ public class DemoDataSeederTests
     public async Task Seeds_a_hoard_hero_so_the_backlog_check_has_something_to_find()
     {
         // The gap this closes: every other seeded household is well behaved, so "What's piling up" had no
-        // sample data showing the thing it exists for — three months of beef in the freezer. This asserts
-        // the SEED DATA really reads as a hoard once it's been through the engine, not just that the rows
-        // exist. (The BacklogInput assembly mirrors Reports.razor; the page's own copy is still untested —
-        // see the note in DESIGN.md §13.7.)
+        // sample data showing the thing it exists for — three months of beef in the freezer. This runs the
+        // seeded rows through the REAL load the page uses, so it asserts the DATA reads as a hoard, not
+        // merely that the rows exist.
         using var db = new TestDb();
         await new DemoDataSeeder(db).SeedAsync();
 
-        await using var read = db.CreateDbContext();
         var today = DateOnly.FromDateTime(DateTime.Today);
-        var products = read.Products.Include(p => p.Purchases).Include(p => p.Signals).ToList();
-
-        var report = BacklogSignals.Find(
-            products.Select(p =>
-            {
-                var prediction = ReplenishmentPredictor.Predict(p, today);
-                return new BacklogInput(
-                    p.Id,
-                    p.Name,
-                    p.Purchases.Select(x => x.PurchasedAt).ToList(),
-                    p.Signals.Where(s => s.Kind == SignalKind.OutNow)
-                        .Select(s => DateOnly.FromDateTime(s.SignaledAt.Date)).ToList(),
-                    TotalQuantity: p.Purchases.Sum(x => x.Quantity),
-                    PricedSpend: 0m,
-                    UnpricedPurchases: 0,
-                    prediction.RebuyIntervalDays,
-                    prediction.DueDate,
-                    RecentMealUses: 0);
-            }),
-            today);
+        var service = new ReportDataService(db);
+        var report = await service.LoadBacklogAsync(await service.LoadAsync(), today, 60);
 
         var roast = Assert.Single(report.Findings, f => f.ProductName == "Beef Chuck Roast");
         Assert.Equal(5, roast.Trips);
@@ -109,8 +89,9 @@ public class DemoDataSeederTests
         Assert.True(roast.OverdueDays > 30,
             $"the freezer-filling trip should have run long past due, got {roast.OverdueDays} days");
         // The deliberately missing half of the fixture: a household eating through a hoard reports nothing.
+        await using var read = db.CreateDbContext();
         Assert.DoesNotContain(
-            products.Single(p => p.Name == "Beef Chuck Roast").Signals,
+            read.Products.Include(p => p.Signals).Single(p => p.Name == "Beef Chuck Roast").Signals,
             s => s.Kind == SignalKind.OutNow);
     }
 

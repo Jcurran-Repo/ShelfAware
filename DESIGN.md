@@ -316,11 +316,14 @@ quantity on the purchase itself. **That case is exactly what `TrackQuantity` (§
 which is worth remembering when judging whether the counting feature earns its keep — the report covers
 the repeat-buy pattern, counting covers the one-off pile, and neither substitutes for the other.
 
-**Not yet tested:** `Reports.razor` assembles `BacklogInput` from EF rows, and that assembly has no
-coverage — the same is true of the gap and waste row builders beside it. The bug in the first build
-(re-deriving the due date instead of asking the engine) lived in exactly that layer and was caught by
-running the app, not by 714 green tests. A test-host auth handler over `WebApplicationFactory` would
-close it for all three; the bypass would live only in the test project's DI, never in shipped code.
+**Where the preset loads live, and why.** `ReportDataService.LoadBacklogAsync` / `LoadGapRowsAsync` /
+`LoadLabelOutcomesAsync` — not the page. All three used to open their own `DbContext` inside
+`Reports.razor`, which made the docstring on that service ("the one place reporting touches the
+database") false and put the joins somewhere no test could reach. **The due-date bug lived in exactly
+that layer and shipped past 714 green tests**; nothing but noticing two screens disagreeing would have
+caught it. Moved down, they're covered by `ReportDataServiceTests` on the same real-EF-on-SQLite
+harness as everything else in `ShelfAware.Web.Tests` — no new packages, no auth harness, no browser.
+The page keeps only what is genuinely UI: which preset is open, and whether expiration tracking is on.
 
 ### 13.8 Shelf-photo census (later phase)
 The intake answer for stock that receipts can never know about — bought pre-app, bought elsewhere,
