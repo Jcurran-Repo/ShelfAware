@@ -48,7 +48,7 @@ public static class PredictionBacktest
                     Id = product.Id,
                     Name = product.Name,
                     Purchases = product.Purchases.Where(p => p.PurchasedAt < actual).ToList(),
-                    Signals = product.Signals.Where(s => DateOnly.FromDateTime(s.SignaledAt.Date) < actual).ToList(),
+                    Signals = product.Signals.Where(s => SignalDate.Of(s.SignaledAt) < actual).ToList(),
                 };
                 // Deliberately expiration-blind (the honorExpirations default): the backtest scores the
                 // LEARNED rhythm against real rebuy dates, and an expiry pin would overwrite DueDate

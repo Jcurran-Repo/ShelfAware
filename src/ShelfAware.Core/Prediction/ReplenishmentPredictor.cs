@@ -15,6 +15,11 @@ namespace ShelfAware.Core.Prediction;
 /// </summary>
 public static class ReplenishmentPredictor
 {
+    /// <summary>How far a stock-up may push a due date: two years. A ceiling on the ARITHMETIC, not on
+    /// the behaviour — a genuine freezer hoard is months, so nothing real reaches it, and it never
+    /// shortens a rhythm that is legitimately longer than this on its own.</summary>
+    private const double MaxProjectionDays = 730;
+
     /// <param name="honorExpirations">Whether purchase expiration dates may mark the item out (the
     /// per-household Settings toggle, default OFF — see <c>SettingKeys.TrackExpirationDates</c>).
     /// Defaulting to false makes a call site that forgets the flag fail INERT (no expiry state for a
@@ -40,12 +45,12 @@ public static class ReplenishmentPredictor
 
         var restockDates = product.Signals
             .Where(s => s.Kind == SignalKind.Restocked)
-            .Select(s => DateOnly.FromDateTime(s.SignaledAt.Date))
+            .Select(s => SignalDate.Of(s.SignaledAt))
             .ToList();
 
         var outageDates = product.Signals
             .Where(s => s.Kind == SignalKind.OutNow)
-            .Select(s => DateOnly.FromDateTime(s.SignaledAt.Date))
+            .Select(s => SignalDate.Of(s.SignaledAt))
             .OrderBy(d => d)
             .ToList();
 
@@ -77,7 +82,16 @@ public static class ReplenishmentPredictor
             // A stock-up stretches the projection: buying ~3× the usual amount pushes the due date out
             // ~3× instead of nagging on the one-unit cadence.
             stockUp = StockUpFactor(product.Purchases, anchor);
-            var interval = Floor(median * stockUp);
+            // Bound the STRETCH — an arithmetic sanity check, not the 3× behavioural ceiling that was
+            // removed 2026-07-28. Quantity is only clamped upward from zero on the way in, so one
+            // misread line (a price or a size read as a count) used to be able to project an item years
+            // out, and the failure was SILENT: no exception, just an item that vanishes from every list
+            // with nothing saying why. Twelve roasts on a 14-day rhythm is 168 days, nowhere near this,
+            // so a real hoard is untouched; only nonsense is. Never shortens a genuinely slow rhythm —
+            // the floor is the unstretched median itself. Clamped as a double so the int cast below
+            // can't overflow either (500,000,000 threw ArgumentOutOfRangeException before this).
+            var projected = Math.Min(median * stockUp, Math.Max(median, MaxProjectionDays));
+            var interval = Floor(projected);
             dueDate = anchor.AddDays(interval);
             // The DueSoon window earns its width from the cadence's real variance: a noisy rhythm
             // (IQR above the flat max(3, 20%) rule) warns earlier; a metronomic one stays tight. But it
@@ -105,7 +119,7 @@ public static class ReplenishmentPredictor
         //    we're out tonight") — that OutNow is ignored until tomorrow. Pinned by a unit test.
         var activeSignal = product.Signals
             .Where(s => s.Kind is SignalKind.OutNow or SignalKind.RunningLow)
-            .Where(s => lastStockBack is null || DateOnly.FromDateTime(s.SignaledAt.Date) > lastStockBack)
+            .Where(s => lastStockBack is null || SignalDate.Of(s.SignaledAt) > lastStockBack)
             .OrderByDescending(s => s.SignaledAt)
             .ThenByDescending(s => s.Kind == SignalKind.OutNow) // OutNow wins a same-instant tie
             .FirstOrDefault();
@@ -115,7 +129,7 @@ public static class ReplenishmentPredictor
         {
             status = PredictionStatus.Overdue; // pinned to top until next purchase / restock
             pinned = true;
-            dueDate = DateOnly.FromDateTime(activeSignal.SignaledAt.Date); // out NOW → due is the outage date
+            dueDate = SignalDate.Of(activeSignal.SignaledAt); // out NOW → due is the outage date
         }
         else if (activeSignal?.Kind == SignalKind.RunningLow && status is PredictionStatus.Stocked or PredictionStatus.Unknown)
         {
@@ -152,7 +166,7 @@ public static class ReplenishmentPredictor
             if (expiresOn is { } label)
             {
                 expirationOverridden = product.Signals.Any(s =>
-                    s.Kind == SignalKind.Restocked && DateOnly.FromDateTime(s.SignaledAt.Date) > label);
+                    s.Kind == SignalKind.Restocked && SignalDate.Of(s.SignaledAt) > label);
                 if (!expirationOverridden && today > label)
                 {
                     expired = true;

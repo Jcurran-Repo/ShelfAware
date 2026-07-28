@@ -181,7 +181,7 @@ public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
             .ToDictionary(
                 g => g.Key,
                 g => (IReadOnlyCollection<(DateOnly, SignalKind)>)g
-                    .Select(s => (DateOnly.FromDateTime(s.SignaledAt.LocalDateTime), s.Kind)).ToList());
+                    .Select(s => (SignalDate.Of(s.SignaledAt), s.Kind)).ToList());
 
         var priceByPurchase = source.Purchases
             .GroupBy(f => (f.ProductId, f.Date))
@@ -233,11 +233,11 @@ public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
                     p.Id,
                     p.Name,
                     p.Purchases.Select(x => x.PurchasedAt).ToList(),
-                    // DateOnly.FromDateTime(.Date) — the PREDICTOR's convention, deliberately, because
-                    // the cycle pairing this feeds is the predictor's own. A different reading of the
-                    // same instant could pair a cycle here that the engine never sees.
+                    // SignalDate.Of — the one reading, shared with the engine. The cycle pairing this
+                    // feeds is the predictor's own, so a different reading of the same instant could
+                    // pair a cycle here that the engine never sees.
                     p.Signals.Where(s => s.Kind == SignalKind.OutNow)
-                        .Select(s => DateOnly.FromDateTime(s.SignaledAt.Date)).ToList(),
+                        .Select(s => SignalDate.Of(s.SignaledAt)).ToList(),
                     money.Quantity,
                     money.Spend,
                     money.Unpriced,

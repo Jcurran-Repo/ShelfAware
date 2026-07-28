@@ -364,6 +364,48 @@ public class ReplenishmentPredictorTests
     }
 
     [Fact]
+    public void AnAbsurdQuantity_CannotProjectAnItemOutOfSightOrOverflowTheDate()
+    {
+        // The stretch is bounded at two years — an arithmetic guard, not the 3× behavioural ceiling that
+        // was removed. Quantity is only clamped upward from zero on the way in, so one misread line (a
+        // price or a size read as a count) used to project an item years out and it vanished from every
+        // list with nothing saying why. Bigger still used to THROW: 500,000,000 raised
+        // ArgumentOutOfRangeException out of DateOnly.AddDays, taking down every page that predicts.
+        var silent = ProductWithQuantities((0, 1), (10, 1), (20, 500));
+        var crashing = ProductWithQuantities((0, 1), (10, 1), (20, 500_000_000));
+
+        // 10-day rhythm × 500 would be 5,000 days; the bound holds it to 730.
+        Assert.Equal(D(750), ReplenishmentPredictor.Predict(silent, D(25)).DueDate);
+        Assert.Equal(D(750), ReplenishmentPredictor.Predict(crashing, D(25)).DueDate);
+    }
+
+    [Fact]
+    public void TheProjectionBound_NeverShortensALegitimatelySlowRhythm()
+    {
+        // The floor is the unstretched median itself, so an item genuinely bought every three years
+        // keeps its own rhythm — the bound only ever trims a stock-up STRETCH.
+        var product = ProductWithQuantities((0, 1), (1095, 1));
+
+        var r = ReplenishmentPredictor.Predict(product, D(1100));
+
+        Assert.Null(r.StockUpFactor);
+        Assert.Equal(D(2190), r.DueDate); // D(1095) + the full 1095-day median, not clipped to 730
+    }
+
+    [Fact]
+    public void ARealHoard_IsWellInsideTheBound()
+    {
+        // Twelve when you usually buy one, on a 10-day rhythm: 120 days, nowhere near 730. The guard
+        // must not touch the behaviour it was added alongside.
+        var product = ProductWithQuantities((0, 1), (10, 1), (20, 12));
+
+        var r = ReplenishmentPredictor.Predict(product, D(25));
+
+        Assert.Equal(12.0, r.StockUpFactor);
+        Assert.Equal(D(140), r.DueDate);
+    }
+
+    [Fact]
     public void SmallerThanUsualBuy_DoesNotShortenTheDueDate()
     {
         // Extend-only: quantities are noisy (weights, partial packs) — a small last buy keeps the

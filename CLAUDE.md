@@ -542,6 +542,22 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      seeder's hoard hero. A 6× buy now projects ~84 days on a 14-day rhythm, so the hero's last trip
      moved to 130 days ago to still read as overdue. **Its dates are load-bearing** — shorten the
      silence and the grocery list is right to ask again.
+   - ⚠️ **`MaxProjectionDays` (730) replaced it, and is a different KIND of thing.** The `/pre-push`
+     gate caught what removing the ceiling exposed: `Quantity` is clamped upward from zero on the way
+     in (`ReceiptConfirmationService`) but has **no upper bound**, so one misread line — a price or a
+     size read as a count — could project an item years out. The failure was SILENT (no exception, the
+     item just vanishes from every list with nothing saying why, and it isn't overdue so "What's piling
+     up" can't surface it either); only an absurd value crashed, and a probe pinned that at
+     500,000,000 → `ArgumentOutOfRangeException` from `DateOnly.AddDays`. The bound is on the
+     ARITHMETIC: it clamps in double space (so the `int` cast can't overflow), its floor is the
+     unstretched median (so a legitimately slow rhythm is never shortened), and twelve roasts on a
+     14-day rhythm is 168 days — nowhere near it. **Don't read it as the 3× ceiling coming back.**
+   - **`SignalDate.Of` (Core/Domain) is now the ONE reading of when a signal happened**, from the same
+     gate. Seven call sites used `DateOnly.FromDateTime(s.SignaledAt.Date)` and one (Waste watch's)
+     used `.LocalDateTime` — identical on a single-timezone box, and a silent one-day shift of every
+     historical row on any deployment that moves timezone (the `TZ` gotcha below). `.Date` wins because
+     it keeps the day a signal was RECORDED on; the predictor already used it, and a signal that pairs
+     into a burn cycle in the engine but reads a day later in a report is two screens disagreeing.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
