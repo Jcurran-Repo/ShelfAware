@@ -765,8 +765,13 @@ else
     /// <summary>A voice/chat data change lands while a report is on screen. Every preset here caches its
     /// result for the component's lifetime, so without this the page keeps printing the pantry as it was
     /// — telling the assistant "we're out of lemons" and watching "What's piling up" still list lemons as
-    /// never-reported-out. Drop every cache, including the shared fact load, and re-run the active preset:
-    /// the guards are all "load if empty", so clearing is the whole invalidation.</summary>
+    /// never-reported-out. Drop every cache, including the shared fact load, and re-run the active preset.
+    /// <para>⚠️ <b>Custom is the exception that has to be named.</b> The other presets guard on "load if
+    /// empty", so clearing them IS the invalidation. `EnterCustomAsync` guards on whether the URL changed
+    /// — and a pantry change doesn't touch the URL, while `ReportSpec` is a record, so a re-parse compares
+    /// EQUAL and the guard closes on stale numbers. Clearing `customResult` (and NOT `customSpec`, and NOT
+    /// the draft) is what its recompute branch keys on. Anything added here that caches on something other
+    /// than emptiness needs the same treatment.</para></summary>
     private async Task OnPantryChangedAsync()
     {
         source = null;
@@ -774,6 +779,7 @@ else
         labelOutcomes = [];
         backlog = null;
         recipeMains = [];
+        customResult = null;
         await LoadActivePresetAsync();
         await InvokeAsync(StateHasChanged);
     }
@@ -991,13 +997,30 @@ else
         {
             draft.CopyFrom(parsed);
             draftInitialized = true;
-            if (ReportSpecRules.Check(parsed).Count == 0 && source!.Purchases.Count > 0)
-            {
-                customSpec = parsed;
-                customResult = ReportEngine.Run(parsed, source.Purchases, source.Meals);
-                customLinks = SeriesLinksFor(parsed, customResult);
-            }
+            RunCustom(parsed);
         }
+        else if (customResult is null && customSpec is { } spec)
+        {
+            // The pantry changed under us (OnPantryChangedAsync dropped the result). Recompute the SAME
+            // spec against the new facts WITHOUT re-entering the guard above — that one exists to seed
+            // the builder form from the URL, and running it here would overwrite whatever the user has
+            // typed into the form since. This branch is what makes the handler's "clearing is the whole
+            // invalidation" true for custom, which is the one preset whose guard keys on the URL rather
+            // than on being empty.
+            RunCustom(spec);
+        }
+    }
+
+    /// <summary>Run a spec against the CURRENT facts. Split out of <see cref="EnterCustomAsync"/> because
+    /// that method's guard answers "should the builder form be re-seeded from the URL?", which is a
+    /// different question from "are these numbers still current?" — and a pantry change needs the second
+    /// answered without disturbing the first.</summary>
+    private void RunCustom(ReportSpec spec)
+    {
+        if (ReportSpecRules.Check(spec).Count > 0 || source!.Purchases.Count == 0) return;
+        customSpec = spec;
+        customResult = ReportEngine.Run(spec, source.Purchases, source.Meals);
+        customLinks = SeriesLinksFor(spec, customResult);
     }
 
     private void ApplyDraft()
@@ -1155,8 +1178,6 @@ else
         return links;
     }
 
-    /// <summary>The gap rows need full products (purchases + signals) for the predictor — loaded only
-    /// when the gap preset is actually opened, not on every report visit.</summary>
     private decimal RankWidth(decimal total) =>
         topItemMax > 0 ? Math.Round(total / topItemMax * 100, 1) : 0;
 
