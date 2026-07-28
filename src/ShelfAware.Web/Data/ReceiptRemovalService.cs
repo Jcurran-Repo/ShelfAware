@@ -46,6 +46,7 @@ public sealed class ReceiptRemovalService(
         if (receipt.Status == ReceiptStatus.Confirmed)
         {
             var linked = await db.PurchaseEvents
+                .Include(p => p.Product) // §13.2's undo needs each purchase's product to move the count
                 .Where(p => p.ReceiptId == receipt.Id).ToListAsync(cancellationToken);
 
             // A confirmed receipt with no traceable purchases predates provenance (or its products
@@ -54,6 +55,15 @@ public sealed class ReceiptRemovalService(
             if (linked.Count == 0) return new Outcome(Found: true, Untraceable: true);
 
             purchases = linked.Count;
+
+            // §13.2, the other half: take back exactly what the confirm put in, BEFORE the purchases
+            // go. Same StockLedger the confirm used, so the two can't drift into disagreeing about how
+            // much a removal owes. Products deleted below don't care — their row goes with them.
+            foreach (var purchase in linked)
+            {
+                if (purchase.Product is { } product) StockLedger.Remove(product, purchase.Quantity);
+            }
+
             db.PurchaseEvents.RemoveRange(linked);
 
             // Products this receipt introduced: gone only while nothing else ever touched them.

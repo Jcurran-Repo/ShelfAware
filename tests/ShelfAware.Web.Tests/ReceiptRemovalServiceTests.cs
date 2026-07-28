@@ -62,6 +62,75 @@ public class ReceiptRemovalServiceTests : IDisposable
         return id;
     }
 
+    /// <summary>Seeds a counted product with an established count, the way turning counting on and
+    /// counting the shelf once would.</summary>
+    private async Task<int> CountedProduct(string name, decimal onHand, decimal? countedDaysAgo = null)
+    {
+        await using var db = _db.CreateDbContext();
+        var product = new Product
+        {
+            Name = name,
+            Category = Category.Meat,
+            TrackQuantity = true,
+            QuantityOnHand = onHand,
+            QuantityCountedAt = DateTimeOffset.Now.AddDays(-(double)(countedDaysAgo ?? 30)),
+        };
+        db.Products.Add(product);
+        await db.SaveChangesAsync();
+        return product.Id;
+    }
+
+    private async Task<Product> ReadProduct(int id)
+    {
+        await using var db = _db.CreateDbContext();
+        return await db.Products.AsNoTracking().SingleAsync(p => p.Id == id);
+    }
+
+    [Fact]
+    public async Task Confirm_then_remove_returns_the_count_to_where_it_started()
+    {
+        // §13.2's invariant, end to end through both real services: whatever a confirm adds, its undo
+        // takes back. This is the one that would catch the two halves drifting apart.
+        var id = await CountedProduct("Beef Chuck Roast", onHand: 5);
+        var before = await ReadProduct(id);
+
+        var receipt = await ConfirmReceipt(writeAliases: false, ("CHUCK ROAST", "Beef Chuck Roast", id));
+        Assert.Equal(6m, (await ReadProduct(id)).QuantityOnHand); // the line's quantity is 1
+
+        await Service().RemoveAsync(receipt);
+
+        var after = await ReadProduct(id);
+        Assert.Equal(before.QuantityOnHand, after.QuantityOnHand);
+        // And the undo did NOT count as a human having looked — the attestation date is untouched, so
+        // the staleness check still measures from the last real count.
+        Assert.Equal(before.QuantityCountedAt, after.QuantityCountedAt);
+    }
+
+    [Fact]
+    public async Task A_confirm_leaves_an_uncounted_product_alone()
+    {
+        // Opt-in stays opt-in: confirming a receipt must not start counting an item, nor invent a total
+        // for one that's counted but never counted.
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Products.Add(new Product { Name = "Bananas", Category = Category.Produce });
+            db.Products.Add(new Product { Name = "Rice", Category = Category.Pantry, TrackQuantity = true });
+            await db.SaveChangesAsync();
+        }
+        int bananas, rice;
+        await using (var db = _db.CreateDbContext())
+        {
+            bananas = (await db.Products.SingleAsync(p => p.Name == "Bananas")).Id;
+            rice = (await db.Products.SingleAsync(p => p.Name == "Rice")).Id;
+        }
+
+        await ConfirmReceipt(writeAliases: false,
+            ("BANANAS", "Bananas", bananas), ("RICE", "Rice", rice));
+
+        Assert.Null((await ReadProduct(bananas)).QuantityOnHand); // never opted in
+        Assert.Null((await ReadProduct(rice)).QuantityOnHand);    // opted in, no baseline counted yet
+    }
+
     [Fact]
     public async Task Removes_the_receipt_its_purchases_and_the_products_it_introduced()
     {

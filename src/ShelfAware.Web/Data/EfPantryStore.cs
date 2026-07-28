@@ -75,6 +75,11 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory) : IPantryStore
             product.IsTracked = true;
             retracked = true;
         }
+        // §13.2: a purchase moves the count wherever it comes from. Chat purchases carry no ReceiptId,
+        // so unlike a receipt's this one has no undo — which is fine, it's a deliberate human statement
+        // rather than a machine reading, and the count is correctable by hand.
+        StockLedger.Add(product, quantity);
+
         db.PurchaseEvents.Add(new PurchaseEvent
         {
             ProductId = productId,

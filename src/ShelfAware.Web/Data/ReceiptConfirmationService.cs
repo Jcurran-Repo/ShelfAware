@@ -127,6 +127,11 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
             });
             purchases++;
 
+            // §13.2: the count moves by the quantity actually bought — three cans adds 3, never 1. A
+            // no-op unless this product is counted AND has an established count; the rule lives in
+            // StockLedger so removal can take back exactly this much.
+            StockLedger.Add(product, quantity);
+
             TagVocabulary.ApplyTags(product, line.Tags, vocabulary);
 
             var dbLine = unmatchedLines.FirstOrDefault(l => l.RawText == line.RawText);
