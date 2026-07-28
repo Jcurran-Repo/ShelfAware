@@ -548,6 +548,7 @@ else
                                 <tr>
                                     <th scope="col">Item</th>
                                     <th scope="col" class="num">Bought</th>
+                                    <th scope="col" class="num">Qty</th>
                                     <th scope="col" class="num">Usually every</th>
                                     <th scope="col" class="num">Overdue by</th>
                                     <th scope="col" class="num">Spent</th>
@@ -560,6 +561,7 @@ else
                                     <tr>
                                         <td><a href="/product/@row.ProductId">@row.ProductName</a></td>
                                         <td class="num">@(row.Trips)× over @row.SpanDays d</td>
+                                        <td class="num">@row.TotalQuantity.ToString("0.#")</td>
                                         <td class="num">@(row.RebuyIntervalDays is { } r ? $"~{r:0.#} days" : "—")</td>
                                         <td class="num change-up">@row.OverdueDays day@(row.OverdueDays == 1 ? "" : "s") over</td>
                                         <td class="num">@row.Spend.ToString("C")@(row.SpendIncomplete ? "+" : "")</td>
@@ -569,7 +571,9 @@ else
                             </tbody>
                         </table>
                     </div>
-                    <p class="muted small">"Overdue by" is the same number the dashboard and the item's own page
+                    <p class="muted small">"Qty" is everything bought across those trips, in whatever unit the
+                        item is bought in — packages for things you count, weight for things you weigh, never the
+                        two added together. "Overdue by" is the same number the dashboard and the item's own page
                         show — this report asks the engine rather than doing its own arithmetic, so the two can
                         never disagree about whether you need to buy something.
                         "Cooked with" counts meals from the last @RecentMealWindowDays days whose
@@ -766,8 +770,12 @@ else
         }
         if (ActivePreset == "waste") await BuildWasteRowsAsync();
         if (ActivePreset == "piling-up" && backlog is null)
+        {
+            await LoadRecipeMainsAsync(); // the same cached copy the meal presets use — loaded once per visit
             backlog = await ReportData.LoadBacklogAsync(
-                source, Today, await SettingsStore.GetTrackExpirationDatesAsync(), RecentMealWindowDays);
+                source, recipeMains, Today,
+                await SettingsStore.GetTrackExpirationDatesAsync(), RecentMealWindowDays);
+        }
         if (ActivePreset == "custom") await EnterCustomAsync();
         loaded = true;
     }

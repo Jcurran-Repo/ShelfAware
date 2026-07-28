@@ -103,7 +103,8 @@ public class ReportDataServiceTests
         await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(lastBuyDaysAgo: 20, bulkQty: 6));
 
         var service = new ReportDataService(db);
-        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, honorExpirations: false, 60);
+        var report = await service.LoadBacklogAsync(
+            await service.LoadAsync(), await service.LoadRecipeMainsAsync(), Today, honorExpirations: false, 60);
 
         Assert.Equal(1, report.Considered); // judged, and deliberately rejected
         Assert.DoesNotContain(report.Findings, f => f.ProductName == "Beef Chuck Roast");
@@ -118,7 +119,8 @@ public class ReportDataServiceTests
         await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(lastBuyDaysAgo: 130, bulkQty: 6));
 
         var service = new ReportDataService(db);
-        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, honorExpirations: false, 60);
+        var report = await service.LoadBacklogAsync(
+            await service.LoadAsync(), await service.LoadRecipeMainsAsync(), Today, honorExpirations: false, 60);
 
         var finding = Assert.Single(report.Findings);
         Assert.Equal("Beef Chuck Roast", finding.ProductName);
@@ -149,9 +151,10 @@ public class ReportDataServiceTests
 
         var service = new ReportDataService(db);
         var source = await service.LoadAsync();
+        var mains = await service.LoadRecipeMainsAsync();
 
-        var optedOut = await service.LoadBacklogAsync(source, Today, honorExpirations: false, 60);
-        var optedIn = await service.LoadBacklogAsync(source, Today, honorExpirations: true, 60);
+        var optedOut = await service.LoadBacklogAsync(source, mains, Today, honorExpirations: false, 60);
+        var optedIn = await service.LoadBacklogAsync(source, mains, Today, honorExpirations: true, 60);
 
         Assert.Empty(optedOut.Findings); // the rhythm alone says it isn't due for two more months
         Assert.Equal(10, Assert.Single(optedIn.Findings).OverdueDays); // the label the rest of the app honours
@@ -166,7 +169,8 @@ public class ReportDataServiceTests
         await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(130, 6), tracked: false);
 
         var service = new ReportDataService(db);
-        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, honorExpirations: false, 60);
+        var report = await service.LoadBacklogAsync(
+            await service.LoadAsync(), await service.LoadRecipeMainsAsync(), Today, honorExpirations: false, 60);
 
         Assert.Equal(0, report.Considered);
         Assert.Empty(report.Findings);
@@ -181,7 +185,8 @@ public class ReportDataServiceTests
         await SeedProductAsync(db, "Ground Coffee", StockUpHistory(130, 6), outageDaysAgo: [137]);
 
         var service = new ReportDataService(db);
-        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, honorExpirations: false, 60);
+        var report = await service.LoadBacklogAsync(
+            await service.LoadAsync(), await service.LoadRecipeMainsAsync(), Today, honorExpirations: false, 60);
 
         Assert.Equal(1, report.Considered);
         Assert.Equal(1, report.EverRanOut);
@@ -197,7 +202,8 @@ public class ReportDataServiceTests
         await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(130, 6), unitPrice: 10m);
 
         var service = new ReportDataService(db);
-        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, honorExpirations: false, 60);
+        var report = await service.LoadBacklogAsync(
+            await service.LoadAsync(), await service.LoadRecipeMainsAsync(), Today, honorExpirations: false, 60);
 
         var finding = Assert.Single(report.Findings);
         Assert.Equal(10m, finding.TotalQuantity); // 6 + 1 + 1 + 1 + 1
@@ -212,7 +218,8 @@ public class ReportDataServiceTests
         await SeedProductAsync(db, "Beef Chuck Roast", StockUpHistory(130, 6)); // no receipt lines at all
 
         var service = new ReportDataService(db);
-        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, honorExpirations: false, 60);
+        var report = await service.LoadBacklogAsync(
+            await service.LoadAsync(), await service.LoadRecipeMainsAsync(), Today, honorExpirations: false, 60);
 
         Assert.True(Assert.Single(report.Findings).SpendIncomplete);
     }
@@ -244,7 +251,8 @@ public class ReportDataServiceTests
         }
 
         var service = new ReportDataService(db);
-        var report = await service.LoadBacklogAsync(await service.LoadAsync(), Today, honorExpirations: false, 60);
+        var report = await service.LoadBacklogAsync(
+            await service.LoadAsync(), await service.LoadRecipeMainsAsync(), Today, honorExpirations: false, 60);
 
         Assert.Equal(2, Assert.Single(report.Findings).RecentMealUses);
     }

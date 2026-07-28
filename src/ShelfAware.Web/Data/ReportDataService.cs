@@ -205,12 +205,16 @@ public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
     /// <summary>The backlog check (DESIGN.md §13.7). Assembles what <see cref="BacklogSignals"/> needs:
     /// full buy/outage histories, money from the facts, and — the load-bearing one — the ENGINE's own
     /// rhythm and due date, never a median recomputed here.</summary>
+    /// <param name="recipeMains">Passed in rather than loaded: the caller already has these (the meal
+    /// presets load them first and keep them), and re-querying every recipe with its ingredients to fill
+    /// one column is work the page has already done. <see cref="LoadRecipeMainsAsync"/> is public, so a
+    /// caller with nothing cached — a test — still has one line to get them.</param>
     public async Task<BacklogReport> LoadBacklogAsync(
-        ReportSourceData source, DateOnly today, bool honorExpirations, int recentMealWindowDays,
-        CancellationToken ct = default)
+        ReportSourceData source, IReadOnlyList<RecipeMains> recipeMains, DateOnly today,
+        bool honorExpirations, int recentMealWindowDays, CancellationToken ct = default)
     {
         var products = await LoadHistoriesAsync(ct);
-        var mealUses = RecentMealUsesByProductName(source, await LoadRecipeMainsAsync(ct), today, recentMealWindowDays);
+        var mealUses = RecentMealUsesByProductName(source, recipeMains, today, recentMealWindowDays);
 
         // Money comes from the report facts, priced exactly the way the Spend metric prices it
         // (ReportEngine.PurchaseValue): unit price × quantity, unpriced purchases counted not guessed.

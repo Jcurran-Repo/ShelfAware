@@ -80,7 +80,8 @@ public class DemoDataSeederTests
 
         var today = DateOnly.FromDateTime(DateTime.Today);
         var service = new ReportDataService(db);
-        var report = await service.LoadBacklogAsync(await service.LoadAsync(), today, honorExpirations: false, 60);
+        var report = await service.LoadBacklogAsync(
+            await service.LoadAsync(), await service.LoadRecipeMainsAsync(), today, honorExpirations: false, 60);
 
         var roast = Assert.Single(report.Findings, f => f.ProductName == "Beef Chuck Roast");
         Assert.Equal(5, roast.Trips);
