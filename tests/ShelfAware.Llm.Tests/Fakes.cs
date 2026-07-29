@@ -178,11 +178,23 @@ internal sealed class FakePantryStore : IPantryStore
 
     public List<(int ProductId, decimal Quantity, bool Relative, bool StopCounting)> Quantities { get; } = [];
 
+    /// <summary>Mirrors the real store's REFUSALS, not just its happy path — a fake that accepts more
+    /// than the thing it stands in for lets the chat layer's error branches go untested while looking
+    /// covered. Both refusals are the ones the tool has a specific reply for.</summary>
     public Task<bool> SetQuantityAsync(
         int productId, decimal quantity, bool relative = false, bool stopCounting = false,
         CancellationToken cancellationToken = default)
     {
-        if (Products.All(p => p.Id != productId)) return Task.FromResult(false);
+        if (Products.FirstOrDefault(p => p.Id == productId) is not { } product) return Task.FromResult(false);
+        if (stopCounting)
+        {
+            Quantities.Add((productId, quantity, relative, stopCounting));
+            return Task.FromResult(true);
+        }
+        // An absolute count below zero is refused rather than clamped (clamping would file an OutNow off
+        // a typo); a relative move needs an established baseline to be relative TO.
+        if (!relative && quantity < 0) return Task.FromResult(false);
+        if (relative && product.QuantityOnHand is null) return Task.FromResult(false);
         Quantities.Add((productId, quantity, relative, stopCounting));
         return Task.FromResult(true);
     }

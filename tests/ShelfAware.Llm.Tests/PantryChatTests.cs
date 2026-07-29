@@ -124,6 +124,121 @@ public class PantryChatTests
         Assert.Empty(store.Expirations);
     }
 
+    // --- set_quantity (§13.3) ------------------------------------------------
+
+    private static Product Counted(int id, string name, decimal? onHand) =>
+        new()
+        {
+            Id = id, Name = name, Category = Category.Meat,
+            TrackQuantity = onHand is not null, QuantityOnHand = onHand,
+            Purchases = [new PurchaseEvent { ProductId = id, PurchasedAt = new DateOnly(2026, 7, 10) }],
+        };
+
+    [Fact]
+    public async Task Set_quantity_records_a_stated_total()
+    {
+        var store = new FakePantryStore(Counted(7, "Beef Chuck Roast", onHand: null));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("set_quantity", ("product_name", "chuck roast"), ("quantity", 6))),
+            () => Responses.Text("Noted."));
+
+        var result = await Chat(client, store).HandleAsync("we have six roasts left");
+
+        Assert.True(result.Success);
+        Assert.Equal((7, 6m, false, false), Assert.Single(store.Quantities));
+    }
+
+    [Fact]
+    public async Task Set_quantity_records_a_relative_change()
+    {
+        // "used two" is a delta, not a total — passing 2 as a total would DOUBLE a count of one.
+        var store = new FakePantryStore(Counted(7, "Beef Chuck Roast", onHand: 6m));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("set_quantity",
+                ("product_name", "chuck roast"), ("quantity", -2), ("relative", true))),
+            () => Responses.Text("Noted."));
+
+        await Chat(client, store).HandleAsync("used two roasts");
+
+        Assert.Equal((7, -2m, true, false), Assert.Single(store.Quantities));
+    }
+
+    [Fact]
+    public async Task Set_quantity_refuses_a_relative_move_against_a_count_that_was_never_established()
+    {
+        // Inventing a baseline is the error §13.2 exists to avoid: a receipt says what you ADDED, not
+        // what you HAVE, so "unknown" is not zero. The tool has to say so rather than write.
+        var store = new FakePantryStore(Counted(7, "Beef Chuck Roast", onHand: null));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("set_quantity",
+                ("product_name", "chuck roast"), ("quantity", -2), ("relative", true))),
+            () => Responses.Text("How many are there?"));
+
+        var result = await Chat(client, store).HandleAsync("used two roasts");
+
+        Assert.True(result.Success); // handled by relaying, not by writing
+        Assert.Empty(store.Quantities);
+    }
+
+    [Fact]
+    public async Task Set_quantity_refuses_an_absolute_count_below_zero()
+    {
+        // Clamping -5 to 0 would file an OutNow (§13.4) off a typo — a fake outage in the cadence
+        // engine, which is precisely what the asserted-vs-derived rule exists to prevent.
+        var store = new FakePantryStore(Counted(7, "Beef Chuck Roast", onHand: 6m));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("set_quantity", ("product_name", "chuck roast"), ("quantity", -5))),
+            () => Responses.Text("That didn't look right."));
+
+        await Chat(client, store).HandleAsync("we have negative five roasts");
+
+        Assert.Empty(store.Quantities);
+    }
+
+    [Fact]
+    public async Task Set_quantity_stops_counting_on_request()
+    {
+        // Distinct from set_tracking: this stops counting the NUMBER, not predicting the item.
+        var store = new FakePantryStore(Counted(7, "Long Grain Rice", onHand: 3m));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("set_quantity",
+                ("product_name", "rice"), ("stop_counting", true))),
+            () => Responses.Text("Stopped."));
+
+        await Chat(client, store).HandleAsync("stop counting the rice");
+
+        Assert.True(Assert.Single(store.Quantities).StopCounting);
+        Assert.Empty(store.Tracking); // set_tracking was NOT what happened
+    }
+
+    [Fact]
+    public async Task Set_quantity_without_a_number_asks_instead_of_guessing()
+    {
+        // 'quantity' isn't a required parameter (stop_counting doesn't need one), so a model that omits
+        // it must be asked back — never defaulted to 0, which would assert an outage.
+        var store = new FakePantryStore(Counted(7, "Beef Chuck Roast", onHand: 6m));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("set_quantity", ("product_name", "chuck roast"))),
+            () => Responses.Text("How many?"));
+
+        await Chat(client, store).HandleAsync("we have some roasts left");
+
+        Assert.Empty(store.Quantities);
+    }
+
+    [Fact]
+    public async Task Set_quantity_on_an_unknown_product_writes_nothing()
+    {
+        var store = new FakePantryStore(Counted(7, "Beef Chuck Roast", onHand: 6m));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("set_quantity", ("product_name", "quinoa"), ("quantity", 3))),
+            () => Responses.Text("I don't have that one."));
+
+        await Chat(client, store).HandleAsync("we have three quinoa");
+
+        Assert.Empty(store.Quantities);
+    }
+
     [Fact]
     public async Task Blank_input_is_rejected_without_calling_the_model()
     {
