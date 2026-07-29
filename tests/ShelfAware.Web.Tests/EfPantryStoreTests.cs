@@ -142,6 +142,37 @@ public class EfPantryStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task An_absolute_count_below_zero_is_refused_rather_than_clamped()
+    {
+        // The same rule SetPurchaseQuantityAsync follows: "-5 on hand" is a number nobody means, and
+        // clamping it to 0 would file an OutNow (§13.4) off a typo — a fake outage in the cadence
+        // engine, which is the one thing the asserted/derived distinction exists to prevent.
+        var (productId, _) = await CountedWithPurchase(onHand: 2, bought: 2);
+
+        Assert.False(await _store.SetQuantityAsync(productId, -5));
+
+        var product = await Reload(productId);
+        Assert.Equal(2m, product.QuantityOnHand); // untouched
+        await using var db = _db.CreateDbContext();
+        Assert.Empty(await db.InventorySignals.Where(s => s.ProductId == productId).ToListAsync());
+    }
+
+    [Fact]
+    public async Task A_relative_move_past_zero_still_lands_at_none_and_reports_it()
+    {
+        // Relative is the case where the clamp IS right: "used two" against a count of one legitimately
+        // means there is nothing left, and the person saying it is looking at the shelf.
+        var (productId, _) = await CountedWithPurchase(onHand: 1, bought: 1);
+
+        Assert.True(await _store.SetQuantityAsync(productId, -2, relative: true));
+
+        Assert.Equal(0m, (await Reload(productId)).QuantityOnHand);
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(SignalKind.OutNow,
+            Assert.Single(await db.InventorySignals.Where(s => s.ProductId == productId).ToListAsync()).Kind);
+    }
+
+    [Fact]
     public async Task A_relative_move_refuses_against_a_count_that_was_never_established()
     {
         await using (var db = _db.CreateDbContext())

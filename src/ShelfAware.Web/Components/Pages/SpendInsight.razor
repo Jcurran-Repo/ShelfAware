@@ -161,7 +161,12 @@ else
 
             var typicalQty = ShoppingEstimator.For(p, prediction, today, price).TypicalQuantity;
             var interval = Math.Max(1, (int)Math.Round(m));
-            var d = due;
+            // Start from the day the money is actually going to be spent. For a counted item that's when
+            // the shelf runs out, not when the rhythm alone would have asked — suppression deliberately
+            // leaves DueDate alone, so stepping from it would forecast a purchase the app is currently
+            // telling the household NOT to make. (honorQuantity was already threaded here and had no
+            // effect at all until this line read the result.)
+            var d = prediction.SuppressedByCount && prediction.CountRunsOutOn is { } exhausted ? exhausted : due;
             var guard = 0;
             while (d <= lastNextMonth && guard++ < 400)
             {

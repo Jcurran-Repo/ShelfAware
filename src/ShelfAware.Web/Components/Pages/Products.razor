@@ -189,7 +189,14 @@ else
                     <td>@purchaseCounts.GetValueOrDefault(p.Id)</td>
                     <td><span class="chip chip-@ChipClass(e.Status)">@StatusLabel(e.Status)</span></td>
                     <td class="nextbuy">
-                        @if (e.NextBuyDate is { } d)
+                        @* Never print NextBuyDate raw — a suppressed row would read "Stocked · 15 days
+                           overdue", the same self-contradiction the grocery list shipped. CountNote is
+                           the one shared phrasing for it. *@
+                        @if (e.CountNote is { } note)
+                        {
+                            <span>@note</span>
+                        }
+                        else if (e.NextBuyDate is { } d)
                         {
                             @d.ToString("MMM d")
                             <span class="muted"> (@Relative(e.DaysUntil!.Value))</span>
@@ -207,7 +214,16 @@ else
                                 <dt>Typical buy</dt>
                                 <dd>@e.RecommendedQuantity.ToString("0.##")@(p.DefaultUnit is { } u ? " " + u : "")</dd>
                                 <dt>Next buy</dt>
-                                <dd>@(e.NextBuyDate is { } nb ? $"{nb:yyyy-MM-dd} ({Relative(e.DaysUntil!.Value)})" : "still learning")</dd>
+                                <dd>
+                                    @if (e.CountNote is { } popNote)
+                                    {
+                                        @($"{popNote} — not asking while you do")
+                                    }
+                                    else
+                                    {
+                                        @(e.NextBuyDate is { } nb ? $"{nb:yyyy-MM-dd} ({Relative(e.DaysUntil!.Value)})" : "still learning")
+                                    }
+                                </dd>
                                 <dt>Est. unit price</dt>
                                 <dd>@(e.UnitPrice is { } up ? up.ToString("C") : "unknown")</dd>
                                 <dt>Est. cost</dt>

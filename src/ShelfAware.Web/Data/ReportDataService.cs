@@ -240,6 +240,10 @@ public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
                 // the dashboard shows" footnote false for exactly the households that opted in.
                 // Unlike the BACKTEST, which stays blind on purpose: that one grades the learned
                 // rhythm, and a label is not a thing the rhythm predicted.
+                // honorQuantity is passed for consistency with every other buying surface, but note it
+                // cannot change this report's answer: suppression moves Status, and the only fields read
+                // below are DueDate and RebuyIntervalDays. Counted products are excluded by
+                // BacklogInput.AlreadyCounted instead — that exclusion is what does the work.
                 var prediction = ReplenishmentPredictor.Predict(p, today, honorExpirations, honorQuantity: true);
                 return new BacklogInput(
                     p.Id,

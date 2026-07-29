@@ -214,13 +214,24 @@ else
         {
             <p>
                 <strong>@QuantityFormat.Describe(onHand, product.DefaultUnit)</strong> on hand
+                @* SignalDate.Of, not .LocalDateTime — the one reading of when a timestamped act happened,
+                   so this date can't drift a day from the one the engine measured staleness against. *@
                 @if (product.QuantityCountedAt is { } counted)
                 {
-                    <span class="muted">· you last counted @counted.LocalDateTime.ToString("MMM d, yyyy")</span>
+                    <span class="muted">· you last counted @SignalDate.Of(counted).ToString("MMM d, yyyy")</span>
+                }
+                @if (prediction.CountRunsOutOn is { } runsOut && !prediction.CountLooksStale)
+                {
+                    @* Leading space inside the span: Razor collapses the whitespace between two adjacent
+                       conditional blocks, which ran the counted date into this clause. *@
+                    <span class="muted">&#32;· that's about enough until @runsOut.ToString("MMM d")</span>
                 }
             </p>
             @if (prediction.SuppressedByCount)
             {
+                @* Safe to call this the rhythm's date: suppression stands down whenever a label, a
+                   signal or a stale count is what made the item due, so under suppression DueDate can
+                   only ever be the rhythm's own projection. *@
                 <p class="muted">Not on the grocery list because of this count — its rhythm would otherwise
                     have asked for it @(prediction.DueDate is { } askedOn ? $"on {askedOn:MMM d}" : "by now").</p>
             }
@@ -229,6 +240,11 @@ else
                 <p class="error">That count is older than it should have lasted — by this item's own rhythm
                     it would be gone by now, so it's back on the list. <strong>Still got some?</strong>
                     Set the number again and it'll be believed afresh.</p>
+            }
+            else if (prediction.Expired || prediction.DueCappedByExpiration)
+            {
+                <p class="muted">The count isn't holding this back — its expiration date is doing the
+                    talking, and how many you have doesn't say whether they're still good.</p>
             }
             else if (onHand == 0)
             {
@@ -250,8 +266,9 @@ else
             </button>
             @if (product.TrackQuantity && product.QuantityOnHand is > 0)
             {
-                <button type="button" class="secondary" @onclick="() => AdjustQuantity(-1)" disabled="@quantityBusy"
-                        title="Used one">−1</button>
+                <button type="button" class="secondary" @onclick="UsedOne" disabled="@quantityBusy"
+                        title="Take one package off — @QuantityFormat.Describe(TypicalPackage.Of(product.DefaultUnit, product.Purchases.Select(x => x.Quantity)), product.DefaultUnit) for this item"
+                        aria-label="Used one package of @product.Name">Used one</button>
             }
             @if (product.TrackQuantity)
             {
@@ -801,12 +818,28 @@ else
     private bool quantityBusy;
     private string? quantityError;
 
-    private Task SaveQuantity() => ApplyQuantityAsync(editQuantity ?? 0, relative: false);
+    /// <summary>⚠️ An EMPTY box is not a zero. `editQuantity` starts null for every product that has
+    /// never been counted, so coercing null to 0 here meant one stray click on "Set count" asserted "we
+    /// have none" — writing a real OutNow into the cadence engine and opting the product into counting,
+    /// from a field the user never typed in. §13.4 exists precisely so nothing can mint an OutNow the
+    /// household didn't give; a mis-click must not be the exception.</summary>
+    private Task SaveQuantity()
+    {
+        if (editQuantity is not { } value)
+        {
+            quantityError = "Type how many you have. (An empty box isn't zero — to say you're out, enter 0.)";
+            return Task.CompletedTask;
+        }
+        return ApplyQuantityAsync(value, relative: false);
+    }
 
-    /// <summary>"Used one" — one tap off the shelf. Relative and human-attested, which is the difference
-    /// between this and an "Ate it" decrement: the person is looking at the cupboard, so their zero
-    /// counts as running out.</summary>
-    private Task AdjustQuantity(decimal delta) => ApplyQuantityAsync(delta, relative: true);
+    /// <summary>"Used one" — one package off the shelf, which for a weight item is the household's own
+    /// typical pack rather than a round 1 (the same <see cref="TypicalPackage"/> rule "Ate it" follows,
+    /// so the two decrement paths can't disagree about what "one" means). Relative and human-attested,
+    /// which is the difference from an "Ate it": the person is at the cupboard, so their zero counts as
+    /// running out.</summary>
+    private Task UsedOne() => ApplyQuantityAsync(
+        -TypicalPackage.Of(product!.DefaultUnit, product.Purchases.Select(x => x.Quantity)), relative: true);
 
     private Task StopCounting() => ApplyQuantityAsync(0, relative: false, stop: true);
 

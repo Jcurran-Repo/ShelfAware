@@ -149,6 +149,13 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory) : IPantryStore
             return true;
         }
 
+        // An ABSOLUTE count below zero is refused, not clamped — the same rule as
+        // SetPurchaseQuantityAsync, and for the same reason: "-5 on hand" is a number nobody means, and
+        // quietly turning it into 0 would file an OutNow (§13.4) off a typo. A relative move is
+        // different: "used two" against a count of one legitimately lands at none, and the clamp in
+        // StockLedger.Attest is the right answer there.
+        if (!relative && quantity < 0) return false;
+
         // A relative move still lands as an ATTESTATION: "used two" is a person telling us about the
         // shelf, so it stamps the date and can assert an out — unlike the automated -1 an "Ate it"
         // applies. It needs a baseline to be relative TO, though; against an unknown count there is

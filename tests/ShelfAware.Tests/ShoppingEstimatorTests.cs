@@ -22,6 +22,53 @@ public class ShoppingEstimatorTests
     private static PredictionResult Prediction(PredictionStatus status, DateOnly? due) =>
         new() { ProductId = 1, Status = status, DueDate = due, Basis = "test" };
 
+    // ---- §13.5: the one string every buying surface shows for a suppressed row --------------------
+
+    private static Product Counted(decimal onHand, string? unit, int countedOnDay)
+    {
+        var product = ProductWith((0, 1m), (10, 1m), (20, 1m));
+        product.DefaultUnit = unit;
+        product.TrackQuantity = true;
+        product.QuantityOnHand = onHand;
+        product.QuantityCountedAt = new DateTimeOffset(D(countedOnDay).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        return product;
+    }
+
+    private static PredictionResult Suppressed(DateOnly? due) =>
+        new() { ProductId = 1, Status = PredictionStatus.Stocked, DueDate = due, Basis = "test", SuppressedByCount = true };
+
+    [Fact]
+    public void CountNote_SaysWhatYouHaveAndWhenYouLooked()
+    {
+        // The row has to carry both: "you have 3" from March is a different claim from "you have 3"
+        // from yesterday, and the reader can only judge it with the date attached.
+        var e = ShoppingEstimator.For(Counted(3m, null, countedOnDay: 20), Suppressed(D(30)), D(45), unitPrice: null);
+
+        Assert.Equal("You have 3, counted Jan 21", e.CountNote);
+    }
+
+    [Fact]
+    public void CountNote_CarriesTheUnitForAWeightItem()
+    {
+        // Through QuantityFormat, so a weight item never reads as a bare number the reader would take
+        // for a package count.
+        var e = ShoppingEstimator.For(Counted(2.34m, "lb", countedOnDay: 20), Suppressed(D(30)), D(45), unitPrice: null);
+
+        Assert.Equal("You have 2.34 lb, counted Jan 21", e.CountNote);
+    }
+
+    [Fact]
+    public void CountNote_IsNullWhenNothingIsBeingSuppressed()
+    {
+        // Which is what makes it safe as the gate on every surface: no note, print the due date.
+        var e = ShoppingEstimator.For(
+            Counted(3m, null, countedOnDay: 20), Prediction(PredictionStatus.Overdue, D(30)), D(45), unitPrice: null);
+
+        Assert.Null(e.CountNote);
+        Assert.Null(e.CountOnHand);
+        Assert.Null(e.CountedOn);
+    }
+
     [Fact]
     public void TypicalQuantity_IsMedianOfPurchaseQuantities()
     {

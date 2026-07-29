@@ -31,6 +31,22 @@ public record ProductEstimate
     /// <summary>How much was counted, for the row that explains the suppression above.</summary>
     public decimal? CountOnHand { get; init; }
 
+    /// <summary>When the household last vouched for <see cref="CountOnHand"/> — §13.5 asks a suppressed
+    /// row to show its reason AND its age, because "you have 3" from March is a different claim from
+    /// "you have 3" from yesterday.</summary>
+    public DateOnly? CountedOn { get; init; }
+
+    /// <summary>What a list shows in place of a due date when a count is holding the item back, or null
+    /// when nothing is. <b>Every buying surface must use this rather than printing
+    /// <see cref="NextBuyDate"/> raw</b>: suppression deliberately leaves the due date alone so a screen
+    /// CAN explain itself, which means a screen that prints it anyway renders "Stocked · 3 days overdue"
+    /// — a row contradicting itself in one line. That shipped twice (the grocery list, then the products
+    /// grid) before this became one shared string.</summary>
+    public string? CountNote => SuppressedByCount
+        ? $"You have {QuantityFormat.Describe(CountOnHand ?? 0, DefaultUnit)}"
+          + (CountedOn is { } on ? $", counted {on:MMM d}" : "")
+        : null;
+
     /// <summary>The product's declared unit, so a count renders through
     /// <see cref="QuantityFormat.Describe"/> rather than as a bare number ("2.34 lb", not "2.34").</summary>
     public string? DefaultUnit { get; init; }
@@ -100,6 +116,9 @@ public static class ShoppingEstimator
             DaysUntil = prediction.DueDate is { } due ? due.DayNumber - today.DayNumber : null,
             SuppressedByCount = prediction.SuppressedByCount,
             CountOnHand = prediction.SuppressedByCount ? product.QuantityOnHand : null,
+            CountedOn = prediction.SuppressedByCount && product.QuantityCountedAt is { } at
+                ? SignalDate.Of(at)
+                : null,
             DefaultUnit = product.DefaultUnit,
             TypicalQuantity = typicalQuantity,
             RecommendedQuantity = recommendedQuantity,
