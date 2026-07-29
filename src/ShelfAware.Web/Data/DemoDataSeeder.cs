@@ -75,7 +75,11 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
         (int DaysAgo, SignalKind Kind)[]? Signals = null,
         string[]? AlsoWorksAs = null,
         double DriftPerDayAgo = 0,
-        (string? Brand, string? Variety)[]? BuyVariants = null);
+        (string? Brand, string? Variety)[]? BuyVariants = null,
+        // v4.0 §13: the household counted this one. CountedDaysAgo is the ATTESTATION date, so it also
+        // decides whether the drift check has fired — a distant count is a different demo from a fresh one.
+        decimal? CountOnHand = null,
+        int CountedDaysAgo = 0);
 
     private static (List<Product> Products, List<Receipt> Receipts) BuildCatalog(DateOnly today)
     {
@@ -126,6 +130,17 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
             // grocery list is right to ask again.
             new("Beef Chuck Roast", Category.Meat, null, "3 lb", 18.94m, ["Protein", "Freezer"],
                 [(130, 6), (144, 1), (158, 1), (172, 1), (186, 1)]),
+
+            // COUNTED (v4.0 §13's hero, and the answer the hoard above can't give): bought on a ~21-day
+            // rhythm and now well past due, so §6 alone would be asking for more — except the household
+            // actually counted five on the shelf three days ago. Every buying surface defers to that and
+            // says WHY ("You have 5, counted …") rather than silently dropping the row. It exists
+            // because the catalog otherwise demonstrated the counting feature nowhere: the backlog check
+            // NAMES items worth counting, and nothing showed what happens once you do.
+            // Fresh on purpose — five packages on a 21-day rhythm are months from the drift check, so
+            // this reads as suppression working rather than as a stale count.
+            new("Canned Black Beans", Category.Pantry, "Great Value", "15 oz", 1.12m, ["Pantry"],
+                [(30, 1), (52, 1), (73, 1), (95, 1)], CountOnHand: 5, CountedDaysAgo: 3),
 
             // Vacation gap: one 45-day interval among ~12-day ones. MedianWithTrim drops it (> 3× median) so
             // the cadence stays honest at ~12 days. Also the Trends "price is climbing" hero: ~15% cheaper
@@ -242,6 +257,11 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
                 Name = s.Name,
                 Category = s.Category,
                 IsTracked = true,
+                TrackQuantity = s.CountOnHand is not null,
+                QuantityOnHand = s.CountOnHand,
+                QuantityCountedAt = s.CountOnHand is null
+                    ? null
+                    : new DateTimeOffset(today.AddDays(-s.CountedDaysAgo).ToDateTime(TimeOnly.MinValue)),
                 Tags = [.. s.Tags.Select(t => new ProductTag { Value = t })],
                 Substitutes = [.. (s.AlsoWorksAs ?? []).Select(v => new ProductSubstitute { Value = v })],
                 Signals = [.. (s.Signals ?? []).Select(x => new InventorySignal

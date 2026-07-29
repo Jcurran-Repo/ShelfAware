@@ -97,6 +97,37 @@ public class DemoDataSeederTests
     }
 
     [Fact]
+    public async Task Seeds_a_counted_hero_so_suppression_has_something_to_show()
+    {
+        // Same gap as the hoard hero above, one phase later: the backlog check NAMES items worth
+        // counting, and until this seed nothing in the catalog showed what happens once you do — a
+        // visitor to the demo could never see a count, a suppressed row, or the reason given for it.
+        // Run through the REAL engine so it asserts the DATA behaves, not merely that the columns are set.
+        using var db = new TestDb();
+        await new DemoDataSeeder(db).SeedAsync();
+
+        await using var read = db.CreateDbContext();
+        var beans = read.Products
+            .Include(p => p.Purchases)
+            .Include(p => p.Signals)
+            .Single(p => p.Name == "Canned Black Beans");
+
+        Assert.True(beans.TrackQuantity);
+        Assert.Equal(5m, beans.QuantityOnHand);
+
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        // Without the count the rhythm wants it bought; with the count it stands down and says why.
+        Assert.Equal(PredictionStatus.Overdue, ReplenishmentPredictor.Predict(beans, today).Status);
+
+        var counted = ReplenishmentPredictor.Predict(beans, today, honorQuantity: true);
+        Assert.Equal(PredictionStatus.Stocked, counted.Status);
+        Assert.True(counted.SuppressedByCount);
+        // Fresh on purpose — five packages on a ~21-day rhythm are months from the drift check, so the
+        // demo reads as suppression working rather than as a count that has already rotted.
+        Assert.False(counted.CountLooksStale);
+    }
+
+    [Fact]
     public async Task Skips_when_the_catalog_already_has_products()
     {
         using var db = new TestDb();

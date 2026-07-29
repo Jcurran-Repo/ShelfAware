@@ -73,7 +73,7 @@ Category enum (store aisle): Dairy, Meat, Produce, Pantry, Frozen, Beverage, Hou
 
 > Brand and Size are per-purchase metadata on both ReceiptLine and PurchaseEvent — the product is the brand/size-agnostic item, so the same item bought across brands/sizes rolls up. See CLAUDE.md for the matching + dominant-size prediction model.
 
-> **v4.0 adds an opt-in stock count to `Product`** (`TrackQuantity`, `QuantityOnHand`, `QuantityCountedAt`) — the first thing in the model that measures *stock* rather than *flow*. Spec + invariants in **§13**; not built yet.
+> **v4.0 adds an opt-in stock count to `Product`** (`TrackQuantity`, `QuantityOnHand`, `QuantityCountedAt`) — the first thing in the model that measures *stock* rather than *flow*. Spec + invariants in **§13** (built, except the §13.8 census).
 
 ## 5. Receipt extraction (the AI centerpiece)
 **Flow:** Upload → client resize (longest edge ≤ 1568px, JPEG q≈80) → `IReceiptExtractor.ExtractAsync(images)` → editable review table → user confirms → persist `PurchaseEvent`s + aliases.
@@ -98,7 +98,7 @@ For each tracked `Product`, **two purchase-anchored rhythms** — learned from r
 
 **Unit tests required:** 2-purchase minimum, median vs outlier trim, each status boundary (±1 day), every signal override, same-day collapse, burn-rate pairing + hybrid switchover, restock-not-in-rhythm.
 
-> **v4.0 (§13, not built):** for a product with a tracked count, a positive count *suppresses* the buy recommendation (real evidence beats a learned guess) and the rhythms above take a second job — **auditing the count for drift**. The engine never edits a count and the backtest never sees one.
+> **v4.0 (§13):** for a product with a tracked count, a positive count *suppresses* the buy recommendation (real evidence beats a learned guess) and the rhythms above take a second job — **auditing the count for drift**. The engine never edits a count and the backtest never sees one. A count is about **how many**, never about **whether they're still good** or **what someone just told us** — so it never silences an expiration label or a newer signal.
 
 ## 7. Natural-language updates (tool calling)
 Single-turn dashboard box. `IPantryChat.HandleAsync(userText)` runs a tool-calling loop with:
@@ -141,7 +141,7 @@ Auth/accounts · multi-user · mobile apps · push/SMS/email (digest is stretch-
 
 ---
 
-## 13. Quantity on hand (v4.0 — spec, not yet built)
+## 13. Quantity on hand (v4.0 — built through §13.7; §13.8 is the remaining phase)
 
 **Why it exists.** §6 models *flow* — purchases in, a learned rhythm out. A backed-up pantry/freezer is
 a *stock* problem, and the household's actual goal is to answer **"do we have it?" without walking to the
@@ -183,6 +183,15 @@ feature that demands you count the salt is dead inside a week, and §13.7 is how
 - **"Ate it" auto-decrements each MAIN ingredient's matched product by one package.** Recipe quantities
   are free-form strings by deliberate design ("2 lbs", "3 cloves"), so the app cannot know you used half
   a package and **must not start parsing them** — that would re-open a locked decision.
+- **For a COUNTED item, one package is exactly 1 — never a median.** A receipt line reading
+  "Beef Chuck Roast × 6" is one purchase *of six*, not one purchase of a six-pack, so a median over
+  per-purchase quantities returns 6 for a household that habitually buys six at a time and cooking one
+  dinner would empty the freezer — which lifts suppression and puts the item straight back on the
+  grocery list, the exact opposite of the feature's purpose. **`Product.DefaultUnit` is the
+  discriminator**, the same one `QuantityFormat.Describe` uses, so what the app deducts and what it
+  prints can never disagree about which kind of number this is. (Known edge: a non-weight unit like
+  "ct" takes the median path. It's the only signal the model carries, and guessing from the numbers
+  would be worse.)
 - **For a weight item, "one package" is the household's typical package, not a round number.** Deducting
   1 lb would be arbitrary — a pound is not a unit of anything about how this household buys. Instead:
   **the median of that product's per-purchase quantities**, so a household whose ground beef arrives in
@@ -197,7 +206,11 @@ feature that demands you count the salt is dead inside a week, and §13.7 is how
 - **This is approximate, and it fails SAFE.** Using half a package still costs a whole one, so the count
   reaches zero early and you rebuy early — the same direction as the app's existing safe-side rounding
   (intervals floor, buy quantities ceil). What it must never be is silent: the "Ate it" tap **shows what
-  it is about to decrement and lets it be corrected there.**
+  it is about to decrement and lets it be corrected there.** ✅ *built: a recipe touching a counted main
+  gets a confirm step naming each item, its package and where the count lands; a recipe touching none
+  stays a single tap, so the common case keeps zero friction. `MealStock` (Web/Data) owns both the
+  preview and the write from ONE query — logic private to a page is logic no test can reach, which is
+  the §13.7 lesson applied to the one path that changes a hand-maintained number unasked.*
 - `set_quantity(product_name, quantity, relative?)` — the chat/voice tool. Absolute by default; with
   `relative: true` the number is a delta ("used two" → `-2`). Either way it is a human act, so it
   advances `QuantityCountedAt`.
@@ -229,10 +242,29 @@ An **asserted** zero and a **derived** zero are different facts and must not be 
 - **Threaded flag, inert by default** — `honorQuantity`, mirroring §6/v3.6's `honorExpirations`. A
   forgotten call site then ignores counts (a visible gap) rather than suppressing recommendations
   nobody asked it to suppress. Do not "fix" the default.
+- **A count answers "how many", so it may only silence a recommendation that rests on "how many".**
+  Four things stand it down, each for its own reason:
+  - an explicit `OutNow` — a count is a memory of a past look, an outage is a statement about now;
+  - an **expiration label** (§6/v3.6's cap, and an expired pin) — how many you have says nothing about
+    whether they're still good, and v3.6's cap is escalate-only. Silencing it would delete exactly the
+    warning that arrives *before* the food dies, and the household would first hear about the milk the
+    day after. Consequence worth stating: a counted item with a live label is explained by its **label**
+    rather than its count, which is the honest order — the label is the binding constraint;
+  - a **`RunningLow` tapped since the count** — newer human evidence beats older human evidence, the
+    same argument the outage makes. (One tapped *before* the count loses to it, or a single old tap
+    would disable counting forever.);
+  - a **stale count**, below.
 - **The rhythms audit the count.** This is what keeps a count from rotting unnoticed:
-  **expected exhaustion = `QuantityCountedAt` + (driving median × `QuantityOnHand`)**. Past that date
-  with the count still positive, the app asks once — "you counted 3 in March and one usually lasts ~9
-  days; still have them?" The engine **never silently corrects a count**; it only ever raises a question.
+  **expected exhaustion = `QuantityCountedAt` + (days-per-package × `QuantityOnHand`)**, where
+  **days-per-package = driving median ÷ the typical trip quantity**. Past that date with the count still
+  positive, the app asks once — "you counted 3 in March and one usually lasts ~9 days; still have them?"
+  The engine **never silently corrects a count**; it only ever raises a question.
+  ⚠️ **The driving median is days-per-TRIP, not days-per-package**, and conflating them is a silent
+  failure: a household buying six at a time on a 60-day rhythm gets a 360-day horizon instead of 60, so
+  the drift check never fires for exactly the bulk buyers §13 exists for. That divisor is not a new
+  assumption — it is the *same* proportionality `StockUpFactor` already asserts when it stretches a due
+  date by (this buy ÷ typical trip). One reading of what the median measures, or two rules in one file
+  contradict each other. Pinned by `TheDriftHorizon_ReadsTheMedianAsOneTripsWorth_NotOnePackage`.
   This is the answer to "an inventory decays": the drift is detected instead of assumed away, and the
   cost of being wrong is one tap, not a re-census.
 - **The backtest stays count-blind**, exactly as it stays expiration-blind — it grades the learned

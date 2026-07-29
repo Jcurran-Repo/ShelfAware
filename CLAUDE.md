@@ -572,6 +572,51 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      it keeps the day a signal was RECORDED on; the predictor already used it, and a signal that pairs
      into a burn cycle in the engine but reads a day later in a report is two screens disagreeing.
 
+20. **Review pass on the counting arc (2026-07-28, same branch).** An in-process review of the whole
+   v4.0 diff found nine real things; the four that changed behaviour are decisions worth keeping:
+   - ⚠️ **A count may only silence a recommendation that rests on "how many".** It now stands down for
+     an expiration label (cap or pin) and for a `RunningLow` tapped SINCE the attestation, as well as
+     for the OutNow it already deferred to. The label case was the sharp one: suppression turned a
+     DueSoon-by-label item Stocked, so v3.6's escalate-only cap silently became escalate-then-mute and
+     the household would first hear about the milk the day AFTER it died. Both directions are pinned
+     (`ACount_CannotSilenceAnApproachingExpiration` + `TheSameCount_SuppressesOnceTheLabelIsOutOfTheWay`).
+     Falls out of it: under suppression `DueDate` can only ever be the rhythm's own projection, which is
+     what makes Product Detail's "its rhythm would otherwise have asked for it on X" true by construction.
+   - ⚠️ **The drift horizon is per PACKAGE: `median ÷ typical trip × count`.** The driving median is how
+     long a *trip's* worth lasts — the same reading `StockUpFactor` asserts when it stretches a due date
+     by (this buy ÷ typical trip) — so multiplying it by a package count gave a household buying six at
+     a time a 360-day horizon instead of 60, and the drift check could never fire for exactly the bulk
+     buyers §13 was built for. Two rules in one file must not disagree about what the median measures;
+     `tripTotals`/`typicalTrip` are computed once and shared for that reason.
+   - ⚠️ **`TypicalPackage.Of` takes `DefaultUnit`, and a COUNTED item's package is exactly 1.** A receipt
+     line reading "× 6" is one purchase OF six, not a six-pack, so the median returned 6 for a habitual
+     bulk buyer and one dinner emptied the freezer — which lifts suppression and re-adds the item to the
+     list. Its own docstring had always said "for a counted item that's the number 1"; the code never
+     had that branch, and the tests only covered a bulk buy as an *outlier* (`[1,1,1,1,6]`).
+   - **An EMPTY count box is not a zero.** `editQuantity` starts null for every never-counted product, so
+     `?? 0` meant one stray click on "Set count" asserted an outage — writing a real `OutNow` into the
+     cadence engine from a field nobody typed in. §13.4 exists to stop machine inference becoming ground
+     truth; a mis-click must not be the exception. The absolute-negative path is refused too, matching
+     `SetPurchaseQuantityAsync` (relative still clamps — "used two" against one really is none).
+   - **`ProductEstimate.CountNote` is THE phrasing for a suppressed row**, because the "Stocked · 3 days
+     overdue" self-contradiction shipped TWICE: fixed on the grocery list, then left on the products
+     grid, which got `honorQuantity: true` without the matching display change. It's a computed property
+     rather than per-page markup so a new surface can't reinvent it wrongly. Same class as the
+     "One prediction, one story" directive above — that rule has now been broken five times on this branch.
+   - **`MealStock` (Web/Data) owns the "Ate it" decrement**, moved out of `Recipes.razor` for the §13.7
+     reason (logic private to a page is logic no test can reach) — plus the §13.3 confirm step the spec
+     always required, a double-tap guard, and case-insensitive matching (SQLite's `IN` is
+     case-SENSITIVE, so a renamed product silently stopped decrementing with no error at all).
+   - Smaller: the spend forecast now steps from `CountRunsOutOn` rather than a due date the app is
+     currently telling you to ignore (`honorQuantity` was threaded there and had NO effect); DESIGN.md's
+     three "not built yet" markers were stale within their own branch; and the demo seeder gained a
+     **counted** hero ("Canned Black Beans", 5 on hand) — the backlog check names items worth counting
+     and nothing showed what happens once you do.
+   - 808 tests green, 0 warnings (777 before). `set_quantity` gained the chat-layer tests and the
+     system-prompt rule (6c) it shipped without — `set_expiration`, the closest precedent, had four
+     tests and rule 6b. ⚠️ Its fake was ALSO more permissive than the real store, so the refusal tests
+     passed vacuously until it was taught the real contract.
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active
