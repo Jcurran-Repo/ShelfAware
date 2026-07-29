@@ -5,6 +5,7 @@
 @using ShelfAware.Core.Prediction
 @using ShelfAware.Core.Recipes
 @using ShelfAware.Core.Settings
+@using ShelfAware.Core.Shopping
 @inject IHouseholdDbFactory DbFactory
 @inject IPantryStore Store
 @inject IAppSettings Settings
@@ -237,7 +238,8 @@
                                     }
                                 </SplitButton>
                             }
-                            <button class="secondary" @onclick="() => MarkEaten(r)" aria-label="Mark @r.Name eaten">Ate it</button>
+                            <button class="secondary" @onclick="() => MarkEaten(r)" disabled="@eatBusy"
+                                    aria-label="Mark @r.Name eaten">Ate it</button>
                             @if (!makeable)
                             {
                                 <button class="secondary" @onclick="() => AddMissingToList(r)" aria-label="Add missing ingredients for @r.Name to the grocery list">Add missing to list</button>
@@ -247,6 +249,35 @@
                             <button class="icon-btn" @onclick="() => DeleteSaved(r)" aria-label="Delete @r.Name" title="Delete @r.Name"><span aria-hidden="true">🗑</span></button>
                         </span>
                     </div>
+                    @* §13.3: an "Ate it" that moves a count must SAY what it is about to take and let it
+                       be corrected first — the decrement is approximate by design (it can't parse "2 lbs"),
+                       so it must never be silent. Only recipes with counted mains get this step; for every
+                       other recipe the tap still goes straight through. *@
+                    @if (pendingEat is { } pending && pending.RecipeId == r.Id)
+                    {
+                        <div class="panel inline-confirm">
+                            <p>Marking this eaten also takes it off what you have on hand:</p>
+                            <ul>
+                                @foreach (var take in pending.Takes)
+                                {
+                                    <li>
+                                        <strong>@take.ProductName</strong> —
+                                        @QuantityFormat.Describe(take.Amount, take.DefaultUnit) off
+                                        @QuantityFormat.Describe(take.OnHand, take.DefaultUnit),
+                                        leaving @QuantityFormat.Describe(take.Remaining, take.DefaultUnit)
+                                    </li>
+                                }
+                            </ul>
+                            <p class="muted small">One package each — the app can't tell from "2 lbs" how much
+                                of a pack a recipe really used, so it charges a whole one. That errs toward
+                                rebuying early. If it's wrong, set the real number on the item's page.</p>
+                            <button type="button" @onclick="ConfirmEat" disabled="@eatBusy">
+                                @(eatBusy ? "Saving…" : "Ate it")
+                            </button>
+                            <button type="button" class="secondary" @onclick="() => pendingEat = null"
+                                    disabled="@eatBusy">Cancel</button>
+                        </div>
+                    }
                     @if (r.Blurb is { Length: > 0 })
                     {
                         <p class="muted">@r.Blurb</p>
@@ -831,49 +862,54 @@
         await LoadAsync();
     }
 
+    private sealed record PendingEat(int RecipeId, IReadOnlyList<MealStock.Take> Takes);
+
+    private PendingEat? pendingEat;
+    private bool eatBusy;
+
+    /// <summary>"Ate it" — one tap for a recipe that touches no counted item, a confirm step for one that
+    /// does. §13.3 requires the decrement to show itself before it happens: it is deliberately
+    /// approximate (recipe quantities are free-form strings the app must not parse), and an approximate
+    /// change to a number the household maintains by hand cannot also be a silent one.</summary>
     private async Task MarkEaten(Recipe r)
     {
+        if (eatBusy) return;
         await using var db = await DbFactory.CreateDbContextAsync();
-        var rec = await db.Recipes.FindAsync(r.Id);
-        if (rec is null) return;
-        rec.TimesEaten++;
-        // The counter answers "how reliable is this recipe" (Pick for me); the event answers "when did
-        // we eat it" (the Reports tab's meals/calories charts). Same tap writes both.
-        db.MealEvents.Add(new MealEvent { RecipeId = rec.Id, AteAt = DateOnly.FromDateTime(DateTime.Today) });
-        await EatIntoTheCountAsync(db, r);
-        await db.SaveChangesAsync();
-        await LoadAsync();
+        var takes = await MealStock.PlanAsync(db, r);
+        if (takes.Count > 0)
+        {
+            pendingEat = new PendingEat(r.Id, takes);
+            return;
+        }
+        await CommitEatAsync(r);
     }
 
-    /// <summary>Cooking takes stock off the shelf (§13.3): one package of each MAIN ingredient whose
-    /// matched product is being counted. Recipe quantities are free-form strings by design ("2 lbs",
-    /// "3 cloves") and must NOT be parsed — so "one package" is the household's own typical pack for
-    /// that item, which for a weight item is the median of its per-purchase quantities rather than a
-    /// round pound.
-    /// <para>Approximate, and it fails SAFE: using half a pack still costs a whole one, so the count
-    /// empties early and the rebuy comes early — the same direction as the app's safe-side rounding.
-    /// And deliberately silent about zero: this is <see cref="StockLedger.Remove"/>, which cannot write
-    /// an OutNow. A machine decrement arriving at nothing is a hypothesis for the product page to raise,
-    /// never an outage the human never reported (§13.4).</para></summary>
-    private static async Task EatIntoTheCountAsync(ShelfAwareDbContext db, Recipe recipe)
+    private async Task ConfirmEat()
     {
-        var names = recipe.MainIngredients
-            .Select(i => i.MatchedProduct)
-            .OfType<string>()
-            .Where(n => n.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        if (names.Count == 0) return;
+        if (pendingEat is not { } pending || eatBusy) return;
+        var recipe = savedRecipes.FirstOrDefault(x => x.Id == pending.RecipeId);
+        if (recipe is null) { pendingEat = null; return; }
+        await CommitEatAsync(recipe);
+    }
 
-        var counted = await db.Products
-            .Where(p => p.TrackQuantity && p.QuantityOnHand != null && names.Contains(p.Name))
-            .Include(p => p.Purchases)
-            .ToListAsync();
-
-        foreach (var product in counted)
+    private async Task CommitEatAsync(Recipe r)
+    {
+        eatBusy = true;
+        try
         {
-            StockLedger.Remove(product, TypicalPackage.Of(product.Purchases.Select(x => x.Quantity)));
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var rec = await db.Recipes.FindAsync(r.Id);
+            if (rec is null) return;
+            rec.TimesEaten++;
+            // The counter answers "how reliable is this recipe" (Pick for me); the event answers "when did
+            // we eat it" (the Reports tab's meals/calories charts). Same tap writes both.
+            db.MealEvents.Add(new MealEvent { RecipeId = rec.Id, AteAt = DateOnly.FromDateTime(DateTime.Today) });
+            await MealStock.ApplyAsync(db, r); // same save as the MealEvent — one tap, one transaction
+            await db.SaveChangesAsync();
+            pendingEat = null;
+            await LoadAsync();
         }
+        finally { eatBusy = false; }
     }
 
     // Send the main ingredients you don't currently have to the grocery list's manual "extras" section.
