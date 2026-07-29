@@ -79,6 +79,18 @@ public static class ReplenishmentPredictor
         // is meaningless, so it stays null and the warning window falls back to the flat rule.
         double? spread = driving is { Samples.Count: >= 3 } d ? Iqr(d.Samples) : null;
 
+        // One trip's worth, by date. Computed once because TWO rules read it and they must not disagree
+        // about what a median interval is a median interval OF: the stock-up stretch below scales the
+        // interval by (this buy ÷ typical trip), which is the statement "the median interval is how long
+        // a TYPICAL TRIP'S worth lasts". §13.5's drift horizon divides by the same typical trip to get
+        // days per package. Reading the median as days-per-package in one place and days-per-trip in the
+        // other is how a household that buys six at a time got a drift horizon six times too long.
+        var tripTotals = product.Purchases
+            .Where(p => p.Quantity > 0)
+            .GroupBy(p => p.PurchasedAt)
+            .ToDictionary(g => g.Key, g => g.Sum(p => p.Quantity));
+        var typicalTrip = tripTotals.Count > 0 ? MedianDecimal([.. tripTotals.Values]) : 0m;
+
         // 5. Statistical base: project the driving rhythm from the last time we had stock.
         PredictionStatus status;
         DateOnly? dueDate = null;
@@ -88,7 +100,7 @@ public static class ReplenishmentPredictor
         {
             // A stock-up stretches the projection: buying ~3× the usual amount pushes the due date out
             // ~3× instead of nagging on the one-unit cadence.
-            stockUp = StockUpFactor(product.Purchases, anchor);
+            stockUp = StockUpFactor(tripTotals, typicalTrip, anchor);
             // Bound the STRETCH — an arithmetic sanity check, not the 3× behavioural ceiling that was
             // removed 2026-07-28. Quantity is only clamped upward from zero on the way in, so one
             // misread line (a price or a size read as a count) used to be able to project an item years
@@ -218,28 +230,51 @@ public static class ReplenishmentPredictor
         //    Never the other way: a count of zero doesn't PIN anything. Reaching zero by arithmetic is a
         //    hypothesis (§13.4) — only a human's "we're out" writes the OutNow that pins, and that runs
         //    through the ordinary signal path above like any other.
-        var statusBeforeCount = status;
+        //    Four things it must NOT silence, each for its own reason:
+        //      • An OutNow (`pinned`) — a count is a memory of a past look, an OutNow is a statement
+        //        about now.
+        //      • A LABEL (`dueCapped`, and `expired` which always pins) — a count answers "how many",
+        //        never "is it still good". v3.6's cap is escalate-only and must stay that way: silencing
+        //        it here would delete exactly the warning it exists to give, and the household would
+        //        first hear about the milk the day AFTER it died. Consequence worth knowing: a counted
+        //        item with a live label is explained by its label rather than its count, which is the
+        //        honest order — the label is the binding constraint.
+        //      • A RunningLow tapped since the count — newer human evidence beats older human evidence,
+        //        which is the same argument the pin above already makes for OutNow.
+        //      • A count that has gone stale (below) — the whole reason the drift check exists.
         var suppressed = false;
         var staleCount = false;
-        if (honorQuantity && product is { TrackQuantity: true, QuantityOnHand: > 0 } && !pinned)
+        DateOnly? countRunsOut = null;
+        if (honorQuantity && product is { TrackQuantity: true, QuantityOnHand: > 0 } counted)
         {
-            suppressed = true;
-            status = PredictionStatus.Stocked;
-
-            // …unless the count has gone quiet long enough that the rhythm says it should be gone. The
-            // answer to "an inventory decays": expected exhaustion = the last time a human vouched for
-            // the number + (how long one lasts × how many they said). Past that, the app stops
-            // suppressing and asks, rather than trusting a March count forever.
-            if (drivingMedian is { } perUnit && perUnit > 0 && product.QuantityCountedAt is { } countedAt)
+            // Expected exhaustion: the last time a human vouched for the number, plus how long that many
+            // packages last. ⚠️ The driving median is how long a TYPICAL TRIP'S worth lasts, not one
+            // package — the same reading StockUpFactor uses when it stretches a due date for a big buy.
+            // Divide by the typical trip to get days per package, or a household that buys six at a time
+            // gets a horizon six times too long and the drift check never fires for exactly the bulk
+            // buyers §13 was built for.
+            if (drivingMedian is { } perTrip && perTrip > 0 && counted.QuantityCountedAt is { } countedAt)
             {
-                var expectedGone = DateOnly.FromDateTime(countedAt.Date)
-                    .AddDays(Floor(Math.Min(perUnit * (double)product.QuantityOnHand.Value, MaxProjectionDays)));
-                if (today > expectedGone)
-                {
-                    staleCount = true;
-                    suppressed = false;
-                    status = statusBeforeCount;
-                }
+                var perPackage = typicalTrip > 0 ? perTrip / (double)typicalTrip : perTrip;
+                countRunsOut = SignalDate.Of(countedAt)
+                    .AddDays(Floor(Math.Min(perPackage * (double)counted.QuantityOnHand.Value, MaxProjectionDays)));
+                staleCount = today > countRunsOut.Value;
+            }
+
+            var labelIsSpeaking = dueCapped || expired;
+            var lowSinceTheCount = activeSignal is { Kind: SignalKind.RunningLow } low
+                && (counted.QuantityCountedAt is not { } at || SignalDate.Of(low.SignaledAt) >= SignalDate.Of(at));
+            // …and there has to BE a recommendation to hold back. A still-learning item was never going
+            // to be asked for, so calling it suppressed made every surface explain a decision the engine
+            // never made — "its rhythm would otherwise have asked for it by now", about an item with no
+            // rhythm. Found by running it. Stocked is already off the buy lists, so this only ever
+            // skips work there.
+            var wouldHaveAsked = status is PredictionStatus.Overdue or PredictionStatus.DueSoon;
+
+            if (wouldHaveAsked && !pinned && !labelIsSpeaking && !lowSinceTheCount && !staleCount)
+            {
+                suppressed = true;
+                status = PredictionStatus.Stocked;
             }
         }
 
@@ -250,6 +285,7 @@ public static class ReplenishmentPredictor
             DueDate = dueDate,
             SuppressedByCount = suppressed,
             CountLooksStale = staleCount,
+            CountRunsOutOn = countRunsOut,
             MedianIntervalDays = drivingMedian, // the winning number — shown everywhere
             RebuyIntervalDays = rebuy?.Median,
             BurnRateDays = burn?.Median,
@@ -359,16 +395,12 @@ public static class ReplenishmentPredictor
     // non-perishables — precisely the things it IS safe to stay quiet about. The honest limit remains:
     // this can't tell a freezer stock-up from twenty sodas bought for a party, and neither could the
     // cap; a real count (§13) is what actually answers it.
-    private static double StockUpFactor(IReadOnlyCollection<PurchaseEvent> purchases, DateOnly anchor)
+    private static double StockUpFactor(
+        IReadOnlyDictionary<DateOnly, decimal> tripTotals, decimal typicalTrip, DateOnly anchor)
     {
-        var totalsByDate = purchases
-            .Where(p => p.Quantity > 0)
-            .GroupBy(p => p.PurchasedAt)
-            .ToDictionary(g => g.Key, g => g.Sum(p => p.Quantity));
-        if (!totalsByDate.TryGetValue(anchor, out var lastQty)) return 1.0; // anchor is a restock, not a buy
-        var typical = MedianDecimal([.. totalsByDate.Values]);
-        if (typical <= 0 || lastQty <= typical) return 1.0;
-        return (double)(lastQty / typical);
+        if (!tripTotals.TryGetValue(anchor, out var lastQty)) return 1.0; // anchor is a restock, not a buy
+        if (typicalTrip <= 0 || lastQty <= typicalTrip) return 1.0;
+        return (double)(lastQty / typicalTrip);
     }
 
     private static decimal MedianDecimal(List<decimal> values)

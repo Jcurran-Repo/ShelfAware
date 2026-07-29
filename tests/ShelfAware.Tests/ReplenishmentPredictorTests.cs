@@ -499,6 +499,170 @@ public class ReplenishmentPredictorTests
         Assert.False(r.CountLooksStale);
     }
 
+    // ---- §13.5: the drift horizon is per PACKAGE, not per trip -----------------------------------
+
+    [Fact]
+    public void TheDriftHorizon_ReadsTheMedianAsOneTripsWorth_NotOnePackage()
+    {
+        // A household that buys SIX at a time on a ~60-day rhythm. That median is how long six last, so
+        // six on hand are gone in ~60 days — not 360. Reading it as days-per-package meant the drift
+        // check couldn't fire for a year, on exactly the bulk-buying households §13 was built for.
+        // It's also the reading StockUpFactor already uses: a 2× buy stretches the due date 2×, which is
+        // the statement "the median covers a TYPICAL TRIP'S worth".
+        var product = ProductWithQuantities((0, 6), (60, 6), (120, 6));
+        product.TrackQuantity = true;
+        product.QuantityOnHand = 6m;
+        product.QuantityCountedAt = new DateTimeOffset(D(120).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+
+        var r = ReplenishmentPredictor.Predict(product, D(200), honorQuantity: true);
+
+        Assert.Equal(D(180), r.CountRunsOutOn); // 120 + (60 ÷ 6) × 6, not 120 + 60 × 6
+        Assert.True(r.CountLooksStale);
+        Assert.False(r.SuppressedByCount);
+    }
+
+    [Fact]
+    public void ABulkBuyersFreshCount_IsStillBelieved()
+    {
+        // The other half of the same rule: shortening the horizon must not make every hoard read stale.
+        // Six counted on D(120) last until D(180), and the rhythm starts asking at D(168) — so D(175) is
+        // exactly the window where there IS a recommendation and the count is still good enough to hold
+        // it back.
+        var product = ProductWithQuantities((0, 6), (60, 6), (120, 6));
+        product.TrackQuantity = true;
+        product.QuantityOnHand = 6m;
+        product.QuantityCountedAt = new DateTimeOffset(D(120).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+
+        var r = ReplenishmentPredictor.Predict(product, D(175), honorQuantity: true);
+
+        Assert.True(r.SuppressedByCount);
+        Assert.False(r.CountLooksStale);
+    }
+
+    [Fact]
+    public void ABuyerOfOne_IsUnaffectedByThePerPackageRule()
+    {
+        // Where the typical trip IS one package the two readings coincide, so nothing moves for the
+        // ordinary staple: three counted on D(44) at a 10-day rhythm last until D(74).
+        var r = ReplenishmentPredictor.Predict(CountedAndOverdue(3, countedOnDay: 44), D(45), honorQuantity: true);
+
+        Assert.Equal(D(74), r.CountRunsOutOn);
+        Assert.True(r.SuppressedByCount);
+    }
+
+    // ---- §13.5: what a count is NOT allowed to silence -------------------------------------------
+
+    /// <summary>Bought on a ~10-day rhythm, the last buy on D(40) carrying a best-by label of D(46).</summary>
+    private static Product DatedAndCounted(decimal onHand, int countedOnDay)
+    {
+        var product = ProductWith([D(20), D(30), D(40)]);
+        product.Purchases.Single(p => p.PurchasedAt == D(40)).ExpirationDate = D(46);
+        product.TrackQuantity = true;
+        product.QuantityOnHand = onHand;
+        product.QuantityCountedAt = new DateTimeOffset(D(countedOnDay).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        return product;
+    }
+
+    [Fact]
+    public void ACount_CannotSilenceAnApproachingExpiration()
+    {
+        // v3.6's cap is escalate-only and has to stay that way. A count answers "how many", never "are
+        // they still good" — so suppressing here would delete the one warning that arrives BEFORE the
+        // food dies, and the household would first hear about it the day after.
+        var r = ReplenishmentPredictor.Predict(
+            DatedAndCounted(3, countedOnDay: 44), D(45), honorExpirations: true, honorQuantity: true);
+
+        Assert.Equal(PredictionStatus.DueSoon, r.Status);
+        Assert.False(r.SuppressedByCount);
+        Assert.True(r.DueCappedByExpiration);
+        Assert.Equal(D(46), r.DueDate);
+    }
+
+    [Fact]
+    public void ACount_CannotSilenceAnExpiredItem()
+    {
+        var r = ReplenishmentPredictor.Predict(
+            DatedAndCounted(3, countedOnDay: 44), D(50), honorExpirations: true, honorQuantity: true);
+
+        Assert.Equal(PredictionStatus.Overdue, r.Status);
+        Assert.True(r.Expired);
+        Assert.False(r.SuppressedByCount);
+    }
+
+    [Fact]
+    public void TheSameCount_SuppressesOnceTheLabelIsOutOfTheWay()
+    {
+        // Control for the two above, and it has to be taken on a day the RHYTHM would ask (due D(50), so
+        // D(52) is overdue) — otherwise "not suppressed" would prove nothing, since an item that isn't
+        // due isn't being held back by anything. With expiration tracking off the identical product
+        // suppresses, so the label really is what stands the count down.
+        var r = ReplenishmentPredictor.Predict(DatedAndCounted(3, countedOnDay: 44), D(52), honorQuantity: true);
+
+        Assert.Equal(PredictionStatus.Stocked, r.Status);
+        Assert.True(r.SuppressedByCount);
+    }
+
+    [Fact]
+    public void TheSameCount_WithTheLabelHonoured_StaysOverdueOnThatDay()
+    {
+        // The pair to the control: same product, same day, expirations ON. Past the label now, so it is
+        // pinned expired and the count cannot quiet it.
+        var r = ReplenishmentPredictor.Predict(
+            DatedAndCounted(3, countedOnDay: 44), D(52), honorExpirations: true, honorQuantity: true);
+
+        Assert.Equal(PredictionStatus.Overdue, r.Status);
+        Assert.True(r.Expired);
+        Assert.False(r.SuppressedByCount);
+    }
+
+    [Fact]
+    public void AStillLearningItem_IsNotCalledSuppressed()
+    {
+        // Found by running it: counting a product with only one purchase flipped "Still learning" to
+        // "Stocked" and had the page explain that "its rhythm would otherwise have asked for it by now"
+        // — about an item that has no rhythm and was never going to be asked for. There has to BE a
+        // recommendation before anything can be said to be holding one back. The count itself still
+        // shows on the product page; it just isn't dressed up as a decision.
+        var product = ProductWithQuantities((0, 1));
+        product.TrackQuantity = true;
+        product.QuantityOnHand = 3m;
+        product.QuantityCountedAt = new DateTimeOffset(D(1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+
+        var r = ReplenishmentPredictor.Predict(product, D(45), honorQuantity: true);
+
+        Assert.Equal(PredictionStatus.Unknown, r.Status);
+        Assert.False(r.SuppressedByCount);
+    }
+
+    [Fact]
+    public void ARunningLowTappedSinceTheCount_BeatsIt()
+    {
+        // Newer human evidence beats older human evidence — the same argument the OutNow pin makes.
+        // Someone stood at the cupboard today and said it's low; a count from four days ago doesn't
+        // get to overrule them.
+        var product = CountedAndOverdue(3, countedOnDay: 41);
+        product.Signals.Add(Signal(SignalKind.RunningLow, D(45)));
+
+        var r = ReplenishmentPredictor.Predict(product, D(45), honorQuantity: true);
+
+        Assert.Equal(PredictionStatus.Overdue, r.Status); // the rhythm's own verdict, un-suppressed
+        Assert.False(r.SuppressedByCount);
+    }
+
+    [Fact]
+    public void ARunningLowFromBeforeTheCount_LosesToIt()
+    {
+        // The mirror: they said "low" on D(41) and then actually counted three on D(44). The count is
+        // the newer look, so it wins — otherwise one old tap would silence counting forever.
+        var product = CountedAndOverdue(3, countedOnDay: 44);
+        product.Signals.Add(Signal(SignalKind.RunningLow, D(41)));
+
+        var r = ReplenishmentPredictor.Predict(product, D(45), honorQuantity: true);
+
+        Assert.Equal(PredictionStatus.Stocked, r.Status);
+        Assert.True(r.SuppressedByCount);
+    }
+
     [Fact]
     public void SmallerThanUsualBuy_DoesNotShortenTheDueDate()
     {

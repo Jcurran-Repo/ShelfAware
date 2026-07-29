@@ -84,6 +84,15 @@ public record PredictionResult
     /// can actually see. This is what stops a stale inventory silencing an item forever.</summary>
     public bool CountLooksStale { get; init; }
 
+    /// <summary>When the counted stock is expected to run out: the last human attestation plus how long
+    /// that many packages last at this item's own rhythm (§13.5). Null when the item isn't counted, has
+    /// never been attested, or has no rhythm to project from.
+    /// <para>It is the date <see cref="CountLooksStale"/> fires the day after, and it is the honest
+    /// answer to "when WILL I need this?" while <see cref="DueDate"/> is answering "when would the
+    /// rhythm alone have asked?" — a spend forecast wants this one, since it's the day the money is
+    /// actually going to be spent.</para></summary>
+    public DateOnly? CountRunsOutOn { get; init; }
+
     // ---- Derived: the two-stream gap (rebuy rhythm vs. burn rate) ----
 
     /// <summary>Rebuy rhythm minus burn rate in days, when both are known. Positive means you run out this
