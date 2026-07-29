@@ -264,4 +264,108 @@ public class HouseholdIsolationTests : IDisposable
             Assert.True(await db.Products.CountAsync() > 10);
         }
     }
+
+    // ---- v4.0 §13: the count's own write paths take raw ids, so they walk this drill too ------------
+
+    /// <summary>B's counted product and one of its purchases. Returns both ids so A can try to reach
+    /// them the only way a caller ever could — by id.</summary>
+    private async Task<(int ProductId, int PurchaseId)> CountedProductOwnedByB()
+    {
+        await using var db = As(B);
+        var product = new Product
+        {
+            Name = "Beef Chuck Roast",
+            Category = Category.Meat,
+            TrackQuantity = true,
+            QuantityOnHand = 6m,
+            QuantityCountedAt = new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero),
+        };
+        db.Products.Add(product);
+        await db.SaveChangesAsync();
+        var purchase = new PurchaseEvent
+        {
+            ProductId = product.Id,
+            PurchasedAt = new DateOnly(2026, 7, 1),
+            Quantity = 6m,
+            Source = PurchaseSource.Receipt,
+        };
+        db.PurchaseEvents.Add(purchase);
+        await db.SaveChangesAsync();
+        return (product.Id, purchase.Id);
+    }
+
+    private async Task<Product> ReadAsB(int productId)
+    {
+        await using var db = As(B);
+        return await db.Products.AsNoTracking().SingleAsync(p => p.Id == productId);
+    }
+
+    [Fact]
+    public async Task Setting_a_count_cannot_reach_another_households_product()
+    {
+        // SetQuantityAsync resolves a RAW product id through FindAsync, and the whole write rests on the
+        // claim that FindAsync applies the global query filter. That claim was probed once for other
+        // paths; these are new paths, so it gets proved here rather than inherited.
+        var (productId, _) = await CountedProductOwnedByB();
+
+        _db.HouseholdId = A;
+        var store = new EfPantryStore(_db);
+
+        Assert.False(await store.SetQuantityAsync(productId, 99));
+        Assert.False(await store.SetQuantityAsync(productId, -1, relative: true));
+        Assert.False(await store.SetQuantityAsync(productId, 0, stopCounting: true));
+
+        var untouched = await ReadAsB(productId);
+        Assert.True(untouched.TrackQuantity);
+        Assert.Equal(6m, untouched.QuantityOnHand);
+        Assert.Equal(new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero), untouched.QuantityCountedAt);
+        // And no phantom outage was filed against B by A's asserted zero.
+        await using var raw = _db.CreateUnscopedContext();
+        Assert.Empty(await raw.InventorySignals.IgnoreQueryFilters().ToListAsync());
+    }
+
+    [Fact]
+    public async Task Correcting_a_purchase_cannot_reach_another_households_purchase()
+    {
+        var (productId, purchaseId) = await CountedProductOwnedByB();
+
+        _db.HouseholdId = A;
+        Assert.False(await new EfPantryStore(_db).SetPurchaseQuantityAsync(purchaseId, 1));
+
+        await using var raw = _db.CreateUnscopedContext();
+        Assert.Equal(6m, // the history A tried to rewrite
+            (await raw.PurchaseEvents.IgnoreQueryFilters().SingleAsync(p => p.Id == purchaseId)).Quantity);
+        Assert.Equal(6m, (await ReadAsB(productId)).QuantityOnHand); // …and the shelf it would have moved
+    }
+
+    [Fact]
+    public async Task Cooking_cannot_decrement_a_same_named_product_in_another_household()
+    {
+        // MealStock matches counted products by NAME, and two households naturally hold the same names.
+        // A's recipe names "Beef Chuck Roast"; only B counts one. A cooking it must find nothing.
+        var (productId, _) = await CountedProductOwnedByB();
+
+        int recipeId;
+        await using (var db = As(A))
+        {
+            var recipe = new Recipe
+            {
+                Name = "A's Roast Dinner",
+                Ingredients = [new RecipeIngredient { Name = "roast", IsMain = true, MatchedProduct = "Beef Chuck Roast" }],
+            };
+            db.Recipes.Add(recipe);
+            await db.SaveChangesAsync();
+            recipeId = recipe.Id;
+        }
+
+        await using (var db = As(A))
+        {
+            var recipe = await db.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
+            Assert.Empty(await MealStock.PlanAsync(db, recipe));
+            await MealStock.ApplyAsync(db, recipe);
+            await db.SaveChangesAsync();
+        }
+
+        Assert.Equal(6m, (await ReadAsB(productId)).QuantityOnHand);
+    }
 }
