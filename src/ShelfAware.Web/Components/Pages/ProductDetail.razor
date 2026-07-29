@@ -257,8 +257,24 @@ else
             }
             else if (onHand == 0)
             {
-                <p class="muted">Down to none. If that's right, say so and it counts as running out (which
-                    is what teaches the burn rate) — otherwise correct the number.</p>
+                @* §13.4's two kinds of zero reach this same branch, and they need opposite copy. A zero
+                   the HUMAN asserted (typing 0, or tapping Used one down to none) already wrote its
+                   OutNow — asking them to "say so" invites them to report an outage that is on record,
+                   and implies the app ignored them. A DERIVED zero (a receipt removal, an "Ate it")
+                   wrote nothing and is exactly the hypothesis §13.4 says to raise. Ask the ENGINE which
+                   one this is rather than re-deriving it: an active outage is what pins, and only
+                   expiry pins otherwise. *@
+                @if (prediction.Pinned && !prediction.Expired)
+                {
+                    <p class="muted">Down to none, and that's on record as running out — which is what
+                        teaches the burn rate. Bought more? Set the new number.</p>
+                }
+                else
+                {
+                    <p class="muted">Down to none, but nothing here has said so out loud — cooking and
+                        receipt changes move this number without claiming you're out. If it's right, set it
+                        to 0 and it counts as running out; otherwise correct the number.</p>
+                }
             }
         }
         else
