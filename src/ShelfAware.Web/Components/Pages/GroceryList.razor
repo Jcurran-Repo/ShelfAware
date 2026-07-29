@@ -211,8 +211,15 @@ else
                                     @* The due date is deliberately left untouched by suppression, so
                                        printing it raw here would read "Stocked · 3 days overdue" on one
                                        row. CountNote is the one shared phrasing — the products grid
-                                       reads the same string. *@
+                                       reads the same string. §13.5 also asks for a one-tap correction
+                                       WHERE the claim is made, so the fix is at hand rather than a page
+                                       away: one package off, the same amount "Ate it" and the product
+                                       page take, and the row returns to the buy list once it hits zero. *@
                                     <span>@note</span>
+                                    <button type="button" class="linkish" @onclick="() => UsedOne(e)"
+                                            disabled="@actionBusy"
+                                            title="Take one off — @QuantityFormat.Describe(e.OnePackage, e.DefaultUnit) of @e.Name"
+                                            aria-label="Used one @e.Name — correct the count without leaving the list">Used one</button>
                                 }
                                 else
                                 {
@@ -290,6 +297,25 @@ else
                 product.IsTracked = false;
                 await db.SaveChangesAsync();
             }
+            await LoadAsync();
+        }
+        finally { actionBusy = false; }
+    }
+
+    /// <summary>§13.5's one-tap correction, offered WHERE the count is claimed. A row saying "You have 4"
+    /// is the moment a household notices the number is wrong, and sending them to another page to fix it
+    /// is how a count stops being maintained. Takes one package — <see cref="ProductEstimate.OnePackage"/>,
+    /// the same amount "Ate it" and the product page take, so no surface disagrees about what "one" is —
+    /// through the ONE quantity write path, which stamps it as the human attestation it is. Reaching zero
+    /// there records the outage, exactly as it does on the product page.</summary>
+    private async Task UsedOne(ProductEstimate e)
+    {
+        if (actionBusy) return;
+        actionBusy = true;
+        try
+        {
+            copied = false; // the copied list is now stale
+            await Store.SetQuantityAsync(e.ProductId, -e.OnePackage, relative: true);
             await LoadAsync();
         }
         finally { actionBusy = false; }

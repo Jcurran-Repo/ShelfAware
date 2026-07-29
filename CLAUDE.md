@@ -612,10 +612,47 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      three "not built yet" markers were stale within their own branch; and the demo seeder gained a
      **counted** hero ("Canned Black Beans", 5 on hand) — the backlog check names items worth counting
      and nothing showed what happens once you do.
-   - 808 tests green, 0 warnings (777 before). `set_quantity` gained the chat-layer tests and the
+   - **824 tests green, 0 warnings** (777 before this pass). A `/code-review` over these five commits
+     then found 15 more, fixed in item 21 below. `set_quantity` gained the chat-layer tests and the
      system-prompt rule (6c) it shipped without — `set_expiration`, the closest precedent, had four
      tests and rule 6b. ⚠️ Its fake was ALSO more permissive than the real store, so the refusal tests
      passed vacuously until it was taught the real contract.
+
+21. **`/code-review` over the review pass itself (2026-07-28, same branch).** 15 findings on item 20's
+   own five commits; all fixed. The ones that carry a rule:
+   - ⚠️ **`CountLooksStale` reports the AGE of a count and nothing else.** Moving the drift computation
+     out of the suppression branch decoupled it from `Status`, so it can now be true while an item is
+     **Stocked** (a later purchase re-anchored the rhythm without anyone re-counting) or already pinned
+     by an OutNow. Product Detail was asserting "so it's back on the list" from the flag alone and
+     telling a Stocked item's owner it was on a list it wasn't on — the "one prediction, one story"
+     directive broken by the commit that cited it. **Read `Status` for the consequence, never the flag.**
+   - **A same-day `RunningLow` now LOSES to the count.** `>=` gave the tie to the signal; the ordinary
+     flow is "this looks low" → then go and actually count, so the count is the later and far more
+     precise act. Same shape and same resolution as §6.6's documented same-day tie.
+   - ⚠️ **The "Ate it" confirm re-plans in the COMMIT's own context and refuses to write if the numbers
+     moved** (`MealStock.Matches`). Preview and commit are two user actions on two `DbContext`s with an
+     unbounded gap — a receipt confirm or a second cook can move a count in between. The original test
+     shared one context, so it asserted a guarantee the production path did not have; that is exactly how
+     this shipped. Two-context tests now pin both directions.
+   - **No fallback when there is no typical trip quantity** — the drift horizon stays null rather than
+     reverting to the raw median, because that fallback would silently restore the per-trip reading the
+     whole rule exists to remove, on the one product nobody would check. No horizon is a visible gap.
+   - **`SpendForecast` (Core/Shopping)** — the forecast's stepping and its count-aware start date came
+     out of `SpendInsight.razor` for the same reason `MealStock` came out of `Recipes.razor` one commit
+     earlier: it is the only place a count moves a number denominated in money, and it had no test
+     because it lived in a page. Applying that lesson in one file and not its neighbour was itself a finding.
+   - **A counted main at zero no longer raises a confirm step** (the write is a provable no-op, so the
+     friction bought nothing), and the grocery row's `Used one` finally delivers §13.5's one-tap
+     correction *where the claim is made* — `ProductEstimate.OnePackage` carries the amount so the list,
+     the product page and "Ate it" cannot disagree about what "one" is.
+   - Smaller: `UsedOne` guards `product` in its own body (an argument is evaluated before the callee's
+     null check); `onePackage` is computed once on load instead of per render *and* per click; a missing
+     recipe clears the panel with a message instead of stranding it; `eatError` is keyed by recipe since
+     the page renders them all; `labelIsSpeaking` dropped a redundant `|| expired` (step 7 always pins).
+   - ⚠️ **The doc numbers were wrong** (`808` in CLAUDE.md and timeline.md, actual 810 at the time). Written
+     from an intermediate run and never re-checked — the same false-claim-in-the-record class the
+     `/pre-push` gate exists to catch, in the file that states the rule. **Re-read the number off the
+     final run before writing it down.**
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

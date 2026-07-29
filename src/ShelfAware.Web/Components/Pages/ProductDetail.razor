@@ -237,9 +237,18 @@ else
             }
             else if (prediction.CountLooksStale)
             {
+                @* CountLooksStale reports the AGE of the count and nothing else — it can be true while
+                   the item is Stocked (a later purchase re-anchored the rhythm without anyone
+                   re-counting) or already pinned by an OutNow. Read Status for what the app is actually
+                   doing; asserting "so it's back on the list" from the flag alone told a Stocked item's
+                   owner it was on a list it wasn't on. *@
                 <p class="error">That count is older than it should have lasted — by this item's own rhythm
-                    it would be gone by now, so it's back on the list. <strong>Still got some?</strong>
-                    Set the number again and it'll be believed afresh.</p>
+                    it would be gone by now, so it isn't holding anything back any more.
+                    @if (prediction.Status is PredictionStatus.Overdue or PredictionStatus.DueSoon)
+                    {
+                        <text>It's on the grocery list again.</text>
+                    }
+                    <strong>Still got some?</strong> Set the number again and it'll be believed afresh.</p>
             }
             else if (prediction.Expired || prediction.DueCappedByExpiration)
             {
@@ -267,7 +276,7 @@ else
             @if (product.TrackQuantity && product.QuantityOnHand is > 0)
             {
                 <button type="button" class="secondary" @onclick="UsedOne" disabled="@quantityBusy"
-                        title="Take one package off — @QuantityFormat.Describe(TypicalPackage.Of(product.DefaultUnit, product.Purchases.Select(x => x.Quantity)), product.DefaultUnit) for this item"
+                        title="Take one package off — @QuantityFormat.Describe(onePackage, product.DefaultUnit) for this item"
                         aria-label="Used one package of @product.Name">Used one</button>
             }
             @if (product.TrackQuantity)
@@ -558,6 +567,7 @@ else
         // actually doing to the prediction sitting beside it.
         prediction = ReplenishmentPredictor.Predict(product, today, trackExpirations, honorQuantity: true);
         editQuantity = product.QuantityOnHand;
+        onePackage = TypicalPackage.Of(product.DefaultUnit, product.Purchases.Select(x => x.Quantity));
         editExpiration = prediction.ExpiresOn; // the panel's date input starts at the governing date
         expirationError = null;
 
@@ -833,13 +843,20 @@ else
         return ApplyQuantityAsync(value, relative: false);
     }
 
+    /// <summary>One package of this product, computed once when it loads. The tooltip renders on every
+    /// re-render of this page (every count edit, expiration edit, substitute keystroke), and recomputing
+    /// a median over the whole purchase history each time — then again on click — is work for nothing.</summary>
+    private decimal onePackage = 1m;
+
     /// <summary>"Used one" — one package off the shelf, which for a weight item is the household's own
     /// typical pack rather than a round 1 (the same <see cref="TypicalPackage"/> rule "Ate it" follows,
     /// so the two decrement paths can't disagree about what "one" means). Relative and human-attested,
     /// which is the difference from an "Ate it": the person is at the cupboard, so their zero counts as
-    /// running out.</summary>
-    private Task UsedOne() => ApplyQuantityAsync(
-        -TypicalPackage.Of(product!.DefaultUnit, product.Purchases.Select(x => x.Quantity)), relative: true);
+    /// running out.
+    /// <para>The null check belongs here, not only inside <see cref="ApplyQuantityAsync"/>: an argument
+    /// is evaluated before the call, so reading <c>product</c> to build the delta would throw past that
+    /// guard if the component were navigated away between render and click.</para></summary>
+    private Task UsedOne() => product is null ? Task.CompletedTask : ApplyQuantityAsync(-onePackage, relative: true);
 
     private Task StopCounting() => ApplyQuantityAsync(0, relative: false, stop: true);
 

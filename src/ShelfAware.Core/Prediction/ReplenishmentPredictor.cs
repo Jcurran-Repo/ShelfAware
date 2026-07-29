@@ -253,17 +253,29 @@ public static class ReplenishmentPredictor
             // Divide by the typical trip to get days per package, or a household that buys six at a time
             // gets a horizon six times too long and the drift check never fires for exactly the bulk
             // buyers §13 was built for.
-            if (drivingMedian is { } perTrip && perTrip > 0 && counted.QuantityCountedAt is { } countedAt)
+            // No typical trip means no divisor, and there is deliberately NO fallback to the raw median:
+            // that fallback would silently reinstate the per-trip reading this whole rule exists to
+            // remove, on the one product where nobody would think to check. No horizon is a visible gap;
+            // a wrong horizon is an invisible one.
+            if (drivingMedian is { } perTrip && perTrip > 0 && typicalTrip > 0
+                && counted.QuantityCountedAt is { } countedAt)
             {
-                var perPackage = typicalTrip > 0 ? perTrip / (double)typicalTrip : perTrip;
+                var perPackage = perTrip / (double)typicalTrip;
                 countRunsOut = SignalDate.Of(countedAt)
                     .AddDays(Floor(Math.Min(perPackage * (double)counted.QuantityOnHand.Value, MaxProjectionDays)));
                 staleCount = today > countRunsOut.Value;
             }
 
-            var labelIsSpeaking = dueCapped || expired;
+            // `expired` needs no term of its own here: step 7 pins whenever it expires, so `!pinned`
+            // below already covers it. Naming it twice would suggest the two can come apart.
+            var labelIsSpeaking = dueCapped;
+            // STRICTLY after the count. A low tapped on the same DAY loses, because the realistic order
+            // is "this looks low" → then go and actually count: the count is the later and far more
+            // precise act, and dates here have no time-of-day to separate them. This is the same shape
+            // as §6.6's documented same-day tie, resolved for the same reason — the more specific
+            // statement wins.
             var lowSinceTheCount = activeSignal is { Kind: SignalKind.RunningLow } low
-                && (counted.QuantityCountedAt is not { } at || SignalDate.Of(low.SignaledAt) >= SignalDate.Of(at));
+                && (counted.QuantityCountedAt is not { } at || SignalDate.Of(low.SignaledAt) > SignalDate.Of(at));
             // …and there has to BE a recommendation to hold back. A still-learning item was never going
             // to be asked for, so calling it suppressed made every surface explain a decision the engine
             // never made — "its rhythm would otherwise have asked for it by now", about an item with no

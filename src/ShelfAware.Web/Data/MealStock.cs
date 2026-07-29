@@ -26,6 +26,18 @@ public static class MealStock
         public decimal Remaining => Math.Max(0m, OnHand - Amount);
     }
 
+    /// <summary>Whether a plan shown to the user still describes what would happen now. The preview and
+    /// the commit are two separate user actions, so they run on two different <c>DbContext</c>s with an
+    /// unbounded gap between them — a receipt confirm, another member's <c>set_quantity</c>, or a second
+    /// cook in the same household can move a count in between. "The panel cannot promise what the write
+    /// doesn't do" only holds if the write CHECKS, so the caller re-plans and compares before saving,
+    /// and re-shows rather than writing when this returns false.</summary>
+    public static bool Matches(IReadOnlyList<Take> shown, IReadOnlyList<Take> current) =>
+        shown.Count == current.Count
+        && shown.OrderBy(t => t.ProductId)
+            .Zip(current.OrderBy(t => t.ProductId))
+            .All(pair => pair.First == pair.Second);
+
     /// <summary>What <see cref="ApplyAsync"/> is about to do, without doing it. §13.3 requires the tap to
     /// SHOW its decrement first: the amount is approximate by design (recipe quantities are free-form
     /// strings the app must not parse), and an approximate change to a hand-maintained number cannot
@@ -52,7 +64,15 @@ public static class MealStock
 
     /// <summary>The counted products this recipe's MAIN ingredients resolve to — ONE definition, shared
     /// by the preview and the write, so the confirm panel can never promise a decrement the commit
-    /// doesn't make.</summary>
+    /// doesn't make.
+    /// <para>Products at zero are excluded: <see cref="StockLedger.Remove"/> clamps there, so including
+    /// them would put a confirmation in front of a decrement that provably changes nothing.</para>
+    /// <para>Two queries rather than one, deliberately. The name match must happen in memory because
+    /// SQLite's <c>IN</c> is case-SENSITIVE, so a product whose casing drifted from the MatchedProduct
+    /// captured at save time would be silently skipped — no error, the count simply never moves. But
+    /// matching over fully-loaded products means dragging every purchase of every counted item across
+    /// for the sake of one or two, so the first query reads NAMES only and the second loads purchases for
+    /// the handful that matched.</para></summary>
     private static async Task<IReadOnlyList<Product>> CountedMainsAsync(
         ShelfAwareDbContext db, Recipe recipe, CancellationToken ct)
     {
@@ -63,17 +83,20 @@ public static class MealStock
             .ToList();
         if (names.Count == 0) return [];
 
-        // Load the counted set — bounded by design, since counting is opt-in per product — and match in
-        // memory. SQLite's `IN` is case-SENSITIVE, so matching in SQL would silently skip a product
-        // whose casing has drifted from the MatchedProduct captured at save time, and the failure mode
-        // is the worst kind: no error, the count simply never moves.
-        var counted = await db.Products
-            .Where(p => p.TrackQuantity && p.QuantityOnHand != null)
-            .Include(p => p.Purchases)
+        var countedNames = await db.Products
+            .Where(p => p.TrackQuantity && p.QuantityOnHand > 0)
+            .Select(p => new { p.Id, p.Name })
             .ToListAsync(ct);
 
-        return counted
+        var ids = countedNames
             .Where(p => names.Contains(p.Name, StringComparer.OrdinalIgnoreCase))
+            .Select(p => p.Id)
             .ToList();
+        if (ids.Count == 0) return [];
+
+        return await db.Products
+            .Where(p => ids.Contains(p.Id))
+            .Include(p => p.Purchases)
+            .ToListAsync(ct);
     }
 }

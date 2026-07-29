@@ -125,15 +125,90 @@ public class MealStockTests : IDisposable
     }
 
     [Fact]
-    public async Task A_count_already_at_none_stays_there_rather_than_going_negative()
+    public async Task A_count_already_at_none_needs_no_confirmation_because_nothing_would_change()
     {
+        // StockLedger clamps at zero, so a take here is a provable no-op — putting a confirm step in
+        // front of it is friction that buys nothing, on the most casual tap in the app.
         var productId = await Product("Beef Chuck Roast", counted: true, onHand: 0m, unit: null, 1m, 1m);
         var recipeId = await Recipe("Beef Chuck Roast");
 
         var (plan, after) = await Cook(recipeId, productId);
 
-        Assert.Equal(0m, Assert.Single(plan).Remaining);
+        Assert.Empty(plan);
         Assert.Equal(0m, after);
+    }
+
+    [Fact]
+    public async Task A_plan_still_matching_the_shelf_is_accepted()
+    {
+        await using var db = _db.CreateDbContext();
+        var productId = await Product("Beef Chuck Roast", counted: true, onHand: 3m, unit: null, 1m, 1m);
+        var recipeId = await Recipe("Beef Chuck Roast");
+        var recipe = await db.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
+
+        var shown = await MealStock.PlanAsync(db, recipe);
+        await using var later = _db.CreateDbContext();
+        var current = await MealStock.PlanAsync(later, recipe);
+
+        Assert.True(MealStock.Matches(shown, current));
+        await using var read = _db.CreateDbContext();
+        Assert.Equal(3m, // planning is read-only — neither call may touch the shelf
+            (await read.Products.AsNoTracking().SingleAsync(p => p.Id == productId)).QuantityOnHand);
+    }
+
+    [Fact]
+    public async Task A_plan_the_shelf_moved_under_is_rejected()
+    {
+        // The preview and the commit are two user actions on two DbContexts with an unbounded gap: a
+        // receipt confirm, a set_quantity, or a second cook can move the count in between. "The panel
+        // cannot promise what the write doesn't do" only holds if the write CHECKS — and a test that
+        // shares one context can never show that, which is how this shipped.
+        await using var db = _db.CreateDbContext();
+        var productId = await Product("Beef Chuck Roast", counted: true, onHand: 3m, unit: null, 1m, 1m);
+        var recipeId = await Recipe("Beef Chuck Roast");
+        var recipe = await db.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
+
+        var shown = await MealStock.PlanAsync(db, recipe);
+
+        // Somebody else confirms a receipt for the same item while the panel sits open.
+        await using (var other = _db.CreateDbContext())
+        {
+            var p = await other.Products.SingleAsync(x => x.Id == productId);
+            p.QuantityOnHand = 8m;
+            await other.SaveChangesAsync();
+        }
+
+        await using var later = _db.CreateDbContext();
+        var current = await MealStock.PlanAsync(later, recipe);
+
+        Assert.False(MealStock.Matches(shown, current));
+        Assert.Equal(8m, Assert.Single(current).OnHand);
+    }
+
+    [Fact]
+    public async Task A_plan_is_rejected_when_the_item_stopped_being_counted()
+    {
+        // The other direction: the take vanishes entirely rather than changing. A count-less plan must
+        // not silently pass the equality check as "nothing changed".
+        await using var db = _db.CreateDbContext();
+        var productId = await Product("Beef Chuck Roast", counted: true, onHand: 3m, unit: null, 1m, 1m);
+        var recipeId = await Recipe("Beef Chuck Roast");
+        var recipe = await db.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
+
+        var shown = await MealStock.PlanAsync(db, recipe);
+
+        await using (var other = _db.CreateDbContext())
+        {
+            var p = await other.Products.SingleAsync(x => x.Id == productId);
+            StockLedger.StopCounting(p);
+            await other.SaveChangesAsync();
+        }
+
+        await using var later = _db.CreateDbContext();
+        var current = await MealStock.PlanAsync(later, recipe);
+
+        Assert.Empty(current);
+        Assert.False(MealStock.Matches(shown, current));
     }
 
     [Fact]

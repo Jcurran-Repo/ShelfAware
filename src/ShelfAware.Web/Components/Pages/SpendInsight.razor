@@ -154,25 +154,17 @@ else
         foreach (var p in products.Where(p => p.IsTracked))
         {
             var prediction = ReplenishmentPredictor.Predict(p, today, trackExpirations, honorQuantity: true);
-            if (prediction.MedianIntervalDays is not { } m || prediction.DueDate is not { } due) continue;
+            if (prediction.MedianIntervalDays is not { } m) continue;
             // Price the size we'd actually tell the user to buy (same idea as the grocery list),
             // falling back to the all-sizes average when that size has no priced line.
             if (priceIndex.PriceFor(p.Id, prediction.RecommendedSize) is not { } price) continue;
+            // The stepping — and the count-aware start date it begins from — is SpendForecast (Core), so
+            // it's testable; this page keeps only the loading and the pricing.
+            if (SpendForecast.FirstBuy(prediction) is not { } firstBuy) continue;
 
             var typicalQty = ShoppingEstimator.For(p, prediction, today, price).TypicalQuantity;
-            var interval = Math.Max(1, (int)Math.Round(m));
-            // Start from the day the money is actually going to be spent. For a counted item that's when
-            // the shelf runs out, not when the rhythm alone would have asked — suppression deliberately
-            // leaves DueDate alone, so stepping from it would forecast a purchase the app is currently
-            // telling the household NOT to make. (honorQuantity was already threaded here and had no
-            // effect at all until this line read the result.)
-            var d = prediction.SuppressedByCount && prediction.CountRunsOutOn is { } exhausted ? exhausted : due;
-            var guard = 0;
-            while (d <= lastNextMonth && guard++ < 400)
-            {
-                if (d >= firstNextMonth && d > today) nextMonthForecast += price * typicalQty;
-                d = d.AddDays(interval);
-            }
+            nextMonthForecast += SpendForecast.InWindow(
+                firstBuy, m, today, firstNextMonth, lastNextMonth, price * typicalQty);
         }
 
         foreach (var p in products)

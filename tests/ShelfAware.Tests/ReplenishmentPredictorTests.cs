@@ -650,6 +650,40 @@ public class ReplenishmentPredictorTests
     }
 
     [Fact]
+    public void ARunningLowTappedTheSameDayAsTheCount_LosesToIt()
+    {
+        // The tie that matters, because it's the ordinary flow: you notice it looks low and tap, then you
+        // go and actually count three. Dates carry no time of day, so the rule has to be chosen — and the
+        // count is the later and far more precise act, the same reason §6.6 gives the purchase the tie.
+        var product = CountedAndOverdue(3, countedOnDay: 45);
+        product.Signals.Add(Signal(SignalKind.RunningLow, D(45)));
+
+        var r = ReplenishmentPredictor.Predict(product, D(45), honorQuantity: true);
+
+        Assert.Equal(PredictionStatus.Stocked, r.Status);
+        Assert.True(r.SuppressedByCount);
+    }
+
+    [Fact]
+    public void ACountWithNoTypicalTripQuantity_GetsNoHorizonRatherThanAWrongOne()
+    {
+        // There is deliberately no fallback to the raw median: it would silently restore the per-trip
+        // reading this rule exists to remove, on the one product nobody would think to check. No horizon
+        // is a visible gap; a wrong horizon is an invisible one.
+        // Every write path clamps quantity to >= 1 today, so this is a contract test for the guard rather
+        // than a reachable state — which is the point: it pins the guard against those clamps changing.
+        var product = ProductWithQuantities((0, 0), (10, 0), (20, 0));
+        product.TrackQuantity = true;
+        product.QuantityOnHand = 3m;
+        product.QuantityCountedAt = new DateTimeOffset(D(0).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+
+        var r = ReplenishmentPredictor.Predict(product, D(45), honorQuantity: true);
+
+        Assert.Null(r.CountRunsOutOn);
+        Assert.False(r.CountLooksStale);
+    }
+
+    [Fact]
     public void ARunningLowFromBeforeTheCount_LosesToIt()
     {
         // The mirror: they said "low" on D(41) and then actually counted three on D(44). The count is

@@ -78,15 +78,21 @@ public record PredictionResult
     /// must always be visible with a one-tap correction, never a silent disappearance.</summary>
     public bool SuppressedByCount { get; init; }
 
-    /// <summary>The count is past the date its own rhythm says it should have run out — a March count of
-    /// three on a nine-day burn is long spent. Suppression stands down and the item is asked for again,
-    /// and the surface should ask the human to confirm rather than quietly correcting a number only they
-    /// can actually see. This is what stops a stale inventory silencing an item forever.</summary>
+    /// <summary>The count is past <see cref="CountRunsOutOn"/> — a March count of three on a nine-day
+    /// burn is long spent. It can no longer hold a recommendation back, and the surface should ask the
+    /// human to confirm rather than quietly correcting a number only they can actually see. This is what
+    /// stops a stale inventory silencing an item forever.
+    /// <para>⚠️ It reports the AGE of the count and nothing else, so it can be true alongside any status
+    /// — including <see cref="PredictionStatus.Stocked"/> (a later purchase re-anchored the rhythm while
+    /// the attestation stayed old) and alongside <see cref="Pinned"/>. <b>A surface must not infer
+    /// "so it's back on the list" from this flag</b>; read <see cref="Status"/> for that.</para></summary>
     public bool CountLooksStale { get; init; }
 
     /// <summary>When the counted stock is expected to run out: the last human attestation plus how long
     /// that many packages last at this item's own rhythm (§13.5). Null when the item isn't counted, has
-    /// never been attested, or has no rhythm to project from.
+    /// never been attested, has no rhythm to project from, has no typical trip quantity to divide by —
+    /// <b>or when <c>honorQuantity</c> was not passed</b>, since the whole count block is gated on it.
+    /// A caller that wants this date must ask for counts, exactly as it must to get suppression.
     /// <para>It is the date <see cref="CountLooksStale"/> fires the day after, and it is the honest
     /// answer to "when WILL I need this?" while <see cref="DueDate"/> is answering "when would the
     /// rhythm alone have asked?" — a spend forecast wants this one, since it's the day the money is

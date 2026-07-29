@@ -51,6 +51,12 @@ public record ProductEstimate
     /// <see cref="QuantityFormat.Describe"/> rather than as a bare number ("2.34 lb", not "2.34").</summary>
     public string? DefaultUnit { get; init; }
 
+    /// <summary>One package of this item (<see cref="Domain.TypicalPackage"/>), so a list can offer the
+    /// one-tap "used one" correction §13.5 asks a suppressed row for without loading purchase history
+    /// of its own — the estimator already holds it. Same rule "Ate it" and the product page use, so
+    /// every surface takes the same amount off for the same act.</summary>
+    public decimal OnePackage { get; init; } = 1m;
+
     /// <summary>The statistical typical (median) purchase quantity — kept for analysis. For a shopping
     /// number, prefer <see cref="RecommendedQuantity"/>.</summary>
     public decimal TypicalQuantity { get; init; } = 1m;
@@ -120,6 +126,7 @@ public static class ShoppingEstimator
                 ? SignalDate.Of(at)
                 : null,
             DefaultUnit = product.DefaultUnit,
+            OnePackage = TypicalPackage.Of(product.DefaultUnit, product.Purchases.Select(p => p.Quantity)),
             TypicalQuantity = typicalQuantity,
             RecommendedQuantity = recommendedQuantity,
             UnitPrice = unitPrice,

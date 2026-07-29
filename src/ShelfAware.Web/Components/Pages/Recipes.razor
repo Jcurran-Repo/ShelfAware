@@ -253,6 +253,10 @@
                        be corrected first — the decrement is approximate by design (it can't parse "2 lbs"),
                        so it must never be silent. Only recipes with counted mains get this step; for every
                        other recipe the tap still goes straight through. *@
+                    @if (eatError is { } problem && problem.RecipeId == r.Id)
+                    {
+                        <p class="error" role="alert">@problem.Message</p>
+                    }
                     @if (pendingEat is { } pending && pending.RecipeId == r.Id)
                     {
                         <div class="panel inline-confirm">
@@ -274,7 +278,7 @@
                             <button type="button" @onclick="ConfirmEat" disabled="@eatBusy">
                                 @(eatBusy ? "Saving…" : "Ate it")
                             </button>
-                            <button type="button" class="secondary" @onclick="() => pendingEat = null"
+                            <button type="button" class="secondary" @onclick="CancelEat"
                                     disabled="@eatBusy">Cancel</button>
                         </div>
                     }
@@ -866,6 +870,9 @@
 
     private PendingEat? pendingEat;
     private bool eatBusy;
+    /// <summary>Keyed by recipe: the saved list renders every recipe, so an unkeyed message would
+    /// appear under all of them.</summary>
+    private (int RecipeId, string Message)? eatError;
 
     /// <summary>"Ate it" — one tap for a recipe that touches no counted item, a confirm step for one that
     /// does. §13.3 requires the decrement to show itself before it happens: it is deliberately
@@ -874,6 +881,7 @@
     private async Task MarkEaten(Recipe r)
     {
         if (eatBusy) return;
+        eatError = null; // a fresh tap must not sit under the last attempt's message
         await using var db = await DbFactory.CreateDbContextAsync();
         var takes = await MealStock.PlanAsync(db, r);
         if (takes.Count > 0)
@@ -884,22 +892,61 @@
         await CommitEatAsync(r);
     }
 
+    /// <summary>Backing out takes the "what changed while this was open" notice with it — the panel it
+    /// explains is gone, so leaving the message behind would strand it.</summary>
+    private void CancelEat()
+    {
+        pendingEat = null;
+        eatError = null;
+    }
+
     private async Task ConfirmEat()
     {
         if (pendingEat is not { } pending || eatBusy) return;
         var recipe = savedRecipes.FirstOrDefault(x => x.Id == pending.RecipeId);
-        if (recipe is null) { pendingEat = null; return; }
-        await CommitEatAsync(recipe);
+        if (recipe is null)
+        {
+            pendingEat = null;
+            eatError = (pending.RecipeId, "That recipe isn't here any more — nothing was recorded.");
+            return;
+        }
+        await CommitEatAsync(recipe, pending.Takes);
     }
 
-    private async Task CommitEatAsync(Recipe r)
+    /// <param name="shown">The plan the user actually agreed to, or null when there was nothing to agree
+    /// to. The preview and this commit are two user actions on two DbContexts, so a count can move in
+    /// between — the write re-plans in its OWN context and re-shows instead of saving if the numbers
+    /// changed. Otherwise "the panel can't promise what the write doesn't do" would only be true in a
+    /// test that shares one context.</param>
+    private async Task CommitEatAsync(Recipe r, IReadOnlyList<MealStock.Take>? shown = null)
     {
         eatBusy = true;
+        eatError = null;
         try
         {
             await using var db = await DbFactory.CreateDbContextAsync();
             var rec = await db.Recipes.FindAsync(r.Id);
-            if (rec is null) return;
+            if (rec is null)
+            {
+                pendingEat = null;
+                eatError = (r.Id, "That recipe isn't here any more — nothing was recorded.");
+                return;
+            }
+
+            if (shown is not null)
+            {
+                var current = await MealStock.PlanAsync(db, r);
+                // An empty re-plan needs no second confirmation — there is nothing left to warn about,
+                // so the meal is simply recorded and the decrement finds nothing to do.
+                if (current.Count > 0 && !MealStock.Matches(shown, current))
+                {
+                    pendingEat = new PendingEat(r.Id, current);
+                    eatError = (r.Id, "What you have on hand changed while this was open — here's what it "
+                        + "would take off now. Nothing has been recorded yet.");
+                    return;
+                }
+            }
+
             rec.TimesEaten++;
             // The counter answers "how reliable is this recipe" (Pick for me); the event answers "when did
             // we eat it" (the Reports tab's meals/calories charts). Same tap writes both.
@@ -907,6 +954,7 @@
             await MealStock.ApplyAsync(db, r); // same save as the MealEvent — one tap, one transaction
             await db.SaveChangesAsync();
             pendingEat = null;
+            eatError = null;
             await LoadAsync();
         }
         finally { eatBusy = false; }
