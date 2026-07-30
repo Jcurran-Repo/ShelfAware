@@ -79,7 +79,15 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
         // v4.0 §13: the household counted this one. CountedDaysAgo is the ATTESTATION date, so it also
         // decides whether the drift check has fired — a distant count is a different demo from a fresh one.
         decimal? CountOnHand = null,
-        int CountedDaysAgo = 0);
+        int CountedDaysAgo = 0,
+        // Product.DefaultUnit — DISPLAY only (§13.1/§13.6). A real receipt import never sets it (its one
+        // writer is the manual add-product form), so a seed that sets it is showing what a household gets
+        // after typing the unit in by hand. It deliberately does NOT decide the decrement: §13.3 reads the
+        // fractionality of the quantities, which is why a weight hero needs fractional Buys and not this.
+        string? Unit = null,
+        // v3.6: the label on the LATEST buy, days from today (negative = already past). Dormant unless the
+        // household turns TrackExpirationDates on, which is exactly how the feature ships.
+        int? ExpiresInDays = null);
 
     private static (List<Product> Products, List<Receipt> Receipts) BuildCatalog(DateOnly today)
     {
@@ -141,6 +149,35 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
             // this reads as suppression working rather than as a stale count.
             new("Canned Black Beans", Category.Pantry, "Great Value", "15 oz", 1.12m, ["Pantry"],
                 [(30, 1), (52, 1), (73, 1), (95, 1)], CountOnHand: 5, CountedDaysAgo: 3),
+
+            // A COUNT GONE STALE (§13.5's drift check): counted 3 a hundred and ten days ago on a ~14-day
+            // rhythm, so three should have been gone about 68 days back. The engine stops trusting the
+            // number and asks instead of silently correcting it — the answer to "an inventory decays".
+            // This state CANNOT be produced through the UI: every write path stamps the attestation date
+            // as NOW, so only a seed (or waiting three months) can show it. That's the reason it exists.
+            new("Canned Diced Tomatoes", Category.Pantry, "Hunt's", "14.5 oz", 1.28m, ["Pantry"],
+                [(120, 1), (134, 1), (148, 1), (163, 1)], CountOnHand: 3, CountedDaysAgo: 110),
+
+            // A WEIGHT ITEM (§13.3): quantities are the weight itself, which is what extraction writes for
+            // a weight-priced line ("1.24 lb @ 5.48/lb" — prompt rule 6). The fractional median is what
+            // makes "one package" 1.24 lb rather than an arbitrary 1, and the FRACTIONALITY is what tells
+            // the app that: Unit is set here only so the display can say "lb", and a real receipt import
+            // would leave it null. Counted at three packs' worth.
+            new("Ground Chuck", Category.Meat, null, "lb", 5.48m, ["Protein"],
+                [(9, 1.24m), (23, 1.18m), (38, 1.31m), (52, 1.22m)],
+                Unit: "lb", CountOnHand: 3.72m, CountedDaysAgo: 2),
+
+            // A COUNTED ITEM WITH A LABEL (§13.5's sharpest interaction). Two cartons on the shelf, a
+            // metronomic 7-day rhythm putting the next buy 3 days out, and a best-by in 2 — so the label
+            // lands INSIDE the rhythm's projection, which is the only arrangement where the two can be
+            // seen to disagree. While expiration tracking is OFF this is just a counted item that the count
+            // keeps off the list, dormant exactly as v3.6 ships. Turn the household toggle on and the LABEL
+            // takes over: how many you have says nothing about whether they're still good, so suppression
+            // stands down and the item reaches Due Soon BEFORE it dies rather than the day after. Also the
+            // catalog's only expiration-dated purchase, so /reports' Waste watch has something to judge.
+            new("Heavy Whipping Cream", Category.Dairy, "Great Value", "16 fl oz", 2.72m, ["Breakfast"],
+                [(4, 1), (11, 1), (18, 1), (25, 1)],
+                CountOnHand: 2, CountedDaysAgo: 1, ExpiresInDays: 2),
 
             // Vacation gap: one 45-day interval among ~12-day ones. MedianWithTrim drops it (> 3× median) so
             // the cadence stays honest at ~12 days. Also the Trends "price is climbing" hero: ~15% cheaper
@@ -257,6 +294,7 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
                 Name = s.Name,
                 Category = s.Category,
                 IsTracked = true,
+                DefaultUnit = s.Unit,
                 TrackQuantity = s.CountOnHand is not null,
                 QuantityOnHand = s.CountOnHand,
                 QuantityCountedAt = s.CountOnHand is null
@@ -271,9 +309,17 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
                 })],
             };
 
+            // Only the LATEST purchase's label governs (v3.6), so the seed stamps exactly that one. Found
+            // by the minimum days-ago rather than index 0, so a seed listing its buys in any order still
+            // dates the right purchase.
+            var latestDaysAgo = s.Buys.Length > 0 ? s.Buys.Min(b => b.DaysAgo) : 0;
+
             for (var buy = 0; buy < s.Buys.Length; buy++)
             {
                 var (daysAgo, qty) = s.Buys[buy];
+                DateOnly? expires = s.ExpiresInDays is { } days && daysAgo == latestDaysAgo
+                    ? today.AddDays(days)
+                    : null;
                 // Items sold in flavors rotate brand + variety across their buys; the rest keep the
                 // product's single brand. The raw line carries the variety like a real shelf label.
                 var (brand, variety) = s.BuyVariants is { Length: > 0 } variants
@@ -291,6 +337,7 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
                     Variety = variety,
                     Quantity = qty,
                     UnitPrice = PriceOn(s, daysAgo),
+                    ExpirationDate = expires,
                     Category = s.Category,
                     Confidence = 1,
                     Product = product,
@@ -302,6 +349,7 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
                     Brand = brand,
                     Size = s.Size,
                     Variety = variety,
+                    ExpirationDate = expires,
                     Source = PurchaseSource.Receipt,
                     Receipt = trip, // tie the buy to its trip so per-purchase price lookups hit exactly
                 });

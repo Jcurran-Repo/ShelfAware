@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Prediction;
 using ShelfAware.Core.Reporting;
+using ShelfAware.Core.Shopping;
 using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.Tests;
@@ -125,6 +126,94 @@ public class DemoDataSeederTests
         // Fresh on purpose — five packages on a ~21-day rhythm are months from the drift check, so the
         // demo reads as suppression working rather than as a count that has already rotted.
         Assert.False(counted.CountLooksStale);
+    }
+
+    /// <summary>The seeded catalog, loaded the way a page loads it.</summary>
+    private static async Task<Product> SeededProduct(TestDb db, string name)
+    {
+        await using var read = db.CreateDbContext();
+        return await read.Products
+            .AsNoTracking()
+            .Include(p => p.Purchases)
+            .Include(p => p.Signals)
+            .SingleAsync(p => p.Name == name);
+    }
+
+    [Fact]
+    public async Task Seeds_a_stale_count_so_the_drift_check_has_something_to_catch()
+    {
+        // §13.5's drift check is the one behaviour NO UI path can produce: every write stamps the
+        // attestation as NOW, so without a seed it could only be seen by waiting three months. This is
+        // the demo hero that makes it visible — and the test that proves the engine really does stand its
+        // suppression down rather than trusting a count forever.
+        using var db = new TestDb();
+        await new DemoDataSeeder(db).SeedAsync();
+        var today = DateOnly.FromDateTime(DateTime.Today);
+
+        var tomatoes = await SeededProduct(db, "Canned Diced Tomatoes");
+        Assert.True(tomatoes.TrackQuantity);
+        Assert.Equal(3m, tomatoes.QuantityOnHand);
+
+        var r = ReplenishmentPredictor.Predict(tomatoes, today, honorQuantity: true);
+
+        Assert.True(r.CountLooksStale);
+        Assert.False(r.SuppressedByCount); // the count no longer holds the recommendation back
+        Assert.NotNull(r.CountRunsOutOn);
+        Assert.True(r.CountRunsOutOn < today,
+            $"the count should have run out before today, got {r.CountRunsOutOn}");
+        // And it's genuinely back on the buy list, which is what the product page now claims only when true.
+        Assert.True(r.Status is PredictionStatus.Overdue or PredictionStatus.DueSoon, $"got {r.Status}");
+    }
+
+    [Fact]
+    public async Task Seeds_a_weight_item_so_one_package_is_a_real_pack_not_a_round_one()
+    {
+        // The branch that had no real-world instance: 0 of 537 purchases on the real dev database carry a
+        // fractional quantity, so until this hero existed §13.3's median path was only ever exercised by
+        // hand-built unit tests. Now the seeded catalog contains the shape extraction writes for a
+        // weight-priced line, and the whole chain is checked on it.
+        using var db = new TestDb();
+        await new DemoDataSeeder(db).SeedAsync();
+
+        var chuck = await SeededProduct(db, "Ground Chuck");
+        Assert.Contains(chuck.Purchases, p => p.Quantity != decimal.Truncate(p.Quantity));
+
+        // One package is the household's own pack (median of 1.18/1.22/1.24/1.31), NOT 1.
+        var onePackage = TypicalPackage.Of(chuck.Purchases.Select(p => p.Quantity));
+        Assert.Equal(1.23m, onePackage);
+        // Driven by the FRACTIONALITY, not by the unit — clearing the label must not change the amount.
+        Assert.Equal(onePackage, TypicalPackage.Of(chuck.Purchases.Select(p => p.Quantity)));
+        // …and the unit is what makes the display honest rather than a bare number.
+        Assert.Equal("lb", chuck.DefaultUnit);
+        Assert.Equal("3.72 lb", QuantityFormat.Describe(chuck.QuantityOnHand!.Value, chuck.DefaultUnit));
+    }
+
+    [Fact]
+    public async Task Seeds_a_counted_item_with_a_label_so_the_label_can_be_seen_to_win()
+    {
+        // §13.5's sharpest interaction, and the other thing I could not verify live (it needs the
+        // household toggle flipped). Same product, both ways, through the real seeded data.
+        using var db = new TestDb();
+        await new DemoDataSeeder(db).SeedAsync();
+        var today = DateOnly.FromDateTime(DateTime.Today);
+
+        var milk = await SeededProduct(db, "Heavy Whipping Cream");
+        Assert.Equal(2m, milk.QuantityOnHand);
+        var label = milk.Purchases.Max(p => p.ExpirationDate);
+        Assert.NotNull(label); // the catalog's one dated purchase — Waste watch needs it too
+
+        // Toggle OFF: dormant, exactly as v3.6 ships. The count does its normal job.
+        var blind = ReplenishmentPredictor.Predict(milk, today, honorQuantity: true);
+        Assert.True(blind.SuppressedByCount);
+        Assert.Equal(PredictionStatus.Stocked, blind.Status);
+
+        // Toggle ON: the label takes over. A count says how many, never whether they're still good — so
+        // suppression stands down and the item reaches Due Soon BEFORE it dies instead of after.
+        var honoured = ReplenishmentPredictor.Predict(milk, today, honorExpirations: true, honorQuantity: true);
+        Assert.False(honoured.SuppressedByCount);
+        Assert.True(honoured.DueCappedByExpiration);
+        Assert.Equal(label, honoured.DueDate);
+        Assert.Equal(PredictionStatus.DueSoon, honoured.Status);
     }
 
     [Fact]

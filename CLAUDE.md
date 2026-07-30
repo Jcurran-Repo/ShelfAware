@@ -681,6 +681,30 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      lines) and half was fiction (that field is never populated). **Before building on a field, grep for
      its writers.** One `grep -rn` would have caught this before any of it was designed.
 
+23. **The demo catalog is the test rig for states the UI can't reach (2026-07-29).** Every v4.0 concept now
+   has a seeded hero, and each one is asserted by running the SEEDED rows through the real engine — the
+   standard the hoard hero set ("assert the data reads as a hoard, not merely that the rows exist"). Two
+   of these could not be verified any other way, which is the point:
+   - **`Canned Diced Tomatoes` — a count gone stale.** Counted 3 · 110 days ago on a ~14-day rhythm, so
+     three should have been gone ~68 days back. ⚠️ **No UI path can produce this**: every write stamps
+     `QuantityCountedAt` as NOW, so before this hero the drift check could only be seen by waiting three
+     months. Its dates are load-bearing.
+   - **`Ground Chuck` — a weight item.** Fractional quantities (1.18–1.31 lb) — the shape extraction
+     writes for a weight-priced line (prompt rule 6). Before this, §13.3's median branch had **no
+     real-world instance at all**: 0 of 537 purchases on the real dev DB are fractional. `Unit: "lb"` is
+     set for DISPLAY only; the test proves the amount comes from the fractionality, not the label.
+   - **`Heavy Whipping Cream` — a counted item with a label.** 7-day rhythm putting the next buy 3 days
+     out with a best-by in 2, so the label lands INSIDE the rhythm's projection — the only arrangement
+     where the two can be seen to disagree. Tested both ways from one product: toggle off → the count
+     suppresses; toggle on → the label wins and it reaches Due Soon before it dies. Also the catalog's
+     only dated purchase, so Waste watch has something to judge.
+   - `Beef Chuck Roast` (the hoard, §13.7) and `Canned Black Beans` (a fresh count that suppresses) were
+     already there.
+   - `Seed` gained `Unit` and `ExpiresInDays`. The label stamps only the LATEST buy (v3.6's rule), found
+     by minimum days-ago rather than index 0 so a seed can list its buys in any order.
+   - **Deliberately NOT seeded: a misread quantity for §13.6's correction.** A demo must not ship
+     known-wrong data to show off a repair tool; the pencil is discoverable on any purchase row.
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active
