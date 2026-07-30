@@ -59,6 +59,15 @@ public sealed class ReceiptRemovalService(
             // §13.2, the other half: take back exactly what the confirm put in, BEFORE the purchases
             // go. Same StockLedger the confirm used, so the two can't drift into disagreeing about how
             // much a removal owes. Products deleted below don't care — their row goes with them.
+            //
+            // ⚠️ Deliberately UNCONDITIONAL, even when a human attested the count between the confirm
+            // and this removal (§13.2's accepted edge). A "skip when QuantityCountedAt postdates the
+            // confirm" guard was considered and rejected: the attestation date also advances on
+            // RELATIVE moves ("Used one"), which carry a duplicate's phantom stock forward rather than
+            // re-baselining — under the guard that case would KEEP the phantom, an error found only by
+            // running out, where subtracting errs toward one early rebuy and is fixed by one recount.
+            // The stored data cannot tell the two attestation kinds apart without the change log §13.6
+            // defers, so symmetry stays structural.
             foreach (var purchase in linked)
             {
                 if (purchase.Product is { } product) StockLedger.Remove(product, purchase.Quantity);

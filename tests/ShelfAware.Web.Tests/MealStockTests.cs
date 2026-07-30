@@ -371,6 +371,36 @@ public class MealStockTests : IDisposable
     }
 
     [Fact]
+    public async Task Two_counted_products_sharing_a_name_are_refused_not_crashed()
+    {
+        // Nothing in the schema forbids two products with one name — the duplicate guard is a UI
+        // prompt with an explicit "Add anyway" — and a name-keyed dictionary built over such a pair
+        // used to throw, taking down every "Ate it" in the household, planned or not. A shared name
+        // cannot say WHICH row to decrement, so it is refused and reported exactly like two products
+        // covering one ingredient; the candidate list carries the name once, not twice.
+        var firstId = await Product("Ground Beef", counted: true, onHand: 4m, unit: null, 1m, 1m);
+        var secondId = await Product("Ground Beef", counted: true, onHand: 2m, unit: null, 1m, 1m);
+        var recipeId = await Recipe("Ground Beef");
+
+        await using var read = _db.CreateDbContext();
+        var recipe = await read.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
+        var resolution = await MealStock.ResolveAsync(read, recipe); // must not throw
+        var plan = MealStock.Describe(resolution);
+
+        Assert.Empty(plan.Takes);
+        Assert.True(plan.NeedsConfirmation);
+        var pick = Assert.Single(plan.Ambiguous);
+        Assert.Equal(["Ground Beef"], pick.Candidates);
+
+        // …and nothing moved.
+        MealStock.Apply(resolution);
+        await read.SaveChangesAsync();
+        await using var after2 = _db.CreateDbContext();
+        Assert.Equal(4m, (await after2.Products.AsNoTracking().SingleAsync(p => p.Id == firstId)).QuantityOnHand);
+        Assert.Equal(2m, (await after2.Products.AsNoTracking().SingleAsync(p => p.Id == secondId)).QuantityOnHand);
+    }
+
+    [Fact]
     public async Task An_ambiguity_whose_candidate_is_already_being_taken_is_not_reported()
     {
         // The panel used to contradict itself: "Ground Beef Chuck — 1 off 4" in the take list, and

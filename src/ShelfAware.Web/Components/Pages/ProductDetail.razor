@@ -948,7 +948,13 @@ else
             }
             else
             {
-                quantityError = "Couldn't save — set a starting count before adjusting it up or down.";
+                // Two refusals reach this branch and they need different sentences: an ABSOLUTE
+                // negative (refused rather than clamped — a clamp to 0 would file an OutNow off a
+                // typo, §13.4) and a RELATIVE move with no established count to be relative to.
+                // The input's min="0" only styles validity; typing a minus sign still binds.
+                quantityError = !relative && value < 0
+                    ? "A count can't be negative. To say you're out, enter 0."
+                    : "Couldn't save — set a starting count before adjusting it up or down.";
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

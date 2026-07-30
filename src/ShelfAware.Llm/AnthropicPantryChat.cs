@@ -9,6 +9,7 @@ using ShelfAware.Core.Domain;
 using ShelfAware.Core.Prediction;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Settings;
+using ShelfAware.Core.Shopping;
 using Category = ShelfAware.Core.Domain.Category;
 
 namespace ShelfAware.Llm;
@@ -224,11 +225,26 @@ public class AnthropicPantryChat : IPantryChat
                 var product = ProductMatcher.Resolve(name, products);
                 if (product is null) return ($"No product matches \"{name}\".", true);
                 var pr = ReplenishmentPredictor.Predict(product, today, trackExpirations, honorQuantity: true);
-                var due = pr.DueDate is { } dd ? $", due {dd:yyyy-MM-dd}" : "";
+                // A suppressed item must not read "Stocked, due <last week>". Suppression deliberately
+                // leaves DueDate as the rhythm's own projection so a surface CAN explain itself — which
+                // means a surface that prints it raw contradicts the status beside it. The grocery list
+                // and the products grid each shipped exactly that once (CLAUDE.md item 20); this reply
+                // was the third surface to get honorQuantity without the matching display change.
+                // Same SOURCE as their CountNote — the engine's SuppressedByCount/CountRunsOutOn plus
+                // the product's own count — worded for a spoken reply rather than a table cell; the
+                // wording may differ from ProductEstimate.CountNote, the facts must not.
+                var due = !pr.SuppressedByCount && pr.DueDate is { } dd ? $", due {dd:yyyy-MM-dd}" : "";
+                var count = !pr.SuppressedByCount ? ""
+                    : $" You have {QuantityFormat.Describe(product.QuantityOnHand ?? 0, product.DefaultUnit)} on hand"
+                      + (product.QuantityCountedAt is { } countedAt ? $" (counted {SignalDate.Of(countedAt):yyyy-MM-dd})" : "")
+                      + (pr.CountRunsOutOn is { } lasts ? $", about enough until {lasts:yyyy-MM-dd}" : "")
+                      + (pr.DueDate is { } wouldHave
+                          ? $"; without the count its rhythm would have asked again by {wouldHave:yyyy-MM-dd}."
+                          : ".");
                 var expiry = pr.Expired ? $" It expired {pr.ExpiresOn:yyyy-MM-dd}, so it's marked out."
                     : pr.ExpirationOverridden ? $" Its label expired {pr.ExpiresOn:yyyy-MM-dd}, but the user marked it Restocked afterward — trust them."
                     : pr.ExpiresOn is { } eo && eo >= today ? $" Expires {eo:yyyy-MM-dd}." : "";
-                return ($"{product.Name}: {pr.Status} ({pr.Basis}){due}.{expiry}", false);
+                return ($"{product.Name}: {pr.Status} ({pr.Basis}){due}.{count}{expiry}", false);
             }
 
             case "set_tracking":

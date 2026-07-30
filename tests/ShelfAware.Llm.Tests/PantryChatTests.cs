@@ -239,6 +239,72 @@ public class PantryChatTests
         Assert.Empty(store.Quantities);
     }
 
+    // --- query_status × counts (§13.5) ---------------------------------------
+
+    /// <summary>A counted product whose rhythm says overdue but whose fresh count suppresses it — the
+    /// demo seeder's "Canned Black Beans" shape. Dates are relative to today because suppression is a
+    /// question about NOW; a fixed date would rot into a different prediction.</summary>
+    private static Product SuppressedByCount(int id, string name)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        return new Product
+        {
+            Id = id, Name = name, Category = Category.Pantry,
+            TrackQuantity = true, QuantityOnHand = 5m,
+            QuantityCountedAt = DateTimeOffset.Now.AddDays(-3),
+            Purchases =
+            [
+                new PurchaseEvent { ProductId = id, PurchasedAt = today.AddDays(-30), Quantity = 1 },
+                new PurchaseEvent { ProductId = id, PurchasedAt = today.AddDays(-52), Quantity = 1 },
+                new PurchaseEvent { ProductId = id, PurchasedAt = today.AddDays(-73), Quantity = 1 },
+                new PurchaseEvent { ProductId = id, PurchasedAt = today.AddDays(-95), Quantity = 1 },
+            ],
+        };
+    }
+
+    [Fact]
+    public async Task Query_status_for_a_suppressed_item_explains_the_count_instead_of_a_stale_due_date()
+    {
+        // The self-contradiction this pins against: suppression leaves DueDate as the rhythm's own
+        // projection (deliberately — surfaces must be able to explain themselves), so a reply printing
+        // it raw said "Stocked ... due <eight days ago>" with no mention of the count doing the work.
+        // The grocery list and products grid each shipped that once; this is the surface that SPEAKS.
+        var store = new FakePantryStore(SuppressedByCount(3, "Canned Black Beans"));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("query_status", ("product_name", "black beans"))),
+            () => Responses.Text("You're fine for beans."));
+
+        await Chat(client, store).HandleAsync("how are we on black beans?");
+
+        var toolResult = client.ReceivedMessages[1]
+            .Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result?.ToString();
+        Assert.NotNull(toolResult);
+        Assert.Contains("Stocked", toolResult);
+        Assert.Contains("You have 5 on hand", toolResult);
+        Assert.DoesNotContain(", due ", toolResult); // the raw clause is the contradiction
+        // The rhythm's own projection is still told — attributed to the rhythm, not printed as due.
+        Assert.Contains("its rhythm would have asked", toolResult);
+    }
+
+    [Fact]
+    public async Task Query_status_with_no_name_keeps_omitting_suppressed_items_from_running_low()
+    {
+        // The list branch was already right (a suppressed item is Stocked, so it drops out) — pinned
+        // so the single-product fix can't regress it.
+        var store = new FakePantryStore(SuppressedByCount(3, "Canned Black Beans"));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("query_status")),
+            () => Responses.Text("All good."));
+
+        await Chat(client, store).HandleAsync("anything running low?");
+
+        var toolResult = client.ReceivedMessages[1]
+            .Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result?.ToString();
+        Assert.Equal("Nothing is running low right now.", toolResult);
+    }
+
     [Fact]
     public async Task Blank_input_is_rejected_without_calling_the_model()
     {

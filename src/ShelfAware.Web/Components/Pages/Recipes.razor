@@ -981,6 +981,15 @@
             eatError = null;
             await LoadAsync();
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Same shape as ProductDetail's count handlers: an "Ate it" is a WRITE to a hand-maintained
+            // number, and a transient DB error tearing down the circuit mid-tap would leave the user
+            // unsure whether the meal (and the decrement) was recorded. It wasn't — say so, keep the
+            // confirm panel (if one was open) so the tap can be retried.
+            Logger.LogError(ex, "Recording a meal for recipe {RecipeId} failed.", r.Id);
+            eatError = (r.Id, "That didn't save. Try again, or reload the page.");
+        }
         finally { eatBusy = false; }
     }
 

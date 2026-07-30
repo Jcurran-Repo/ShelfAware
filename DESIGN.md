@@ -186,6 +186,16 @@ feature that demands you count the salt is dead inside a week, and §13.7 is how
 - `add_purchase` (chat/manual) increments by its quantity the same way.
 - **Symmetry is the invariant worth testing:** confirm-then-remove must return every affected count to
   the number it started at, for count and weight items alike.
+- ⚠️ **Accepted edge: the subtraction is unconditional, even past a newer attestation.** Confirm a
+  duplicate (+3), recount the shelf (attest 6 — ground truth, phantom excluded), then remove the
+  duplicate: the count lands at 3 while the shelf holds 6. A guard — skip the subtract when
+  `QuantityCountedAt` postdates the confirm — was weighed and rejected, because the attestation date
+  also advances on **relative** moves ("Used one", §13.3), which carry a duplicate's phantom stock
+  *forward* rather than re-baselining. Under the guard that case would keep the phantom: an inflated
+  count, over-silenced buy list, an error found only by running out. The unconditional subtract errs
+  the other way — one early rebuy, fixed by one recount — which is the app's safe side (the same
+  direction as its rounding). Telling the two attestation kinds apart would need the change log §13.6
+  defers; until then symmetry stays structural, and the removal service says so at the call site.
 
 ### 13.3 Decrements
 - **"Ate it" auto-decrements each MAIN ingredient's matched product by one package.** Recipe quantities
@@ -259,7 +269,13 @@ feature that demands you count the salt is dead inside a week, and §13.7 is how
 - `set_quantity(product_name, quantity, relative?)` — the chat/voice tool. Absolute by default; with
   `relative: true` the number is a delta ("used two" → `-2`). Either way it is a human act, so it
   advances `QuantityCountedAt`.
-- One-tap decrement on the dashboard/product card.
+- One-tap decrement **where the count is claimed**: the grocery list's suppressed row and the product
+  page's count panel (both "Used one"). Deliberately **not** on the dashboard — it lists running-low
+  items only, so a counted item appears there only once its count has *stopped* doing work (stale,
+  pinned, or due by label), and at that point the useful act is re-attesting or asserting zero, not a
+  decrement. Both of those live on the product page's panel one tap away from the card, beside the
+  staleness sentence that makes them safe; a bare count control on the card would duplicate the
+  surface without its explanation.
 - **Decrements are household-wide** — tenancy already guarantees this, and it is the point: two people
   cook, one count. It is also the largest real risk to accuracy (an unlogged "took the last can" leaves
   the count wrong in the direction that stops a rebuy), which is the whole argument for making every
@@ -372,9 +388,11 @@ display rule is built: it labels a quantity with `Product.DefaultUnit` when the 
 instead. The backlog check's Qty column runs through it now; the count's own display must too,
 or the two surfaces drift the way the due dates did. Format is `0.##`, matching the recommended-quantity
 displays — `0.#` silently rounds 2.34 lb to 2.3, which a test pins.
-No change-log table in v4.0: purchases and `MealEvent`s are already dated, so every automated path is
-self-documenting and only manual edits are unrecorded. Add the log if the household ever needs to ask
-"why does it say 3?" and can't answer it.
+No change-log table in v4.0: purchases and `MealEvent`s are already dated, so every automated change
+is *attributable* — though not always to a clock time: a confirm's own moment is unrecorded (its
+purchases carry the receipt's PURCHASE date), which is one bound on the §13.2 accepted edge — and only
+manual edits are unrecorded entirely. Add the log if the household ever needs to ask "why does it say
+3?" and can't answer it.
 
 **Editing a purchase's quantity after the fact** ✅ *built: tap a quantity in Product Detail's "Recent
 purchases"; `IPantryStore.SetPurchaseQuantityAsync` is the one write path.* There was no way to correct one.

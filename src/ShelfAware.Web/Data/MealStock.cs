@@ -141,18 +141,29 @@ public static class MealStock
         // IngredientMatcher.Covering already prefers the grounded MatchedProduct over an inference, so
         // there is no precedence to re-implement here — a pinned ingredient simply comes back as one
         // candidate. Keyed by product NAME because that is what the matcher speaks.
-        var byName = counted.ToDictionary(c => c.Name, c => c.Id, StringComparer.OrdinalIgnoreCase);
+        // A name shared by two counted rows maps to NULL: the schema has no unique index on product
+        // names (the duplicate guard is a UI prompt with an explicit "Add anyway"), and a name-keyed
+        // matcher cannot say WHICH row such a name means — so its ingredient is refused like any other
+        // ambiguity, rather than a dictionary collision taking down every "Ate it" in the household.
+        var byName = new Dictionary<string, int?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var c in counted)
+        {
+            byName[c.Name] = byName.ContainsKey(c.Name) ? null : c.Id;
+        }
         var candidates = counted.Select(c => new PantryProduct(c.Name, c.Substitutes)).ToList();
 
-        // Pass 1: settle every main that resolves to exactly one counted product.
+        // Pass 1: settle every main that resolves to exactly one counted product — one covering name,
+        // and that name addressing exactly one row. Candidates are reported by DISTINCT name: two rows
+        // sharing one name are one answer to "which product", not two.
         var chosen = new HashSet<int>();
         var unsettled = new List<(string Ingredient, List<string> Candidates)>();
         foreach (var main in mains)
         {
             var covering = IngredientMatcher.Covering(main.Name, main.MatchedProduct, candidates);
-            if (covering.Count == 1) chosen.Add(byName[covering[0].Name]);
-            else if (covering.Count > 1)
-                unsettled.Add((main.Name, [.. covering.Select(c => c.Name).Order()]));
+            if (covering.Count == 1 && byName[covering[0].Name] is { } only) chosen.Add(only);
+            else if (covering.Count > 0)
+                unsettled.Add((main.Name,
+                    [.. covering.Select(c => c.Name).Distinct(StringComparer.OrdinalIgnoreCase).Order()]));
         }
 
         // Pass 2, and it needs the COMPLETE chosen set — which is why it can't fold into the loop above.
@@ -161,7 +172,7 @@ public static class MealStock
         // product in the panel's "not touching these" list while the panel's own take list was touching it.
         // Grouped by ingredient name so a recipe that lists one main twice doesn't say so twice.
         var ambiguous = unsettled
-            .Where(u => !u.Candidates.Any(name => chosen.Contains(byName[name])))
+            .Where(u => !u.Candidates.Any(name => byName[name] is { } id && chosen.Contains(id)))
             .GroupBy(u => u.Ingredient, StringComparer.OrdinalIgnoreCase)
             .Select(g => new Ambiguity(g.Key, g.First().Candidates))
             .ToList();

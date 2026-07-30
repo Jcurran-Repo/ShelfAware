@@ -810,6 +810,45 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      `null!` for a properly nullable helper parameter.
    - **861 tests green, 0 warnings.**
 
+27. **Independent `/pre-push` gate over the finished branch (2026-07-30) — six findings, each fixed or
+   decided.** Run in a fresh context against the whole diff, with every authored claim re-measured
+   (the 0-of-190 / 0-of-537 probes reproduced exactly; 861/0 confirmed before the pass).
+   - ⚠️ **`query_status` was the SIXTH "one prediction, one story" break, and the first that TALKS.**
+     A suppressed item's reply read "Stocked (bought 4×, ~every 22 days), due 2026-07-21" — eight days
+     past, spoken aloud, count never mentioned — the third surface to get `honorQuantity: true`
+     without the matching display change (confirmed by probe against the seeded beans hero before the
+     fix). Fixed from the same SOURCE the grids read — `SuppressedByCount`/`CountRunsOutOn` plus the
+     product's own count — with wording for speech rather than `ProductEstimate.CountNote`'s cell
+     form; the comment states that the wording may differ but the facts must not. Two chat tests pin
+     it, including the list branch that was already right.
+   - **Removal past a newer attestation is §13.2's documented ACCEPTED edge, not new code.** The
+     obvious guard — skip the subtract when `QuantityCountedAt` postdates the confirm (needs a new
+     `Receipt.ConfirmedAt`; none exists) — was weighed and REJECTED: the attestation date also
+     advances on relative moves ("Used one"), which carry a duplicate's phantom stock forward rather
+     than re-baselining, so the guard would trade today's safe-direction error (one early rebuy, one
+     recount fixes it) for an inflated count and an over-silenced buy list — the §13.5 direction you
+     only discover by running out. Distinguishing the attestation kinds needs the change log §13.6
+     defers. §13.6's "every automated path is self-documenting" was corrected in the same pass (a
+     confirm's own clock time is unrecorded — its purchases carry the receipt's purchase date).
+   - **`MealStock` survives two counted products sharing a name.** No unique index exists on product
+     names (probed) and the duplicate guard is a UI prompt with a real "Add anyway" — and the
+     name-keyed dictionary THREW on the pair, taking down every "Ate it" in the household, planned or
+     not. A shared name now maps to "cannot address" and its ingredient is refused and reported like
+     any other ambiguity (candidates listed by distinct name). Pinned.
+   - **§13.3's "one-tap decrement on the dashboard" described the wrong control.** The dashboard lists
+     running-low items only, so a counted item appears there only once its count has STOPPED being
+     believed — where the useful act is re-attesting or asserting zero, both on the product page's
+     panel one tap from the card, beside the staleness sentence that makes them safe. Sentence
+     reworded; no new control built.
+   - Smaller: the negative-absolute count refusal has its own message (it shared the relative-move
+     one, telling a "-3" typist to "set a starting count"); `CommitEatAsync` gained the
+     catch/log/friendly-error shape its ProductDetail siblings in the same branch already had (a
+     transient DB error mid-"Ate it" tore down the circuit with the confirm panel open).
+   - Deliberately unchanged: GroceryList's `UsedOne` still ignores a `false` return from
+     `SetQuantityAsync` — the only road there is a concurrent stop-counting, and the reload it already
+     performs renders the corrected state; a banner for that race would be noise.
+   - **864 tests green, 0 warnings** (861 before the pass).
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active
