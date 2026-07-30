@@ -943,6 +943,10 @@
     {
         eatBusy = true;
         eatError = null;
+        // Whether SaveChanges completed, so the catch can tell a failed WRITE from a failed RELOAD.
+        // Conflating them is not cosmetic: "didn't save — try again" after a successful save invites a
+        // second tap, and this tap is NOT idempotent (a second MealEvent, a second package off).
+        var saved = false;
         try
         {
             await using var db = await DbFactory.CreateDbContextAsync();
@@ -977,18 +981,21 @@
             db.MealEvents.Add(new MealEvent { RecipeId = rec.Id, AteAt = DateOnly.FromDateTime(DateTime.Today) });
             MealStock.Apply(resolution); // same save as the MealEvent — one tap, one transaction
             await db.SaveChangesAsync();
+            saved = true;
             pendingEat = null;
             eatError = null;
             await LoadAsync();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Same shape as ProductDetail's count handlers: an "Ate it" is a WRITE to a hand-maintained
-            // number, and a transient DB error tearing down the circuit mid-tap would leave the user
-            // unsure whether the meal (and the decrement) was recorded. It wasn't — say so, keep the
-            // confirm panel (if one was open) so the tap can be retried.
-            Logger.LogError(ex, "Recording a meal for recipe {RecipeId} failed.", r.Id);
-            eatError = (r.Id, "That didn't save. Try again, or reload the page.");
+            // A transient DB error tearing down the circuit mid-tap would leave the user unsure
+            // whether the meal (and the decrement) was recorded — but the two failure points need
+            // OPPOSITE advice: a failed write may be retried (the panel stays for it), while a failed
+            // reload after a successful write must NOT say "try again" — the tap already counted.
+            Logger.LogError(ex, "Recording a meal for recipe {RecipeId} failed (saved: {Saved}).", r.Id, saved);
+            eatError = saved
+                ? (r.Id, "Recorded — but the page couldn't refresh. Reload to see it; don't tap again.")
+                : (r.Id, "That didn't save. Try again, or reload the page.");
         }
         finally { eatBusy = false; }
     }

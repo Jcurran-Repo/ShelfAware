@@ -847,6 +847,15 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
    - Deliberately unchanged: GroceryList's `UsedOne` still ignores a `false` return from
      `SetQuantityAsync` — the only road there is a concurrent stop-counting, and the reload it already
      performs renders the corrected state; a banner for that race would be noise.
+   - ⚠️ **Re-gating the fix pass caught the fix pass's own defect** — the class this branch keeps
+     warning about. The new `CommitEatAsync` catch said "didn't save — try again" for a RELOAD failure
+     after a successful save, inviting a second tap on a non-idempotent write (a second `MealEvent`, a
+     second package off) — strictly worse than the circuit crash it replaced. And ProductDetail's
+     handlers, which the fix had copied as the good precedent, carried the same latent flaw ("Used
+     one" is relative: repeated, it double-decrements). All three now track whether the save completed
+     and give OPPOSITE advice for the two failure points ("recorded — don't tap again" vs "didn't save
+     — try again"). No page-test harness exists (no bUnit anywhere in the repo), so these handlers are
+     review-verified rather than unit-pinned — stated here so the gap is a known one.
    - **864 tests green, 0 warnings** (861 before the pass).
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval

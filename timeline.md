@@ -299,7 +299,11 @@ _Last updated: 7/30/2026_
   card); and removal-past-a-newer-attestation is §13.2's documented ACCEPTED edge — the `ConfirmedAt`
   guard was rejected because a relative "Used one" also advances the attestation date, so the guard
   would flip a safe-direction error (early rebuy) into an unsafe one (phantom stock kept, buy list
-  over-silenced). **864 tests green, 0 warnings** — 7/30/2026
+  over-silenced). Re-gating the fix pass then caught the fix's own defect: the new catch invited a
+  retry after a reload failure that FOLLOWED a successful save — non-idempotent (a second `MealEvent`,
+  a second package off) — and ProductDetail's handlers, copied as the precedent, had the same latent
+  flaw; all three now split write-failure from reload-failure advice. **864 tests green, 0 warnings**
+  — 7/30/2026
 - [ ] Shelf-photo census — the intake path for stock receipts can never know about (pre-app, elsewhere, gifted, bulk): photo → candidates → the review-grid shape → confirm. ★ Never creates PurchaseEvents (invented purchases would poison every rhythm); proposes a front-row count the human corrects, with occlusion/stacking designed for rather than papered over — Not complete
 
 ---

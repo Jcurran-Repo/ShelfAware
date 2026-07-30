@@ -554,10 +554,15 @@ else
         if (editingPurchaseId is not { } id || purchaseBusy) return;
         purchaseBusy = true;
         purchaseError = null;
+        // Same write-vs-reload split as ApplyQuantityAsync. Re-running THIS correction is harmless
+        // (same absolute value → a difference of zero) but the message must still not claim a
+        // completed save didn't happen.
+        var saved = false;
         try
         {
             if (await Store.SetPurchaseQuantityAsync(id, editPurchaseQuantity))
             {
+                saved = true;
                 editingPurchaseId = null;
                 loadedId = null; // reload: the rhythm, the count and the chart all move with it
                 await OnParametersSetAsync();
@@ -569,8 +574,10 @@ else
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Logger.LogError(ex, "Correcting purchase {PurchaseId} failed.", id);
-            purchaseError = "That didn't save. Reload the page and try again.";
+            Logger.LogError(ex, "Correcting purchase {PurchaseId} failed (saved: {Saved}).", id, saved);
+            purchaseError = saved
+                ? "Saved — but the page couldn't refresh. Reload to see the updated history."
+                : "That didn't save. Reload the page and try again.";
         }
         finally { purchaseBusy = false; }
     }
@@ -939,10 +946,15 @@ else
         if (product is null || quantityBusy) return;
         quantityBusy = true;
         quantityError = null;
+        // Whether the store write completed, so the catch can tell a failed WRITE from a failed
+        // RELOAD. "Didn't save — try again" after a successful save invites repeating the change,
+        // and the "Used one" path is relative: repeated, it takes a SECOND package off.
+        var saved = false;
         try
         {
             if (await Store.SetQuantityAsync(product.Id, value, relative, stop))
             {
+                saved = true;
                 loadedId = null; // force the OnParametersSet load to run again for this product
                 await OnParametersSetAsync();
             }
@@ -959,8 +971,10 @@ else
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Logger.LogError(ex, "Setting quantity for product {ProductId} failed.", product.Id);
-            quantityError = "That didn't save. Reload the page and try again.";
+            Logger.LogError(ex, "Setting quantity for product {ProductId} failed (saved: {Saved}).", product.Id, saved);
+            quantityError = saved
+                ? "Saved — but the page couldn't refresh. Reload to see it; don't repeat the change."
+                : "That didn't save. Reload the page and try again.";
         }
         finally { quantityBusy = false; }
     }
