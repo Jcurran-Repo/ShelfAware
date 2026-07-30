@@ -238,14 +238,16 @@ else
             }
             else
             {
+                @* Razor collapses the whitespace between an element and an adjacent conditional block, so
+                   the spaces are written explicitly — without them this ran together as "4on Mar 12—". *@
                 <p>
                     You counted
                     <strong>@QuantityFormat.Describe(onHand, product.DefaultUnit)</strong>
                     @if (product.QuantityCountedAt is { } counted)
                     {
-                        <text>on @SignalDate.Of(counted).ToString("MMM d, yyyy")</text>
+                        <text>&#32;on @SignalDate.Of(counted).ToString("MMM d, yyyy")</text>
                     }
-                    <span class="muted">— Shelf Aware isn't counting on that any more.</span>
+                    <span class="muted">&#32;— Shelf Aware isn't counting on that any more.</span>
                 </p>
             }
             @if (prediction.SuppressedByCount)
