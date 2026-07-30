@@ -32,9 +32,20 @@ public class MeteredChatClientTests : IDisposable
             });
         }
 
-        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException("The app's AI services don't stream.");
+        // Nothing in the app streams TODAY — this exists so the decorator's streaming path can be
+        // pinned, because a future streaming service must not be able to bypass metering through it.
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            await Task.Yield();
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "ok");
+            yield return new ChatResponseUpdate
+            {
+                Contents = [new UsageContent(new UsageDetails { InputTokenCount = 100, OutputTokenCount = 50 })],
+            };
+        }
 
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
 
@@ -148,6 +159,52 @@ public class MeteredChatClientTests : IDisposable
         var today = await meter.GetTodayAsync();
         Assert.Equal(1000, today.Calls);       // recorded on top of the seeded 999
         Assert.True(today.Tokens >= 150);      // the fake call's 100 in + 50 out landed too
+    }
+
+    [Fact]
+    public async Task A_streamed_call_passes_updates_through_and_records_the_trailing_usage()
+    {
+        // The decorator's streaming half had NO test (the 7/30 audit's coverage read: 45%). It exists
+        // so a future streaming service can't bypass metering — the quota gate runs up front and the
+        // provider's trailing UsageContent lands in the household's row like any other call.
+        var (client, meter) = Build("Managed", dailyCalls: 100);
+
+        var texts = new List<string?>();
+        await foreach (var update in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "hi")]))
+            texts.Add(update.Text);
+
+        Assert.Contains("ok", texts);
+        var today = await meter.GetTodayAsync();
+        Assert.Equal(1, today.Calls);
+        Assert.Equal(150, today.Tokens);
+    }
+
+    [Fact]
+    public async Task A_streamed_call_at_the_cap_throws_before_the_provider_yields_anything()
+    {
+        await SeedTodayAsync("hh-test", calls: 5);
+        var (client, _) = Build("Managed", dailyCalls: 5);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "hi")])) { }
+        });
+        Assert.Equal(0, _provider.Calls);
+    }
+
+    [Fact]
+    public async Task A_metering_write_failure_never_fails_the_users_answer()
+    {
+        // The deliberate catch in RecordAsync: the user already has their response, so a bookkeeping
+        // failure logs and under-counts rather than blowing up the reply. Byok mode so no quota read
+        // runs up front; disposing the TestDb makes the usage write throw exactly as a dead DB would.
+        var (client, _) = Build("Byok");
+        _db.Dispose();
+
+        var response = await AskAsync(client);
+
+        Assert.Equal("ok", response.Text);
+        Assert.Equal(1, _provider.Calls);
     }
 
     [Fact]

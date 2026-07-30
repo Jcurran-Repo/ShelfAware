@@ -197,8 +197,10 @@ more permissive by construction, and an asserted zero files the same OutNow the 
    history — say a fresh count"). Pinned at all four layers: ledger, store, chat, and the fake.
    UI paths were already safe (their controls only render for counted rows).
 
-### ShelfAware.Web.Tests (28 files + TestDb/TestAuthDb/Fakes, 286 tests) — 1 of 28 audited 7/30
+### ShelfAware.Web.Tests (26 files + TestDb/TestAuthDb/Fakes) — 3 of 26 audited 7/30
 | File | Verdict | Notes |
 |---|---|---|
-| EfAppSettingsTests | rewrite | Re-implements its subject (hunt-list class 6). Keep the tenancy pins but route them through the real `EfAppSettings`; add the upsert update branch and `value ?? ""` null case. Check overlap with `HouseholdIsolationTests` while there. |
-| *(27 files remaining)* | | |
+| EfAppSettingsTests | rewritten ✅ | Was hunt-list class 6 (re-implemented its subject). Now drives the real `EfAppSettings`; gained the upsert update-in-place branch (row count pinned unscoped) and the null→"" distinction vs never-set. The unscoped-context test kept with a note: it's a context guarantee, retained beside the reads it protects. |
+| MeteredChatClientTests | keep + strengthened ✅ | **The 45% suspect was NOT class 6** — the tests honestly exercised their subject; the uncovered half was the SUBJECT's streaming path (implemented so streaming can't bypass metering, unused today) + the metering-failure catch. Added: streamed-call records trailing UsageContent, streamed-call blocked at cap before the provider yields, and a metering write failure never fails the user's answer (disposed-DB simulation — the catch is now live-proven, not review-verified). |
+| EfPantryStoreTests | keep + 1 new pin ✅ | Read during the dormancy-bug fix: strong file (asserted-zero → OutNow, clock semantics both directions, refusals with state asserted untouched). Added the dormant-relative refusal + frozen-pair assertion. |
+| *(23 files remaining — next session: HouseholdServiceTests 504, MealStockTests 495, UserDataServiceTests 420, ReceiptRemovalServiceTests 347, HouseholdIsolationTests 337, ReportDataServiceTests 331, CachingTextToSpeechTests 275 ← the 63% suspect, DemoDataSeederTests 252, ReceiptConfirmationService 205, ReceiptAutoConfirmer 205, AdditiveSchema 168, RecipeAdapter 158, NullableInviteCodeMigration 142, ProductMerge 137, Byok 136, ReceiptDuplicateDetector 121, ReceiptStorage 121, HouseholdWriteGuard 102, CurrentHousehold 89, SpeechCacheTrim 76, ProductDeletion 75, ProductRename 75, PantryDbGuard 48, + Fakes/TestDb/TestAuthDb helpers)* | | |
