@@ -1923,6 +1923,49 @@ button.tag-chip {
     color: var(--overdue-ink);
 }
 
+/* Buttons that read as inline row-level actions ("Used one") — link-styled, not button-styled.
+   The class predates this rule; undefined, these fell back to the full blue button styling. */
+.linkish {
+    background: none;
+    border: none;
+    padding: 0;
+    margin-left: 0.4rem;
+    color: var(--accent-ink);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.85rem;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.linkish:hover:not(:disabled) {
+    color: var(--accent);
+}
+
+.linkish:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+/* ---- "Which did you use?" picker (Ate it, DESIGN.md 13.3) ---- */
+.picker-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 60;
+}
+
+.picker-modal {
+    max-width: 26rem;
+    width: calc(100% - 2rem);
+    max-height: 70vh;
+    overflow-y: auto;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
 /* ---- Grocery List report ---- */
 tfoot td {
     border-top: 2px solid var(--line);

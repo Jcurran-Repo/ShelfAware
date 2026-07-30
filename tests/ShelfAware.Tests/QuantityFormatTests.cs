@@ -43,4 +43,25 @@ public class QuantityFormatTests
     {
         Assert.Equal("3 gal", QuantityFormat.Describe(3m, "  gal  "));
     }
+
+    [Fact]
+    public void Exactly_one_of_a_plural_unit_reads_singular()
+    {
+        // Units are human-typed and the box invites plurals ("cans", "jars"), which read wrong beside
+        // a 1 the moment the count gets there — "Typical buy: 1 cans" shipped exactly that way.
+        Assert.Equal("1 can", QuantityFormat.Describe(1m, "cans"));
+        Assert.Equal("1 jar", QuantityFormat.Describe(1m, "jars"));
+        Assert.Equal("4 cans", QuantityFormat.Describe(4m, "cans"));
+        Assert.Equal("1 can", QuantityFormat.Describe(1.0m, "cans")); // 1.0 is still exactly one
+    }
+
+    [Fact]
+    public void Singularizing_never_touches_units_that_are_not_plurals()
+    {
+        Assert.Equal("1 lb", QuantityFormat.Describe(1m, "lb"));
+        Assert.Equal("1 each", QuantityFormat.Describe(1m, "each"));
+        Assert.Equal("1 glass", QuantityFormat.Describe(1m, "glass")); // trailing "ss" is a name, not a plural
+        Assert.Equal("1.5 cans", QuantityFormat.Describe(1.5m, "cans")); // only exactly one
+        Assert.Equal("1 s", QuantityFormat.Describe(1m, "s")); // a one-letter unit has nothing to trim
+    }
 }

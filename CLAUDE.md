@@ -907,6 +907,48 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      button, unit box, nudge) have no unit tests — no page-test harness exists in this repo — and
      were NOT live-verified this session; the logic beneath them is covered.
 
+29. **v4.2 — the walkthrough pass (2026-07-30): what a full live click-through of v4.0/v4.1 turned up,
+   fixed to Jordan's calls.** Every flow was exercised in a real browser against a throwaway demo
+   household (real data untouched); the six findings and their resolutions:
+   - **The "Ate it" decrement ASKS via a picker now** (Jordan's call on the walkthrough's one design
+     finding). Ambiguous mains open a tiny modal — swap-cloud styling, each counted candidate a bubble
+     with its live count — pick what came off the shelf, or click away and no count moves (skips are
+     said in the notice, not hidden). ⚠️ **A grounded link to a product that exists UNCOUNTED also
+     routes to the picker even with one candidate**: live-verified before the fix, the taco recipe's
+     tick credited the uncounted store pack while the decrement silently took a freezer package — the
+     app guessing WHICH ground beef got cooked. A grounded link naming a product that no longer exists
+     stays automatic (stale link — the §13.8 census fall-through). Both directions pinned. Picks land
+     in `EatDone.Taken`, so ↩ Undo reverses them with everything else (`MealStock.TakePicked` — same
+     ledger, no signal, clock untouched). Fell out of it: candidate ids ride beside the matcher's
+     candidates by REFERENCE (`ReferenceEqualityComparer`), so two counted rows sharing a name are two
+     picker bubbles told apart by their counts — the duplicate-name defense got better, not just safe.
+   - **`.linkish` never existed in app.css** — the class both the purchase pencil and the grocery
+     list's "Used one" wore fell back to full blue-button styling ("that giant pencil/blue button").
+     Defined now (inline link-styled action); the pencil itself became a plain quantity label + a
+     small `icon-btn` ✏️ per Jordan's ask.
+   - **Enter didn't submit the Quick update box.** The submit button was disabled while the input was
+     blank, and the browser's implicit form submission NO-OPS on a disabled default button — enabling
+     it rides a circuit round-trip, so "type, Enter" lost the race and did nothing, silently. The
+     button now disables on busy only; `SendChat` already refuses blanks.
+   - **The stock-up annotation gates at 1.25×** (`NoteworthyStockUp`, display only — the engine still
+     stretches for any above-typical buy): a corrected 2× purchase read fine, but a 1.07× meat-pack
+     swing rendered "last buy was ~1× the usual — due date pushed out to match", a story about nothing.
+   - **`QuantityFormat.Describe` singularizes exactly-1 plurals** ("1 can", not "1 cans" — visible the
+     moment units became editable), naive English trim documented as such ("glass" keeps its name);
+     Product Detail's and the Products popover's "Typical buy" now route through `Describe` instead of
+     gluing the unit on by hand — one rule, three surfaces.
+   - **Transient errors clear on every ProductDetail (re)load** (a stranded empty-box error sat beside
+     unrelated content after a purchase save), and a suppressed item's rhythm row is labelled **"Rhythm
+     would ask"** with the bare date — "Next buy · 8 days overdue" beside a Stocked chip was the
+     contradiction shape one glance-width from its explanation.
+   - Walkthrough evidence worth keeping: the beans "Used one" moved 5→4 with the exhaustion date
+     (Nov 14→Oct 23) while the attestation stayed Jul 27 — the v4.1 keystone seen working; a purchase
+     correction 1→2 cascaded into a live StockUpFactor stretch AND stood suppression down, then
+     reverted exactly; dormant stop-counting flipped the cream to Due soon and surfaced the fast-mover
+     nudge in the same render; the fixed `query_status` answered through a REAL model call ("you have
+     4 cans on hand as of July 27… no action needed"); every logged query carried the household filter.
+   - **889 tests green, 0 warnings** (884 before the pass).
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active

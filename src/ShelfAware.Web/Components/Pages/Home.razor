@@ -132,7 +132,11 @@ else
         <form @onsubmit="SendChat" @formname="quick-update">
             <input @bind="chatInput" @bind:event="oninput" placeholder="e.g. we're out of dog food, almost out of coffee"
                    aria-label="Quick update — say what you bought or ran low on" disabled="@chatBusy" />
-            <button type="submit" disabled="@(chatBusy || string.IsNullOrWhiteSpace(chatInput))">
+            @* Disabled on busy ONLY — not on an empty box. The browser's implicit form submission
+               (Enter in the input) no-ops when the default submit button is disabled, and the
+               enable-on-first-keystroke round-trips the circuit, so a fast "type, Enter" lost the
+               race and silently did nothing. SendChat already refuses a blank input. *@
+            <button type="submit" disabled="@chatBusy">
                 @(chatBusy ? "Working…" : "Send")
             </button>
         </form>

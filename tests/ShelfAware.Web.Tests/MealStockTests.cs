@@ -350,9 +350,11 @@ public class MealStockTests : IDisposable
         await read.SaveChangesAsync();
 
         Assert.Empty(taken); // decrements neither…
-        var pick = Assert.Single(resolution.Ambiguous); // …and SAYS so in the notice
+        var pick = Assert.Single(resolution.Ambiguous); // …and ASKS, with everything the picker renders
         Assert.Equal("ground beef", pick.Ingredient);
-        Assert.Equal(["Ground Beef Chuck", "Ground Beef Sirloin"], pick.Candidates);
+        Assert.Equal(["Ground Beef Chuck", "Ground Beef Sirloin"], pick.Candidates.Select(c => c.ProductName));
+        Assert.Equal([4m, 6m], pick.Candidates.Select(c => c.OnHand));
+        Assert.All(pick.Candidates, c => Assert.Equal(1m, c.OnePackage)); // whole-count buys → one is 1
 
         await using var after = _db.CreateDbContext();
         Assert.Equal(4m, (await after.Products.AsNoTracking().SingleAsync(p => p.Id == beefId)).QuantityOnHand);
@@ -360,13 +362,13 @@ public class MealStockTests : IDisposable
     }
 
     [Fact]
-    public async Task Two_counted_products_sharing_a_name_are_refused_not_crashed()
+    public async Task Two_counted_products_sharing_a_name_are_asked_about_not_crashed()
     {
         // Nothing in the schema forbids two products with one name — the duplicate guard is a UI
         // prompt with an explicit "Add anyway" — and a name-keyed dictionary built over such a pair
-        // used to throw, taking down every "Ate it" in the household, planned or not. A shared name
-        // cannot say WHICH row to decrement, so it is refused and reported exactly like two products
-        // covering one ingredient; the candidate list carries the name once, not twice.
+        // used to throw, taking down every "Ate it" in the household. Ids ride beside the matcher's
+        // candidates by reference now, so the pair is simply two picker candidates the human can tell
+        // apart by their counts.
         var firstId = await Product("Ground Beef", counted: true, onHand: 4m, unit: null, 1m, 1m);
         var secondId = await Product("Ground Beef", counted: true, onHand: 2m, unit: null, 1m, 1m);
         var recipeId = await Recipe("Ground Beef");
@@ -379,11 +381,83 @@ public class MealStockTests : IDisposable
 
         Assert.Empty(taken);
         var pick = Assert.Single(resolution.Ambiguous);
-        Assert.Equal(["Ground Beef"], pick.Candidates);
+        Assert.Equal(2, pick.Candidates.Count);
+        Assert.All(pick.Candidates, c => Assert.Equal("Ground Beef", c.ProductName));
+        Assert.Equal([4m, 2m], pick.Candidates.Select(c => c.OnHand)); // same name, told apart by count
 
         await using var after2 = _db.CreateDbContext();
         Assert.Equal(4m, (await after2.Products.AsNoTracking().SingleAsync(p => p.Id == firstId)).QuantityOnHand);
         Assert.Equal(2m, (await after2.Products.AsNoTracking().SingleAsync(p => p.Id == secondId)).QuantityOnHand);
+    }
+
+    [Fact]
+    public async Task A_grounded_link_to_an_uncounted_product_asks_instead_of_guessing()
+    {
+        // The household pinned this recipe to the store pack ("Ground Beef" — on the shelf, uncounted).
+        // Token-matching still reaches the counted freezer stock, but taking a package off it would be
+        // the app guessing WHICH ground beef got cooked — so it asks, even with a single candidate.
+        await Product("Ground Beef", counted: false, onHand: null, unit: null, 1m, 1m);
+        var freezerId = await Product("Quarter Cow Ground Beef", counted: true, onHand: 14m, unit: null);
+        var recipeId = await Recipe("Ground Beef");
+        await using (var db = _db.CreateDbContext())
+        {
+            var ing = await db.RecipeIngredients.SingleAsync(i => i.RecipeId == recipeId && i.IsMain);
+            ing.Name = "ground beef";
+            await db.SaveChangesAsync();
+        }
+
+        var (taken, after) = await Cook(recipeId, freezerId);
+
+        Assert.Empty(taken);
+        Assert.Equal(14m, after); // nothing moved without an answer
+        await using var read = _db.CreateDbContext();
+        var recipe = await read.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
+        var pick = Assert.Single((await MealStock.ResolveAsync(read, recipe)).Ambiguous);
+        Assert.Equal("Quarter Cow Ground Beef", Assert.Single(pick.Candidates).ProductName);
+    }
+
+    [Fact]
+    public async Task A_stale_grounded_link_still_falls_through_automatically()
+    {
+        // The census story (§13.8) must survive the rule above: a link naming a product that no longer
+        // EXISTS (renamed, deleted) is stale, not a live pairing — the token fall-through is the only
+        // way such stock is ever maintained, and it stays automatic.
+        var freezerId = await Product("Quarter Cow Ground Beef", counted: true, onHand: 14m, unit: null);
+        var recipeId = await Recipe("A Product That Was Renamed Away");
+        await using (var db = _db.CreateDbContext())
+        {
+            var ing = await db.RecipeIngredients.SingleAsync(i => i.RecipeId == recipeId && i.IsMain);
+            ing.Name = "ground beef";
+            await db.SaveChangesAsync();
+        }
+
+        var (taken, after) = await Cook(recipeId, freezerId);
+
+        Assert.Equal("Quarter Cow Ground Beef", Assert.Single(taken).ProductName);
+        Assert.Equal(13m, after);
+    }
+
+    [Fact]
+    public async Task A_picked_candidate_takes_its_own_typical_package()
+    {
+        // The picker's decrement is the same take "Ate it" would have made: the product's own median
+        // pack for a weight item, ledger-clamped, no signal, attestation clock untouched.
+        var productId = await Product("Ground Beef", counted: true, onHand: 3.72m, unit: null, 1.18m, 1.24m, 1.31m);
+
+        await using var db = _db.CreateDbContext();
+        var product = await db.Products.Include(p => p.Purchases).SingleAsync(p => p.Id == productId);
+        var countedAt = product.QuantityCountedAt;
+        var taken = MealStock.TakePicked(product);
+        await db.SaveChangesAsync();
+
+        Assert.NotNull(taken);
+        Assert.Equal(1.24m, taken.Taken);
+        Assert.Equal(2.48m, taken.Remaining);
+        await using var read = _db.CreateDbContext();
+        var stored = await read.Products.AsNoTracking().SingleAsync(p => p.Id == productId);
+        Assert.Equal(2.48m, stored.QuantityOnHand);
+        Assert.Equal(countedAt, stored.QuantityCountedAt); // a pick is a decrement, not a look
+        Assert.Empty(await read.InventorySignals.Where(s => s.ProductId == productId).ToListAsync());
     }
 
     [Fact]

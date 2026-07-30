@@ -322,6 +322,25 @@ _Last updated: 7/30/2026_
   never say lb" (display only; walks the tenancy drill). Incident-retelling comments trimmed to their
   constraints. **884 tests green, 0 warnings** (+20). Page flows not live-verified this session; the
   logic beneath them is — 7/30/2026
+- [x] **v4.2 — the walkthrough pass: a full live click-through of every v4.0/v4.1 flow on a throwaway
+  demo household, six findings, fixed to Jordan's calls.** The design one: the taco recipe's tick
+  credited the grounded UNCOUNTED store pack while "Ate it" silently took a package off the counted
+  freezer quarter cow — the app guessing which ground beef got cooked. Ambiguity is **asked** now: a
+  tiny picker (swap-cloud bubbles, live counts) opens when several counted products could be the main
+  OR when the grounded product exists uncounted; click-away moves nothing and the notice says what was
+  left uncounted; picks join the take list so ↩ Undo reverses them too. A stale grounded link (product
+  gone) still falls through automatically — the §13.8 census path, pinned both ways. Also: `.linkish`
+  had never been DEFINED, so the purchase pencil and the list's "Used one" wore full blue-button
+  styling — defined, and the pencil became a label + small ✏️ icon-btn; Enter now submits the Quick
+  update box (the submit button's disabled-while-blank state made the browser's implicit submission
+  no-op, racing the circuit's enable round-trip); the stock-up annotation gates at 1.25× (display
+  only — a 1.07× meat-pack swing had rendered "~1× the usual — due date pushed out to match");
+  `QuantityFormat.Describe` singularizes exactly-1 plurals ("1 can") and the two hand-glued "Typical
+  buy" displays now route through it; ProductDetail clears transient errors on every reload; a
+  suppressed item's rhythm row reads "Rhythm would ask" with the bare date. Walkthrough also verified
+  live: the no-clock-refresh "Used one", the correction→stretch→suppression-standdown cascade and its
+  exact revert, dormant stop-counting surfacing the fast-mover nudge, and the fixed `query_status`
+  through a real model call. **889 tests green, 0 warnings** — 7/30/2026
 - [ ] Shelf-photo census — the intake path for stock receipts can never know about (pre-app, elsewhere, gifted, bulk): photo → candidates → the review-grid shape → confirm. ★ Never creates PurchaseEvents (invented purchases would poison every rhythm); proposes a front-row count the human corrects, with occlusion/stacking designed for rather than papered over — Not complete
 
 ---

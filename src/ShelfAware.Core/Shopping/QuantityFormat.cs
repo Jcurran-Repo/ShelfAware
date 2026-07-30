@@ -16,10 +16,22 @@ public static class QuantityFormat
     /// dropped either way, so a whole count reads "4" and not "4.00".
     /// <para><c>0.##</c>, matching the recommended-quantity displays on Products and Product Detail —
     /// and NOT <c>0.#</c>, which silently rounds a 2.34 lb pack of beef to "2.3" and loses precision on
-    /// exactly the weight items this exists for.</para></summary>
+    /// exactly the weight items this exists for.</para>
+    /// <para>Exactly 1 of a plural unit drops the "s" — "1 can", not "1 cans". Units are human-typed
+    /// free text ("cans", "jars", "lb", "each"), so this is a plain English trim: a single trailing
+    /// "s" not preceded by another ("glass" keeps its name). Naive on purpose — the app is
+    /// English-only and a unit box invites plurals, which read wrong beside a 1 the moment the count
+    /// gets there.</para></summary>
     public static string Describe(decimal quantity, string? defaultUnit)
     {
         var number = quantity.ToString("0.##");
-        return string.IsNullOrWhiteSpace(defaultUnit) ? number : $"{number} {defaultUnit.Trim()}";
+        if (string.IsNullOrWhiteSpace(defaultUnit)) return number;
+        var unit = defaultUnit.Trim();
+        if (quantity == 1m && unit.Length > 1
+            && unit.EndsWith('s') && !unit.EndsWith("ss", StringComparison.Ordinal))
+        {
+            unit = unit[..^1];
+        }
+        return $"{number} {unit}";
     }
 }

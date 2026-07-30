@@ -112,8 +112,13 @@ else
     <section class="panel">
         <h2>Current rhythm</h2>
         <dl class="rhythm">
-            <dt>Next buy</dt>
-            <dd>@(estimate.NextBuyDate is { } d ? $"{d:MMM d, yyyy} ({Relative(estimate.DaysUntil!.Value)})" : "still learning")@(prediction.DueCappedByExpiration ? " · 🏷️ capped by the expiration date" : "")</dd>
+            @* Under suppression the date is the RHYTHM's projection, not a request — the count panel
+               below explains, but the row label must not read "Next buy · 8 days overdue" beside a
+               Stocked chip one glance-width from that explanation. *@
+            <dt>@(prediction.SuppressedByCount ? "Rhythm would ask" : "Next buy")</dt>
+            <dd>@(estimate.NextBuyDate is { } d
+                    ? prediction.SuppressedByCount ? $"{d:MMM d, yyyy}" : $"{d:MMM d, yyyy} ({Relative(estimate.DaysUntil!.Value)})"
+                    : "still learning")@(prediction.DueCappedByExpiration ? " · 🏷️ capped by the expiration date" : "")</dd>
             <dt>Rebuy rhythm</dt>
             <dd>@(prediction.RebuyIntervalDays is { } rb ? $"~every {Math.Round(rb)} days" : "—")</dd>
             @if (prediction.BurnRateDays is { } burn)
@@ -126,13 +131,17 @@ else
                 <dt>Consistency</dt>
                 <dd>give or take ~@Math.Round(sp) day@(Math.Round(sp) == 1 ? "" : "s")</dd>
             }
-            @if (prediction.StockUpFactor is { } su)
+            @* The engine stretches for ANY above-typical buy (that's honest arithmetic — a 1.1× buy
+               moves a two-week rhythm by a day), but an annotation reading "~1× the usual" is noise.
+               Jordan's call: a story is only worth telling from 1.25× up; a small swing in a meat
+               pack's size shouldn't flag. *@
+            @if (prediction.StockUpFactor is { } su && su >= NoteworthyStockUp)
             {
                 <dt>Stocked up</dt>
                 <dd>last buy was ~@su.ToString("0.#")× the usual — due date pushed out to match</dd>
             }
             <dt>Typical buy</dt>
-            <dd>@estimate.RecommendedQuantity.ToString("0.##")@(product.DefaultUnit is { } u2 ? $" {u2}" : "")</dd>
+            <dd>@QuantityFormat.Describe(estimate.RecommendedQuantity, product.DefaultUnit)</dd>
             @if (SizeFormat.Normalize(prediction.RecommendedSize) is { Length: > 0 } rs)
             {
                 <dt>Recommended size</dt>
@@ -515,9 +524,11 @@ else
                                 }
                                 else
                                 {
-                                    <button type="button" class="linkish" @onclick="() => EditPurchase(h)"
-                                            title="Correct the quantity recorded for this purchase">
-                                        @h.Quantity.ToString("0.##") ✏️
+                                    @h.Quantity.ToString("0.##")
+                                    <button type="button" class="icon-btn" @onclick="() => EditPurchase(h)"
+                                            title="Correct the quantity recorded for this purchase"
+                                            aria-label="Correct the quantity for the @h.Date.ToString("MMM d") purchase">
+                                        <span aria-hidden="true">✏️</span>
                                     </button>
                                 }
                             </td>
@@ -558,6 +569,11 @@ else
 
     private const string Unbranded = "Unbranded";
     private const string Unlabeled = "Unlabeled";
+
+    /// <summary>Smallest stock-up worth a row of its own (display only — the engine stretches for any
+    /// above-typical buy). Below this the annotation reads "~1× the usual", which is a story about
+    /// nothing: a small swing in a meat pack's size moves a two-week rhythm by a day.</summary>
+    private const double NoteworthyStockUp = 1.25;
 
     private record PurchaseRow(int Id, DateOnly Date, int? GapDays, decimal Quantity, string? Size, string? Variety, decimal? UnitPrice);
 
@@ -679,7 +695,11 @@ else
         editUnit = product.DefaultUnit;
         onePackage = TypicalPackage.Of(product.Purchases.Select(x => x.Quantity));
         editExpiration = prediction.ExpiresOn; // the panel's date input starts at the governing date
+        // Every transient message clears on a (re)load: any successful action reloads through here, and
+        // an error stranded from an earlier panel otherwise sits beside unrelated, current content.
         expirationError = null;
+        quantityError = null;
+        purchaseError = null;
 
         // Price the recommended (dominant) size specifically; fall back to the overall average.
         // ProductPriceIndex folds the loose/"each" spellings together, so per-each produce

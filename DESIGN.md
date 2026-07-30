@@ -253,11 +253,19 @@ gate, because someone WILL try to count the milk and then blame the feature for 
   Two consequences the looser matcher brings, both deliberate:
   - **The grounded link still wins outright** when `MatchedProduct` names a counted product. A human
     confirmed that pairing; it beats an inference.
-  - **Ambiguity is refused, not guessed.** An ingredient can be covered by several counted products
+  - **Ambiguity is ASKED, not guessed.** An ingredient can be covered by several counted products
     ("ground beef" by two cuts). Cooking one meal must not take a package off each, and picking one
-    silently would be arbitrary — so such a main decrements **none** of them and is **reported in the
-    after-the-tap notice** with the candidates. A decrement the app declines to make is as much the
-    household's business as one it makes; saying nothing would leave a count quietly un-maintained.
+    silently would be arbitrary — so such a main decrements none of them by itself and the tap opens a
+    **tiny picker** (the swap-cloud styling): each candidate as a bubble with its current count, "pick
+    what came off the shelf". Click-away answers "none of these" — no count moves, and the notice says
+    which ingredients were left uncounted rather than letting the question vanish. One tap to answer,
+    zero to decline; the meal itself is already recorded either way (tell-don't-ask holds).
+  - ⚠️ **A grounded link to a product that exists UNCOUNTED also goes to the picker, even with one
+    counted candidate.** The household pinned the recipe to the store pack; token-matching past it to
+    the counted freezer stock is the app guessing *which* ground beef got cooked — the exact guess a
+    tell-don't-ask decrement must not make silently. A grounded link naming a product that no longer
+    exists at all is different: that link is STALE, and the automatic fall-through is the only way
+    census stock (§13.8) is ever maintained, so it stays automatic. Both directions pinned.
     ⚠️ **Judged against the COMPLETE set of chosen products, which needs a second pass.** If another main
     is pinned to one of the candidates, that package is already being taken and this ingredient is covered
     by it — reporting it anyway put a product in the panel's "not touching these" list while the take list
@@ -270,8 +278,8 @@ gate, because someone WILL try to count the milk and then blame the feature for 
   reaches zero early and you rebuy early — the same direction as the app's existing safe-side rounding
   (intervals floor, buy quantities ceil). What it must never be is silent — and "not silent" means
   **tell, don't ask**: the tap commits in one go, and the notice then says exactly what was taken
-  (actual amounts, where each count landed, and any main it declined to guess at) with **↩ Undo** as
-  the one-tap way back. ✅ *built: `MealStock.Apply` reports the ACTUAL takes (clamp-aware, so the undo
+  (actual amounts, where each count landed, and any question the picker was left holding) with
+  **↩ Undo** as the one-tap way back — picks included, since they land in the same take list. ✅ *built: `MealStock.Apply` reports the ACTUAL takes (clamp-aware, so the undo
   can never invent stock) and `MealStock.Restore` reverses precisely them; a recipe touching nothing
   counted gets a one-line notice.* A confirmation step was tried first and rejected by its own logic:
   asked on every cook of the same stew, it gets blown through unread, which protects nothing and

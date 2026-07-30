@@ -281,23 +281,16 @@
                             {
                                 <p>Marked eaten.</p>
                             }
-                            @* A decrement the app DECLINES to make is as much the human's business as one it
-                               makes — saying nothing would leave a count quietly un-maintained. *@
+                            @* Questions the picker asked and the human clicked away from — said, not
+                               hidden, or a count would go quietly un-maintained. *@
                             @if (done.Skipped.Count > 0)
                             {
                                 <p class="muted">
-                                    @(done.Taken.Count > 0 ? "Not touched — " : "Nothing taken off automatically — ")
-                                    more than one thing you count could be what the recipe means, and guessing
-                                    which package to take would be worse than telling you:
+                                    Left uncounted — you didn't pick a product for:
+                                    @string.Join("; ", done.Skipped.Select(s => s.Ingredient)).
+                                    Set the number by hand on whichever you actually used, or pin the recipe
+                                    to one of them with the ⇄ swap so it stops being a question.
                                 </p>
-                                <ul>
-                                    @foreach (var pick in done.Skipped)
-                                    {
-                                        <li><strong>@pick.Ingredient</strong> — could be @string.Join(" or ", pick.Candidates)</li>
-                                    }
-                                </ul>
-                                <p class="muted small">Set the number by hand on whichever you actually used, or
-                                    pin the recipe to one of them with the ⇄ swap so it stops being a guess.</p>
                             }
                             <button type="button" class="secondary" @onclick="UndoEat" disabled="@eatBusy">
                                 @(eatBusy ? "Working…" : "↩ Undo")
@@ -305,6 +298,37 @@
                             <button type="button" class="secondary" @onclick="DismissEat"
                                     disabled="@eatBusy">Dismiss</button>
                         </div>
+                        @* §13.3's picker: the app can't know WHICH counted product came off the shelf, so
+                           it asks — once, on the spot, with the candidates on screen. Click-away answers
+                           "none of these" and no count moves. *@
+                        @if (done.ToPick.Count > 0)
+                        {
+                            <div class="picker-backdrop" @onclick="ClosePicker">
+                                <div class="panel picker-modal" @onclick:stopPropagation="true"
+                                     role="dialog" aria-label="Which did you use?">
+                                    <p><strong>Which did you use?</strong> <span class="muted">More than one
+                                        thing you count could be what the recipe means. Pick what came off
+                                        the shelf, or click away and the counts stay put.</span></p>
+                                    @foreach (var question in done.ToPick)
+                                    {
+                                        <p class="muted small">@question.Ingredient</p>
+                                        <div class="alt-cloud" role="group"
+                                             aria-label="Counted products that could be @question.Ingredient">
+                                            @foreach (var candidate in question.Candidates)
+                                            {
+                                                <button type="button" class="alt-bubble have" disabled="@eatBusy"
+                                                        @onclick="() => PickCandidate(question, candidate)">
+                                                    @candidate.ProductName —
+                                                    @QuantityFormat.Describe(candidate.OnHand, candidate.DefaultUnit) on hand
+                                                </button>
+                                            }
+                                        </div>
+                                    }
+                                    <button type="button" class="secondary" @onclick="ClosePicker"
+                                            disabled="@eatBusy">None of these</button>
+                                </div>
+                            </div>
+                        }
                     }
                     @if (r.Blurb is { Length: > 0 })
                     {
@@ -890,12 +914,19 @@
         await LoadAsync();
     }
 
-    /// <summary>What the last "Ate it" did — the meal event's id, the ACTUAL takes, and the mains left
-    /// alone — kept so the notice can say it and <see cref="UndoEat"/> can reverse it. One at a time: a
-    /// new tap replaces it, because the restore is only exact against the takes it stored.</summary>
-    private sealed record EatDone(
-        int RecipeId, int MealEventId, IReadOnlyList<MealStock.Applied> Taken,
-        IReadOnlyList<MealStock.Ambiguity> Skipped);
+    /// <summary>What the last "Ate it" did — the meal event's id, the ACTUAL takes (auto + picked), the
+    /// picker's open questions, and what the human declined to answer — kept so the notice can say it
+    /// and <see cref="UndoEat"/> can reverse all of it. One at a time: a new tap replaces it, because
+    /// the restore is only exact against the takes it stored. Mutable on purpose: picks move entries
+    /// from <see cref="ToPick"/> into <see cref="Taken"/> as they land.</summary>
+    private sealed class EatDone
+    {
+        public required int RecipeId { get; init; }
+        public required int MealEventId { get; init; }
+        public List<MealStock.Applied> Taken { get; } = [];
+        public List<MealStock.Ambiguity> ToPick { get; } = [];
+        public List<MealStock.Ambiguity> Skipped { get; } = [];
+    }
 
     private EatDone? lastEat;
     private bool eatBusy;
@@ -936,7 +967,10 @@
             var taken = MealStock.Apply(resolution); // same save as the MealEvent — one tap, one transaction
             await db.SaveChangesAsync();
             saved = true;
-            lastEat = new EatDone(r.Id, meal.Id, taken, resolution.Ambiguous);
+            var done = new EatDone { RecipeId = r.Id, MealEventId = meal.Id };
+            done.Taken.AddRange(taken);
+            done.ToPick.AddRange(resolution.Ambiguous); // the picker asks these; click-away skips them
+            lastEat = done;
             await LoadAsync();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -996,6 +1030,48 @@
     {
         lastEat = null;
         eatError = null;
+    }
+
+    /// <summary>The human pointed at what came off the shelf (§13.3's picker). The decrement is the
+    /// same take "Ate it" makes — <see cref="MealStock.TakePicked"/>: ledger clamp, no signal, clock
+    /// untouched — recorded into <see cref="EatDone.Taken"/> so the notice shows it and Undo reverses
+    /// it with everything else.</summary>
+    private async Task PickCandidate(MealStock.Ambiguity question, MealStock.Candidate candidate)
+    {
+        if (lastEat is not { } done || eatBusy) return;
+        eatBusy = true;
+        eatError = null;
+        var saved = false;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var product = await db.Products.Include(p => p.Purchases)
+                .FirstOrDefaultAsync(p => p.Id == candidate.ProductId);
+            var taken = product is null ? null : MealStock.TakePicked(product);
+            if (taken is not null) await db.SaveChangesAsync();
+            saved = true;
+            if (taken is not null) done.Taken.Add(taken);
+            done.ToPick.Remove(question); // answered — even if the shelf moved and nothing could be taken
+            await LoadAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogError(ex, "Applying a picked decrement for product {ProductId} failed (saved: {Saved}).",
+                candidate.ProductId, saved);
+            eatError = saved
+                ? (done.RecipeId, "Recorded — but the page couldn't refresh. Reload to see it; don't pick again.")
+                : (done.RecipeId, "That didn't save. Try again, or reload the page.");
+        }
+        finally { eatBusy = false; }
+    }
+
+    /// <summary>Click-away (§13.3): the human didn't say which product came off the shelf, so no count
+    /// moves — the open questions land in the notice as "left uncounted" rather than vanishing.</summary>
+    private void ClosePicker()
+    {
+        if (lastEat is not { } done || done.ToPick.Count == 0) return;
+        done.Skipped.AddRange(done.ToPick);
+        done.ToPick.Clear();
     }
 
     // Send the main ingredients you don't currently have to the grocery list's manual "extras" section.

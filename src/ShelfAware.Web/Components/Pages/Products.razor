@@ -212,7 +212,7 @@ else
                                 <dt>Last bought</dt>
                                 <dd>@(e.LastPurchased?.ToString("yyyy-MM-dd") ?? "never")</dd>
                                 <dt>Typical buy</dt>
-                                <dd>@e.RecommendedQuantity.ToString("0.##")@(p.DefaultUnit is { } u ? " " + u : "")</dd>
+                                <dd>@QuantityFormat.Describe(e.RecommendedQuantity, p.DefaultUnit)</dd>
                                 <dt>Next buy</dt>
                                 <dd>
                                     @if (e.CountNote is { } popNote)

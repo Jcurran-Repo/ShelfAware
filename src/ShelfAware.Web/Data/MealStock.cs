@@ -19,11 +19,18 @@ namespace ShelfAware.Web.Data;
 /// </summary>
 public static class MealStock
 {
-    /// <param name="Ingredient">A main ingredient covered by more than one counted product, so the app
-    /// refuses to guess which package to take. Reported so the after-the-tap notice can say so — a
-    /// decrement it declines to make is exactly as much a thing the human must be told about as one it
-    /// makes.</param>
-    public sealed record Ambiguity(string Ingredient, IReadOnlyList<string> Candidates);
+    /// <summary>One product the picker can offer for an ambiguous main — everything the modal needs to
+    /// render a bubble ("Ground Chuck — 3.72 lb on hand") without a query of its own, plus the package
+    /// the pick would take.</summary>
+    public sealed record Candidate(int ProductId, string ProductName, string? DefaultUnit, decimal OnHand, decimal OnePackage);
+
+    /// <param name="Ingredient">A main ingredient the app declines to decrement on its own — several
+    /// counted products could be what it means, or its grounded product exists uncounted (see
+    /// <see cref="CountedMainsAsync"/>). Reported with full candidates so the page can ASK on the spot
+    /// (§13.3's picker): the human points at what came off the shelf, or clicks away and no count
+    /// moves. Guessing silently would be arbitrary; a hidden refusal would leave a count quietly
+    /// un-maintained.</param>
+    public sealed record Ambiguity(string Ingredient, IReadOnlyList<Candidate> Candidates);
 
     /// <summary>One product <see cref="Apply"/> actually moved. <paramref name="Taken"/> is the ACTUAL
     /// change, not the nominal package — when the ledger clamps at zero (half a pack left, one taken)
@@ -62,6 +69,19 @@ public static class MealStock
             }
         }
         return applied;
+    }
+
+    /// <summary>The picker's decrement: the same take "Ate it" would have made, applied to the product
+    /// the human just pointed at. Same ledger, same package rule, same §13.4 guarantees — clamps at
+    /// zero, never writes a signal, never touches the attestation clock. Returns what actually moved
+    /// (for the notice and the undo), or null when nothing did. The caller owns SaveChanges, exactly as
+    /// for <see cref="Apply"/>.</summary>
+    public static Applied? TakePicked(Product product)
+    {
+        if (product.QuantityOnHand is not { } before || before <= 0) return null;
+        StockLedger.Remove(product, TypicalPackage.Of(product.Purchases.Select(x => x.Quantity)));
+        var after = product.QuantityOnHand!.Value;
+        return before == after ? null : new Applied(product.Id, product.Name, product.DefaultUnit, before - after, after);
     }
 
     /// <summary>Undo one <see cref="Apply"/>: put back the ACTUAL amounts it took, onto freshly loaded
@@ -112,51 +132,76 @@ public static class MealStock
             .ToListAsync(ct);
         if (counted.Count == 0) return ([], []);
 
+        // Every product NAME in the household, counted or not — one cheap column scan. Needed to tell
+        // a grounded link whose product exists-but-uncounted (a live pairing the household simply
+        // doesn't count — decrementing a token-matched stand-in would be a guess) from one whose
+        // product is GONE (renamed/deleted — a stale link, where the token fall-through is the whole
+        // §13.8 census story and must stay automatic).
+        var allNames = (await db.Products.Select(p => p.Name).ToListAsync(ct))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var countedNames = counted.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         // IngredientMatcher.Covering already prefers the grounded MatchedProduct over an inference, so
         // there is no precedence to re-implement here — a pinned ingredient simply comes back as one
-        // candidate. Keyed by product NAME because that is what the matcher speaks.
-        // A name shared by two counted rows maps to NULL: the schema has no unique index on product
-        // names (the duplicate guard is a UI prompt with an explicit "Add anyway"), and a name-keyed
-        // matcher cannot say WHICH row such a name means — so its ingredient is refused like any other
-        // ambiguity, rather than a dictionary collision taking down every "Ate it" in the household.
-        var byName = new Dictionary<string, int?>(StringComparer.OrdinalIgnoreCase);
+        // candidate. Ids ride beside the matcher's name-level candidates by REFERENCE, so two counted
+        // rows sharing a name (no unique index exists; "Add anyway" is real) are simply two candidates
+        // the picker can tell apart by their counts — never a key collision.
+        var candidates = new List<PantryProduct>(counted.Count);
+        var idOf = new Dictionary<PantryProduct, int>(ReferenceEqualityComparer.Instance);
         foreach (var c in counted)
         {
-            byName[c.Name] = byName.ContainsKey(c.Name) ? null : c.Id;
+            var candidate = new PantryProduct(c.Name, c.Substitutes);
+            candidates.Add(candidate);
+            idOf[candidate] = c.Id;
         }
-        var candidates = counted.Select(c => new PantryProduct(c.Name, c.Substitutes)).ToList();
 
-        // Pass 1: settle every main that resolves to exactly one counted product — one covering name,
-        // and that name addressing exactly one row. Candidates are reported by DISTINCT name: two rows
-        // sharing one name are one answer to "which product", not two.
+        // Pass 1: settle every main the app may take from WITHOUT asking — exactly one covering row,
+        // and no live-but-uncounted grounded product standing beside it. When the grounded product
+        // exists uncounted, any counted coverage reached by falling through it is a stand-in guess
+        // (store pack or freezer stock?), so it goes to the picker even with one candidate.
         var chosen = new HashSet<int>();
-        var unsettled = new List<(string Ingredient, List<string> Candidates)>();
+        var unsettled = new List<(string Ingredient, IReadOnlyList<PantryProduct> Covering)>();
         foreach (var main in mains)
         {
             var covering = IngredientMatcher.Covering(main.Name, main.MatchedProduct, candidates);
-            if (covering.Count == 1 && byName[covering[0].Name] is { } only) chosen.Add(only);
-            else if (covering.Count > 0)
-                unsettled.Add((main.Name,
-                    [.. covering.Select(c => c.Name).Distinct(StringComparer.OrdinalIgnoreCase).Order()]));
+            if (covering.Count == 0) continue;
+            var groundedUncounted = main.MatchedProduct is { Length: > 0 } grounded
+                && !countedNames.Contains(grounded) && allNames.Contains(grounded);
+            if (covering.Count == 1 && !groundedUncounted) chosen.Add(idOf[covering[0]]);
+            else unsettled.Add((main.Name, covering));
         }
 
         // Pass 2, and it needs the COMPLETE chosen set — which is why it can't fold into the loop above.
         // If a candidate is already being decremented (another main was pinned to it), this ingredient is
-        // covered by that same package and there is nothing to warn about: reporting it anyway put a
-        // product in the panel's "not touching these" list while the panel's own take list was touching it.
-        // Grouped by ingredient name so a recipe that lists one main twice doesn't say so twice.
-        var ambiguous = unsettled
-            .Where(u => !u.Candidates.Any(name => byName[name] is { } id && chosen.Contains(id)))
+        // covered by that same package and there is nothing to ask about: asking anyway would offer a
+        // product the take list is already taking. Grouped by ingredient name so a recipe that lists one
+        // main twice doesn't ask twice.
+        var open = unsettled
+            .Where(u => !u.Covering.Any(c => chosen.Contains(idOf[c])))
             .GroupBy(u => u.Ingredient, StringComparer.OrdinalIgnoreCase)
-            .Select(g => new Ambiguity(g.Key, g.First().Candidates))
+            .Select(g => (Ingredient: g.Key, Ids: g.First().Covering.Select(c => idOf[c]).Distinct().ToList()))
             .ToList();
 
-        if (chosen.Count == 0) return ([], ambiguous);
-
+        // One load for everything the caller might touch — the takes AND the picker's candidates, with
+        // purchases so each carries its own typical package.
+        var wanted = chosen.Union(open.SelectMany(o => o.Ids)).ToList();
+        if (wanted.Count == 0) return ([], []);
         var products = await db.Products
-            .Where(p => chosen.Contains(p.Id))
+            .Where(p => wanted.Contains(p.Id))
             .Include(p => p.Purchases)
             .ToListAsync(ct);
-        return (products, ambiguous);
+        var byId = products.ToDictionary(p => p.Id);
+
+        var ambiguous = open
+            .Select(o => new Ambiguity(
+                o.Ingredient,
+                [.. o.Ids.Select(id => byId[id])
+                    .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ThenBy(p => p.Id)
+                    .Select(p => new Candidate(
+                        p.Id, p.Name, p.DefaultUnit, p.QuantityOnHand!.Value,
+                        TypicalPackage.Of(p.Purchases.Select(x => x.Quantity))))]))
+            .ToList();
+
+        return ([.. chosen.Select(id => byId[id])], ambiguous);
     }
 }
