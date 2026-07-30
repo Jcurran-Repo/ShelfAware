@@ -44,10 +44,13 @@ filenames against `src/`.
   `HouseholdClaimsPrincipalFactory`, `HouseholdDbFactory`. Partials with dedicated test files that
   still read low: `MeteredChatClient` **45%** (has `MeteredChatClientTests`), `CachingTextToSpeech`
   63%, `EfPantryStore` 66%.
-- **⚠️ Anomaly, first stop of the vacuous-test hunt:** `Data\EfAppSettings.cs` reads **0%** while
-  `EfAppSettingsTests.cs` exists and passes. Either the tests exercise a different type, the
-  implementation moved, or the tests are vacuous. Diagnose before anything else in Phase B —
-  whatever the answer, it calibrates how much to trust file-name↔test-name pairing everywhere else.
+- **⚠️ Anomaly — DIAGNOSED (Phase B, 7/30):** `EfAppSettingsTests` never constructs `EfAppSettings`.
+  Its private `SetAsync`/`GetAsync` helpers re-implement the subject's two methods inline against the
+  DbContext, so the assertions pin the context's tenancy filter (real behavior) but cannot fail
+  because of the class in the filename: the upsert add-vs-update branch, `value ?? ""`, and the
+  factory path have zero coverage. **A new hunt-list entry falls out: tests that re-implement their
+  subject instead of calling it.** Calibration lesson: a passing test file named after a class proves
+  nothing about that class until you check what the arrange actually constructs.
 
 ## The hunt list — bad-test classes this repo has already caught (each cost a real bug)
 
@@ -69,7 +72,12 @@ Plus the generic classes: tautologies (assert what the arrange constructed), fra
 (asserting EF/xUnit behavior), duplicate coverage (keep the stronger), and
 implementation-detail pins no behavior depends on.
 
-## Deletion criteria — PROPOSED, awaiting Jordan's sign-off
+6. **(added in Phase B)** **Subject re-implemented in the test** — `EfAppSettingsTests` rebuilt its
+   subject's methods as private helpers and tested those; assertions can fail, but never because of
+   the subject. *Audit move: check what the arrange constructs — a test that never instantiates the
+   class in its filename is testing something else.*
+
+## Deletion criteria — SIGNED OFF (Jordan, 7/30/2026)
 
 A test is deleted only when at least one of these holds, named per test in the commit message:
 
@@ -81,7 +89,7 @@ A test is deleted only when at least one of these holds, named per test in the c
 
 Never deleted for being slow, inconvenient, or red. A red test is a finding, not a nuisance.
 
-## Coverage-exclusion policy — PROPOSED, awaiting Jordan's sign-off
+## Coverage-exclusion policy — SIGNED OFF (Jordan, 7/30/2026)
 
 "Everything covered" means every *behavior*. Excluded from the coverage bar, with reasons:
 
@@ -117,17 +125,28 @@ Never deleted for being slow, inconvenient, or red. A red test is a finding, not
 
 ## Worklist (filled during Phase B)
 
-### ShelfAware.Tests (33 files, 510 tests)
+### ShelfAware.Tests (33 files, 510 tests) — 10 of 33 audited 7/30
 | File | Verdict | Notes |
 |---|---|---|
-| *(pending Phase B)* | | |
+| ReplenishmentPredictorTests | keep + strengthen | The model file: both sides of every precedence rule, ±1-day boundaries, real controls. Strengthen: (a) `SameDayTie_PurchaseWins` + `Restocked_ClearsAnEarlierOutNow` assert `NotEqual(Overdue)` — pin the exact expected status; (b) no edge test for burn-cycle pairing (a SECOND OutNow in one cycle must not add a sample; an OutNow before the first purchase is ignored). |
+| PantryOnHandTests | keep + strengthen | Both pin cases from the 7/29 regression covered; complement test asserts absolute membership. Strengthen: no test for a STALE POSITIVE count with an overdue rhythm deferring to the rhythm (item drops out of on-hand). |
+| StockLedgerTests | keep + strengthen | Full v4.1 attestation-clock semantics. Strengthen: `A_negative_attested_count_is_clamped_not_stored` asserts only the return value and discards the product — if Attest stored −2 it still passes; assert `QuantityOnHand == 0`. |
+| TypicalPackageTests | keep | Full discriminator matrix incl. the pinned residual limit and noise filtering. |
+| BacklogSignalsTests | keep | Boundary days both sides, cycle-closing edges, ranking, coverage disclosure, empty input. |
+| IngredientMatcherTests | keep | Strong negatives; `IsSatisfied ≡ Covering` matrix is a deliberate anti-drift pin against re-implementation (the item-25 bug class), not a tautology. |
+| ShoppingEstimatorTests | keep | CountNote gated both directions; trip summing; weight-vs-whole rounding; brand/variety grouping + case folding. |
+| SpendForecastTests | keep | Count-moves-money cases; straddle, already-past, and degenerate-interval edges. |
+| CountingAdviceTests | keep | Boundary tested both sides incl. exactly-10; null case reasoned. |
+| SignalDateTests | keep | Day-keeping semantics incl. the same-instant-two-offsets case. |
+| *(23 files remaining — next session)* | | ReportEngine, CookAlongCommands, SpeechText, ListeningSettings, PredictionBacktest, ExtractionScorer, PriceSeries, PriceWatch, Recipe, ProductMatcher, QuantityFormat, ReportSpecUrl, RecipeNarration, ExpirationOutcomes, RecipeSuggestionStorage, SwapCloud, ReceiptTotals, SettingKeys, ProductPriceIndex, SizeFormat, VoiceCommands, TagVocabulary, SizeBucket, ImportMode |
 
 ### ShelfAware.Llm.Tests (5 files + Fakes, 93 tests)
 | File | Verdict | Notes |
 |---|---|---|
 | *(pending Phase B)* | | |
 
-### ShelfAware.Web.Tests (28 files + TestDb/TestAuthDb/Fakes, 286 tests)
+### ShelfAware.Web.Tests (28 files + TestDb/TestAuthDb/Fakes, 286 tests) — 1 of 28 audited 7/30
 | File | Verdict | Notes |
 |---|---|---|
-| *(pending Phase B)* | | |
+| EfAppSettingsTests | rewrite | Re-implements its subject (hunt-list class 6). Keep the tenancy pins but route them through the real `EfAppSettings`; add the upsert update branch and `value ?? ""` null case. Check overlap with `HouseholdIsolationTests` while there. |
+| *(27 files remaining)* | | |
