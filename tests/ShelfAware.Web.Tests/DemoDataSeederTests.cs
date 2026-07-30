@@ -48,7 +48,7 @@ public class DemoDataSeederTests
         var bought = read.Products.Include(p => p.Purchases).ToList();
         Assert.All(bought.Where(p => p.Purchases.Count > 0), p => Assert.Contains(p.Id, pricedProducts));
         Assert.Equal(
-            ["Quarter Cow Ground Beef"],
+            ["Home-Canned Tomato Sauce", "Quarter Cow Ground Beef"],
             bought.Where(p => p.Purchases.Count == 0).Select(p => p.Name).OrderBy(n => n).ToArray());
 
         // Each buy ties to a same-day trip receipt so per-purchase price lookups (Trends spend) hit exactly.
@@ -251,6 +251,33 @@ public class DemoDataSeederTests
         Assert.Contains(beef, PantryOnHand.EdibleInStock([beef], today));
         beef.QuantityOnHand = 0m;
         Assert.Empty(PantryOnHand.EdibleInStock([beef], today));
+    }
+
+    [Fact]
+    public async Task Seeds_an_aging_census_count_so_the_confidence_band_is_visible()
+    {
+        // The pair to the Quarter Cow: identical shape, opposite confidence. Counted 140 days ago with no
+        // rhythm, so there is no exhaustion date to be past and the app can only say it has stopped
+        // believing the number — which is why the page attributes it to its date instead of restating it.
+        using var db = new TestDb();
+        await new DemoDataSeeder(db).SeedAsync();
+        var today = DateOnly.FromDateTime(DateTime.Today);
+
+        var sauce = await SeededProduct(db, "Home-Canned Tomato Sauce");
+        Assert.Empty(sauce.Purchases);
+
+        var r = ReplenishmentPredictor.Predict(sauce, today, honorQuantity: true);
+
+        Assert.Equal(CountConfidence.Aging, r.CountConfidence);
+        Assert.True(r.CountLooksStale);
+        Assert.Null(r.CountRunsOutOn); // no rate, so no depth claim is available or invented
+        // A count nobody has vouched for in months stops deciding recipe stock and defers to the rhythm.
+        Assert.Contains(sauce, PantryOnHand.EdibleInStock([sauce], today));
+
+        // …and the believed one still reads as believed, so the demo shows both bands side by side.
+        var beef = await SeededProduct(db, "Quarter Cow Ground Beef");
+        Assert.Equal(CountConfidence.Counted,
+            ReplenishmentPredictor.Predict(beef, today, honorQuantity: true).CountConfidence);
     }
 
     [Fact]

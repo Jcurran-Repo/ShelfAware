@@ -86,16 +86,18 @@ public record PredictionResult
     /// — including <see cref="PredictionStatus.Stocked"/> (a later purchase re-anchored the rhythm while
     /// the attestation stayed old) and alongside <see cref="Pinned"/>. <b>A surface must not infer
     /// "so it's back on the list" from this flag</b>; read <see cref="Status"/> for that.</para>
-    /// <para>⚠️ Nor may a surface assume WHY it fired — read <see cref="CountStaleReason"/>. The two
-    /// causes need different sentences: an item with a rhythm is past the date that rhythm projected, and
-    /// an item without one has simply gone unattested too long and has no projection to be past.</para></summary>
-    public bool CountLooksStale { get; init; }
+    /// <para>⚠️ Nor may a surface assume WHY it fired — read <see cref="CountConfidence"/>. The two causes
+    /// need different sentences: an item with a rhythm is past the date that rhythm projected, and an item
+    /// without one has simply gone unattested too long and has no projection to be past.</para>
+    /// <para>Derived from <see cref="CountConfidence"/> rather than stored beside it, so the flag and the
+    /// reason cannot drift apart.</para></summary>
+    public bool CountLooksStale => CountConfidence != CountConfidence.Counted;
 
-    /// <summary>Why <see cref="CountLooksStale"/> fired, or <see cref="Prediction.CountStaleReason.None"/>
-    /// when it didn't. Explicit rather than inferable from <see cref="CountRunsOutOn"/> being null,
-    /// because a screen guessing at the engine's reasoning is the failure this branch made five
-    /// times.</summary>
-    public CountStaleReason CountStaleReason { get; init; }
+    /// <summary>How much the number is still believed, and therefore whether a surface may STATE it or must
+    /// ATTRIBUTE it to the date it was taken (§13.5). Explicit rather than inferable from
+    /// <see cref="CountRunsOutOn"/> being null, because a screen guessing at the engine's reasoning is the
+    /// failure this branch made five times.</summary>
+    public CountConfidence CountConfidence { get; init; }
 
     /// <summary>When the counted stock is expected to run out: the last human attestation plus how long
     /// that many packages last at this item's own rhythm (§13.5). Null when the item isn't counted, has

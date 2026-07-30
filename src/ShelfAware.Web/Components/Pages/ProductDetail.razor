@@ -212,21 +212,42 @@ else
         <h2>How many you have</h2>
         @if (product.TrackQuantity && product.QuantityOnHand is { } onHand)
         {
-            <p>
-                <strong>@QuantityFormat.Describe(onHand, product.DefaultUnit)</strong> on hand
-                @* SignalDate.Of, not .LocalDateTime — the one reading of when a timestamped act happened,
-                   so this date can't drift a day from the one the engine measured staleness against. *@
-                @if (product.QuantityCountedAt is { } counted)
-                {
-                    <span class="muted">· you last counted @SignalDate.Of(counted).ToString("MMM d, yyyy")</span>
-                }
-                @if (prediction.CountRunsOutOn is { } runsOut && !prediction.CountLooksStale)
-                {
-                    @* Leading space inside the span: Razor collapses the whitespace between two adjacent
-                       conditional blocks, which ran the counted date into this clause. *@
-                    <span class="muted">&#32;· that's about enough until @runsOut.ToString("MMM d")</span>
-                }
-            </p>
+            @* §13.5's confidence band. There is ONE stored truth — the number and the date a human vouched
+               for it — and CountConfidence decides whether this may ASSERT it or must ATTRIBUTE it. A
+               believed count reads "4 on hand"; a count the app has stopped believing reads "you counted 14
+               on Apr 10", which is still true when "14 on hand" has become a lie. Deliberately no guess at
+               a SMALLER number: without a consumption rate (and the Aging case is defined by not having
+               one) elapsed time says nothing about how much got eaten, so attributing is the honest floor.
+               SignalDate.Of, not .LocalDateTime — the one reading of when a timestamped act happened, so
+               this date can't drift a day from the one the engine measured staleness against. *@
+            @if (prediction.CountConfidence == CountConfidence.Counted)
+            {
+                <p>
+                    <strong>@QuantityFormat.Describe(onHand, product.DefaultUnit)</strong> on hand
+                    @if (product.QuantityCountedAt is { } counted)
+                    {
+                        <span class="muted">· you last counted @SignalDate.Of(counted).ToString("MMM d, yyyy")</span>
+                    }
+                    @if (prediction.CountRunsOutOn is { } runsOut)
+                    {
+                        @* Leading space inside the span: Razor collapses the whitespace between two adjacent
+                           conditional blocks, which ran the counted date into this clause. *@
+                        <span class="muted">&#32;· that's about enough until @runsOut.ToString("MMM d")</span>
+                    }
+                </p>
+            }
+            else
+            {
+                <p>
+                    You counted
+                    <strong>@QuantityFormat.Describe(onHand, product.DefaultUnit)</strong>
+                    @if (product.QuantityCountedAt is { } counted)
+                    {
+                        <text>on @SignalDate.Of(counted).ToString("MMM d, yyyy")</text>
+                    }
+                    <span class="muted">— Shelf Aware isn't counting on that any more.</span>
+                </p>
+            }
             @if (prediction.SuppressedByCount)
             {
                 @* Safe to call this the rhythm's date: suppression stands down whenever a label, a
@@ -243,9 +264,9 @@ else
                    doing; asserting "so it's back on the list" from the flag alone told a Stocked item's
                    owner it was on a list it wasn't on. *@
                 @* The two reasons need different sentences: only one of them has a rhythm to have outlived.
-                   Read CountStaleReason rather than guessing from the flag. *@
+                   Read CountConfidence rather than guessing from the flag. *@
                 <p class="error">
-                    @if (prediction.CountStaleReason == CountStaleReason.Unattested)
+                    @if (prediction.CountConfidence == CountConfidence.Aging)
                     {
                         <text>
                             Nobody has counted this in a while, and there aren't enough purchases yet for

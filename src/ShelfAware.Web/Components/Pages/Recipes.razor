@@ -260,21 +260,42 @@
                     @if (pendingEat is { } pending && pending.RecipeId == r.Id)
                     {
                         <div class="panel inline-confirm">
-                            <p>Marking this eaten also takes it off what you have on hand:</p>
-                            <ul>
-                                @foreach (var take in pending.Takes)
-                                {
-                                    <li>
-                                        <strong>@take.ProductName</strong> —
-                                        @QuantityFormat.Describe(take.Amount, take.DefaultUnit) off
-                                        @QuantityFormat.Describe(take.OnHand, take.DefaultUnit),
-                                        leaving @QuantityFormat.Describe(take.Remaining, take.DefaultUnit)
-                                    </li>
-                                }
-                            </ul>
-                            <p class="muted small">One package each — the app can't tell from "2 lbs" how much
-                                of a pack a recipe really used, so it charges a whole one. That errs toward
-                                rebuying early. If it's wrong, set the real number on the item's page.</p>
+                            @if (pending.Plan.Takes.Count > 0)
+                            {
+                                <p>Marking this eaten also takes it off what you have on hand:</p>
+                                <ul>
+                                    @foreach (var take in pending.Plan.Takes)
+                                    {
+                                        <li>
+                                            <strong>@take.ProductName</strong> —
+                                            @QuantityFormat.Describe(take.Amount, take.DefaultUnit) off
+                                            @QuantityFormat.Describe(take.OnHand, take.DefaultUnit),
+                                            leaving @QuantityFormat.Describe(take.Remaining, take.DefaultUnit)
+                                        </li>
+                                    }
+                                </ul>
+                                <p class="muted small">One package each — the app can't tell from "2 lbs" how much
+                                    of a pack a recipe really used, so it charges a whole one. That errs toward
+                                    rebuying early. If it's wrong, set the real number on the item's page.</p>
+                            }
+                            @* A decrement the app DECLINES to make is as much the human's business as one it
+                               makes — saying nothing would leave a count quietly un-maintained. *@
+                            @if (pending.Plan.Ambiguous.Count > 0)
+                            {
+                                <p class="muted">
+                                    @(pending.Plan.Takes.Count > 0 ? "Not touching these — " : "Nothing taken off automatically — ")
+                                    more than one thing you count could be what the recipe means, and guessing
+                                    which package to take would be worse than asking:
+                                </p>
+                                <ul>
+                                    @foreach (var pick in pending.Plan.Ambiguous)
+                                    {
+                                        <li><strong>@pick.Ingredient</strong> — could be @string.Join(" or ", pick.Candidates)</li>
+                                    }
+                                </ul>
+                                <p class="muted small">Set the number by hand on whichever you actually used, or
+                                    pin the recipe to one of them with the ⇄ swap so it stops being a guess.</p>
+                            }
                             <button type="button" @onclick="ConfirmEat" disabled="@eatBusy">
                                 @(eatBusy ? "Saving…" : "Ate it")
                             </button>
@@ -866,7 +887,7 @@
         await LoadAsync();
     }
 
-    private sealed record PendingEat(int RecipeId, IReadOnlyList<MealStock.Take> Takes);
+    private sealed record PendingEat(int RecipeId, MealStock.Plan Plan);
 
     private PendingEat? pendingEat;
     private bool eatBusy;
@@ -883,10 +904,10 @@
         if (eatBusy) return;
         eatError = null; // a fresh tap must not sit under the last attempt's message
         await using var db = await DbFactory.CreateDbContextAsync();
-        var takes = await MealStock.PlanAsync(db, r);
-        if (takes.Count > 0)
+        var plan = await MealStock.PlanAsync(db, r);
+        if (plan.NeedsConfirmation)
         {
-            pendingEat = new PendingEat(r.Id, takes);
+            pendingEat = new PendingEat(r.Id, plan);
             return;
         }
         await CommitEatAsync(r);
@@ -910,7 +931,7 @@
             eatError = (pending.RecipeId, "That recipe isn't here any more — nothing was recorded.");
             return;
         }
-        await CommitEatAsync(recipe, pending.Takes);
+        await CommitEatAsync(recipe, pending.Plan);
     }
 
     /// <param name="shown">The plan the user actually agreed to, or null when there was nothing to agree
@@ -918,7 +939,7 @@
     /// between — the write re-plans in its OWN context and re-shows instead of saving if the numbers
     /// changed. Otherwise "the panel can't promise what the write doesn't do" would only be true in a
     /// test that shares one context.</param>
-    private async Task CommitEatAsync(Recipe r, IReadOnlyList<MealStock.Take>? shown = null)
+    private async Task CommitEatAsync(Recipe r, MealStock.Plan? shown = null)
     {
         eatBusy = true;
         eatError = null;
@@ -936,9 +957,9 @@
             if (shown is not null)
             {
                 var current = await MealStock.PlanAsync(db, r);
-                // An empty re-plan needs no second confirmation — there is nothing left to warn about,
-                // so the meal is simply recorded and the decrement finds nothing to do.
-                if (current.Count > 0 && !MealStock.Matches(shown, current))
+                // A re-plan with nothing left to confirm needs no second look — there is nothing to warn
+                // about, so the meal is recorded and the decrement finds nothing to do.
+                if (current.NeedsConfirmation && !MealStock.Matches(shown, current))
                 {
                     pendingEat = new PendingEat(r.Id, current);
                     eatError = (r.Id, "What you have on hand changed while this was open — here's what it "

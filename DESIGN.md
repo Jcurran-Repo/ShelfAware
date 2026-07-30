@@ -223,6 +223,23 @@ feature that demands you count the salt is dead inside a week, and §13.7 is how
   - **Median, not mode.** Continuous weights rarely repeat exactly (1.24 vs 1.26 is the same package in
     practice), so "most common" isn't well defined for them, and the app is median-based throughout.
     Fallback ladder when there's no history to take a median of: the single known purchase quantity → 1.
+- ⚠️ **Which product a main ingredient means is `IngredientMatcher`'s question — the SAME one the ✓/🛒 mark
+  on the row above asks.** Matching on `RecipeIngredient.MatchedProduct` alone (as the decrement first did)
+  let a row show "you have this" — satisfied by an on-hand product of the same specific food, or by a
+  curated "also works as" — while the tap beneath it decremented **nothing**, because the grounded link was
+  null or named something else. Two rules for one question is the same screen-disagrees-with-engine fault
+  §6's "one prediction, one story" directive exists for.
+  It is also the **only** way a count on a product the recipe was saved BEFORE can ever be maintained:
+  nothing back-fills `MatchedProduct` when a product appears, so census stock (§13.8) would otherwise have
+  no automated decrement at all.
+  Two consequences the looser matcher brings, both deliberate:
+  - **The grounded link still wins outright** when `MatchedProduct` names a counted product. A human
+    confirmed that pairing; it beats an inference.
+  - **Ambiguity is refused, not guessed.** An ingredient can be covered by several counted products
+    ("ground beef" by two cuts). Cooking one meal must not take a package off each, and picking one
+    silently would be arbitrary — so such a main decrements **none** of them and is **reported in the
+    confirm panel** with the candidates. A decrement the app declines to make is as much the household's
+    business as one it makes; saying nothing would leave a count quietly un-maintained.
 - **This is approximate, and it fails SAFE.** Using half a package still costs a whole one, so the count
   reaches zero early and you rebuy early — the same direction as the app's existing safe-side rounding
   (intervals floor, buy quantities ceil). What it must never be is silent: the "Ate it" tap **shows what
@@ -287,6 +304,18 @@ An **asserted** zero and a **derived** zero are different facts and must not be 
   contradict each other. Pinned by `TheDriftHorizon_ReadsTheMedianAsOneTripsWorth_NotOnePackage`.
   This is the answer to "an inventory decays": the drift is detected instead of assumed away, and the
   cost of being wrong is one tap, not a re-census.
+- **`CountConfidence` governs how a count is STATED, not what it is** — `Counted` / `Aging` / `Spent`.
+  There is one stored truth (the number, and the date a human vouched for it); confidence decides whether a
+  surface may **assert** it ("4 on hand") or must **attribute** it ("you counted 9 on Mar 12"), which is
+  still true when the first form has become a lie. One enum, because "why did we stop trusting it" and "how
+  much do we trust it" are the same fact seen twice; `CountLooksStale` is derived from it so the two cannot
+  drift.
+  ⚠️ **A low-confidence count is NOT banded by depth.** "Plenty" vs "nearly out" needs a consumption rate,
+  and the `Aging` case is *defined* by not having one — elapsed time says nothing about how much got eaten.
+  Guessing a smaller number would be the confident lie the whole feature exists to avoid. Only `Spent`,
+  which by definition has a rhythm, may add a depth claim ("by its rhythm they'd be gone").
+  This is also what lets §13.9's rejection of coarse depth levels stand: a band here is not a second truth
+  about the pantry, it is an honest rendering of the first one's reliability.
 - ⚠️ **A count with NO rhythm is asked about on AGE alone — 90 days.** An item with 0 or 1 purchases has
   nothing to project exhaustion from, which is exactly the shape of stock bought before the app, bought
   elsewhere, gifted, or in one bulk run (§13.8). Without this the drift check simply wouldn't apply, so
@@ -465,6 +494,14 @@ review-grid pattern → confirm. Three photos of a freezer beats reading thirty 
   - **"One package" is 1** for the `Ate it` decrement, since there is no purchase history to take a median
     from. Fine for cans; meaningless for a quarter cow — so the census review grid is the natural place to
     capture *how many packages*, because that IS the count.
+  - ✅ **It CAN be decremented by cooking, since §13.3's matcher fix.** This was the missing prerequisite:
+    the decrement used to match on `MatchedProduct`, which nothing back-fills when a product appears, so a
+    census product was named by no saved recipe and no tap could ever touch it. Now it resolves through
+    `IngredientMatcher` like the ✓ mark does, so a census item is maintained by cooking from the moment it
+    exists. ⚠️ **How well that works is a function of how much cooking goes through a saved recipe** —
+    measured on the real household at ~3–4 "Ate it" taps a week against ~537 purchases, so call it a third
+    of meals. The count will therefore be *directionally* right and *precisely* wrong, which is exactly what
+    `CountConfidence`'s attribute-don't-assert rendering is for.
   - ⚠️ **A second write path.** `ReceiptConfirmationService` is THE confirm path and it creates
     `PurchaseEvent`s, which the ★ rule above forbids. The census reuses the review-grid *UI* and needs its
     own persistence: products (if new) + `StockLedger.Attest`, nothing else. "Reuses the extraction shape
@@ -483,5 +520,12 @@ review-grid pattern → confirm. Three photos of a freezer beats reading thirty 
   deliberately not keyed on (§4).
 - **Coarse "depth" levels** (none/low/have/deep) — subsumed by a real count, and shipping both would be
   two truths about the same question. Uncounted products simply keep §6's derived in-stock/run-out state.
+  ⚠️ **Re-examined once maintenance turned out to be asymmetric** (§13.8: census stock gets no automated
+  `+` and only partial `−`), because this rejection assumed a count stays maintainable and for that
+  population it doesn't. It still stands, and the reason is sharper than before: a depth band would need a
+  consumption rate, which is precisely what a rhythm-less item lacks — so it could only ever be a guess
+  dressed as a reading. `CountConfidence` takes the honest half of the idea instead: the count's
+  **reliability** is banded, never its depth, and one truth is rendered two ways rather than two truths
+  shipped side by side.
 - **Unit arithmetic / normalized volumes** — re-opens a locked decision, and packages answer the
   household's question already.

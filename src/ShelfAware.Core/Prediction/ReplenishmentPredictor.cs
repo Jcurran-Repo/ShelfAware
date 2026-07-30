@@ -21,7 +21,7 @@ public static class ReplenishmentPredictor
     private const double MaxProjectionDays = 730;
 
     /// <summary>How long a count on a product with NO learned rhythm is believed before the app asks again
-    /// (§13.5, <see cref="CountStaleReason.Unattested"/>): 90 days.
+    /// (§13.5, <see cref="CountConfidence.Aging"/>): 90 days.
     /// <para>It is a judgement, not a derivation, and it has to be — an item with 0 or 1 purchases offers
     /// nothing to project exhaustion from, which is precisely the shape of stock bought before the app,
     /// bought elsewhere, gifted, or in one bulk run. Without this check such a count would be trusted
@@ -253,8 +253,7 @@ public static class ReplenishmentPredictor
         //        which is the same argument the pin above already makes for OutNow.
         //      • A count that has gone stale (below) — the whole reason the drift check exists.
         var suppressed = false;
-        var staleCount = false;
-        var staleReason = CountStaleReason.None;
+        var confidence = CountConfidence.Counted;
         DateOnly? countRunsOut = null;
         // Entered for ANY established count, zero included — staleness is a question about the NUMBER'S
         // AGE and applies just as much to "none" as to "twelve". Gating this on `> 0` (as it first did)
@@ -283,18 +282,16 @@ public static class ReplenishmentPredictor
                     var perPackage = perTrip / (double)typicalTrip;
                     countRunsOut = attestedOn
                         .AddDays(Floor(Math.Min(perPackage * (double)counted.QuantityOnHand.Value, MaxProjectionDays)));
-                    staleCount = today > countRunsOut.Value;
-                    if (staleCount) staleReason = CountStaleReason.PastItsProjection;
+                    if (today > countRunsOut.Value) confidence = CountConfidence.Spent;
                 }
                 // No rhythm to project from — 0 or 1 purchases, the shape of stock receipts never saw.
                 // §13.5's drift check would simply not apply, so the count would be believed forever on
                 // exactly the items nothing will ever correct. Fall back to asking on AGE alone. There is
                 // deliberately no `countRunsOut` here: inventing a date would be a projection the engine
-                // cannot make, and `CountStaleReason` is what tells a surface to word it differently.
+                // cannot make, and `CountConfidence` is what tells a surface to word it differently.
                 else if (today.DayNumber - attestedOn.DayNumber > UnattestedCountDays)
                 {
-                    staleCount = true;
-                    staleReason = CountStaleReason.Unattested;
+                    confidence = CountConfidence.Aging;
                 }
             }
 
@@ -316,7 +313,8 @@ public static class ReplenishmentPredictor
             var wouldHaveAsked = status is PredictionStatus.Overdue or PredictionStatus.DueSoon;
 
             if (counted.QuantityOnHand.Value > 0
-                && wouldHaveAsked && !pinned && !labelIsSpeaking && !lowSinceTheCount && !staleCount)
+                && wouldHaveAsked && !pinned && !labelIsSpeaking && !lowSinceTheCount
+                && confidence == CountConfidence.Counted)
             {
                 suppressed = true;
                 status = PredictionStatus.Stocked;
@@ -329,8 +327,7 @@ public static class ReplenishmentPredictor
             Status = status,
             DueDate = dueDate,
             SuppressedByCount = suppressed,
-            CountLooksStale = staleCount,
-            CountStaleReason = staleReason,
+            CountConfidence = confidence,
             CountRunsOutOn = countRunsOut,
             MedianIntervalDays = drivingMedian, // the winning number — shown everywhere
             RebuyIntervalDays = rebuy?.Median,

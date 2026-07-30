@@ -75,7 +75,7 @@ public class MealStockTests : IDisposable
         await db.SaveChangesAsync();
 
         await using var read = _db.CreateDbContext();
-        return (plan, (await read.Products.AsNoTracking().SingleAsync(p => p.Id == productId)).QuantityOnHand);
+        return (plan.Takes, (await read.Products.AsNoTracking().SingleAsync(p => p.Id == productId)).QuantityOnHand);
     }
 
     [Fact]
@@ -201,7 +201,7 @@ public class MealStockTests : IDisposable
         var current = await MealStock.PlanAsync(later, recipe);
 
         Assert.False(MealStock.Matches(shown, current));
-        Assert.Equal(8m, Assert.Single(current).OnHand);
+        Assert.Equal(8m, Assert.Single(current.Takes).OnHand);
     }
 
     [Fact]
@@ -226,7 +226,7 @@ public class MealStockTests : IDisposable
         await using var later = _db.CreateDbContext();
         var current = await MealStock.PlanAsync(later, recipe);
 
-        Assert.Empty(current);
+        Assert.False(current.NeedsConfirmation);
         Assert.False(MealStock.Matches(shown, current));
     }
 
@@ -272,6 +272,119 @@ public class MealStockTests : IDisposable
 
         Assert.Empty(plan);
         Assert.Equal(2m, after);
+    }
+
+    /// <summary>A counted product with a curated "also works as" list, and no recipe pointing at it.</summary>
+    private async Task<int> CountedWithSubstitutes(string name, decimal onHand, params string[] alsoWorksAs)
+    {
+        var id = await Product(name, counted: true, onHand: onHand, unit: null, 1m, 1m);
+        await using var db = _db.CreateDbContext();
+        var p = await db.Products.SingleAsync(x => x.Id == id);
+        foreach (var v in alsoWorksAs) p.Substitutes.Add(new ProductSubstitute { Value = v });
+        await db.SaveChangesAsync();
+        return id;
+    }
+
+    [Fact]
+    public async Task A_main_with_no_grounded_link_is_still_decremented_when_one_counted_item_covers_it()
+    {
+        // The bug: makeability marks a row ✓ via IngredientMatcher (same specific food, or a curated
+        // stand-in) while the decrement matched on MatchedProduct alone — so the row said "you have this"
+        // and the tap beneath it moved NOTHING. Two rules for "which product does this ingredient mean".
+        // This is also the only way a count on a product the recipe was saved BEFORE can be maintained,
+        // since nothing back-fills MatchedProduct when a product appears (§13.8's census stock).
+        var productId = await Product("Chicken Breast Tenderloins", counted: true, onHand: 4m, unit: null, 1m, 1m);
+        var recipeId = await Recipe(matchedProduct: null!); // no grounded link at all
+        await using (var db = _db.CreateDbContext())
+        {
+            var ing = await db.RecipeIngredients.SingleAsync(i => i.RecipeId == recipeId && i.IsMain);
+            ing.Name = "chicken breast";
+            ing.MatchedProduct = null;
+            await db.SaveChangesAsync();
+        }
+
+        var (plan, after) = await Cook(recipeId, productId);
+
+        Assert.Equal("Chicken Breast Tenderloins", Assert.Single(plan).ProductName);
+        Assert.Equal(3m, after);
+    }
+
+    [Fact]
+    public async Task A_curated_stand_in_is_decremented_the_same_way_the_row_goes_green()
+    {
+        // The other half of the matcher: the product's own "also works as" list is what lets a specific
+        // recipe stay specific and still count what you own. The decrement has to honour it too.
+        var productId = await CountedWithSubstitutes("Ground Turkey", 5m, "ground beef");
+        var recipeId = await Recipe(matchedProduct: null!);
+        await using (var db = _db.CreateDbContext())
+        {
+            var ing = await db.RecipeIngredients.SingleAsync(i => i.RecipeId == recipeId && i.IsMain);
+            ing.Name = "ground beef";
+            ing.MatchedProduct = null;
+            await db.SaveChangesAsync();
+        }
+
+        var (plan, after) = await Cook(recipeId, productId);
+
+        Assert.Equal("Ground Turkey", Assert.Single(plan).ProductName);
+        Assert.Equal(4m, after);
+    }
+
+    [Fact]
+    public async Task Two_counted_items_covering_one_main_are_reported_rather_than_guessed_at()
+    {
+        // The cost of using the looser matcher: an ingredient can be covered by more than one counted
+        // product. Taking a package off each would be wrong and picking one silently would be arbitrary,
+        // so it decrements neither and SAYS so — a decrement declined is as much the human's business as
+        // one performed.
+        var beefId = await Product("Ground Beef Chuck", counted: true, onHand: 4m, unit: null, 1m, 1m);
+        var leanId = await Product("Ground Beef Sirloin", counted: true, onHand: 6m, unit: null, 1m, 1m);
+        var recipeId = await Recipe(matchedProduct: null!);
+        await using (var db = _db.CreateDbContext())
+        {
+            var ing = await db.RecipeIngredients.SingleAsync(i => i.RecipeId == recipeId && i.IsMain);
+            ing.Name = "ground beef";
+            ing.MatchedProduct = null;
+            await db.SaveChangesAsync();
+        }
+
+        await using var read = _db.CreateDbContext();
+        var recipe = await read.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
+        var plan = await MealStock.PlanAsync(read, recipe);
+
+        Assert.Empty(plan.Takes);
+        Assert.True(plan.NeedsConfirmation); // still worth the human's eyes
+        var pick = Assert.Single(plan.Ambiguous);
+        Assert.Equal("ground beef", pick.Ingredient);
+        Assert.Equal(["Ground Beef Chuck", "Ground Beef Sirloin"], pick.Candidates);
+
+        // …and nothing moved.
+        await MealStock.ApplyAsync(read, recipe);
+        await read.SaveChangesAsync();
+        await using var after = _db.CreateDbContext();
+        Assert.Equal(4m, (await after.Products.AsNoTracking().SingleAsync(p => p.Id == beefId)).QuantityOnHand);
+        Assert.Equal(6m, (await after.Products.AsNoTracking().SingleAsync(p => p.Id == leanId)).QuantityOnHand);
+    }
+
+    [Fact]
+    public async Task The_grounded_link_wins_outright_over_an_ambiguous_inference()
+    {
+        // MatchedProduct exists precisely to settle this: a human confirmed the pairing, so it beats the
+        // matcher's guess and the ambiguity never arises.
+        var beefId = await Product("Ground Beef Chuck", counted: true, onHand: 4m, unit: null, 1m, 1m);
+        await Product("Ground Beef Sirloin", counted: true, onHand: 6m, unit: null, 1m, 1m);
+        var recipeId = await Recipe("Ground Beef Chuck");
+        await using (var db = _db.CreateDbContext())
+        {
+            var ing = await db.RecipeIngredients.SingleAsync(i => i.RecipeId == recipeId && i.IsMain);
+            ing.Name = "ground beef";
+            await db.SaveChangesAsync();
+        }
+
+        var (plan, after) = await Cook(recipeId, beefId);
+
+        Assert.Equal("Ground Beef Chuck", Assert.Single(plan).ProductName);
+        Assert.Equal(3m, after);
     }
 
     [Fact]

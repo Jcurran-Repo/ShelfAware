@@ -739,6 +739,39 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      `Seeds_confirmed_receipt_prices_for_every_product` names it as an exact exception rather than
      loosening to a skip.
 
+25. **The decrement asks the makeability question, and a count now bands by CONFIDENCE (2026-07-29).**
+   Designing §13.8's census decrement turned up that the bug was never "nothing back-fills
+   `MatchedProduct`" — it was that **`MealStock` used a different matcher from the ✓ mark above it**.
+   - ⚠️ **Makeability asks `IngredientMatcher.IsSatisfied(name, matchedProduct, onHand)`** (core words, plus
+     the product's curated "also works as"); the decrement matched `MatchedProduct` by name alone. So a
+     recipe row could read **✓ you have this** while "Ate it" moved **nothing**. Two rules for "which
+     product does this ingredient mean", which is the "one prediction, one story" fault again — in code I
+     wrote four commits earlier. One rule now.
+   - That fix is also what makes census stock maintainable at all: nothing back-fills `MatchedProduct` when
+     a product appears, so a census product was named by no saved recipe and no tap could reach it.
+   - **Ambiguity is refused, not guessed.** The looser matcher means an ingredient can be covered by
+     several counted products ("ground beef" by two cuts). Taking a package off each is wrong and picking
+     one silently is arbitrary, so it decrements NONE and reports them in the confirm panel
+     (`MealStock.Ambiguity`). The grounded `MatchedProduct` still wins outright — that is what it's for.
+     `PlanAsync` returns a `Plan` now, and `NeedsConfirmation` is takes-OR-ambiguities: a decrement the app
+     declines to make is as much the household's business as one it makes.
+   - **`CountConfidence` (Counted / Aging / Spent) replaces `CountStaleReason`.** Jordan's idea, and it
+     resolves §13.9's conflict: one enum, one stored truth (the number + its attestation date), and
+     confidence decides whether a surface may **assert** it ("4 on hand") or must **attribute** it ("you
+     counted 9 on Mar 12") — the second is still true when the first has become a lie. `CountLooksStale` is
+     derived from it, so flag and reason can't drift.
+   - ⚠️ **A low-confidence count is NOT banded by depth, and that's the honest half of the idea.** "Plenty"
+     vs "nearly out" needs a consumption rate, and `Aging` is *defined* by not having one — elapsed time
+     says nothing about how much got eaten. Only `Spent` (which has a rhythm) may make a depth claim.
+     §13.9's rejection of coarse depth levels therefore still stands, for a sharper reason than before.
+   - **Measured, since it decides how much any of this is worth:** ~3–4 "Ate it" taps a week (17 across 8 of
+     15 recipes since 6/22) against 537 purchases — so roughly a third of meals are logged through a recipe.
+     A census count will be **directionally right and precisely wrong**, which is exactly the case the
+     attribute-don't-assert rendering exists for. (`MealEvents` alone reads 1 and is misleading: that log
+     only started 7/18. `TimesEaten` is the honest measure.)
+   - Seeded `Home-Canned Tomato Sauce` (counted 140 days ago, no purchases) beside `Quarter Cow Ground Beef`
+     (counted 20 days ago) — same shape, opposite confidence, so both bands are visible in the demo.
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active

@@ -177,6 +177,16 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
             new("Quarter Cow Ground Beef", Category.Meat, null, "1 lb pack", 4.95m, ["Protein", "Freezer"],
                 [], CountOnHand: 14, CountedDaysAgo: 20),
 
+            // THE CONFIDENCE BAND (§13.5): the same census shape, counted 140 days ago. No rhythm means no
+            // exhaustion date to be past, so the app can't say how many are LEFT — only that it has stopped
+            // believing the number. So the page attributes rather than asserts: "you counted 9 on <date>"
+            // instead of "9 on hand", which is still true when the second sentence has become a lie. That
+            // is deliberately NOT a guess at a smaller number: without a consumption rate, elapsed time
+            // says nothing about how much got eaten, and inventing a band would be the confident lie the
+            // whole feature avoids. Pairs with the Quarter Cow above — same shape, opposite confidence.
+            new("Home-Canned Tomato Sauce", Category.Pantry, null, "quart jar", 3.25m, ["Pantry"],
+                [], CountOnHand: 9, CountedDaysAgo: 140),
+
             // A COUNTED ITEM WITH A LABEL (§13.5's sharpest interaction). Two cartons on the shelf, a
             // metronomic 7-day rhythm putting the next buy 3 days out, and a best-by in 2 — so the label
             // lands INSIDE the rhythm's projection, which is the only arrangement where the two can be

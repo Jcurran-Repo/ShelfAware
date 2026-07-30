@@ -671,7 +671,7 @@ public class ReplenishmentPredictorTests
         var r = ReplenishmentPredictor.Predict(CountedWithoutARhythm(12m, countedOnDay: 0), D(120), honorQuantity: true);
 
         Assert.True(r.CountLooksStale);
-        Assert.Equal(CountStaleReason.Unattested, r.CountStaleReason);
+        Assert.Equal(CountConfidence.Aging, r.CountConfidence);
         // No projected date, deliberately: inventing one would be a projection the engine cannot make.
         Assert.Null(r.CountRunsOutOn);
     }
@@ -682,7 +682,7 @@ public class ReplenishmentPredictorTests
         var r = ReplenishmentPredictor.Predict(CountedWithoutARhythm(12m, countedOnDay: 0), D(89), honorQuantity: true);
 
         Assert.False(r.CountLooksStale);
-        Assert.Equal(CountStaleReason.None, r.CountStaleReason);
+        Assert.Equal(CountConfidence.Counted, r.CountConfidence);
     }
 
     [Fact]
@@ -693,7 +693,7 @@ public class ReplenishmentPredictorTests
             CountedWithoutARhythm(12m, countedOnDay: 0, purchases: 1), D(120), honorQuantity: true);
 
         Assert.True(r.CountLooksStale);
-        Assert.Equal(CountStaleReason.Unattested, r.CountStaleReason);
+        Assert.Equal(CountConfidence.Aging, r.CountConfidence);
     }
 
     [Fact]
@@ -704,7 +704,7 @@ public class ReplenishmentPredictorTests
         var r = ReplenishmentPredictor.Predict(CountedAndOverdue(3, countedOnDay: 0), D(45), honorQuantity: true);
 
         Assert.True(r.CountLooksStale);
-        Assert.Equal(CountStaleReason.PastItsProjection, r.CountStaleReason);
+        Assert.Equal(CountConfidence.Spent, r.CountConfidence);
         Assert.Equal(D(30), r.CountRunsOutOn);
     }
 
@@ -714,7 +714,7 @@ public class ReplenishmentPredictorTests
         var r = ReplenishmentPredictor.Predict(CountedAndOverdue(3, countedOnDay: 44), D(45), honorQuantity: true);
 
         Assert.False(r.CountLooksStale);
-        Assert.Equal(CountStaleReason.None, r.CountStaleReason);
+        Assert.Equal(CountConfidence.Counted, r.CountConfidence);
     }
 
     [Fact]
