@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Prediction;
+using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Reporting;
 using ShelfAware.Core.Shopping;
 using ShelfAware.Web.Data;
@@ -39,7 +40,16 @@ public class DemoDataSeederTests
         var pricedProducts = read.ReceiptLines
             .Where(l => l.UnitPrice > 0 && l.ProductId != null)
             .Select(l => l.ProductId!.Value).Distinct().ToHashSet();
-        Assert.All(read.Products.ToList(), p => Assert.Contains(p.Id, pricedProducts));
+
+        // Everything BOUGHT must be priced. Census stock is the deliberate exception and states itself:
+        // it has no purchases because no receipt ever saw it (§13.8), so it can have no priced line
+        // either. Asserted as an exact set rather than skipped, so a product that loses its receipt lines
+        // by accident still fails this.
+        var bought = read.Products.Include(p => p.Purchases).ToList();
+        Assert.All(bought.Where(p => p.Purchases.Count > 0), p => Assert.Contains(p.Id, pricedProducts));
+        Assert.Equal(
+            ["Quarter Cow Ground Beef"],
+            bought.Where(p => p.Purchases.Count == 0).Select(p => p.Name).OrderBy(n => n).ToArray());
 
         // Each buy ties to a same-day trip receipt so per-purchase price lookups (Trends spend) hit exactly.
         Assert.All(read.PurchaseEvents.Include(pe => pe.Receipt).ToList(), pe =>
@@ -214,6 +224,33 @@ public class DemoDataSeederTests
         Assert.True(honoured.DueCappedByExpiration);
         Assert.Equal(label, honoured.DueDate);
         Assert.Equal(PredictionStatus.DueSoon, honoured.Status);
+    }
+
+    [Fact]
+    public async Task Seeds_census_stock_whose_count_is_the_only_thing_that_makes_it_usable()
+    {
+        // §13.8's output shape, seeded now so the behaviour it depends on is demonstrable before the census
+        // itself is built: a product with a count and NO purchase history. Its status stays Unknown
+        // forever — correct, since the app was never going to ask you to buy it — so the count reaching
+        // recipes is the entire value, and reading status alone left it as decoration.
+        using var db = new TestDb();
+        await new DemoDataSeeder(db).SeedAsync();
+        var today = DateOnly.FromDateTime(DateTime.Today);
+
+        var beef = await SeededProduct(db, "Quarter Cow Ground Beef");
+        Assert.Empty(beef.Purchases);
+        Assert.Equal(14m, beef.QuantityOnHand);
+
+        var r = ReplenishmentPredictor.Predict(beef, today, honorQuantity: true);
+        Assert.Equal(PredictionStatus.Unknown, r.Status); // nothing to suppress, and that's the design
+        Assert.False(r.SuppressedByCount);
+        Assert.False(r.CountLooksStale); // counted 20 days ago — inside the 90-day age window
+        Assert.Null(r.CountRunsOutOn); // no rhythm to project from, so no invented date
+
+        // The payoff: recipes can see it, and can see it go.
+        Assert.Contains(beef, PantryOnHand.EdibleInStock([beef], today));
+        beef.QuantityOnHand = 0m;
+        Assert.Empty(PantryOnHand.EdibleInStock([beef], today));
     }
 
     [Fact]

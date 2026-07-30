@@ -167,6 +167,16 @@ public sealed class DemoDataSeeder(IHouseholdDbFactory dbFactory)
                 [(9, 1.24m), (23, 1.18m), (38, 1.31m), (52, 1.22m)],
                 Unit: "lb", CountOnHand: 3.72m, CountedDaysAgo: 2),
 
+            // CENSUS STOCK (§13.8's output shape, available now): a quarter cow split and frozen — bought
+            // from a farm, so no receipt ever saw it and there is NO purchase history at all. Its status
+            // stays "Still learning" forever, which is correct and deliberate: the app was never going to
+            // ask you to buy this, so there is nothing for the count to suppress. What the count DOES do is
+            // tell the recipes you have beef — the only way stock like this can reach makeability, since
+            // reading status alone would leave the number as decoration. Counted recently, so it reads as
+            // the working state; §13.5's age fallback is what eventually asks about it (90 days).
+            new("Quarter Cow Ground Beef", Category.Meat, null, "1 lb pack", 4.95m, ["Protein", "Freezer"],
+                [], CountOnHand: 14, CountedDaysAgo: 20),
+
             // A COUNTED ITEM WITH A LABEL (§13.5's sharpest interaction). Two cartons on the shelf, a
             // metronomic 7-day rhythm putting the next buy 3 days out, and a best-by in 2 — so the label
             // lands INSIDE the rhythm's projection, which is the only arrangement where the two can be

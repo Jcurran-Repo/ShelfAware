@@ -287,6 +287,24 @@ An **asserted** zero and a **derived** zero are different facts and must not be 
   contradict each other. Pinned by `TheDriftHorizon_ReadsTheMedianAsOneTripsWorth_NotOnePackage`.
   This is the answer to "an inventory decays": the drift is detected instead of assumed away, and the
   cost of being wrong is one tap, not a re-census.
+- ⚠️ **A count with NO rhythm is asked about on AGE alone — 90 days.** An item with 0 or 1 purchases has
+  nothing to project exhaustion from, which is exactly the shape of stock bought before the app, bought
+  elsewhere, gifted, or in one bulk run (§13.8). Without this the drift check simply wouldn't apply, so
+  the count would be trusted **forever** on the one population no receipt will ever correct — the longest
+  trust given to the weakest evidence. The threshold is a judgement and has to be: long enough not to nag
+  a freezer hoard that genuinely lasts a season, short enough that a count can't outlive the food.
+  `CountStaleReason` (`PastItsProjection` / `Unattested`) tells a surface which finding it has, because
+  the two need different sentences — only one of them has a rhythm to have outlived. No date is invented
+  for the age case: `CountRunsOutOn` stays null rather than implying a projection the engine can't make.
+- **Staleness is a question about the NUMBER'S AGE, so it applies to a count of zero too.** Gating it on
+  a positive count left a stale zero deciding outright while a stale positive deferred — one fact treated
+  two ways. Suppression separately still needs a positive count: a zero has nothing to hold back.
+- **A fresh count decides recipe stock outright, in both directions** (`PantryOnHand`). Same principle —
+  real evidence beats a learned guess — and it is the ONLY way a count reaches makeability for stock with
+  no purchase history, since such an item never leaves `Unknown` and reading status alone left its number
+  as decoration: a counted 12 added nothing and a counted 0 removed nothing. A stale count defers back to
+  the rhythm. ⚠️ A zero withholding an item here is a DISPLAY inference and leaves §13.4 untouched — the
+  cost of being wrong is a red recipe row with a hint, not a false `OutNow` taught to the cadence engine.
 - **The backtest stays count-blind**, exactly as it stays expiration-blind — it grades the learned
   rhythm, and a human-entered fact overwriting `DueDate` would be grading itself.
 - **Untracked products are untouched.** No count, no suppression, no drift check — §6 verbatim.
@@ -413,6 +431,9 @@ single purchase there is no behavioural signal to read, and the only thing that 
 quantity on the purchase itself. **That case is exactly what `TrackQuantity` (§13.1–13.6) exists for**,
 which is worth remembering when judging whether the counting feature earns its keep — the report covers
 the repeat-buy pattern, counting covers the one-off pile, and neither substitutes for the other.
+⚠️ That hand-off was a **no-op** until §13.5 grew the two rules a rhythm-less count needs (recipe stock
+decided by the count; staleness asked on age): a count on a single-purchase item previously did nothing
+whatsoever, so the sentence above is load-bearing rather than rhetorical.
 
 **Where the preset loads live, and why.** `ReportDataService.LoadBacklogAsync` / `LoadGapRowsAsync` /
 `LoadLabelOutcomesAsync` — not the page. All three used to open their own `DbContext` inside
@@ -425,10 +446,31 @@ The page keeps only what is genuinely UI: which preset is open, and whether expi
 
 ### 13.8 Shelf-photo census (later phase)
 The intake answer for stock that receipts can never know about — bought pre-app, bought elsewhere,
-gifted, bulk. Reuses the extraction shape end to end: photo → candidate items with confidence → the
+gifted, bulk. Reuses the extraction **line shape** — photo → candidate items with confidence → the
 review-grid pattern → confirm. Three photos of a freezer beats reading thirty items aloud.
 - ★ **It must never create `PurchaseEvent`s.** You did not buy those today, and invented purchases would
   poison every rhythm in the app. A census writes products (if new) and an attested count — nothing else.
+- ⚠️ **What that output can and cannot do, measured before building any of it.** Census stock has 0 or 1
+  purchases by construction, so it has no learned rhythm — and every use §13 makes of a count except one
+  is gated on having one. What it does: **a fresh count decides recipe makeability** (§13.5), which is the
+  census's real payoff and required teaching `PantryOnHand` to read the count instead of inferring stock
+  from status. What it is asked about: **age alone, at 90 days** (§13.5's `Unattested` reason) — without
+  which a census count would never be questioned at all.
+  What it deliberately does NOT do:
+  - **No buy-recommendation suppression, and that is correct.** A rhythm-less item is `Unknown` — "still
+    learning" — so the app was never asking you to buy it and there is nothing to hold back. Suppression
+    is for silencing a request, not for announcing stock.
+  - **No exhaustion date**, hence no "you counted 3 in March and one lasts ~9 days" question. There is no
+    rate to reason from and inventing one would be a projection the engine cannot make.
+  - **"One package" is 1** for the `Ate it` decrement, since there is no purchase history to take a median
+    from. Fine for cans; meaningless for a quarter cow — so the census review grid is the natural place to
+    capture *how many packages*, because that IS the count.
+  - ⚠️ **A second write path.** `ReceiptConfirmationService` is THE confirm path and it creates
+    `PurchaseEvent`s, which the ★ rule above forbids. The census reuses the review-grid *UI* and needs its
+    own persistence: products (if new) + `StockLedger.Attest`, nothing else. "Reuses the extraction shape
+    end to end" was true of the line contract and false of the writing.
+  Seeded now as `Quarter Cow Ground Beef` (a count, no purchases) so all of the above is demonstrable and
+  tested before the photo half exists.
   Census input and purchase input are different doors.
 - Honest limits, designed for rather than papered over: occlusion (the back row), stacking (one visible
   can may be five), and unlabeled freezer parcels. The photo **proposes** a front-row count; the human

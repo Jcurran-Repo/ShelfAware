@@ -242,13 +242,30 @@ else
                    re-counting) or already pinned by an OutNow. Read Status for what the app is actually
                    doing; asserting "so it's back on the list" from the flag alone told a Stocked item's
                    owner it was on a list it wasn't on. *@
-                <p class="error">That count is older than it should have lasted — by this item's own rhythm
-                    it would be gone by now, so it isn't holding anything back any more.
+                @* The two reasons need different sentences: only one of them has a rhythm to have outlived.
+                   Read CountStaleReason rather than guessing from the flag. *@
+                <p class="error">
+                    @if (prediction.CountStaleReason == CountStaleReason.Unattested)
+                    {
+                        <text>
+                            Nobody has counted this in a while, and there aren't enough purchases yet for
+                            Shelf Aware to guess how fast it goes — so it can't tell whether that number is
+                            still true, and it has stopped assuming it is.
+                        </text>
+                    }
+                    else
+                    {
+                        <text>
+                            That count is older than it should have lasted — by this item's own rhythm it
+                            would be gone by now, so it isn't holding anything back any more.
+                        </text>
+                    }
                     @if (prediction.Status is PredictionStatus.Overdue or PredictionStatus.DueSoon)
                     {
                         <text>It's on the grocery list again.</text>
                     }
-                    <strong>Still got some?</strong> Set the number again and it'll be believed afresh.</p>
+                    <strong>Still got some?</strong> Set the number again and it'll be believed afresh.
+                </p>
             }
             else if (prediction.Expired || prediction.DueCappedByExpiration)
             {

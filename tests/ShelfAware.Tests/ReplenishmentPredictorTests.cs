@@ -649,6 +649,74 @@ public class ReplenishmentPredictorTests
         Assert.False(r.SuppressedByCount);
     }
 
+    // ---- §13.5: staleness for a count with NO rhythm to project from ------------------------------
+
+    /// <summary>The shape of stock receipts never saw — bought before the app, elsewhere, gifted, or in
+    /// one bulk run. 0 or 1 purchases, so no rhythm, so nothing to project exhaustion from.</summary>
+    private static Product CountedWithoutARhythm(decimal onHand, int countedOnDay, int purchases = 0)
+    {
+        var product = purchases == 0 ? ProductWith() : ProductWith([D(0)]);
+        product.TrackQuantity = true;
+        product.QuantityOnHand = onHand;
+        product.QuantityCountedAt = new DateTimeOffset(D(countedOnDay).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        return product;
+    }
+
+    [Fact]
+    public void ACountWithNoRhythm_IsAskedAboutOnAgeAlone()
+    {
+        // Without this the count would be believed FOREVER — no rhythm means no exhaustion date, and no
+        // receipt will ever move stock the app didn't see arrive. So the one population §13 can't
+        // automate is also the one it would silently trust the longest.
+        var r = ReplenishmentPredictor.Predict(CountedWithoutARhythm(12m, countedOnDay: 0), D(120), honorQuantity: true);
+
+        Assert.True(r.CountLooksStale);
+        Assert.Equal(CountStaleReason.Unattested, r.CountStaleReason);
+        // No projected date, deliberately: inventing one would be a projection the engine cannot make.
+        Assert.Null(r.CountRunsOutOn);
+    }
+
+    [Fact]
+    public void ACountWithNoRhythm_IsBelievedInsideTheWindow()
+    {
+        var r = ReplenishmentPredictor.Predict(CountedWithoutARhythm(12m, countedOnDay: 0), D(89), honorQuantity: true);
+
+        Assert.False(r.CountLooksStale);
+        Assert.Equal(CountStaleReason.None, r.CountStaleReason);
+    }
+
+    [Fact]
+    public void TheAgeFallbackAlsoCoversAnItemWithASinglePurchase()
+    {
+        // One purchase is still no rhythm — the quarter-cow case §13.7 hands off to counting.
+        var r = ReplenishmentPredictor.Predict(
+            CountedWithoutARhythm(12m, countedOnDay: 0, purchases: 1), D(120), honorQuantity: true);
+
+        Assert.True(r.CountLooksStale);
+        Assert.Equal(CountStaleReason.Unattested, r.CountStaleReason);
+    }
+
+    [Fact]
+    public void AnItemWithARhythm_UsesItsProjectionNotTheAgeFallback()
+    {
+        // The age fallback must not pre-empt the real check: three on a 10-day rhythm are spent after 30
+        // days, and saying so at 45 is the whole point — waiting for day 90 would be worse than useless.
+        var r = ReplenishmentPredictor.Predict(CountedAndOverdue(3, countedOnDay: 0), D(45), honorQuantity: true);
+
+        Assert.True(r.CountLooksStale);
+        Assert.Equal(CountStaleReason.PastItsProjection, r.CountStaleReason);
+        Assert.Equal(D(30), r.CountRunsOutOn);
+    }
+
+    [Fact]
+    public void AFreshCount_ReportsNoStaleReason()
+    {
+        var r = ReplenishmentPredictor.Predict(CountedAndOverdue(3, countedOnDay: 44), D(45), honorQuantity: true);
+
+        Assert.False(r.CountLooksStale);
+        Assert.Equal(CountStaleReason.None, r.CountStaleReason);
+    }
+
     [Fact]
     public void ARunningLowTappedTheSameDayAsTheCount_LosesToIt()
     {

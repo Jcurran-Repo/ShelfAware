@@ -76,6 +76,77 @@ public class PantryOnHandTests
         Assert.Equal(["Coffee"], PantryOnHand.EdibleOutOfStock(products, Today).Select(p => p.Name).ToList());
     }
 
+    // ---- §13: a count reaches recipes directly, which is the only way census stock ever can -------
+
+    /// <summary>Stock with no purchase history — bought before the app, elsewhere, gifted, or in one bulk
+    /// run. Its status is permanently Unknown, so reading Status alone made its count invisible here.</summary>
+    private static Product Counted(string name, decimal onHand, int countedDaysAgo)
+    {
+        var p = P(name, Category.Meat);
+        p.TrackQuantity = true;
+        p.QuantityOnHand = onHand;
+        p.QuantityCountedAt = new DateTimeOffset(
+            Today.AddDays(-countedDaysAgo).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        return p;
+    }
+
+    [Fact]
+    public void A_counted_item_with_no_purchase_history_is_on_hand_because_of_the_count()
+    {
+        // Before this it was in stock only incidentally — Unknown isn't Overdue — so a counted 12 added
+        // nothing and the number was decoration. Now the count is the reason.
+        var beef = Counted("Quarter Cow Ground Beef", 12m, countedDaysAgo: 5);
+
+        Assert.Equal(["Quarter Cow Ground Beef"], PantryOnHand.EdibleInStock([beef], Today).Select(p => p.Name));
+        Assert.Empty(PantryOnHand.EdibleOutOfStock([beef], Today));
+    }
+
+    [Fact]
+    public void A_counted_item_eaten_down_to_none_stops_being_on_hand()
+    {
+        // The gap that mattered: the household told the app it had twelve, ate all twelve, and recipes
+        // went on believing there was beef — because nothing here ever read the count.
+        var beef = Counted("Quarter Cow Ground Beef", 0m, countedDaysAgo: 5);
+
+        Assert.Empty(PantryOnHand.EdibleInStock([beef], Today));
+        // …and it surfaces as run-out so a red recipe row can explain itself rather than just being red.
+        Assert.Equal(["Quarter Cow Ground Beef"], PantryOnHand.EdibleOutOfStock([beef], Today).Select(p => p.Name));
+    }
+
+    [Fact]
+    public void A_stale_count_defers_to_the_rhythm_instead_of_deciding()
+    {
+        // Same reason a stale count stops suppressing: a number nobody has vouched for in months is not
+        // evidence. With no rhythm either, the item falls back to Unknown — which is not Overdue, so it
+        // stays available rather than being declared empty on the strength of an old guess.
+        var beef = Counted("Quarter Cow Ground Beef", 0m, countedDaysAgo: 200);
+
+        Assert.Equal(["Quarter Cow Ground Beef"], PantryOnHand.EdibleInStock([beef], Today).Select(p => p.Name));
+    }
+
+    [Fact]
+    public void A_fresh_count_beats_a_rhythm_that_says_overdue()
+    {
+        // §13.5's principle reaching recipes: real evidence beats a learned guess. The rhythm has this
+        // long overdue; the household counted three yesterday.
+        var coffee = new Product
+        {
+            Name = "Coffee",
+            Category = Category.Beverage,
+            TrackQuantity = true,
+            QuantityOnHand = 3m,
+            QuantityCountedAt = new DateTimeOffset(Today.AddDays(-1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
+            Purchases =
+            [
+                new PurchaseEvent { PurchasedAt = new DateOnly(2020, 1, 1) },
+                new PurchaseEvent { PurchasedAt = new DateOnly(2020, 1, 10) },
+            ],
+        };
+
+        Assert.Equal(["Coffee"], PantryOnHand.EdibleInStock([coffee], Today).Select(p => p.Name));
+        Assert.Empty(PantryOnHand.EdibleOutOfStock([coffee], Today));
+    }
+
     [Fact]
     public void Untracked_edibles_are_surfaced_separately_and_non_food_stays_out()
     {

@@ -705,6 +705,40 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
    - **Deliberately NOT seeded: a misread quantity for §13.6's correction.** A demo must not ship
      known-wrong data to show off a repair tool; the pencil is discoverable on any purchase row.
 
+24. **A count with no rhythm behind it now does something (2026-07-29).** Checking §13.8's premises against
+   the code found that every use §13 makes of a count except one is gated on a **learned rhythm** — and
+   §13.8's population (bought pre-app, elsewhere, gifted, bulk) has 0 or 1 purchases by construction, so
+   it has none. Measured: a counted-12-no-purchases product came back `Status=Unknown`,
+   `Suppressed=False`, `RunsOut=null`, `onePackage=1`, and **on-hand for recipes whether the count said 12
+   or 0**. A census would have written a number that influenced nothing. §13.7's documented hand-off
+   ("that case is exactly what `TrackQuantity` exists for") was therefore a no-op too, including for the
+   single-purchase quarter cow. Two rules fix it:
+   - ⚠️ **`CountStaleReason.Unattested` — a rhythm-less count is asked about on AGE alone, at 90 days**
+     (`UnattestedCountDays`). Without it the drift check simply doesn't apply, so the count is trusted
+     FOREVER on the one population no receipt will ever correct — the longest trust given to the weakest
+     evidence. The threshold is a judgement and says so. **No date is invented**: `CountRunsOutOn` stays
+     null rather than implying a projection the engine can't make, and `CountStaleReason` is what lets a
+     surface word the two findings differently (only one has a rhythm to have outlived). Explicit enum
+     rather than inferring from a null date — a screen guessing at engine reasoning is this branch's
+     signature failure.
+   - **`PantryOnHand` reads the count directly.** A fresh count decides recipe stock in both directions;
+     a stale one defers to the rhythm. This is the only way a count reaches makeability for rhythm-less
+     stock, and it closes the sharpest hole: told the app it had twelve, ate all twelve, and recipes went
+     on believing there was beef. ⚠️ A zero withholding an item here is a DISPLAY inference — §13.4 is
+     untouched, a derived zero still can't write an `OutNow`.
+   - **Jordan's call, and right: NOT suppressing a rhythm-less item is a FEATURE, not a gap.** The app was
+     never asking you to buy it, so there is nothing to hold back; suppression silences a request, it
+     doesn't announce stock. So `Status` stays `Unknown` and only the two rules above changed.
+   - Fell out of it: **staleness now covers a count of ZERO.** It was gated on `> 0`, which left a stale
+     zero deciding recipe stock outright while a stale positive deferred — one fact treated two ways.
+     Suppression still needs `> 0` (a zero has nothing to hold back). Caught by a test I'd written
+     expecting the opposite, which is the second time this arc a wrong test expectation exposed a real
+     asymmetry.
+   - Seeded as `Quarter Cow Ground Beef` (a count, no purchases, no receipt) so all of it is demonstrable
+     now. It is the catalog's one product with no priced receipt line, and
+     `Seeds_confirmed_receipt_prices_for_every_product` names it as an exact exception rather than
+     loosening to a skip.
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active

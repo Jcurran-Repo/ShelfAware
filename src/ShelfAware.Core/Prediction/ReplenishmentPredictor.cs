@@ -20,6 +20,16 @@ public static class ReplenishmentPredictor
     /// shortens a rhythm that is legitimately longer than this on its own.</summary>
     private const double MaxProjectionDays = 730;
 
+    /// <summary>How long a count on a product with NO learned rhythm is believed before the app asks again
+    /// (§13.5, <see cref="CountStaleReason.Unattested"/>): 90 days.
+    /// <para>It is a judgement, not a derivation, and it has to be — an item with 0 or 1 purchases offers
+    /// nothing to project exhaustion from, which is precisely the shape of stock bought before the app,
+    /// bought elsewhere, gifted, or in one bulk run. Without this check such a count would be trusted
+    /// FOREVER, on the very stock no receipt will ever correct. Ninety days is long enough not to nag a
+    /// freezer hoard that genuinely lasts a season, short enough that a count cannot quietly outlive the
+    /// food; the cost of being wrong either way is one tap, per §13.5.</para></summary>
+    private const int UnattestedCountDays = 90;
+
     /// <param name="honorExpirations">Whether purchase expiration dates may mark the item out (the
     /// per-household Settings toggle, default OFF — see <c>SettingKeys.TrackExpirationDates</c>).
     /// Defaulting to false makes a call site that forgets the flag fail INERT (no expiry state for a
@@ -244,8 +254,14 @@ public static class ReplenishmentPredictor
         //      • A count that has gone stale (below) — the whole reason the drift check exists.
         var suppressed = false;
         var staleCount = false;
+        var staleReason = CountStaleReason.None;
         DateOnly? countRunsOut = null;
-        if (honorQuantity && product is { TrackQuantity: true, QuantityOnHand: > 0 } counted)
+        // Entered for ANY established count, zero included — staleness is a question about the NUMBER'S
+        // AGE and applies just as much to "none" as to "twelve". Gating this on `> 0` (as it first did)
+        // left a stale zero deciding recipe stock outright while a stale positive deferred, which is the
+        // same fact treated two ways. Suppression separately still needs `> 0`: a zero has nothing to
+        // hold back.
+        if (honorQuantity && product is { TrackQuantity: true, QuantityOnHand: not null } counted)
         {
             // Expected exhaustion: the last time a human vouched for the number, plus how long that many
             // packages last. ⚠️ The driving median is how long a TYPICAL TRIP'S worth lasts, not one
@@ -257,13 +273,29 @@ public static class ReplenishmentPredictor
             // that fallback would silently reinstate the per-trip reading this whole rule exists to
             // remove, on the one product where nobody would think to check. No horizon is a visible gap;
             // a wrong horizon is an invisible one.
-            if (drivingMedian is { } perTrip && perTrip > 0 && typicalTrip > 0
-                && counted.QuantityCountedAt is { } countedAt)
+            if (counted.QuantityCountedAt is { } countedAt)
             {
-                var perPackage = perTrip / (double)typicalTrip;
-                countRunsOut = SignalDate.Of(countedAt)
-                    .AddDays(Floor(Math.Min(perPackage * (double)counted.QuantityOnHand.Value, MaxProjectionDays)));
-                staleCount = today > countRunsOut.Value;
+                var attestedOn = SignalDate.Of(countedAt);
+                // A projection needs something to exhaust, so a count of zero can only ever go stale by
+                // age — no rhythm can say when "none" stops being true.
+                if (counted.QuantityOnHand.Value > 0 && drivingMedian is { } perTrip && perTrip > 0 && typicalTrip > 0)
+                {
+                    var perPackage = perTrip / (double)typicalTrip;
+                    countRunsOut = attestedOn
+                        .AddDays(Floor(Math.Min(perPackage * (double)counted.QuantityOnHand.Value, MaxProjectionDays)));
+                    staleCount = today > countRunsOut.Value;
+                    if (staleCount) staleReason = CountStaleReason.PastItsProjection;
+                }
+                // No rhythm to project from — 0 or 1 purchases, the shape of stock receipts never saw.
+                // §13.5's drift check would simply not apply, so the count would be believed forever on
+                // exactly the items nothing will ever correct. Fall back to asking on AGE alone. There is
+                // deliberately no `countRunsOut` here: inventing a date would be a projection the engine
+                // cannot make, and `CountStaleReason` is what tells a surface to word it differently.
+                else if (today.DayNumber - attestedOn.DayNumber > UnattestedCountDays)
+                {
+                    staleCount = true;
+                    staleReason = CountStaleReason.Unattested;
+                }
             }
 
             // `expired` needs no term of its own here: step 7 pins whenever it expires, so `!pinned`
@@ -283,7 +315,8 @@ public static class ReplenishmentPredictor
             // skips work there.
             var wouldHaveAsked = status is PredictionStatus.Overdue or PredictionStatus.DueSoon;
 
-            if (wouldHaveAsked && !pinned && !labelIsSpeaking && !lowSinceTheCount && !staleCount)
+            if (counted.QuantityOnHand.Value > 0
+                && wouldHaveAsked && !pinned && !labelIsSpeaking && !lowSinceTheCount && !staleCount)
             {
                 suppressed = true;
                 status = PredictionStatus.Stocked;
@@ -297,6 +330,7 @@ public static class ReplenishmentPredictor
             DueDate = dueDate,
             SuppressedByCount = suppressed,
             CountLooksStale = staleCount,
+            CountStaleReason = staleReason,
             CountRunsOutOn = countRunsOut,
             MedianIntervalDays = drivingMedian, // the winning number — shown everywhere
             RebuyIntervalDays = rebuy?.Median,
