@@ -325,6 +325,19 @@ public class HouseholdIsolationTests : IDisposable
     }
 
     [Fact]
+    public async Task Setting_a_unit_cannot_reach_another_households_product()
+    {
+        // Same shape as the count: a raw product id through the filtered FindAsync. New write path,
+        // so it walks the same drill rather than inheriting the claim.
+        var (productId, _) = await CountedProductOwnedByB();
+
+        _db.HouseholdId = A;
+        Assert.False(await new EfPantryStore(_db).SetDefaultUnitAsync(productId, "lb"));
+
+        Assert.Null((await ReadAsB(productId)).DefaultUnit);
+    }
+
+    [Fact]
     public async Task Correcting_a_purchase_cannot_reach_another_households_purchase()
     {
         var (productId, purchaseId) = await CountedProductOwnedByB();
@@ -362,8 +375,8 @@ public class HouseholdIsolationTests : IDisposable
         {
             var recipe = await db.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
             var resolution = await MealStock.ResolveAsync(db, recipe);
-            Assert.False(MealStock.Describe(resolution).NeedsConfirmation);
-            MealStock.Apply(resolution);
+            Assert.Empty(resolution.Ambiguous); // B's product isn't even a candidate to be ambiguous about
+            Assert.Empty(MealStock.Apply(resolution));
             await db.SaveChangesAsync();
         }
 

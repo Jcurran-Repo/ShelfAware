@@ -304,6 +304,24 @@ _Last updated: 7/30/2026_
   a second package off) — and ProductDetail's handlers, copied as the precedent, had the same latent
   flaw; all three now split write-failure from reload-failure advice. **864 tests green, 0 warnings**
   — 7/30/2026
+- [x] **v4.1 — the feel pass: six agreed design changes, with "don't bother me while I count" as the
+  ruling constraint.** A relative move ("used two", the lists' "Used one") no longer re-anchors the
+  attestation clock — it states a delta, not a level, and stamping it let the most engaged households
+  renew a count's credibility forever without anyone looking; landing at zero is the exception (the
+  shelf was seen empty — stamps and asserts the out). That change made the removal guard SOUND, so it
+  now exists: `Receipt.ConfirmedAt` (additive; NULL = pre-v4.1, subtract as ever) lets removal skip the
+  subtract past a newer LOOK, while a relative move deliberately doesn't shield the count (its case
+  needs the subtract or phantom stock survives) — replacing the "accepted edge" documented one commit
+  earlier, whose justification died with the stamping change. "Ate it" is **tell-don't-ask**: the
+  confirm panel and its preview machinery (`Plan`/`Describe`/`Matches`) are deleted; one tap commits,
+  the notice says exactly what was taken (ACTUAL clamp-aware amounts) with ↩ Undo reversing precisely
+  them plus the MealEvent and the counter — a mis-tap was previously permanent. Stop-counting went
+  dormant-not-destructive (v3.6's toggle semantics — number and date kept, attributed, influencing
+  nothing). `CountingAdvice` steers against counting ≤10-day fast movers (passive sentence, never a
+  gate). `SetDefaultUnitAsync` + a unit box on the count panel ends "a receipt-imported weight item can
+  never say lb" (display only; walks the tenancy drill). Incident-retelling comments trimmed to their
+  constraints. **884 tests green, 0 warnings** (+20). Page flows not live-verified this session; the
+  logic beneath them is — 7/30/2026
 - [ ] Shelf-photo census — the intake path for stock receipts can never know about (pre-app, elsewhere, gifted, bulk): photo → candidates → the review-grid shape → confirm. ★ Never creates PurchaseEvents (invented purchases would poison every rhythm); proposes a front-row count the human corrects, with occlusion/stacking designed for rather than papered over — Not complete
 
 ---

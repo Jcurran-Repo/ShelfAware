@@ -54,6 +54,11 @@ public static class AdditiveSchema
         EnsureColumn(db, table: "Products", column: "TrackQuantity", definition: "INTEGER NOT NULL DEFAULT 0");
         EnsureColumn(db, table: "Products", column: "QuantityOnHand", definition: "TEXT NULL");
         EnsureColumn(db, table: "Products", column: "QuantityCountedAt", definition: "TEXT NULL");
+
+        // 2026-07-30: when a confirm RAN (v4.1) — lets removal order a confirm against a later human
+        // count. NULL on every pre-existing confirmed receipt, which removal reads as "no timestamp to
+        // compare" and subtracts exactly as it always did.
+        EnsureColumn(db, table: "Receipts", column: "ConfirmedAt", definition: "TEXT NULL");
     }
 
     public static void Apply(AuthDbContext db)

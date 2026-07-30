@@ -66,19 +66,18 @@ public class MealStockTests : IDisposable
         return product.Id;
     }
 
-    private async Task<(IReadOnlyList<MealStock.Take> Plan, decimal? OnHandAfter)> Cook(int recipeId, int productId)
+    private async Task<(IReadOnlyList<MealStock.Applied> Taken, decimal? OnHandAfter)> Cook(int recipeId, int productId)
     {
         await using var db = _db.CreateDbContext();
         var recipe = await db.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
-        // One resolution, described and then applied — the shape the page uses, so the test exercises the
-        // guarantee that the write acts on exactly the objects the description came from.
+        // One resolution, applied in the tap's own transaction — the shape the page uses. Apply's
+        // report is what the notice shows and what Undo reverses, so the tests assert on it directly.
         var resolution = await MealStock.ResolveAsync(db, recipe);
-        var plan = MealStock.Describe(resolution);
-        MealStock.Apply(resolution);
+        var taken = MealStock.Apply(resolution);
         await db.SaveChangesAsync();
 
         await using var read = _db.CreateDbContext();
-        return (plan.Takes, (await read.Products.AsNoTracking().SingleAsync(p => p.Id == productId)).QuantityOnHand);
+        return (taken, (await read.Products.AsNoTracking().SingleAsync(p => p.Id == productId)).QuantityOnHand);
     }
 
     [Fact]
@@ -93,7 +92,7 @@ public class MealStockTests : IDisposable
 
         var (plan, after) = await Cook(recipeId, productId);
 
-        Assert.Equal(1m, Assert.Single(plan).Amount);
+        Assert.Equal(1m, Assert.Single(plan).Taken);
         Assert.Equal(5m, after);
     }
 
@@ -110,7 +109,7 @@ public class MealStockTests : IDisposable
 
         var (plan, after) = await Cook(recipeId, productId);
 
-        Assert.Equal(1.24m, Assert.Single(plan).Amount);
+        Assert.Equal(1.24m, Assert.Single(plan).Taken);
         Assert.Equal(3.76m, after);
     }
 
@@ -125,32 +124,32 @@ public class MealStockTests : IDisposable
 
         var (plan, after) = await Cook(recipeId, productId);
 
-        Assert.Equal(1m, Assert.Single(plan).Amount);
+        Assert.Equal(1m, Assert.Single(plan).Taken);
         Assert.Equal(5m, after);
     }
 
     [Fact]
-    public async Task The_plan_describes_exactly_what_the_write_performs()
+    public async Task Apply_reports_exactly_what_it_took()
     {
-        // The confirm panel renders the plan and the tap performs the write. If they could ever differ
-        // the panel would be lying, so they share one query and this pins the pairing.
+        // The notice renders this report and Undo reverses it, so it must be the ACTUAL change — or
+        // the notice lies and the undo invents stock.
         var productId = await Product("Beef Chuck Roast", counted: true, onHand: 2m, unit: null, 1m, 1m);
         var recipeId = await Recipe("Beef Chuck Roast");
 
-        var (plan, after) = await Cook(recipeId, productId);
+        var (taken, after) = await Cook(recipeId, productId);
 
-        var take = Assert.Single(plan);
+        var take = Assert.Single(taken);
         Assert.Equal("Beef Chuck Roast", take.ProductName);
-        Assert.Equal(2m, take.OnHand);
+        Assert.Equal(1m, take.Taken);
         Assert.Equal(1m, take.Remaining);
         Assert.Equal(after, take.Remaining);
     }
 
     [Fact]
-    public async Task A_count_already_at_none_needs_no_confirmation_because_nothing_would_change()
+    public async Task A_count_already_at_none_is_left_alone_and_unreported()
     {
-        // StockLedger clamps at zero, so a take here is a provable no-op — putting a confirm step in
-        // front of it is friction that buys nothing, on the most casual tap in the app.
+        // StockLedger clamps at zero, so a take here would change nothing — and a notice reporting a
+        // decrement that didn't happen would be the panel lying in the other direction.
         var productId = await Product("Beef Chuck Roast", counted: true, onHand: 0m, unit: null, 1m, 1m);
         var recipeId = await Recipe("Beef Chuck Roast");
 
@@ -161,63 +160,52 @@ public class MealStockTests : IDisposable
     }
 
     [Fact]
-    public async Task A_plan_still_matching_the_shelf_is_accepted()
+    public async Task Undo_returns_every_count_to_where_it_started()
     {
-        await using var db = _db.CreateDbContext();
         var productId = await Product("Beef Chuck Roast", counted: true, onHand: 3m, unit: null, 1m, 1m);
         var recipeId = await Recipe("Beef Chuck Roast");
-        var recipe = await db.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
+        var (taken, after) = await Cook(recipeId, productId);
+        Assert.Equal(2m, after);
 
-        var shown = await MealStock.PlanAsync(db, recipe);
-        await using var later = _db.CreateDbContext();
-        var current = await MealStock.PlanAsync(later, recipe);
+        // The undo is its own user action on its own context, exactly like the page's.
+        await using var db = _db.CreateDbContext();
+        var products = await db.Products.Where(p => p.Id == productId).ToListAsync();
+        MealStock.Restore(products, taken);
+        await db.SaveChangesAsync();
 
-        Assert.True(MealStock.Matches(shown, current));
         await using var read = _db.CreateDbContext();
-        Assert.Equal(3m, // planning is read-only — neither call may touch the shelf
-            (await read.Products.AsNoTracking().SingleAsync(p => p.Id == productId)).QuantityOnHand);
+        Assert.Equal(3m, (await read.Products.AsNoTracking().SingleAsync(p => p.Id == productId)).QuantityOnHand);
     }
 
     [Fact]
-    public async Task A_plan_the_shelf_moved_under_is_rejected()
+    public async Task Undo_restores_only_what_was_actually_taken_when_the_ledger_clamped()
     {
-        // The preview and the commit are two user actions on two DbContexts with an unbounded gap: a
-        // receipt confirm, a set_quantity, or a second cook can move the count in between. "The panel
-        // cannot promise what the write doesn't do" only holds if the write CHECKS — and a test that
-        // shares one context can never show that, which is how this shipped.
+        // Half a pack left, one nominal package taken: the ledger clamps at zero, so the ACTUAL take
+        // is 0.5. An undo that re-added the nominal 1.24 would invent stock out of a tap and its
+        // reversal — Apply reports actuals precisely so this cannot happen.
+        var productId = await Product("Ground Beef", counted: true, onHand: 0.5m, unit: null, 1.18m, 1.24m, 1.31m);
+        var recipeId = await Recipe("Ground Beef");
+        var (taken, after) = await Cook(recipeId, productId);
+        Assert.Equal(0m, after);
+        Assert.Equal(0.5m, Assert.Single(taken).Taken);
+
         await using var db = _db.CreateDbContext();
-        var productId = await Product("Beef Chuck Roast", counted: true, onHand: 3m, unit: null, 1m, 1m);
-        var recipeId = await Recipe("Beef Chuck Roast");
-        var recipe = await db.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
+        var products = await db.Products.Where(p => p.Id == productId).ToListAsync();
+        MealStock.Restore(products, taken);
+        await db.SaveChangesAsync();
 
-        var shown = await MealStock.PlanAsync(db, recipe);
-
-        // Somebody else confirms a receipt for the same item while the panel sits open.
-        await using (var other = _db.CreateDbContext())
-        {
-            var p = await other.Products.SingleAsync(x => x.Id == productId);
-            p.QuantityOnHand = 8m;
-            await other.SaveChangesAsync();
-        }
-
-        await using var later = _db.CreateDbContext();
-        var current = await MealStock.PlanAsync(later, recipe);
-
-        Assert.False(MealStock.Matches(shown, current));
-        Assert.Equal(8m, Assert.Single(current.Takes).OnHand);
+        await using var read = _db.CreateDbContext();
+        Assert.Equal(0.5m, (await read.Products.AsNoTracking().SingleAsync(p => p.Id == productId)).QuantityOnHand);
     }
 
     [Fact]
-    public async Task A_plan_is_rejected_when_the_item_stopped_being_counted()
+    public async Task Undo_leaves_a_product_whose_counting_stopped_dormant()
     {
-        // The other direction: the take vanishes entirely rather than changing. A count-less plan must
-        // not silently pass the equality check as "nothing changed".
-        await using var db = _db.CreateDbContext();
+        // Stop-counting between the tap and its undo: the dormant number stays frozen where the cook
+        // left it (the ledger's own TrackQuantity gate), not resurrected by the restore.
         var productId = await Product("Beef Chuck Roast", counted: true, onHand: 3m, unit: null, 1m, 1m);
         var recipeId = await Recipe("Beef Chuck Roast");
-        var recipe = await db.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
-
-        var shown = await MealStock.PlanAsync(db, recipe);
+        var (taken, _) = await Cook(recipeId, productId);
 
         await using (var other = _db.CreateDbContext())
         {
@@ -226,11 +214,15 @@ public class MealStockTests : IDisposable
             await other.SaveChangesAsync();
         }
 
-        await using var later = _db.CreateDbContext();
-        var current = await MealStock.PlanAsync(later, recipe);
+        await using var db = _db.CreateDbContext();
+        var products = await db.Products.Where(p => p.Id == productId).ToListAsync();
+        MealStock.Restore(products, taken);
+        await db.SaveChangesAsync();
 
-        Assert.False(current.NeedsConfirmation);
-        Assert.False(MealStock.Matches(shown, current));
+        await using var read = _db.CreateDbContext();
+        var product = await read.Products.AsNoTracking().SingleAsync(p => p.Id == productId);
+        Assert.False(product.TrackQuantity);
+        Assert.Equal(2m, product.QuantityOnHand); // where the cook left it — dormant, not restored
     }
 
     [Fact]
@@ -250,10 +242,10 @@ public class MealStockTests : IDisposable
     }
 
     [Fact]
-    public async Task An_uncounted_product_is_left_alone_and_needs_no_confirmation()
+    public async Task An_uncounted_product_is_left_alone_and_unreported()
     {
-        // An empty plan is what lets the ordinary "Ate it" stay a single tap: no counted item, no
-        // preview, no friction.
+        // An empty report is what keeps the ordinary "Ate it" notice down to one line: no counted
+        // item, nothing taken, nothing to say about stock.
         var productId = await Product("Bananas", counted: false, onHand: null, unit: null, 1m, 1m);
         var recipeId = await Recipe("Bananas");
 
@@ -354,17 +346,14 @@ public class MealStockTests : IDisposable
         await using var read = _db.CreateDbContext();
         var recipe = await read.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
         var resolution = await MealStock.ResolveAsync(read, recipe);
-        var plan = MealStock.Describe(resolution);
+        var taken = MealStock.Apply(resolution);
+        await read.SaveChangesAsync();
 
-        Assert.Empty(plan.Takes);
-        Assert.True(plan.NeedsConfirmation); // still worth the human's eyes
-        var pick = Assert.Single(plan.Ambiguous);
+        Assert.Empty(taken); // decrements neither…
+        var pick = Assert.Single(resolution.Ambiguous); // …and SAYS so in the notice
         Assert.Equal("ground beef", pick.Ingredient);
         Assert.Equal(["Ground Beef Chuck", "Ground Beef Sirloin"], pick.Candidates);
 
-        // …and nothing moved.
-        MealStock.Apply(resolution);
-        await read.SaveChangesAsync();
         await using var after = _db.CreateDbContext();
         Assert.Equal(4m, (await after.Products.AsNoTracking().SingleAsync(p => p.Id == beefId)).QuantityOnHand);
         Assert.Equal(6m, (await after.Products.AsNoTracking().SingleAsync(p => p.Id == leanId)).QuantityOnHand);
@@ -385,16 +374,13 @@ public class MealStockTests : IDisposable
         await using var read = _db.CreateDbContext();
         var recipe = await read.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
         var resolution = await MealStock.ResolveAsync(read, recipe); // must not throw
-        var plan = MealStock.Describe(resolution);
+        var taken = MealStock.Apply(resolution);
+        await read.SaveChangesAsync();
 
-        Assert.Empty(plan.Takes);
-        Assert.True(plan.NeedsConfirmation);
-        var pick = Assert.Single(plan.Ambiguous);
+        Assert.Empty(taken);
+        var pick = Assert.Single(resolution.Ambiguous);
         Assert.Equal(["Ground Beef"], pick.Candidates);
 
-        // …and nothing moved.
-        MealStock.Apply(resolution);
-        await read.SaveChangesAsync();
         await using var after2 = _db.CreateDbContext();
         Assert.Equal(4m, (await after2.Products.AsNoTracking().SingleAsync(p => p.Id == firstId)).QuantityOnHand);
         Assert.Equal(2m, (await after2.Products.AsNoTracking().SingleAsync(p => p.Id == secondId)).QuantityOnHand);
@@ -435,7 +421,7 @@ public class MealStockTests : IDisposable
         Assert.Equal(3m, after);
         await using var read = _db.CreateDbContext();
         var recipe2 = await read.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
-        Assert.Empty(MealStock.Describe(await MealStock.ResolveAsync(read, recipe2)).Ambiguous);
+        Assert.Empty((await MealStock.ResolveAsync(read, recipe2)).Ambiguous);
     }
 
     [Fact]
@@ -465,10 +451,10 @@ public class MealStockTests : IDisposable
 
         await using var read = _db.CreateDbContext();
         var recipe2 = await read.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
-        var plan = MealStock.Describe(await MealStock.ResolveAsync(read, recipe2));
+        var resolution = await MealStock.ResolveAsync(read, recipe2);
 
-        Assert.Single(plan.Ambiguous);
-        Assert.Empty(plan.Takes);
+        Assert.Single(resolution.Ambiguous);
+        Assert.Empty(resolution.Products);
     }
 
     [Fact]

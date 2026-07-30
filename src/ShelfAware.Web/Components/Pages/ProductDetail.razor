@@ -335,10 +335,30 @@ else
                 }
             }
         }
+        else if (product.QuantityOnHand is { } dormant)
+        {
+            @* Stop-counting is dormant, not destructive (the v3.6 toggle semantics): the old number is
+               stale by definition, so resuming starts from a fresh count — but what was known and when
+               is still true, and worth showing instead of amnesia. *@
+            <p class="muted">Not counted any more — you counted
+                <strong>@QuantityFormat.Describe(dormant, product.DefaultUnit)</strong>@(product.QuantityCountedAt is { } stopped
+                    ? $" on {SignalDate.Of(stopped):MMM d, yyyy}" : ""). Enter a number to start again.</p>
+        }
         else
         {
             <p class="muted">Not counted. Enter a number and Shelf Aware keeps it up to date from your
                 receipts — and stops asking you to buy more while you still have some.</p>
+        }
+
+        @if (!product.TrackQuantity && CountingAdvice.IsHardToKeepTrue(prediction.MedianIntervalDays))
+        {
+            @* Steering, never a gate — the count box below still works. A fast mover's count is wrong
+               within days and the drift check then keeps asking, which reads as the feature being
+               broken; the rhythm alone already handles fast movers well. *@
+            <p class="muted small">Heads up: this is bought about every
+                @(((int)Math.Round(prediction.MedianIntervalDays!.Value))) days, so a count here would be
+                hard to keep true — the rhythm already handles fast movers well. Counting pays off most
+                on slow, deep stock: freezer meat, canned goods, bulk buys.</p>
         }
 
         <div class="tag-add">
@@ -357,6 +377,14 @@ else
             {
                 <button type="button" class="secondary" @onclick="StopCounting" disabled="@quantityBusy">Stop counting</button>
             }
+        </div>
+        <div class="tag-add">
+            @* Display only — §13.3's decrement reads the fractionality of the quantities, never this
+               field. Editable here because its one other writer is the manual add-a-product form, so a
+               receipt-imported weight item could never say "lb" no matter what the household wanted. *@
+            <input maxlength="20" placeholder="unit — lb, jars…" @bind="editUnit"
+                   aria-label="Display unit for @product.Name (optional)" />
+            <button type="button" class="secondary" @onclick="SaveUnit" disabled="@quantityBusy">Set unit</button>
         </div>
         <p class="muted small">A count is what you saw on the shelf. Receipts add to it and cooking takes
             from it, but only you can say what's actually there — so when it drifts, Shelf Aware asks
@@ -648,6 +676,7 @@ else
         // actually doing to the prediction sitting beside it.
         prediction = ReplenishmentPredictor.Predict(product, today, trackExpirations, honorQuantity: true);
         editQuantity = product.QuantityOnHand;
+        editUnit = product.DefaultUnit;
         onePackage = TypicalPackage.Of(product.Purchases.Select(x => x.Quantity));
         editExpiration = prediction.ExpiresOn; // the panel's date input starts at the governing date
         expirationError = null;
@@ -931,15 +960,49 @@ else
 
     /// <summary>"Used one" — one package off the shelf, which for a weight item is the household's own
     /// typical pack rather than a round 1 (the same <see cref="TypicalPackage"/> rule "Ate it" follows,
-    /// so the two decrement paths can't disagree about what "one" means). Relative and human-attested,
-    /// which is the difference from an "Ate it": the person is at the cupboard, so their zero counts as
-    /// running out.
+    /// so the two decrement paths can't disagree about what "one" means). Relative: it moves the number
+    /// WITHOUT renewing the attestation — the person saw what they took, not the rows behind it, and
+    /// only a look re-anchors the clock (§13.1). Landing at zero is the exception: the shelf was seen
+    /// empty, so it stamps and records the outage, which is the difference from an "Ate it".
     /// <para>The null check belongs here, not only inside <see cref="ApplyQuantityAsync"/>: an argument
     /// is evaluated before the call, so reading <c>product</c> to build the delta would throw past that
     /// guard if the component were navigated away between render and click.</para></summary>
     private Task UsedOne() => product is null ? Task.CompletedTask : ApplyQuantityAsync(-onePackage, relative: true);
 
     private Task StopCounting() => ApplyQuantityAsync(0, relative: false, stop: true);
+
+    // The display unit (§13.1/§13.6): QuantityFormat's label, nothing more. Its own field because it
+    // edits a different fact than the count — clearing it must not touch the number.
+    private string? editUnit;
+
+    private async Task SaveUnit()
+    {
+        if (product is null || quantityBusy) return;
+        quantityBusy = true;
+        quantityError = null;
+        var saved = false;
+        try
+        {
+            if (await Store.SetDefaultUnitAsync(product.Id, editUnit))
+            {
+                saved = true;
+                loadedId = null; // reload so every quantity on the page re-renders with the label
+                await OnParametersSetAsync();
+            }
+            else
+            {
+                quantityError = "Couldn't save the unit. Reload the page and try again.";
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogError(ex, "Setting the display unit for product {ProductId} failed (saved: {Saved}).", product.Id, saved);
+            quantityError = saved
+                ? "Saved — but the page couldn't refresh. Reload to see it."
+                : "That didn't save. Reload the page and try again.";
+        }
+        finally { quantityBusy = false; }
+    }
 
     private async Task ApplyQuantityAsync(decimal value, bool relative, bool stop = false)
     {

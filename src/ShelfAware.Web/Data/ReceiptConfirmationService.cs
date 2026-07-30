@@ -178,6 +178,9 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
         }
 
         receipt.Status = ReceiptStatus.Confirmed;
+        // The confirm's own moment — what lets removal order this confirm against a later count
+        // (§13.2). The early AlreadyConfirmed return above is what keeps a re-confirm from moving it.
+        receipt.ConfirmedAt = DateTimeOffset.Now;
         receipt.VerifiedForEval = verifiedForEval;
         await db.SaveChangesAsync(cancellationToken);
         return new(AlreadyConfirmed: false, purchases, created, retracked.Count);

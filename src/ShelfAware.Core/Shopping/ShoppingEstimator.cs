@@ -24,8 +24,7 @@ public record ProductEstimate
 
     /// <summary>This item is Stocked because the household COUNTED it, not because its rhythm says so
     /// (§13.5). A list has to say which: the due date is deliberately left untouched by suppression, so
-    /// a row would otherwise read "Stocked · 3 days overdue" and contradict itself. Caught by running
-    /// it — the numbers were right and the sentence they formed together wasn't.</summary>
+    /// a row would otherwise read "Stocked · 3 days overdue" and contradict itself.</summary>
     public bool SuppressedByCount { get; init; }
 
     /// <summary>How much was counted, for the row that explains the suppression above.</summary>
@@ -40,8 +39,8 @@ public record ProductEstimate
     /// when nothing is. <b>Every buying surface must use this rather than printing
     /// <see cref="NextBuyDate"/> raw</b>: suppression deliberately leaves the due date alone so a screen
     /// CAN explain itself, which means a screen that prints it anyway renders "Stocked · 3 days overdue"
-    /// — a row contradicting itself in one line. That shipped twice (the grocery list, then the products
-    /// grid) before this became one shared string.</summary>
+    /// — a row contradicting itself in one line. One shared string so a new surface can't reword the
+    /// facts.</summary>
     public string? CountNote => SuppressedByCount
         ? $"You have {QuantityFormat.Describe(CountOnHand ?? 0, DefaultUnit)}"
           + (CountedOn is { } on ? $", counted {on:MMM d}" : "")

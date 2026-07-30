@@ -858,6 +858,55 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      review-verified rather than unit-pinned — stated here so the gap is a known one.
    - **864 tests green, 0 warnings** (861 before the pass).
 
+28. **v4.1 — the feel pass (2026-07-30): six agreed design changes from the gate reviewer's "do you
+   agree with the implementation?" conversation.** Jordan agreed with all six pushbacks and asked for
+   them fixed, with "I do NOT want to be bothered while keeping track of my quantity" as the ruling
+   constraint. The changes, and the couplings that mattered:
+   - ⚠️ **A relative move no longer re-anchors the attestation clock** (`StockLedger.AdjustByHuman`).
+     "Used two" states a DELTA — the person saw what they took, not the rows behind it — so stamping
+     `QuantityCountedAt` let a household dutifully tapping "Used one" renew a count's credibility
+     forever without anyone looking, and the drift check could never fire for the most engaged users.
+     Exception, deliberate: a relative move landing at ZERO (clamp included) stamps and asserts the
+     out — taking the last package IS seeing the shelf empty. §13.1 is rewritten around "the date of a
+     LOOK".
+   - **…which made the removal guard sound, so it exists now.** `Receipt.ConfirmedAt` (AdditiveSchema,
+     NULL on pre-v4.1 confirms = subtract as ever, stamped once on the PendingReview→Confirmed
+     transition) lets removal skip the subtract for a product whose count was attested AFTER the
+     confirm — the recount already reflects the shelf, phantom excluded. Only sound because ONLY an
+     absolute look advances the clock; a relative move deliberately does not shield the count (its
+     case NEEDS the subtract or phantom stock survives). Both directions pinned. This replaces the
+     "accepted edge" documented one commit earlier — its justification died with the stamping change.
+   - **"Ate it" is tell-don't-ask now.** The confirm panel and its whole preview machinery
+     (`MealStock.Plan`/`Describe`/`PlanAsync`/`Matches`, the two-context re-plan dance) are DELETED —
+     a confirmation on every cook of the same stew gets blown through unread, protecting nothing.
+     One tap commits; the notice says exactly what was taken with **↩ Undo**. `MealStock.Apply` now
+     returns the ACTUAL per-product deltas (clamp-aware — taking "one package" from half a pack
+     reports 0.5), and `MealStock.Restore` reverses precisely those, so the undo can never invent
+     stock; restore commutes with intervening receipts/cooks, and a product whose counting stopped
+     meanwhile stays dormant (the ledger's gate). Undo also removes the MealEvent and steps
+     TimesEaten back. Every "Ate it" gets the notice + Undo (a mis-tap was previously permanent).
+   - **Stop-counting is dormant, not destructive** — `TrackQuantity` false, number + date KEPT, the
+     v3.6 toggle semantics ("off is dormant"). Every reader gates on the flag (verified: predictor,
+     PantryOnHand, MealStock's query, backlog's AlreadyCounted, the ledger's Move), so the pair
+     influences nothing; the product page attributes it ("you counted 14 on Mar 12") instead of
+     amnesia. Receipts leave a dormant number frozen at its date — pinned.
+   - **`CountingAdvice` (Core) steers against counting fast movers** — ≤10-day rhythms get a passive
+     "hard to keep true" sentence on the count panel (never a gate, and never shown for a rhythm-less
+     item: §13.8's census stock is the feature's best case). Someone WILL count the milk; the drift
+     questions that follow must not read as the feature being broken.
+   - **`IPantryStore.SetDefaultUnitAsync` + a unit box on the count panel** — display only (§13.3's
+     decrement still reads fractionality), but previously the manual add form was the field's only
+     writer, so a receipt-imported weight item could never say "lb". Walks the tenancy drill
+     (isolation test) like every new write path.
+   - **Comment trim** — the incident-retelling clauses ("caught by running it", "shipped twice",
+     "0 of 190") came out of Core/page comments in favor of the constraint alone; the history lives
+     here and in timeline.md. The ⚠️ constraint comments stay.
+   - **884 tests green, 0 warnings** (864 before; +20: ledger relative/dormant semantics,
+     CountingAdvice, unit setter + isolation, removal-guard both directions, ConfirmedAt migration,
+     Apply/Restore incl. the clamp case). ⚠️ The Recipes/ProductDetail page flows (notice, Undo
+     button, unit box, nudge) have no unit tests — no page-test harness exists in this repo — and
+     were NOT live-verified this session; the logic beneath them is covered.
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active

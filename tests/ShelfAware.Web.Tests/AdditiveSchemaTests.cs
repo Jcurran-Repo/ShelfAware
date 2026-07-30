@@ -132,6 +132,28 @@ public class AdditiveSchemaTests : IDisposable
         Assert.Equal(new DateTimeOffset(2026, 7, 28, 9, 0, 0, TimeSpan.FromHours(-5)), counted.QuantityCountedAt);
     }
 
+    [Fact]
+    public async Task Adds_the_confirmed_at_column_to_a_pre_v41_db()
+    {
+        await using var db = _db.CreateDbContext();
+        var fresh = await ColumnTypesAsync(db, "Receipts");
+
+        // Simulate a DB built before v4.1's confirm timestamp existed.
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Receipts DROP COLUMN ConfirmedAt;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // second boot — a no-op, not a duplicate-column error
+
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "Receipts"));
+
+        // A receipt written without the stamp reads back NULL — "no moment to compare", which removal
+        // treats as a pre-v4.1 confirm and subtracts exactly as it always did.
+        var receipt = new Receipt { ImagePath = "confirmedat-test", Status = ReceiptStatus.Confirmed };
+        db.Receipts.Add(receipt);
+        await db.SaveChangesAsync();
+        Assert.Null((await db.Receipts.AsNoTracking().SingleAsync(r => r.Id == receipt.Id)).ConfirmedAt);
+    }
+
     /// <summary>Each column's declared type, keyed by name — order-independent, so it survives the fact
     /// that ADD COLUMN appends while EnsureCreated writes the model's order.</summary>
     private static async Task<Dictionary<string, string>> ColumnTypesAsync(ShelfAwareDbContext db, string table)

@@ -306,8 +306,9 @@ else
     /// is the moment a household notices the number is wrong, and sending them to another page to fix it
     /// is how a count stops being maintained. Takes one package — <see cref="ProductEstimate.OnePackage"/>,
     /// the same amount "Ate it" and the product page take, so no surface disagrees about what "one" is —
-    /// through the ONE quantity write path, which stamps it as the human attestation it is. Reaching zero
-    /// there records the outage, exactly as it does on the product page.</summary>
+    /// through the ONE quantity write path. Relative, so it moves the number without renewing the
+    /// attestation (§13.1: only a look re-anchors the clock); reaching zero is the exception and records
+    /// the outage, exactly as on the product page.</summary>
     private async Task UsedOne(ProductEstimate e)
     {
         if (actionBusy) return;

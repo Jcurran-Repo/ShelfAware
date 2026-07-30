@@ -48,11 +48,20 @@ public interface IPantryStore
     /// <summary>THE write path for a human's count (§13.3). Shared by the product page, the one-tap
     /// adjusters and the <c>set_quantity</c> tool, because §13.4's asserted-zero rule has to hold on
     /// every road in: a person saying "none left" writes a real OutNow, and only a person's does.
-    /// <paramref name="relative"/> adds a delta ("used two" → -2) instead of setting a total.
-    /// <paramref name="stopCounting"/> clears the count entirely rather than storing a number.</summary>
+    /// <paramref name="relative"/> adds a delta ("used two" → -2) instead of setting a total — a delta
+    /// moves the number but does NOT re-anchor the attestation clock (§13.1: only a look at the shelf
+    /// does; landing at zero is the exception). <paramref name="stopCounting"/> stops believing the
+    /// count; the number and its date stay, dormant (§13.3).</summary>
     Task<bool> SetQuantityAsync(
         int productId, decimal quantity, bool relative = false, bool stopCounting = false,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Set (or clear, with null/blank) the product's display unit — the label
+    /// <c>QuantityFormat.Describe</c> appends ("2.34 lb" instead of a bare "2.34"). Display ONLY: §13.3's
+    /// decrement reads the fractionality of the quantities, never this field. Exists because the manual
+    /// add-a-product form used to be the field's only writer, so a receipt-imported weight item could
+    /// never say "lb" no matter what the household typed anywhere.</summary>
+    Task<bool> SetDefaultUnitAsync(int productId, string? unit, CancellationToken cancellationToken = default);
 
     /// <summary>Start or stop tracking a product for replenishment (untracked = kept in the catalog
     /// but not predicted or shown as running low).</summary>

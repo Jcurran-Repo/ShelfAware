@@ -10,15 +10,11 @@ namespace ShelfAware.Core.Domain;
 /// "decimal because weight items are already fractional". A whole-number median means the numbers are
 /// COUNTS, so one of them is 1; a fractional median means they're a continuous measure, so one package is
 /// that median.</para>
-/// <para>⚠️ It deliberately does NOT read <see cref="Product.DefaultUnit"/>, which was the original
-/// discriminator and was wrong twice over. Nothing populates it — the ONLY writer in the app is the
-/// manual add-a-product form, so every receipt-imported product has it null forever with no editor to
-/// set it (0 of 190 products on the real dev database). That alone made the weight branch unreachable.
-/// And consulting it would be actively harmful where it IS set: a product declaring "each" or "ct" with
-/// quantities [6, 6, 6] would take the median path and charge six for cooking one, which is the exact
-/// bug the counted branch exists to prevent. Fractionality answers correctly in both cases, so the unit
-/// string stays what it always really was — a display label for
-/// <see cref="Shopping.QuantityFormat.Describe"/>.</para>
+/// <para>⚠️ It deliberately does NOT read <see cref="Product.DefaultUnit"/>. That field is a display
+/// label for <see cref="Shopping.QuantityFormat.Describe"/> and nothing more: receipt-imported products
+/// rarely have it set, and where a human has set one it can mislead — "each" or "ct" beside quantities
+/// [6, 6, 6] would take the median path and charge six for cooking one, the exact bug the counted
+/// branch exists to prevent. Fractionality answers correctly in both cases.</para>
 /// </summary>
 public static class TypicalPackage
 {

@@ -56,15 +56,75 @@ public class StockLedgerTests
     }
 
     [Fact]
-    public void Stopping_clears_the_number_rather_than_leaving_it_to_rot()
+    public void Stopping_keeps_the_number_dormant_rather_than_forgetting_it()
     {
-        // A count nobody maintains is worse than none: the engine would go on trusting it.
+        // The v3.6 toggle semantics: off is dormant, not destructive. "You counted 6 on this date"
+        // stays a true historical fact; what stops is the BELIEVING, and every reader gates on
+        // TrackQuantity, so the dormant pair influences nothing until a fresh count.
         var product = Counted(6);
         product.QuantityCountedAt = Now;
 
         StockLedger.StopCounting(product);
 
         Assert.False(product.TrackQuantity);
+        Assert.Equal(6m, product.QuantityOnHand);
+        Assert.Equal(Now, product.QuantityCountedAt);
+    }
+
+    [Fact]
+    public void A_dormant_count_is_frozen_at_its_date_not_maintained()
+    {
+        // Receipts must not keep a stopped count fresh-looking: Move gates on TrackQuantity, so the
+        // number stays exactly what it was when counting stopped.
+        var product = Counted(6);
+        StockLedger.StopCounting(product);
+
+        StockLedger.Add(product, 3);
+
+        Assert.Equal(6m, product.QuantityOnHand);
+    }
+
+    [Fact]
+    public void A_relative_adjust_moves_the_number_but_not_the_clock()
+    {
+        // "Used two" states a DELTA, not a level — the person saw what they took, not the rows behind
+        // it. Stamping here would let a weekly "Used one" renew the count's credibility forever
+        // without anyone looking, and §13.5's drift check would never fire for the most engaged users.
+        var counted = new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero);
+        var product = Counted(4);
+        product.QuantityCountedAt = counted;
+
+        var assertedOut = StockLedger.AdjustByHuman(product, -2, Now);
+
+        Assert.False(assertedOut);
+        Assert.Equal(2m, product.QuantityOnHand);
+        Assert.Equal(counted, product.QuantityCountedAt);
+    }
+
+    [Fact]
+    public void A_relative_adjust_landing_at_zero_stamps_and_asserts_the_out()
+    {
+        // Taking the last package IS seeing the shelf empty — a level statement, so the clock moves
+        // and the caller owes the OutNow. The clamped case included: "used two" against one is none.
+        var counted = new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero);
+        var product = Counted(1);
+        product.QuantityCountedAt = counted;
+
+        var assertedOut = StockLedger.AdjustByHuman(product, -2, Now);
+
+        Assert.True(assertedOut);
+        Assert.Equal(0m, product.QuantityOnHand);
+        Assert.Equal(Now, product.QuantityCountedAt);
+    }
+
+    [Fact]
+    public void A_relative_adjust_against_an_unknown_count_does_nothing()
+    {
+        // No baseline, nothing to be relative to — the callers refuse first; the ledger holds the
+        // same line rather than trusting them to.
+        var product = Counted(onHand: null);
+
+        Assert.False(StockLedger.AdjustByHuman(product, -1, Now));
         Assert.Null(product.QuantityOnHand);
         Assert.Null(product.QuantityCountedAt);
     }

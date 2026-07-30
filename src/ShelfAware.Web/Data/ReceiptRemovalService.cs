@@ -60,17 +60,20 @@ public sealed class ReceiptRemovalService(
             // go. Same StockLedger the confirm used, so the two can't drift into disagreeing about how
             // much a removal owes. Products deleted below don't care — their row goes with them.
             //
-            // ⚠️ Deliberately UNCONDITIONAL, even when a human attested the count between the confirm
-            // and this removal (§13.2's accepted edge). A "skip when QuantityCountedAt postdates the
-            // confirm" guard was considered and rejected: the attestation date also advances on
-            // RELATIVE moves ("Used one"), which carry a duplicate's phantom stock forward rather than
-            // re-baselining — under the guard that case would KEEP the phantom, an error found only by
-            // running out, where subtracting errs toward one early rebuy and is fixed by one recount.
-            // The stored data cannot tell the two attestation kinds apart without the change log §13.6
-            // defers, so symmetry stays structural.
+            // ⚠️ …except past a LOOK the human took after the confirm. An absolute count attested
+            // after ConfirmedAt already reflects whatever this receipt did or didn't put on the shelf
+            // — recount 6 after a duplicate's phantom +3 and the 6 is the truth, phantom excluded —
+            // so subtracting would overrule newer, better evidence. This comparison is only sound
+            // because ONLY an absolute count advances QuantityCountedAt: a relative "Used one"
+            // carries phantom stock forward rather than re-baselining, so it must not (and does not)
+            // shield the count from the subtract. Null ConfirmedAt is a pre-v4.1 confirm with no
+            // moment to compare against — subtract as always.
             foreach (var purchase in linked)
             {
-                if (purchase.Product is { } product) StockLedger.Remove(product, purchase.Quantity);
+                if (purchase.Product is not { } product) continue;
+                if (receipt.ConfirmedAt is { } confirmedAt
+                    && product.QuantityCountedAt is { } counted && counted > confirmedAt) continue;
+                StockLedger.Remove(product, purchase.Quantity);
             }
 
             db.PurchaseEvents.RemoveRange(linked);

@@ -107,6 +107,71 @@ public class ReceiptRemovalServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task An_absolute_count_taken_after_the_confirm_is_not_overruled_by_removal()
+    {
+        // The duplicate-upload aftermath, in order: a dupe confirms (+1), the household recounts the
+        // shelf (6 — ground truth, phantom excluded), the dupe is removed. Subtracting past that look
+        // would overrule newer, better evidence. Skipping is sound ONLY because a relative move never
+        // advances the attestation clock — the test below pins that half.
+        var id = await CountedProduct("Beef Chuck Roast", onHand: 5);
+        var receipt = await ConfirmReceipt(writeAliases: false, ("CHUCK ROAST", "Beef Chuck Roast", id));
+        Assert.Equal(6m, (await ReadProduct(id)).QuantityOnHand);
+
+        await using (var db = _db.CreateDbContext())
+        {
+            var p = await db.Products.SingleAsync(x => x.Id == id);
+            StockLedger.Attest(p, 6, DateTimeOffset.Now.AddMinutes(1)); // the look, after the confirm
+            await db.SaveChangesAsync();
+        }
+
+        await Service().RemoveAsync(receipt);
+
+        Assert.Equal(6m, (await ReadProduct(id)).QuantityOnHand); // the look wins
+    }
+
+    [Fact]
+    public async Task A_relative_move_after_the_confirm_does_not_shield_the_count_from_removal()
+    {
+        // "Used one" between the dupe's confirm and its removal carries the phantom stock forward — it
+        // re-baselines nothing — so the removal must still subtract, or the count keeps stock that
+        // never existed and the buy list goes quiet about it (the failure you find by running out).
+        var id = await CountedProduct("Beef Chuck Roast", onHand: 5);
+        var receipt = await ConfirmReceipt(writeAliases: false, ("CHUCK ROAST", "Beef Chuck Roast", id));
+
+        await using (var db = _db.CreateDbContext())
+        {
+            var p = await db.Products.SingleAsync(x => x.Id == id);
+            StockLedger.AdjustByHuman(p, -1, DateTimeOffset.Now.AddMinutes(1)); // 6 → 5, clock untouched
+            await db.SaveChangesAsync();
+        }
+
+        await Service().RemoveAsync(receipt);
+
+        Assert.Equal(4m, (await ReadProduct(id)).QuantityOnHand); // the dupe's +1 comes back off
+    }
+
+    [Fact]
+    public async Task A_pre_timestamp_confirm_subtracts_exactly_as_it_always_did()
+    {
+        // Receipts confirmed before ConfirmedAt existed carry NULL — no moment to compare a count
+        // against, so removal behaves as it did before the column: subtract, err toward early rebuy.
+        var id = await CountedProduct("Beef Chuck Roast", onHand: 5);
+        var receipt = await ConfirmReceipt(writeAliases: false, ("CHUCK ROAST", "Beef Chuck Roast", id));
+
+        await using (var db = _db.CreateDbContext())
+        {
+            (await db.Receipts.SingleAsync(r => r.Id == receipt)).ConfirmedAt = null; // a pre-v4.1 confirm
+            var p = await db.Products.SingleAsync(x => x.Id == id);
+            StockLedger.Attest(p, 6, DateTimeOffset.Now.AddMinutes(1)); // even with a newer look…
+            await db.SaveChangesAsync();
+        }
+
+        await Service().RemoveAsync(receipt);
+
+        Assert.Equal(5m, (await ReadProduct(id)).QuantityOnHand); // …the subtract still runs
+    }
+
+    [Fact]
     public async Task A_confirm_leaves_an_uncounted_product_alone()
     {
         // Opt-in stays opt-in: confirming a receipt must not start counting an item, nor invent a total

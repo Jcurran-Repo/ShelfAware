@@ -97,8 +97,7 @@ public record PredictionResult
 
     /// <summary>How much the number is still believed, and therefore whether a surface may STATE it or must
     /// ATTRIBUTE it to the date it was taken (§13.5). Explicit rather than inferable from
-    /// <see cref="CountRunsOutOn"/> being null, because a screen guessing at the engine's reasoning is the
-    /// failure this branch made five times.</summary>
+    /// <see cref="CountRunsOutOn"/> being null — a screen must never guess at the engine's reasoning.</summary>
     public CountConfidence CountConfidence { get; init; }
 
     /// <summary>When the counted stock is expected to run out: the last human attestation plus how long

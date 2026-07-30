@@ -152,22 +152,20 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory) : IPantryStore
         // An ABSOLUTE count below zero is refused, not clamped — the same rule as
         // SetPurchaseQuantityAsync, and for the same reason: "-5 on hand" is a number nobody means, and
         // quietly turning it into 0 would file an OutNow (§13.4) off a typo. A relative move is
-        // different: "used two" against a count of one legitimately lands at none, and the clamp in
-        // StockLedger.Attest is the right answer there.
+        // different: "used two" against a count of one legitimately lands at none, and the ledger's
+        // clamp is the right answer there.
         if (!relative && quantity < 0) return false;
 
-        // A relative move still lands as an ATTESTATION: "used two" is a person telling us about the
-        // shelf, so it stamps the date and can assert an out — unlike the automated -1 an "Ate it"
-        // applies. It needs a baseline to be relative TO, though; against an unknown count there is
-        // nothing to subtract from, and inventing one is the error §13.2 exists to avoid.
-        var target = quantity;
-        if (relative)
-        {
-            if (product.QuantityOnHand is not { } onHand) return false;
-            target = onHand + quantity;
-        }
+        // A relative move is a human act but a statement about the DELTA, not the level — they saw
+        // what they took, not the rows behind it — so it moves the number WITHOUT re-anchoring the
+        // attestation clock (§13.1; landing at zero is the exception, stamped and asserted inside the
+        // ledger). It needs a baseline to be relative TO; against an unknown count there is nothing to
+        // subtract from, and inventing one is the error §13.2 exists to avoid.
+        if (relative && product.QuantityOnHand is null) return false;
 
-        var assertedOut = StockLedger.Attest(product, target, DateTimeOffset.Now);
+        var assertedOut = relative
+            ? StockLedger.AdjustByHuman(product, quantity, DateTimeOffset.Now)
+            : StockLedger.Attest(product, quantity, DateTimeOffset.Now);
 
         // §13.4: a HUMAN'S zero is real evidence, so it writes the outage the burn-rate rhythm learns
         // from — dated by running out rather than by remembering to report it. A zero that automated
@@ -182,6 +180,18 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory) : IPantryStore
             });
         }
 
+        await db.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
+    public async Task<bool> SetDefaultUnitAsync(int productId, string? unit, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        // Filtered lookup — the same in-household existence rule as every other mutation.
+        var product = await db.Products.FindAsync([productId], cancellationToken);
+        if (product is null) return false;
+
+        product.DefaultUnit = string.IsNullOrWhiteSpace(unit) ? null : unit.Trim();
         await db.SaveChangesAsync(cancellationToken);
         return true;
     }

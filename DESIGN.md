@@ -151,7 +151,9 @@ the decrements — but ShelfAware already automates the hard half: a confirmed r
 
 **Opt-in per product** (`Product.TrackQuantity`, default **false**). The hoard is ~30 items — freezer
 meat, canned goods, bulk buys. Every other product keeps running on §6 exactly as it does today. A
-feature that demands you count the salt is dead inside a week, and §13.7 is how you pick the 30.
+feature that demands you count the salt is dead inside a week: §13.7 is how you pick the 30, and the
+count panel says so out loud for fast movers (`CountingAdvice`, ≤10-day rhythms — steering, never a
+gate, because someone WILL try to count the milk and then blame the feature for the drift questions).
 
 ### 13.1 What a quantity is
 - **Packages, not volume.** `QuantityOnHand` is a `decimal`, and it counts *containers*. Four milk means
@@ -165,14 +167,19 @@ feature that demands you count the salt is dead inside a week, and §13.7 is how
   app tells the two kinds apart** — see §13.3, and note it is a stronger signal than any unit field,
   because it is written by the same path that writes the number.
   *Display* follows `Product.DefaultUnit` where a human has set one ("2.34 lb") and prints a bare number
-  otherwise. ⚠️ In practice that is **always** a bare number for anything imported from a receipt: the
-  unit of a weight-priced line goes into the per-purchase `Size`, not `DefaultUnit`, and nothing but the
-  manual add-a-product form ever writes `DefaultUnit` (0 of 190 products on the real dev database). A
-  bare "2.34" is incomplete rather than wrong, which is why display can live with it and the decrement
-  in §13.3 cannot.
-- **`QuantityCountedAt` is an attestation date, not a modification date.** Only a human act (setting the
-  count, confirming a prompt, tapping a correction) advances it. Automated `+`/`-` move the number and
-  leave the date alone — that gap is precisely what §13.5 measures.
+  otherwise. Extraction never writes it (a weight-priced line's unit goes into the per-purchase `Size`),
+  so it is human-entered: the manual add-a-product form at creation, and the count panel's unit box on
+  Product Detail afterwards (`IPantryStore.SetDefaultUnitAsync` — added when "no editor exists" turned
+  out to mean every receipt-imported weight item showed a bare number forever). A bare "2.34" is
+  incomplete rather than wrong, which is why display can live with it and the decrement in §13.3 cannot.
+- **`QuantityCountedAt` is the date of a LOOK, not of a change — and not every human act is a look.**
+  A stated total ("we have 6") re-anchors it: the person saw the shelf. A **relative** move ("used
+  two", the lists' one-tap "Used one") moves the number and leaves the clock alone: the person saw what
+  they *took*, not the rows behind it, and letting deltas refresh the clock would renew a count's
+  credibility forever for exactly the households that tap "Used one" most — §13.5's drift check would
+  never fire for them. The one exception is a relative move that lands at ZERO (clamped included):
+  taking the last package *is* seeing the shelf empty, so it stamps and asserts the out (§13.4).
+  Automated `+`/`-` never touch the date — that gap is precisely what §13.5 measures.
 
 ### 13.2 Receipts move the count by the quantity actually bought
 - **The one confirm path owns the `+`.** `ReceiptConfirmationService` adds **the confirmed line's own
@@ -186,16 +193,16 @@ feature that demands you count the salt is dead inside a week, and §13.7 is how
 - `add_purchase` (chat/manual) increments by its quantity the same way.
 - **Symmetry is the invariant worth testing:** confirm-then-remove must return every affected count to
   the number it started at, for count and weight items alike.
-- ⚠️ **Accepted edge: the subtraction is unconditional, even past a newer attestation.** Confirm a
-  duplicate (+3), recount the shelf (attest 6 — ground truth, phantom excluded), then remove the
-  duplicate: the count lands at 3 while the shelf holds 6. A guard — skip the subtract when
-  `QuantityCountedAt` postdates the confirm — was weighed and rejected, because the attestation date
-  also advances on **relative** moves ("Used one", §13.3), which carry a duplicate's phantom stock
-  *forward* rather than re-baselining. Under the guard that case would keep the phantom: an inflated
-  count, over-silenced buy list, an error found only by running out. The unconditional subtract errs
-  the other way — one early rebuy, fixed by one recount — which is the app's safe side (the same
-  direction as its rounding). Telling the two attestation kinds apart would need the change log §13.6
-  defers; until then symmetry stays structural, and the removal service says so at the call site.
+- ⚠️ **Removal defers to a LOOK the human took after the confirm.** Confirm a duplicate (+3), recount
+  the shelf (attest 6 — ground truth, phantom excluded), then remove the duplicate: subtracting past
+  that look would overrule newer, better evidence, so when `QuantityCountedAt` postdates the receipt's
+  `ConfirmedAt` (§13.6) the subtract is skipped for that product. This guard is only sound because
+  §13.1 makes the clock mean exactly "a look": a **relative** move ("Used one") carries a duplicate's
+  phantom stock *forward* rather than re-baselining, deliberately does not advance the clock, and so
+  deliberately does not shield the count — its case needs the subtract, or the phantom survives and
+  the buy list goes quiet about stock that never existed. Both directions are pinned. A receipt
+  confirmed before `ConfirmedAt` existed carries NULL and subtracts exactly as it always did — erring
+  toward one early rebuy, the app's safe side.
 
 ### 13.3 Decrements
 - **"Ate it" auto-decrements each MAIN ingredient's matched product by one package.** Recipe quantities
@@ -210,14 +217,15 @@ feature that demands you count the salt is dead inside a week, and §13.7 is how
   the numbers are counts, so one of them is 1; a fractional median means they are a continuous measure,
   so one package is that median. This is the same fact §13.1 gives as its reason for the decimal type —
   *"weight items are already fractional"* — used as the signal it is.
-  **`DefaultUnit` was tried first and was wrong twice over.** Nothing populates it: its only writer in
-  the whole app is the manual add-a-product form, there is no editor for it afterwards, and extraction
-  puts a weight-priced line's unit in the per-purchase **`Size`** (prompt rule 6) — so every
-  receipt-imported product has it null forever (measured: **0 of 190** products on the real dev
-  database), which made the weight branch unreachable. And where it *is* set it can mislead: a product
-  declaring `"each"` or `"ct"` with quantities `[6, 6, 6]` would take the median path and charge six for
-  cooking one — the very bug the counted rule exists to prevent, arriving through the field meant to
-  prevent it. It stays a display label for `QuantityFormat.Describe` and nothing more.
+  **`DefaultUnit` was tried first and was wrong twice over.** At the time nothing populated it — its
+  only writer was the manual add-a-product form with no editor afterwards, and extraction puts a
+  weight-priced line's unit in the per-purchase **`Size`** (prompt rule 6) — so every receipt-imported
+  product had it null (measured: **0 of 190** on the real dev database), which made the weight branch
+  unreachable. And where it *is* set it can mislead: a product declaring `"each"` or `"ct"` with
+  quantities `[6, 6, 6]` would take the median path and charge six for cooking one — the very bug the
+  counted rule exists to prevent, arriving through the field meant to prevent it. The count panel now
+  has a unit box (§13.1), but that changes nothing here: it stays a display label for
+  `QuantityFormat.Describe` and nothing more, whoever writes it.
   *Residual limit, accepted:* a weight item whose median lands on a whole number (beef at exactly 2.00 lb
   every time) reads as counted and deducts 1. Continuous weights essentially never do that, and the
   alternative is trusting a field nothing writes. Pinned by
@@ -248,8 +256,8 @@ feature that demands you count the salt is dead inside a week, and §13.7 is how
   - **Ambiguity is refused, not guessed.** An ingredient can be covered by several counted products
     ("ground beef" by two cuts). Cooking one meal must not take a package off each, and picking one
     silently would be arbitrary — so such a main decrements **none** of them and is **reported in the
-    confirm panel** with the candidates. A decrement the app declines to make is as much the household's
-    business as one it makes; saying nothing would leave a count quietly un-maintained.
+    after-the-tap notice** with the candidates. A decrement the app declines to make is as much the
+    household's business as one it makes; saying nothing would leave a count quietly un-maintained.
     ⚠️ **Judged against the COMPLETE set of chosen products, which needs a second pass.** If another main
     is pinned to one of the candidates, that package is already being taken and this ingredient is covered
     by it — reporting it anyway put a product in the panel's "not touching these" list while the take list
@@ -260,15 +268,19 @@ feature that demands you count the salt is dead inside a week, and §13.7 is how
     makes the tick on a recipe row and the action taken on its behalf the same question asked once.
 - **This is approximate, and it fails SAFE.** Using half a package still costs a whole one, so the count
   reaches zero early and you rebuy early — the same direction as the app's existing safe-side rounding
-  (intervals floor, buy quantities ceil). What it must never be is silent: the "Ate it" tap **shows what
-  it is about to decrement and lets it be corrected there.** ✅ *built: a recipe touching a counted main
-  gets a confirm step naming each item, its package and where the count lands; a recipe touching none
-  stays a single tap, so the common case keeps zero friction. `MealStock` (Web/Data) owns both the
-  preview and the write from ONE query — logic private to a page is logic no test can reach, which is
-  the §13.7 lesson applied to the one path that changes a hand-maintained number unasked.*
+  (intervals floor, buy quantities ceil). What it must never be is silent — and "not silent" means
+  **tell, don't ask**: the tap commits in one go, and the notice then says exactly what was taken
+  (actual amounts, where each count landed, and any main it declined to guess at) with **↩ Undo** as
+  the one-tap way back. ✅ *built: `MealStock.Apply` reports the ACTUAL takes (clamp-aware, so the undo
+  can never invent stock) and `MealStock.Restore` reverses precisely them; a recipe touching nothing
+  counted gets a one-line notice.* A confirmation step was tried first and rejected by its own logic:
+  asked on every cook of the same stew, it gets blown through unread, which protects nothing and
+  costs every tap. `MealStock` (Web/Data) owns the resolution, the write and the restore — logic
+  private to a page is logic no test can reach, the §13.7 lesson applied to the one path that changes
+  a hand-maintained number unasked.
 - `set_quantity(product_name, quantity, relative?)` — the chat/voice tool. Absolute by default; with
-  `relative: true` the number is a delta ("used two" → `-2`). Either way it is a human act, so it
-  advances `QuantityCountedAt`.
+  `relative: true` the number is a delta ("used two" → `-2`). Only the absolute form re-anchors
+  `QuantityCountedAt` — a delta is not a look (§13.1), except when it lands at zero.
 - One-tap decrement **where the count is claimed**: the grocery list's suppressed row and the product
   page's count panel (both "Used one"). Deliberately **not** on the dashboard — it lists running-low
   items only, so a counted item appears there only once its count has *stopped* doing work (stale,
@@ -375,8 +387,16 @@ DB** (unlike v3).
 ```
 Product   + TrackQuantity (bool, default false)      # opt-in; false = today's behaviour exactly
           + QuantityOnHand (decimal?)                 # packages, or the item's own unit for weight items
-          + QuantityCountedAt (DateTimeOffset?)       # last HUMAN attestation (§13.1), not last change
+          + QuantityCountedAt (DateTimeOffset?)       # last LOOK at the shelf (§13.1), not last change
+Receipt   + ConfirmedAt (DateTimeOffset?)             # when the confirm RAN (v4.1) — orders it against a
+                                                      # later look (§13.2); NULL = pre-v4.1, subtract as ever
 ```
+
+**Stop-counting is dormant, not destructive** — `TrackQuantity` goes false and the number + date STAY
+(the v3.6 toggle semantics). Every reader gates on the flag, so the dormant pair renders nowhere and
+influences nothing; the product page attributes it ("you counted 14 on Mar 12 — enter a number to start
+again") instead of amnesia. Resuming still starts from a fresh count: the old number is stale by
+definition.
 
 **`QuantityFormat.Describe` (Core/Shopping) already exists — use it, don't write a second one.** §13.1's
 display rule is built: it labels a quantity with `Product.DefaultUnit` when the product declares one
@@ -388,11 +408,9 @@ display rule is built: it labels a quantity with `Product.DefaultUnit` when the 
 instead. The backlog check's Qty column runs through it now; the count's own display must too,
 or the two surfaces drift the way the due dates did. Format is `0.##`, matching the recommended-quantity
 displays — `0.#` silently rounds 2.34 lb to 2.3, which a test pins.
-No change-log table in v4.0: purchases and `MealEvent`s are already dated, so every automated change
-is *attributable* — though not always to a clock time: a confirm's own moment is unrecorded (its
-purchases carry the receipt's PURCHASE date), which is one bound on the §13.2 accepted edge — and only
-manual edits are unrecorded entirely. Add the log if the household ever needs to ask "why does it say
-3?" and can't answer it.
+No change-log table in v4.0: purchases and `MealEvent`s are already dated, confirms carry their own
+moment since v4.1 (`ConfirmedAt`, above), and only manual edits are unrecorded. Add the log if the
+household ever needs to ask "why does it say 3?" and can't answer it.
 
 **Editing a purchase's quantity after the fact** ✅ *built: tap a quantity in Product Detail's "Recent
 purchases"; `IPantryStore.SetPurchaseQuantityAsync` is the one write path.* There was no way to correct one.

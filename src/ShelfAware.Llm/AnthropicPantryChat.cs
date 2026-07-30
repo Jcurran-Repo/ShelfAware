@@ -227,12 +227,10 @@ public class AnthropicPantryChat : IPantryChat
                 var pr = ReplenishmentPredictor.Predict(product, today, trackExpirations, honorQuantity: true);
                 // A suppressed item must not read "Stocked, due <last week>". Suppression deliberately
                 // leaves DueDate as the rhythm's own projection so a surface CAN explain itself — which
-                // means a surface that prints it raw contradicts the status beside it. The grocery list
-                // and the products grid each shipped exactly that once (CLAUDE.md item 20); this reply
-                // was the third surface to get honorQuantity without the matching display change.
-                // Same SOURCE as their CountNote — the engine's SuppressedByCount/CountRunsOutOn plus
-                // the product's own count — worded for a spoken reply rather than a table cell; the
-                // wording may differ from ProductEstimate.CountNote, the facts must not.
+                // means a surface that prints it raw contradicts the status beside it. Same SOURCE as
+                // the grids' CountNote — the engine's SuppressedByCount/CountRunsOutOn plus the
+                // product's own count — worded for a spoken reply rather than a table cell; the wording
+                // may differ from ProductEstimate.CountNote, the facts must not.
                 var due = !pr.SuppressedByCount && pr.DueDate is { } dd ? $", due {dd:yyyy-MM-dd}" : "";
                 var count = !pr.SuppressedByCount ? ""
                     : $" You have {QuantityFormat.Describe(product.QuantityOnHand ?? 0, product.DefaultUnit)} on hand"

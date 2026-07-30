@@ -27,14 +27,40 @@ public static class StockLedger
         return product.QuantityOnHand == 0m;
     }
 
-    /// <summary>Stop counting this item: the number and its attestation go, and the product returns to
-    /// running on the learned cadence alone. Clearing rather than keeping a stale number is the point —
-    /// a count nobody maintains is worse than none, because the engine would go on trusting it.</summary>
+    /// <summary>A HUMAN adjusts the count by a delta — "used two", the lists' one-tap "Used one". They
+    /// are at the cupboard, but they are stating what they TOOK, not what is there: taking one from the
+    /// front verifies nothing about the rows behind it. So the number moves and the attestation clock
+    /// does NOT — a household that dutifully taps "Used one" every week must not renew a count's
+    /// credibility forever without anyone actually looking, or §13.5's drift check never fires for
+    /// exactly the most engaged users. Only <see cref="Attest"/> — a look at the shelf — re-anchors it.
+    /// <para><b>The one exception is landing at zero, and it returns true there.</b> Taking the last
+    /// package IS seeing the shelf empty — a statement of the level, not just the delta — so it stamps
+    /// the clock and the caller owes the OutNow, exactly as for an attested zero (§13.4). That includes
+    /// the clamped case: "used two" against a count of one really is none.</para>
+    /// <para>Requires an established count — a delta against "unknown" has no baseline, and inventing
+    /// one is the error §13.2 exists to avoid. Callers refuse before reaching here; the null check is
+    /// the ledger holding its own invariant.</para></summary>
+    public static bool AdjustByHuman(Product product, decimal delta, DateTimeOffset at)
+    {
+        if (product.QuantityOnHand is not { } onHand) return false;
+        var landed = Math.Max(0m, onHand + delta);
+        product.QuantityOnHand = landed;
+        if (landed != 0m) return false;
+        product.QuantityCountedAt = at;
+        return true;
+    }
+
+    /// <summary>Stop counting this item: the product returns to running on the learned cadence alone.
+    /// <para>The number and its date are KEPT, dormant — the same toggle semantics as v3.6's expiration
+    /// dates ("off is dormant, not destructive"). "You counted 14 on Mar 12" stays a true historical
+    /// fact whether or not anyone maintains it; what stops is the BELIEVING, and every reader gates on
+    /// <see cref="Product.TrackQuantity"/>, so a dormant pair renders nowhere and influences nothing
+    /// (including <see cref="Move"/> — receipts leave it frozen at its date). Resuming still starts
+    /// from a fresh <see cref="Attest"/> — the old number is stale by definition — but the product page
+    /// can show what was known and when, instead of amnesia.</para></summary>
     public static void StopCounting(Product product)
     {
         product.TrackQuantity = false;
-        product.QuantityOnHand = null;
-        product.QuantityCountedAt = null;
     }
 
     /// <summary>Stock arrived: a receipt line was confirmed, or a purchase was recorded by hand.</summary>

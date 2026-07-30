@@ -192,6 +192,78 @@ public class EfPantryStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task A_relative_move_does_not_renew_the_counts_credibility()
+    {
+        // "Used one" states a delta, not a level — the person saw what they took, not the rows behind
+        // it. If it re-anchored the attestation, a household dutifully tapping "Used one" would keep a
+        // count believed forever without anyone looking, and the drift check could never fire.
+        var (productId, _) = await CountedWithPurchase(onHand: 2, bought: 2);
+
+        Assert.True(await _store.SetQuantityAsync(productId, -1, relative: true));
+
+        var product = await Reload(productId);
+        Assert.Equal(1m, product.QuantityOnHand);
+        Assert.Equal(new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero), product.QuantityCountedAt);
+    }
+
+    [Fact]
+    public async Task An_absolute_count_re_anchors_the_attestation()
+    {
+        // The counterpart: a stated total IS a look at the shelf, so the clock moves with it.
+        var (productId, _) = await CountedWithPurchase(onHand: 2, bought: 2);
+
+        Assert.True(await _store.SetQuantityAsync(productId, 5));
+
+        var product = await Reload(productId);
+        Assert.Equal(5m, product.QuantityOnHand);
+        Assert.True(product.QuantityCountedAt > new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero));
+    }
+
+    [Fact]
+    public async Task Stop_counting_keeps_the_number_dormant()
+    {
+        // v3.6's toggle semantics: off is dormant, not destructive. The pair stays for the product
+        // page to attribute ("you counted 2 on Mar 1"); TrackQuantity off is what stops the believing.
+        var (productId, _) = await CountedWithPurchase(onHand: 2, bought: 2);
+
+        Assert.True(await _store.SetQuantityAsync(productId, 0, stopCounting: true));
+
+        var product = await Reload(productId);
+        Assert.False(product.TrackQuantity);
+        Assert.Equal(2m, product.QuantityOnHand);
+        Assert.Equal(new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero), product.QuantityCountedAt);
+        await using var db = _db.CreateDbContext();
+        Assert.Empty(await db.InventorySignals.Where(s => s.ProductId == productId).ToListAsync());
+    }
+
+    [Fact]
+    public async Task Set_default_unit_trims_and_stores_the_label()
+    {
+        var (productId, _) = await CountedWithPurchase(onHand: 2, bought: 2);
+
+        Assert.True(await _store.SetDefaultUnitAsync(productId, "  lb "));
+
+        Assert.Equal("lb", (await Reload(productId)).DefaultUnit);
+    }
+
+    [Fact]
+    public async Task Set_default_unit_clears_on_blank()
+    {
+        var (productId, _) = await CountedWithPurchase(onHand: 2, bought: 2);
+        Assert.True(await _store.SetDefaultUnitAsync(productId, "lb"));
+
+        Assert.True(await _store.SetDefaultUnitAsync(productId, "   "));
+
+        Assert.Null((await Reload(productId)).DefaultUnit);
+    }
+
+    [Fact]
+    public async Task Set_default_unit_reports_false_for_an_unknown_product()
+    {
+        Assert.False(await _store.SetDefaultUnitAsync(999_999, "lb"));
+    }
+
+    [Fact]
     public async Task Adding_a_purchase_retracks_an_ignored_product_and_reports_it()
     {
         // The chat/voice "bought X" path must end "don't want it for a while" (grocery-list Untrack)

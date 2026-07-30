@@ -312,10 +312,9 @@ public static class ReplenishmentPredictor
             var lowSinceTheCount = activeSignal is { Kind: SignalKind.RunningLow } low
                 && (counted.QuantityCountedAt is not { } at || SignalDate.Of(low.SignaledAt) > SignalDate.Of(at));
             // …and there has to BE a recommendation to hold back. A still-learning item was never going
-            // to be asked for, so calling it suppressed made every surface explain a decision the engine
-            // never made — "its rhythm would otherwise have asked for it by now", about an item with no
-            // rhythm. Found by running it. Stocked is already off the buy lists, so this only ever
-            // skips work there.
+            // to be asked for, so calling it suppressed would make every surface explain a decision the
+            // engine never made — "its rhythm would otherwise have asked for it by now", about an item
+            // with no rhythm. Stocked is already off the buy lists, so this only ever skips work there.
             var wouldHaveAsked = status is PredictionStatus.Overdue or PredictionStatus.DueSoon;
 
             if (counted.QuantityOnHand.Value > 0

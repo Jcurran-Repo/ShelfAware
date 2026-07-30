@@ -21,5 +21,13 @@ public class Receipt : IHouseholdOwned
     /// itself and inflate the scores.</summary>
     public bool VerifiedForEval { get; set; }
 
+    /// <summary>When the confirm actually RAN — distinct from <see cref="PurchasedAt"/>, which is the
+    /// date printed on the receipt. Exists so removal can order the confirm against a later human count:
+    /// a count attested after this moment already reflects whatever the confirm put on the shelf, so
+    /// removal must not subtract past it (§13.2). Null on receipts confirmed before the column existed —
+    /// removal treats those as it always did. Stamped once, on the PendingReview → Confirmed transition
+    /// only; a re-confirm is a no-op and must not move it.</summary>
+    public DateTimeOffset? ConfirmedAt { get; set; }
+
     public List<ReceiptLine> Lines { get; set; } = [];
 }

@@ -199,6 +199,15 @@ internal sealed class FakePantryStore : IPantryStore
         return Task.FromResult(true);
     }
 
+    public Task<bool> SetDefaultUnitAsync(int productId, string? unit, CancellationToken cancellationToken = default)
+    {
+        if (Products.All(p => p.Id != productId)) return Task.FromResult(false);
+        Units.Add((productId, string.IsNullOrWhiteSpace(unit) ? null : unit.Trim()));
+        return Task.FromResult(true);
+    }
+
+    public List<(int ProductId, string? Unit)> Units { get; } = [];
+
     public Task<IReadOnlyList<string>> AddSubstitutesAsync(int productId, IReadOnlyList<string> values, CancellationToken cancellationToken = default)
     {
         var have = new HashSet<string>(
@@ -248,6 +257,8 @@ internal sealed class ThrowingPantryStore(params Product[] products) : IPantrySt
         CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("simulated DB write failure");
     public Task<bool> SetPurchaseQuantityAsync(int purchaseId, decimal quantity, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("simulated DB write failure");
+    public Task<bool> SetDefaultUnitAsync(int productId, string? unit, CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("simulated DB write failure");
     public Task<IReadOnlyList<RecipeRef>> GetRecipesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<string>> AddSubstitutesAsync(int productId, IReadOnlyList<string> values, CancellationToken cancellationToken = default) => throw new NotSupportedException();
