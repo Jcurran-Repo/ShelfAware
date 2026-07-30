@@ -1028,12 +1028,15 @@
 
     private void DismissEat()
     {
+        // Same gate as ClosePicker: dismissing mid-pick would null the state a completing pick is
+        // about to record into, leaving a saved decrement with no notice and no Undo.
+        if (eatBusy) return;
         lastEat = null;
         eatError = null;
     }
 
     /// <summary>The human pointed at what came off the shelf (§13.3's picker). The decrement is the
-    /// same take "Ate it" makes — <see cref="MealStock.TakePicked"/>: ledger clamp, no signal, clock
+    /// same take "Ate it" makes — <see cref="MealStock.TakeOne"/>: ledger clamp, no signal, clock
     /// untouched — recorded into <see cref="EatDone.Taken"/> so the notice shows it and Undo reverses
     /// it with everything else.</summary>
     private async Task PickCandidate(MealStock.Ambiguity question, MealStock.Candidate candidate)
@@ -1047,11 +1050,23 @@
             await using var db = await DbFactory.CreateDbContextAsync();
             var product = await db.Products.Include(p => p.Purchases)
                 .FirstOrDefaultAsync(p => p.Id == candidate.ProductId);
-            var taken = product is null ? null : MealStock.TakePicked(product);
-            if (taken is not null) await db.SaveChangesAsync();
-            saved = true;
-            if (taken is not null) done.Taken.Add(taken);
-            done.ToPick.Remove(question); // answered — even if the shelf moved and nothing could be taken
+            var taken = product is null ? null : MealStock.TakeOne(product);
+            if (taken is not null)
+            {
+                await db.SaveChangesAsync();
+                saved = true;
+                done.Taken.Add(taken);
+                done.ToPick.Remove(question);
+            }
+            else
+            {
+                // The shelf moved between the ask and the answer (emptied, counting stopped, product
+                // deleted) — nothing was written, so `saved` stays false. The question is spent but
+                // must not VANISH: it lands in Skipped so the notice still says the ingredient went
+                // uncounted (§13.3's no-silent-refusal rule holds even for a pick that found nothing).
+                done.ToPick.Remove(question);
+                done.Skipped.Add(question);
+            }
             await LoadAsync();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -1066,10 +1081,14 @@
     }
 
     /// <summary>Click-away (§13.3): the human didn't say which product came off the shelf, so no count
-    /// moves — the open questions land in the notice as "left uncounted" rather than vanishing.</summary>
+    /// moves — the open questions land in the notice as "left uncounted" rather than vanishing.
+    /// <para>Gated on <c>eatBusy</c>, as is <see cref="DismissEat"/>: a pick's awaits yield the
+    /// dispatcher, so an ungated backdrop click could file a question as skipped while the pick for
+    /// that same question was completing — the notice would then claim both "taken" and "left
+    /// uncounted" about one ingredient.</para></summary>
     private void ClosePicker()
     {
-        if (lastEat is not { } done || done.ToPick.Count == 0) return;
+        if (eatBusy || lastEat is not { } done || done.ToPick.Count == 0) return;
         done.Skipped.AddRange(done.ToPick);
         done.ToPick.Clear();
     }

@@ -53,6 +53,8 @@ public class QuantityFormatTests
         Assert.Equal("1 jar", QuantityFormat.Describe(1m, "jars"));
         Assert.Equal("4 cans", QuantityFormat.Describe(4m, "cans"));
         Assert.Equal("1 can", QuantityFormat.Describe(1.0m, "cans")); // 1.0 is still exactly one
+        Assert.Equal("1 Can", QuantityFormat.Describe(1m, "Cans")); // capitalization must not dodge it
+        Assert.Equal("1 CAN", QuantityFormat.Describe(1m, "CANS"));
     }
 
     [Fact]

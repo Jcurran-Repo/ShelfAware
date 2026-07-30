@@ -341,6 +341,18 @@ _Last updated: 7/30/2026_
   live: the no-clock-refresh "Used one", the correction→stretch→suppression-standdown cascade and its
   exact revert, dormant stop-counting surfacing the fast-mover nudge, and the fixed `query_status`
   through a real model call. **889 tests green, 0 warnings** — 7/30/2026
+- [x] **The official `/code-review` (ten angles, run inline) — 9 findings, all fixed, all in the
+  day-old picker code while the multiply-reviewed rest came back clean.** The real ones: the picker's
+  backdrop/dismiss could interleave with an in-flight pick (notice claiming an ingredient both taken
+  AND left uncounted; a dismissed mid-save pick leaving a saved decrement with no notice or Undo) —
+  both gated on `eatBusy` now; a pick that found nothing to take vanished from the notice — it lands
+  in Skipped; the resolve's second query re-filters and tolerates rows deleted/emptied in the
+  two-query window instead of throwing. Consolidation: `MealStock.TakeOne` is the ONE take (`Apply`
+  had re-implemented its body); the all-names scan is paid only when a grounded link points outside
+  the counted set; the stale "refused, not guessed" docstring says "asked"; `QuantityFormat`
+  singularizes case-insensitively; the pick-clock test seeds a real date (null==null pinned nothing);
+  a blank Quick update send answers with a hint. **889 tests green, 0 warnings.** Regated and PUSHED
+  — 7/30/2026
 - [ ] Shelf-photo census — the intake path for stock receipts can never know about (pre-app, elsewhere, gifted, bulk): photo → candidates → the review-grid shape → confirm. ★ Never creates PurchaseEvents (invented purchases would poison every rhythm); proposes a front-row count the human corrects, with occlusion/stacking designed for rather than papered over — Not complete
 
 ---

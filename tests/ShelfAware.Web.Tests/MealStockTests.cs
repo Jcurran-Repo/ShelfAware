@@ -443,11 +443,17 @@ public class MealStockTests : IDisposable
         // The picker's decrement is the same take "Ate it" would have made: the product's own median
         // pack for a weight item, ledger-clamped, no signal, attestation clock untouched.
         var productId = await Product("Ground Beef", counted: true, onHand: 3.72m, unit: null, 1.18m, 1.24m, 1.31m);
+        // A REAL attestation date, or the clock assertion below compares null to null and pins nothing.
+        var countedAt = new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero);
+        await using (var seed = _db.CreateDbContext())
+        {
+            (await seed.Products.SingleAsync(p => p.Id == productId)).QuantityCountedAt = countedAt;
+            await seed.SaveChangesAsync();
+        }
 
         await using var db = _db.CreateDbContext();
         var product = await db.Products.Include(p => p.Purchases).SingleAsync(p => p.Id == productId);
-        var countedAt = product.QuantityCountedAt;
-        var taken = MealStock.TakePicked(product);
+        var taken = MealStock.TakeOne(product);
         await db.SaveChangesAsync();
 
         Assert.NotNull(taken);

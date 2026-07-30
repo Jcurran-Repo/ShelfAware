@@ -949,6 +949,28 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      4 cans on hand as of July 27… no action needed"); every logged query carried the household filter.
    - **889 tests green, 0 warnings** (884 before the pass).
 
+30. **The official `/code-review` over the whole branch (2026-07-30) — 9 findings, all fixed; then the
+   branch was regated and pushed.** Ten angles run inline (no fan-outs). Everything clustered in the
+   newest code — the day-old picker — while the multiply-reviewed older code came back clean:
+   - **The picker's close paths are gated on `eatBusy` now.** `ClosePicker` (the backdrop) and
+     `DismissEat` could interleave with an in-flight pick's awaits: a backdrop click mid-save filed
+     the very question being answered as "skipped" (notice claiming one ingredient both taken and
+     left uncounted), and a dismiss mid-save orphaned a SAVED decrement with no notice and no Undo.
+   - **A pick that finds nothing to take lands in Skipped** instead of vanishing (the shelf can move
+     between the ask and the answer), and `saved` is only set after a real write, so the failure
+     messages can't claim a no-op was recorded.
+   - **The resolve's second query re-filters** (`TrackQuantity && QuantityOnHand > 0`) and both
+     consumers tolerate a dropped row — a product deleted/emptied between the two queries is omitted,
+     as pre-picker code did, instead of `byId[id]`/`!.Value` throwing mid-tap.
+   - **`MealStock.TakeOne` is THE take** — `Apply` had re-implemented its body; now every decrement
+     (auto and picked) is one definition. The all-names scan is paid only when a grounded link
+     actually points outside the counted set. The stale "refused, not guessed" docstring now says
+     what the file's own header and §13.3 say: asked.
+   - `QuantityFormat` singularizes case-insensitively ("1 Can" from "Cans"); the pick-clock test
+     seeds a real attestation date (it compared null to null and pinned nothing); a blank Quick
+     update send answers with a hint instead of an active-looking button doing nothing in silence.
+   - **889 tests green, 0 warnings.**
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active

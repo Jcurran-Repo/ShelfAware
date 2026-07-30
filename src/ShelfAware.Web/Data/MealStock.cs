@@ -51,32 +51,26 @@ public static class MealStock
     }
 
     /// <summary>Take the packages off, and report exactly what was taken — the report IS the honesty
-    /// contract now that nothing asks first, and it is what <see cref="Restore"/> reverses. Goes through
-    /// <see cref="StockLedger.Remove"/>, which has no path to a signal at all: a machine decrement that
-    /// arrives at zero is a hypothesis for the product page to raise, never an outage the human never
-    /// reported (§13.4). A product the ledger didn't actually move is not reported.</summary>
+    /// contract now that nothing asks first, and it is what <see cref="Restore"/> reverses. Each take
+    /// is <see cref="TakeOne"/>; a product the ledger didn't actually move is not reported.</summary>
     public static IReadOnlyList<Applied> Apply(Resolution resolution)
     {
         var applied = new List<Applied>();
         foreach (var product in resolution.Products)
         {
-            var before = product.QuantityOnHand!.Value;
-            StockLedger.Remove(product, TypicalPackage.Of(product.Purchases.Select(x => x.Quantity)));
-            var after = product.QuantityOnHand!.Value;
-            if (before != after)
-            {
-                applied.Add(new Applied(product.Id, product.Name, product.DefaultUnit, before - after, after));
-            }
+            if (TakeOne(product) is { } taken) applied.Add(taken);
         }
         return applied;
     }
 
-    /// <summary>The picker's decrement: the same take "Ate it" would have made, applied to the product
-    /// the human just pointed at. Same ledger, same package rule, same §13.4 guarantees — clamps at
-    /// zero, never writes a signal, never touches the attestation clock. Returns what actually moved
-    /// (for the notice and the undo), or null when nothing did. The caller owns SaveChanges, exactly as
-    /// for <see cref="Apply"/>.</summary>
-    public static Applied? TakePicked(Product product)
+    /// <summary>ONE take, the only definition — <see cref="Apply"/> makes it for every resolved main,
+    /// the page makes it for the product a picker answer points at. One package per
+    /// <see cref="TypicalPackage"/>, through <see cref="StockLedger.Remove"/>: clamps at zero, never
+    /// writes a signal (§13.4 — a machine decrement arriving at zero is a hypothesis for the product
+    /// page to raise, never an outage the human never reported), never touches the attestation clock.
+    /// Returns the ACTUAL movement for the notice and the undo, or null when nothing moved — including
+    /// a product that stopped qualifying since it was loaded. The caller owns SaveChanges.</summary>
+    public static Applied? TakeOne(Product product)
     {
         if (product.QuantityOnHand is not { } before || before <= 0) return null;
         StockLedger.Remove(product, TypicalPackage.Of(product.Purchases.Select(x => x.Quantity)));
@@ -106,11 +100,12 @@ public static class MealStock
     /// in the matcher, not here. This shared rule is also what lets a count on a product the recipe was
     /// saved BEFORE (census stock, §13.8) be maintained at all: nothing back-fills
     /// <c>MatchedProduct</c> when a product appears.</para>
-    /// <para><b>Ambiguity is refused, not guessed.</b> The matcher is deliberately loose, so an ingredient
+    /// <para><b>Ambiguity is ASKED, not guessed.</b> The matcher is deliberately loose, so an ingredient
     /// can be covered by more than one counted product ("ground beef" by two cuts). Cooking one meal must
-    /// not take a package off each, and picking one silently would be arbitrary — so a main that resolves
-    /// to several counted products decrements none of them and is reported instead
-    /// (<see cref="Ambiguity"/>), so the human can correct it by hand.</para>
+    /// not take a package off each, and picking one silently would be arbitrary — so such a main
+    /// decrements none of them here and comes back as an <see cref="Ambiguity"/> with full candidates,
+    /// for the page's picker: the human points at what came off the shelf, or clicks away and no count
+    /// moves.</para>
     /// <para>Products at zero are excluded: <see cref="StockLedger.Remove"/> clamps there, so nothing
     /// would change and nothing is worth reporting.</para>
     /// <para>Two queries rather than one, deliberately: the first reads the counted set's names and
@@ -132,14 +127,21 @@ public static class MealStock
             .ToListAsync(ct);
         if (counted.Count == 0) return ([], []);
 
-        // Every product NAME in the household, counted or not — one cheap column scan. Needed to tell
-        // a grounded link whose product exists-but-uncounted (a live pairing the household simply
-        // doesn't count — decrementing a token-matched stand-in would be a guess) from one whose
-        // product is GONE (renamed/deleted — a stale link, where the token fall-through is the whole
-        // §13.8 census story and must stay automatic).
-        var allNames = (await db.Products.Select(p => p.Name).ToListAsync(ct))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var countedNames = counted.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // Every product NAME in the household, counted or not — needed only to tell a grounded link
+        // whose product exists-but-uncounted (a live pairing the household simply doesn't count —
+        // decrementing a token-matched stand-in would be a guess) from one whose product is GONE
+        // (renamed/deleted — a stale link, where the token fall-through is the whole §13.8 census
+        // story and must stay automatic). Paid only when some grounded link actually points outside
+        // the counted set: the common cases (no grounded link, or grounded to a counted product)
+        // short-circuit on countedNames and never consult it.
+        var groundedOutside = mains.Any(m =>
+            m.MatchedProduct is { Length: > 0 } g && !countedNames.Contains(g));
+        var allNames = groundedOutside
+            ? (await db.Products.Select(p => p.Name).ToListAsync(ct))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : countedNames;
 
         // IngredientMatcher.Covering already prefers the grounded MatchedProduct over an inference, so
         // there is no precedence to re-implement here — a pinned ingredient simply comes back as one
@@ -183,25 +185,29 @@ public static class MealStock
             .ToList();
 
         // One load for everything the caller might touch — the takes AND the picker's candidates, with
-        // purchases so each carries its own typical package.
+        // purchases so each carries its own typical package. Re-filtered to rows that still qualify:
+        // the window between the two queries belongs to other circuits, and a product deleted or
+        // emptied in it is DROPPED (as the pre-picker code tolerated), never indexed into a crash.
         var wanted = chosen.Union(open.SelectMany(o => o.Ids)).ToList();
         if (wanted.Count == 0) return ([], []);
-        var products = await db.Products
-            .Where(p => wanted.Contains(p.Id))
-            .Include(p => p.Purchases)
-            .ToListAsync(ct);
-        var byId = products.ToDictionary(p => p.Id);
+        var byId = (await db.Products
+                .Where(p => wanted.Contains(p.Id))
+                .Include(p => p.Purchases)
+                .ToListAsync(ct))
+            .Where(p => p is { TrackQuantity: true, QuantityOnHand: > 0 })
+            .ToDictionary(p => p.Id);
 
         var ambiguous = open
             .Select(o => new Ambiguity(
                 o.Ingredient,
-                [.. o.Ids.Select(id => byId[id])
+                [.. o.Ids.Where(byId.ContainsKey).Select(id => byId[id])
                     .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ThenBy(p => p.Id)
                     .Select(p => new Candidate(
                         p.Id, p.Name, p.DefaultUnit, p.QuantityOnHand!.Value,
                         TypicalPackage.Of(p.Purchases.Select(x => x.Quantity))))]))
+            .Where(a => a.Candidates.Count > 0) // every candidate vanished → nothing left to ask
             .ToList();
 
-        return ([.. chosen.Select(id => byId[id])], ambiguous);
+        return ([.. chosen.Where(byId.ContainsKey).Select(id => byId[id])], ambiguous);
     }
 }

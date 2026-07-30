@@ -28,9 +28,10 @@ public static class QuantityFormat
         if (string.IsNullOrWhiteSpace(defaultUnit)) return number;
         var unit = defaultUnit.Trim();
         if (quantity == 1m && unit.Length > 1
-            && unit.EndsWith('s') && !unit.EndsWith("ss", StringComparison.Ordinal))
+            && unit.EndsWith("s", StringComparison.OrdinalIgnoreCase)
+            && !unit.EndsWith("ss", StringComparison.OrdinalIgnoreCase))
         {
-            unit = unit[..^1];
+            unit = unit[..^1]; // case-insensitive detection, case-preserving trim: "Cans" → "Can"
         }
         return $"{number} {unit}";
     }

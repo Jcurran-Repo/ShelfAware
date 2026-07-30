@@ -287,7 +287,16 @@ else
 
     private async Task SendChat()
     {
-        if (chatBusy || string.IsNullOrWhiteSpace(chatInput)) return;
+        if (chatBusy) return;
+        if (string.IsNullOrWhiteSpace(chatInput))
+        {
+            // The button stays enabled on a blank box so the browser's implicit Enter-submission
+            // works (it no-ops on a disabled default button) — so a blank send must answer with
+            // SOMETHING, or an active-looking button does nothing in silence.
+            chatReply = "Say what you bought or ran low on first — e.g. \"we're out of coffee\".";
+            chatError = false;
+            return;
+        }
         chatBusy = true;
         chatReply = null;
         try
