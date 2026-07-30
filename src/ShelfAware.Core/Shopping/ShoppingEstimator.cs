@@ -126,7 +126,7 @@ public static class ShoppingEstimator
                 ? SignalDate.Of(at)
                 : null,
             DefaultUnit = product.DefaultUnit,
-            OnePackage = TypicalPackage.Of(product.DefaultUnit, product.Purchases.Select(p => p.Quantity)),
+            OnePackage = TypicalPackage.Of(product.Purchases.Select(p => p.Quantity)),
             TypicalQuantity = typicalQuantity,
             RecommendedQuantity = recommendedQuantity,
             UnitPrice = unitPrice,

@@ -583,7 +583,7 @@ else
         // actually doing to the prediction sitting beside it.
         prediction = ReplenishmentPredictor.Predict(product, today, trackExpirations, honorQuantity: true);
         editQuantity = product.QuantityOnHand;
-        onePackage = TypicalPackage.Of(product.DefaultUnit, product.Purchases.Select(x => x.Quantity));
+        onePackage = TypicalPackage.Of(product.Purchases.Select(x => x.Quantity));
         editExpiration = prediction.ExpiresOn; // the panel's date input starts at the governing date
         expirationError = null;
 

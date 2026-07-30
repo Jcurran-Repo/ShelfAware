@@ -654,6 +654,33 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      `/pre-push` gate exists to catch, in the file that states the rule. **Re-read the number off the
      final run before writing it down.**
 
+22. **⚠️ `DefaultUnit` is a display label and NOTHING else (2026-07-29).** It was §13.3's discriminator
+   between a counted item and a weight item, and it was the wrong field twice over. Measured, not
+   assumed — a read-only probe of the real dev DB: **0 of 190 products have `DefaultUnit` set, and 0 of
+   537 purchases have a fractional quantity.**
+   - **Nothing populates it.** The ONLY writer in the app is the manual add-a-product form
+     (`Products.razor` `CreateAsync`); `ProductMergeService` merely propagates an existing value. There
+     is **no editor for it afterwards**, so a receipt-imported product has it null forever. Extraction
+     never sets it: prompt **rule 6** puts a weight-priced line's unit in the per-purchase **`Size`**
+     ("2.31 lb @ 1.99/lb" → quantity 2.31, size "lb"). So the weight branch was unreachable, and would
+     have deducted an arbitrary 1 from a 2.31 lb count — the exact arbitrariness §13.3 forbids in its
+     own words.
+   - **Where it IS set it can mislead.** A product declaring `"each"` or `"ct"` with quantities
+     `[6, 6, 6]` took the median path and charged six for cooking one — the freezer-emptying bug the
+     counted rule exists to prevent, arriving through the field meant to prevent it.
+   - **The quantities are the discriminator now.** Whole-number median → counts → one is 1; fractional
+     median → a measure → one package is the median. That is the same fact §13.1 already gives as its
+     reason for the decimal type ("weight items are already fractional"), and it is a stronger signal
+     because it is written by the same path that writes the number. The MEDIAN decides, so one
+     hand-corrected 1.5 among whole counts can't flip a product into weight mode.
+   - Accepted residual: a weight item whose median lands whole (beef at exactly 2.00 lb every time) reads
+     as counted and deducts 1. Pinned by a test so it's a known cost, not a surprise.
+   - **The lesson worth carrying:** the spec asserted a premise about its own data
+     ("`Quantity` carries 2.34… display follows `DefaultUnit`") that no one had checked against the
+     database. Half of it was true (extraction really does write fractional quantities for weight-priced
+     lines) and half was fiction (that field is never populated). **Before building on a field, grep for
+     its writers.** One `grep -rn` would have caught this before any of it was designed.
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active

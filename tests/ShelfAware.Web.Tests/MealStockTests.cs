@@ -97,14 +97,33 @@ public class MealStockTests : IDisposable
     [Fact]
     public async Task A_weight_item_loses_the_pack_this_household_actually_buys()
     {
-        // Not a round pound — a pound is not a unit of anything about how this household buys.
-        var productId = await Product("Ground Beef", counted: true, onHand: 5m, unit: "lb", 1.18m, 1.24m, 1.31m);
+        // Not a round pound — a pound is not a unit of anything about how this household buys. NOTE the
+        // null unit: DefaultUnit is null on every receipt-imported product (0 of 190 on the real dev
+        // database, since the only writer is the manual add form), so if the unit were the discriminator
+        // this — the case §13.3 designed the median for — would deduct an arbitrary 1. The fractional
+        // quantities are what identify it.
+        var productId = await Product("Ground Beef", counted: true, onHand: 5m, unit: null, 1.18m, 1.24m, 1.31m);
         var recipeId = await Recipe("Ground Beef");
 
         var (plan, after) = await Cook(recipeId, productId);
 
         Assert.Equal(1.24m, Assert.Single(plan).Amount);
         Assert.Equal(3.76m, after);
+    }
+
+    [Fact]
+    public async Task A_misleading_unit_cannot_turn_a_counted_item_into_a_weight_one()
+    {
+        // The other half of dropping the unit from the decision: "each" is a real thing a human might
+        // type, and it is NOT a weight. Consulting it would have charged six for cooking one — the same
+        // freezer-emptying bug, arriving through the field that was supposed to prevent it.
+        var productId = await Product("Beef Chuck Roast", counted: true, onHand: 6m, unit: "each", 6m, 6m, 6m);
+        var recipeId = await Recipe("Beef Chuck Roast");
+
+        var (plan, after) = await Cook(recipeId, productId);
+
+        Assert.Equal(1m, Assert.Single(plan).Amount);
+        Assert.Equal(5m, after);
     }
 
     [Fact]

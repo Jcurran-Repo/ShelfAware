@@ -159,9 +159,17 @@ feature that demands you count the salt is dead inside a week, and §13.7 is how
   the dominant-size model in CLAUDE.md). **The UI must say "packages" plainly**; an unqualified "4" reads
   as a claim about volume, which would be a lie.
 - **Decimal because weight items are already fractional.** `PurchaseEvent.Quantity` carries 2.34 for
-  2.34 lb of ground beef. For those the count is fractional *in the item's own unit*, which is meaningful
-  — not "2.34 packages of beef". Display follows `Product.DefaultUnit`: unit-less items render whole
-  ("4 packages"), weight items render in their unit ("2.34 lb"). No normalization between the two, ever.
+  2.34 lb of ground beef (extraction prompt rule 6: a weight-priced line's quantity IS the printed
+  weight). For those the count is fractional *in the item's own unit*, which is meaningful — not
+  "2.34 packages of beef". No normalization between the two, ever. **That fractionality is also how the
+  app tells the two kinds apart** — see §13.3, and note it is a stronger signal than any unit field,
+  because it is written by the same path that writes the number.
+  *Display* follows `Product.DefaultUnit` where a human has set one ("2.34 lb") and prints a bare number
+  otherwise. ⚠️ In practice that is **always** a bare number for anything imported from a receipt: the
+  unit of a weight-priced line goes into the per-purchase `Size`, not `DefaultUnit`, and nothing but the
+  manual add-a-product form ever writes `DefaultUnit` (0 of 190 products on the real dev database). A
+  bare "2.34" is incomplete rather than wrong, which is why display can live with it and the decrement
+  in §13.3 cannot.
 - **`QuantityCountedAt` is an attestation date, not a modification date.** Only a human act (setting the
   count, confirming a prompt, tapping a correction) advances it. Automated `+`/`-` move the number and
   leave the date alone — that gap is precisely what §13.5 measures.
@@ -187,11 +195,23 @@ feature that demands you count the salt is dead inside a week, and §13.7 is how
   "Beef Chuck Roast × 6" is one purchase *of six*, not one purchase of a six-pack, so a median over
   per-purchase quantities returns 6 for a household that habitually buys six at a time and cooking one
   dinner would empty the freezer — which lifts suppression and puts the item straight back on the
-  grocery list, the exact opposite of the feature's purpose. **`Product.DefaultUnit` is the
-  discriminator**, the same one `QuantityFormat.Describe` uses, so what the app deducts and what it
-  prints can never disagree about which kind of number this is. (Known edge: a non-weight unit like
-  "ct" takes the median path. It's the only signal the model carries, and guessing from the numbers
-  would be worse.)
+  grocery list, the exact opposite of the feature's purpose.
+- ⚠️ **The QUANTITIES are the discriminator, not `Product.DefaultUnit`.** A whole-number median means
+  the numbers are counts, so one of them is 1; a fractional median means they are a continuous measure,
+  so one package is that median. This is the same fact §13.1 gives as its reason for the decimal type —
+  *"weight items are already fractional"* — used as the signal it is.
+  **`DefaultUnit` was tried first and was wrong twice over.** Nothing populates it: its only writer in
+  the whole app is the manual add-a-product form, there is no editor for it afterwards, and extraction
+  puts a weight-priced line's unit in the per-purchase **`Size`** (prompt rule 6) — so every
+  receipt-imported product has it null forever (measured: **0 of 190** products on the real dev
+  database), which made the weight branch unreachable. And where it *is* set it can mislead: a product
+  declaring `"each"` or `"ct"` with quantities `[6, 6, 6]` would take the median path and charge six for
+  cooking one — the very bug the counted rule exists to prevent, arriving through the field meant to
+  prevent it. It stays a display label for `QuantityFormat.Describe` and nothing more.
+  *Residual limit, accepted:* a weight item whose median lands on a whole number (beef at exactly 2.00 lb
+  every time) reads as counted and deducts 1. Continuous weights essentially never do that, and the
+  alternative is trusting a field nothing writes. Pinned by
+  `A_weight_item_whose_median_lands_whole_reads_as_counted`.
 - **For a weight item, "one package" is the household's typical package, not a round number.** Deducting
   1 lb would be arbitrary — a pound is not a unit of anything about how this household buys. Instead:
   **the median of that product's per-purchase quantities**, so a household whose ground beef arrives in
@@ -284,8 +304,10 @@ Product   + TrackQuantity (bool, default false)      # opt-in; false = today's b
 display rule is built: it labels a quantity with `Product.DefaultUnit` when the product declares one
 ("2.34 lb") and prints a bare number when it doesn't ("4"). **Null means UNKNOWN, never "packages"** —
 `PurchaseEvent.Quantity` is a package count for a counted item and a *weight* for a weight item, so
-"2.34 packages" of beef would be a confident lie where "2.34" is merely incomplete, and most products
-have no unit set. The backlog check's Qty column runs through it now; the count's own display must too,
+"2.34 packages" of beef would be a confident lie where "2.34" is merely incomplete, and in practice
+**no** product has a unit set (0 of 190 on the real dev database — §13.1). This is the one place
+`DefaultUnit` is still consulted, and it is display only; §13.3's decrement reads the quantities
+instead. The backlog check's Qty column runs through it now; the count's own display must too,
 or the two surfaces drift the way the due dates did. Format is `0.##`, matching the recommended-quantity
 displays — `0.#` silently rounds 2.34 lb to 2.3, which a test pins.
 No change-log table in v4.0: purchases and `MealEvent`s are already dated, so every automated path is

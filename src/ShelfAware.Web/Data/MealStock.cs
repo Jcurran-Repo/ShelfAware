@@ -48,7 +48,7 @@ public static class MealStock
         (await CountedMainsAsync(db, recipe, ct))
             .Select(p => new Take(
                 p.Id, p.Name, p.DefaultUnit, p.QuantityOnHand!.Value,
-                TypicalPackage.Of(p.DefaultUnit, p.Purchases.Select(x => x.Quantity))))
+                TypicalPackage.Of(p.Purchases.Select(x => x.Quantity))))
             .ToList();
 
     /// <summary>Take the packages off. Goes through <see cref="StockLedger.Remove"/>, which has no path
@@ -58,7 +58,7 @@ public static class MealStock
     {
         foreach (var product in await CountedMainsAsync(db, recipe, ct))
         {
-            StockLedger.Remove(product, TypicalPackage.Of(product.DefaultUnit, product.Purchases.Select(x => x.Quantity)));
+            StockLedger.Remove(product, TypicalPackage.Of(product.Purchases.Select(x => x.Quantity)));
         }
     }
 
