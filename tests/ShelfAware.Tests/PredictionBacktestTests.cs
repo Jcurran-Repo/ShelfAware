@@ -76,6 +76,28 @@ public class PredictionBacktestTests
     }
 
     [Fact]
+    public void SignalsOnOrAfterTheScoredTrip_AreInvisibleToItsPrediction()
+    {
+        // The half the restock test alone cannot pin: its restock sits BEFORE the scored trip, so a
+        // peeking implementation passes it too. This restock exists only after the final trip — read
+        // the full signal list and the day-20 prediction re-anchors to day 25, missing by five.
+        // Walk-forward means the snapshot never contains it.
+        var product = ProductWith(1, "Milk", 0, 10, 20);
+        product.Signals.Add(new InventorySignal
+        {
+            ProductId = 1,
+            Kind = SignalKind.Restocked,
+            SignaledAt = new DateTimeOffset(D(25).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
+        });
+
+        var summary = PredictionBacktest.Run([product]);
+
+        Assert.Equal(1, summary.Samples);
+        Assert.Equal(0, summary.MedianAbsErrorDays);
+        Assert.Equal(1.0, summary.HitRate);
+    }
+
+    [Fact]
     public void AggregatesAcrossProducts()
     {
         var summary = PredictionBacktest.Run([

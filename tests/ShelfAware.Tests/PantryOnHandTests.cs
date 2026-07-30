@@ -210,6 +210,31 @@ public class PantryOnHandTests
     }
 
     [Fact]
+    public void A_stale_positive_count_with_an_overdue_rhythm_defers_to_the_rhythm()
+    {
+        // The mirror of A_fresh_count_beats_a_rhythm_that_says_overdue, and the pair that makes both
+        // real: identical long-overdue coffee, identical count of three — only the attestation age
+        // differs. A ~9-day rhythm spends three in ~27 days, so a 200-day-old count is long distrusted
+        // and the rhythm's verdict (out) stands.
+        var coffee = new Product
+        {
+            Name = "Coffee",
+            Category = Category.Beverage,
+            TrackQuantity = true,
+            QuantityOnHand = 3m,
+            QuantityCountedAt = new DateTimeOffset(Today.AddDays(-200).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
+            Purchases =
+            [
+                new PurchaseEvent { PurchasedAt = new DateOnly(2020, 1, 1) },
+                new PurchaseEvent { PurchasedAt = new DateOnly(2020, 1, 10) },
+            ],
+        };
+
+        Assert.Empty(PantryOnHand.EdibleInStock([coffee], Today));
+        Assert.Equal(["Coffee"], PantryOnHand.EdibleOutOfStock([coffee], Today).Select(p => p.Name));
+    }
+
+    [Fact]
     public void Untracked_edibles_are_surfaced_separately_and_non_food_stays_out()
     {
         var products = new[]

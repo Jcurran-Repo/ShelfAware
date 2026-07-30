@@ -52,7 +52,14 @@ public class StockLedgerTests
     [Fact]
     public void A_negative_attested_count_is_clamped_not_stored()
     {
-        Assert.True(StockLedger.Attest(Counted(3), -2, Now));
+        // Both halves matter: it reports the asserted-out AND the shelf reads zero — a cupboard can't
+        // hold minus two. (The first version of this test checked only the return value, so a stored
+        // -2 would have passed it.)
+        var product = Counted(3);
+
+        Assert.True(StockLedger.Attest(product, -2, Now));
+        Assert.Equal(0m, product.QuantityOnHand);
+        Assert.Equal(Now, product.QuantityCountedAt);
     }
 
     [Fact]

@@ -125,12 +125,17 @@ Never deleted for being slow, inconvenient, or red. A red test is a finding, not
 
 ## Worklist (filled during Phase B)
 
-### ShelfAware.Tests (33 files, 510 tests) — 10 of 33 audited 7/30
+### ShelfAware.Tests (34 files — the Phase A count of 33 was off by one) — ✅ AUDIT COMPLETE 7/30
+**Every file is a keep; zero deletion candidates. All five strengthen items were applied the same
+day (+4 tests, 2 exact-status pins, 1 storage assertion → 514 green).** The strengthens share a
+theme worth carrying into the Llm/Web passes: each was a test whose *fixture couldn't exercise the
+claim its name or comment made* (a no-peeking test with no future signal to peek at; a "not stored"
+test that discarded the object; a NotEqual where the exact state was known).
 | File | Verdict | Notes |
 |---|---|---|
-| ReplenishmentPredictorTests | keep + strengthen | The model file: both sides of every precedence rule, ±1-day boundaries, real controls. Strengthen: (a) `SameDayTie_PurchaseWins` + `Restocked_ClearsAnEarlierOutNow` assert `NotEqual(Overdue)` — pin the exact expected status; (b) no edge test for burn-cycle pairing (a SECOND OutNow in one cycle must not add a sample; an OutNow before the first purchase is ignored). |
-| PantryOnHandTests | keep + strengthen | Both pin cases from the 7/29 regression covered; complement test asserts absolute membership. Strengthen: no test for a STALE POSITIVE count with an overdue rhythm deferring to the rhythm (item drops out of on-hand). |
-| StockLedgerTests | keep + strengthen | Full v4.1 attestation-clock semantics. Strengthen: `A_negative_attested_count_is_clamped_not_stored` asserts only the return value and discards the product — if Attest stored −2 it still passes; assert `QuantityOnHand == 0`. |
+| ReplenishmentPredictorTests | keep + strengthened ✅ | The model file: both sides of every precedence rule, ±1-day boundaries, real controls. Strengthen: (a) `SameDayTie_PurchaseWins` + `Restocked_ClearsAnEarlierOutNow` assert `NotEqual(Overdue)` — pin the exact expected status; (b) no edge test for burn-cycle pairing (a SECOND OutNow in one cycle must not add a sample; an OutNow before the first purchase is ignored). |
+| PantryOnHandTests | keep + strengthened ✅ | Both pin cases from the 7/29 regression covered; complement test asserts absolute membership. Strengthen: no test for a STALE POSITIVE count with an overdue rhythm deferring to the rhythm (item drops out of on-hand). |
+| StockLedgerTests | keep + strengthened ✅ | Full v4.1 attestation-clock semantics. Strengthen: `A_negative_attested_count_is_clamped_not_stored` asserts only the return value and discards the product — if Attest stored −2 it still passes; assert `QuantityOnHand == 0`. |
 | TypicalPackageTests | keep | Full discriminator matrix incl. the pinned residual limit and noise filtering. |
 | BacklogSignalsTests | keep | Boundary days both sides, cycle-closing edges, ranking, coverage disclosure, empty input. |
 | IngredientMatcherTests | keep | Strong negatives; `IsSatisfied ≡ Covering` matrix is a deliberate anti-drift pin against re-implementation (the item-25 bug class), not a tautology. |
@@ -138,7 +143,30 @@ Never deleted for being slow, inconvenient, or red. A red test is a finding, not
 | SpendForecastTests | keep | Count-moves-money cases; straddle, already-past, and degenerate-interval edges. |
 | CountingAdviceTests | keep | Boundary tested both sides incl. exactly-10; null case reasoned. |
 | SignalDateTests | keep | Day-keeping semantics incl. the same-instant-two-offsets case. |
-| *(23 files remaining — next session)* | | ReportEngine, CookAlongCommands, SpeechText, ListeningSettings, PredictionBacktest, ExtractionScorer, PriceSeries, PriceWatch, Recipe, ProductMatcher, QuantityFormat, ReportSpecUrl, RecipeNarration, ExpirationOutcomes, RecipeSuggestionStorage, SwapCloud, ReceiptTotals, SettingKeys, ProductPriceIndex, SizeFormat, VoiceCommands, TagVocabulary, SizeBucket, ImportMode |
+| ReportEngineTests | keep | Honesty rules pinned as behavior: pool-never-drop with totals intact, tag overlap never stacks/totals, gaps-not-zeros, estimate ≠ paid, UI/engine rule agreement, TopN table-exemption regression. |
+| CookAlongCommandsTests | keep | Both failure directions of the grammar; repetition can't MAKE a command; stop precedence; IsWorthAsking. |
+| SpeechTextTests | keep | Refuse-to-guess cases pinned (bare C, F starting a word); realistic end-to-end step. |
+| ListeningSettingsTests | keep | Geometric-mean gate with the arithmetic shown; monotonicity; failed-run keeps defaults; NaN clamp; cap-exceeds-silence invariant. |
+| PredictionBacktestTests | keep + strengthened ✅ | Added the future-signal-invisible test — the existing restock test sits BEFORE the scored trip, so a peeking implementation passed it too. |
+| ExtractionScorerTests | keep | Containment, plural fold, duplicate-consumption, both-miss-lists, errored-fixture aggregation. |
+| PriceSeriesTests | keep | The limes regression; dominance + tie→most-recent; dateless ordering; bucket count. |
+| PriceWatchTests | keep | Spend-weighting contrasted with the naive mean; disclosure floor; off-size/estimate exclusion. |
+| RecipeTests | keep | Entity-level delegation; variant identity; no-mains-never-makeable. |
+| ProductMatcherTests | keep | Store-brand-prefix regression; distinctive-token reorder still resolves. |
+| QuantityFormatTests | keep | Singularization edges: case, "glass", one-letter unit, 1.5 stays plural. |
+| ReportSpecUrlTests | keep | Full round-trip; defaults-omitted exact URL; garbage degrades to defaults; numeric enum smuggling refused. |
+| RecipeNarrationTests | keep | The cache-key CONTRACT: segmentation + neighbour context, nulls beyond the ends. |
+| ExpirationOutcomesTests | keep | Every rule tested both directions; consumption evidence beats the freezer override. |
+| RecipeSuggestionStorageTests | keep | Round-trip plus derived members provably absent from the payload. |
+| SwapCloudTests | keep | Self-swap excluded; merge subsumption of generic forms. |
+| ReceiptTotalsTests | keep | Weight quantities; unpriced lines counted honestly; empty input. |
+| SettingKeysTests | keep | Reflection guard with a teaching failure message — a new key can't default to surviving delete-my-data. |
+| ProductPriceIndexTests | keep | Null/each one pricing bucket; own-bucket average; unpriced-size fallback blend. |
+| SizeFormatTests | keep | Case/whitespace collapse; blanks → null. |
+| VoiceCommandsTests | keep | Stop grammar both directions — statement-first utterances stay with the model. |
+| TagVocabularyTests | keep | Trivial variants caught; genuine synonyms deliberately left to the LLM pass. |
+| SizeBucketTests | keep | Each-family fold; no unit arithmetic between real sizes. |
+| ImportModeTests | keep | Explicit mode > legacy bool > Smart default, incl. nonsense input. |
 
 ### ShelfAware.Llm.Tests (5 files + Fakes, 93 tests)
 | File | Verdict | Notes |

@@ -216,6 +216,36 @@ public class ReplenishmentPredictorTests
     }
 
     [Fact]
+    public void ASecondOutageInTheSameCycle_AddsNoBurnSample()
+    {
+        // One purchase can complete one cycle: the FIRST outage after it says how long that trip's worth
+        // lasted; a second "still out" tap before the next purchase is the same outage restated. Cycles
+        // here are {10, 15} → 12.5; counting the D(20) repeat would read {10, 20, 15} → 15.
+        var product = ProductWith(
+            [D(0), D(30), D(60)],
+            [Signal(SignalKind.OutNow, D(10)), Signal(SignalKind.OutNow, D(20)), Signal(SignalKind.OutNow, D(45))]);
+
+        var r = ReplenishmentPredictor.Predict(product, D(65));
+
+        Assert.Equal(12.5, r.BurnRateDays);
+        Assert.Equal(12.5, r.MedianIntervalDays); // burn (12.5) still beats rebuy (30) to drive
+    }
+
+    [Fact]
+    public void AnOutageBeforeTheFirstPurchase_ClosesNoCycle()
+    {
+        // Pre-history: nothing was bought yet, so there is no trip for it to have burned through.
+        // Real cycles are {10, 10}; letting the D(5) outage pair with anything would corrupt the median.
+        var product = ProductWith(
+            [D(10), D(40), D(70)],
+            [Signal(SignalKind.OutNow, D(5)), Signal(SignalKind.OutNow, D(20)), Signal(SignalKind.OutNow, D(50))]);
+
+        var r = ReplenishmentPredictor.Predict(product, D(75));
+
+        Assert.Equal(10, r.BurnRateDays);
+    }
+
+    [Fact]
     public void RunsOutEarly_WhenBurnRateIsShorterThanRebuyRhythm()
     {
         // Bought ~every 30 days but each one lasts only ~10 (two completed outage cycles) → you're out ~20
@@ -252,7 +282,7 @@ public class ReplenishmentPredictorTests
         var r = ReplenishmentPredictor.Predict(product, D(21));
 
         Assert.False(r.Pinned);
-        Assert.NotEqual(PredictionStatus.Overdue, r.Status);
+        Assert.Equal(PredictionStatus.Stocked, r.Status); // fully cleared — not merely "not Overdue"
         Assert.Null(r.SignalNote);
     }
 
@@ -267,7 +297,9 @@ public class ReplenishmentPredictorTests
 
         var r = ReplenishmentPredictor.Predict(product, D(26));
 
-        Assert.NotEqual(PredictionStatus.Overdue, r.Status);
+        // The restock re-anchors the ~20-day rhythm to D(25), so the day after is squarely Stocked —
+        // pinning the exact status catches a clear that leaves the item stranded in DueSoon.
+        Assert.Equal(PredictionStatus.Stocked, r.Status);
         Assert.False(r.Pinned);
     }
 
