@@ -18,7 +18,7 @@ public class MealStockTests : IDisposable
 
     /// <summary>A recipe whose MAIN ingredient is matched to <paramref name="matchedProduct"/>, plus a
     /// seasoning that is deliberately NOT main — seasonings must never move a count.</summary>
-    private async Task<int> Recipe(string matchedProduct, string? seasoningMatch = null)
+    private async Task<int> Recipe(string? matchedProduct, string? seasoningMatch = null)
     {
         await using var db = _db.CreateDbContext();
         var recipe = new Recipe
@@ -70,8 +70,11 @@ public class MealStockTests : IDisposable
     {
         await using var db = _db.CreateDbContext();
         var recipe = await db.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
-        var plan = await MealStock.PlanAsync(db, recipe);
-        await MealStock.ApplyAsync(db, recipe);
+        // One resolution, described and then applied — the shape the page uses, so the test exercises the
+        // guarantee that the write acts on exactly the objects the description came from.
+        var resolution = await MealStock.ResolveAsync(db, recipe);
+        var plan = MealStock.Describe(resolution);
+        MealStock.Apply(resolution);
         await db.SaveChangesAsync();
 
         await using var read = _db.CreateDbContext();
@@ -294,7 +297,7 @@ public class MealStockTests : IDisposable
         // This is also the only way a count on a product the recipe was saved BEFORE can be maintained,
         // since nothing back-fills MatchedProduct when a product appears (§13.8's census stock).
         var productId = await Product("Chicken Breast Tenderloins", counted: true, onHand: 4m, unit: null, 1m, 1m);
-        var recipeId = await Recipe(matchedProduct: null!); // no grounded link at all
+        var recipeId = await Recipe(matchedProduct: null); // no grounded link at all
         await using (var db = _db.CreateDbContext())
         {
             var ing = await db.RecipeIngredients.SingleAsync(i => i.RecipeId == recipeId && i.IsMain);
@@ -315,7 +318,7 @@ public class MealStockTests : IDisposable
         // The other half of the matcher: the product's own "also works as" list is what lets a specific
         // recipe stay specific and still count what you own. The decrement has to honour it too.
         var productId = await CountedWithSubstitutes("Ground Turkey", 5m, "ground beef");
-        var recipeId = await Recipe(matchedProduct: null!);
+        var recipeId = await Recipe(matchedProduct: null);
         await using (var db = _db.CreateDbContext())
         {
             var ing = await db.RecipeIngredients.SingleAsync(i => i.RecipeId == recipeId && i.IsMain);
@@ -339,7 +342,7 @@ public class MealStockTests : IDisposable
         // one performed.
         var beefId = await Product("Ground Beef Chuck", counted: true, onHand: 4m, unit: null, 1m, 1m);
         var leanId = await Product("Ground Beef Sirloin", counted: true, onHand: 6m, unit: null, 1m, 1m);
-        var recipeId = await Recipe(matchedProduct: null!);
+        var recipeId = await Recipe(matchedProduct: null);
         await using (var db = _db.CreateDbContext())
         {
             var ing = await db.RecipeIngredients.SingleAsync(i => i.RecipeId == recipeId && i.IsMain);
@@ -350,7 +353,8 @@ public class MealStockTests : IDisposable
 
         await using var read = _db.CreateDbContext();
         var recipe = await read.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
-        var plan = await MealStock.PlanAsync(read, recipe);
+        var resolution = await MealStock.ResolveAsync(read, recipe);
+        var plan = MealStock.Describe(resolution);
 
         Assert.Empty(plan.Takes);
         Assert.True(plan.NeedsConfirmation); // still worth the human's eyes
@@ -359,11 +363,82 @@ public class MealStockTests : IDisposable
         Assert.Equal(["Ground Beef Chuck", "Ground Beef Sirloin"], pick.Candidates);
 
         // …and nothing moved.
-        await MealStock.ApplyAsync(read, recipe);
+        MealStock.Apply(resolution);
         await read.SaveChangesAsync();
         await using var after = _db.CreateDbContext();
         Assert.Equal(4m, (await after.Products.AsNoTracking().SingleAsync(p => p.Id == beefId)).QuantityOnHand);
         Assert.Equal(6m, (await after.Products.AsNoTracking().SingleAsync(p => p.Id == leanId)).QuantityOnHand);
+    }
+
+    [Fact]
+    public async Task An_ambiguity_whose_candidate_is_already_being_taken_is_not_reported()
+    {
+        // The panel used to contradict itself: "Ground Beef Chuck — 1 off 4" in the take list, and
+        // "not touching these — ground beef could be Ground Beef Chuck or …" underneath. One main pinned to
+        // Chuck settles it; the looser main is covered by that same package, so there is nothing to warn
+        // about. It also can't be spotted in one pass — `chosen` is only complete after every main is read.
+        var chuckId = await Product("Ground Beef Chuck", counted: true, onHand: 4m, unit: null, 1m, 1m);
+        await Product("Ground Beef Sirloin", counted: true, onHand: 6m, unit: null, 1m, 1m);
+
+        int recipeId;
+        await using (var db = _db.CreateDbContext())
+        {
+            var recipe = new Recipe
+            {
+                Name = "Two Ways Of Saying Beef",
+                Ingredients =
+                [
+                    // Pinned to Chuck.
+                    new RecipeIngredient { Name = "beef chuck", IsMain = true, MatchedProduct = "Ground Beef Chuck" },
+                    // Unpinned, and covered by BOTH counted products.
+                    new RecipeIngredient { Name = "ground beef", IsMain = true, MatchedProduct = null },
+                ],
+            };
+            db.Recipes.Add(recipe);
+            await db.SaveChangesAsync();
+            recipeId = recipe.Id;
+        }
+
+        var (plan, after) = await Cook(recipeId, chuckId);
+
+        Assert.Equal("Ground Beef Chuck", Assert.Single(plan).ProductName);
+        Assert.Equal(3m, after);
+        await using var read = _db.CreateDbContext();
+        var recipe2 = await read.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
+        Assert.Empty(MealStock.Describe(await MealStock.ResolveAsync(read, recipe2)).Ambiguous);
+    }
+
+    [Fact]
+    public async Task One_ingredient_listed_twice_is_reported_once()
+    {
+        // The advisor is not deduplicated and recipes really do repeat an ingredient, so an ungrouped list
+        // showed the same "could be X or Y" row twice.
+        await Product("Ground Beef Chuck", counted: true, onHand: 4m, unit: null, 1m, 1m);
+        await Product("Ground Beef Sirloin", counted: true, onHand: 6m, unit: null, 1m, 1m);
+
+        int recipeId;
+        await using (var db = _db.CreateDbContext())
+        {
+            var recipe = new Recipe
+            {
+                Name = "Beef Twice",
+                Ingredients =
+                [
+                    new RecipeIngredient { Name = "ground beef", IsMain = true, MatchedProduct = null },
+                    new RecipeIngredient { Name = "Ground Beef", IsMain = true, MatchedProduct = null },
+                ],
+            };
+            db.Recipes.Add(recipe);
+            await db.SaveChangesAsync();
+            recipeId = recipe.Id;
+        }
+
+        await using var read = _db.CreateDbContext();
+        var recipe2 = await read.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
+        var plan = MealStock.Describe(await MealStock.ResolveAsync(read, recipe2));
+
+        Assert.Single(plan.Ambiguous);
+        Assert.Empty(plan.Takes);
     }
 
     [Fact]

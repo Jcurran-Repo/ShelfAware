@@ -17,9 +17,16 @@ namespace ShelfAware.Core.Prediction;
 /// </summary>
 public enum CountConfidence
 {
+    /// <summary>There is no count to believe — the product isn't counted, has never been attested, or the
+    /// caller didn't pass <c>honorQuantity</c> and so didn't ask. <b>The default deliberately means
+    /// "not applicable" rather than "believed"</b>: with <c>Counted</c> at zero, every uncounted product in
+    /// the catalog reported that its nonexistent number was trustworthy, which is precisely the kind of
+    /// implicit answer a future surface reads without checking <c>TrackQuantity</c> first.</summary>
+    NotCounted = 0,
+
     /// <summary>Believed: attested recently, or maintained since by receipts and cooking. A surface may
     /// state the number plainly, and it decides both buy-suppression and recipe stock.</summary>
-    Counted = 0,
+    Counted,
 
     /// <summary>Believed no longer, on AGE alone: the item has no learned rhythm — 0 or 1 purchases, the
     /// shape of stock bought before the app, elsewhere, gifted, or in one bulk run (§13.8) — and nobody has

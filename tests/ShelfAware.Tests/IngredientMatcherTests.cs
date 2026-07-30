@@ -23,6 +23,75 @@ public class IngredientMatcherTests
         Assert.True(IngredientMatcher.IsSatisfied(ingredient, matchedProduct: null, Pantry));
     }
 
+    // ---- Covering: WHICH products cover it, since a caller that must act needs to know ---------------
+
+    [Fact]
+    public void Covering_names_the_product_that_satisfied_it()
+    {
+        var covering = IngredientMatcher.Covering("chicken breast", matchedProduct: null, Pantry);
+
+        Assert.Equal(["Chicken Breast Tenderloins"], covering.Select(p => p.Name));
+    }
+
+    [Fact]
+    public void Covering_returns_every_product_that_covers_a_loose_ingredient()
+    {
+        // The rule is deliberately loose, so two cuts really do both cover "ground beef". A caller that
+        // must pick ONE has to decide what to do about that — MealStock refuses rather than guessing.
+        var pantry = new[] { P("Ground Beef Chuck"), P("Ground Beef Sirloin"), P("Chicken Breast Tenderloins") };
+
+        var covering = IngredientMatcher.Covering("ground beef", matchedProduct: null, pantry);
+
+        Assert.Equal(["Ground Beef Chuck", "Ground Beef Sirloin"], covering.Select(p => p.Name).Order());
+    }
+
+    [Fact]
+    public void Covering_returns_the_grounded_product_ALONE_when_it_is_on_hand()
+    {
+        // The precedence lives here, so no caller has to re-implement it: a human confirmed this pairing,
+        // so a pinned ingredient comes back as exactly one candidate and can never read as ambiguous.
+        var pantry = new[] { P("Ground Beef Chuck"), P("Ground Beef Sirloin") };
+
+        var covering = IngredientMatcher.Covering("ground beef", "Ground Beef Sirloin", pantry);
+
+        Assert.Equal(["Ground Beef Sirloin"], covering.Select(p => p.Name));
+    }
+
+    [Fact]
+    public void Covering_falls_back_to_the_core_words_when_the_grounded_product_is_absent()
+    {
+        // A link to something no longer on hand must not blind the matcher to what IS.
+        var covering = IngredientMatcher.Covering("chicken breast", "Something We Sold Out Of", Pantry);
+
+        Assert.Equal(["Chicken Breast Tenderloins"], covering.Select(p => p.Name));
+    }
+
+    [Fact]
+    public void Covering_finds_a_curated_stand_in()
+    {
+        var pantry = new[] { P("Ground Turkey", "ground beef") };
+
+        Assert.Equal(["Ground Turkey"],
+            IngredientMatcher.Covering("ground beef", matchedProduct: null, pantry).Select(p => p.Name));
+    }
+
+    [Fact]
+    public void IsSatisfied_and_Covering_can_never_disagree()
+    {
+        // IsSatisfied is defined as Covering().Count > 0, so a tick on a recipe row and the action taken on
+        // its behalf are the same question asked once. Checked across the mismatching cases too.
+        string?[] ingredients = ["chicken breast", "whole chicken", "ground beef", null, "", "  "];
+        foreach (var ingredient in ingredients)
+        {
+            foreach (var matched in new string?[] { null, "Lean Ground Beef", "Gone" })
+            {
+                Assert.Equal(
+                    IngredientMatcher.IsSatisfied(ingredient, matched, Pantry),
+                    IngredientMatcher.Covering(ingredient, matched, Pantry).Count > 0);
+            }
+        }
+    }
+
     [Theory]
     [InlineData("potatoes")]     // plural -> "Fresh Baby Yellow Potatoes"
     [InlineData("bell pepper")]  // -> "Mixed Bell Peppers"

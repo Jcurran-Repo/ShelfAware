@@ -35,16 +35,36 @@ public static class IngredientMatcher
 
     /// <summary>True if this ingredient is covered by anything on hand — its exact matched product, an
     /// on-hand product of the same specific food, or a product that lists this ingredient as a substitute.</summary>
-    public static bool IsSatisfied(string? ingredientName, string? matchedProduct, IReadOnlyCollection<PantryProduct> onHand)
+    public static bool IsSatisfied(string? ingredientName, string? matchedProduct, IReadOnlyCollection<PantryProduct> onHand) =>
+        Covering(ingredientName, matchedProduct, onHand).Count > 0;
+
+    /// <summary>WHICH on-hand products cover this ingredient — the same rule as <see cref="IsSatisfied"/>,
+    /// which is defined in terms of this, so a caller that needs to act on the covering product can never
+    /// disagree with the tick that says one exists.
+    /// <para>The grounded product captured at save time still wins: when <paramref name="matchedProduct"/>
+    /// names something on hand, that alone is returned and the core-word rule is not consulted. A human
+    /// confirmed that pairing, so it beats any inference — and it means a caller gets exactly one answer
+    /// for a pinned ingredient without having to re-implement the precedence.</para>
+    /// <para>More than one result is a real and expected outcome, not an error: the rule is deliberately
+    /// loose (two cuts of beef both cover "ground beef"), so a caller that must pick ONE has to decide
+    /// what to do about that rather than assume uniqueness — see <c>MealStock</c>, which refuses.</para>
+    /// <para>Computes the ingredient's core tokens ONCE for the whole candidate set. Asking
+    /// <see cref="IsSatisfied"/> per candidate to find out which one matched re-tokenised the ingredient
+    /// on every call.</para></summary>
+    public static IReadOnlyList<PantryProduct> Covering(
+        string? ingredientName, string? matchedProduct, IReadOnlyCollection<PantryProduct> onHand)
     {
-        // The grounded product captured at save time still wins when it's actually on hand.
-        if (matchedProduct is { Length: > 0 } &&
-            onHand.Any(p => string.Equals(p.Name, matchedProduct, StringComparison.OrdinalIgnoreCase)))
-            return true;
+        if (matchedProduct is { Length: > 0 })
+        {
+            var grounded = onHand
+                .Where(p => string.Equals(p.Name, matchedProduct, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (grounded.Count > 0) return grounded;
+        }
 
         var need = CoreTokens(ingredientName);
-        if (need.Count == 0) return false;
-        return onHand.Any(p => Covers(need, p.Name) || p.AlsoWorksAs.Any(s => Covers(need, s)));
+        if (need.Count == 0) return [];
+        return [.. onHand.Where(p => Covers(need, p.Name) || p.AlsoWorksAs.Any(s => Covers(need, s)))];
     }
 
     // Every core word of the ingredient must appear (plural-tolerant) in the candidate phrase, so the

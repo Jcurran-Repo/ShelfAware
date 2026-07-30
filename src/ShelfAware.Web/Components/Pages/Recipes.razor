@@ -954,9 +954,12 @@
                 return;
             }
 
+            // ONE resolution per tap: the re-check, and the write below, act on the same loaded products
+            // rather than looking twice and agreeing by luck.
+            var resolution = await MealStock.ResolveAsync(db, r);
             if (shown is not null)
             {
-                var current = await MealStock.PlanAsync(db, r);
+                var current = MealStock.Describe(resolution);
                 // A re-plan with nothing left to confirm needs no second look — there is nothing to warn
                 // about, so the meal is recorded and the decrement finds nothing to do.
                 if (current.NeedsConfirmation && !MealStock.Matches(shown, current))
@@ -972,7 +975,7 @@
             // The counter answers "how reliable is this recipe" (Pick for me); the event answers "when did
             // we eat it" (the Reports tab's meals/calories charts). Same tap writes both.
             db.MealEvents.Add(new MealEvent { RecipeId = rec.Id, AteAt = DateOnly.FromDateTime(DateTime.Today) });
-            await MealStock.ApplyAsync(db, r); // same save as the MealEvent — one tap, one transaction
+            MealStock.Apply(resolution); // same save as the MealEvent — one tap, one transaction
             await db.SaveChangesAsync();
             pendingEat = null;
             eatError = null;

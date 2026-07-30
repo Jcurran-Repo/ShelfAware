@@ -125,6 +125,68 @@ public class PantryOnHandTests
     }
 
     [Fact]
+    public void An_expired_counted_item_is_NOT_on_hand()
+    {
+        // A count answers "how many", never "are they still good" — so v3.6's label beats it, exactly as it
+        // beats buy-suppression. Without this the app offered to cook with food it knew was expired.
+        var chicken = Counted("Chicken Breast", 3m, countedDaysAgo: 6);
+        chicken.Purchases.Add(new PurchaseEvent { PurchasedAt = Today.AddDays(-30) });
+        chicken.Purchases.Add(new PurchaseEvent { PurchasedAt = Today.AddDays(-20) });
+        chicken.Purchases.Add(new PurchaseEvent
+        { PurchasedAt = Today.AddDays(-10), ExpirationDate = Today.AddDays(-6) });
+
+        Assert.Empty(PantryOnHand.EdibleInStock([chicken], Today, honorExpirations: true));
+        Assert.Equal(["Chicken Breast"],
+            PantryOnHand.EdibleOutOfStock([chicken], Today, honorExpirations: true).Select(p => p.Name));
+    }
+
+    [Fact]
+    public void A_counted_item_the_household_reported_OUT_is_NOT_on_hand()
+    {
+        // §13.5: "an explicit OutNow beats the count outright." A count is a memory of a past look; an
+        // OutNow is a statement about now. Recipes have to agree with the engine on that.
+        var coffee = Counted("Coffee", 2m, countedDaysAgo: 2);
+        coffee.Purchases.Add(new PurchaseEvent { PurchasedAt = Today.AddDays(-20) });
+        coffee.Purchases.Add(new PurchaseEvent { PurchasedAt = Today.AddDays(-10) });
+        coffee.Signals.Add(new InventorySignal
+        {
+            Kind = SignalKind.OutNow,
+            SignaledAt = new DateTimeOffset(Today.AddDays(-1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
+        });
+
+        Assert.Empty(PantryOnHand.EdibleInStock([coffee], Today));
+        Assert.Equal(["Coffee"], PantryOnHand.EdibleOutOfStock([coffee], Today).Select(p => p.Name));
+    }
+
+    [Fact]
+    public void The_split_agrees_with_the_two_lists_it_replaces()
+    {
+        // EdibleSplit exists so a caller needing both doesn't predict everything twice. It must be the
+        // SAME predicate, or there'd be a third definition of on-hand for the two to disagree with.
+        var counted = Counted("Quarter Cow Ground Beef", 12m, countedDaysAgo: 5);
+        var empty = Counted("Canned Beans", 0m, countedDaysAgo: 5);
+        var products = new[]
+        {
+            counted,
+            empty,
+            P("Whole Milk", Category.Dairy),
+            P("Dish Soap", Category.Household),               // non-food, in neither
+            P("Old Cereal", Category.Pantry, tracked: false), // untracked, in neither
+        };
+
+        var (inStock, outOfStock) = PantryOnHand.EdibleSplit(products, Today);
+
+        Assert.Equal(
+            PantryOnHand.EdibleInStock(products, Today).Select(p => p.Name),
+            inStock.Select(p => p.Name));
+        Assert.Equal(
+            PantryOnHand.EdibleOutOfStock(products, Today).Select(p => p.Name),
+            outOfStock.Select(p => p.Name));
+        Assert.Contains("Quarter Cow Ground Beef", inStock.Select(p => p.Name));
+        Assert.Contains("Canned Beans", outOfStock.Select(p => p.Name));
+    }
+
+    [Fact]
     public void A_fresh_count_beats_a_rhythm_that_says_overdue()
     {
         // §13.5's principle reaching recipes: real evidence beats a learned guess. The rhythm has this

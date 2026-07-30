@@ -240,6 +240,14 @@ feature that demands you count the salt is dead inside a week, and §13.7 is how
     silently would be arbitrary — so such a main decrements **none** of them and is **reported in the
     confirm panel** with the candidates. A decrement the app declines to make is as much the household's
     business as one it makes; saying nothing would leave a count quietly un-maintained.
+    ⚠️ **Judged against the COMPLETE set of chosen products, which needs a second pass.** If another main
+    is pinned to one of the candidates, that package is already being taken and this ingredient is covered
+    by it — reporting it anyway put a product in the panel's "not touching these" list while the take list
+    above was touching it. Grouped by ingredient name too, since a recipe may list one main twice.
+  - **The grounded-link precedence lives in `IngredientMatcher.Covering`, not in the caller.** It returns
+    the pinned product ALONE when it is on hand, so a pinned ingredient can never read as ambiguous and no
+    caller re-implements the rule. `IsSatisfied` is defined as `Covering(...).Count > 0`, which is what
+    makes the tick on a recipe row and the action taken on its behalf the same question asked once.
 - **This is approximate, and it fails SAFE.** Using half a package still costs a whole one, so the count
   reaches zero early and you rebuy early — the same direction as the app's existing safe-side rounding
   (intervals floor, buy quantities ceil). What it must never be is silent: the "Ate it" tap **shows what
@@ -334,6 +342,13 @@ An **asserted** zero and a **derived** zero are different facts and must not be 
   as decoration: a counted 12 added nothing and a counted 0 removed nothing. A stale count defers back to
   the rhythm. ⚠️ A zero withholding an item here is a DISPLAY inference and leaves §13.4 untouched — the
   cost of being wrong is a red recipe row with a hint, not a false `OutNow` taught to the cadence engine.
+- ⚠️ **…but a PINNED item is out, whatever the count says.** An expiration label and an explicit `OutNow`
+  both beat the count for recipe stock exactly as they beat it for suppression, and for the same one-line
+  reason: a count answers "how many", never "are they still good" or "what did someone just tell us".
+  Letting the count decide unconditionally made recipes offer to cook with food the app knew was expired,
+  and with food the household had just reported running out of — so the rule reads the ENGINE's pin rather
+  than re-deriving the precedence. Pinned by `An_expired_counted_item_is_NOT_on_hand` and
+  `A_counted_item_the_household_reported_OUT_is_NOT_on_hand`.
 - **The backtest stays count-blind**, exactly as it stays expiration-blind — it grades the learned
   rhythm, and a human-entered fact overwriting `DueDate` would be grading itself.
 - **Untracked products are untouched.** No count, no suppression, no drift check — §6 verbatim.

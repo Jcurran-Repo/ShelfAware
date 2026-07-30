@@ -361,8 +361,9 @@ public class HouseholdIsolationTests : IDisposable
         await using (var db = As(A))
         {
             var recipe = await db.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
-            Assert.False((await MealStock.PlanAsync(db, recipe)).NeedsConfirmation);
-            await MealStock.ApplyAsync(db, recipe);
+            var resolution = await MealStock.ResolveAsync(db, recipe);
+            Assert.False(MealStock.Describe(resolution).NeedsConfirmation);
+            MealStock.Apply(resolution);
             await db.SaveChangesAsync();
         }
 

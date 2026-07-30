@@ -253,7 +253,9 @@ public static class ReplenishmentPredictor
         //        which is the same argument the pin above already makes for OutNow.
         //      • A count that has gone stale (below) — the whole reason the drift check exists.
         var suppressed = false;
-        var confidence = CountConfidence.Counted;
+        // NotCounted until we actually look at a count — an uncounted product must not report that its
+        // absent number is believed.
+        var confidence = CountConfidence.NotCounted;
         DateOnly? countRunsOut = null;
         // Entered for ANY established count, zero included — staleness is a question about the NUMBER'S
         // AGE and applies just as much to "none" as to "twelve". Gating this on `> 0` (as it first did)
@@ -262,6 +264,10 @@ public static class ReplenishmentPredictor
         // hold back.
         if (honorQuantity && product is { TrackQuantity: true, QuantityOnHand: not null } counted)
         {
+            // There IS a count here, so the question "how much do we believe it" now has an answer;
+            // the checks below can only downgrade it.
+            confidence = CountConfidence.Counted;
+
             // Expected exhaustion: the last time a human vouched for the number, plus how long that many
             // packages last. ⚠️ The driving median is how long a TYPICAL TRIP'S worth lasts, not one
             // package — the same reading StockUpFactor uses when it stretches a due date for a big buy.

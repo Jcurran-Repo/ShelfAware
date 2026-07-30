@@ -19,23 +19,34 @@ public static class PantryOnHand
     /// removed nothing.</para>
     /// <para>A STALE count defers to the rhythm, for the same reason it stops suppressing: a number nobody
     /// has vouched for in months is not evidence any more.</para>
+    /// <para>⚠️ <b>A PINNED item is out, whatever the count says.</b> A count answers "how many", never
+    /// "are they still good" or "what did someone just tell us" — so an expiration label and an explicit
+    /// <c>OutNow</c> both beat it, exactly as they do for buy-suppression in §13.5. Skipping this check let
+    /// recipes offer to cook with food the app knew was expired, and with food the household had just
+    /// reported running out of. Reading the ENGINE'S pin rather than re-deriving the precedence is what
+    /// keeps the two in step.</para>
     /// <para>⚠️ A count of zero withholding an item from recipes is a DISPLAY inference, and §13.4's rule
     /// is untouched by it: a derived zero still cannot write an <c>OutNow</c>. The cost of being wrong here
     /// is a red recipe row with a hint (see <see cref="EdibleOutOfStock"/>), not a false outage taught to
     /// the cadence engine.</para></summary>
-    private static bool InStock(Product p, DateOnly today, bool honorExpirations)
-    {
-        var prediction = ReplenishmentPredictor.Predict(p, today, honorExpirations, honorQuantity: true);
-        if (p is { TrackQuantity: true, QuantityOnHand: { } onHand } && !prediction.CountLooksStale)
-            return onHand > 0;
-        return prediction.Status != PredictionStatus.Overdue;
-    }
+    private static bool InStock(Product p, PredictionResult prediction) =>
+        p is { TrackQuantity: true, QuantityOnHand: { } onHand }
+        && !prediction.CountLooksStale
+        && !prediction.Pinned
+            ? onHand > 0
+            : prediction.Status != PredictionStatus.Overdue;
+
+    /// <summary>Tracked, edible products split into the two lists by ONE prediction each — the pair used to
+    /// call <c>Predict</c> per product per list, so a page needing both (a recipe row needs the on-hand set
+    /// for its tick and the run-out set for its hint) predicted everything twice per render.</summary>
+    private static IEnumerable<(Product Product, bool InStock)> Classify(
+        IEnumerable<Product> products, DateOnly today, bool honorExpirations) =>
+        products
+            .Where(p => p.IsTracked && p.Category.IsEdible())
+            .Select(p => (p, InStock(p, ReplenishmentPredictor.Predict(p, today, honorExpirations, honorQuantity: true))));
 
     public static IEnumerable<Product> EdibleInStock(IEnumerable<Product> products, DateOnly today, bool honorExpirations = false) =>
-        products.Where(p =>
-            p.IsTracked &&
-            p.Category.IsEdible() &&
-            InStock(p, today, honorExpirations));
+        Classify(products, today, honorExpirations).Where(x => x.InStock).Select(x => x.Product);
 
     /// <summary>The other side of the same rule: tracked, edible products the engine thinks you've RUN OUT
     /// of. These are exactly the items <see cref="EdibleInStock"/> silently drops — surfaced so a recipe
@@ -44,10 +55,22 @@ public static class PantryOnHand
     /// count as on-hand chicken) — the two methods stay exact complements by construction, which is why
     /// this negates <see cref="InStock"/> rather than re-deriving the rule.</summary>
     public static IEnumerable<Product> EdibleOutOfStock(IEnumerable<Product> products, DateOnly today, bool honorExpirations = false) =>
-        products.Where(p =>
-            p.IsTracked &&
-            p.Category.IsEdible() &&
-            !InStock(p, today, honorExpirations));
+        Classify(products, today, honorExpirations).Where(x => !x.InStock).Select(x => x.Product);
+
+    /// <summary>Both lists from ONE pass, for a caller that needs them together — which is the common case,
+    /// since a recipe row shows a tick from the first and its "you may still have this" hint from the
+    /// second. Same predicate as the two methods above, so no third definition of on-hand exists.</summary>
+    public static (List<Product> InStock, List<Product> OutOfStock) EdibleSplit(
+        IEnumerable<Product> products, DateOnly today, bool honorExpirations = false)
+    {
+        var inStock = new List<Product>();
+        var outOfStock = new List<Product>();
+        foreach (var (product, isIn) in Classify(products, today, honorExpirations))
+        {
+            (isIn ? inStock : outOfStock).Add(product);
+        }
+        return (inStock, outOfStock);
+    }
 
     /// <summary>The third way a covering product can be invisible: edible but UNTRACKED. Untracked items
     /// are excluded from on-hand and run-out alike (the engine isn't allowed to watch them), which

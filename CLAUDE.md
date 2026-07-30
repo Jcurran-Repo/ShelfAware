@@ -772,6 +772,44 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
    - Seeded `Home-Canned Tomato Sauce` (counted 140 days ago, no purchases) beside `Quarter Cow Ground Beef`
      (counted 20 days ago) — same shape, opposite confidence, so both bands are visible in the demo.
 
+26. **`/code-review` over item 25 (2026-07-29) — 10 findings, all fixed. The first was a live regression.**
+   - ⚠️ **`PantryOnHand` let a fresh count override a PINNED item.** Probed: chicken counted 3 with a label
+     that passed → `Status=Overdue, Expired=True, Pinned=True`, and `inStock=True`. Same for a counted item
+     with an explicit `OutNow`. So recipes offered to cook with food the app knew was **expired**, and with
+     food the household had just said they were **out of** — breaking this file's own docstring ("an expired
+     chicken must not count as on-hand chicken") and §13.5's "an OutNow beats the count outright", which the
+     predictor implements correctly. Fixed by reading the engine's `Pinned` instead of re-deriving
+     precedence. **The irony worth remembering: fixing "the count never reaches recipes" overshot into "the
+     count reaches them too far" — and all four tests I'd written covered cases where the count SHOULD win,
+     so 849 green tests said nothing.** `Out_of_stock_is_the_exact_complement…` can't catch it either: both
+     methods negate one predicate, so they stay complements while putting the item in the wrong bucket.
+   - **`IngredientMatcher.Covering` now owns the grounded-link precedence** and returns the pinned product
+     ALONE when on hand. `IsSatisfied` is defined as `Covering(...).Count > 0`, so the tick on a row and the
+     action taken on its behalf are one question asked once — and `MealStock` stopped re-implementing the
+     precedence. Also computes the ingredient's core tokens once per candidate SET rather than once per
+     candidate (asking `IsSatisfied` per product to learn which matched was M×C token work).
+   - ⚠️ **Ambiguity is judged in a SECOND pass, against the complete chosen set.** One main pinned to a
+     product plus a looser main covered by that same product made the panel say "not touching these" about
+     an item its own take list was decrementing. Can't be folded into one loop — `chosen` is only complete
+     after every main is read. Also grouped by ingredient name, since a recipe may list one main twice.
+   - **`CountConfidence.NotCounted = 0` is the new default.** With `Counted` at zero, every uncounted product
+     reported that its nonexistent number was believed — exactly the implicit answer a surface reads without
+     checking `TrackQuantity`. `CountLooksStale` now names the two disbelieved states rather than negating
+     `Counted`, since `NotCounted` is neither believed nor stale.
+   - **One resolution per tap.** `ResolveAsync` → `Describe` → `Apply`: the write acts on the same loaded
+     products the description came from, instead of `PlanAsync` and `ApplyAsync` each re-querying and
+     agreeing by luck. Halves the queries on a confirm and strengthens the guarantee.
+   - **`PantryOnHand.EdibleSplit`** returns both lists from one pass — a recipe row needs the on-hand set for
+     its tick and the run-out set for its hint, so the pair used to run the full predictor twice per product
+     per render. Same predicate, so no third definition of on-hand exists.
+   - Smaller: a distrusted ZERO gets its own sentence ("you recorded none on … — long enough ago that Shelf
+     Aware treats it as unknown now"), since "You counted 0 — isn't counting on that any more" reads as
+     though the app now suspects there might be some; the band is gated on `CountLooksStale` rather than
+     `== Counted` so a `NotCounted` result can't fall into the attributed form; a stale docstring claiming
+     the first query reads "NAMES only" now says it also loads substitute phrases; and three tests dropped
+     `null!` for a properly nullable helper parameter.
+   - **861 tests green, 0 warnings.**
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active

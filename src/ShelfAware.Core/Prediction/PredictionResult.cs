@@ -90,8 +90,10 @@ public record PredictionResult
     /// need different sentences: an item with a rhythm is past the date that rhythm projected, and an item
     /// without one has simply gone unattested too long and has no projection to be past.</para>
     /// <para>Derived from <see cref="CountConfidence"/> rather than stored beside it, so the flag and the
-    /// reason cannot drift apart.</para></summary>
-    public bool CountLooksStale => CountConfidence != CountConfidence.Counted;
+    /// reason cannot drift apart. Note it names the two DISBELIEVED states rather than negating
+    /// <c>Counted</c>: <c>NotCounted</c> is neither believed nor stale, and negation would have called every
+    /// uncounted product's absent number stale.</para></summary>
+    public bool CountLooksStale => CountConfidence is CountConfidence.Aging or CountConfidence.Spent;
 
     /// <summary>How much the number is still believed, and therefore whether a surface may STATE it or must
     /// ATTRIBUTE it to the date it was taken (§13.5). Explicit rather than inferable from

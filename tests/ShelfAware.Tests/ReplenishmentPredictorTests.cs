@@ -709,6 +709,29 @@ public class ReplenishmentPredictorTests
     }
 
     [Fact]
+    public void AnUncountedProduct_ReportsNotCounted_NotBelieved()
+    {
+        // `Counted` used to be the enum's zero, so every uncounted product in the catalog reported that its
+        // nonexistent number was trustworthy — the sort of implicit answer a surface reads without first
+        // checking TrackQuantity. NotCounted is neither believed nor stale.
+        var r = ReplenishmentPredictor.Predict(ProductWithQuantities((0, 1), (10, 1)), D(12), honorQuantity: true);
+
+        Assert.Equal(CountConfidence.NotCounted, r.CountConfidence);
+        Assert.False(r.CountLooksStale);
+    }
+
+    [Fact]
+    public void ACountedProductReportsNotCounted_WhenTheCallerDidntAsk()
+    {
+        // Same inert-by-default doctrine as the flag itself: without honorQuantity the engine never looks at
+        // the count, so it must not claim a verdict on it.
+        var r = ReplenishmentPredictor.Predict(CountedAndOverdue(3, countedOnDay: 44), D(45));
+
+        Assert.Equal(CountConfidence.NotCounted, r.CountConfidence);
+        Assert.False(r.CountLooksStale);
+    }
+
+    [Fact]
     public void AFreshCount_ReportsNoStaleReason()
     {
         var r = ReplenishmentPredictor.Predict(CountedAndOverdue(3, countedOnDay: 44), D(45), honorQuantity: true);

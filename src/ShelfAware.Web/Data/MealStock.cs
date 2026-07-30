@@ -57,29 +57,44 @@ public static class MealStock
         public bool NeedsConfirmation => Takes.Count > 0 || Ambiguous.Count > 0;
     }
 
-    /// <summary>What <see cref="ApplyAsync"/> is about to do, without doing it. §13.3 requires the tap to
-    /// SHOW its decrement first: the amount is approximate by design (recipe quantities are free-form
-    /// strings the app must not parse), and an approximate change to a hand-maintained number cannot
-    /// also be a silent one. A plan that needs no confirmation means this recipe touches no counted item
-    /// — then the tap goes straight through, because there is nothing to warn about.</summary>
-    public static async Task<Plan> PlanAsync(
+    /// <summary>The loaded products a cook would decrement, plus the mains it refuses to guess at. Held so
+    /// the caller can <see cref="Describe"/> it, compare, and then <see cref="Apply"/> the SAME objects —
+    /// one resolution and one pair of queries per tap, and the write is literally the thing that was
+    /// described rather than a second lookup that agrees by luck.</summary>
+    public sealed record Resolution(IReadOnlyList<Product> Products, IReadOnlyList<Ambiguity> Ambiguous);
+
+    /// <summary>Work out what cooking this recipe would take off the shelf, without taking it.</summary>
+    public static async Task<Resolution> ResolveAsync(
         ShelfAwareDbContext db, Recipe recipe, CancellationToken ct = default)
     {
         var (products, ambiguous) = await CountedMainsAsync(db, recipe, ct);
-        return new Plan(
-            [.. products.Select(p => new Take(
+        return new Resolution(products, ambiguous);
+    }
+
+    /// <summary>What <see cref="Apply"/> is about to do, described for a human. §13.3 requires the tap to
+    /// SHOW its decrement first: the amount is approximate by design (recipe quantities are free-form
+    /// strings the app must not parse), and an approximate change to a hand-maintained number cannot
+    /// also be a silent one. A plan that needs no confirmation means this recipe touches no counted item
+    /// — then the tap goes straight through, because there is nothing to warn about.
+    /// <para>A pure projection, so the description and the write cannot describe different work.</para></summary>
+    public static Plan Describe(Resolution resolution) =>
+        new(
+            [.. resolution.Products.Select(p => new Take(
                 p.Id, p.Name, p.DefaultUnit, p.QuantityOnHand!.Value,
                 TypicalPackage.Of(p.Purchases.Select(x => x.Quantity))))],
-            ambiguous);
-    }
+            resolution.Ambiguous);
+
+    /// <summary>Resolve and describe in one step, for a caller that only wants to look.</summary>
+    public static async Task<Plan> PlanAsync(
+        ShelfAwareDbContext db, Recipe recipe, CancellationToken ct = default) =>
+        Describe(await ResolveAsync(db, recipe, ct));
 
     /// <summary>Take the packages off. Goes through <see cref="StockLedger.Remove"/>, which has no path
     /// to a signal at all: a machine decrement that arrives at zero is a hypothesis for the product page
     /// to raise, never an outage the human never reported (§13.4).</summary>
-    public static async Task ApplyAsync(ShelfAwareDbContext db, Recipe recipe, CancellationToken ct = default)
+    public static void Apply(Resolution resolution)
     {
-        var (products, _) = await CountedMainsAsync(db, recipe, ct);
-        foreach (var product in products)
+        foreach (var product in resolution.Products)
         {
             StockLedger.Remove(product, TypicalPackage.Of(product.Purchases.Select(x => x.Quantity)));
         }
@@ -88,27 +103,27 @@ public static class MealStock
     /// <summary>The counted products this recipe's MAIN ingredients resolve to — ONE definition, shared
     /// by the preview and the write, so the confirm panel can never promise a decrement the commit
     /// doesn't make.
-    /// <para>⚠️ It asks <see cref="IngredientMatcher"/>, the SAME question the ✓/🛒 mark on the row above
-    /// asks. Matching on <c>MatchedProduct</c> alone (as this first did) meant a row could show "you have
-    /// this" — satisfied by an on-hand product of the same specific food, or by a curated "also works as"
-    /// — while the tap beneath it decremented NOTHING, because the grounded link was null or named
-    /// something else. Two rules for "which product does this ingredient mean" is the same
-    /// screen-disagrees-with-engine fault this branch keeps finding; there is one rule now. It is also
+    /// <para>⚠️ It asks <see cref="IngredientMatcher.Covering"/>, the SAME rule the ✓/🛒 mark on the row
+    /// above is defined in terms of. Matching on <c>MatchedProduct</c> alone (as this first did) meant a
+    /// row could show "you have this" — satisfied by an on-hand product of the same specific food, or by a
+    /// curated "also works as" — while the tap beneath it decremented NOTHING, because the grounded link
+    /// was null or named something else. Two rules for "which product does this ingredient mean" is the
+    /// same screen-disagrees-with-engine fault this branch keeps finding; there is one rule now, and the
+    /// grounded-link precedence lives in the matcher rather than being re-implemented here. It is also
     /// what lets a count on a product the recipe was saved BEFORE (census stock, §13.8) ever be
     /// maintained: nothing back-fills <c>MatchedProduct</c> when a product appears.</para>
     /// <para><b>Ambiguity is refused, not guessed.</b> The matcher is deliberately loose, so an ingredient
     /// can be covered by more than one counted product ("ground beef" by two cuts). Cooking one meal must
     /// not take a package off each, and picking one silently would be arbitrary — so a main that resolves
     /// to several counted products decrements none of them and is reported instead
-    /// (<see cref="Ambiguity"/>), which the confirm panel shows so the human can correct it by hand. The
-    /// grounded <c>MatchedProduct</c> wins outright when it names a counted product, which is exactly
-    /// what it's for.</para>
+    /// (<see cref="Ambiguity"/>), which the confirm panel shows so the human can correct it by hand.</para>
     /// <para>Products at zero are excluded: <see cref="StockLedger.Remove"/> clamps there, so including
     /// them would put a confirmation in front of a decrement that provably changes nothing.</para>
-    /// <para>Two queries rather than one, deliberately: the first reads the counted set's NAMES to decide
-    /// what matches (in memory — the matcher can't run in SQL, and SQLite's <c>IN</c> is case-sensitive
-    /// anyway), the second loads purchases only for the handful that matched, rather than dragging every
-    /// purchase of every counted item across for the sake of one or two.</para></summary>
+    /// <para>Two queries rather than one, deliberately: the first reads the counted set's names and
+    /// substitute phrases — everything the matcher needs and nothing more — because the matcher can't run
+    /// in SQL (and SQLite's <c>IN</c> is case-sensitive anyway); the second loads purchases only for the
+    /// handful that matched, rather than dragging every purchase of every counted item across for the sake
+    /// of one or two.</para></summary>
     private static async Task<(IReadOnlyList<Product> Products, IReadOnlyList<Ambiguity> Ambiguous)>
         CountedMainsAsync(ShelfAwareDbContext db, Recipe recipe, CancellationToken ct)
     {
@@ -123,28 +138,33 @@ public static class MealStock
             .ToListAsync(ct);
         if (counted.Count == 0) return ([], []);
 
+        // IngredientMatcher.Covering already prefers the grounded MatchedProduct over an inference, so
+        // there is no precedence to re-implement here — a pinned ingredient simply comes back as one
+        // candidate. Keyed by product NAME because that is what the matcher speaks.
+        var byName = counted.ToDictionary(c => c.Name, c => c.Id, StringComparer.OrdinalIgnoreCase);
+        var candidates = counted.Select(c => new PantryProduct(c.Name, c.Substitutes)).ToList();
+
+        // Pass 1: settle every main that resolves to exactly one counted product.
         var chosen = new HashSet<int>();
-        var ambiguous = new List<Ambiguity>();
+        var unsettled = new List<(string Ingredient, List<string> Candidates)>();
         foreach (var main in mains)
         {
-            // The grounded link first — a human confirmed it, so it beats any inference.
-            var exact = counted.FirstOrDefault(
-                c => string.Equals(c.Name, main.MatchedProduct, StringComparison.OrdinalIgnoreCase));
-            if (exact is not null)
-            {
-                chosen.Add(exact.Id);
-                continue;
-            }
-
-            // Otherwise the makeability rule, asked one product at a time so we learn WHICH covers it.
-            var covering = counted
-                .Where(c => IngredientMatcher.IsSatisfied(
-                    main.Name, main.MatchedProduct, [new PantryProduct(c.Name, c.Substitutes)]))
-                .ToList();
-            if (covering.Count == 1) chosen.Add(covering[0].Id);
+            var covering = IngredientMatcher.Covering(main.Name, main.MatchedProduct, candidates);
+            if (covering.Count == 1) chosen.Add(byName[covering[0].Name]);
             else if (covering.Count > 1)
-                ambiguous.Add(new Ambiguity(main.Name, [.. covering.Select(c => c.Name).Order()]));
+                unsettled.Add((main.Name, [.. covering.Select(c => c.Name).Order()]));
         }
+
+        // Pass 2, and it needs the COMPLETE chosen set — which is why it can't fold into the loop above.
+        // If a candidate is already being decremented (another main was pinned to it), this ingredient is
+        // covered by that same package and there is nothing to warn about: reporting it anyway put a
+        // product in the panel's "not touching these" list while the panel's own take list was touching it.
+        // Grouped by ingredient name so a recipe that lists one main twice doesn't say so twice.
+        var ambiguous = unsettled
+            .Where(u => !u.Candidates.Any(name => chosen.Contains(byName[name])))
+            .GroupBy(u => u.Ingredient, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new Ambiguity(g.Key, g.First().Candidates))
+            .ToList();
 
         if (chosen.Count == 0) return ([], ambiguous);
 
