@@ -197,10 +197,61 @@ more permissive by construction, and an asserted zero files the same OutNow the 
    history — say a fresh count"). Pinned at all four layers: ledger, store, chat, and the fake.
    UI paths were already safe (their controls only render for counted rows).
 
-### ShelfAware.Web.Tests (26 files + TestDb/TestAuthDb/Fakes) — 3 of 26 audited 7/30
+### ShelfAware.Web.Tests (26 files + TestDb/TestAuthDb/Fakes) — ✅ AUDIT COMPLETE 7/30 late
+**Every file read end to end; every file a keep.** The standouts hold the same bar the Core suite set:
+`HouseholdServiceTests` (real UserManager with the reasoning stated; the honest-scope comment on the
+replaced-code race), `MealStockTests` (every walkthrough-era rule pinned incl. clamp-aware undo and
+the same-name pair), `HouseholdIsolationTests` (the FindAsync claim *proven*, every v4 write path
+walking the drill), `UserDataServiceTests` (the Kestrel-modeling stream, the zip-slip matrix, the
+reflection every-table guard), `NullableInviteCodeMigrationTests` (unrecognized-column fail-loud),
+`DemoDataSeederTests` (every hero run through the REAL engine). One-line verdicts for the rest:
+ReportDataService (the regression pinned at its own layer + the same-day two-price join), ReceiptRemoval
+(the full v4.1 ConfirmedAt matrix both directions), ReceiptConfirmation (idempotency + all trust
+boundaries), ReceiptAutoConfirmer (Smart's undated tightening + the Auto duplicate exception),
+AdditiveSchema (schema-parity fingerprints with the DEFAULT-clause reasoning), RecipeAdapter (ignored-
+swap guard, re-rooting), ProductMerge (order-sensitive move + tenancy both directions + label matrix),
+Byok (managed ignores browser overrides, SSRF lock), ReceiptDuplicateDetector (RawText-first, undated-
+never), ReceiptStorage (portable separators, traversal + root refusals), HouseholdWriteGuard (both
+detached-entity shapes), CurrentHousehold (fail-safe-not-guess + caching), SpeechCacheTrim (per-
+household budget + orphan sweep), ProductDeletion (pins the FAILURE MODE first), ProductRename
+(case-collision vs case-fix), PantryDbGuard (fail-fast wording). Helpers (TestDb/TestAuthDb/Fakes)
+reviewed: honest — `FakeCurrentHousehold` mirrors the real refusal.
 | File | Verdict | Notes |
 |---|---|---|
 | EfAppSettingsTests | rewritten ✅ | Was hunt-list class 6 (re-implemented its subject). Now drives the real `EfAppSettings`; gained the upsert update-in-place branch (row count pinned unscoped) and the null→"" distinction vs never-set. The unscoped-context test kept with a note: it's a context guarantee, retained beside the reads it protects. |
 | MeteredChatClientTests | keep + strengthened ✅ | **The 45% suspect was NOT class 6** — the tests honestly exercised their subject; the uncovered half was the SUBJECT's streaming path (implemented so streaming can't bypass metering, unused today) + the metering-failure catch. Added: streamed-call records trailing UsageContent, streamed-call blocked at cap before the provider yields, and a metering write failure never fails the user's answer (disposed-DB simulation — the catch is now live-proven, not review-verified). |
 | EfPantryStoreTests | keep + 1 new pin ✅ | Read during the dormancy-bug fix: strong file (asserted-zero → OutNow, clock semantics both directions, refusals with state asserted untouched). Added the dormant-relative refusal + frozen-pair assertion. |
-| *(23 files remaining — next session: HouseholdServiceTests 504, MealStockTests 495, UserDataServiceTests 420, ReceiptRemovalServiceTests 347, HouseholdIsolationTests 337, ReportDataServiceTests 331, CachingTextToSpeechTests 275 ← the 63% suspect, DemoDataSeederTests 252, ReceiptConfirmationService 205, ReceiptAutoConfirmer 205, AdditiveSchema 168, RecipeAdapter 158, NullableInviteCodeMigration 142, ProductMerge 137, Byok 136, ReceiptDuplicateDetector 121, ReceiptStorage 121, HouseholdWriteGuard 102, CurrentHousehold 89, SpeechCacheTrim 76, ProductDeletion 75, ProductRename 75, PantryDbGuard 48, + Fakes/TestDb/TestAuthDb helpers)* | | |
+| *(all 26 audited — verdicts in the section note above; the three changed files are the rows preceding this one)* | | |
+
+## The second pass (7/30, per Jordan's "review it twice")
+
+The audit's own hunt-list, re-applied to THIS SESSION's additions. Findings:
+
+1. **The dormancy fix created an adjacent unpinned edge — fixed.** The gate refuses deltas on a
+   dormant product; the promised way back in is a fresh `Attest`. Nothing pinned that the resume
+   actually works, so a later symmetric-looking "fix" (making `Attest` respect dormancy too) would
+   turn stop-counting into a one-way door with every test green — breaking exactly the recovery the
+   chat refusal promises ("say a fresh count and I'll start again"). Now pinned at the ledger
+   (`A_fresh_count_resumes_a_dormant_product`) and the store
+   (`A_fresh_absolute_count_resumes_a_dormant_product`).
+2. **Re-verified the new streaming-cap test discriminates:** the quota gate lives inside the async
+   iterator, so it fires on first MoveNext; the test enumerates, and `Calls == 0` fails under a
+   peeking implementation.
+3. **Re-verified the metering-failure test exercises the intended branch:** Byok mode skips the
+   up-front quota read, so the disposed connection throws inside `RecordAsync`'s try — the one the
+   catch guards — not before the provider call.
+4. **Re-verified the dormancy change against every `AdjustByHuman` caller:** the store pre-checks;
+   the UI decrement buttons render only on counted rows; `MealStock` uses `TakeOne`/`Move` (already
+   gated). No caller loses a behavior it had.
+5. **Doc-vs-reality count check:** 26 Web test files + 3 helpers, 34 Core, 5 Llm + Fakes — the
+   worklist headers now match what is actually on disk.
+
+## Phase C shortlist (confirmed by the full pass)
+
+- The three 0% Llm advisors (substitutes / alternatives / tags) — construction + fail-soft pins.
+- `AnthropicRecipeAdvisor`'s uncovered 32% (prompt-building, error paths).
+- `CachingTextToSpeech`'s uncovered error branches (corrupt sidecar / IO failures).
+- 0% Web services: `ReceiptSelfEval` (92 lines — the biggest genuinely untested service),
+  `CircuitVoiceCredentials`, `VoiceCoordinator`, `HouseholdClaimsPrincipalFactory`, `HouseholdDbFactory`.
+- Core's last 21 uncovered lines, where they are behavior.
+- (`ByokChatClient`'s streaming delegate is now covered via the MeteredChatClient streamed test.)

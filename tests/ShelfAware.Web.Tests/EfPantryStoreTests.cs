@@ -237,6 +237,21 @@ public class EfPantryStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task A_fresh_absolute_count_resumes_a_dormant_product()
+    {
+        // The recovery path the chat refusal points at: after stop-counting, a stated TOTAL opts the
+        // product back in. If the dormancy refusal ever spread to absolutes, this is what goes red.
+        var (productId, _) = await CountedWithPurchase(onHand: 2, bought: 2);
+        Assert.True(await _store.SetQuantityAsync(productId, 0, stopCounting: true));
+
+        Assert.True(await _store.SetQuantityAsync(productId, 4));
+
+        var product = await Reload(productId);
+        Assert.True(product.TrackQuantity);
+        Assert.Equal(4m, product.QuantityOnHand);
+    }
+
+    [Fact]
     public async Task A_relative_move_refuses_against_a_dormant_count_and_leaves_it_frozen()
     {
         // Found by the 7/30 audit: stop counting, then a habitual "used one" — the dormant pair is

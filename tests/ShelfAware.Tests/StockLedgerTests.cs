@@ -141,6 +141,21 @@ public class StockLedgerTests
     }
 
     [Fact]
+    public void A_fresh_count_resumes_a_dormant_product()
+    {
+        // The way back in, and the counterweight to the dormancy gate above: deltas refuse, but a
+        // LOOK opts back in — otherwise stopping would be a one-way door and the chat reply's "say a
+        // fresh count and I'll start again" would be a promise nothing keeps.
+        var product = Counted(6);
+        StockLedger.StopCounting(product);
+
+        Assert.False(StockLedger.Attest(product, 4, Now));
+        Assert.True(product.TrackQuantity);
+        Assert.Equal(4m, product.QuantityOnHand);
+        Assert.Equal(Now, product.QuantityCountedAt);
+    }
+
+    [Fact]
     public void A_relative_adjust_against_an_unknown_count_does_nothing()
     {
         // No baseline, nothing to be relative to — the callers refuse first; the ledger holds the
