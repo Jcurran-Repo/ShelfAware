@@ -42,6 +42,10 @@ public static class StockLedger
     /// the ledger holding its own invariant.</para></summary>
     public static bool AdjustByHuman(Product product, decimal delta, DateTimeOffset at)
     {
+        // Dormant means FROZEN: a stopped count is a historical fact ("you counted 14 on Mar 12"), and
+        // a delta must not edit history — resuming starts from a fresh Attest, never from arithmetic
+        // against a number nobody is maintaining. Same structural gate Move holds.
+        if (!product.TrackQuantity) return false;
         if (product.QuantityOnHand is not { } onHand) return false;
         var landed = Math.Max(0m, onHand + delta);
         product.QuantityOnHand = landed;

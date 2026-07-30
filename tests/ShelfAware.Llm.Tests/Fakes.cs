@@ -138,24 +138,31 @@ internal sealed class FakePantryStore : IPantryStore
 
     public Task<bool> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default)
     {
+        // Mirror the real store: the product must exist (nothing recorded otherwise), a purchase
+        // re-tracks an untracked product and reports it, and the count moves through the REAL ledger.
+        if (Products.FirstOrDefault(p => p.Id == productId) is not { } product) return Task.FromResult(false);
         Purchases.Add((productId, purchasedAt, quantity));
-        // Mirror the real store: a purchase re-tracks an untracked product and reports it.
-        if (Products.FirstOrDefault(p => p.Id == productId) is { IsTracked: false } product)
+        var retracked = false;
+        if (!product.IsTracked)
         {
             product.IsTracked = true;
-            return Task.FromResult(true);
+            retracked = true;
         }
-        return Task.FromResult(false);
+        StockLedger.Add(product, quantity);
+        return Task.FromResult(retracked);
     }
 
     public Task RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default)
     {
-        Signals.Add((productId, kind));
+        // Mirror the real store's in-household existence rule: no signals onto unknown products.
+        if (Products.Any(p => p.Id == productId)) Signals.Add((productId, kind));
         return Task.CompletedTask;
     }
 
     public Task SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default)
     {
+        if (Products.FirstOrDefault(p => p.Id == productId) is not { } product) return Task.CompletedTask;
+        product.IsTracked = tracked;
         Tracking.Add((productId, tracked));
         return Task.CompletedTask;
     }
@@ -180,7 +187,9 @@ internal sealed class FakePantryStore : IPantryStore
 
     /// <summary>Mirrors the real store's REFUSALS, not just its happy path — a fake that accepts more
     /// than the thing it stands in for lets the chat layer's error branches go untested while looking
-    /// covered. Both refusals are the ones the tool has a specific reply for.</summary>
+    /// covered. The moves run through the REAL StockLedger (as EfPantryStore's do), so the fake can't
+    /// drift more permissive than the store by construction, and an asserted zero writes the same
+    /// OutNow the real store writes.</summary>
     public Task<bool> SetQuantityAsync(
         int productId, decimal quantity, bool relative = false, bool stopCounting = false,
         CancellationToken cancellationToken = default)
@@ -188,13 +197,18 @@ internal sealed class FakePantryStore : IPantryStore
         if (Products.FirstOrDefault(p => p.Id == productId) is not { } product) return Task.FromResult(false);
         if (stopCounting)
         {
+            StockLedger.StopCounting(product);
             Quantities.Add((productId, quantity, relative, stopCounting));
             return Task.FromResult(true);
         }
         // An absolute count below zero is refused rather than clamped (clamping would file an OutNow off
-        // a typo); a relative move needs an established baseline to be relative TO.
+        // a typo); a relative move needs an ACTIVE baseline — unknown and dormant counts both refuse.
         if (!relative && quantity < 0) return Task.FromResult(false);
-        if (relative && product.QuantityOnHand is null) return Task.FromResult(false);
+        if (relative && (!product.TrackQuantity || product.QuantityOnHand is null)) return Task.FromResult(false);
+        var assertedOut = relative
+            ? StockLedger.AdjustByHuman(product, quantity, DateTimeOffset.Now)
+            : StockLedger.Attest(product, quantity, DateTimeOffset.Now);
+        if (assertedOut) Signals.Add((productId, SignalKind.OutNow));
         Quantities.Add((productId, quantity, relative, stopCounting));
         return Task.FromResult(true);
     }

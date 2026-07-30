@@ -303,7 +303,9 @@ public class AnthropicPantryChat : IPantryChat
                     return ("How many? Pass a quantity.", true);
                 if (!await _store.SetQuantityAsync(product.Id, quantity, relative, cancellationToken: ct))
                     return relative
-                        ? ($"{product.Name} has no count yet to adjust — say how many there are and I'll start from that.", true)
+                        ? (!product.TrackQuantity && product.QuantityOnHand is not null
+                            ? ($"You stopped counting {product.Name}, so its old number is frozen history — say a fresh count and I'll start again from that.", true)
+                            : ($"{product.Name} has no count yet to adjust — say how many there are and I'll start from that.", true))
                         : ($"Couldn't set a count for {product.Name}.", true);
 
                 actions.Add($"count → {product.Name}");

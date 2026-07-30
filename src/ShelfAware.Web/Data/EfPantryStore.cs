@@ -160,8 +160,9 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory) : IPantryStore
         // what they took, not the rows behind it — so it moves the number WITHOUT re-anchoring the
         // attestation clock (§13.1; landing at zero is the exception, stamped and asserted inside the
         // ledger). It needs a baseline to be relative TO; against an unknown count there is nothing to
-        // subtract from, and inventing one is the error §13.2 exists to avoid.
-        if (relative && product.QuantityOnHand is null) return false;
+        // subtract from, and a DORMANT count is frozen history a delta must not edit — both refusals
+        // land on the same reply: state a fresh count to (re)start.
+        if (relative && (!product.TrackQuantity || product.QuantityOnHand is null)) return false;
 
         var assertedOut = relative
             ? StockLedger.AdjustByHuman(product, quantity, DateTimeOffset.Now)

@@ -168,10 +168,34 @@ test that discarded the object; a NotEqual where the exact state was known).
 | SizeBucketTests | keep | Each-family fold; no unit arithmetic between real sizes. |
 | ImportModeTests | keep | Explicit mode > legacy bool > Smart default, incl. nonsense input. |
 
-### ShelfAware.Llm.Tests (5 files + Fakes, 93 tests)
+### ShelfAware.Llm.Tests (5 files + Fakes) — ✅ AUDIT COMPLETE 7/30, all keeps
+**The class-1 fake-vs-real diff found one PRODUCT bug (below) and three fake drifts, all fixed:**
+`FakePantryStore` now runs its quantity/purchase moves through the REAL `StockLedger` (can't drift
+more permissive by construction, and an asserted zero files the same OutNow the real store files);
+`AddPurchaseAsync`/`RecordSignalAsync`/`SetTrackingAsync` gained the real store's existence refusals.
+
 | File | Verdict | Notes |
 |---|---|---|
-| *(pending Phase B)* | | |
+| Fakes.cs | strengthened ✅ | Real-ledger mirror + existence refusals (above). `CreateProductAsync` deliberately skips tag canonicalization — a documented simplification: the vocabulary rules are pinned in TagVocabularyTests/Web, and the fake records what the tool passed. |
+| PantryChatTests | keep + 2 new pins ✅ | Comprehensive: every tool, error branches, history replay, screen context, JsonElement args, loop bail-out. Added: the dormant-relative refusal reply, and spoken-zero → OutNow through the store. |
+| SpeechServicesTests | keep | Request-shape pins; fingerprint discipline all three ways (changes with anything audible, ignores the key, absent ≠ defaults); cancellation propagation. |
+| ReceiptExtractorTests | keep | Retry semantics incl. wrong-shape-but-parseable; transport errors not retried; clamp/dedupe; suggestion carry-through. |
+| RecipeAdvisorTests | keep | Parse coverage incl. steps trim/drop and null calories. The advisor's uncovered 32% is prompt-building + error paths — Phase C. |
+| ChatClientFactoryTests | keep | Construction-only across three providers + rejection cases — honest scope for CI without keys. |
+
+## Product bugs found by the audit (fixed on this branch — flag for Jordan's review)
+
+1. **A relative chat move edited a DORMANT count (7/30, fixed).** `StockLedger.AdjustByHuman` gated
+   only on a null baseline, and dormancy keeps the number — so *"stop counting the rice"* followed by
+   a habitual *"used two rice"* silently moved the frozen number the product page attributes as "you
+   counted N on <date>", while the assistant replied "Noted — adjusted what's on hand." That broke two
+   written invariants: `StopCounting`'s "frozen at its date," and GroceryList's "the only road to a
+   false return is a concurrent stop-counting" (which was true only if dormancy refused). **Fix, per
+   the design's own doctrine ("resuming starts from a fresh Attest"):** the ledger now refuses a delta
+   on a dormant product (structural, same as `Move`'s gate), the store's relative branch refuses with
+   the same reply shape as the null-baseline case, and the chat reply distinguishes it ("frozen
+   history — say a fresh count"). Pinned at all four layers: ledger, store, chat, and the fake.
+   UI paths were already safe (their controls only render for counted rows).
 
 ### ShelfAware.Web.Tests (28 files + TestDb/TestAuthDb/Fakes, 286 tests) — 1 of 28 audited 7/30
 | File | Verdict | Notes |

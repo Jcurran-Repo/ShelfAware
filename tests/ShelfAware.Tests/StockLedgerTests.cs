@@ -125,6 +125,22 @@ public class StockLedgerTests
     }
 
     [Fact]
+    public void A_dormant_count_cannot_be_adjusted_frozen_means_frozen()
+    {
+        // Found by the 7/30 audit: "stop counting the rice" then a habitual "used two" was editing the
+        // frozen historical number — the one the product page attributes as "you counted 6 on this
+        // date". A delta must not edit history; resuming starts from a fresh Attest.
+        var product = Counted(6);
+        product.QuantityCountedAt = Now;
+        StockLedger.StopCounting(product);
+
+        Assert.False(StockLedger.AdjustByHuman(product, -2, Now.AddDays(1)));
+        Assert.Equal(6m, product.QuantityOnHand);
+        Assert.Equal(Now, product.QuantityCountedAt);
+        Assert.False(product.TrackQuantity);
+    }
+
+    [Fact]
     public void A_relative_adjust_against_an_unknown_count_does_nothing()
     {
         // No baseline, nothing to be relative to — the callers refuse first; the ledger holds the

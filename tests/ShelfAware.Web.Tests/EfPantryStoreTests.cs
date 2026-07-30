@@ -237,6 +237,23 @@ public class EfPantryStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task A_relative_move_refuses_against_a_dormant_count_and_leaves_it_frozen()
+    {
+        // Found by the 7/30 audit: stop counting, then a habitual "used one" — the dormant pair is
+        // HISTORY ("you counted 2 on Mar 1") and a delta must not edit it; the product page's
+        // attribution stays true only while nothing moves the frozen number. Resuming is a fresh count.
+        var (productId, _) = await CountedWithPurchase(onHand: 2, bought: 2);
+        Assert.True(await _store.SetQuantityAsync(productId, 0, stopCounting: true));
+
+        Assert.False(await _store.SetQuantityAsync(productId, -1, relative: true));
+
+        var product = await Reload(productId);
+        Assert.False(product.TrackQuantity);
+        Assert.Equal(2m, product.QuantityOnHand);
+        Assert.Equal(new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero), product.QuantityCountedAt);
+    }
+
+    [Fact]
     public async Task Set_default_unit_trims_and_stores_the_label()
     {
         var (productId, _) = await CountedWithPurchase(onHand: 2, bought: 2);

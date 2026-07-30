@@ -181,6 +181,48 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task Set_quantity_refuses_a_relative_move_against_a_dormant_count_and_says_so()
+    {
+        // "Stop counting the rice" froze the number as history ("you counted 3 on that date"). A later
+        // habitual "used one" must not edit that history — the reply steers to a fresh count, the only
+        // way back in. Found by the 7/30 audit: the ledger, the store, and this reply all refuse now.
+        var rice = Counted(7, "Long Grain Rice", onHand: 3m);
+        rice.TrackQuantity = false; // dormant: number kept, believing stopped
+        var store = new FakePantryStore(rice);
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("set_quantity",
+                ("product_name", "rice"), ("quantity", -1), ("relative", true))),
+            () => Responses.Text("Say a fresh count."));
+
+        var result = await Chat(client, store).HandleAsync("used one rice");
+
+        Assert.True(result.Success);
+        Assert.Empty(store.Quantities);
+        Assert.Equal(3m, rice.QuantityOnHand); // the frozen historical number is untouched
+        var toolResult = client.ReceivedMessages[1]
+            .Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result?.ToString();
+        Assert.Contains("stopped counting", toolResult);
+        Assert.Contains("fresh count", toolResult);
+    }
+
+    [Fact]
+    public async Task A_spoken_zero_count_records_the_outage_the_burn_rhythm_learns_from()
+    {
+        // §13.4 through the chat door: "no roasts left" as a COUNT of zero is a human's asserted zero,
+        // so the store files the OutNow — dated by running out, not by remembering to report it.
+        var store = new FakePantryStore(Counted(7, "Beef Chuck Roast", onHand: 6m));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("set_quantity", ("product_name", "chuck roast"), ("quantity", 0))),
+            () => Responses.Text("Noted — you're out."));
+
+        await Chat(client, store).HandleAsync("no roasts left");
+
+        Assert.Equal((7, 0m, false, false), Assert.Single(store.Quantities));
+        Assert.Contains((7, SignalKind.OutNow), store.Signals);
+    }
+
+    [Fact]
     public async Task Set_quantity_refuses_an_absolute_count_below_zero()
     {
         // Clamping -5 to 0 would file an OutNow (§13.4) off a typo — a fake outage in the cadence
