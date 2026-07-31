@@ -119,6 +119,45 @@ public class ReportEngineTests
         Assert.Contains("no calorie estimate", kcal.Note);
     }
 
+    [Fact]
+    public void Purchase_count_counts_trips_to_the_till_and_totals()
+    {
+        // The one purchase metric with no test until the 7/30 audit: it counts FACTS (line items),
+        // ignores prices entirely, and — unlike quantity — is honestly additive across products.
+        var result = ReportEngine.Run(Spec(ReportMetric.PurchaseCount),
+            [Buy(5), Buy(6, productId: 2, name: "Apples", price: null), Buy(10, month: 7)], []);
+
+        Assert.Equal(3m, result.Total);
+        Assert.Equal([2m, 1m], result.Series.Single().Values);
+        Assert.True(result.Additive);
+        Assert.Null(result.Note); // an unpriced purchase still counts — no disclosure needed
+    }
+
+    [Fact]
+    public void Quarterly_buckets_start_on_quarter_boundaries_and_label_as_Q()
+    {
+        Assert.Equal(new DateOnly(2026, 4, 1), ReportEngine.BucketStart(new DateOnly(2026, 6, 30), ReportGrain.Quarterly));
+        Assert.Equal(new DateOnly(2026, 7, 1), ReportEngine.BucketStart(new DateOnly(2026, 7, 1), ReportGrain.Quarterly));
+
+        var result = ReportEngine.Run(
+            Spec() with { Grain = ReportGrain.Quarterly, From = new DateOnly(2026, 4, 1), To = new DateOnly(2026, 9, 30) },
+            [Buy(5), Buy(10, month: 8)], []);
+
+        Assert.Equal(["Q2", "Q3"], result.Buckets.Select(b => b.Label));
+        Assert.Equal([3.50m, 3.50m], result.Series.Single().Values);
+    }
+
+    [Fact]
+    public void Weekly_buckets_label_with_the_week_start_date()
+    {
+        // 2026-06-01 is a Monday, so a two-week window reads as its two Mondays.
+        var result = ReportEngine.Run(
+            Spec() with { Grain = ReportGrain.Weekly, From = new DateOnly(2026, 6, 1), To = new DateOnly(2026, 6, 14) },
+            [Buy(3)], []);
+
+        Assert.Equal(["Jun 1", "Jun 8"], result.Buckets.Select(b => b.Label));
+    }
+
     // ---- Filters -------------------------------------------------------------------------------
 
     [Fact]
@@ -268,10 +307,14 @@ public class ReportEngineTests
         Assert.Throws<ArgumentException>(() => ReportEngine.Run(crossProductQuantity, [], []));
 
         Assert.NotEmpty(ReportSpecRules.Check(Spec(ReportMetric.UnitPrice)));                       // no product
+        Assert.NotEmpty(ReportSpecRules.Check(Spec(ReportMetric.UnitPrice, ReportSplit.ByCategory) with { ProductId = 1 })); // unit price never splits
         Assert.NotEmpty(ReportSpecRules.Check(Spec(split: ReportSplit.ByTag) with { Chart = ReportChart.StackedBars }));
         Assert.NotEmpty(ReportSpecRules.Check(Spec(ReportMetric.MealsCooked, ReportSplit.ByProduct)));
+        Assert.NotEmpty(ReportSpecRules.Check(Spec(split: ReportSplit.ByRecipe)));                  // recipes are a meal-metric split
+        Assert.NotEmpty(ReportSpecRules.Check(Spec(ReportMetric.MealsCooked) with { Tag = "kids" })); // pantry filters don't reach the meal log
         Assert.NotEmpty(ReportSpecRules.Check(Spec() with { To = Jun1.AddDays(-1) }));
         Assert.NotEmpty(ReportSpecRules.Check(Spec(ReportMetric.Spend) with { RecipeId = 3 }));
+        Assert.NotEmpty(ReportSpecRules.Check(Spec(split: ReportSplit.ByProduct) with { TopN = 0 })); // at least one series
 
         // TopN's upper bound is about chart color slots, so it binds charts and spares tables —
         // regression pin: the first version of this rule 500'd the report card's top-10 table.

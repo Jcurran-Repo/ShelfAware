@@ -246,12 +246,37 @@ The audit's own hunt-list, re-applied to THIS SESSION's additions. Findings:
 5. **Doc-vs-reality count check:** 26 Web test files + 3 helpers, 34 Core, 5 Llm + Fakes — the
    worklist headers now match what is actually on disk.
 
-## Phase C shortlist (confirmed by the full pass)
+## Phase C — ✅ COMPLETE 7/30 late (+40 tests → 944 green)
 
-- The three 0% Llm advisors (substitutes / alternatives / tags) — construction + fail-soft pins.
-- `AnthropicRecipeAdvisor`'s uncovered 32% (prompt-building, error paths).
-- `CachingTextToSpeech`'s uncovered error branches (corrupt sidecar / IO failures).
-- 0% Web services: `ReceiptSelfEval` (92 lines — the biggest genuinely untested service),
-  `CircuitVoiceCredentials`, `VoiceCoordinator`, `HouseholdClaimsPrincipalFactory`, `HouseholdDbFactory`.
-- Core's last 21 uncovered lines, where they are behavior.
-- (`ByokChatClient`'s streaming delegate is now covered via the MeteredChatClient streamed test.)
+Coverage after: **Core 99.0%** (was 98.8) · **Llm 91.9%, zero files at 0%** (was 79.4 with three) ·
+**Web 27.2%** with every remaining 0% file a `.razor` page/component, `Program.cs`, or Identity
+scaffolding — i.e. exactly the signed-off exclusions plus Phase D's harness targets. **No non-page
+service remains untested.** What landed:
+
+- **The three fail-soft advisors** (`AdvisorTests.cs`, 13 tests): parse contracts (lowercase, dedupe,
+  self-exclusion, caps at 8/6, trailing-period trim), the NONE token, no-call short-circuits, and —
+  the load-bearing one — a hallucinated tag NOT in the vocabulary reads as "no synonym" (the dedup
+  must never coin the near-dupe it exists to prevent). Every advisor fails OPEN on a thrown client.
+- **`AnthropicRecipeAdvisor.AdaptAsync`** (was 0% of the file's uncovered third): the prompt assembly
+  the adapter's ignored-swap guard DEPENDS on — mandatory-swap line, curated also-works-as lists,
+  seasoning markers, numbered steps, the won't-eat list — plus empty-recipes → null and the
+  no-recipes-property parse branch.
+- **`ReceiptSelfEval`** (6 tests): confirmed+verified filter, missing-audit-copy errors that receipt
+  without spending a vision call, a failed extraction errors its fixture, a THROWING receipt costs
+  itself and not the run, persist + round-trip, corrupt stored JSON reads as no-run.
+- **`CachingTextToSpeech` error branches, live-proven**: a locked clip is a MISS the provider covers;
+  an unwritable household folder costs money not correctness; the REAL `FindAsync` (the export's
+  road in) honors keying incl. context and household.
+- **Small services**: `CircuitVoiceCredentials` (managed ignores browser creds; null Apply CLEARS
+  rather than falling back to the host's key), `VoiceCoordinator` (every subscriber awaited — a
+  multicast Invoke awaits only the last), `HouseholdDbFactory` (scoped context; no household →
+  refusal, never an unscoped context), `HouseholdClaimsPrincipalFactory` (claim present/absent —
+  absent, never empty-string).
+- **Core's last lines**: PurchaseCount metric (counts facts, price-blind, additive), Quarterly
+  bucketing + Q labels, Weekly labels, four unasserted `ReportSpecRules` objections (unit-price
+  never splits, ByRecipe is meal-only, meal metrics ignore pantry filters, TopN ≥ 1), the
+  `BacklogFinding` columns the page links/renders from, and the estimate's sorted tag list.
+
+**Accepted uncovered (with reasons):** `AiUsage.Id` (EF key auto-property), the two unreachable
+`default:` guard throws in `ReportEngine` (`PurchaseValue`/`BucketStart` — enum-exhaustive switches),
+and `Trim`'s unlistable-directory branches (startup housekeeping, logged-warning-only by design).

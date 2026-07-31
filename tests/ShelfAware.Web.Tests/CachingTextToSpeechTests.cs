@@ -146,6 +146,58 @@ public sealed class CachingTextToSpeechTests : IDisposable
     }
 
     [Fact]
+    public async Task A_locked_clip_reads_as_a_miss_and_the_provider_covers_it()
+    {
+        // "Cache failures are never synthesis failures" — the read half, live-proven: a clip held open
+        // exclusively (an AV scan, a mid-write racer) is just a miss, and the provider answers.
+        var warm = new FakeTts();
+        await Cache(warm).SynthesizeAsync("Step 1. Sear the chicken.");
+        var clip = Directory.GetFiles(_dir, "*.audio", SearchOption.AllDirectories).Single();
+
+        using (File.Open(clip, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            var provider = new FakeTts();
+            var result = await Cache(provider).SynthesizeAsync("Step 1. Sear the chicken.");
+
+            Assert.True(result.Success);
+            Assert.Equal(1, provider.Calls); // the miss went to the provider, not to an exception
+        }
+    }
+
+    [Fact]
+    public async Task A_cache_that_cannot_be_written_costs_money_not_correctness()
+    {
+        // The write half: a FILE squatting where the household's folder should be makes every write
+        // fail — the caller still gets its audio, and the next call pays again rather than crashing.
+        Directory.CreateDirectory(_dir);
+        var squatter = Path.Combine(_dir, HouseholdFolder.For("household-a"));
+        await File.WriteAllBytesAsync(squatter, [1]);
+
+        var provider = new FakeTts();
+        var first = await Cache(provider).SynthesizeAsync("Step 1. Sear the chicken.");
+        var second = await Cache(provider).SynthesizeAsync("Step 1. Sear the chicken.");
+
+        Assert.True(first.Success);
+        Assert.True(second.Success);
+        Assert.Equal(2, provider.Calls); // never cached, always answered
+    }
+
+    [Fact]
+    public async Task FindAsync_returns_the_filed_clip_for_its_household_and_null_otherwise()
+    {
+        // The export's road into the cache — the real one, not the FakeSpeechCache the export tests
+        // use. Same keying as the synthesis path, so a clip filed with context is only found with it.
+        var inner = new FakeTts();
+        var cache = Cache(inner);
+        await cache.SynthesizeAsync("Step 1. Sear the chicken.", new SpeechContext(Next: "Step 2. Rest."));
+
+        Assert.NotNull(await cache.FindAsync("household-a", "Step 1. Sear the chicken.", new SpeechContext(Next: "Step 2. Rest.")));
+        Assert.Null(await cache.FindAsync("household-a", "Step 1. Sear the chicken.")); // different key without the context
+        Assert.Null(await cache.FindAsync("household-b", "Step 1. Sear the chicken.", new SpeechContext(Next: "Step 2. Rest.")));
+        Assert.Null(await cache.FindAsync("household-a", "   "));
+    }
+
+    [Fact]
     public async Task Different_text_is_a_different_clip()
     {
         var inner = new FakeTts();

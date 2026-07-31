@@ -120,19 +120,26 @@ public class BacklogSignalsTests
         // the grocery list starts asking for a roast the freezer is still full of, and this is what
         // argues back.
         var report = Find(Item(
+            id: 7,
             name: "Beef Chuck Roast",
             buys: [Day(1), Day(15), Day(29), Day(43), Day(71)],
             outages: [],
             quantity: 10,
             spend: 189.40m,
             rebuy: 14,
-            due: Today.AddDays(-46)));
+            due: Today.AddDays(-46),
+            unit: "roasts"));
 
         var finding = Assert.Single(report.Findings);
         Assert.Equal(5, finding.Trips);
         Assert.Equal(46, finding.OverdueDays);
         Assert.Equal(189.40m, finding.Spend);
         Assert.Equal(0, report.EverRanOut);
+        // The columns the page renders from the finding directly: the /product/{id} link target,
+        // the unit that makes "10 roasts" honest, and the rhythm shown for context.
+        Assert.Equal(7, finding.ProductId);
+        Assert.Equal("roasts", finding.DefaultUnit);
+        Assert.Equal(14, finding.RebuyIntervalDays);
     }
 
     [Fact]

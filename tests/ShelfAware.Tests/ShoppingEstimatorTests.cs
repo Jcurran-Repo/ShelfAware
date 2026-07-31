@@ -298,6 +298,20 @@ public class ShoppingEstimatorTests
     }
 
     [Fact]
+    public void Tags_ride_the_estimate_sorted_for_the_report_facts()
+    {
+        // The estimate's tag list feeds the reporting facts (by-tag series) — sorted so two loads of
+        // the same product can't produce differently-ordered series keys.
+        var product = ProductWith((0, 1m), (10, 1m));
+        product.Tags.Add(new ProductTag { Value = "Snack" });
+        product.Tags.Add(new ProductTag { Value = "Kids" });
+
+        var e = ShoppingEstimator.For(product, Prediction(PredictionStatus.Stocked, D(20)), D(10), unitPrice: null);
+
+        Assert.Equal(["Kids", "Snack"], e.Tags);
+    }
+
+    [Fact]
     public void UsualBrandOf_PrefersHigherCount_ThenAlphabetical()
     {
         var purchases = new[]
