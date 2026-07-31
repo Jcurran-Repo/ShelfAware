@@ -36,3 +36,6 @@ jobs:
 
       - name: Test — persistence (in-memory SQLite)
         run: dotnet test tests/ShelfAware.Web.Tests/ShelfAware.Web.Tests.csproj --configuration Release --no-build
+
+      - name: Test — page components (bUnit)
+        run: dotnet test tests/ShelfAware.Web.UI.Tests/ShelfAware.Web.UI.Tests.csproj --configuration Release --no-build

@@ -9,5 +9,6 @@
     <Project Path="tests/ShelfAware.Llm.Tests/ShelfAware.Llm.Tests.csproj" />
     <Project Path="tests/ShelfAware.Tests/ShelfAware.Tests.csproj" />
     <Project Path="tests/ShelfAware.Web.Tests/ShelfAware.Web.Tests.csproj" />
+    <Project Path="tests/ShelfAware.Web.UI.Tests/ShelfAware.Web.UI.Tests.csproj" />
   </Folder>
 </Solution>

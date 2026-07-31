@@ -119,7 +119,9 @@ Never deleted for being slow, inconvenient, or red. A red test is a finding, not
   standing structural rule), then the named untested flows first: the "Ate it" notice + Undo, the
   picker's gated exits, the count panel, ProductDetail's split write-failure/reload-failure advice,
   GroceryList's `UsedOne`, Enter-submits-Quick-update. These are exactly the flows past reviews
-  could only verify by hand.
+  could only verify by hand. **◑ 7/31 — harness landed + all six named flows pinned (38 tests,
+  982 green total); the remaining page surfaces are the phase's open tail. See the Phase D section
+  below — the first page test found a real bug in review-verified handler code.**
 - **E — Gauntlet:** `/pre-push`, Jordan's `/code-review`, merge. Tests-about-tests get the same
   review rigor as code.
 
@@ -184,6 +186,25 @@ more permissive by construction, and an asserted zero files the same OutNow the 
 | ChatClientFactoryTests | keep | Construction-only across three providers + rejection cases — honest scope for CI without keys. |
 
 ## Product bugs found by the audit (fixed on this branch — flag for Jordan's review)
+
+2. **ProductDetail's failure advice could never be seen, and its catch crashed the circuit (7/31,
+   fixed — found by the FIRST page test to exercise the path).** `OnParametersSetAsync` cleared
+   `product` to null BEFORE creating its context, so when a post-write reload's context failed:
+   (a) `ApplyQuantityAsync`'s catch dereferenced `product.Id` for its log → `NullReferenceException`
+   thrown FROM THE CATCH — circuit down, write landed, no message; and (b) even without the NRE,
+   `quantityError` renders inside the `product is not null` branch, so the page sat on "Loading…"
+   forever with "Saved — don't repeat the change" set but unreachable. Item 27 shipped that split
+   advice as the fix for exactly this scenario and noted the handlers were "review-verified rather
+   than unit-pinned — no page harness exists"; the harness's first contact proved the review wrong.
+   **Fix:** a product SWITCH still blanks to "Loading…" (B must not render under A's data), but a
+   same-product REFRESH keeps the current view up while the load runs — a failed refresh now leaves
+   a live page with the advice visible (derived rows clear after the fresh product is in hand; the
+   not-found path nulls explicitly). Pinned by
+   `A_failed_reload_after_a_landed_used_one_warns_against_repeating_it` (message AND count moved)
+   and its failed-write mirror (message AND count unchanged). ⚠️ `ApplyExpirationAsync` has NO
+   catch at all — same handler family, a reload failure there still tears down the circuit.
+   Deliberately not fixed in this pass (it needs the same split-advice treatment, its own message
+   wording, and its own tests); flagged for the Phase D tail.
 
 1. **A relative chat move edited a DORMANT count (7/30, fixed).** `StockLedger.AdjustByHuman` gated
    only on a null baseline, and dormancy keeps the number — so *"stop counting the rice"* followed by
@@ -280,3 +301,50 @@ service remains untested.** What landed:
 **Accepted uncovered (with reasons):** `AiUsage.Id` (EF key auto-property), the two unreachable
 `default:` guard throws in `ReportEngine` (`PurchaseValue`/`BucketStart` — enum-exhaustive switches),
 and `Trim`'s unlistable-directory branches (startup housekeeping, logged-warning-only by design).
+
+## Phase D — the page harness (7/31, named flows ✅ / page tail open)
+
+**`tests/ShelfAware.Web.UI.Tests`** — bUnit 2.8.6 on net10.0, in the solution and CI (fourth test
+step). **38 tests, 4 files, all green; 982 across the suite; 0 warnings.** The harness renders real
+pages over the SAME stack the persistence suite trusts: `TestDb` + `FakeAppSettings` shared from
+Web.Tests via `InternalsVisibleTo` (one definition, no drift), the real `EfPantryStore`, real
+rename/merge services — fakes only at the AI/voice seams, whose real implementations Llm.Tests
+already covers. AI-adjacent child components (PushToTalk, OnboardingBanner, the readers) are
+stubbed; pure-markup children (SplitButton, BrandVarietyHint, LineChart) render for real.
+
+**The load-bearing harness piece is `FlakyDbFactory`:** pages get contexts through it, and it can
+fail the Nth create (`FailAfter`) or stall one on a gate (`HoldNext`). That models the boundary
+production genuinely has — every load and save is its own short-lived context — which is what makes
+two previously walkthrough-only classes honestly testable: the split failure advice ("didn't save —
+try again" vs "saved — don't repeat it", asserted with the message AND the database state so the
+branch is proven, not assumed), and the picker's gated exits (a real mid-flight interleave: hold the
+pick at its context create, click the backdrop, release, then prove the pick landed once and nowhere
+else). The store shares the factory, so `FailAfter = 0` kills the store's write and `= 1` kills the
+page's reload after it.
+
+| File | Pins |
+|---|---|
+| HomeQuickUpdateTests (6) | Enter-submits fix both sides (enabled on blank, disabled only while busy — held mid-flight via the fake's gate); blank send answers with a hint and never calls chat; success clears the box, failure keeps the text and styles as error; a navigating reply moves the page. |
+| GroceryListUsedOneTests (5) | Suppressed row = CountNote + `linkish` "Used one", full cell text regex-pinned so a leaked due date fails; decrement is the household's own 1.25 lb median package (weight fixture — a hardcoded −1 fails) and never renews the clock; last package records the OutNow and re-anchors (the one delta that IS a look); the stop-counting race reloads in silence with the dormant pair frozen; the gate's other side (no count → date form, no control). |
+| RecipesEatFlowTests (11) | One-tap commit with the exact take line; Undo reverses all three writes; failure advice split both directions with DB state; ambiguity → picker with live counts, nothing moves until answered; grounded-to-uncounted asks even with one candidate; click-away lands in Skipped and is SAID; both gated-exit interleavings (backdrop + Dismiss mid-pick); a pick that finds nothing lands in Skipped with no decrement and no error. |
+| ProductDetailCountPanelTests (17) | All four confidence renderings (assert / Aging / Spent / distrusted zero) with each band's sentence pinned positively AND the neighbours' absent; suppression note + "Rhythm would ask" relabel, and the relabel's other side on a stale count; empty box ≠ zero; negative refused with its own message; concurrent stop-counting refusal; split failure advice on "Used one" both directions; stop-counting dormant copy with the pair kept; unit box relabels without touching the number; fast-mover nudge shown and (three ways) not shown; transient error clears on reload; panels reset on product switch. |
+
+**Hunt-list pass over the new tests (the audit's own rigor, applied to itself):**
+- **Mutation check on the crown jewels:** removed `eatBusy` from `ClosePicker`'s gate and disabled
+  `DismissEat`'s — both interleaving tests FAILED, then passed again with the gates restored. The
+  timing tests discriminate; they are not passing by accident of bUnit's dispatch order.
+- **One one-sided pin found and closed:** the rhythm-row relabel had only its suppressed side
+  ("Rhythm would ask" present); a mutant relabeling unconditionally would have passed. The Spent
+  test now pins "Next buy" present / relabel absent when suppression is NOT active.
+- Class 2 (null==null): every clock assertion compares against a seeded non-null instant; the two
+  `Assert.Null`s are deliberate absolute pins. Class 3: the factory IS the context boundary; DB
+  asserts go through a separate unscoped context. Class 6: none — every test drives rendered markup.
+
+**Page coverage from this run alone** (whole-page lines, so the untested surfaces are visible):
+GroceryList 55% · ProductDetail 50% · Recipes 39% · Home 35%.
+
+**The Phase D tail (open):** the rest of the page surfaces per the exclusion policy — Recipes'
+suggest/save/adapt/swap-cloud flows, ProductDetail's rename/merge/expiration panels (⚠️ incl. the
+`ApplyExpirationAsync` missing-catch fix flagged in bug #2), GroceryList extras/copy/download,
+Home's cards + quick-buy actions, then Upload, Products, Receipts, Reports, Settings, Accuracy,
+SpendInsight, the chart components, and the JS-interop-mocked voice components.

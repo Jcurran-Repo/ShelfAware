@@ -640,14 +640,22 @@ else
         if (loadedId == Id) return; // same product already loaded
         loadedId = Id;
 
-        product = null;
-        notFound = false;
-        history.Clear();
-        priceSeries.Clear();
-        chartSizeLabel = null;
-        brandBreakdown = [];
-        varietyBreakdown = [];
-        usedInRecipes = [];
+        // A product SWITCH blanks to "Loading…" — B must not render under A's data. A same-product
+        // REFRESH (a write handler nulled loadedId) keeps the current view up while the fresh load
+        // runs: clearing first meant a refresh whose load then failed left a dead "Loading…" page
+        // with the handler's failure advice set but no product branch to render it in — the split
+        // "Saved — don't repeat it" message could never reach the person it exists to warn.
+        if (product is null || product.Id != Id)
+        {
+            product = null;
+            notFound = false;
+            history.Clear();
+            priceSeries.Clear();
+            chartSizeLabel = null;
+            brandBreakdown = [];
+            varietyBreakdown = [];
+            usedInRecipes = [];
+        }
 
         // Transient edit affordances must not survive a product switch: a merge navigates this SAME
         // reused component instance to the target product, and a panel left open there would offer a
@@ -662,7 +670,7 @@ else
         mergeCandidates = [];
 
         await using var db = await DbFactory.CreateDbContextAsync();
-        product = await db.Products
+        var loaded = await db.Products
             .AsNoTracking() // read-only detail view; substitute edits reload via their own context
             .Include(p => p.Purchases)
             .Include(p => p.Signals)
@@ -670,11 +678,13 @@ else
             .Include(p => p.Substitutes)
             .FirstOrDefaultAsync(p => p.Id == Id);
 
-        if (product is null)
+        if (loaded is null)
         {
+            product = null;
             notFound = true;
             return;
         }
+        product = loaded;
 
         // Per-receipt unit price for this product, so each purchase can show what it cost. Size rides
         // along so the est. cost/buy can price the recommended size, not a blend across sizes.
@@ -706,6 +716,12 @@ else
         // prices match a null recommended size.
         var sizePrices = new ProductPriceIndex(priceByReceipt.Select(x => (Id, x.Size, x.Price)));
         estimate = ShoppingEstimator.For(product, prediction, today, sizePrices.PriceFor(Id, prediction.RecommendedSize));
+
+        // The fresh product is in hand — now drop the previous render's derived rows. On a refresh
+        // they stayed on screen while the load ran; no awaits sit between here and repopulation.
+        history.Clear();
+        priceSeries.Clear();
+        chartSizeLabel = null;
 
         var pricePoints = new List<PricePoint>();
         var ordered = product.Purchases.OrderBy(p => p.PurchasedAt).ToList();
