@@ -172,11 +172,11 @@ public class SettingsPageTests : SettingsTestBase
         var section = Section(cut, "AI usage");
         // Today's stats sum the row the meter keeps per day…
         Assert.Contains("3", section.QuerySelectorAll(".stat").Single(s => s.TextContent.Contains("AI calls")).TextContent);
-        Assert.Contains("2,000", section.QuerySelectorAll(".stat").Single(s => s.TextContent.Contains("tokens")).TextContent);
+        Assert.Contains(2000.ToString("N0"), section.QuerySelectorAll(".stat").Single(s => s.TextContent.Contains("tokens")).TextContent);
         // …and the history table lists both days with in/out split out.
         var rows = section.QuerySelectorAll("tbody tr").ToList();
         Assert.Equal(2, rows.Count);
-        Assert.Contains("1,200", rows.Single(r => r.TextContent.Contains($"{Today:MMM d}")).TextContent);
+        Assert.Contains(1200.ToString("N0"), rows.Single(r => r.TextContent.Contains($"{Today:MMM d}")).TextContent);
     }
 
     // ----------------------------------------------------------------------------- BYOK panel
