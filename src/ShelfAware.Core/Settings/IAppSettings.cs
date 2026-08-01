@@ -9,15 +9,12 @@ public interface IAppSettings
 }
 
 /// <summary>
-/// Every key the settings table can hold, and — just as importantly — whether each is CONFIGURATION or
-/// the household's own CONTENT.
+/// Every key the settings table can hold, documented for what it MEANS.
 ///
-/// The distinction earns its keep at "delete my data": this table is mostly how the app is set up, but
-/// some keys hold content derived from a household's pantry (their last recipe ideas; their receipts'
-/// self-eval scores, merchant names and all), and that has to go when they delete their data.
-///
-/// Classify here rather than listing keys at the delete site — a test fails if a new key is in neither
-/// list, so the choice gets made rather than defaulted to "survives".
+/// Deliberately no config-vs-content classification: "delete my data" removes a household's settings
+/// rows wholesale, so there is no per-key choice to make and no second list that could fall out of step
+/// with these constants. Every key below has a sensible default when absent, which is what makes wiping
+/// them safe rather than merely tidy.
 /// </summary>
 public static class SettingKeys
 {
@@ -51,16 +48,6 @@ public static class SettingKeys
     /// in). Off is DORMANT, not destructive: recorded dates are kept but never fire and never render.
     /// One definition of "on": <see cref="AppSettingsExtensions.GetTrackExpirationDatesAsync"/>.</summary>
     public const string TrackExpirationDates = "TrackExpirationDates";
-
-    /// <summary>How the app is set up. Survives "delete my data": wiping your pantry shouldn't forget
-    /// how you like receipts confirmed.</summary>
-    public static readonly IReadOnlyList<string> Config =
-        [ImportMode, AutoConfirmImports, RecipeAddConfirm, TrackExpirationDates];
-
-    /// <summary>Derived from the household's own pantry and receipts, and therefore theirs: removed by
-    /// "delete my data" like any other content.</summary>
-    public static readonly IReadOnlyList<string> UserContent =
-        [LastRecipeSuggestions, SelfEvalResults];
 }
 
 public static class AppSettingsExtensions

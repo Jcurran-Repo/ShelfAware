@@ -3,7 +3,6 @@ using System.IO.Compression;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Domain;
-using ShelfAware.Core.Settings;
 using ShelfAware.Core.Speech;
 
 namespace ShelfAware.Web.Data;
@@ -18,12 +17,13 @@ namespace ShelfAware.Web.Data;
 /// theirs: the saved images of their receipts, and the synthesized audio of their recipe steps. It does
 /// NOT touch the visitor's BYOK keys — those are held in the browser and cleared by "Forget my key".
 ///
-/// **The export is everything in the household's database, deliberately** — including its settings and
-/// its AI usage history, which the delete treats differently (settings split into config-that-stays and
-/// content-that-goes; usage stays). Export and delete answer different questions. Delete asks "what is
-/// yours to remove", and the answers are allowed to differ: config surviving a wipe is a kindness, and
-/// usage surviving is what stops a delete doubling as a quota reset. Export asks "what do you have on
-/// me", and the only defensible answer to that is all of it.
+/// **The export is everything in the household's database, deliberately** — including its AI usage
+/// history, which the delete alone leaves behind. Export and delete answer different questions, and the
+/// answers are allowed to differ. Delete asks "what is yours to remove": the settings go with the rest,
+/// because the button is called "delete all my data" and a row in that table is as likely to be
+/// something the app wrote itself as a preference anyone chose; usage stays, because a delete that
+/// cleared it would double as a quota reset. Export asks "what do you have on me", and the only
+/// defensible answer to that is all of it.
 /// </summary>
 /// <param name="speechCache">The household's stored recipe audio, or null when caching is off. Both
 /// halves need it: deleting a household's rows while leaving a recording of its recipes on disk would
@@ -245,7 +245,7 @@ public sealed class UserDataService(
             + await db.SavedReports.CountAsync(ct)
             + await db.ExcludedFoods.CountAsync(ct)
             + await db.GroceryExtras.CountAsync(ct)
-            + await db.AppSettings.CountAsync(s => SettingKeys.UserContent.Contains(s.Key), ct);
+            + await db.AppSettings.CountAsync(ct);
     }
 
     /// <summary>Wipe every user-content table. In one transaction so it's all-or-nothing, and children
@@ -278,10 +278,13 @@ public sealed class UserDataService(
         await db.GroceryExtras.ExecuteDeleteAsync(ct);
         await db.SavedReports.ExecuteDeleteAsync(ct); // no FKs — but a report config is user content
 
-        // The settings table is mostly configuration, which survives — but some of its keys hold content
-        // derived from the pantry we just deleted (the last recipe ideas; the self-eval's per-receipt
-        // scores, each named for its merchant and date). SettingKeys says which is which.
-        await db.AppSettings.Where(s => SettingKeys.UserContent.Contains(s.Key)).ExecuteDeleteAsync(ct);
+        // Settings go with everything else, and wholesale rather than by a list of keys. Some of this
+        // table is pantry-derived content outright (the last recipe ideas; the self-eval's per-receipt
+        // scores, each named for its merchant and date), and the rest is as likely to be residue the app
+        // wrote itself as a choice anyone made — so nothing here has a claim to outlive the data it was
+        // about. Deleting the table rather than a key list is also what stops a key added later quietly
+        // surviving. Safe because every key has a default when absent; none is required to exist.
+        await db.AppSettings.ExecuteDeleteAsync(ct);
 
         await tx.CommitAsync(ct);
 
