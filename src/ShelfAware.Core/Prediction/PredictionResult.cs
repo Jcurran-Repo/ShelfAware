@@ -32,7 +32,9 @@ public record PredictionResult
     /// &gt; 1 when the most recent stock-back was a purchase noticeably bigger than the typical trip
     /// (same-day quantities summed), in which case the due date is projected that much further out —
     /// buying 3 bags shouldn't nag on the 1-bag cadence. Null when the last buy was typical (or the
-    /// anchor was a restock). Capped at 3×.
+    /// anchor was a restock). Uncapped as a behaviour (the 3× ceiling was removed 2026-07-28); this
+    /// reports the factor the engine APPLIED, which parts company with the raw ratio only when the
+    /// arithmetic bound in <see cref="ReplenishmentPredictor"/> bites on a misread quantity.
     public double? StockUpFactor { get; init; }
 
     /// The package size to recommend buying — the size bought most often (ties: most recent). Null for

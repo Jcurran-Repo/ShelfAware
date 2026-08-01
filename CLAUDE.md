@@ -71,7 +71,7 @@ Accuracy (`/accuracy`, renders `eval-results.json`), **Recipes (`/recipes`)**, a
 Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptTotals`, Core).
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1163 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1174 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see item 31).
 
@@ -1005,10 +1005,62 @@ bUnit pages/components — see item 31).
    - CI runs the bUnit project as a fourth test step. GitHub's Node-20 deprecation notice on
      checkout@v4/setup-dotnet@v4 is the one open CI annotation (bump to v5 in some future arc).
 
+32. **The demo seed audited against the whole feature set (2026-08-01, branch `feature/demo-seed-coverage`).**
+   The sample pantry is the app's test environment, so a feature with no seeded instance is a feature nobody
+   can look at. **Measured, not eyeballed** — a throwaway probe ran the seeded rows through the real engine,
+   `ReportDataService` and `MealStock`: 4 of 17 tables empty, 6 of 19 enum values unused. What it found, and
+   the rules the fixes carry:
+   - ⚠️ **`SignalKind.Restocked` had ZERO instances**, which silently took three behaviours with it: an
+     outage cleared by a stock-back rather than a purchase, a due date re-anchored to one, and v3.6's
+     "I froze it" override (`ExpirationOverridden` was unreachable — it *needs* a Restocked). One missing
+     enum value, three dark features.
+   - ⚠️ **The catalog's only dated purchase was in the FUTURE**, so `Expired` never fired and Waste watch
+     could only ever return `StillAhead` — its four evidence-reading verdicts had no data and its headline
+     list rendered empty. The seeder's own comment claimed it "has something to judge"; it had one row it
+     was definitionally unable to judge. **Four past labels** (milk/dog food/spinach/bacon) make all five
+     reachable, one per verdict.
+   - ⚠️ **"Ate it" took NOTHING for every recipe in the catalog** — no counted product was any main's
+     grounded match, so v4.1's flagship flow reported "nothing to take" and that was indistinguishable
+     from a bug. `White Rice` is counted now (~30-day rhythm, so it suppresses nothing — it exists purely
+     so cooking moves a number). The picker keeps its own case on the tacos.
+   - **Nothing was bought in two sizes**, so BOTH branches of the dominant-size rule — the case the whole
+     size-is-metadata decision exists for — were unexercised. Orange Juice (a size bought ≥2× drives the
+     cadence alone) and Peanut Butter (no size twice → falls back to all purchases) cover them.
+   - **`AlternativesJson` and `LastRecipeSuggestions` were empty, and that's a KEYLESS problem**: an
+     un-cached swap cloud needs an AI call to open, so the feature was dead for most visitors. Seeding the
+     cache is the same move the speech cache already makes to let sample recipes talk without a key.
+   - **The sample pantry now sets `TrackExpirationDates=true`** and says so in the load message. It ships
+     OFF for a real household deliberately (most ritual-heavy field in the app), but a sample pantry that
+     leaves it off renders none of v3.6 and an empty Waste watch. ⚠️ It's a `Config` key, so it survives
+     "delete my data" — someone who loads samples, wipes them and goes real keeps it until they turn it off.
+   - **A PendingReview receipt ships with the image it was read from** (embedded resource, not wwwroot —
+     demo content, not a public asset). The insight that made it worth building: the review grid never
+     needed a key, only extracted LINES, so review + confirm now work on a keyless visit. ⚠️ **Its lines are
+     that image transcribed** and tests pin enough of them that the two can't drift — a row describing a
+     different receipt from the one it can show you is this area's signature failure. ⚠️ It is the ONE
+     fixed-date row in a catalog that is otherwise relative to today, because the date is printed on the
+     picture; an ageing review date is exactly what an abandoned review looks like.
+   - Also seeded: aliases with their teaching receipt, two saved reports (**asserted against
+     `ReportSpecRules`** — a saved spec the engine refuses would greet a visitor with an error), `ConfirmedAt`
+     + `CreatedByReceiptId` provenance, a second merchant (aliases are keyed per merchant), an untracked
+     product, a dormant count, a pre-variety merge candidate, `Category.Other`, and all three
+     `PurchaseSource` values.
+   - **Deliberately still absent, each for a stated reason:** seeded `AiUsage` (would misreport what a
+     household spent), a `Discarded` receipt (every surface filters it out by design, so the row would be
+     invisible), and a misread quantity (a demo must not ship known-wrong data to show off its repair tool).
+   - **`DemoSeeding` (Web.Tests) is the one way to construct the seeder** in either suite, since seeding now
+     writes a real file through real `ReceiptStorage`.
+   - Fixed in passing: `PredictionResult` still documented `StockUpFactor` as "capped at 3×" (removed
+     2026-07-28 — the predictor's own comment said so), and `Product.CreatedByReceiptId` named the demo
+     seeder as a reason the column is null, which this change made false.
+   - **1174 tests green, 0 warnings** (1162 before; +12). Live-verified end to end on a throwaway household:
+     the expired pin on the dashboard, the label beating the count on the cream, the review grid with every
+     line pre-filled and the low-confidence row styled, the audit image byte-exact on disk under its
+     household folder, Waste watch showing all five verdicts, both saved reports running, "White Rice — 1
+     off, 3 left" with Undo restoring it, and a swap cloud opening with no key configured.
+
 33. **v4.3 — "delete all my data" takes the settings too, and the `Config`/`UserContent` split is gone
-   (2026-08-01, branch `feature/delete-resets-settings`).** Jordan's call. ⚠️ **Numbering note: this
-   branch is cut from `master`, so it does not contain item 32 (PR #2, still open when this was
-   written) — whichever merges second appends.**
+   (2026-08-01, branch `feature/delete-resets-settings`).** Jordan's call.
    - **Why the classification stopped being right.** `Config` justified itself as "wiping your pantry
      shouldn't forget how you like receipts confirmed" — which presumes the household CHOSE the
      setting. The demo seeder writing `TrackExpirationDates` (item 32) breaks that presumption: load

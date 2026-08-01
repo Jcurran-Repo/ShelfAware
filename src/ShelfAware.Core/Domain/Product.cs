@@ -29,8 +29,8 @@ public class Product : IHouseholdOwned
     /// "you counted 3 in March and one usually lasts 9 days — still got them?" instead of trusting a
     /// count forever. A last-modified stamp would answer a different question and detect nothing.</summary>
     public DateTimeOffset? QuantityCountedAt { get; set; }
-    /// <summary>The receipt whose confirm CREATED this product, or null (created by hand, by the demo
-    /// seeder, or before 2026-07-22). Provenance for "remove this receipt": a product the receipt
+    /// <summary>The receipt whose confirm CREATED this product, or null (created by hand, never bought
+    /// on a receipt at all, or before 2026-07-22). Provenance for "remove this receipt": a product the receipt
     /// introduced — and that gathered no other history since — goes with it. A plain breadcrumb, not
     /// an FK (no navigation): the receipt may be long gone while the product lives on.</summary>
     public int? CreatedByReceiptId { get; set; }

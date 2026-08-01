@@ -16,6 +16,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The sample pantry's one un-reviewed receipt, shipped inside the assembly rather than under
+         wwwroot: it is demo CONTENT, not a public asset, and nothing should be able to fetch it by
+         URL. Its printed lines are the ground truth for the PendingReview rows DemoDataSeeder writes
+         — change one and you must change the other, or the review screen describes a different
+         receipt from the one it can show you. (A copy of test-fixtures/walmart-receipt.png, which
+         serves browser-upload testing; the app owns this one so the fixture can change freely.) -->
+    <EmbeddedResource Include="Data\demo-receipt.png" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The page-test harness scripts the browser side of the voice components, which means
          constructing the JS-interop DTO records (VoiceCapture, SessionResult, HeardResult) that
          the components deserialize from their modules. Those records are internal, not public —
