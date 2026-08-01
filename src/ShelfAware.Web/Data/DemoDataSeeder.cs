@@ -686,14 +686,23 @@ public sealed class DemoDataSeeder(
     /// receipt's removal un-teaches the pairing.</para></summary>
     private static IEnumerable<ProductAlias> BuildAliases(List<Product> products, List<Receipt> receipts)
     {
+        // Named rather than derived, so the aliases land on staples whose receipt text is stable and
+        // worth having learned. The cost of naming them is a coupling to the catalog above, and the
+        // lookups below say so out loud: the only way either can fail is a seed edit in this same file,
+        // and a bare "sequence contains no matching element" from inside a first-run flow is the worst
+        // possible way to find that out.
         foreach (var name in (string[])["Whole Milk", "Dry Dog Food", "Ground Coffee", "Large Eggs", "Sandwich Bread"])
         {
-            var product = products.First(p => p.Name == name);
+            var product = products.FirstOrDefault(p => p.Name == name)
+                ?? throw new InvalidOperationException(
+                    $"The demo catalog no longer seeds a product named '{name}', which the seeded aliases point at.");
             // The earliest trip that bought it — the confirm that would have taught the pairing.
             var teacher = receipts
                 .Where(r => r.Lines.Any(l => l.Product == product))
                 .OrderBy(r => r.PurchasedAt)
-                .First();
+                .FirstOrDefault()
+                ?? throw new InvalidOperationException(
+                    $"'{name}' has no seeded receipt line, so no confirm could have taught an alias for it.");
             yield return new ProductAlias
             {
                 Merchant = teacher.Merchant!,
