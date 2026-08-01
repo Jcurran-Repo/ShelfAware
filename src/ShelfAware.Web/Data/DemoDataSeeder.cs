@@ -61,7 +61,16 @@ public sealed class DemoDataSeeder(
         // a Waste watch with nothing in it. Turning it on here is what makes the seeded labels mean
         // anything, and the load message says so, because a setting that changed itself silently is
         // worse than a feature nobody found.
-        db.AppSettings.Add(new AppSetting { Key = SettingKeys.TrackExpirationDates, Value = "true" });
+        //
+        // ⚠️ Updated if present, not blind-inserted. The seed guard is about the CATALOG, so a household
+        // with an empty pantry can already hold settings rows — the Settings page writes this exact key
+        // the moment anyone touches the toggle, and the sample-data button is on offer the whole time.
+        // Adding a second row collides on the composite key (HouseholdId, Key) and takes the entire seed
+        // down, in the one flow this button has. Same read-then-write shape as EfAppSettings.SetAsync.
+        if (await db.AppSettings.FirstOrDefaultAsync(s => s.Key == SettingKeys.TrackExpirationDates, ct) is { } existing)
+            existing.Value = "true";
+        else
+            db.AppSettings.Add(new AppSetting { Key = SettingKeys.TrackExpirationDates, Value = "true" });
 
         var originals = BuildOriginalRecipes();
         db.Recipes.AddRange(originals);

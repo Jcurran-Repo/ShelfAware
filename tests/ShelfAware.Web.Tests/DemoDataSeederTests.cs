@@ -609,6 +609,32 @@ public class DemoDataSeederTests : IDisposable
     }
 
     [Fact]
+    public async Task Seeds_over_a_household_that_already_chose_a_setting()
+    {
+        // The guard is about the CATALOG, so an empty-pantry household can still hold settings rows: the
+        // Settings page writes one the moment anyone touches the expiration toggle, and the sample data
+        // button stays on offer the whole time. Blind-inserting the same key would collide on the
+        // composite primary key (HouseholdId, Key) and take the whole seed down with it — in a first-run
+        // flow, which is the only flow this button has.
+        using var db = new TestDb();
+        await using (var setup = db.CreateDbContext())
+        {
+            setup.AppSettings.Add(new AppSetting { Key = SettingKeys.TrackExpirationDates, Value = "false" });
+            await setup.SaveChangesAsync();
+        }
+
+        var result = await _seeding.Seeder(db).SeedAsync();
+
+        Assert.True(result.Seeded);
+        await using var read = db.CreateDbContext();
+        // The sample pantry's labels are inert without it, and the load message says it was turned on,
+        // so the seed's value has to win over the pre-existing one rather than either crashing or
+        // quietly leaving the feature dark while claiming otherwise.
+        var setting = Assert.Single(read.AppSettings.ToList(), s => s.Key == SettingKeys.TrackExpirationDates);
+        Assert.Equal("true", setting.Value);
+    }
+
+    [Fact]
     public async Task Skips_when_the_catalog_already_has_products()
     {
         using var db = new TestDb();

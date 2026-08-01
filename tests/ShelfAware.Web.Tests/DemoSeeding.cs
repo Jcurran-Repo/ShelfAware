@@ -19,11 +19,15 @@ internal sealed class DemoSeeding : IDisposable
 
     public ReceiptStorage Storage { get; }
 
-    public DemoSeeding()
+    /// <param name="householdId">Must be the household the DB factory is scoped to. In production both
+    /// sides read the SAME scoped <c>ICurrentHousehold</c>, so the image folder and the rows that point
+    /// at it cannot disagree; a fixture that hardcoded its own id would keep passing if they ever did.
+    /// Defaults to <c>TestDb</c>'s household so the two line up without every call site saying so.</param>
+    public DemoSeeding(string householdId = "hh-test")
     {
         Storage = new ReceiptStorage(
             new AppPaths(_dataDir, Path.Combine(_dataDir, "receipts")),
-            new FakeCurrentHousehold(),
+            new FakeCurrentHousehold(householdId),
             NullLogger<ReceiptStorage>.Instance);
     }
 

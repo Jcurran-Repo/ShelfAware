@@ -248,7 +248,7 @@ public class HouseholdIsolationTests : IDisposable
         }
 
         _db.HouseholdId = B;
-        using var seeding = new DemoSeeding();
+        using var seeding = new DemoSeeding(B); // storage scoped to the same household as the context
         var seeded = await seeding.Seeder(_db).SeedAsync();
         Assert.True(seeded.Seeded);
 
