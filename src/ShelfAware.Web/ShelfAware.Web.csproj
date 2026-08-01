@@ -15,6 +15,16 @@
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The page-test harness scripts the browser side of the voice components, which means
+         constructing the JS-interop DTO records (VoiceCapture, SessionResult, HeardResult) that
+         the components deserialize from their modules. Those records are internal, not public —
+         they mirror private JS shapes and are nobody else's contract. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>ShelfAware.Web.UI.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>

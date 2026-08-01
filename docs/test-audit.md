@@ -119,11 +119,11 @@ Never deleted for being slow, inconvenient, or red. A red test is a finding, not
   standing structural rule), then the named untested flows first: the "Ate it" notice + Undo, the
   picker's gated exits, the count panel, ProductDetail's split write-failure/reload-failure advice,
   GroceryList's `UsedOne`, Enter-submits-Quick-update. These are exactly the flows past reviews
-  could only verify by hand. **◑ 7/31 — harness + all six named flows (38 tests), then the tail
-  session (+106 → 144), then Upload/Reports/Settings (+43 → 187 page tests, 1131 green total,
-  three product bugs found and fixed across the phase). Every page with handlers is covered and
-  the chart family rides the Reports tests. The one remaining item: the JS-interop-heavy voice
-  components (VoiceAgent/RecipeReadAloud/CookAlong/PushToTalk) — see the Phase D section below.**
+  could only verify by hand. **✅ COMPLETE 7/31, in four sessions: harness + the six named flows
+  (38 tests), the four pages' remaining surfaces + four more pages + components (+106 → 144),
+  Upload/Reports/Settings (+43 → 187), and the voice components (+32 → 219 page tests; 1163 green
+  total; 0 warnings). Three product bugs found and fixed along the way; every page with handlers,
+  every chart, and every voice surface is covered. See the Phase D section below. Next: Phase E.**
 - **E — Gauntlet:** `/pre-push`, Jordan's `/code-review`, merge. Tests-about-tests get the same
   review rigor as code.
 
@@ -415,5 +415,41 @@ Core-tested (`ListeningSettingsTests`); the page pins the refusal path. Upload's
 image-resize branch (`RequestImageFileAsync` is browser JS; PDFs cover the pipeline) and the
 oversize-file guard.
 
-**Still open in Phase D:** only the voice components — VoiceAgent, RecipeReadAloud, CookAlong,
-PushToTalk (JS-interop boundaries mocked per the exclusion policy). Then Phase E.
+**Still open after the third session:** only the voice components — closed in the fourth session
+below, which completes the phase.
+
+### The fourth session (7/31 latest) — the voice components (+32 → 219 in the harness, 1163 green) · PHASE D ✅
+
+The four JS-interop-heavy surfaces, driven through bUnit's scripted modules with the speech seams
+faked (the REAL `ElevenLabs*` implementations are pinned in ShelfAware.Llm.Tests). The loop
+harness convention that makes the async listening loops deterministic: the fake browser's capture
+is STICKY (every window "hears" the same bytes) and **`FakeSpeechToText` is the sequencer** — a
+queue of transcripts whose exhausted-queue backstop answers "stop listening", so a loop under
+test always winds down instead of spinning. A first draft tried sequencing with fresh pending JS
+handlers instead; bUnit reuses the handler for an identical setup, the test failed, and the
+rewrite landed on the queue convention — which also moved the resume test's assertion to where
+the claim actually lives (the history REPLAYED to the brain, not the panel paint).
+
+**Testability seam:** `ShelfAware.Web` gained `InternalsVisibleTo("ShelfAware.Web.UI.Tests")` and
+the four JS-interop DTO records (`PushToTalk.VoiceCapture`, `VoiceAgent.VoiceCapture`,
+`RecipeReadAloud.SessionResult`/`HeardResult`) went `private` → `internal` — the tests must
+construct them to script the browser side, and they mirror private JS shapes that are nobody
+else's contract. Same precedent as Web.Tests' IVT.
+
+| File | Pins |
+|---|---|
+| PushToTalkTests (8) | The one-shot state machine end to end (hold → speak → release → transcript shown → reply read back → OnApplied → Idle); silence coached without waking the brain (no STT, no chat); unreadable audio apologizes without a chat call; a failed chat turn styles as error and skips the refresh; a navigating reply moves AFTER the spoken confirmation; a failed read-back is a bonus lost, not a turn lost (reply on screen, no play, machine home); unsupported browser disables and says why; the keyboard hold's auto-repeat guard (three keydowns, ONE recording). |
+| VoiceAgentTests (8) | A conversation heard, answered WITH the screen context, and ended by the plain-code stop phrase (goodbye spoken, brain never woken for it); refused mic reports and leaves the launcher; silence winds down instead of holding the mic open; **an ordinary navigation keeps the agent listening so commands chain** (the backstop stop heard on the destination page is the proof) vs **a hand-off standing it down first** (no goodbye, recorder released — mutation-checked: disabling the hand-off branch fails the test); a non-navigating change pings `PantryChanged` exactly once; resume REPLAYS the kept history to the brain while the launcher starts clean; a stand-down mid-turn releases the mic at once and the held turn still lands in the history the hand-back replays. |
+| CookAlongTests (5) | The agent's dynamic variable carries the recipe with ORDER-ordered renumbered steps + the calorie estimate; mode/transcript callbacks drive the panel; a session that can't start reports and fires OnUnavailable exactly ONCE (a second failure signal must not fight the parent's fallback swap); ✕ ends without resuming the assistant; both hand-back roads (button + spoken) stop the session FIRST then resume. |
+| RecipeReadAloudTests (11) | Narration speaks EXACTLY `RecipeNarration`'s segmentation with its neighbour contexts (the cache-key contract the export depends on) and streams — intro playing before the steps append in order; a failed intro names the key; a failed STEP stops loudly, never skips (the listener's hands are busy); buttons drive the player and the highlight follows OnIndex, never guesses; ✕ vs Back-to-assistant; hands-free asks the agent to stand down before opening ears and the grammar moves the reader for free (no chat call for "next"); no-ears and denied-mic keep the buttons working; a question falls through to the brain with the recipe + "listening, not reading" + go_to_step steering as context, the answer spoken, and "stop listening" putting the mic down while the recipe stays; the brain's `StepTarget` moves the reader with the step AS the answer (reply not spoken); "hold on" ignores kitchen chatter (zero chat calls) until a command releases it. |
+
+**Coverage:** CookAlong 96% · VoiceAgent 89% · PushToTalk 89% · RecipeReadAloud 87%. The
+remainders are circuit-teardown catches and the JS-side branches (pause/resume against a real
+`<audio>` element, the mic-session lifecycle) that only a real browser exercises — the class the
+audit's exclusion policy anticipated for these components.
+
+**Phase D is complete.** 219 page/component tests; every page with handlers, every chart, every
+voice surface. Cumulative page-harness yield: three product bugs (the unreachable split advice +
+catch NRE, its expiration sibling, the swallowed removal accounting), two wrong test expectations
+fixed honestly, and four mutation checks proving the sharpest gates discriminate. Next: Phase E —
+`/pre-push`, Jordan's `/code-review`, merge.

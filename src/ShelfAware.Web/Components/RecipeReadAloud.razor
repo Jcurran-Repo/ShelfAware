@@ -720,8 +720,8 @@
         return InvokeAsync(StateHasChanged);
     }
 
-    private sealed record SessionResult(bool Ok, string? Error, double Floor);
-    private sealed record HeardResult(bool Heard, string? Audio, string? MimeType, string? Error);
+    internal sealed record SessionResult(bool Ok, string? Error, double Floor);
+    internal sealed record HeardResult(bool Heard, string? Audio, string? MimeType, string? Error);
 
     public async ValueTask DisposeAsync()
     {
