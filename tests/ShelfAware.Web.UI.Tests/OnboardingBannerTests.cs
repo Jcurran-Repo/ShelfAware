@@ -1,0 +1,87 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using ShelfAware.Llm;
+using ShelfAware.Web.Components;
+using ShelfAware.Web.Data;
+using ShelfAware.Web.Services;
+
+namespace ShelfAware.Web.UI.Tests;
+
+/// <summary>
+/// The first-run banner: a keyless visitor gets the BYOK pitch, an empty catalog always offers
+/// the one-click sample pantry (dismissal notwithstanding — a brand-new visitor must always have
+/// a way in), and "Load sample data" runs the REAL demo seeder so the button's promise is the
+/// seeded catalog, not a fake's nod.
+/// </summary>
+public class OnboardingBannerTests : PageTestContext
+{
+    protected override void RegisterAdditionalServices()
+    {
+        // These tests render the banner ITSELF — clear the page-harness stubs (the pages stub it
+        // as an AI-adjacent child; here it is the subject).
+        ComponentFactories.Clear();
+        Services.AddSingleton(new CircuitAiSettings(Options.Create(new LlmOptions()))); // keyless
+        Services.AddSingleton(new DemoDataSeeder(Factory));
+    }
+
+    [Fact]
+    public void A_keyless_visitor_with_an_empty_catalog_gets_the_full_pitch()
+    {
+        var cut = Render<OnboardingBanner>(ps => ps.Add(p => p.CatalogEmpty, true));
+
+        var banner = cut.Find(".onboarding");
+        Assert.Contains("your own API key", banner.TextContent);
+        Assert.Contains("Load sample data", banner.TextContent);
+    }
+
+    [Fact]
+    public async Task Load_sample_seeds_the_real_catalog_and_tells_the_host_page()
+    {
+        var seeded = 0;
+        var cut = Render<OnboardingBanner>(ps => ps
+            .Add(p => p.CatalogEmpty, true)
+            .Add(p => p.OnSeeded, () => seeded++));
+
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Load sample data").Click();
+
+        cut.WaitForAssertion(() => Assert.NotEqual("", cut.Find("[role=status]").TextContent.Trim()));
+        Assert.Equal(1, seeded); // the dashboard reloads off this callback — a silent seed is a ghost town
+
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.True(await raw.Products.IgnoreQueryFilters().AnyAsync()); // the REAL seeder ran
+    }
+
+    [Fact]
+    public void Dismiss_hides_the_pitch_but_an_empty_catalog_keeps_the_banner()
+    {
+        // Dismissal is for the key nag; the sample-data offer survives it — the one path into the
+        // app for a visitor who dismissed the banner on sight and then found an empty pantry.
+        var emptyCatalog = Render<OnboardingBanner>(ps => ps.Add(p => p.CatalogEmpty, true));
+        emptyCatalog.Find(".onboarding-x").Click();
+        Assert.NotEmpty(emptyCatalog.FindAll(".onboarding"));
+        Assert.Contains(JSInterop.Invocations, i => i.Identifier == "shelfawareOnboarding.dismiss");
+    }
+
+    [Fact]
+    public void Dismissing_with_a_stocked_catalog_hides_the_banner_entirely()
+    {
+        var cut = Render<OnboardingBanner>(ps => ps.Add(p => p.CatalogEmpty, false));
+        Assert.NotEmpty(cut.FindAll(".onboarding"));
+
+        cut.Find(".onboarding-x").Click();
+
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".onboarding")));
+    }
+
+    [Fact]
+    public void A_previously_dismissed_visitor_is_not_nagged_again()
+    {
+        JSInterop.Setup<bool>("shelfawareOnboarding.isDismissed").SetResult(true);
+
+        var cut = Render<OnboardingBanner>(ps => ps.Add(p => p.CatalogEmpty, false));
+
+        // The dismissal flag loads after first render — the banner then stands down.
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".onboarding")));
+    }
+}

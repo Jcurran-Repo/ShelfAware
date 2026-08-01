@@ -84,10 +84,21 @@ internal sealed class FakeSuggestionAdvisor : IRecipeAdvisor
 {
     public IReadOnlyList<RecipeSuggestion> Suggestions { get; set; } = [];
 
+    /// <summary>When set, the next SuggestAsync throws it instead of answering — the page's
+    /// keep-the-old-batch-on-failure rule needs a failing model call to exist.</summary>
+    public Exception? Throw { get; set; }
+
+    public IReadOnlyList<string>? LastOnHand { get; private set; }
+    public IReadOnlyList<string>? LastExcluded { get; private set; }
+
     public Task<IReadOnlyList<RecipeSuggestion>> SuggestAsync(
         string request, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods,
-        CancellationToken cancellationToken = default) =>
-        Task.FromResult(Suggestions);
+        CancellationToken cancellationToken = default)
+    {
+        LastOnHand = onHand;
+        LastExcluded = excludedFoods;
+        return Throw is { } ex ? Task.FromException<IReadOnlyList<RecipeSuggestion>>(ex) : Task.FromResult(Suggestions);
+    }
 
     public Task<RecipeSuggestion?> AdaptAsync(
         RecipeToAdapt recipe, IReadOnlyList<PantryProduct> onHand, IReadOnlyList<string> excludedFoods,
@@ -99,8 +110,15 @@ internal sealed class FakeAlternativesAdvisor : IIngredientAlternativesAdvisor
 {
     public IReadOnlyList<string> Alternatives { get; set; } = [];
 
-    public Task<IReadOnlyList<string>> SuggestAsync(string ingredientName, CancellationToken cancellationToken = default) =>
-        Task.FromResult(Alternatives);
+    /// <summary>How many times the advisor was actually asked — the swap cloud promises to
+    /// generate once and cache, and only a counter can prove the second open costs nothing.</summary>
+    public int Calls { get; private set; }
+
+    public Task<IReadOnlyList<string>> SuggestAsync(string ingredientName, CancellationToken cancellationToken = default)
+    {
+        Calls++;
+        return Task.FromResult(Alternatives);
+    }
 }
 
 internal sealed class FakeSubstituteAdvisor : IProductSubstituteAdvisor

@@ -70,17 +70,27 @@ public abstract class PageTestContext : BunitContext
         Services.AddSingleton(new ProductMergeService(Factory));
         Services.AddLogging();
 
-        // Pages run interactively in production (global InteractiveServer); Recipes reads
-        // RendererInfo.IsInteractive in OnParametersSet, which throws when it's never set.
-        SetRendererInfo(new RendererInfo("Server", isInteractive: true));
-
         JSInterop.Mode = JSRuntimeMode.Loose;
 
         ComponentFactories.AddStub<PushToTalk>();
         ComponentFactories.AddStub<OnboardingBanner>();
         ComponentFactories.AddStub<RecipeReadAloud>();
         ComponentFactories.AddStub<CookAlong>();
+
+        // Derived classes adjust services and factories here — after the standard stubs (so a
+        // component-under-test can un-stub itself), and before the provider locks (the moment
+        // anything resolves from it, which SetRendererInfo below triggers).
+        RegisterAdditionalServices();
+
+        // Pages run interactively in production (global InteractiveServer); Recipes reads
+        // RendererInfo.IsInteractive in OnParametersSet, which throws when it's never set.
+        SetRendererInfo(new RendererInfo("Server", isInteractive: true));
     }
+
+    /// <summary>Called from the base constructor after the standard registrations and BEFORE the
+    /// provider initializes. ⚠️ Runs before the derived constructor body — use only the base
+    /// class's own members in an override.</summary>
+    protected virtual void RegisterAdditionalServices() { }
 
     protected override void Dispose(bool disposing)
     {

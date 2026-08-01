@@ -951,10 +951,16 @@ else
     {
         if (product is null || expirationBusy) return;
         expirationBusy = true;
+        expirationError = null;
+        // Same write-vs-reload split as ApplyQuantityAsync/SaveUnit. Re-saving this date is harmless
+        // (the write is absolute), but the message must still not claim a completed save didn't
+        // happen — and without a catch at all, a reload failure tore down the whole circuit.
+        var saved = false;
         try
         {
             if (await Store.SetExpirationAsync(product.Id, value))
             {
+                saved = true;
                 loadedId = null; // force the OnParametersSet load to run again for this product
                 await OnParametersSetAsync();
             }
@@ -962,6 +968,13 @@ else
             {
                 expirationError = "Couldn't save — this product has no purchases to carry a date.";
             }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogError(ex, "Setting the expiration for product {ProductId} failed (saved: {Saved}).", product.Id, saved);
+            expirationError = saved
+                ? "Saved — but the page couldn't refresh. Reload to see it."
+                : "That didn't save. Reload the page and try again.";
         }
         finally { expirationBusy = false; }
     }

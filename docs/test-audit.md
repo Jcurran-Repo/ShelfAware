@@ -119,9 +119,11 @@ Never deleted for being slow, inconvenient, or red. A red test is a finding, not
   standing structural rule), then the named untested flows first: the "Ate it" notice + Undo, the
   picker's gated exits, the count panel, ProductDetail's split write-failure/reload-failure advice,
   GroceryList's `UsedOne`, Enter-submits-Quick-update. These are exactly the flows past reviews
-  could only verify by hand. **◑ 7/31 — harness landed + all six named flows pinned (38 tests,
-  982 green total); the remaining page surfaces are the phase's open tail. See the Phase D section
-  below — the first page test found a real bug in review-verified handler code.**
+  could only verify by hand. **◑ 7/31 — harness + all six named flows (38 tests), then the tail
+  session: the four pages' remaining surfaces, Products/Receipts/Accuracy/SpendInsight, and four
+  components (+106 → 144 page tests, 1088 green total, three product bugs found and fixed).
+  Still open: Upload, Reports, Settings, the chart components, the voice components — see the
+  Phase D section below.**
 - **E — Gauntlet:** `/pre-push`, Jordan's `/code-review`, merge. Tests-about-tests get the same
   review rigor as code.
 
@@ -201,10 +203,19 @@ more permissive by construction, and an asserted zero files the same OutNow the 
    a live page with the advice visible (derived rows clear after the fresh product is in hand; the
    not-found path nulls explicitly). Pinned by
    `A_failed_reload_after_a_landed_used_one_warns_against_repeating_it` (message AND count moved)
-   and its failed-write mirror (message AND count unchanged). ⚠️ `ApplyExpirationAsync` has NO
-   catch at all — same handler family, a reload failure there still tears down the circuit.
-   Deliberately not fixed in this pass (it needs the same split-advice treatment, its own message
-   wording, and its own tests); flagged for the Phase D tail.
+   and its failed-write mirror (message AND count unchanged). ⚠️ `ApplyExpirationAsync` had NO
+   catch at all — same handler family, a reload failure there tore down the circuit. **Fixed in the
+   Phase D tail session (7/31 later):** the same split-advice shape as its siblings, pinned both
+   directions (`A_failed_write_advises_retry…` / `A_failed_reload_after_a_landed_date…`).
+
+3. **Removing the LAST receipt swallowed the removal accounting (7/31, fixed — found by the
+   Receipts page tests).** `removeResult` — the summary naming everything the removal undid
+   (purchases, products removed vs kept, merchant matches untaught) — rendered inside the
+   non-empty-list branch, so removing the only receipt flipped the page to "No receipts yet" and
+   the accounting vanished. That's the most likely first-contact case (one test upload, then
+   remove it), and the summary is the user's only record of what the removal did. The notice now
+   renders outside the list branches. Pinned by
+   `Removal_says_its_consequences_first_and_the_confirm_actually_removes`.
 
 1. **A relative chat move edited a DORMANT count (7/30, fixed).** `StockLedger.AdjustByHuman` gated
    only on a null baseline, and dormancy keeps the number — so *"stop counting the rice"* followed by
@@ -343,8 +354,44 @@ page's reload after it.
 **Page coverage from this run alone** (whole-page lines, so the untested surfaces are visible):
 GroceryList 55% · ProductDetail 50% · Recipes 39% · Home 35%.
 
-**The Phase D tail (open):** the rest of the page surfaces per the exclusion policy — Recipes'
-suggest/save/adapt/swap-cloud flows, ProductDetail's rename/merge/expiration panels (⚠️ incl. the
-`ApplyExpirationAsync` missing-catch fix flagged in bug #2), GroceryList extras/copy/download,
-Home's cards + quick-buy actions, then Upload, Products, Receipts, Reports, Settings, Accuracy,
-SpendInsight, the chart components, and the JS-interop-mocked voice components.
+### The tail session (7/31 later) — +106 tests → 144 in the harness, 1088 across the suite
+
+The four pages' remaining surfaces, four more pages, and four components — same bar, same
+harness. What each new file pins:
+
+| File | Pins |
+|---|---|
+| ProductDetailExpirationTests (11) | Toggle-off = panel absent (dormant, not disabled); no-purchases teaching state; label caps the projection (min, never max) with the cap named on the rhythm row; passed label pins out WITH the override path on screen; Restocked-after-label override wording; save stamps every latest-day purchase and only those; Clear; Save disabled until the date changes (both sides); split failure advice both directions (the bug-#2 catch, live-proven); the racing-receipt-removal refusal. |
+| ProductDetailEditFlowsTests (14) | Rename in place (button/Enter/Escape), collision keeps the editor open holding the refused value; merge candidates prefiltered by the product's own tag with Clear, variety pre-fill from the name diff, hidden-target reset, disabled-until-target, success navigates to the survivor; §13.6 purchase correction moves the count by the DIFFERENCE without renewing the clock, non-positive refused toward receipt removal, split advice both directions, Cancel; substitutes add/Enter/dedupe/remove/Suggest-adds-only-new. |
+| RecipesSuggestAndAdaptTests (21) | Batch success renders + persists; failure keeps the old batch on screen AND in storage; empty answer ≠ success; restore recomputes availability live (a stale ✓ can't replay); corrupt snapshot discarded and cleared; Clear ideas; Save locks the card and persists ingredients/steps/calories; the won't-eat list provably reaches the model call; makeability both ways; run-out row offers Restocked and recovers, untracked row offers Track-it; Add-missing sends only the gaps and dedupes; Adapt reports and records the ask; swap cloud generates ONCE and caches (call-counted); curated stand-ins lead, bubble click adapts to that form; Pick-for-me pool = eaten AND makeable; delete; ?uses matches variants on their own ingredients with the original as reference (and out of the voice list); ?read starts the stubbed hands-free reader and strips itself; ScreenContext ordering + cleared on dispose. |
+| GroceryListPageTests (7) | Extras trim/dedupe/sort/clear; concurrent-removal no-op; Restocked re-anchors without a purchase AND stales the "Copied" status; Untrack keeps history; Copy writes the shoppable text (qualifiers + extras) — asserted on the actual clipboard payload; Download names the file for today + the D-shortcut wiring; aisle-then-urgency ordering; still-learning disclosure. |
+| HomeCardsTests (7) | §8 ordering (pinned outage > severity > date) with the 📌 note; chips count by status + the quiet state; Bought-today writes a Manual purchase (feeds the rhythm), Restocked writes only a signal (never a purchase) — both sides of the two-stream rule at page level; the expired card names the label as the reason; the runs-out-early habit panel from real burn cycles; learning hints count purchases only; the coordinator ping reloads. |
+| SplitButtonTests (5) | Menu closed until the caret; selection/backdrop/Escape all close; dismissing ≠ choosing; primary fires + closes; Disabled reaches both halves. |
+| BrandVarietyHintTests (3) | No usual → nothing renders; usuals + full breakdown; empty breakdown row omitted. |
+| LineChartTests (4) | y-inversion with exact points; single point = no line, centered dot; flat series holds the middle (no divide-by-zero); screen-reader labelling. |
+| OnboardingBannerTests (5) | Keyless pitch; Load-sample runs the REAL seeder + fires OnSeeded; dismissal spares the empty-catalog offer; dismissal with stock hides fully; a stored dismissal isn't re-nagged. |
+| ProductsPageTests (12) | Add stores name/category/unit + clears; blank refused; exact duplicate BLOCKED with a link (no "anyway" exists — mutation-checked); fuzzy asks with both answers pinned; tag cloud + untagged complement exclusivity; search/status filters; multi-aisle deep link named on screen with unknown names skipped; Out files the outage and the row reads due TODAY; tracking checkbox writes through; delete asks first and no means no; the suppressed row speaks CountNote (the third surface of that rule). |
+| ReceiptsPageTests (6) | Totals from lines with unpriced lines disclosed; newest-first, Discarded invisible; pending chip points back at review; verification offered only with an audit image and toggles through the DB both ways; removal consequences-first with Cancel whole (found bug #3); no-provenance refusal says why. |
+| SpendInsightTests (6) | Dominant-size ticker with the size named (the $/bag-vs-$/lime rule); grocery change semantics both directions; spend windows sum paid prices; the forecast counts an asking rhythm and goes to ZERO under a fresh count (the count-aware start, seen from the page); no-history teaching state. |
+| AccuracyPageTests (5) | Both empty states teach; pass/fail against targets per stat; errored fixtures render their error, not vanish; the backtest scores live history; the self-check renders its stored run with a THROWING extractor proving grading never happens on load. |
+
+**Hunt-list pass over the tail (same six classes):** mutation-checked the duplicate guard
+(`duplicateIsExact = false` → the exact-block test fails; restored → passes); the two new
+split-advice pairs assert message AND database state; every clock assertion compares a seeded
+non-null instant; the spend-window test's calendar arithmetic is fixture math (noted in-test), the
+summing/valuation is the assertion. Known one-sided residual, accepted: Products' tag/untagged
+exclusivity is pinned in one direction (tag → untagged); the mirror shares the same two-line
+implementation.
+
+**Coverage after the tail** (per page, this project's run alone): SplitButton/LineChart/
+BrandVarietyHint 100% · SpendInsight 96% · Home 96% · GroceryList 92% · Products 90% ·
+Recipes 89% · ProductDetail 84% · OnboardingBanner 84% · Accuracy 71% · Receipts 70%. The
+sub-90 remainders are the deliberately unexercised roads: Accuracy/Receipts' self-eval RUN click
+and fixture export (service-tested in Web.Tests; the page pins the cost discipline), ProductDetail's
+merge-concurrency catch, OnboardingBanner's JSException fallbacks.
+
+**The Phase D tail (still open):** Upload (file streaming + review grid + auto-confirm routing),
+Reports (the spec builder + `ReportSpecRules` surfaces), Settings (BYOK, calibration, usage,
+invites), the chart components (BarChart/TimeSeriesChart/ChartLegend/ReportDataTable), and the
+JS-interop-heavy voice components (VoiceAgent/RecipeReadAloud/CookAlong/PushToTalk). Each is a
+sitting-sized piece; the harness they need is proven.

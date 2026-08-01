@@ -149,14 +149,18 @@ else
             </details>
         </section>
     }
-    @if (removeResult is not null)
-    {
-        <p class="chat-reply" role="status">@removeResult</p>
-    }
-    @if (removeError is not null)
-    {
-        <p class="error" role="alert">@removeError</p>
-    }
+}
+
+@* Outside the list branches: removing the LAST receipt flips the page to its empty state, and the
+   removal accounting (purchases undone, products removed vs kept, matches untaught) must not
+   vanish with it — that summary is the user's only record of what the removal did. *@
+@if (removeResult is not null)
+{
+    <p class="chat-reply" role="status">@removeResult</p>
+}
+@if (removeError is not null)
+{
+    <p class="error" role="alert">@removeError</p>
 }
 
 @code {
