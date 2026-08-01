@@ -253,14 +253,14 @@ public class ReportsPageTests : PageTestContext
     }
 
     [Fact]
-    public void Waste_watch_is_gated_on_the_toggle_and_reads_evidence_not_verdicts()
+    public async Task Waste_watch_is_gated_on_the_toggle_and_reads_evidence_not_verdicts()
     {
         SeedPriced("Whole Milk", Today.AddDays(-20), 6.00m, Category.Dairy,
             expires: Today.AddDays(-10)); // the label passed with no sign it was finished
         var off = RenderReports("waste");
         Assert.Contains("expiration tracking is switched off", off.Find(".report-section").TextContent);
 
-        AppSettings.SetAsync(SettingKeys.TrackExpirationDates, "true").GetAwaiter().GetResult();
+        await AppSettings.SetAsync(SettingKeys.TrackExpirationDates, "true");
         var on = RenderReports("waste");
 
         // "Worth checking, $ at stake" — never "wasted": the app can't see inside the fridge.

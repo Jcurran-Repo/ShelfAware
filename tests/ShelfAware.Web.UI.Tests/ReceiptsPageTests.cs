@@ -210,7 +210,7 @@ public class ReceiptsPageTests : PageTestContext
         SeedReceipt();
         var cut = RenderReceipts();
 
-        Assert.Empty(cut.FindAll("button").Where(b => b.TextContent.Contains("Remove receipt")));
+        Assert.DoesNotContain(cut.FindAll("button"), b => b.TextContent.Contains("Remove receipt"));
         Assert.Contains("it can't be removed as a unit",
             Collapsed(cut.Find(".receipt-remove-actions")));
     }

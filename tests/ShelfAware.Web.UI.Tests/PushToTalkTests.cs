@@ -14,26 +14,26 @@ namespace ShelfAware.Web.UI.Tests;
 /// </summary>
 public class PushToTalkTests : VoiceTestBase
 {
-    private Bunit.BunitJSModuleInterop? _voice;
+    private Bunit.BunitJSModuleInterop? _voiceModule;
 
     /// <summary>The voice.js module double — created on first touch with isSupported=true, so a
     /// test can script the capture before or after rendering.</summary>
-    private Bunit.BunitJSModuleInterop Voice
+    private Bunit.BunitJSModuleInterop VoiceModule
     {
         get
         {
-            if (_voice is null)
+            if (_voiceModule is null)
             {
-                _voice = JSInterop.SetupModule("/js/voice.js");
-                _voice.Setup<bool>("isSupported").SetResult(true);
+                _voiceModule = JSInterop.SetupModule("/js/voice.js");
+                _voiceModule.Setup<bool>("isSupported").SetResult(true);
             }
-            return _voice;
+            return _voiceModule;
         }
     }
 
     private IRenderedComponent<PushToTalk> RenderMic(bool supported = true)
     {
-        if (supported) _ = Voice;
+        if (supported) _ = VoiceModule;
         else JSInterop.SetupModule("/js/voice.js").Setup<bool>("isSupported").SetResult(false);
         var cut = Render<PushToTalk>();
         cut.WaitForState(() => cut.Find(".mic-label").TextContent.Trim() is "Hold to talk"
@@ -42,7 +42,7 @@ public class PushToTalkTests : VoiceTestBase
     }
 
     private void Capture(string mime = "audio/webm") =>
-        Voice.Setup<PushToTalk.VoiceCapture?>("stop")
+        VoiceModule.Setup<PushToTalk.VoiceCapture?>("stop")
             .SetResult(new PushToTalk.VoiceCapture(OneByteBase64, mime, 1));
 
     [Fact]
@@ -179,7 +179,7 @@ public class PushToTalkTests : VoiceTestBase
         await mic.KeyDownAsync(new KeyboardEventArgs { Key = " " });
         await cut.Find("button.mic").KeyDownAsync(new KeyboardEventArgs { Key = " " });
         await cut.Find("button.mic").KeyDownAsync(new KeyboardEventArgs { Key = " " });
-        Assert.Single(JSInterop.Invocations.Where(i => i.Identifier == "start"));
+        Assert.Single(JSInterop.Invocations, i => i.Identifier == "start");
 
         await cut.Find("button.mic").KeyUpAsync(new KeyboardEventArgs { Key = " " });
         cut.WaitForAssertion(() => Assert.Contains("hello there", cut.Find(".voice-heard").TextContent));

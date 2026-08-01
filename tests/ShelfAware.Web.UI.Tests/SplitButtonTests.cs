@@ -10,7 +10,6 @@ namespace ShelfAware.Web.UI.Tests;
 public class SplitButtonTests : PageTestContext
 {
     private int primaryClicks;
-    private int altClicks;
 
     private IRenderedComponent<SplitButton> RenderButton(bool disabled = false) =>
         Render<SplitButton>(ps => ps
