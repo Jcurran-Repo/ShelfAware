@@ -454,8 +454,13 @@
     {
         <div class="danger-confirm">
             <p><strong>This permanently deletes</strong> your products, purchase history, out/low signals,
-               receipts, recipes, substitutes, avoided foods, and grocery list. Your app settings and saved
-               API keys are kept (use “Forget my key” above to clear a key).</p>
+               receipts, recipes, substitutes, avoided foods, grocery list, and app settings — every
+               preference on this page goes back to its default. Your saved API keys are kept: those live
+               in this browser rather than on the server, so use “Forget my key” above to clear them.</p>
+            @if (deleteCount is int records)
+            {
+                <p><strong>@records.ToString("N0") record@(records == 1 ? "" : "s")</strong> will be removed.</p>
+            }
             <p class="muted">Consider <a href="/api/data/export" download>downloading a backup</a> first — this can’t be undone.</p>
             <label>
                 Type <code>DELETE</code> to confirm
@@ -536,6 +541,10 @@
     private string deleteConfirmText = "";
     private bool deleting;
     private string? deleteResult;
+    /// <summary>How many rows the delete would take, counted when the confirm opens so the warning is
+    /// concrete. Null while it loads, and null if counting failed — the panel simply omits the sentence
+    /// rather than guessing at a number on a destructive flow.</summary>
+    private int? deleteCount;
     private bool DeleteArmed => string.Equals(deleteConfirmText.Trim(), "DELETE", StringComparison.Ordinal);
 
     // ---- BYOK: provider, keys, and models, held only in the visitor's browser ----
@@ -907,18 +916,26 @@
     protected override async Task OnInitializedAsync()
     {
         await LoadHouseholdAsync();
-        // Usage is recorded in every key mode now (BYOK included), so the readouts always load.
+        // Usage is recorded in every key mode now (BYOK included), so the readouts always load. They
+        // outlive a delete deliberately, which is why they aren't in the reload below.
         todayUsage = await UsageMeter.GetTodayAsync();
         usageHistory = await UsageMeter.GetRecentAsync(days: 14);
+        await LoadSettingsStateAsync();
+    }
+
+    /// <summary>Everything on this page that is read out of the household's own data, in one place
+    /// because it is read twice: on init, and again after "delete my data" — which resets every setting
+    /// and empties the pantry, so leaving the controls showing the old choices would put a claim on
+    /// screen that the database no longer supports.</summary>
+    private async Task LoadSettingsStateAsync()
+    {
         mode = ImportModes.Parse(
             await SettingsStore.GetAsync(SettingKeys.ImportMode),
             await SettingsStore.GetAsync(SettingKeys.AutoConfirmImports)); // legacy toggle honored
         recipeAddConfirm = await SettingsStore.GetAsync(SettingKeys.RecipeAddConfirm) ?? "Confirm";
         trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
-        await using (var db = await DbFactory.CreateDbContextAsync())
-        {
-            hasStoredExpirations = await db.PurchaseEvents.AnyAsync(p => p.ExpirationDate != null);
-        }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        hasStoredExpirations = await db.PurchaseEvents.AnyAsync(p => p.ExpirationDate != null);
     }
 
     // ---- AI usage readouts (recorded in every key mode; limits apply only in managed mode) ----
@@ -1069,11 +1086,24 @@
     private async Task SaveRecipeAddConfirm() =>
         await SettingsStore.SetAsync(SettingKeys.RecipeAddConfirm, recipeAddConfirm);
 
-    private void StartDelete()
+    private async Task StartDelete()
     {
         confirmingDelete = true;
         deleteResult = null;
         deleteConfirmText = "";
+        deleteCount = null;
+        try
+        {
+            deleteCount = await UserData.CountAllAsync();
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // The panel renders either way. A warning without a number is still a warning, a wrong
+            // number would be worse than none, and failing to count must not stand between someone and
+            // deleting their own data.
+            Logger.LogWarning(ex, "Couldn't count the household's records for the delete confirmation.");
+        }
     }
 
     private void CancelDelete()
@@ -1087,18 +1117,26 @@
         if (!DeleteArmed || deleting) return;
         deleting = true;
         deleteResult = null;
+        var deleted = false;
         try
         {
             await UserData.DeleteAllAsync();
-            deleteResult = "Done — all your pantry data has been deleted.";
+            deleted = true;
+            deleteResult = "Done — your data has been deleted, and your settings are back to their defaults.";
             confirmingDelete = false;
             deleteConfirmText = "";
+            // Until this runs, the controls above are still showing settings that no longer exist.
+            await LoadSettingsStateAsync();
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Delete-my-data failed.");
-            deleteResult = "Something went wrong deleting your data — please try again.";
+            // Which half failed decides the advice. A delete that went through must not be reported as
+            // one that didn't — the data is gone either way, and only the page needs putting right.
+            deleteResult = deleted
+                ? "Your data was deleted, but this page couldn't refresh — reload it to see the reset settings."
+                : "Something went wrong deleting your data — please try again.";
         }
         finally
         {

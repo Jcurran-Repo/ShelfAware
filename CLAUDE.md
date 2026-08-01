@@ -269,6 +269,9 @@ bUnit pages/components — see item 31).
      configuration", which stopped being true when it grew `LastRecipeSuggestions` + `SelfEvalResults`
      (merchant names, dates). `SelfEvalResults` wasn't even declared there. A reflection test fails if a new
      key is in neither list, so the choice can't be defaulted to "survives a delete".
+     **[GONE 2026-08-01: the delete now takes the whole settings table (item 33), so the split had no
+     consumer left and both it and its reflection test were removed. The rule it enforced survives in a
+     stronger form — nothing can outlive a wipe, so nothing has to be classified to stop it.]**
    - **`Receipts:AllowedRoot`** (unset = today's behaviour, so the self-host is unchanged) confines the receipt
      folder. Unvalidated, it's an arbitrary-path read of every image/PDF the server can see. `ReceiptFolderPolicy`
      is asked by Settings (friendly refusal) **and** by the inbox (the real boundary — a stored setting can
@@ -1050,11 +1053,66 @@ bUnit pages/components — see item 31).
    - Fixed in passing: `PredictionResult` still documented `StockUpFactor` as "capped at 3×" (removed
      2026-07-28 — the predictor's own comment said so), and `Product.CreatedByReceiptId` named the demo
      seeder as a reason the column is null, which this change made false.
-   - **1174 tests green, 0 warnings** (1163 before; +11). Live-verified end to end on a throwaway household:
+   - **1174 tests green, 0 warnings** (1162 before; +12). Live-verified end to end on a throwaway household:
      the expired pin on the dashboard, the label beating the count on the cream, the review grid with every
      line pre-filled and the low-confidence row styled, the audit image byte-exact on disk under its
      household folder, Waste watch showing all five verdicts, both saved reports running, "White Rice — 1
      off, 3 left" with Undo restoring it, and a swap cloud opening with no key configured.
+
+33. **v4.3 — "delete all my data" takes the settings too, and the `Config`/`UserContent` split is gone
+   (2026-08-01, branch `feature/delete-resets-settings`).** Jordan's call.
+   - **Why the classification stopped being right.** `Config` justified itself as "wiping your pantry
+     shouldn't forget how you like receipts confirmed" — which presumes the household CHOSE the
+     setting. The demo seeder writing `TrackExpirationDates` (item 32) breaks that presumption: load
+     samples, wipe them, and a toggle the app turned on for data that no longer exists survives, and
+     it is neither configuration nor pantry-derived content. It's residue, and no third category or
+     per-row provenance is worth inventing for it.
+   - ⚠️ **The structural reason, which is the stronger one: the split had exactly ONE consumer.**
+     Export takes all settings regardless; `CountAll` consulted it only to count what deletion
+     removes. With nothing surviving a delete, the classification has no job left and the reflection
+     test policing it guards a risk that cannot occur — "a new key silently survives a delete" is
+     impossible when nothing does. **Removing a concept beats policing one.** A "reset by default with
+     a keep-my-settings opt-out" variant was weighed and REJECTED: it keeps the split load-bearing
+     (`LastRecipeSuggestions`/`SelfEvalResults` must go regardless, so "keep my settings" can't mean
+     "keep all rows") and puts a conditional in the copy of a destructive flow, to save re-picking four
+     toggles that all have defaults.
+   - **The delete is the TABLE, not a key list** (`db.AppSettings.ExecuteDeleteAsync`). That's what
+     makes the guarantee unfalsifiable by a later key, and it finally clears rows from retired features
+     (`ReceiptFolder`) that no list mentioned. Safe because every key has a default when absent — no
+     setting is required to exist. Pinned by a test that seeds an undeclared key alongside the real
+     ones. **Export is untouched** (asking for your data still returns everything), and **`AiUsage`
+     still survives a delete** so a wipe can't double as a quota reset — that asymmetry is now the only
+     one, and it's stated on both the service and the export test.
+   - ⚠️ **The Settings page re-reads itself after the wipe.** Not in the brief; found by asking what the
+     screen says once the rows are gone. It loaded its three controls once in `OnInitializedAsync`, so
+     a delete left them offering the old Import mode, recipe-add preference and expiration toggle — a
+     screen stating what the database no longer holds, one scroll above a message claiming the
+     opposite ("one prediction, one story", applied to settings). `LoadSettingsStateAsync` is the one
+     reader now, called on init and after the delete; failure advice splits by which half failed,
+     because a delete that went through must not be reported as one that didn't.
+   - ⚠️ **`PageTestContext` was faking the settings store, which is why the reset was untestable.** It
+     registered `FakeAppSettings`, an in-memory dictionary — but settings are DATA, not one of the
+     AI/browser seams that harness fakes (item 31's own bar), and a dictionary cannot observe a change
+     the product makes to the table. The first reset test performed the delete, rendered the success
+     message, and still showed the old radio, because the page re-read the fake. It uses the real
+     `EfAppSettings` over the same TestDb now. **The same class of trap as item 20's `set_quantity`
+     fake**: a stand-in more permissive than the real store makes its tests pass vacuously.
+   - Fell out of that swap: **`SetAsync(key, null)` writes an EMPTY value, it does not remove the
+     row** — so two "cleared" assertions had been pinning `null`, a state the real store never
+     produces. Both pin `IsNullOrEmpty` now, which is exactly what `RestoreSuggestionsAsync` treats as
+     "nothing saved" (no product bug — the page guards correctly). One of the two sat inside
+     `WaitForAssertion(async …)`, whose lambda parameter is synchronous: it ran unobserved and had been
+     pinning nothing at all. ⚠️ **That `async` lambda shape appears elsewhere in the UI suite and was
+     NOT swept in this change** — worth a pass of its own.
+   - **`CountAllAsync` had no production caller** (only tests) while its docstring claimed the confirm
+     dialog shows "this removes 214 records" — it didn't. Jordan's call: make the docstring true rather
+     than delete it. The confirm now counts when it opens and says "N records will be removed", which
+     this change makes more useful, not less — the settings rows are IN that number, and a warning that
+     under-reported by the rows nobody thinks of would be the wrong kind of reassuring. **A failed count
+     omits the sentence rather than guessing**: no number beats a wrong one on a destructive flow, and
+     failing to count must never stand between someone and deleting their own data.
+   - **1162 tests green, 0 warnings** on a non-incremental Release build (1163 before: −3 for the
+     removed `SettingKeysTests`, +2 page tests).
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

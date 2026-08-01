@@ -370,6 +370,54 @@ _Last updated: 7/30/2026_
 
 ---
 
+## v4.3 — "Delete all my data" means the settings too
+- [x] **The delete takes the settings table with the pantry, and the `Config`/`UserContent` split is
+  gone.** Jordan's call, 8/1. The classification justified itself as "wiping your pantry shouldn't
+  forget how you like receipts confirmed" — reasoning that presumes the household CHOSE the setting,
+  which stopped being true when the demo seeder began writing `TrackExpirationDates` for anyone who
+  loads sample data (the demo-seed arc, PR #2 — this branch is cut from master and doesn't contain it,
+  so the residue it creates arrives whenever that merges). Load samples, wipe them, and you keep a
+  toggle the app turned on, for data that
+  no longer exists, that you never picked; neither category described it. Deleting everything resolves
+  it without inventing a third category or tracking provenance per row. **The structural half is the
+  real reason to prefer this shape**: the split had exactly one consumer — deletion — so with nothing
+  surviving, the classification has no job and the reflection test policing it guards a risk that
+  can't exist. Removing a concept beats policing one. A "reset by default with a keep-my-settings
+  opt-out" variant was weighed and rejected: it keeps the split load-bearing (the pantry-derived keys
+  must go regardless) and puts a conditional in the copy of a destructive flow, to save re-picking
+  four toggles that all have defaults. The delete is wholesale — the TABLE, not a key list — so a key
+  added later can't quietly outlive a wipe, and rows from retired features (`ReceiptFolder`) finally
+  go too. Export is untouched: asking for your data still hands back everything, settings included,
+  and AI usage still survives a delete so a wipe can't double as a quota reset. — 8/1/2026
+- [x] **The Settings page re-reads itself after the wipe.** Not in the brief; found by asking what the
+  screen says once the rows are gone. The page loaded its three controls once in `OnInitializedAsync`,
+  so after a delete it kept offering the old Import mode, recipe-add preference and expiration toggle
+  — a screen stating something the database no longer holds, one scroll above a message claiming the
+  opposite. `LoadSettingsStateAsync` is now the one reader, called on init and after the delete, and
+  the failure advice splits by which half failed: a delete that went through must not be reported as
+  one that didn't. — 8/1/2026
+- [x] ⚠️ **The page harness was faking the settings store, and that's why the reset couldn't be
+  tested.** `PageTestContext` registered `FakeAppSettings`, an in-memory dictionary — but settings are
+  DATA, not one of the AI/browser seams this harness fakes, and a dictionary cannot observe a change
+  the product makes to the table. The first version of the reset test passed the delete, showed the
+  success message, and still rendered the old radio, because the page re-read the fake. Now the real
+  `EfAppSettings` over the same TestDb every other page test trusts. It immediately corrected a second
+  thing: `SetAsync(key, null)` writes an EMPTY value rather than removing the row, so two "cleared"
+  assertions had been pinning `null` — a state the real store never produces. Both now pin
+  `IsNullOrEmpty`, which is what `RestoreSuggestionsAsync` itself treats as "nothing saved" (no
+  product bug — the page guards correctly). One of the two was inside `WaitForAssertion(async …)`,
+  whose lambda is synchronous: it ran unobserved and had been pinning nothing at all. — 8/1/2026
+- [x] **The delete confirmation says how many records it will remove.** `CountAllAsync` existed, was
+  called by nothing but tests, and its docstring claimed the dialog showed "this removes 214 records"
+  — which it never did. Jordan's call was to make the docstring true rather than delete the method,
+  and this change is what makes it worth having: the settings rows are IN the count, so a warning that
+  under-reported by the rows nobody thinks of would be the wrong kind of reassuring. Counted when the
+  panel opens; **a failed count omits the sentence rather than guessing**, because no number beats a
+  wrong one on a destructive flow and failing to count must never stand between someone and deleting
+  their own data. **1162 tests green, 0 warnings.** — 8/1/2026
+
+---
+
 ## Backlog (unscheduled)
 - [x] Double-scroll fix (Grocery List + Upload review) — 7/2/2026
 - [x] Photo-upload fix (CSP `img-src blob:` + bounded resize) — 7/21/2026 (the first real photo upload hung forever: the strict CSP blocked Blazor's in-browser resize and its JS never settles the promise; PDFs skip the path, so it hid since 7/5)

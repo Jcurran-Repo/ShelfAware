@@ -167,8 +167,10 @@ public class RecipesSuggestAndAdaptTests : PageTestContext
         // The page renders normally, and the corrupt snapshot is actively cleared so it doesn't
         // fail again on every future load.
         Assert.Empty(cut.FindAll(".recipe-card"));
-        cut.WaitForAssertion(async () =>
-            Assert.Null(await AppSettings.GetAsync(SettingKeys.LastRecipeSuggestions)));
+        // Cleared, which in the store is an empty value rather than a missing row — the same state
+        // RestoreSuggestionsAsync reads as "nothing saved". Awaited out here rather than inside
+        // WaitForAssertion, whose lambda is synchronous: an async one runs unobserved and pins nothing.
+        Assert.True(string.IsNullOrEmpty(await AppSettings.GetAsync(SettingKeys.LastRecipeSuggestions)));
     }
 
     [Fact]
@@ -182,7 +184,8 @@ public class RecipesSuggestAndAdaptTests : PageTestContext
         cut.Find("button[aria-label='Clear these recipe ideas']").Click();
 
         cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".recipe-card")));
-        Assert.Null(await AppSettings.GetAsync(SettingKeys.LastRecipeSuggestions));
+        // Empty, not absent: clearing a setting writes an empty value rather than removing the row.
+        Assert.True(string.IsNullOrEmpty(await AppSettings.GetAsync(SettingKeys.LastRecipeSuggestions)));
     }
 
     [Fact]

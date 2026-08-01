@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using ShelfAware.Core.Domain;
+using ShelfAware.Core.Settings;
 using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.Tests;
@@ -203,11 +204,13 @@ public class HouseholdIsolationTests : IDisposable
         {
             db.Products.Add(NewProduct("Whole Milk"));
             db.GroceryExtras.Add(new GroceryExtra { Name = "candles" });
+            db.AppSettings.Add(new AppSetting { Key = SettingKeys.ImportMode, Value = "Review" });
             await db.SaveChangesAsync();
         }
         await using (var db = As(B))
         {
             db.Products.Add(NewProduct("Coffee"));
+            db.AppSettings.Add(new AppSetting { Key = SettingKeys.ImportMode, Value = "Auto" });
             await db.SaveChangesAsync();
         }
 
@@ -227,6 +230,7 @@ public class HouseholdIsolationTests : IDisposable
         var export = await service.ExportAsync();
         Assert.Equal("Coffee", Assert.Single(export.Products).Name);
         Assert.Empty(export.GroceryExtras);
+        Assert.Equal("Auto", Assert.Single(export.Settings).Value);
 
         await service.DeleteAllAsync();
 
@@ -236,6 +240,11 @@ public class HouseholdIsolationTests : IDisposable
         Assert.Equal("Whole Milk", Assert.Single(survivors).Name);
         Assert.Equal(A, survivors[0].HouseholdId);
         Assert.Single(await raw.GroceryExtras.IgnoreQueryFilters().ToListAsync());
+        // Settings are wiped by table now rather than by a list of keys, so this is the assertion that
+        // the delete is still composing over the filter and not emptying AppSettings for everyone.
+        var setting = Assert.Single(await raw.AppSettings.IgnoreQueryFilters().ToListAsync());
+        Assert.Equal(A, setting.HouseholdId);
+        Assert.Equal("Review", setting.Value);
     }
 
     [Fact]
