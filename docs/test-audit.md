@@ -120,10 +120,10 @@ Never deleted for being slow, inconvenient, or red. A red test is a finding, not
   picker's gated exits, the count panel, ProductDetail's split write-failure/reload-failure advice,
   GroceryList's `UsedOne`, Enter-submits-Quick-update. These are exactly the flows past reviews
   could only verify by hand. **◑ 7/31 — harness + all six named flows (38 tests), then the tail
-  session: the four pages' remaining surfaces, Products/Receipts/Accuracy/SpendInsight, and four
-  components (+106 → 144 page tests, 1088 green total, three product bugs found and fixed).
-  Still open: Upload, Reports, Settings, the chart components, the voice components — see the
-  Phase D section below.**
+  session (+106 → 144), then Upload/Reports/Settings (+43 → 187 page tests, 1131 green total,
+  three product bugs found and fixed across the phase). Every page with handlers is covered and
+  the chart family rides the Reports tests. The one remaining item: the JS-interop-heavy voice
+  components (VoiceAgent/RecipeReadAloud/CookAlong/PushToTalk) — see the Phase D section below.**
 - **E — Gauntlet:** `/pre-push`, Jordan's `/code-review`, merge. Tests-about-tests get the same
   review rigor as code.
 
@@ -390,8 +390,30 @@ sub-90 remainders are the deliberately unexercised roads: Accuracy/Receipts' sel
 and fixture export (service-tested in Web.Tests; the page pins the cost discipline), ProductDetail's
 merge-concurrency catch, OnboardingBanner's JSException fallbacks.
 
-**The Phase D tail (still open):** Upload (file streaming + review grid + auto-confirm routing),
-Reports (the spec builder + `ReportSpecRules` surfaces), Settings (BYOK, calibration, usage,
-invites), the chart components (BarChart/TimeSeriesChart/ChartLegend/ReportDataTable), and the
-JS-interop-heavy voice components (VoiceAgent/RecipeReadAloud/CookAlong/PushToTalk). Each is a
-sitting-sized piece; the harness they need is proven.
+**The Phase D tail (still open after the second session):** Upload, Reports, Settings, the chart
+components, and the voice components. The first four closed in the third session below.
+
+### The third session (7/31 later) — Upload, Reports, Settings (+43 → 187 in the harness, 1131 green)
+
+The three biggest pages, over their REAL stacks: Upload runs the actual ingest pipeline (storage,
+confirmation service, auto-confirm router, duplicate detector, removal — only the extractor is a
+canned-results queue, and PDFs skip the browser resize so bUnit drives file selection through
+`InputFile.UploadFiles` for real); Reports runs the real `ReportEngine`/`ReportDataService` (so
+the chart family renders against real results); Settings runs the real `HouseholdService` over a
+real `UserManager` (TestAuthDb) with bUnit's authorization context carrying the household claim.
+
+| File | Pins |
+|---|---|
+| UploadPageTests (18) | The mode hint before upload (Smart default / Auto / Review silent); the queue separating readable rows from failed reads (Retry visible — a failed read used to vanish); the queued-duplicate chip; review pre-fill by TRUST ORDER (alias 🔗 > model suggestion > matcher > create-new, one select each); undated demands a date, dated offers correction; the exact-duplicate warning on review; Confirm-all through the one path with the REVIEWED date and the ticked assertion riding through — and its unticked mirror staying false; the lost-race confirm reading "already recorded" with NO Undo (once, not twice, in the DB); Undo reversing the confirm it is about; Discard; Retry re-extracting from the audit copy (fail → still-couldn't message, succeed → straight into review); the Expires column gated on the toggle both ways; both tag-dedup stages (near-dup asks → Use takes the canonical; synonym asks → Add-anyway keeps the user's word); Smart confirming a trusted single PDF (with the audit copy proven on disk) vs falling through to review for a novel product; a stack reading as separate receipts with per-file fates (one failure doesn't sink the batch); combine-as-one sending BOTH pages in ONE extractor call. |
+| ReportsPageTests (13) | The teaching empty state; the report card's month arithmetic, aisle chart + always-present data table, ranked top items; presets from the URL with nonsense falling back (and the pill lit); the builder surfacing `ReportSpecRules` objections and holding Run until answered; running writes the spec into the URL (THE serialization); a deep link seeding the form and running without a click; save/delete of saved reports (the pill IS the stored query); **the ⚠️-commented invalidation rule — a pantry change recomputes the RESULT (old spec, new facts) without re-seeding the FORM mid-edit (mutation-checked: removing `customResult = null` from the handler fails the test)**; waste watch gated on the toggle and reading "worth checking", never "wasted"; piling-up asking the engine + disclosing thin outage evidence; eat charting logged meals and pricing mains at today's receipts (+ waist reading the same meal's calories); price watch refusing an overall claim below its floor while still listing the movers; the gap report's burn-vs-rebuy arithmetic pinned to the day. |
+| SettingsPageTests (11) + SettingsManagedModeTests (1) | Import-mode radios reading and writing the household setting (Smart default checked); the expiration toggle writing through with the dormant-dates reassurance both sides; the recipe-add preference; usage rendering recorded days + the honest zero state; BYOK save applying to THIS circuit without a reload (`CircuitAiSettings.HasKey` flips) and Forget clearing back to keyless; per-provider configs remembered across a switch only once SAVED (the test originally expected unsaved text to survive — the expectation was wrong, fixed to the real contract); the calibration wizard refusing kindly on a browser that can't listen; the invite lifecycle (no code until asked, single-use default with the status sentence, Copy putting the real code on the clipboard, Replace invalidating, Clear returning to "—" — each verified against auth.db); member removal asking first, never offered for yourself, really detaching the account; rename arming only on change; delete-my-data arming only on the exact word DELETE (case-sensitive both sides) and really deleting through `UserDataService`. |
+
+**Coverage (this project's run):** ReportDataTable/TimeSeriesChart 100% · BarChart 98% ·
+Reports 85% · Upload 85% · ChartLegend 81% · Settings 67%. Settings' remainder is the calibration
+wizard's mic-session interior — it needs a real browser microphone and its measured math is
+Core-tested (`ListeningSettingsTests`); the page pins the refusal path. Upload's remainder is the
+image-resize branch (`RequestImageFileAsync` is browser JS; PDFs cover the pipeline) and the
+oversize-file guard.
+
+**Still open in Phase D:** only the voice components — VoiceAgent, RecipeReadAloud, CookAlong,
+PushToTalk (JS-interop boundaries mocked per the exclusion policy). Then Phase E.
