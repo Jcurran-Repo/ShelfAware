@@ -248,11 +248,12 @@ public class HouseholdIsolationTests : IDisposable
         }
 
         _db.HouseholdId = B;
-        var seeded = await new DemoDataSeeder(_db).SeedAsync();
+        using var seeding = new DemoSeeding();
+        var seeded = await seeding.Seeder(_db).SeedAsync();
         Assert.True(seeded.Seeded);
 
         // …and the guard still refuses a SECOND seed for the same household.
-        var again = await new DemoDataSeeder(_db).SeedAsync();
+        var again = await seeding.Seeder(_db).SeedAsync();
         Assert.False(again.Seeded);
 
         await using (var db = As(A))

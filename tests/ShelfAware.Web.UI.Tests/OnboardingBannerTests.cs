@@ -5,6 +5,7 @@ using ShelfAware.Llm;
 using ShelfAware.Web.Components;
 using ShelfAware.Web.Data;
 using ShelfAware.Web.Services;
+using ShelfAware.Web.Tests;
 
 namespace ShelfAware.Web.UI.Tests;
 
@@ -22,7 +23,18 @@ public class OnboardingBannerTests : PageTestContext
         // as an AI-adjacent child; here it is the subject).
         ComponentFactories.Clear();
         Services.AddSingleton(new CircuitAiSettings(Options.Create(new LlmOptions()))); // keyless
-        Services.AddSingleton(new DemoDataSeeder(Factory));
+        Services.AddSingleton(_seeding.Seeder(Factory));
+    }
+
+    // Seeding writes the sample pending receipt's image through real storage, so it needs somewhere on
+    // disk to put it. Field-initializer state only — RegisterAdditionalServices runs from the base ctor,
+    // before this class's own initializers would have run if it were assigned any later.
+    private readonly DemoSeeding _seeding = new();
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+        if (disposing) _seeding.Dispose();
     }
 
     [Fact]
