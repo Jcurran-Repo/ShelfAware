@@ -17,7 +17,6 @@ namespace ShelfAware.Web.UI.Tests;
 /// </summary>
 public class RecipesEatFlowTests : PageTestContext
 {
-    private static readonly DateOnly Today = DateOnly.FromDateTime(DateTime.Today);
 
     /// <summary>Midnight <paramref name="daysAgo"/> days back, offset zero — a fixed instant chosen
     /// by the test, never derived mid-assertion.</summary>
@@ -71,10 +70,6 @@ public class RecipesEatFlowTests : PageTestContext
     private static void ClickAteIt(IRenderedComponent<Recipes> cut, string recipeName) =>
         cut.Find($"button[aria-label='Mark {recipeName} eaten']").Click();
 
-    /// <summary>An element's visible text with whitespace collapsed, so razor line breaks can't make
-    /// an exact-text pin flaky.</summary>
-    private static string Collapsed(AngleSharp.Dom.IElement element) =>
-        System.Text.RegularExpressions.Regex.Replace(element.TextContent, @"\s+", " ").Trim();
 
     // ---------------------------------------------------------------- one tap commits, notice tells
 

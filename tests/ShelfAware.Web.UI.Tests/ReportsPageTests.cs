@@ -18,7 +18,6 @@ namespace ShelfAware.Web.UI.Tests;
 /// </summary>
 public class ReportsPageTests : PageTestContext
 {
-    private static readonly DateOnly Today = DateOnly.FromDateTime(DateTime.Today);
 
     protected override void RegisterAdditionalServices() =>
         Services.AddSingleton(new ReportDataService(Factory));

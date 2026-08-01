@@ -92,6 +92,18 @@ public abstract class PageTestContext : BunitContext
     /// class's own members in an override.</summary>
     protected virtual void RegisterAdditionalServices() { }
 
+    /// <summary>Evaluated fresh on every read, the same way the pages compute their own
+    /// DateTime.Today — a static captured at class load can straddle midnight and skew every
+    /// relative-date fixture in a run that crosses it.</summary>
+    private protected static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+
+    /// <summary>Visible text with whitespace collapsed — Razor's source line breaks otherwise make
+    /// exact-text pins flaky. One definition for every test file.</summary>
+    internal static string Collapsed(AngleSharp.Dom.IElement element) => Collapsed(element.TextContent);
+
+    internal static string Collapsed(string text) =>
+        System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+
     protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);

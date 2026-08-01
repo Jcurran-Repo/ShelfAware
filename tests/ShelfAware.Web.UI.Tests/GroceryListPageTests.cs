@@ -12,7 +12,6 @@ namespace ShelfAware.Web.UI.Tests;
 /// </summary>
 public class GroceryListPageTests : PageTestContext
 {
-    private static readonly DateOnly Today = DateOnly.FromDateTime(DateTime.Today);
 
     /// <summary>Overdue on a 15-day rhythm — the shape that lands a row in "Buy now".</summary>
     private int SeedOverdue(string name, Category category = Category.Dairy, string? brand = null, string? size = null)

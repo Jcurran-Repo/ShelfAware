@@ -14,7 +14,6 @@ namespace ShelfAware.Web.UI.Tests;
 /// </summary>
 public class ProductDetailExpirationTests : PageTestContext
 {
-    private static readonly DateOnly Today = DateOnly.FromDateTime(DateTime.Today);
 
     private Task TrackExpirations() => AppSettings.SetAsync(SettingKeys.TrackExpirationDates, "true");
 
@@ -39,7 +38,7 @@ public class ProductDetailExpirationTests : PageTestContext
         cut.FindAll("section.panel").FirstOrDefault(s => s.QuerySelector("h2")?.TextContent.Trim() == "Expiration");
 
     private static string SectionText(IRenderedComponent<ProductDetail> cut) =>
-        System.Text.RegularExpressions.Regex.Replace(Section(cut)!.TextContent, @"\s+", " ").Trim();
+        Collapsed(Section(cut)!);
 
     [Fact]
     public void The_panel_does_not_exist_while_the_toggle_is_off()

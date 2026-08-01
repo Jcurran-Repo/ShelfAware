@@ -14,7 +14,6 @@ namespace ShelfAware.Web.UI.Tests;
 /// </summary>
 public class ProductDetailCountPanelTests : PageTestContext
 {
-    private static readonly DateOnly Today = DateOnly.FromDateTime(DateTime.Today);
 
     private static DateTimeOffset Clock(int daysAgo) =>
         new(Today.AddDays(-daysAgo).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
@@ -42,11 +41,8 @@ public class ProductDetailCountPanelTests : PageTestContext
     }
 
     private static string CountPanel(IRenderedComponent<ProductDetail> cut) =>
-        System.Text.RegularExpressions.Regex.Replace(
-            cut.FindAll("section.panel")
-                .Single(s => s.QuerySelector("h2")?.TextContent.Trim() == "How many you have")
-                .TextContent,
-            @"\s+", " ").Trim();
+        Collapsed(cut.FindAll("section.panel")
+            .Single(s => s.QuerySelector("h2")?.TextContent.Trim() == "How many you have"));
 
     private static void Click(IRenderedComponent<ProductDetail> cut, string buttonText) =>
         cut.FindAll("button").Single(b => b.TextContent.Trim() == buttonText).Click();

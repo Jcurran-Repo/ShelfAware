@@ -19,7 +19,6 @@ namespace ShelfAware.Web.UI.Tests;
 /// </summary>
 public class RecipesSuggestAndAdaptTests : PageTestContext
 {
-    private static readonly DateOnly Today = DateOnly.FromDateTime(DateTime.Today);
 
     private int SeedProduct(string name, Action<Product>? configure = null)
     {

@@ -24,7 +24,6 @@ namespace ShelfAware.Web.UI.Tests;
 /// </summary>
 public class UploadPageTests : PageTestContext
 {
-    private static readonly DateOnly Today = DateOnly.FromDateTime(DateTime.Today);
 
     private readonly string dataDir =
         Path.Combine(Path.GetTempPath(), "shelfaware-ui-tests", Guid.NewGuid().ToString("N"));

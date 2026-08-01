@@ -13,7 +13,6 @@ namespace ShelfAware.Web.UI.Tests;
 /// </summary>
 public class SpendInsightTests : PageTestContext
 {
-    private static readonly DateOnly Today = DateOnly.FromDateTime(DateTime.Today);
 
     private IRenderedComponent<SpendInsight> RenderTrends()
     {

@@ -684,7 +684,6 @@ else
             notFound = true;
             return;
         }
-        product = loaded;
 
         // Per-receipt unit price for this product, so each purchase can show what it cost. Size rides
         // along so the est. cost/buy can price the recommended size, not a blend across sizes.
@@ -697,25 +696,34 @@ else
             .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
 
         var today = DateOnly.FromDateTime(DateTime.Today);
-        trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
+        var honorExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
         // honorQuantity: true — this page is where a count is set, so it must show what that count is
         // actually doing to the prediction sitting beside it.
-        prediction = ReplenishmentPredictor.Predict(product, today, trackExpirations, honorQuantity: true);
-        editQuantity = product.QuantityOnHand;
-        editUnit = product.DefaultUnit;
-        onePackage = TypicalPackage.Of(product.Purchases.Select(x => x.Quantity));
-        editExpiration = prediction.ExpiresOn; // the panel's date input starts at the governing date
-        // Every transient message clears on a (re)load: any successful action reloads through here, and
-        // an error stranded from an earlier panel otherwise sits beside unrelated, current content.
-        expirationError = null;
-        quantityError = null;
-        purchaseError = null;
+        // Computed into LOCALS first: on a same-product refresh the previous view stays up during the
+        // awaits above, and Blazor renders after each yield — assigning `product` before its fresh
+        // prediction existed painted one frame where the new count sat beside the old projection.
+        // Everything the markup reads together lands together, below, with no awaits in between.
+        var freshPrediction = ReplenishmentPredictor.Predict(loaded, today, honorExpirations, honorQuantity: true);
 
         // Price the recommended (dominant) size specifically; fall back to the overall average.
         // ProductPriceIndex folds the loose/"each" spellings together, so per-each produce
         // prices match a null recommended size.
         var sizePrices = new ProductPriceIndex(priceByReceipt.Select(x => (Id, x.Size, x.Price)));
-        estimate = ShoppingEstimator.For(product, prediction, today, sizePrices.PriceFor(Id, prediction.RecommendedSize));
+        var freshEstimate = ShoppingEstimator.For(loaded, freshPrediction, today, sizePrices.PriceFor(Id, freshPrediction.RecommendedSize));
+
+        product = loaded;
+        prediction = freshPrediction;
+        estimate = freshEstimate;
+        trackExpirations = honorExpirations;
+        editQuantity = loaded.QuantityOnHand;
+        editUnit = loaded.DefaultUnit;
+        onePackage = TypicalPackage.Of(loaded.Purchases.Select(x => x.Quantity));
+        editExpiration = freshPrediction.ExpiresOn; // the panel's date input starts at the governing date
+        // Every transient message clears on a (re)load: any successful action reloads through here, and
+        // an error stranded from an earlier panel otherwise sits beside unrelated, current content.
+        expirationError = null;
+        quantityError = null;
+        purchaseError = null;
 
         // The fresh product is in hand — now drop the previous render's derived rows. On a refresh
         // they stayed on screen while the load ran; no awaits sit between here and repopulation.
@@ -724,7 +732,7 @@ else
         chartSizeLabel = null;
 
         var pricePoints = new List<PricePoint>();
-        var ordered = product.Purchases.OrderBy(p => p.PurchasedAt).ToList();
+        var ordered = loaded.Purchases.OrderBy(p => p.PurchasedAt).ToList();
         for (var i = 0; i < ordered.Count; i++)
         {
             var pe = ordered[i];

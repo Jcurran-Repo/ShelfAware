@@ -25,7 +25,6 @@ namespace ShelfAware.Web.UI.Tests;
 /// </summary>
 public class AccuracyPageTests : PageTestContext
 {
-    private static readonly DateOnly Today = DateOnly.FromDateTime(DateTime.Today);
 
     private readonly string webRoot =
         Path.Combine(Path.GetTempPath(), "shelfaware-ui-tests", Guid.NewGuid().ToString("N"));
@@ -87,7 +86,7 @@ public class AccuracyPageTests : PageTestContext
         Assert.Contains("dotnet run --project tests/ShelfAware.Evals", cut.Find("pre").TextContent);
         Assert.Contains("Not enough history yet", cut.Markup);
         Assert.Contains("at least 3 distinct purchase",
-            System.Text.RegularExpressions.Regex.Replace(cut.Markup, @"\s+", " "));
+            Collapsed(cut.Markup));
     }
 
     [Fact]

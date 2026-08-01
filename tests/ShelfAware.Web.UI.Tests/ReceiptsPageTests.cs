@@ -16,7 +16,6 @@ namespace ShelfAware.Web.UI.Tests;
 /// </summary>
 public class ReceiptsPageTests : PageTestContext
 {
-    private static readonly DateOnly Today = DateOnly.FromDateTime(DateTime.Today);
 
     private readonly string dataDir =
         Path.Combine(Path.GetTempPath(), "shelfaware-ui-tests", Guid.NewGuid().ToString("N"));
@@ -106,7 +105,7 @@ public class ReceiptsPageTests : PageTestContext
         var card = cut.Find(".receipt-card");
         Assert.Contains("Pending review", card.QuerySelector(".chip")!.TextContent);
         Assert.Contains("confirm it on the Upload page before its purchases count",
-            System.Text.RegularExpressions.Regex.Replace(card.TextContent, @"\s+", " "));
+            Collapsed(card));
     }
 
     [Fact]
@@ -213,6 +212,6 @@ public class ReceiptsPageTests : PageTestContext
 
         Assert.Empty(cut.FindAll("button").Where(b => b.TextContent.Contains("Remove receipt")));
         Assert.Contains("it can't be removed as a unit",
-            System.Text.RegularExpressions.Regex.Replace(cut.Find(".receipt-remove-actions").TextContent, @"\s+", " "));
+            Collapsed(cut.Find(".receipt-remove-actions")));
     }
 }

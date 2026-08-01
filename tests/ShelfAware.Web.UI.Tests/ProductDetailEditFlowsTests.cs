@@ -16,7 +16,6 @@ namespace ShelfAware.Web.UI.Tests;
 /// </summary>
 public class ProductDetailEditFlowsTests : PageTestContext
 {
-    private static readonly DateOnly Today = DateOnly.FromDateTime(DateTime.Today);
 
     private static DateTimeOffset CountedClock =>
         new(Today.AddDays(-3).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);

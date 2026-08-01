@@ -22,7 +22,6 @@ namespace ShelfAware.Web.UI.Tests;
 /// real delete-my-data service. Derivatives choose the server's LLM config.</summary>
 public abstract class SettingsTestBase : PageTestContext
 {
-    private protected static readonly DateOnly Today = DateOnly.FromDateTime(DateTime.Today);
 
     private readonly string dataDir =
         Path.Combine(Path.GetTempPath(), "shelfaware-ui-tests", Guid.NewGuid().ToString("N"));

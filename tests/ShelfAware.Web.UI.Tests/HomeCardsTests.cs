@@ -14,7 +14,6 @@ namespace ShelfAware.Web.UI.Tests;
 /// </summary>
 public class HomeCardsTests : PageTestContext
 {
-    private static readonly DateOnly Today = DateOnly.FromDateTime(DateTime.Today);
 
     private int Seed(string name, Action<Product>? configure = null)
     {

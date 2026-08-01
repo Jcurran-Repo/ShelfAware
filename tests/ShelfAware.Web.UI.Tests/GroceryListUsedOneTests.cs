@@ -16,7 +16,6 @@ namespace ShelfAware.Web.UI.Tests;
 /// </summary>
 public class GroceryListUsedOneTests : PageTestContext
 {
-    private static readonly DateOnly Today = DateOnly.FromDateTime(DateTime.Today);
 
     /// <summary>Midnight <paramref name="daysAgo"/> days back, offset zero — a fixed instant so the
     /// clock assertions compare against a value the test chose, not one it derived.</summary>
@@ -63,9 +62,7 @@ public class GroceryListUsedOneTests : PageTestContext
     /// <summary>The whole visible text of the cell holding the "Used one" control, whitespace
     /// collapsed — so a test can pin what the cell says AND that it says nothing else.</summary>
     private static string NextBuyCellText(IRenderedComponent<GroceryList> cut) =>
-        System.Text.RegularExpressions.Regex
-            .Replace(cut.Find("button.linkish").ParentElement!.TextContent, @"\s+", " ")
-            .Trim();
+        Collapsed(cut.Find("button.linkish").ParentElement!);
 
     [Fact]
     public void The_suppressed_row_carries_the_count_note_and_an_inline_used_one_not_a_date()
