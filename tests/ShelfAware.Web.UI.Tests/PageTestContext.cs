@@ -33,7 +33,11 @@ public abstract class PageTestContext : BunitContext
     internal TestDb Db { get; }
     internal FlakyDbFactory Factory { get; }
     internal EfPantryStore Store { get; }
-    internal FakeAppSettings AppSettings { get; }
+    /// <summary>The REAL settings store over the test DB, not a dictionary. Settings are data, not one
+    /// of the AI/browser seams this harness fakes — and a stand-in that holds them in memory cannot see
+    /// a change the product makes to the table, which is how a page reading its own settings back after
+    /// "delete my data" passed against a fake that still remembered them.</summary>
+    internal IAppSettings AppSettings { get; }
     internal FakePantryChat Chat { get; }
     internal FakeRecipeAdapter Adapter { get; }
     internal FakeSuggestionAdvisor SuggestionAdvisor { get; }
@@ -47,7 +51,7 @@ public abstract class PageTestContext : BunitContext
         Db = new TestDb();
         Factory = new FlakyDbFactory(Db);
         Store = new EfPantryStore(Factory);
-        AppSettings = new FakeAppSettings();
+        AppSettings = new EfAppSettings(Factory);
         Chat = new FakePantryChat();
         Adapter = new FakeRecipeAdapter();
         SuggestionAdvisor = new FakeSuggestionAdvisor();

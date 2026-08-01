@@ -359,9 +359,68 @@ public class SettingsPageTests : SettingsTestBase
         cut.FindAll(".danger-confirm button").Single(b => b.TextContent.Contains("Permanently delete")).Click();
 
         cut.WaitForAssertion(() =>
-            Assert.Contains("Done — all your pantry data has been deleted.", cut.Markup));
+            Assert.Contains("your settings are back to their defaults", cut.Markup));
         await using var raw = Db.CreateUnscopedContext();
         Assert.Empty(await raw.Products.IgnoreQueryFilters().ToListAsync());
+    }
+
+    [Fact]
+    public void The_delete_confirmation_counts_what_it_is_about_to_remove()
+    {
+        using (var db = Db.CreateDbContext())
+        {
+            db.Products.Add(new Product { Name = "Doomed Beans", Category = Category.Pantry });
+            db.Products.Add(new Product { Name = "Doomed Rice", Category = Category.Pantry });
+            db.AppSettings.Add(new AppSetting { Key = SettingKeys.ImportMode, Value = "Auto" });
+            db.SaveChanges();
+        }
+        var cut = RenderSettings();
+
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Delete all my data")).Click();
+
+        // Three: the two products AND the setting. The settings row is in the count because the delete
+        // takes it — a warning that under-reported by the rows nobody thinks of would be the wrong kind
+        // of reassuring. Formatted rather than hardcoded: "1,234" is only correct in some cultures.
+        cut.WaitForAssertion(() =>
+            Assert.Contains($"{3:N0} records will be removed", cut.Find(".danger-confirm").TextContent));
+    }
+
+    [Fact]
+    public async Task Delete_everything_puts_the_settings_controls_back_to_their_defaults()
+    {
+        // The wipe takes the settings rows along with the pantry, and this page read them once on init.
+        // Without a re-read, the controls keep offering choices the database no longer holds — a screen
+        // stating something the data doesn't, one scroll above the button that just said otherwise.
+        using (var db = Db.CreateDbContext())
+        {
+            db.Products.Add(new Product { Name = "Doomed Beans", Category = Category.Pantry });
+            db.SaveChanges();
+        }
+        await AppSettings.SetAsync(SettingKeys.ImportMode, "Auto");
+        await AppSettings.SetAsync(SettingKeys.RecipeAddConfirm, "Auto");
+        await AppSettings.SetAsync(SettingKeys.TrackExpirationDates, "true");
+
+        var cut = RenderSettings();
+        Assert.True(cut.FindAll(".import-mode input")[2].HasAttribute("checked"));
+        Assert.True(Section(cut, "Expiration dates").QuerySelector("input[type=checkbox]")!.HasAttribute("checked"));
+
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Delete all my data")).Click();
+        cut.WaitForState(() => cut.FindAll(".danger-confirm").Count == 1);
+        cut.Find(".danger-confirm input[type=text]").Input("DELETE");
+        cut.WaitForAssertion(() => Assert.False(cut.FindAll(".danger-confirm button")
+            .Single(b => b.TextContent.Contains("Permanently delete")).HasAttribute("disabled")));
+        cut.FindAll(".danger-confirm button").Single(b => b.TextContent.Contains("Permanently delete")).Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            // Smart, Confirm, and tracking off — the same answers the store gives with no rows at all.
+            Assert.True(cut.FindAll(".import-mode input")[0].HasAttribute("checked"));
+            Assert.False(Section(cut, "Expiration dates").QuerySelector("input[type=checkbox]")!.HasAttribute("checked"));
+            Assert.Equal("Confirm", ((AngleSharp.Html.Dom.IHtmlSelectElement)
+                Section(cut, "Recipe ingredients").QuerySelector("select")!).Value);
+        });
+        await using var check = Db.CreateDbContext();
+        Assert.Empty(await check.AppSettings.ToListAsync());
     }
 }
 

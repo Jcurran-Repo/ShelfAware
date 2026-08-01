@@ -176,28 +176,32 @@ public class UserDataServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task DeleteAllAsync_removes_pantry_derived_settings_but_keeps_configuration()
+    public async Task DeleteAllAsync_removes_every_setting_including_the_ones_nobody_declared()
     {
         await using (var db = _db.CreateDbContext())
         {
             db.AppSettings.Add(new AppSetting { Key = SettingKeys.ImportMode, Value = "Smart" });
             db.AppSettings.Add(new AppSetting { Key = SettingKeys.RecipeAddConfirm, Value = "Auto" });
+            db.AppSettings.Add(new AppSetting { Key = SettingKeys.TrackExpirationDates, Value = "true" });
             db.AppSettings.Add(new AppSetting { Key = SettingKeys.LastRecipeSuggestions, Value = "[{\"name\":\"Chicken\"}]" });
             db.AppSettings.Add(new AppSetting { Key = SettingKeys.SelfEvalResults, Value = "{\"Fixtures\":[{\"Name\":\"Walmart 2026-07-04\"}]}" });
+            // A key no constant declares. Live DBs still carry rows from the retired folder-import
+            // feature, and a delete that worked from a list of known keys would strand them forever —
+            // which is the whole reason this one deletes the table instead.
+            db.AppSettings.Add(new AppSetting { Key = "ReceiptFolder", Value = "an inbox nobody watches" });
             await db.SaveChangesAsync();
         }
+        var svc = Service();
 
-        await Service().DeleteAllAsync();
+        // The count behind the warning has to be counting these too, or it under-reports what the button
+        // is about to take. Six, not the two that used to be classified as content.
+        Assert.Equal(6, await svc.CountAllAsync());
+
+        await svc.DeleteAllAsync();
 
         await using var check = _db.CreateDbContext();
-        var left = await check.AppSettings.Select(s => s.Key).ToListAsync();
-
-        // Their recipe ideas and their receipts' merchant names are content, and content goes...
-        Assert.DoesNotContain(SettingKeys.LastRecipeSuggestions, left);
-        Assert.DoesNotContain(SettingKeys.SelfEvalResults, left);
-        // ...but wiping the pantry shouldn't forget how they like receipts confirmed.
-        Assert.Contains(SettingKeys.ImportMode, left);
-        Assert.Contains(SettingKeys.RecipeAddConfirm, left);
+        Assert.Empty(await check.AppSettings.ToListAsync());
+        Assert.Equal(0, await svc.CountAllAsync());
     }
 
     [Fact]
@@ -220,9 +224,10 @@ public class UserDataServiceTests : IDisposable
     [Fact]
     public async Task ExportAsync_includes_settings_and_usage_not_just_pantry_rows()
     {
-        // "What do you have on me" has one defensible answer, and it isn't "most of it". Note these two
-        // are treated differently by DELETE (config survives; usage survives so a wipe isn't a quota
-        // reset) — which is the reason they have to be readable here.
+        // "What do you have on me" has one defensible answer, and it isn't "most of it". These two are
+        // the pair DELETE treats differently from each other — the settings go with the pantry, the
+        // usage history stays so a wipe can't double as a quota reset — which is exactly why both have
+        // to be readable here, before any of it goes.
         await using (var db = _db.CreateDbContext())
         {
             db.AppSettings.Add(new AppSetting { Key = SettingKeys.ImportMode, Value = "Smart" });
