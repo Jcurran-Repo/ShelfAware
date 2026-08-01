@@ -71,8 +71,9 @@ Accuracy (`/accuracy`, renders `eval-results.json`), **Recipes (`/recipes`)**, a
 Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptTotals`, Core).
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **200 green xUnit tests across three
-projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite).
++ unit tests; Evals excluded — needs a live key). **1163 green xUnit tests across four
+projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
+bUnit pages/components — see item 31).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -970,6 +971,36 @@ projects** (pure engine · faked-IChatClient AI layer · persistence on in-memor
      seeds a real attestation date (it compared null to null and pinned nothing); a blank Quick
      update send answers with a hint instead of an active-looking button doing nothing in silence.
    - **889 tests green, 0 warnings.**
+
+31. **The test-suite audit & rebuild (7/30–8/1, branch `feature/test-suite-rebuild` — ✅ MERGED via
+   PR #1, CI green, smoke-tested).** Jordan's bar: everything covered, useless tests deleted, no test
+   ever weakened to pass, page flows TESTED not walkthrough-verified. `docs/test-audit.md` is the
+   arc's full record (worklists, verdicts, hunt-list classes, coverage numbers); what belongs HERE:
+   - **All 66 pre-existing test files were read and verdicted; zero deletions were earned.** The one
+     rewrite was hunt-list class 6 (a test file that never constructs its subject); the audit added
+     that class to the list after diagnosing it.
+   - **`tests/ShelfAware.Web.UI.Tests` is the page harness** (bUnit 2.8.6, 219 tests): real pages over
+     the SAME TestDb/EfPantryStore the persistence suite trusts (shared via InternalsVisibleTo), fakes
+     only at the AI/browser seams. `FlakyDbFactory`'s FailAfter/HoldNext knobs model the per-context
+     boundary production genuinely has — that's what makes split failure advice and busy-gate
+     interleavings honestly testable. ⚠️ Its `RegisterAdditionalServices` hook runs from the BASE ctor
+     (before the provider locks); overrides must only touch base members and field-initializer state.
+   - **Four product bugs found by the audit/harness, all fixed on the branch:** a relative chat move
+     edited a DORMANT count (refused at ledger+store+chat now); ProductDetail's reload-failure advice
+     was unreachable and its catch threw NRE (a SWITCH blanks, a same-product REFRESH keeps the view —
+     and computes prediction/estimate into locals so no frame shows a fresh count beside a stale
+     projection); `ApplyExpirationAsync` had no catch at all; removing the LAST receipt swallowed the
+     removal accounting behind the empty state.
+   - ⚠️ **"0 Warnings" from an incremental build is vacuous** — MSBuild doesn't re-emit warnings for
+     up-to-date targets, so a `dotnet build` right after `dotnet test` reports zero no matter what.
+     CI caught five analyzer warnings local checks had "verified" away. Check with
+     `dotnet build --no-incremental -c Release`.
+   - **Voice-loop tests sequence through the STT fake, not JS handlers** (bUnit REUSES a handler for
+     an identical Setup, so "fresh pending handler" tricks silently return stale results): the fake
+     capture is sticky, `FakeSpeechToText` queues transcripts, and its exhausted-queue backstop
+     answers "stop listening" so loops always wind down.
+   - CI runs the bUnit project as a fourth test step. GitHub's Node-20 deprecation notice on
+     checkout@v4/setup-dotnet@v4 is the one open CI annotation (bump to v5 in some future arc).
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
