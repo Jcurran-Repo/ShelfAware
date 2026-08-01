@@ -147,6 +147,19 @@ _Last updated: 7/30/2026_
 - [x] "You keep running out of these" dashboard insight — burn rate ≪ rebuy rhythm, promoted from Product Detail — 7/5/2026
 - [x] Synthetic demo-data seeder — messy + realistic, dates relative to "now", guarded to seed an empty DB only — 7/5/2026
 - [x] First-run onboarding banner — BYOK + voice-key guidance + one-click "Load sample data" — 7/5/2026
+- [x] **Seed coverage audit + close-out** — the sample pantry held to its test-environment billing. Measured
+  first (seeded rows run through the real engine/ReportDataService/MealStock, not eyeballed): 4 of 17 tables
+  empty, 6 of 19 enum values unused, and flags no arrangement of the catalog could reach. `Restocked` had no
+  instance at all, taking three behaviours with it; the one dated purchase was in the FUTURE, so nothing was
+  ever Expired and Waste watch's four evidence verdicts were unreachable; nothing was bought in two sizes;
+  **"Ate it" took nothing for every recipe** (no counted product was any main's grounded match), so the
+  flagship v4.1 flow was indistinguishable from a bug. All closed, plus aliases, saved reports, cached swap
+  clouds (the swap feature was dead on a keyless visit), an untracked product, a dormant count, a merge
+  candidate, and all three purchase sources. The sample pantry now turns expiration tracking ON and says so.
+  Ships the one un-reviewed receipt with the image it was read from (embedded, transcribed into its lines,
+  pinned by tests so the two can't drift) — the review grid needed no key after all, only extracted lines.
+  Deliberately still absent, each stated: AI usage, a discarded receipt, a misread quantity. 1163 → 1174
+  green, 0 warnings; verified live on a throwaway household — 8/1/2026
 
 ---
 
