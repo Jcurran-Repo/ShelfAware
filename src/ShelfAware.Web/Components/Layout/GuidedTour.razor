@@ -17,17 +17,24 @@
 
 @if (active)
 {
-    <aside class="tour-panel panel" role="region" aria-label="Guided walkthrough">
+    @* Escape closes it, the gesture expected of dismissible overlay furniture. The handler sits on the
+       container because focus lands on the heading inside it, and keydown bubbles. *@
+    <aside class="tour-panel panel" role="region" aria-label="Guided walkthrough"
+           @onkeydown="OnKeyDownAsync">
         <div class="tour-head">
-            <p class="tour-progress" aria-hidden="true">Step @(index + 1) of @TourScript.Count</p>
+            @* NOT aria-hidden: "how far in am I, and how much is left" is exactly what a person needs to
+               decide whether to keep going, and hiding it left screen-reader users the only ones who
+               couldn't tell. It reaches them via the heading's description rather than as loose text. *@
+            <p class="tour-progress" id="tour-progress">Step @(index + 1) of @TourScript.Count</p>
             <button type="button" class="icon-btn" @onclick="DismissAsync"
                     aria-label="Close the walkthrough" title="Close the walkthrough">✕</button>
         </div>
 
         @* Focused on every step change so keyboard and screen-reader users land on the new text rather
            than being left wherever the previous step's button was. tabindex=-1 makes it focusable
-           without putting the heading into the tab order. *@
-        <h2 class="tour-title" tabindex="-1" @ref="heading">@Step.Title</h2>
+           without putting the heading into the tab order; the description carries the step position
+           into the same announcement. *@
+        <h2 class="tour-title" tabindex="-1" @ref="heading" aria-describedby="tour-progress">@Step.Title</h2>
         <p class="tour-body">@Step.Body</p>
 
         <div class="tour-actions">
@@ -72,6 +79,7 @@
         // Order matters: the ring scrolls the page to the anchor, so take focus first — focusing an
         // element the browser considers off-screen scrolls it back again.
         try { await heading.FocusAsync(); }
+        catch (JSDisconnectedException) { return; } // circuit gone — no DOM left to focus or ring
         catch (JSException ex) { Logger.LogDebug(ex, "Couldn't focus the walkthrough heading."); }
 
         await SafeJsAsync("shelfawareTour.highlight", Step.Anchor);
@@ -87,6 +95,10 @@
             if (saved is null || !saved.Started || saved.Done) return;
             await GoToAsync(TourScript.ClampIndex(saved.Step), navigate: false);
         }
+        catch (JSDisconnectedException)
+        {
+            // Circuit gone before the browser answered — there is nobody to show a walkthrough to.
+        }
         catch (JSException ex)
         {
             // Storage unavailable — the tour simply doesn't resume. Never a reason to fail the layout.
@@ -97,6 +109,9 @@
     /// <summary>Runs the walkthrough from the top. Raised by the dashboard's first-run banner (right
     /// after sample data lands) and by the Settings replay button.</summary>
     private Task StartAsync() => GoToAsync(0);
+
+    private Task OnKeyDownAsync(KeyboardEventArgs e) =>
+        e.Key == "Escape" ? DismissAsync() : Task.CompletedTask;
 
     private Task NextAsync() => GoToAsync(index + 1);
 
@@ -146,9 +161,14 @@
 
     // The walkthrough is decoration over a working app: if its browser half is missing or storage is
     // blocked, the steps still read and the app is untouched. Never let that tear down the layout.
+    //
+    // ⚠️ JSDisconnectedException is NOT a JSException — it derives straight from Exception — so it needs
+    // its own clause or it escapes this method entirely. This component lives in MainLayout, so an
+    // in-flight save during a circuit teardown would otherwise throw on every page in the app.
     private async Task SafeJsAsync(string identifier, params object?[] args)
     {
         try { await JS.InvokeVoidAsync(identifier, args); }
+        catch (JSDisconnectedException) { /* circuit gone — nothing left to tell the browser */ }
         catch (JSException ex) { Logger.LogDebug(ex, "Walkthrough interop {Identifier} failed.", identifier); }
     }
 

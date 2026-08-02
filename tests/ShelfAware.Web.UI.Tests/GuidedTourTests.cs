@@ -123,6 +123,29 @@ public class GuidedTourTests : PageTestContext
     }
 
     [Fact]
+    public async Task Escape_closes_the_walkthrough()
+    {
+        var cut = await StartedAsync();
+
+        cut.Find(".tour-panel").KeyDown(Key.Escape);
+
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".tour-panel")));
+        Assert.Contains(JSInterop.Invocations, i => i.Identifier == Save && Equals(i.Arguments[1], true));
+    }
+
+    [Fact]
+    public async Task Another_key_leaves_the_walkthrough_alone()
+    {
+        // The handler sits on the container so it can catch Escape from the focused heading; that means
+        // every keystroke inside the panel reaches it, including typing in a future control.
+        var cut = await StartedAsync();
+
+        cut.Find(".tour-panel").KeyDown(Key.Enter);
+
+        Assert.NotEmpty(cut.FindAll(".tour-panel"));
+    }
+
+    [Fact]
     public async Task Skipping_midway_is_the_same_act_as_finishing()
     {
         var cut = await StartedAsync();

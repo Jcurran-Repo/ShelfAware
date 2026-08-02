@@ -71,7 +71,7 @@ Accuracy (`/accuracy`, renders `eval-results.json`), **Recipes (`/recipes`)**, a
 Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptTotals`, Core).
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1202 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1204 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see item 31).
 
@@ -1203,7 +1203,27 @@ bUnit pages/components — see item 31).
      "navigated to the same place" — and it is the navigating that does the damage. The Uri-based test
      survived deliberately removing the guard it was written to protect; the History-based one kills it.
      **Every new test here was mutation-checked** (item 34's rule: green is what the defect produces).
-   - **1202 tests green, 0 warnings** (1174 before; +28). Live-verified end to end: all eleven steps
+   - **The `/pre-push` gate found five, all fixed** (2026-08-01; security review found nothing — the
+     diff adds no DbContext, `IgnoreQueryFilters`, endpoint, settings key or disk write, and
+     `TourCoordinator` is scoped so a start event can't cross circuits):
+     - ⚠️ **`JSDisconnectedException` is NOT a `JSException`** — it derives straight from `Exception`, so
+       catching `JSException` alone lets it escape. That is why the repo already has 16 explicit clauses
+       for it, and why `AiSettingsLoader` catches it AND `Exception` (a dead clause otherwise). Sharper
+       here than in the page-local readers the pattern was copied from: this component is in
+       **MainLayout**, so an in-flight save during a circuit teardown throws on every page in the app.
+     - ⚠️ **Fixed-position screen furniture must be added to the `@media print` hide list.** `.tour-panel`
+       wasn't, and the walkthrough deliberately VISITS the two pages built to be printed (Reports, the
+       grocery list) — it would have landed in the printout of a page it had just invited you to print.
+       `.voice-agent`'s comment right above it already stated the rule.
+     - **`aria-hidden` on the step counter** left screen-reader users the only ones who couldn't tell how
+       far in they were or how much was left — the fact you need to decide whether to skip. It reaches
+       them through the focused heading's `aria-describedby` now rather than as loose text.
+     - **z-index dropped 70 → 55, below the modal layer** (`.picker-backdrop` is 60): a walkthrough is
+       transient furniture, and floating it over the "Ate it" picker left that modal not modal.
+     - **Escape closes it**, the gesture expected of dismissible overlay furniture (the ✕ was already
+       tab-reachable, so this was a gap rather than a blocker). Mutation-checked: `"Esc"` instead of
+       `"Escape"` fails the Escape test and correctly leaves the other-key test passing.
+   - **1204 tests green, 0 warnings** (1174 before; +30). Live-verified end to end: all eleven steps
      navigate and find their anchor, the panel docks clear of the voice assistant (measured, no overlap),
      a reload resumes mid-tour, Done persists across a reload, Settings replays from step 1, and on mobile
      it becomes a full-width sheet with the voice FAB standing down. No console or server errors, so the

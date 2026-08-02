@@ -503,7 +503,9 @@ input:focus, select:focus {
     position: fixed;
     left: 1rem;
     bottom: 1rem;
-    z-index: 70;
+    /* Above ordinary page content, deliberately BELOW the modal layer (.picker-backdrop, 60): a
+       walkthrough is transient furniture, and floating it over a modal leaves the modal not modal. */
+    z-index: 55;
     width: min(360px, calc(100vw - 2rem));
     margin: 0;
     border-left: 4px solid var(--accent);
@@ -2371,9 +2373,13 @@ tfoot td {
     .report-presets,
     .report-print-btn,
     .report-builder,
-    .voice-agent {
+    .voice-agent,
+    .tour-panel {
         /* .voice-agent: the assistant is a floating control on every page — screen furniture,
-           never document content. Global, not report-only: no printout wants it. */
+           never document content. Global, not report-only: no printout wants it.
+           .tour-panel: same class of thing, and the walkthrough deliberately VISITS the two pages
+           built to be printed — Reports and the grocery list — so it would otherwise land in the
+           printout of a page it just invited you to print. */
         display: none !important;
     }
 
