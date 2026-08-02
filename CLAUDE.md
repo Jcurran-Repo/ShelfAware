@@ -71,7 +71,7 @@ Accuracy (`/accuracy`, renders `eval-results.json`), **Recipes (`/recipes`)**, a
 Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptTotals`, Core).
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1174 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1202 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see item 31).
 
@@ -1160,6 +1160,54 @@ bUnit pages/components — see item 31).
      runs zero jobs (found by doing it — the v4.4 branch pushed green-looking and had in fact run
      nothing). The only proof is the run on master, which is why this landed as its own revertible
      commit rather than riding along with unrelated work.
+
+36. **v4.5 — the guided walkthrough (2026-08-01, branch `feature/guided-tour`).** A new visitor — above all
+   one who just loaded the sample pantry — got a catalog full of unfamiliar data and ten nav links with
+   nothing saying what any of them were for. `GuidedTour` walks them through eleven surfaces in turn and
+   closes for good the moment they've had enough. Jordan's calls: docked coach panel over a modal
+   spotlight, all core features over a short happy path, offered to any new user but auto-started only
+   after seeding.
+   - **`TourScript` (Core) is the step list AND the movement rules**, in Core for the `MealStock`/
+     `SpendForecast` reason — logic private to a page is logic no test can reach. Clamping is what a
+     stored position needs: it's read back from the visitor's own browser, where a *shorter tour shipping
+     later* leaves a real person parked past the end.
+   - ⚠️ **The copy is deliberately data-INDEPENDENT.** The tour is offered to a real household as well as
+     a demo one, so a step naming a seeded row ("see the overdue roast at the top") is a screen stating
+     something the engine never produced the moment it runs against real receipts — the "one prediction,
+     one story" failure, pre-empted. A test asserts no step names a hero from the demo catalog.
+   - **It lives in `MainLayout`, not a page**, for a sharper version of VoiceAgent's reason: it NAVIGATES
+     between its own steps, so a page-hosted tour destroys itself on the first Next. It also SKIPS the
+     navigation when two consecutive steps share a page (steps 1–2 are both the dashboard) rather than
+     tearing the page down to land where it already is. `TourCoordinator` is the bus, same shape as
+     `VoiceCoordinator`, so the banner and Settings can start something hosted above them.
+   - ⚠️ **Progress is per BROWSER (localStorage), not per household.** One member finishing the tour must
+     not silently retire it for the other, and it isn't pantry data — AppSettings would also mean a
+     "delete my data" wipe (item 33) resets the tour, which is unrelated to either act.
+   - **The ring is best-effort and must degrade to nothing.** The anchor usually isn't in the DOM when the
+     tour arrives (pages load their data asynchronously before rendering anything to ring), so `tour.js`
+     polls ~3s rather than coupling the tour to any page's lifecycle, and gives up quietly. `.page-head, h1`
+     resolves to "this page's title block" everywhere; the one hand-written selector (`[data-tour=ai-keys]`)
+     is pinned by a test that renders Settings, because a selector that stopped matching would fail
+     SILENTLY and forever.
+   - ⚠️ **A ring's visibility must not depend on its animation running.** The first version animated
+     `outline-color` from `transparent`; a stalled animation holds its first keyframe, so the ring was an
+     invisible outline exactly when it was needed. Probed live: `outline-color rgba(0,0,0,0)` with
+     `playState "running"` and `currentTime` pinned at 0. The animation now moves only the OFFSET, so
+     every frame is a visible ring. **Found by running it — no test would have.**
+   - ⚠️ **`GoToAsync` requests `StateHasChanged` itself.** Two of its three callers get no render for free:
+     the coordinator raises it from another component's event, and the resume runs in `OnAfterRenderAsync`,
+     which — unlike `OnInitializedAsync` — does not re-render on completion. Without it a returning
+     visitor's walkthrough stayed invisible. Caught by the resume tests.
+   - ⚠️ **Assert navigation on `BunitNavigationManager.History`, never `Uri`.** Re-navigating to the page
+     you are already on leaves the URI identical, so a Uri comparison cannot tell "didn't navigate" from
+     "navigated to the same place" — and it is the navigating that does the damage. The Uri-based test
+     survived deliberately removing the guard it was written to protect; the History-based one kills it.
+     **Every new test here was mutation-checked** (item 34's rule: green is what the defect produces).
+   - **1202 tests green, 0 warnings** (1174 before; +28). Live-verified end to end: all eleven steps
+     navigate and find their anchor, the panel docks clear of the voice assistant (measured, no overlap),
+     a reload resumes mid-tour, Done persists across a reload, Settings replays from step 1, and on mobile
+     it becomes a full-width sheet with the voice FAB standing down. No console or server errors, so the
+     strict CSP holds.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
