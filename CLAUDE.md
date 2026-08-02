@@ -1003,7 +1003,7 @@ bUnit pages/components — see item 31).
      capture is sticky, `FakeSpeechToText` queues transcripts, and its exhausted-queue backstop
      answers "stop listening" so loops always wind down.
    - CI runs the bUnit project as a fourth test step. GitHub's Node-20 deprecation notice on
-     checkout@v4/setup-dotnet@v4 is the one open CI annotation (bump to v5 in some future arc).
+     checkout@v4/setup-dotnet@v4 was the one open CI annotation — **cleared 2026-08-01** (item 35).
 
 32. **The demo seed audited against the whole feature set (2026-08-01, branch `feature/demo-seed-coverage`).**
    The sample pantry is the app's test environment, so a feature with no seeded instance is a feature nobody
@@ -1144,6 +1144,22 @@ bUnit pages/components — see item 31).
      must `await` goes in the Async overload; pure DOM/markup checks stay synchronous.
    - **1174 tests green, 0 warnings** on a non-incremental Release build — unchanged, as a repair of
      existing tests should be.
+
+35. **CI actions off Node 20 (2026-08-01).** `actions/checkout@v4` → **v7**, `actions/setup-dotnet@v4`
+   → **v6**, clearing the runner's Node-20 deprecation annotation. Item 31 said "bump to v5", which
+   was already stale when read: v5 is merely the FIRST major on `node24` for both, not the current
+   one. Checked against the published `action.yml` per tag rather than trusting the note.
+   - The one release marked breaking is **`setup-dotnet@v5`** — Node 24 (needs runner ≥ v2.327.1,
+     which GitHub-hosted `ubuntu-latest` long since passed) and it drops older .NET SDKs. We pin
+     `10.0.x`, so neither bites. `checkout@v7` blocks fork-PR checkout under `pull_request_target` /
+     `workflow_run`; this workflow triggers on `push` + `pull_request`, so it can't apply.
+   - Majors stay pinned bare (`@v7`, not a SHA) — same posture the file already had; tightening to
+     digests is a separate decision, not a side effect of a deprecation fix.
+   - ⚠️ **Nothing about a workflow change can be verified locally, and a BRANCH push proves nothing
+     either**: CI triggers on `push: [master]` and `pull_request: [master]`, so pushing a topic branch
+     runs zero jobs (found by doing it — the v4.4 branch pushed green-looking and had in fact run
+     nothing). The only proof is the run on master, which is why this landed as its own revertible
+     commit rather than riding along with unrelated work.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

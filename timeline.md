@@ -445,6 +445,13 @@ _Last updated: 7/30/2026_
   Task-returning delegate. The constraint now sits on `PageTestContext` beside the suite's other bUnit
   gotcha. **1174 tests green, 0 warnings** on a non-incremental Release build — unchanged, because
   this repairs existing tests rather than adding any. — 8/1/2026
+- [x] **CI actions moved off Node 20** — `actions/checkout@v4` → v7, `actions/setup-dotnet@v4` → v6,
+  clearing the runner's deprecation annotation. The standing note said "bump to v5", which was stale
+  on reading: v5 is only the FIRST major on `node24`, not the current one. The single breaking release
+  is `setup-dotnet@v5` (Node 24, runner ≥ v2.327.1, older SDKs dropped) and none of it applies to a
+  `10.0.x` pin on GitHub-hosted `ubuntu-latest`. ⚠️ **A workflow change can't be verified anywhere but
+  master** — CI triggers on push-to-master and PRs, so a topic-branch push runs nothing at all.
+  — 8/1/2026
 
 ---
 
