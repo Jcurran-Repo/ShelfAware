@@ -1120,7 +1120,8 @@ bUnit pages/components — see item 31).
    observes no exception, and the wait passes having pinned nothing. Not flakiness: a test that cannot
    fail. Four sites in `SettingsPageTests` (import mode ×2, expiration toggle, recipe-add), two in
    `ReceiptsPageTests` (`VerifiedForEval` both directions), one in `ProductsPageTests` where the wait
-   **was the entire test body**, so `The_tracking_checkbox_writes_through` asserted nothing whatsoever.
+   held the test's **only** assertion, so `The_tracking_checkbox_writes_through` verified nothing about
+   the write it is named for (its `Find` calls still proved the row renders).
    - **The fix is bUnit's own async API, verified rather than assumed:** 2.8.6 ships
      `WaitForAssertionAsync` with a `Func<Task>` overload (checked in the package's API docs), so each
      site is `await cut.WaitForAssertionAsync(async () => …)` — awaited on the renderer's dispatcher

@@ -423,8 +423,9 @@ _Last updated: 7/30/2026_
   no exception. The assertion ran later on some other thread with nobody observing it, and the wait
   passed immediately having pinned nothing. Not a flaky test — a test that cannot fail. Four in
   `SettingsPageTests` (import mode ×2, the expiration toggle, recipe-add), two in `ReceiptsPageTests`
-  (`VerifiedForEval` on and back off), one in `ProductsPageTests` where the wait **was the whole test
-  body**, so that test asserted nothing at all. bUnit 2.8.6 ships `WaitForAssertionAsync` with a
+  (`VerifiedForEval` on and back off), one in `ProductsPageTests` where the wait held the test's
+  **only** assertion, so it verified nothing about the write it is named for (its `Find` calls still
+  proved the row renders). bUnit 2.8.6 ships `WaitForAssertionAsync` with a
   `Func<Task>` overload — confirmed in the package's own API docs rather than assumed — so each site
   became `await cut.WaitForAssertionAsync(async () => …)`, awaited on the renderer's dispatcher and
   retried per render. — 8/1/2026

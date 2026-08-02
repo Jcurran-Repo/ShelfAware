@@ -28,11 +28,11 @@ namespace ShelfAware.Web.UI.Tests;
 /// they have their own dependencies and deserve their own tests; a page test asserts the page.
 /// Pure-markup children (SplitButton, BrandVarietyHint, LineChart) render for real.
 ///
-/// ⚠️ An assertion that must <c>await</c> — anything reading the store or the DB back — goes in
-/// <c>await cut.WaitForAssertionAsync(async () =&gt; …)</c>, never <c>WaitForAssertion</c>. That one
-/// takes an <see cref="Action"/>, so an async lambda binds as <c>async void</c>: it returns at its
-/// first <c>await</c>, the helper observes no exception, and the wait passes having pinned nothing.
-/// Keep pure DOM and markup checks on the synchronous overload.
+/// ⚠️ Never hand an async lambda to <c>WaitForAssertion</c>. It takes an <see cref="Action"/>, so the
+/// lambda binds as <c>async void</c>: it returns at its first <c>await</c>, the helper observes no
+/// exception, and the wait passes having pinned nothing. An assertion that must <c>await</c> —
+/// anything reading the store or the DB back — goes in <c>await cut.WaitForAssertionAsync(async ()
+/// =&gt; …)</c> instead; pure DOM and markup checks stay on the synchronous overload.
 /// </summary>
 public abstract class PageTestContext : BunitContext
 {
