@@ -416,6 +416,35 @@ _Last updated: 7/30/2026_
   wrong one on a destructive flow and failing to count must never stand between someone and deleting
   their own data. **1162 tests green, 0 warnings.** — 8/1/2026
 
+## v4.4 — The waits that could never fail
+- [x] ⚠️ **Seven page-test waits were pinning nothing, and now assert.** The follow-up v4.3 left open.
+  bUnit's `WaitForAssertion` takes an `Action`, so `WaitForAssertion(async () => …)` binds the lambda
+  as **async void**: the helper calls it, the lambda returns at its first `await`, and the helper sees
+  no exception. The assertion ran later on some other thread with nobody observing it, and the wait
+  passed immediately having pinned nothing. Not a flaky test — a test that cannot fail. Four in
+  `SettingsPageTests` (import mode ×2, the expiration toggle, recipe-add), two in `ReceiptsPageTests`
+  (`VerifiedForEval` on and back off), one in `ProductsPageTests` where the wait **was the whole test
+  body**, so that test asserted nothing at all. bUnit 2.8.6 ships `WaitForAssertionAsync` with a
+  `Func<Task>` overload — confirmed in the package's own API docs rather than assumed — so each site
+  became `await cut.WaitForAssertionAsync(async () => …)`, awaited on the renderer's dispatcher and
+  retried per render. — 8/1/2026
+- [x] **Green was not accepted as proof, because green is exactly what the defect produces.** Every
+  site was proven to observe by breaking its expected value and watching the test fail: five methods
+  failed on the first pass, and the two holding a *second* wait were re-run with only that second wait
+  broken, since the first failure would otherwise mask it. This also settled the one real risk in the
+  fix — `WaitForAssertionAsync` has both an `Action` and a `Func<Task>` overload, so a wrong binding
+  would have "fixed" seven tests into failing silently in a new way. **No expectation needed
+  correcting** (each was read against the product code before being touched) and **no product bug
+  surfaced** — unlike the fake-store swap that found this class, these seven were simply never run.
+  — 8/1/2026
+- [x] **Swept the class, not the two method names in the brief.** `WaitForState(async …)` turns out
+  not to be a hazard in C# at all: its parameter is `Func<bool>`, which an async lambda has no
+  conversion to, so the shape cannot compile. Every other async lambda in the repo — `ThrowsAsync`,
+  the `Func<Task>` `VoiceCoordinator` events, a `Select` projection — already binds to a
+  Task-returning delegate. The constraint now sits on `PageTestContext` beside the suite's other bUnit
+  gotcha. **1174 tests green, 0 warnings** on a non-incremental Release build — unchanged, because
+  this repairs existing tests rather than adding any. — 8/1/2026
+
 ---
 
 ## Backlog (unscheduled)

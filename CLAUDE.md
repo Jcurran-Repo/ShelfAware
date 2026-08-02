@@ -1102,8 +1102,8 @@ bUnit pages/components — see item 31).
      produces. Both pin `IsNullOrEmpty` now, which is exactly what `RestoreSuggestionsAsync` treats as
      "nothing saved" (no product bug — the page guards correctly). One of the two sat inside
      `WaitForAssertion(async …)`, whose lambda parameter is synchronous: it ran unobserved and had been
-     pinning nothing at all. ⚠️ **That `async` lambda shape appears elsewhere in the UI suite and was
-     NOT swept in this change** — worth a pass of its own.
+     pinning nothing at all. That `async` lambda shape appeared seven more times in the UI suite and
+     was deliberately left for a pass of its own rather than drive-by patched — **swept in item 34**.
    - **`CountAllAsync` had no production caller** (only tests) while its docstring claimed the confirm
      dialog shows "this removes 214 records" — it didn't. Jordan's call: make the docstring true rather
      than delete it. The confirm now counts when it opens and says "N records will be removed", which
@@ -1113,6 +1113,36 @@ bUnit pages/components — see item 31).
      failing to count must never stand between someone and deleting their own data.
    - **1162 tests green, 0 warnings** on a non-incremental Release build (1163 before: −3 for the
      removed `SettingKeysTests`, +2 page tests).
+
+34. **v4.4 — the seven waits that could never fail (2026-08-01, branch `fix/waitforassertion-sweep`).**
+   The pass item 33 deferred. ⚠️ **bUnit's `WaitForAssertion` takes an `Action`, so an async lambda
+   binds as `async void`** — the helper calls it, the lambda returns at its first `await`, the helper
+   observes no exception, and the wait passes having pinned nothing. Not flakiness: a test that cannot
+   fail. Four sites in `SettingsPageTests` (import mode ×2, expiration toggle, recipe-add), two in
+   `ReceiptsPageTests` (`VerifiedForEval` both directions), one in `ProductsPageTests` where the wait
+   **was the entire test body**, so `The_tracking_checkbox_writes_through` asserted nothing whatsoever.
+   - **The fix is bUnit's own async API, verified rather than assumed:** 2.8.6 ships
+     `WaitForAssertionAsync` with a `Func<Task>` overload (checked in the package's API docs), so each
+     site is `await cut.WaitForAssertionAsync(async () => …)` — awaited on the renderer's dispatcher
+     and retried per render. ⚠️ It also has an `Action` overload, so the fix had a live failure mode
+     of its own: bind wrong and seven tests go on passing vacuously in a new way.
+   - ⚠️ **Green cannot validate this fix, because green is what the defect produces.** Each site was
+     proven to observe by breaking its expected value and confirming the failure. Five methods failed
+     on the first pass; the two that hold a SECOND wait were re-run with only that second wait broken,
+     since the first failure masks it. Do this for any future change to a wait's shape — the suite
+     passing is not evidence.
+   - **No product bug surfaced and no expectation was wrong** — every one was read against the page's
+     own write path before being touched, and all seven matched. Worth stating plainly because item 33
+     found this class the opposite way (a real bug behind a fake store); a sweep that finds nothing is
+     a result, not a wasted pass.
+   - **`WaitForState(async …)` is a non-issue in C#** (the brief expected it to be a second hazard):
+     its parameter is `Func<bool>`, which an async lambda has no conversion to, so the shape doesn't
+     compile. Every other async lambda in the repo already binds to a Task-returning delegate —
+     `ThrowsAsync`, the `Func<Task>` `VoiceCoordinator` events, one `Select` projection.
+   - The constraint lives on `PageTestContext` beside the suite's other bUnit gotcha: an assertion that
+     must `await` goes in the Async overload; pure DOM/markup checks stay synchronous.
+   - **1174 tests green, 0 warnings** on a non-incremental Release build — unchanged, as a repair of
+     existing tests should be.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
