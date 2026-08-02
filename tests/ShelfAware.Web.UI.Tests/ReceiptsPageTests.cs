@@ -130,7 +130,7 @@ public class ReceiptsPageTests : PageTestContext
         var hasImage = cut.FindAll(".receipt-card").Single(c => c.TextContent.Contains("HasImage"));
         hasImage.QuerySelectorAll("button").Single(b => b.TextContent.Contains("I checked every line")).Click();
 
-        cut.WaitForAssertion(async () =>
+        await cut.WaitForAssertionAsync(async () =>
         {
             await using var raw = Db.CreateUnscopedContext();
             Assert.True((await raw.Receipts.IgnoreQueryFilters().SingleAsync(r => r.Id == withImageId)).VerifiedForEval);
@@ -144,7 +144,7 @@ public class ReceiptsPageTests : PageTestContext
 
         // The way back down — the human can withdraw the assertion.
         cut.FindAll(".receipt-card button").Single(b => b.TextContent.Contains("Stop using")).Click();
-        cut.WaitForAssertion(async () =>
+        await cut.WaitForAssertionAsync(async () =>
         {
             await using var raw = Db.CreateUnscopedContext();
             Assert.False((await raw.Receipts.IgnoreQueryFilters().SingleAsync(r => r.Id == withImageId)).VerifiedForEval);

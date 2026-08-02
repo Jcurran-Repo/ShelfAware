@@ -109,11 +109,11 @@ public class SettingsPageTests : SettingsTestBase
         Assert.True(radios[0].HasAttribute("checked"));
 
         cut.FindAll(".import-mode input")[1].Change(true); // Review everything
-        cut.WaitForAssertion(async () =>
+        await cut.WaitForAssertionAsync(async () =>
             Assert.Equal("Review", await AppSettings.GetAsync(SettingKeys.ImportMode)));
 
         cut.FindAll(".import-mode input")[2].Change(true); // Confirm everything
-        cut.WaitForAssertion(async () =>
+        await cut.WaitForAssertionAsync(async () =>
             Assert.Equal("Auto", await AppSettings.GetAsync(SettingKeys.ImportMode)));
     }
 
@@ -136,7 +136,7 @@ public class SettingsPageTests : SettingsTestBase
 
         Section(cut, "Expiration dates").QuerySelector("input[type=checkbox]")!.Change(true);
 
-        cut.WaitForAssertion(async () =>
+        await cut.WaitForAssertionAsync(async () =>
         {
             Assert.Equal("true", await AppSettings.GetAsync(SettingKeys.TrackExpirationDates));
             Assert.DoesNotContain("kept but dormant", Section(cut, "Expiration dates").TextContent);
@@ -148,7 +148,7 @@ public class SettingsPageTests : SettingsTestBase
     {
         var cut = RenderSettings();
         Section(cut, "Recipe ingredients").QuerySelector("select")!.Change("Auto");
-        cut.WaitForAssertion(async () =>
+        await cut.WaitForAssertionAsync(async () =>
             Assert.Equal("Auto", await AppSettings.GetAsync(SettingKeys.RecipeAddConfirm)));
     }
 

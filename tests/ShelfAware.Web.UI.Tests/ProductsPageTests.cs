@@ -243,7 +243,7 @@ public class ProductsPageTests : PageTestContext
 
         cut.Find("tbody input[type=checkbox]").Change(false);
 
-        cut.WaitForAssertion(async () =>
+        await cut.WaitForAssertionAsync(async () =>
         {
             await using var raw = Db.CreateUnscopedContext();
             Assert.False((await raw.Products.IgnoreQueryFilters().SingleAsync(p => p.Id == id)).IsTracked);
