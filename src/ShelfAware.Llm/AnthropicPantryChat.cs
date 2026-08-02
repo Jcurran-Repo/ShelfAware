@@ -177,7 +177,9 @@ public class AnthropicPantryChat : IPantryChat
             case "record_signal":
             {
                 var name = Str("product_name");
-                if (!Enum.TryParse<SignalKind>(Str("kind"), ignoreCase: true, out var kind))
+                // IsDefined because Enum.TryParse SUCCEEDS on a numeric string, so "7" would sail past this
+                // refusal and write an undefined SignalKind that no reader in the app has a branch for.
+                if (!Enum.TryParse<SignalKind>(Str("kind"), ignoreCase: true, out var kind) || !Enum.IsDefined(kind))
                     return ("Invalid 'kind' — use OutNow, RunningLow, or Restocked.", true);
                 var product = ProductMatcher.Resolve(name, products);
                 if (product is null)
@@ -321,7 +323,7 @@ public class AnthropicPantryChat : IPantryChat
             {
                 var name = Str("name")?.Trim();
                 if (string.IsNullOrWhiteSpace(name)) return ("A product name is required.", true);
-                if (!Enum.TryParse<Category>(Str("category"), ignoreCase: true, out var category))
+                if (!Enum.TryParse<Category>(Str("category"), ignoreCase: true, out var category) || !Enum.IsDefined(category))
                     category = Category.Other;
                 // Same resolver the other tools trust — a near-match means this product likely already
                 // exists under another spelling, and a twin would split its purchase history. Exact dupes

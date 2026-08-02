@@ -187,7 +187,14 @@ public class AnthropicShelfCensusReader : IShelfCensusReader
         // An unparseable evidence value falls back to Appearance, NOT Unidentified: we still hold a name
         // that describes a food, and Unidentified would redefine that name as describing a package. Both
         // fallbacks claim less than Label; only this one keeps the name meaning what it says.
+        // ⚠️ Enum.IsDefined is load-bearing, not belt-and-braces: Enum.TryParse SUCCEEDS on a numeric
+        // string, so "3" would yield an undefined value that is neither Label nor Unidentified — slipping
+        // past every honesty rule below (the confidence cap, the product-match null-out) while the grid's
+        // switch statements fell through to their "couldn't tell" arms. The row would then read
+        // "couldn't tell, 95% sure" and arrive ticked and pre-matched: the screen and the write telling
+        // opposite stories. Same guard, same reason, as ReportSpecUrl's numeric-smuggling refusal.
         var evidence = Enum.TryParse<CensusEvidence>(item.GetProperty("evidence").GetString(), ignoreCase: true, out var e)
+            && Enum.IsDefined(e)
             ? e
             : CensusEvidence.Appearance;
 
@@ -207,7 +214,11 @@ public class AnthropicShelfCensusReader : IShelfCensusReader
             Brand = GetNullableString(item, "brand"),
             Size = GetNullableString(item, "size"),
             Variety = GetNullableString(item, "variety"),
+            // IsDefined for the same reason as the evidence grade above, and it matters more here because
+            // this one PERSISTS: an undefined Category renders a blank dropdown (no option matches) while
+            // the value rides through the confirm onto a real Product row.
             Category = Enum.TryParse<Category>(item.GetProperty("category").GetString(), ignoreCase: true, out var cat)
+                && Enum.IsDefined(cat)
                 ? cat
                 : Category.Other,
             // Floored at 1, and this is load-bearing rather than tidiness. Reporting an item at all means

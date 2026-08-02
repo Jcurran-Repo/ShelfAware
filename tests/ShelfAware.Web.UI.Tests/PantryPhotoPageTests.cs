@@ -165,6 +165,53 @@ public class PantryPhotoPageTests : PageTestContext
     }
 
     [Fact]
+    public void An_unidentified_package_stays_unticked_however_confident_the_reader_sounds()
+    {
+        // ⚠️ The rule above must not rest on the confidence number alone. The reader caps an unidentified
+        // item at 0.3, which is below the tick threshold — so a test seeding 0.2 asserts what its own
+        // fixture guarantees and would survive deleting every Unidentified branch on the page. The tick is
+        // what authorizes a WRITE, so the page holds the rule itself: raise that cap in the other
+        // assembly, or register a different reader, and rows literally named after packaging would
+        // otherwise arrive pre-ticked and become real products.
+        var cut = Review(
+            Item("frosted freezer bag", confidence: 0.99m, evidence: CensusEvidence.Unidentified),
+            Item("Tilapia Fillets", confidence: 0.99m));
+
+        Assert.False(IsTicked(RowFor(cut, "frosted freezer bag")));
+        Assert.True(IsTicked(RowFor(cut, "Tilapia Fillets"))); // the threshold itself still works
+    }
+
+    [Fact]
+    public async Task A_match_made_by_name_similarity_is_flagged_and_not_pre_ticked()
+    {
+        // Confidence measures certainty in the ITEM — how sure the reader is this is peanut butter — and
+        // says nothing about WHICH product a name-similarity pass then picked. ProductMatcher's substring
+        // rule lands "Peanut Butter" on a catalog's "Butter", and attesting REPLACES that product's count
+        // with no undo. So a flawless read must not pre-authorize an unscored guess at the target.
+        await SeedProduct("Butter", counted: true, onHand: 3);
+
+        var cut = Review(Item("Peanut Butter", confidence: 0.95m));
+
+        var row = RowFor(cut, "Peanut Butter");
+        Assert.False(IsTicked(row));
+        Assert.Contains("Matched by name similarity", Collapsed(row));
+    }
+
+    [Fact]
+    public async Task An_exact_match_is_not_treated_as_a_guess()
+    {
+        // The complement, and what stops the rule above from unticking everything: a row whose name IS the
+        // product's name was not guessed at, so it keeps the ordinary confidence-based tick.
+        await SeedProduct("Tilapia Fillets", counted: true, onHand: 3);
+
+        var cut = Review(Item("Tilapia Fillets", confidence: 0.95m));
+
+        var row = RowFor(cut, "Tilapia Fillets");
+        Assert.True(IsTicked(row));
+        Assert.DoesNotContain("Matched by name similarity", Collapsed(row));
+    }
+
+    [Fact]
     public void The_grid_says_whether_it_read_a_label_or_only_looked()
     {
         var cut = Review(
@@ -319,10 +366,187 @@ public class PantryPhotoPageTests : PageTestContext
         RowFor(cut, "Frozen Peas").QuerySelectorAll("input[type=number]").Single().Change("0");
         cut.FindAll("button").Single(b => b.TextContent.Contains("Count ")).Click();
 
-        cut.WaitForAssertion(() => Assert.Contains("isn't something you track yet", Collapsed(cut.Markup)));
+        cut.WaitForAssertion(() => Assert.Contains("you've never bought it here", Collapsed(cut.Markup)));
         await using var db = Db.CreateDbContext();
         Assert.Empty(await db.Products.ToListAsync());
         Assert.Empty(await db.InventorySignals.ToListAsync());
+        // Nothing was written, so the panel must not open with a tick and "Counted".
+        Assert.DoesNotContain("✅", cut.Markup);
+        Assert.Contains("Nothing was counted", Collapsed(cut.Markup));
+    }
+
+    [Fact]
+    public async Task Clearing_the_count_box_refuses_the_row_instead_of_recording_an_outage()
+    {
+        // ⚠️ The sharpest edge on this page. `@bind` on a non-nullable decimal turns an emptied box into 0,
+        // and a ticked 0 is an ASSERTED out — a real OutNow filed against a shelf full of the stuff, from
+        // a field nobody typed in, with the blur beating the click so the 0 is never even seen.
+        var beans = await SeedProduct("Black Beans", counted: true, onHand: 5,
+            purchases: DateOnly.FromDateTime(DateTime.Today.AddDays(-20)));
+
+        var cut = Review(Item("Black Beans", count: 3));
+        RowFor(cut, "Black Beans").QuerySelectorAll("input[type=number]").Single().Change("");
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Count ")).Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("An empty box isn't a zero", Collapsed(cut.Markup)));
+        await using var db = Db.CreateDbContext();
+        Assert.Empty(await db.InventorySignals.ToListAsync());
+        Assert.Equal(5m, (await db.Products.SingleAsync(p => p.Id == beans.Id)).QuantityOnHand);
+    }
+
+    [Fact]
+    public void An_emptied_count_box_says_so_on_the_row_before_the_confirm()
+    {
+        // Refusing it afterwards is the safety net; saying so here is what makes the net unnecessary.
+        var cut = Review(Item("Black Beans", count: 3));
+        var row = RowFor(cut, "Black Beans");
+        Assert.DoesNotContain("Enter how many", Collapsed(row));
+
+        row.QuerySelectorAll("input[type=number]").Single().Change("");
+
+        Assert.Contains("Enter how many", Collapsed(RowFor(cut, "Black Beans")));
+    }
+
+    [Fact]
+    public async Task A_dormant_count_shows_its_stored_number_and_that_counting_will_restart()
+    {
+        // Stop-counting is dormant, not destructive: the number and date are KEPT as history. A census
+        // overwrites both and starts believing them again, so the row cannot look identical to a
+        // never-counted one — this is the single state where the grid most owes the household a sentence.
+        await SeedProduct("Ground Chuck", counted: false, onHand: 14);
+        await using (var seed = Db.CreateDbContext())
+        {
+            var p = await seed.Products.SingleAsync(x => x.Name == "Ground Chuck");
+            p.QuantityCountedAt = DateTimeOffset.Now.AddDays(-90);
+            await seed.SaveChangesAsync();
+        }
+
+        var cut = Review(Item("Ground Chuck"));
+
+        var row = Collapsed(RowFor(cut, "Ground Chuck"));
+        Assert.Contains("Was 14", row);
+        Assert.Contains("You'd stopped counting it", row);
+    }
+
+    [Fact]
+    public async Task Recounting_a_dormant_product_is_reported_in_the_summary()
+    {
+        // `Retracked` counts a different property (IsTracked), so without its own sentence the one switch
+        // the household deliberately turned off would be the one change the summary never mentions.
+        await SeedProduct("Ground Chuck", counted: false, onHand: 14);
+
+        var cut = Review(Item("Ground Chuck", count: 3));
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Count ")).Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains("Started counting 1 item you'd stopped counting", Collapsed(cut.Markup)));
+    }
+
+    [Fact]
+    public async Task An_ignored_product_says_that_counting_it_starts_tracking_again()
+    {
+        // The same notice, in the same words, the receipt review grid gives for the same situation.
+        await SeedProduct("Sparkling Water", tracked: false);
+
+        var cut = Review(Item("Sparkling Water"));
+
+        Assert.Contains("Currently ignored", Collapsed(RowFor(cut, "Sparkling Water")));
+    }
+
+    [Fact]
+    public async Task A_typed_name_that_resembles_an_existing_product_is_named_before_the_confirm()
+    {
+        // The standing duplicate guard, where a name is TYPED rather than read. The reader's own match runs
+        // once at read time and never sees this name, and "Name it if you know what it is" on an
+        // unidentified package invites exactly this — so without the warning a twin gets created silently,
+        // splitting purchase history and blinding the predictor.
+        await SeedProduct("93% Lean Ground Beef");
+
+        var cut = Review(Item("frosted freezer bag", confidence: 0.2m, evidence: CensusEvidence.Unidentified));
+        RowFor(cut, "frosted freezer bag").QuerySelectorAll("input")
+            .Single(i => i.GetAttribute("type") is null).Change("Ground Beef");
+
+        Assert.Contains("Looks like your existing", Collapsed(cut.Markup));
+        Assert.Contains("93% Lean Ground Beef", Collapsed(cut.Markup));
+    }
+
+    [Fact]
+    public async Task A_fast_moving_item_that_is_ALREADY_counted_is_not_nudged_about_counting()
+    {
+        // The nudge is advice about signing UP (the product page gates it on exactly that). Shown for an
+        // item the household already counts, it argues against a count they keep — on the very act that
+        // refreshes it and answers the drift the warning is about.
+        var weekly = Enumerable.Range(1, 6).Select(i => DateOnly.FromDateTime(DateTime.Today.AddDays(-7 * i))).ToArray();
+        await SeedProduct("Whole Milk", counted: true, onHand: 2, purchases: weekly);
+
+        var cut = Review(Item("Whole Milk"));
+
+        Assert.DoesNotContain("hard to keep true", Collapsed(RowFor(cut, "Whole Milk")));
+    }
+
+    [Fact]
+    public async Task A_fast_moving_item_that_is_NOT_counted_still_gets_the_nudge()
+    {
+        // The complement — the gate must not silence the advice where it belongs.
+        var weekly = Enumerable.Range(1, 6).Select(i => DateOnly.FromDateTime(DateTime.Today.AddDays(-7 * i))).ToArray();
+        await SeedProduct("Whole Milk", purchases: weekly);
+
+        var cut = Review(Item("Whole Milk"));
+
+        Assert.Contains("hard to keep true", Collapsed(RowFor(cut, "Whole Milk")));
+    }
+
+    [Fact]
+    public void Removing_every_row_does_not_blame_the_photo()
+    {
+        // Two ways to reach an empty grid, and only one of them is the photo's fault. Telling someone a
+        // perfectly good read "found nothing recognisable" sends them off to re-shoot — and re-spend a
+        // vision call on their own key — over a non-problem.
+        var cut = Review(Item("Tilapia Fillets"), Item("Bananas"));
+        // Re-found each time: removing a row re-renders, which invalidates the other handler ids.
+        while (cut.FindAll("tbody button").Count > 0) cut.FindAll("tbody button")[0].Click();
+
+        var text = Collapsed(cut.Markup);
+        Assert.DoesNotContain("Nothing recognisable turned up", text);
+        Assert.Contains("You've removed everything that was found", text);
+    }
+
+    [Fact]
+    public void A_read_that_genuinely_finds_nothing_still_says_so()
+    {
+        // The complement, so the branch above can't swallow the real empty-read message.
+        var cut = Review();
+
+        Assert.Contains("Nothing recognisable turned up", Collapsed(cut.Markup));
+    }
+
+    [Fact]
+    public void A_photo_the_browser_cannot_decode_is_named_rather_than_timing_out()
+    {
+        // The loader refuses by content type instead of handing an undecodable file to a JS promise that
+        // never settles — 30 seconds of spinner followed by a message that never mentions the file.
+        PhotoLoader.Throws = new NotSupportedException("“shelf.pdf” is application/pdf, which can't be read as a photo. Use a JPEG, PNG, GIF, or WebP.");
+        var cut = Render<PantryPhoto>();
+        Upload(cut, 1);
+        cut.Find("button").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("can't be read as a photo", Collapsed(cut.Markup)));
+    }
+
+    [Fact]
+    public void A_timed_out_read_reports_an_error_instead_of_spinning_forever()
+    {
+        // ⚠️ Cancellation from OUTSIDE the page is a failure, not teardown: an HttpClient timeout on the
+        // vision call arrives as a TaskCanceledException, and rethrowing it looked safe but wasn't —
+        // ComponentBase ignores a canceled task, so there was no error, no log line and no final render.
+        // Just the spinner, and only a page reload out of it.
+        PhotoLoader.Throws = new TaskCanceledException("the call timed out");
+        var cut = Render<PantryPhoto>();
+        Upload(cut, 1);
+        cut.Find("button").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("took too long", Collapsed(cut.Markup)));
+        Assert.DoesNotContain("Looking at your photo", Collapsed(cut.Markup));
     }
 
     [Fact]

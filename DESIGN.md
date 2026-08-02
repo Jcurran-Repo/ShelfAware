@@ -555,6 +555,17 @@ review-grid pattern → confirm. Three photos of a freezer beats reading thirty 
   guess has to be opted into; a legible label or an unmistakable banana is not punished for having no
   barcode. `Tick all` / `Untick all` exist because thirty rows otherwise cost thirty taps — the guard is the
   default, not a lock.
+  ⚠️ **Confidence is necessary and not sufficient, because a tick authorizes a WRITE.** Two more conditions
+  hold, each because the number alone is about the wrong question:
+  - **Never an `Unidentified` row**, enforced on the page and not merely implied by the reader's 0.3 cap.
+    Leaving it implied put the rule in one constant in another assembly: raise that cap, or swap the
+    reader, and rows literally named "foil-wrapped parcel" arrive ticked and become real products named
+    after packaging.
+  - **Never a row matched by name SIMILARITY.** Confidence states certainty in the ITEM — how sure the
+    reader is this is peanut butter — and says nothing about *which* product a `ProductMatcher` pass then
+    picked. Its substring rule lands "Peanut Butter" on a catalog's "Butter", and `Attest` REPLACES that
+    product's count with no undo, so a flawless read must not pre-authorize an unscored guess at the
+    target. The row says it was matched by similarity and waits to be looked at.
 - ★ **It must never create `PurchaseEvent`s.** You did not buy those today, and invented purchases would
   poison every rhythm in the app. A census writes products (if new) and an attested count — nothing else.
 - ⚠️ **What that output can and cannot do, measured before building any of it.** Census stock has 0 or 1
@@ -604,11 +615,34 @@ review-grid pattern → confirm. Three photos of a freezer beats reading thirty 
       said "new product". An explicit create-new whose name is taken is **refused and named** instead:
       merging overrules the human, and creating the twin is what the duplicate guard exists to stop, so the
       honest move is to decline and let them say which they meant. The grid says so *before* the confirm.
-    - **A count of ZERO is refused when the row would CREATE the product.** An attested zero writes a real
-      `OutNow` (§13.4), so this path was inventing a product and immediately pinning it **Overdue** at the
-      top of the dashboard and the grocery list — forever, for an item the household has never owned. The
-      row arrives ticked and typing 0 is exactly what "fix the numbers" invites. A zero on an **existing**
-      product is untouched: that one is §13.4's real evidence.
+    - ⚠️ **A count of ZERO is refused for any product with NO PURCHASE HISTORY** — not merely for one the
+      row would create. An attested zero writes a real `OutNow` (§13.4), and with no purchases behind it
+      nothing can ever re-anchor or clear that signal: it pins the item **Overdue** at the top of the
+      dashboard and the grocery list indefinitely, a later census counting it at three does not lift it,
+      and it teaches nothing either (`BurnCycles` needs purchases to form a cycle). Drawing the line at
+      *newness* looked equivalent and was not — **a census's own output has no purchases by construction**,
+      §13.8 being precisely for stock no receipt knows about, so the second census of the same shelf walked
+      into exactly the state the first one was refused for. A zero on a product the household actually buys
+      is untouched: that one is §13.4's real evidence, and its rhythm is what can later contradict it.
+    - ⚠️ **An EMPTY count box is not a zero.** The row carries a nullable count and a null is refused, never
+      coerced: `@bind` on a non-nullable decimal turns a box cleared to retype into `0`, and a ticked `0` is
+      an *asserted* out — a real `OutNow` against a shelf full of the stuff, from a field nobody typed in,
+      with the blur beating the click so the zero is never even seen. Same rule, same reason, as the product
+      page's count panel (§13.4's "a machine's arithmetic must never mint one", applied to a widget's).
+    - **A row naming a product that has since VANISHED is refused, not redirected.** A merge or a delete in
+      another tab while the grid sits open, and resolving by name instead would create a twin of the product
+      that just went away, or land the count on a different product than the dropdown showed. The grid said
+      where the row was going; a row that can no longer go there is the household's business.
+    - **A NEAR-miss on a typed name is named on the grid, never resolved in the write.** The reader's match
+      runs once, at read time, so it never sees a name the human enters afterwards — and "Name it if you
+      know what it is" on an unidentified package invites exactly that. Fuzzy matching false-positives, so
+      the service still resolves only on an exact name and the *grid* raises the near-miss for the household
+      to settle. Same shape as the standing duplicate guard elsewhere: exact blocked, fuzzy asked.
+    - **Resuming a DORMANT count is reported.** Stopping counting keeps the number and its date as history
+      (§13.1); a census overwrites both and starts believing them again — right for someone who just counted
+      the shelf, but it is the one switch they deliberately turned off, so the row shows the stored number
+      beforehand and the summary names the resumption afterwards. `Retracked` is a different property
+      (`IsTracked`) and would have stayed silent.
   Seeded now as `Quarter Cow Ground Beef` (a count, no purchases) so all of the above is demonstrable and
   tested before the photo half exists.
   Census input and purchase input are different doors.

@@ -1265,6 +1265,10 @@ bUnit pages/components — see item 31).
      (§13.4). A machine's arithmetic must never mint one; a human typing 0 in the grid still can.
    - **Ticked at ≥ 0.6, the SAME number the receipt grid highlights a low-confidence line at** — deliberately
      not a second threshold that could drift from it. A guess is opted into; a legible label isn't punished.
+     ⚠️ **Confidence is necessary, not sufficient** (added by the post-merge review, item 38): a tick
+     authorizes a WRITE, so it also requires the row not be `Unidentified` (held on the PAGE, not left
+     implied by the reader's 0.3 cap in another assembly) and not be a name-SIMILARITY match (confidence is
+     certainty in the ITEM and says nothing about which product `ProductMatcher` then picked).
    - **`CensusConfirmationService` is the census's own confirm path** (§13.8's ⚠️), and the ★ rule is the
      reason: it writes products + `StockLedger.Attest` and **never a `PurchaseEvent`**. Three calls the spec
      didn't settle, all now in DESIGN.md: rows are **summed per product** before one `Attest` (an
@@ -1272,7 +1276,7 @@ bUnit pages/components — see item 31).
      negative count is **refused, not clamped** (clamping lands on an asserted out and files an `OutNow` off
      a typo); and an unmatched row whose name already exists **resolves to that product** — the duplicate
      guard where it matters most, and what lets the failure message honestly promise that pressing Confirm
-     again is safe.
+     again is safe. (Item 38 added three more refusals and reworked the zero rule — see below.)
    - **Nothing is persisted but the counts** (Jordan's call). No audit copy, no census table, nothing new
      for export or "delete my data" to reach — so a photograph of the inside of someone's home never lands
      on disk and the feature adds no tenant table to get wrong. Costs the receipt path's Retry and an
@@ -1365,6 +1369,103 @@ bUnit pages/components — see item 31).
        it and closes the same latent hole for "Grocery List", which had simply never landed on the break.
        ⚠️ **A CSS edit needs a server RESTART to show up** — static assets are fingerprinted
        (`app.mq67gixxrj.css`), so the running server keeps serving the old file and a reload proves nothing.
+
+38. **A second `/code-review` over the finished census branch (2026-08-02, same branch) — 15 findings, all
+   fixed.** Ten finder angles plus a gap sweep, every finding independently verified (two by throwaway
+   probes: a bUnit harness for the page flows, a console probe against the real `ReplenishmentPredictor`).
+   The `/pre-push` gate in item 37 had already swept this code; this pass found a further fifteen, which is
+   the honest measure of how much a second reviewer is worth on a branch this size. The ones carrying a rule:
+   - ⚠️ **An EMPTY count box bound to `0` and filed a real `OutNow`** — the sharpest defect in the arc, and
+     a rule this repo had already written down and then not applied. `@bind` on a non-nullable `decimal`
+     converts `""` to `default`, so clearing the "how many" box to retype it and then clicking Confirm
+     (the blur's `change` beats the click, so the 0 is never even seen) attested an outage against a
+     freezer full of the stuff. `ReceiptConfirmationService` defends the identical control
+     (`line.Quantity > 0 ? line.Quantity : 1m`) and ProductDetail's `editQuantity` is nullable for exactly
+     this reason — item 20 states it as "An EMPTY count box is not a zero". `CensusRow.Count` is
+     `decimal?` now and null is REFUSED, never coerced.
+   - ⚠️ **The zero-refusal was drawn at "the product is NEW" when the harm tracks "it has no PURCHASES".**
+     Probed: `onHand=0, OutNow, zero purchases → Status=Overdue Pinned=True`, unchanged two years later,
+     and **a later census counting it at 3 does not lift it** (no purchases → `lastStockBack` null → every
+     OutNow stays active). So the second census of a shelf hit precisely the state the first was refused
+     for — because **a census's own output has no purchases by construction**, which is the entire point
+     of §13.8. A guard keyed on the wrong property looked equivalent for one release and was reachable by
+     the feature's own happy path.
+   - ⚠️ **A census silently re-armed and destroyed a DORMANT count.** `ProductNote.Counted` required
+     `TrackQuantity`, so a stopped count rendered no "Was N" note and was indistinguishable from
+     never-counted; `Attest` then overwrote the number and date item 28 promises to keep, and the summary
+     stayed silent because `Retracked` counts `IsTracked` — a different property. Every other mutator
+     respects dormancy (`AdjustByHuman` and `Move` both return early). The grid shows the stored number now
+     and `CensusOutcome.ResumedCounting` names the act. The demo catalog already ships an instance
+     (`Cat Litter`), and the page harness could not even express dormancy, so nothing could have caught it.
+   - ⚠️ **A tick authorizes a WRITE, so confidence alone must not grant one.** Two conditions were missing.
+     `ProductMatcher`'s bidirectional substring rule matches "Peanut Butter" to a catalog's `Butter`, and
+     `Attest` REPLACES that product's count with no undo — a flawless 0.95 read of the ITEM pre-authorizing
+     an unscored guess at the TARGET. And `Unidentified ⇒ unticked` was left implied by the reader's 0.3
+     cap in another assembly; the page holds it itself now.
+   - ⚠️ **`Enum.TryParse` SUCCEEDS on a numeric string.** `"evidence": "3"` produced an undefined value that
+     was neither `Label` nor `Unidentified`, slipping past BOTH honesty rules the parse exists to enforce
+     while the grid's switches fell to their "couldn't tell" arms — a row reading "couldn't tell, 95% sure",
+     ticked and pre-matched. `Category` was the same and **persisted** onto a real Product. The repo already
+     knew this (`ReportSpecUrl` pairs it with `IsDefined` under a test named
+     `Enum_parsing_is_case_insensitive_but_refuses_numeric_smuggling`); fixed as a SET, including the three
+     pre-existing sites in `AnthropicReceiptExtractor` and `AnthropicPantryChat`.
+   - ⚠️ **`catch (OperationCanceledException) { throw; }` produced a silent, permanent spinner.**
+     `ComponentBase` IGNORES a canceled task, so the rethrow yielded no error, no log line and no final
+     render — and the reachable trigger is the vision call's own `TaskCanceledException` on an HttpClient
+     timeout. The page owns a `CancellationTokenSource` now and threads it, so "the visitor left" and "the
+     call timed out" are distinguishable: only our own token is teardown. **The house convention
+     ("let cancellation propagate") is right where a token means what it says and wrong where nothing
+     supplies one.**
+   - **Two screens stating what the engine didn't do**, the class this arc keeps producing: "✅ Counted 0
+     items" when every ticked row was refused, and "Nothing recognisable turned up in that photo" after the
+     human ✕'d every row of a read that worked fine.
+   - Also: an unresolvable `ProductId` fell through to create-new/by-name silently (a merge in another tab
+     is enough) — refused as `ProductGone` now, and **the tenancy test got stronger for it**: it asserted
+     the row lands on household B's own same-named product, which is a second wrong answer, and now asserts
+     the refusal; the census created products behind an exact-name check only, where every other creation
+     path resolves fuzzily first (the grid names a near-miss now — resolving one in the service would
+     attach a count to a guessed product); `ShelfPhotoLoader` handed undecodable files to a JS promise that
+     never settles (Blazor's `toImageFile` revokes the object URL on error and never rejects), so a PDF or a
+     corrupt JPEG bought 30 seconds of spinner and a message that never named the file; and the fast-mover
+     nudge had dropped ProductDetail's `!TrackQuantity` gate, so it argued against a count the household
+     already keeps, on the act that refreshes it.
+   - **The prompt's one worked example contradicted its own arithmetic** — "FIVE items in three rows" then
+     enumerating two — inside the `Unidentified` rule, the one the parse can least check.
+   - ⚠️ **A test that asserted what its own fixture guaranteed.** `An_unidentified_package_is_shown_unticked`
+     seeded confidence 0.2, so it re-tested the threshold and would survive deleting every `Unidentified`
+     branch on the page. That it survived the earlier gate is the point: item 34's rule is that **green is
+     what the defect produces**, so a test is not evidence until it has been made to fail.
+   - **All 17 mutations killed exactly their tests and nothing else**, run in four batches. Both halves of
+     each new rule are pinned (the guard AND its complement), so no fix can quietly become a wall.
+   - **1316 tests green, 0 warnings** on a non-incremental Release build (1285 before; +31).
+   - **Live-verified end to end** (2026-08-02, dev server on the alt port, throwaway `test@shelfaware.net`
+     household on the sample catalog; three real vision calls on synthetic canvas-drawn shelves). What the
+     run proved, in the order it was checked:
+     - An unidentified tub came back at 20% and arrived **unticked** with "couldn't tell"; the labelled cans
+       came back at 95% **matched via the model's own `existing_product`** — so ticked with no similarity
+       warning, which is the trust order working rather than the fuzzy path failing to fire.
+     - Clearing the "how many" box rendered **"Enter how many."** inline, and confirming refused the row:
+       *"the 'how many' box was empty. An empty box isn't a zero."*
+     - A zero on a would-be-new product refused with the no-rhythm sentence, and the panel led with
+       **"Nothing was counted."** and **no ✅** — verified `innerHTML` carries no tick glyph.
+     - **Nothing was written by that refused confirm**: no `Diced Tomatoes` twin on `/products`, and
+       `Canned Black Beans` still read "You have 3, counted Aug 2". Pre-fix, the same click would have
+       zeroed the beans, filed an `OutNow`, and left a permanently-pinned ghost product.
+     - Typing "Diced Tomatoes" on a create-new row raised **"Looks like your existing 'Canned Diced
+       Tomatoes'"** — the twin that would otherwise have been created silently.
+     - `Cat Litter` (the dormant hero) showed **"Was 2, counted Jul 2. You'd stopped counting it — this
+       starts again from your new number."** on a genuinely-read match; pre-fix that row showed *nothing*.
+       Confirming said **"✅ Counted 1 item. Started counting 1 item you'd stopped counting."**, the product
+       page then read "You have 4, counted Aug 2", and its purchase count stayed **×4** — the ★ rule holding.
+     - Deleting every row said **"You've removed everything that was found… The photo was read fine"**
+       rather than blaming the photo.
+     - Zero console errors and zero server errors across the whole run, so the strict CSP holds.
+     ⚠️ **The fuzzy-tick rule was NOT exercised live** — the model suggested a product every time, which is
+     the trusted path, so `ProductMatcher`'s substring fallback never drove a pre-fill. It is unit-pinned
+     and mutation-checked; a live case needs a shelf item absent from the catalog whose name is a substring
+     of one that is present.
+     Side effect on the throwaway household, stated so it isn't mistaken for seed data later: `Cat Litter`
+     is no longer dormant — it is counted 4 as of 2026-08-02.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

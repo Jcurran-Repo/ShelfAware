@@ -1,4 +1,5 @@
 @page "/pantry-photo"
+@implements IDisposable
 @using ShelfAware.Core.Census
 @using ShelfAware.Core.Chat
 @using ShelfAware.Core.Prediction
@@ -57,10 +58,24 @@ else if (phase == Phase.Review)
     <section class="panel">
         @if (rows.Count == 0)
         {
-            <p class="error">
-                Nothing recognisable turned up in @(photoCount == 1 ? "that photo" : "those photos") — if it
-                wasn't a shelf of food, that's the right answer. Try again with the labels facing the camera.
-            </p>
+            @* Two ways to end up with an empty grid, and they must not be told the same story: blaming a
+               photo that read perfectly well is the app stating something the engine never did, and it
+               sends someone off to re-shoot — and re-spend a vision call — over a non-problem. *@
+            @if (readItemCount == 0)
+            {
+                <p class="error">
+                    Nothing recognisable turned up in @(photoCount == 1 ? "that photo" : "those photos") — if it
+                    wasn't a shelf of food, that's the right answer. Try again with the labels facing the camera.
+                </p>
+            }
+            else
+            {
+                <p class="muted">
+                    You've removed everything that was found, so there's nothing left to count. The
+                    @(photoCount == 1 ? "photo was read fine" : "photos were read fine") — start over whenever
+                    you're ready.
+                </p>
+            }
             <div class="review-actions">
                 <button @onclick="Reset">Try another photo</button>
             </div>
@@ -124,11 +139,19 @@ else if (phase == Phase.Review)
                             <td>
                                 <input type="number" step="0.01" min="0" @bind="row.Count" size="5"
                                        aria-label="How many @DescribeRow(row)" />
-                                @if (Note(row.ProductId) is { Counted: true } counted)
+                                @if (row.Count is null)
+                                {
+                                    @* An empty box is not a zero — the confirm refuses it rather than
+                                       reading it as "we're out" (which would file a real outage). Said
+                                       here so it's fixed before the confirm, not discovered after. *@
+                                    <div class="error small" role="status">Enter how many.</div>
+                                }
+                                @if (Note(row.ProductId) is { } note && note.HasNumber)
                                 {
                                     <div class="muted small">
-                                        Was @QuantityFormat.Describe(counted.OnHand, counted.Unit)@(counted.CountedAt is { } at
-                                            ? $", counted {SignalDate.Of(at):MMM d}" : "").
+                                        Was @QuantityFormat.Describe(note.OnHand, note.Unit)@(note.CountedAt is { } at
+                                            ? $", counted {SignalDate.Of(at):MMM d}" : "").@(note.Dormant
+                                            ? " You'd stopped counting it — this starts again from your new number." : "")
                                     </div>
                                 }
                             </td>
@@ -148,15 +171,47 @@ else if (phase == Phase.Review)
                                         <option value="@p.Id">@p.Name</option>
                                     }
                                 </select>
+                                @if (row.FuzzyMatch && row.ProductId == row.PrefilledProductId && row.ProductId > 0)
+                                {
+                                    @* The tick default measures how sure the reader was of the ITEM; this
+                                       match was made afterwards by name similarity and nobody scored it,
+                                       so a perfect read of "Peanut Butter" can land on "Butter". Attesting
+                                       REPLACES that product's count, so the row says so and stays unticked
+                                       until someone looks. *@
+                                    <div class="muted small" role="status">
+                                        Matched by name similarity, not read off the package — check this is
+                                        the right item before counting it.
+                                    </div>
+                                }
+                                @if (Note(row.ProductId) is { IsTracked: false })
+                                {
+                                    @* Same notice, same words, as the receipt review grid gives for the
+                                       same situation — counting an item ends its "ignore this for a while". *@
+                                    <div class="muted small" role="status">Currently ignored — counting it starts tracking it again.</div>
+                                }
                                 @if (Note(row.ProductId) is { FastMoverDays: { } days })
                                 {
                                     @* Steering, never a gate (CountingAdvice): a fast mover's count is wrong
                                        within days and the drift check then keeps asking, which reads as the
                                        feature being broken. A whole-fridge census is exactly where someone
                                        counts the milk, so the warning belongs on the row, not just on the
-                                       product page they may never open. *@
+                                       product page they may never open. Advice about signing UP, so it is
+                                       gated on the product not already being counted — nagging someone out
+                                       of a count they keep, on the act that refreshes it, is just noise. *@
                                     <div class="muted small">Bought about every @days day@(days == 1 ? "" : "s") —
                                         a count here would be hard to keep true.</div>
+                                }
+                                @if (NearMatch(row) is { } near)
+                                {
+                                    @* The standing duplicate guard, applied where a name is TYPED rather
+                                       than read: an exact clash is decided below, but a near-miss would
+                                       silently create a twin, and a twin splits purchase history and
+                                       blinds the predictor. Named, not resolved — fuzzy can false-positive,
+                                       so the household picks (the dropdown is right above). *@
+                                    <div class="muted small" role="status">
+                                        Looks like your existing “@near.Name” — pick it above if it's the same
+                                        thing, or leave this to create a separate item.
+                                    </div>
                                 }
                                 @if (NameClash(row) is { } clash)
                                 {
@@ -210,7 +265,9 @@ else if (phase == Phase.Review)
 else if (phase == Phase.Done)
 {
     <section class="panel">
-        <p>✅ @confirmSummary</p>
+        @* No ✅ when nothing was written. Every ticked row can be refused (a name clash, an empty box),
+           and "✅ Counted 0 items" over an empty write is the screen claiming an act that didn't happen. *@
+        <p>@(countedAnything ? "✅ " : "")@confirmSummary</p>
         @if (refusals.Count > 0)
         {
             @* Named, not tallied. A row the household ticked and then didn't get is the one thing they
@@ -250,14 +307,23 @@ else if (phase == Phase.Done)
     private string? errorMessage;
     private List<IBrowserFile> selectedFiles = [];
     private int photoCount;
+    /// <summary>How many items the READ produced, so an empty grid can tell "the photo showed nothing"
+    /// apart from "you removed every row" — two states that need opposite messages.</summary>
+    private int readItemCount;
     private List<ReviewRow> rows = [];
     private List<Product> products = [];
     private Dictionary<int, ProductNote> notes = [];
     private bool reading;
     private bool confirming;
+    private bool countedAnything;
     private string? confirmError;
     private string confirmSummary = "";
     private IReadOnlyList<CensusConfirmationService.RefusedRow> refusals = [];
+    /// <summary>Cancels the in-flight read/confirm when the page goes away. It exists so the difference
+    /// between "the visitor navigated off" and "the model call timed out" is knowable: without it every
+    /// cancellation looked like teardown and was rethrown — and ComponentBase SWALLOWS a canceled task,
+    /// so a timed-out vision call left the spinner up forever with no error and no log line.</summary>
+    private readonly CancellationTokenSource pageCts = new();
 
     private int ticked => rows.Count(r => r.Include);
 
@@ -267,7 +333,10 @@ else if (phase == Phase.Done)
         public string? LabelText { get; init; }
         public CensusEvidence Evidence { get; init; }
         public string Name { get; set; } = "";
-        public decimal Count { get; set; } = 1;
+        /// <summary>⚠️ Nullable, and that is the whole point: <c>@bind</c> on a non-nullable decimal turns
+        /// an emptied box into 0, and a ticked 0 is an ASSERTED outage that files a real OutNow. Null
+        /// means "nobody has said", which the confirm refuses rather than guesses.</summary>
+        public decimal? Count { get; set; } = 1;
         public Category Category { get; set; }
         public decimal Confidence { get; init; }
         public int ProductId { get; set; } // 0 = create new
@@ -275,15 +344,22 @@ else if (phase == Phase.Done)
         /// never matched it" — both of which leave <see cref="ProductId"/> at 0. The confirm treats them
         /// differently and must not have to guess (see CensusRow.CreateNew).</summary>
         public int PrefilledProductId { get; init; }
+        /// <summary>The pre-filled match came from name similarity rather than the label or the model's
+        /// own suggestion — an unscored guess at WHICH product, which the row says out loud and which
+        /// keeps it off the auto-tick list.</summary>
+        public bool FuzzyMatch { get; init; }
 
         /// <summary>The human deliberately turned a matched row into a new product.</summary>
         public bool ChoseCreateNew => ProductId == 0 && PrefilledProductId > 0;
     }
 
-    /// <summary>What the app already knows about a product the grid might land on: the count it holds now,
-    /// and whether its rhythm makes counting a chore. Computed once per load and looked up by the row's
-    /// CURRENT match, so changing the dropdown updates both without another query.</summary>
-    private sealed record ProductNote(bool Counted, decimal OnHand, string? Unit, DateTimeOffset? CountedAt, int? FastMoverDays);
+    /// <summary>What the app already knows about a product the grid might land on: the count it holds now
+    /// (live or dormant), whether it is being ignored, and whether its rhythm makes counting a chore.
+    /// Computed once per load and looked up by the row's CURRENT match, so changing the dropdown updates
+    /// all of them without another query.</summary>
+    private sealed record ProductNote(
+        bool HasNumber, bool Dormant, decimal OnHand, string? Unit, DateTimeOffset? CountedAt,
+        bool IsTracked, int? FastMoverDays);
 
     private ProductNote? Note(int productId) => productId > 0 && notes.TryGetValue(productId, out var n) ? n : null;
 
@@ -294,6 +370,29 @@ else if (phase == Phase.Done)
         row.ProductId != 0
             ? null
             : products.FirstOrDefault(p => string.Equals(p.Name, row.Name.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>An existing product this row's name merely RESEMBLES, or null — the standing duplicate
+    /// guard (a twin splits purchase history and blinds the predictor) applied where a name is typed
+    /// rather than read. The reader's own match runs once, at read time, so it never sees a name the
+    /// human enters afterwards — and "Name it if you know what it is" on an unidentified package is an
+    /// invitation to do exactly that. Named, never resolved: fuzzy matching false-positives, so the
+    /// household decides. Exact clashes are NameClash's job, and it answers first.
+    /// <para>Memoized because it runs per row per render and <c>ProductMatcher.Resolve</c> re-normalizes
+    /// the whole catalog on every call.</para></summary>
+    private Product? NearMatch(ReviewRow row)
+    {
+        if (row.ProductId != 0) return null;
+        var name = row.Name.Trim();
+        if (name.Length == 0 || NameClash(row) is not null) return null;
+        if (!nearMatches.TryGetValue(name, out var near))
+        {
+            near = ProductMatcher.Resolve(name, products);
+            nearMatches[name] = near;
+        }
+        return near;
+    }
+
+    private readonly Dictionary<string, Product?> nearMatches = new(StringComparer.OrdinalIgnoreCase);
 
     private static string EvidenceChip(CensusEvidence evidence) => evidence switch
     {
@@ -353,12 +452,13 @@ else if (phase == Phase.Done)
             var photos = new List<ShelfPhoto>();
             foreach (var file in selectedFiles)
             {
-                photos.Add(await PhotoLoader.LoadAsync(file));
+                photos.Add(await PhotoLoader.LoadAsync(file, pageCts.Token));
             }
             photoCount = photos.Count;
 
             await LoadCatalogAsync();
-            var result = await Reader.ReadAsync(photos, products.Select(p => p.Name).Distinct().ToList());
+            var result = await Reader.ReadAsync(
+                photos, products.Select(p => p.Name).Distinct().ToList(), pageCts.Token);
 
             // Nothing is persisted either way: the photo of someone's freezer goes to the model and stops
             // there. That's the whole reason there's no Retry here as there is for a receipt — there is no
@@ -376,7 +476,8 @@ else if (phase == Phase.Done)
                 // from (an alias keys on a merchant and a printed line, and a shelf has neither), so the
                 // model's own match leads and ProductMatcher backs it up. Resolved ONCE — it walks the
                 // whole catalog, and the row needs the same answer twice.
-                var matched = Match(i)?.Id ?? 0;
+                var (product, fuzzy) = Match(i);
+                var matched = product?.Id ?? 0;
                 return new ReviewRow
                 {
                     LabelText = i.LabelText,
@@ -387,22 +488,54 @@ else if (phase == Phase.Done)
                     Confidence = i.Confidence,
                     ProductId = matched,
                     PrefilledProductId = matched,
-                    // Unticked below 0.6 — a guess has to be opted into. A legible label or an unmistakable
-                    // bunch of bananas scores above it and isn't punished for having no barcode.
-                    Include = i.Confidence >= ConfidentEnough,
+                    FuzzyMatch = fuzzy,
+                    // A tick authorizes a WRITE, so all three things it rests on have to hold.
+                    //  · Confidence — unticked below 0.6, because a guess has to be opted into. A legible
+                    //    label or an unmistakable bunch of bananas clears it and isn't punished for
+                    //    having no barcode.
+                    //  · Not Unidentified — enforced here and not merely implied by the reader's 0.3 cap.
+                    //    Leaving it implied meant the rule lived in one number in another assembly: raise
+                    //    that cap, or swap the reader, and rows literally named "foil-wrapped parcel"
+                    //    arrive ticked and become real products named after packaging.
+                    //  · Not a fuzzy match — confidence measures certainty in the ITEM, and says nothing
+                    //    about WHICH product a name-similarity pass then picked. Attesting replaces that
+                    //    product's count, so an unscored guess must not be pre-authorized.
+                    Include = i.Confidence >= ConfidentEnough
+                        && i.Evidence != CensusEvidence.Unidentified
+                        && !fuzzy,
                 };
             }).ToList();
+            readItemCount = rows.Count;
 
             confirmError = null;
             phase = Phase.Review;
         }
-        catch (OperationCanceledException) { throw; }
+        // ⚠️ Only OUR cancellation is teardown. Nothing else here cancels on purpose, so an
+        // OperationCanceledException that arrives while the page is alive is a failure — an HttpClient
+        // timeout on the vision call is a TaskCanceledException, and the reader rethrows it by design.
+        // Rethrowing it here too looked safe and wasn't: ComponentBase ignores a canceled task, so there
+        // was no error, no log line, and no final render — just the spinner, forever.
+        catch (OperationCanceledException) when (pageCts.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException ex)
+        {
+            Logger.LogError(ex, "Reading a shelf census was cancelled from outside the page (a timeout).");
+            errorMessage = "Sorry — that took too long and was stopped. Please try again.";
+            phase = Phase.Error;
+        }
         catch (JSDisconnectedException)
         {
             // The photo is downscaled over JS interop, so a tab closed mid-read lands here. That is
             // ordinary teardown, not a fault: nothing can be rendered to anyone any more, and logging it
             // as an error would put noise in a real deployment's log. ⚠️ It does NOT derive from
             // JSException, which is why it needs its own clause and can't ride along with one.
+        }
+        catch (NotSupportedException ex)
+        {
+            // The loader refused the file by type. Its message names the file and what to use instead,
+            // which is the whole reason it checks rather than letting an undecodable file time out.
+            Logger.LogInformation("A shelf photo was refused: {Reason}", ex.Message);
+            errorMessage = ex.Message;
+            phase = Phase.Error;
         }
         catch (Exception ex)
         {
@@ -417,40 +550,60 @@ else if (phase == Phase.Done)
         }
     }
 
-    private Product? Match(CensusItem item)
+    /// <summary>The product this item pre-fills to, and whether that came from a NAMED source (the model's
+    /// own suggestion, or an exact name) or from fuzzy similarity. The caller needs both: a similarity
+    /// match is a guess at which product, and the count it would replace belongs to a real one.</summary>
+    private (Product? Product, bool Fuzzy) Match(CensusItem item)
     {
         // An unidentified package names a CONTAINER, so matching it against the catalog would attach a
         // count to a product on no evidence. The reader already refuses to suggest one; this is the same
         // rule held on the fuzzy fallback, which would happily match "unlabeled tub" to a tub of anything.
-        if (item.Evidence == CensusEvidence.Unidentified) return null;
+        if (item.Evidence == CensusEvidence.Unidentified) return (null, false);
         if (item.SuggestedProductName is { Length: > 0 } suggested
             && products.FirstOrDefault(p => string.Equals(p.Name, suggested, StringComparison.OrdinalIgnoreCase)) is { } exact)
         {
-            return exact;
+            return (exact, false);
         }
-        return ProductMatcher.Resolve(item.NormalizedName, products);
+        var resolved = ProductMatcher.Resolve(item.NormalizedName, products);
+        if (resolved is null) return (null, false);
+        // ProductMatcher doesn't say which of its rules fired, so ask the question that matters directly:
+        // is this the same name, or merely a similar one? Anything short of equal is treated as a guess —
+        // erring toward "ask the human" on the side that overwrites a stored count.
+        var sameName = string.Equals(resolved.Name, item.NormalizedName.Trim(), StringComparison.OrdinalIgnoreCase);
+        return (resolved, !sameName);
     }
 
     private async Task LoadCatalogAsync()
     {
-        await using var db = await DbFactory.CreateDbContextAsync();
+        await using var db = await DbFactory.CreateDbContextAsync(pageCts.Token);
         products = await db.Products
             .AsNoTracking()
             .Include(p => p.Purchases)
             .Include(p => p.Signals)
             .OrderBy(p => p.Name)
-            .ToListAsync();
+            .ToListAsync(pageCts.Token);
+        nearMatches.Clear();
 
         var today = DateOnly.FromDateTime(DateTime.Today);
         notes = products.ToDictionary(p => p.Id, p =>
         {
             var median = ReplenishmentPredictor.Predict(p, today).MedianIntervalDays;
             return new ProductNote(
-                Counted: p.TrackQuantity && p.QuantityOnHand is not null,
+                // A DORMANT count still has a number, and it is exactly the number about to be
+                // overwritten — so it shows, with what stopping means said plainly. Gating this on
+                // TrackQuantity made a stopped count indistinguishable from a never-counted one, which
+                // is the one state where the grid most owes the household a sentence.
+                HasNumber: p.QuantityOnHand is not null,
+                Dormant: !p.TrackQuantity && p.QuantityOnHand is not null,
                 OnHand: p.QuantityOnHand ?? 0m,
                 Unit: p.DefaultUnit,
                 CountedAt: p.QuantityCountedAt,
-                FastMoverDays: CountingAdvice.IsHardToKeepTrue(median) ? (int)Math.Round(median!.Value) : null);
+                IsTracked: p.IsTracked,
+                // Advice about signing UP — so it is not shown for a product already being counted, the
+                // same gate the product page's version carries.
+                FastMoverDays: !p.TrackQuantity && CountingAdvice.IsHardToKeepTrue(median)
+                    ? (int)Math.Round(median!.Value)
+                    : null);
         });
     }
 
@@ -466,13 +619,21 @@ else if (phase == Phase.Done)
                 .Select(r => new CensusConfirmationService.CensusRow(
                     r.Name, r.Category, r.Count, r.ProductId, r.ChoseCreateNew))
                 .ToList();
-            var outcome = await Confirmer.ConfirmAsync(confirmed);
+            var outcome = await Confirmer.ConfirmAsync(confirmed, pageCts.Token);
 
             confirmSummary = Summary(outcome);
+            countedAnything = outcome.Counted > 0;
             refusals = outcome.Refused;
             phase = Phase.Done;
         }
-        catch (OperationCanceledException) { throw; }
+        // Same split, same reason, as Read's: only our own token means teardown, and a swallowed
+        // cancellation here would leave the button reading "Saving…" with nothing ever saying otherwise.
+        catch (OperationCanceledException) when (pageCts.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException ex)
+        {
+            Logger.LogError(ex, "Confirming a shelf census was cancelled from outside the page (a timeout).");
+            confirmError = "That took too long and was stopped — nothing was recorded. Try again; re-counting the same numbers is safe.";
+        }
         catch (Exception ex)
         {
             // One SaveChanges in a single transaction, so a failure persists nothing. Pressing it again is
@@ -489,8 +650,13 @@ else if (phase == Phase.Done)
     }
 
     private static string Summary(CensusConfirmationService.CensusOutcome outcome) =>
-        $"Counted {outcome.Counted} item{(outcome.Counted == 1 ? "" : "s")}" +
-        (outcome.NewProducts > 0 ? $" ({outcome.NewProducts} new product{(outcome.NewProducts == 1 ? "" : "s")})" : "") +
+        // "Counted 0 items" is not a result, it's a contradiction — every ticked row can be refused, and
+        // saying it with a tick beside it claims a write that never happened. The refusal list below
+        // carries the detail; this sentence just has to stop asserting the opposite.
+        (outcome.Counted == 0
+            ? "Nothing was counted"
+            : $"Counted {outcome.Counted} item{(outcome.Counted == 1 ? "" : "s")}"
+              + (outcome.NewProducts > 0 ? $" ({outcome.NewProducts} new product{(outcome.NewProducts == 1 ? "" : "s")})" : "")) +
         "." +
         // The button counts ROWS and this counts PRODUCTS, and the reader's own contract makes them differ
         // routinely — it emits a row per variety (rule 7) but matches across varieties (rule 11). Pressing
@@ -504,6 +670,11 @@ else if (phase == Phase.Done)
             : "") +
         (outcome.Retracked > 0
             ? $" Started tracking {outcome.Retracked} previously ignored item{(outcome.Retracked == 1 ? "" : "s")} again."
+            : "") +
+        // A different act from Retracked, and the one most owed a sentence: stopping counting is
+        // deliberate, and this turned it back on and replaced the number it had kept.
+        (outcome.ResumedCounting > 0
+            ? $" Started counting {outcome.ResumedCounting} item{(outcome.ResumedCounting == 1 ? "" : "s")} you'd stopped counting."
             : "");
 
     /// <summary>One sentence per refused row, because the three reasons need genuinely different words —
@@ -512,8 +683,12 @@ else if (phase == Phase.Done)
     {
         CensusConfirmationService.CensusRefusal.DuplicateName =>
             $"“{row.Name}” — a product with that name already exists, so nothing was created. Count it from its own page, or run this again and pick it in the Product match column.",
-        CensusConfirmationService.CensusRefusal.OutageOnNewProduct =>
-            $"“{row.Name}” — counted as none, but it isn't something you track yet. Recording that you're out of an item you've never had would put it on your grocery list; add it with a real count instead.",
+        CensusConfirmationService.CensusRefusal.OutageWithoutHistory =>
+            $"“{row.Name}” — counted as none, but you've never bought it here, so there's no rhythm for Shelf Aware to un-stick it from. Recording an outage would park it at the top of your grocery list for good; count it with a real number, or mark it out from its own page.",
+        CensusConfirmationService.CensusRefusal.ProductGone =>
+            $"“{row.Name}” — the item this row pointed at isn't there any more (removed or merged while you were reviewing). Nothing was guessed in its place; run this again and pick from the up-to-date list.",
+        CensusConfirmationService.CensusRefusal.MissingCount =>
+            $"“{row.Name}” — the “how many” box was empty. An empty box isn't a zero, and Shelf Aware won't guess a number for you.",
         _ => $"“{row.Name}” — needs a name and a count of zero or more.",
     };
 
@@ -524,7 +699,19 @@ else if (phase == Phase.Done)
         refusals = [];
         selectedFiles = [];
         photoCount = 0;
+        readItemCount = 0;
+        countedAnything = false;
+        confirmSummary = "";
         errorMessage = null;
         confirmError = null;
+        nearMatches.Clear();
+    }
+
+    public void Dispose()
+    {
+        // Cancels an in-flight read or confirm, and — because only THIS token means teardown — is what
+        // lets the catch clauses above tell a departed visitor from a timed-out call.
+        if (!pageCts.IsCancellationRequested) pageCts.Cancel();
+        pageCts.Dispose();
     }
 }

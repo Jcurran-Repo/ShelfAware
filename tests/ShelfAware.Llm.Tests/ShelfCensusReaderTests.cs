@@ -173,6 +173,30 @@ public class ShelfCensusReaderTests
         Assert.Equal("Chicken Breast", item.NormalizedName);
     }
 
+    [Fact]
+    public async Task A_NUMERIC_evidence_value_cannot_smuggle_past_the_honesty_rules()
+    {
+        // ⚠️ Enum.TryParse SUCCEEDS on a numeric string, so "3" would produce an undefined value that is
+        // neither Label nor Unidentified — slipping past BOTH rules the parse exists to enforce (the
+        // confidence cap and the product-match null-out) while the grid's switch statements fell through
+        // to their "couldn't tell" arms. The row would read "couldn't tell, 95% sure" and arrive ticked
+        // and pre-matched: the screen and the write telling opposite stories. Reachable on the
+        // OpenAI-compatible provider tier, where response_format enum enforcement is best-effort.
+        var result = await Reader(FakeChatClient.Returning(Responses.Text(Json("""
+        {
+          "label_text": null, "evidence": "3", "normalized_name": "Ground Beef",
+          "brand": null, "size": null, "variety": null, "category": "12",
+          "visible_count": 1, "confidence": 0.95, "existing_product": "Ground Beef"
+        }
+        """)))).ReadAsync(OnePhoto, ["Ground Beef"]);
+
+        var item = Assert.Single(result.Items);
+        Assert.Equal(CensusEvidence.Appearance, item.Evidence);
+        Assert.True(Enum.IsDefined(item.Evidence), "an undefined evidence value must never reach the grid");
+        Assert.Equal(Category.Other, item.Category);
+        Assert.True(Enum.IsDefined(item.Category), "an undefined category would be persisted onto a real product");
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-2)]

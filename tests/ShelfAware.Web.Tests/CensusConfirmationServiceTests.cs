@@ -19,7 +19,8 @@ public class CensusConfirmationServiceTests : IDisposable
     public void Dispose() => _db.Dispose();
 
     private async Task<Product> SeedProduct(
-        string name, bool tracked = true, bool counted = false, decimal? onHand = null, DateTimeOffset? countedAt = null)
+        string name, bool tracked = true, bool counted = false, decimal? onHand = null,
+        DateTimeOffset? countedAt = null, params DateOnly[] purchases)
     {
         await using var db = _db.CreateDbContext();
         var product = new Product
@@ -30,14 +31,21 @@ public class CensusConfirmationServiceTests : IDisposable
             TrackQuantity = counted,
             QuantityOnHand = onHand,
             QuantityCountedAt = countedAt,
+            Purchases = [.. purchases.Select(d => new PurchaseEvent { PurchasedAt = d, Quantity = 1 })],
         };
         db.Products.Add(product);
         await db.SaveChangesAsync();
         return product;
     }
 
+    /// <summary>A product with buying history behind it — the only shape against which an attested ZERO is
+    /// safe, since a rhythm is what can later contradict the outage (see OutageWithoutHistory).</summary>
+    private Task<Product> SeedBoughtProduct(string name, bool tracked = true, bool counted = false, decimal? onHand = null) =>
+        SeedProduct(name, tracked, counted, onHand, null,
+            DateOnly.FromDateTime(DateTime.Today.AddDays(-40)), DateOnly.FromDateTime(DateTime.Today.AddDays(-12)));
+
     private static CensusConfirmationService.CensusRow R(
-        string name, decimal count, int productId = 0, Category category = Category.Frozen) =>
+        string name, decimal? count, int productId = 0, Category category = Category.Frozen) =>
         new(name, category, count, productId);
 
     private async Task<Product> Reload(int id)
@@ -214,8 +222,9 @@ public class CensusConfirmationServiceTests : IDisposable
     public async Task A_human_counting_zero_records_a_real_outage()
     {
         // §13.4: an ASSERTED zero is real evidence and feeds the burn-rate rhythm. The reader floors its
-        // own proposals at 1, so a zero reaching here was typed by a person.
-        var beef = await SeedProduct("Ground Beef", counted: true, onHand: 4, countedAt: DateTimeOffset.Now.AddDays(-30));
+        // own proposals at 1, so a zero reaching here was typed by a person. Bought before, because that
+        // is the rhythm the outage teaches — and the only shape a zero is accepted against.
+        var beef = await SeedBoughtProduct("Ground Beef", counted: true, onHand: 4);
 
         var outcome = await _service.ConfirmAsync([R("Ground Beef", 0, beef.Id)]);
 
@@ -380,16 +389,17 @@ public class CensusConfirmationServiceTests : IDisposable
         Assert.Empty(await db.Products.ToListAsync());
         Assert.Empty(await db.InventorySignals.ToListAsync());
         var refused = Assert.Single(outcome.Refused);
-        Assert.Equal(CensusConfirmationService.CensusRefusal.OutageOnNewProduct, refused.Reason);
+        Assert.Equal(CensusConfirmationService.CensusRefusal.OutageWithoutHistory, refused.Reason);
         Assert.Equal("Frozen Peas", refused.Name);
     }
 
     [Fact]
-    public async Task A_zero_on_a_product_that_already_exists_is_still_a_real_outage()
+    public async Task A_zero_on_a_product_with_buying_history_is_still_a_real_outage()
     {
-        // The complement, and the reason the refusal above is scoped to NEW products: §13.4's asserted zero
-        // on something the household actually tracks is real evidence and must keep working.
-        var beans = await SeedProduct("Black Beans", counted: true, onHand: 4);
+        // The complement, and the reason the refusal is scoped the way it is: §13.4's asserted zero on
+        // something the household actually buys is real evidence, and the rhythm behind it is what can
+        // later contradict the outage. This is the case that must keep working.
+        var beans = await SeedBoughtProduct("Black Beans", counted: true, onHand: 4);
 
         var outcome = await _service.ConfirmAsync([R("Black Beans", 0, beans.Id)]);
 
@@ -401,14 +411,121 @@ public class CensusConfirmationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task A_zero_row_is_fine_once_another_row_has_created_the_product()
+    public async Task A_zero_on_an_EXISTING_product_with_no_purchases_is_refused_too()
     {
-        // The refusal keys on "would this row bring the product into existence", not on the number alone.
+        // ⚠️ The one the "is it new?" test could not catch, and the reason the rule moved to "has it ever
+        // been bought?". A census's OWN output is a product with zero purchases by construction — §13.8
+        // exists for stock no receipt knows about — so the second census of the same shelf hit exactly
+        // the state the first was refused for: an OutNow with no rhythm to re-anchor it, pinning the item
+        // Overdue permanently, unclearable by any later census.
+        var sauce = await SeedProduct("Home-Canned Sauce", counted: true, onHand: 5);
+
+        var outcome = await _service.ConfirmAsync([R("Home-Canned Sauce", 0, sauce.Id)]);
+
+        await using var db = _db.CreateDbContext();
+        Assert.Empty(await db.InventorySignals.ToListAsync());
+        Assert.Equal(5m, (await Reload(sauce.Id)).QuantityOnHand); // untouched, not zeroed
+        Assert.Equal(CensusConfirmationService.CensusRefusal.OutageWithoutHistory,
+            Assert.Single(outcome.Refused).Reason);
+    }
+
+    [Fact]
+    public async Task A_zero_row_is_refused_even_once_another_row_has_created_the_product()
+    {
+        // Creating it a moment ago does not give it a rhythm, so the zero is refused for the same reason.
+        // The positive row still lands: a refusal is per row, never per census.
         var outcome = await _service.ConfirmAsync([R("Frozen Peas", 3), R("Frozen Peas", 0)]);
 
         await using var db = _db.CreateDbContext();
         Assert.Equal(3m, (await db.Products.SingleAsync()).QuantityOnHand);
-        Assert.Empty(outcome.Refused);
+        Assert.Empty(await db.InventorySignals.ToListAsync());
+        Assert.Equal(CensusConfirmationService.CensusRefusal.OutageWithoutHistory,
+            Assert.Single(outcome.Refused).Reason);
+    }
+
+    // ---- what an empty box means, and what a vanished product means ----
+
+    [Fact]
+    public async Task An_EMPTY_count_box_is_refused_and_is_never_read_as_an_outage()
+    {
+        // ⚠️ The sharpest edge on the page. A non-nullable bind turned a box cleared to retype into 0, and
+        // a ticked 0 is an ASSERTED out — a real OutNow filed against a freezer full of the stuff, from a
+        // field nobody typed in. Null means "nobody has said" and is refused, never coerced.
+        var beans = await SeedBoughtProduct("Black Beans", counted: true, onHand: 5);
+
+        var outcome = await _service.ConfirmAsync([R("Black Beans", null, beans.Id)]);
+
+        await using var db = _db.CreateDbContext();
+        Assert.Empty(await db.InventorySignals.ToListAsync());
+        Assert.Equal(5m, (await Reload(beans.Id)).QuantityOnHand); // the real count survives untouched
+        Assert.Equal(0, outcome.AssertedOut);
+        var refused = Assert.Single(outcome.Refused);
+        Assert.Equal(CensusConfirmationService.CensusRefusal.MissingCount, refused.Reason);
+        Assert.Equal("Black Beans", refused.Name);
+    }
+
+    [Fact]
+    public async Task A_row_naming_a_product_that_has_since_vanished_is_refused_not_redirected()
+    {
+        // A merge or a delete in another tab while the grid sits open. Resolving by name instead would
+        // create a twin of the product that just went away — or land the count on a DIFFERENT product
+        // than the dropdown showed — and say nothing about either.
+        var outcome = await _service.ConfirmAsync([R("Ground Beef", 4, productId: 4242)]);
+
+        await using var db = _db.CreateDbContext();
+        Assert.Empty(await db.Products.ToListAsync());
+        var refused = Assert.Single(outcome.Refused);
+        Assert.Equal(CensusConfirmationService.CensusRefusal.ProductGone, refused.Reason);
+        Assert.Equal("Ground Beef", refused.Name);
+    }
+
+    [Fact]
+    public async Task A_refusal_names_the_row_by_its_product_when_the_name_box_is_blank()
+    {
+        // Blanking the name of a matched row is fine (it resolves by id), so a refusal on such a row must
+        // not report "(unnamed)" — among thirty rows that names nothing, and the advice that goes with it
+        // would tell someone to supply a name the row never needed.
+        var beans = await SeedBoughtProduct("Black Beans", counted: true, onHand: 5);
+
+        var outcome = await _service.ConfirmAsync([R("", -3, beans.Id)]);
+
+        var refused = Assert.Single(outcome.Refused);
+        Assert.Equal(CensusConfirmationService.CensusRefusal.Unusable, refused.Reason);
+        Assert.Equal("Black Beans", refused.Name);
+    }
+
+    // ---- resuming a count that was deliberately stopped ----
+
+    [Fact]
+    public async Task Recounting_a_DORMANT_product_resumes_counting_and_says_so()
+    {
+        // Stop-counting is dormant, not destructive: the number and its date are kept as history. A census
+        // overwrites both and starts believing them again — right for someone who just counted the shelf,
+        // but it is the one switch they deliberately turned off, so the outcome reports it. `Retracked` is
+        // a DIFFERENT property (IsTracked) and would stay silent here.
+        var stopped = DateTimeOffset.Now.AddDays(-90);
+        var chuck = await SeedProduct("Ground Chuck", counted: false, onHand: 14, countedAt: stopped);
+
+        var outcome = await _service.ConfirmAsync([R("Ground Chuck", 3, chuck.Id)]);
+
+        var reloaded = await Reload(chuck.Id);
+        Assert.True(reloaded.TrackQuantity);
+        Assert.Equal(3m, reloaded.QuantityOnHand);
+        Assert.Equal(1, outcome.ResumedCounting);
+        Assert.Equal(0, outcome.Retracked); // it was tracked all along — a different thing entirely
+    }
+
+    [Fact]
+    public async Task A_never_counted_product_is_not_reported_as_resuming()
+    {
+        // The complement: "resumed" means a stored number was overwritten, not merely that counting began.
+        // Without this the summary would announce a resumption on every ordinary first count.
+        var fish = await SeedProduct("Tilapia Fillets");
+
+        var outcome = await _service.ConfirmAsync([R("Tilapia Fillets", 2, fish.Id)]);
+
+        Assert.True((await Reload(fish.Id)).TrackQuantity);
+        Assert.Equal(0, outcome.ResumedCounting);
     }
 
     // ---- tenancy ----
@@ -423,13 +540,19 @@ public class CensusConfirmationServiceTests : IDisposable
         var theirs = await SeedProduct("Ground Beef");
 
         // Household B counts, naming A's product id outright. The filtered lookup never resolves it, so the
-        // row falls through to B's own same-named product rather than reaching across the boundary.
-        await _service.ConfirmAsync([R("Ground Beef", 7, mine.Id)]);
+        // row is REFUSED — B's own same-named product is not silently written to either. That second half
+        // matters as much as the first: the boundary holding is what stops the reach-across, but a row
+        // that lands somewhere other than the id it named is a different wrong answer, and a tampered
+        // circuit message must not be able to steer a count by guessing at ids.
+        var outcome = await _service.ConfirmAsync([R("Ground Beef", 7, mine.Id)]);
+
+        Assert.Equal(CensusConfirmationService.CensusRefusal.ProductGone,
+            Assert.Single(outcome.Refused).Reason);
 
         await using var raw = _db.CreateUnscopedContext();
         var all = await raw.Products.IgnoreQueryFilters().ToListAsync();
-        Assert.Equal(7m, all.Single(p => p.Id == theirs.Id).QuantityOnHand);
-        Assert.Null(all.Single(p => p.Id == mine.Id).QuantityOnHand);
+        Assert.Null(all.Single(p => p.Id == mine.Id).QuantityOnHand); // never reached across
+        Assert.Null(all.Single(p => p.Id == theirs.Id).QuantityOnHand); // and not redirected onto B's own
     }
 
     [Fact]
@@ -448,7 +571,7 @@ public class CensusConfirmationServiceTests : IDisposable
     public async Task An_asserted_outage_is_stamped_to_the_counting_household_too()
     {
         _db.HouseholdId = "hh-b";
-        var beef = await SeedProduct("Ground Beef", counted: true, onHand: 2);
+        var beef = await SeedBoughtProduct("Ground Beef", counted: true, onHand: 2);
 
         await _service.ConfirmAsync([R("Ground Beef", 0, beef.Id)]);
 

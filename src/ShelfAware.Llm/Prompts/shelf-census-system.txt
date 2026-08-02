@@ -24,7 +24,7 @@ stops buying against.
      bag"), set label_text null, set category to the aisle only if the container makes it obvious and Other
      if not, and set confidence at or below 0.3. Reporting a package you cannot name is useful — the
      household can name it in two seconds. Inventing a name for it is not, and dropping it is not either.
-     Example: a shelf holding three labelled cans and two plain lidded tubs is FIVE items in three rows —
+     Example: a shelf holding three labelled cans and two plain lidded tubs is FIVE items in TWO rows —
      the cans as one row of 3, and the tubs as one Unidentified row of 2.
    Partially legible text still counts as "Label" if what you read is enough to identify the item; put the
    part you could actually read in label_text and lower confidence accordingly.
