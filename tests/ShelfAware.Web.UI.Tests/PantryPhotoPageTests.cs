@@ -35,15 +35,22 @@ public class PantryPhotoPageTests : PageTestContext
         public List<int> PhotoCounts { get; } = [];
         public List<string> ProductHints { get; } = [];
 
-        public Task<ShelfCensusResult> ReadAsync(
+        /// <summary>When set, the next read parks here — a real vision call takes seconds, and an instant
+        /// fake would make the in-flight branch untestable. One-shot: consumed by the read it holds.</summary>
+        public TaskCompletionSource? Hold { get; set; }
+
+        public async Task<ShelfCensusResult> ReadAsync(
             IReadOnlyList<ShelfPhoto> photos, IReadOnlyList<string>? knownProductNames = null,
             CancellationToken cancellationToken = default)
         {
             PhotoCounts.Add(photos.Count);
             if (knownProductNames is not null) ProductHints.AddRange(knownProductNames);
-            return Task.FromResult(Results.Count > 0
-                ? Results.Dequeue()
-                : ShelfCensusResult.Fail("no result queued"));
+            if (Hold is { } gate)
+            {
+                Hold = null;
+                await gate.Task;
+            }
+            return Results.Count > 0 ? Results.Dequeue() : ShelfCensusResult.Fail("no result queued");
         }
     }
 
@@ -351,6 +358,26 @@ public class PantryPhotoPageTests : PageTestContext
 
         Assert.Contains("Ground Beef", Reader.ProductHints);
         Assert.Contains("Black Beans", Reader.ProductHints);
+    }
+
+    [Fact]
+    public void A_second_press_while_reading_does_not_buy_a_second_vision_call()
+    {
+        // Setting the phase hides the button, but a second click can already be queued before that render
+        // reaches the browser — and on a slow circuit it will be. Both would then run: two vision calls
+        // billed to the visitor's own key for one press, the second overwriting the first's rows.
+        Reader.Results.Enqueue(ShelfCensusResult.Ok([Item("Tilapia Fillets")], "{}"));
+        var gate = new TaskCompletionSource();
+        Reader.Hold = gate;
+        var cut = Render<PantryPhoto>();
+        Upload(cut, 1);
+
+        cut.Find("button").Click();  // parks inside the reader
+        cut.Find("button").Click();  // must NO-OP
+        gate.SetResult();
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("tbody tr")));
+        Assert.Single(Reader.PhotoCounts); // exactly one read
     }
 
     [Fact]

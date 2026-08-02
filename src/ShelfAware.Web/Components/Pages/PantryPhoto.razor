@@ -222,6 +222,7 @@ else if (phase == Phase.Done)
     private List<ReviewRow> rows = [];
     private List<Product> products = [];
     private Dictionary<int, ProductNote> notes = [];
+    private bool reading;
     private bool confirming;
     private string? confirmError;
     private string confirmSummary = "";
@@ -290,7 +291,12 @@ else if (phase == Phase.Done)
 
     private async Task Read()
     {
-        if (selectedFiles.Count == 0) return;
+        // ⚠️ `reading` and not just the phase check: setting phase hides the button via `hidden`, but a
+        // second click can already be queued before that render lands, and BOTH would then run — two vision
+        // calls billed to the visitor's own key for one press, with the second overwriting the first's rows.
+        // Same double-tap guard the dashboard's quick buttons carry.
+        if (selectedFiles.Count == 0 || reading) return;
+        reading = true;
         phase = Phase.Reading;
         errorMessage = null;
         StateHasChanged();
@@ -347,6 +353,7 @@ else if (phase == Phase.Done)
         finally
         {
             selectedFiles = [];
+            reading = false;
         }
     }
 

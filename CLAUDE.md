@@ -72,7 +72,7 @@ Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptT
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1270 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1271 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see item 31).
 
@@ -1300,13 +1300,33 @@ bUnit pages/components — see item 31).
      freezer bag" — a collision `ProductMatcher` really makes, asserted in the test itself — so four frosted
      parcels can't pre-fill the household's box of freezer bags. Both that guard and the tick default fail
      when mutated.
-   - **1270 tests green, 0 warnings** on a non-incremental Release build (1210 before; +60: 19 reader, 21
-     confirm service, 20 page). No schema change — `TrackQuantity`/`QuantityOnHand`/`QuantityCountedAt`
+   - **1271 tests green, 0 warnings** on a non-incremental Release build (1210 before; +61: 19 reader, 21
+     confirm service, 21 page). No schema change — `TrackQuantity`/`QuantityOnHand`/`QuantityCountedAt`
      already exist, and a census writes nothing else. No new demo seed either: the census's OUTPUT (a counted
      product with no purchases) is already seeded as `Quarter Cow Ground Beef` (item 25) — a census is an act,
      not a state.
-   - **Not yet live-verified in the browser** — the page needs a signed-in account and creating one isn't
-     mine to do. The reader half IS live-verified against the real API (above).
+   - **Live-verified end to end** (2026-08-02, dev server on the alt port against the sample catalog; the
+     photo was drawn on a canvas and handed to the file input, the documented no-real-files technique). One
+     synthetic shelf produced exactly three rows: `Canned Black Beans` ×3 read off the label at 95%, ticked,
+     **matched to the existing seeded product** and annotated "Was 5, counted Jul 29"; `Tilapia Fillets` ×1
+     at 95%, ticked, create-new; and `lidded plastic tub` ×2 as **Unidentified at 20%, unticked,
+     `low-confidence`, unmatched**. Confirming said "Counted 2 items (1 new product)", and the two product
+     pages then proved the ★ rule: the beans read "3 on hand · you last counted Aug 2" with **the same four
+     purchases as before** and the suppression sentence beside a `Stocked` chip, and the new Tilapia product
+     read "1 on hand" with **"Last bought: never"** and no purchases at all. No console or server errors, so
+     the strict CSP holds.
+   - **Two findings the run and a re-read produced, both fixed:**
+     - ⚠️ **`Read()` had no busy guard.** Setting the phase hides the button, but a second click can already
+       be queued before that render reaches the browser — and on a slow circuit it will be — so BOTH would
+       run: **two vision calls billed to the visitor's own key for one press**, the second overwriting the
+       first's rows. The same class the dashboard's quick buttons were guarded for in item 8. Pinned by a
+       test that parks the reader mid-flight, mutation-checked.
+     - **A two-word nav label wrapped INSIDE itself.** With 11 links the row wraps, and "Count Stock" split
+       across two lines — both halves highlighted when active — reading as two separate links. Measured
+       (`getClientRects().length === 2`), not eyeballed. `white-space: nowrap` on `.site-header nav a` fixes
+       it and closes the same latent hole for "Grocery List", which had simply never landed on the break.
+       ⚠️ **A CSS edit needs a server RESTART to show up** — static assets are fingerprinted
+       (`app.mq67gixxrj.css`), so the running server keeps serving the old file and a reload proves nothing.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
