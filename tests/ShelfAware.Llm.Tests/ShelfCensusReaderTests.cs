@@ -124,6 +124,22 @@ public class ShelfCensusReaderTests
     }
 
     [Fact]
+    public async Task An_already_modest_unidentified_confidence_is_left_alone()
+    {
+        // The cap is a Min, not an assignment — a reader honest enough to say 0.1 must not be rounded UP
+        // to the ceiling. Without this, replacing Math.Min with a flat 0.3 survives every other test.
+        var result = await Reader(FakeChatClient.Returning(Responses.Text(Json("""
+        {
+          "label_text": null, "evidence": "Unidentified", "normalized_name": "plain white box",
+          "brand": null, "size": null, "variety": null, "category": "Other",
+          "visible_count": 1, "confidence": 0.05, "existing_product": null
+        }
+        """)))).ReadAsync(OnePhoto);
+
+        Assert.Equal(0.05m, Assert.Single(result.Items).Confidence);
+    }
+
+    [Fact]
     public async Task An_unidentified_package_is_never_matched_to_an_existing_product()
     {
         // Its name describes a CONTAINER. Matching it would attach a count to a real product on no

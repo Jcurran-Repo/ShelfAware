@@ -21,9 +21,11 @@ public interface IShelfPhotoLoader
 
 public sealed class BrowserShelfPhotoLoader(IOptions<LlmOptions> options) : IShelfPhotoLoader
 {
-    /// <summary>Generous, and not a security boundary — the resize below is what actually bounds what
-    /// reaches the model. It's here so a mis-picked 300 MB file fails as one photo instead of as the
-    /// circuit.</summary>
+    /// <summary>A backstop on the DOWNSCALED image, which is the only thing that crosses the circuit — the
+    /// browser resize below is what actually bounds what reaches the model, and at a 1568px longest edge
+    /// the JPEG is comfortably under a megabyte. So this can only fire if the resize returned something
+    /// unexpected; it is not a limit on the file the visitor picked (that one is read and shrunk entirely
+    /// in their browser and never arrives here whole).</summary>
     private const long MaxUploadBytes = 25 * 1024 * 1024;
 
     public async Task<ShelfPhoto> LoadAsync(IBrowserFile file, CancellationToken cancellationToken = default)

@@ -202,11 +202,29 @@ public class PantryPhotoPageTests : PageTestContext
     // --- matching ------------------------------------------------------------
 
     [Fact]
-    public async Task A_read_that_names_an_existing_product_pre_selects_it()
+    public async Task The_readers_own_match_LEADS_the_fuzzy_matcher()
+    {
+        // ⚠️ The documented trust order is "the model's own match leads and ProductMatcher backs it up",
+        // and a fixture where both agree cannot tell the two branches apart — the first version of this
+        // test survived deleting the entire suggestion branch. So the suggestion here names a product the
+        // matcher would NOT return for this item name, and the assertion is that the suggestion wins.
+        var frozen = await SeedProduct("Tilapia Fillets");
+        var chicken = await SeedProduct("Chicken Breast");
+        Assert.Equal(chicken.Id, ProductMatcher.Resolve("Chicken Breast", [frozen, chicken])!.Id); // matcher's answer
+
+        var cut = Review(Item("Chicken Breast", suggested: "Tilapia Fillets")); // the reader disagrees
+
+        var select = RowFor(cut, "Chicken Breast").QuerySelectorAll("select")
+            .Single(s => s.GetAttribute("aria-label")!.StartsWith("Product match"));
+        Assert.Equal(frozen.Id.ToString(), ((IHtmlSelectElement)select).Value);
+    }
+
+    [Fact]
+    public async Task With_no_suggestion_the_fuzzy_matcher_pre_selects()
     {
         var beef = await SeedProduct("Ground Beef");
 
-        var cut = Review(Item("Ground Beef", suggested: "Ground Beef"));
+        var cut = Review(Item("Ground Beef"));
 
         var select = RowFor(cut, "Ground Beef").QuerySelectorAll("select")
             .Single(s => s.GetAttribute("aria-label")!.StartsWith("Product match"));
@@ -232,15 +250,108 @@ public class PantryPhotoPageTests : PageTestContext
     }
 
     [Fact]
-    public async Task An_existing_count_is_shown_beside_the_new_one()
+    public async Task An_existing_count_is_shown_beside_the_new_one_and_FOLLOWS_the_dropdown()
     {
         // Attesting REPLACES the number, so the one being replaced belongs on screen — otherwise a recount
-        // silently overwrites a number the household may have wanted to keep.
+        // silently overwrites a number the household may have wanted to keep. With one seeded product this
+        // couldn't distinguish "the right product's count" from "any count", so there are two here and the
+        // test changes the match and watches the note follow.
         await SeedProduct("Black Beans", counted: true, onHand: 3);
+        var peas = await SeedProduct("Frozen Peas", counted: true, onHand: 11);
 
         var cut = Review(Item("Black Beans", count: 9, suggested: "Black Beans"));
+        var row = RowFor(cut, "Black Beans");
+        Assert.Contains("Was 3", Collapsed(row));
+        Assert.DoesNotContain("Was 11", Collapsed(row));
 
-        Assert.Contains("Was 3", Collapsed(RowFor(cut, "Black Beans")));
+        var select = row.QuerySelectorAll("select")
+            .Single(s => s.GetAttribute("aria-label")!.StartsWith("Product match"));
+        select.Change(peas.Id.ToString());
+
+        var moved = Collapsed(RowFor(cut, "Black Beans"));
+        Assert.Contains("Was 11", moved);
+        Assert.DoesNotContain("Was 3", moved);
+    }
+
+    // --- the two the pre-push gate found ---
+
+    [Fact]
+    public async Task Choosing_create_new_on_a_matched_row_warns_that_the_name_is_taken()
+    {
+        // ⚠️ The grid must not say "new product" while the write replaces an existing one's count. Said
+        // BEFORE the confirm, so a name clash is something the household resolves rather than discovers.
+        await SeedProduct("Ground Beef", counted: true, onHand: 12);
+
+        var cut = Review(Item("Ground Beef", count: 4, suggested: "Ground Beef"));
+        var select = RowFor(cut, "Ground Beef").QuerySelectorAll("select")
+            .Single(s => s.GetAttribute("aria-label")!.StartsWith("Product match"));
+        select.Change("0"); // ➕ create new product
+
+        var warned = Collapsed(RowFor(cut, "Ground Beef"));
+        Assert.Contains("already exists", warned);
+        Assert.Contains("this row will be skipped", warned);
+    }
+
+    [Fact]
+    public async Task Choosing_create_new_leaves_the_existing_count_untouched()
+    {
+        var beef = await SeedProduct("Ground Beef", counted: true, onHand: 12);
+
+        var cut = Review(Item("Ground Beef", count: 4, suggested: "Ground Beef"));
+        RowFor(cut, "Ground Beef").QuerySelectorAll("select")
+            .Single(s => s.GetAttribute("aria-label")!.StartsWith("Product match"))
+            .Change("0");
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Count ")).Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("a product with that name already exists", Collapsed(cut.Markup)));
+        await using var db = Db.CreateDbContext();
+        Assert.Single(await db.Products.ToListAsync());                                  // no twin
+        Assert.Equal(12m, (await db.Products.SingleAsync(p => p.Id == beef.Id)).QuantityOnHand); // and no loss
+    }
+
+    [Fact]
+    public async Task Counting_zero_of_something_new_is_declined_and_explained()
+    {
+        // The row arrives ticked; seeing an empty shelf and typing 0 is what "fix the numbers" invites.
+        // Creating the product and asserting an outage would pin it Overdue on the grocery list forever.
+        var cut = Review(Item("Frozen Peas", count: 2));
+
+        RowFor(cut, "Frozen Peas").QuerySelectorAll("input[type=number]").Single().Change("0");
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Count ")).Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("isn't something you track yet", Collapsed(cut.Markup)));
+        await using var db = Db.CreateDbContext();
+        Assert.Empty(await db.Products.ToListAsync());
+        Assert.Empty(await db.InventorySignals.ToListAsync());
+    }
+
+    [Fact]
+    public void Rolled_up_rows_are_explained_rather_than_looking_dropped()
+    {
+        // The button counts rows and the result counts products; the reader emits a row per variety but
+        // matches across varieties, so the two differ routinely.
+        var cut = Review(Item("Drink Mix"), Item("Drink Mix"));
+
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Count 2 items")).Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            var done = Collapsed(cut.Markup);
+            Assert.Contains("Counted 1 item", done);
+            Assert.Contains("2 rows — some were the same product", done);
+        });
+    }
+
+    [Fact]
+    public void A_row_removed_with_the_cross_is_not_counted()
+    {
+        var cut = Review(Item("Tilapia Fillets"), Item("Frozen Peas"));
+
+        RowFor(cut, "Frozen Peas").QuerySelectorAll("button")
+            .Single(b => b.GetAttribute("aria-label")!.StartsWith("Remove")).Click();
+
+        Assert.Single(cut.FindAll("tbody tr"));
+        Assert.Contains("Count 1 item", cut.Markup);
     }
 
     [Fact]

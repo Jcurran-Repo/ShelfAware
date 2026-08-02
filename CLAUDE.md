@@ -72,7 +72,7 @@ Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptT
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1271 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1285 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see item 31).
 
@@ -1300,8 +1300,46 @@ bUnit pages/components — see item 31).
      freezer bag" — a collision `ProductMatcher` really makes, asserted in the test itself — so four frosted
      parcels can't pre-fill the household's box of freezer bags. Both that guard and the tick default fail
      when mutated.
-   - **1271 tests green, 0 warnings** on a non-incremental Release build (1210 before; +61: 19 reader, 21
-     confirm service, 21 page). No schema change — `TrackQuantity`/`QuantityOnHand`/`QuantityCountedAt`
+   - **The `/pre-push` gate found eight, two of them able to destroy or invent data (2026-08-02).** Security
+     review came back clean and said what it checked: both new DB call sites go through `IHouseholdDbFactory`,
+     no new `IgnoreQueryFilters`, no new settings key / endpoint / per-household disk write, `[Authorize]`
+     cascades and isn't shadowed, and a foreign `ProductId` from a tampered circuit message fails to resolve
+     against the already-filtered list rather than reaching across. All three top code findings were
+     REPRODUCED with probes before being accepted:
+     - ⚠️ **An explicit "➕ create new product" silently overwrote the product it collided with.** `ProductId`
+       0 meant both "the grid never matched it" and "the human chose create-new", and the exact-name fallback
+       couldn't tell them apart: a household's `Ground Beef` counted at **12** became **4**, no new product,
+       summary silent — and the grid had just *removed* the "Was 12" note, so the screen stated the opposite
+       of what the write did. `CensusRow.CreateNew` now carries the intent, an explicit create-new whose name
+       is taken is refused and named, and the row warns before the confirm. **This is the "one prediction,
+       one story" class in code written by the same session that cited the rule.**
+     - ⚠️ **A zero on an unmatched row invented a product and pinned it Overdue forever.** Probed:
+       `'Frozen Peas' onHand=0 signals=[OutNow] purchases=0 → Status=Overdue Pinned=True`. The row arrives
+       ticked and typing 0 is what "fix the numbers" invites, so an item the household has never owned went
+       to the top of the dashboard AND the grocery list permanently. Refused now when the row would CREATE
+       the product; a zero on an existing product is still §13.4's real evidence.
+     - The button counted ROWS and the result counted PRODUCTS with nothing explaining the gap — which the
+       reader's own contract makes routine (a row per variety, matched across varieties), and which read as
+       a dropped row beside a refusals clause that *does* explain itself. `CensusOutcome.Rows` reports it.
+     - Smaller: a blank name refused a row that named its product by id (the name is only needed to resolve
+       BY name); "every **1 days**", the third outing of that bug here; a comment on `MaxUploadBytes` that
+       claimed a guarantee it does not provide (it bounds the *resized* stream); and a missing
+       `JSDisconnectedException` clause, so closing the tab mid-read logged an error.
+     - ⚠️ **Refusals are NAMED, not tallied** (`RefusedRow` + `CensusRefusal`), because the three reasons need
+       genuinely different sentences — a typo, a name clash the household can resolve, and a claim the app
+       declines to make for them. A row someone ticked and then didn't get is the one outcome they cannot
+       discover for themselves; every other one is visible on the product's own page.
+     - **Test gaps the same review found, all closed:** `A_read_that_names_an_existing_product_pre_selects_it`
+       was a **mutation survivor** — its suggestion named a product `ProductMatcher` would have found anyway,
+       so deleting the entire suggestion branch left 21/21 green. It now makes the reader and the matcher
+       *disagree* and asserts the reader wins. Also: the "Was N" note couldn't tell right-product from
+       any-product (two products now, and the test changes the dropdown and watches the note follow); a
+       two-rows-one-product test never asserted the sum; the unidentified confidence `Math.Min` was untested
+       (a flat assignment survived); and the ✕ button, zero rows, and every summary sentence but one had no
+       coverage. **Every new test was mutation-checked in three batches** — 11 mutations, each failing
+       exactly the tests it should and nothing else.
+   - **1285 tests green, 0 warnings** on a non-incremental Release build (1210 before; +75).
+     No schema change — `TrackQuantity`/`QuantityOnHand`/`QuantityCountedAt`
      already exist, and a census writes nothing else. No new demo seed either: the census's OUTPUT (a counted
      product with no purchases) is already seeded as `Quarter Cow Ground Beef` (item 25) — a census is an act,
      not a state.

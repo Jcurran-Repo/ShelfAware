@@ -127,7 +127,8 @@ public class CensusConfirmationServiceTests : IDisposable
     public async Task An_unmatched_row_whose_name_already_exists_resolves_to_that_product()
     {
         // A census is the app's biggest bulk product creator, and a twin splits purchase history and blinds
-        // the predictor. It is also what makes a retry safe — see the test below.
+        // the predictor. It is also what makes a retry safe — see the test below. (Scoped to rows the grid
+        // never matched; an explicit create-new is refused instead — see the gate-findings section.)
         var beef = await SeedProduct("Ground Beef");
 
         var outcome = await _service.ConfirmAsync([R("ground beef", 4)]); // different casing, no id
@@ -155,12 +156,16 @@ public class CensusConfirmationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Two_rows_for_one_new_item_become_one_product()
+    public async Task Two_rows_for_one_new_item_become_one_product_carrying_the_SUM()
     {
-        await _service.ConfirmAsync([R("Frozen Peas", 2), R("Frozen Peas", 3)]);
+        var outcome = await _service.ConfirmAsync([R("Frozen Peas", 2), R("Frozen Peas", 3)]);
 
         await using var db = _db.CreateDbContext();
-        Assert.Single(await db.Products.ToListAsync());
+        var product = Assert.Single(await db.Products.ToListAsync());
+        // Asserting the number, not just the row count — at 2 or 3 this would still be "one product".
+        Assert.Equal(5m, product.QuantityOnHand);
+        Assert.Equal(1, outcome.Counted);
+        Assert.Equal(2, outcome.Rows);
     }
 
     [Fact]
@@ -247,20 +252,35 @@ public class CensusConfirmationServiceTests : IDisposable
         await using var db = _db.CreateDbContext();
         Assert.Empty(await db.InventorySignals.ToListAsync());
         Assert.Equal(4m, (await Reload(beef.Id)).QuantityOnHand); // untouched
-        Assert.Equal(1, outcome.Refused);
+        Assert.Equal(CensusConfirmationService.CensusRefusal.Unusable, Assert.Single(outcome.Refused).Reason);
         Assert.Equal(0, outcome.Counted);
     }
 
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
-    public async Task A_blank_name_is_refused_and_reported(string name)
+    public async Task A_blank_name_is_refused_when_there_is_no_product_to_resolve_by(string name)
     {
         var outcome = await _service.ConfirmAsync([R(name, 3)]);
 
         await using var db = _db.CreateDbContext();
         Assert.Empty(await db.Products.ToListAsync());
-        Assert.Equal(1, outcome.Refused);
+        Assert.Equal(CensusConfirmationService.CensusRefusal.Unusable, Assert.Single(outcome.Refused).Reason);
+    }
+
+    [Fact]
+    public async Task A_blank_name_is_FINE_when_the_row_names_its_product_by_id()
+    {
+        // The name is only needed to resolve BY name. Clearing the Item box on a matched row — to retype
+        // it, or because the match makes the name look irrelevant — used to drop the row silently and then
+        // complain about a field that row never needed.
+        var beef = await SeedProduct("Ground Beef");
+
+        var outcome = await _service.ConfirmAsync([R("", 5, beef.Id)]);
+
+        Assert.Equal(5m, (await Reload(beef.Id)).QuantityOnHand);
+        Assert.Empty(outcome.Refused);
+        Assert.Equal(1, outcome.Counted);
     }
 
     [Fact]
@@ -271,7 +291,7 @@ public class CensusConfirmationServiceTests : IDisposable
         await using var db = _db.CreateDbContext();
         Assert.Single(await db.Products.ToListAsync());
         Assert.Equal(1, outcome.Counted);
-        Assert.Equal(2, outcome.Refused);
+        Assert.Equal(2, outcome.Refused.Count);
     }
 
     [Fact]
@@ -279,7 +299,116 @@ public class CensusConfirmationServiceTests : IDisposable
     {
         var outcome = await _service.ConfirmAsync([]);
 
-        Assert.Equal(new CensusConfirmationService.CensusOutcome(0, 0, 0, 0, 0), outcome);
+        // Field by field, not record equality: Refused is a list, and records compare lists by REFERENCE,
+        // so an == against a fresh empty list fails no matter what the service returned.
+        Assert.Equal(0, outcome.Counted);
+        Assert.Equal(0, outcome.Rows);
+        Assert.Equal(0, outcome.NewProducts);
+        Assert.Equal(0, outcome.Retracked);
+        Assert.Equal(0, outcome.AssertedOut);
+        Assert.Empty(outcome.Refused);
+
+        await using var db = _db.CreateDbContext();
+        Assert.Empty(await db.Products.ToListAsync());
+        Assert.Empty(await db.InventorySignals.ToListAsync());
+    }
+
+    // ---- the two the pre-push gate found ----
+
+    [Fact]
+    public async Task An_explicit_create_new_NEVER_overwrites_the_product_it_collides_with()
+    {
+        // ⚠️ The bug this replaces: "create new" and "we never matched it" both arrive as ProductId 0, so
+        // the name fallback resolved an explicit create-new onto the existing product and REPLACED its
+        // count — 12 packs silently becoming 4, no new product, and a summary that said nothing unusual.
+        // The screen said "new product" while the write destroyed an old one.
+        var beef = await SeedProduct("Ground Beef", counted: true, onHand: 12);
+
+        var outcome = await _service.ConfirmAsync(
+            [new CensusConfirmationService.CensusRow("Ground Beef", Category.Meat, 4m, 0, CreateNew: true)]);
+
+        await using var db = _db.CreateDbContext();
+        Assert.Single(await db.Products.ToListAsync());          // no twin created either
+        Assert.Equal(12m, (await Reload(beef.Id)).QuantityOnHand); // and the 12 survives
+        var refused = Assert.Single(outcome.Refused);
+        Assert.Equal(CensusConfirmationService.CensusRefusal.DuplicateName, refused.Reason);
+        Assert.Equal("Ground Beef", refused.Name);
+        Assert.Equal(0, outcome.Counted);
+    }
+
+    [Fact]
+    public async Task An_UNMATCHED_row_still_resolves_to_the_same_named_product()
+    {
+        // The other half of the same rule: without an explicit create-new the fallback still fires, which
+        // is what keeps a retry from duplicating the catalog.
+        var beef = await SeedProduct("Ground Beef", counted: true, onHand: 12);
+
+        var outcome = await _service.ConfirmAsync([R("ground beef", 4)]); // CreateNew defaults false
+
+        Assert.Equal(4m, (await Reload(beef.Id)).QuantityOnHand);
+        Assert.Empty(outcome.Refused);
+    }
+
+    [Fact]
+    public async Task Two_explicit_create_new_rows_of_one_name_still_make_ONE_product()
+    {
+        // No existing product to collide with, so both rows are creating the same thing — and creating it
+        // twice would be the twin the duplicate guard exists to stop.
+        var outcome = await _service.ConfirmAsync(
+        [
+            new CensusConfirmationService.CensusRow("Quarter Cow Ground Beef", Category.Meat, 8m, 0, CreateNew: true),
+            new CensusConfirmationService.CensusRow("Quarter Cow Ground Beef", Category.Meat, 6m, 0, CreateNew: true),
+        ]);
+
+        await using var db = _db.CreateDbContext();
+        var product = Assert.Single(await db.Products.ToListAsync());
+        Assert.Equal(14m, product.QuantityOnHand);
+        Assert.Equal(1, outcome.NewProducts);
+        Assert.Empty(outcome.Refused);
+    }
+
+    [Fact]
+    public async Task Counting_ZERO_of_something_that_does_not_exist_yet_is_refused()
+    {
+        // ⚠️ It used to CREATE the product and then assert an outage against it: a real OutNow pinning a
+        // brand-new product Overdue at the top of the dashboard and the grocery list, forever. The row
+        // arrives ticked, and typing 0 is what the page's own "fix the numbers" copy invites. You cannot
+        // run out of something you have never had.
+        var outcome = await _service.ConfirmAsync([R("Frozen Peas", 0)]);
+
+        await using var db = _db.CreateDbContext();
+        Assert.Empty(await db.Products.ToListAsync());
+        Assert.Empty(await db.InventorySignals.ToListAsync());
+        var refused = Assert.Single(outcome.Refused);
+        Assert.Equal(CensusConfirmationService.CensusRefusal.OutageOnNewProduct, refused.Reason);
+        Assert.Equal("Frozen Peas", refused.Name);
+    }
+
+    [Fact]
+    public async Task A_zero_on_a_product_that_already_exists_is_still_a_real_outage()
+    {
+        // The complement, and the reason the refusal above is scoped to NEW products: §13.4's asserted zero
+        // on something the household actually tracks is real evidence and must keep working.
+        var beans = await SeedProduct("Black Beans", counted: true, onHand: 4);
+
+        var outcome = await _service.ConfirmAsync([R("Black Beans", 0, beans.Id)]);
+
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(SignalKind.OutNow, Assert.Single(await db.InventorySignals.ToListAsync()).Kind);
+        Assert.Equal(0m, (await Reload(beans.Id)).QuantityOnHand);
+        Assert.Equal(1, outcome.AssertedOut);
+        Assert.Empty(outcome.Refused);
+    }
+
+    [Fact]
+    public async Task A_zero_row_is_fine_once_another_row_has_created_the_product()
+    {
+        // The refusal keys on "would this row bring the product into existence", not on the number alone.
+        var outcome = await _service.ConfirmAsync([R("Frozen Peas", 3), R("Frozen Peas", 0)]);
+
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(3m, (await db.Products.SingleAsync()).QuantityOnHand);
+        Assert.Empty(outcome.Refused);
     }
 
     // ---- tenancy ----

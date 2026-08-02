@@ -155,8 +155,25 @@ else if (phase == Phase.Review)
                                        feature being broken. A whole-fridge census is exactly where someone
                                        counts the milk, so the warning belongs on the row, not just on the
                                        product page they may never open. *@
-                                    <div class="muted small">Bought about every @days days — a count here
-                                        would be hard to keep true.</div>
+                                    <div class="muted small">Bought about every @days day@(days == 1 ? "" : "s") —
+                                        a count here would be hard to keep true.</div>
+                                }
+                                @if (NameClash(row) is { } clash)
+                                {
+                                    @* The write and the screen must not disagree about which product a row
+                                       lands on. Said BEFORE the confirm, so a name clash is something the
+                                       household resolves rather than discovers afterwards. *@
+                                    <div class="error small" role="status">
+                                        @if (row.ChoseCreateNew)
+                                        {
+                                            <text>“@clash.Name” already exists, so this row will be skipped —
+                                            pick it above to set its count, or rename this row.</text>
+                                        }
+                                        else
+                                        {
+                                            <text>This will go to the existing “@clash.Name”.</text>
+                                        }
+                                    </div>
                                 }
                             </td>
                             <td>
@@ -194,6 +211,20 @@ else if (phase == Phase.Done)
 {
     <section class="panel">
         <p>✅ @confirmSummary</p>
+        @if (refusals.Count > 0)
+        {
+            @* Named, not tallied. A row the household ticked and then didn't get is the one thing they
+               can't discover for themselves — every other outcome is visible on the product's own page. *@
+            <div class="error" role="alert">
+                <p>@refusals.Count row@(refusals.Count == 1 ? " wasn't" : "s weren't") counted:</p>
+                <ul>
+                    @foreach (var row in refusals)
+                    {
+                        <li>@RefusalNote(row)</li>
+                    }
+                </ul>
+            </div>
+        }
         <p class="muted">
             No purchases were recorded — a count says what you have, not what you bought, so your refill
             rhythms are untouched.
@@ -226,6 +257,7 @@ else if (phase == Phase.Done)
     private bool confirming;
     private string? confirmError;
     private string confirmSummary = "";
+    private IReadOnlyList<CensusConfirmationService.RefusedRow> refusals = [];
 
     private int ticked => rows.Count(r => r.Include);
 
@@ -239,6 +271,13 @@ else if (phase == Phase.Done)
         public Category Category { get; set; }
         public decimal Confidence { get; init; }
         public int ProductId { get; set; } // 0 = create new
+        /// <summary>What the grid pre-filled, so "the human chose create-new" can be told apart from "we
+        /// never matched it" — both of which leave <see cref="ProductId"/> at 0. The confirm treats them
+        /// differently and must not have to guess (see CensusRow.CreateNew).</summary>
+        public int PrefilledProductId { get; init; }
+
+        /// <summary>The human deliberately turned a matched row into a new product.</summary>
+        public bool ChoseCreateNew => ProductId == 0 && PrefilledProductId > 0;
     }
 
     /// <summary>What the app already knows about a product the grid might land on: the count it holds now,
@@ -247,6 +286,14 @@ else if (phase == Phase.Done)
     private sealed record ProductNote(bool Counted, decimal OnHand, string? Unit, DateTimeOffset? CountedAt, int? FastMoverDays);
 
     private ProductNote? Note(int productId) => productId > 0 && notes.TryGetValue(productId, out var n) ? n : null;
+
+    /// <summary>The existing product this row's name would collide with, or null. Only meaningful while the
+    /// row resolves by NAME (no product picked) — that's the one case where what the confirm does isn't
+    /// visible from the dropdown alone.</summary>
+    private Product? NameClash(ReviewRow row) =>
+        row.ProductId != 0
+            ? null
+            : products.FirstOrDefault(p => string.Equals(p.Name, row.Name.Trim(), StringComparison.OrdinalIgnoreCase));
 
     private static string EvidenceChip(CensusEvidence evidence) => evidence switch
     {
@@ -323,27 +370,40 @@ else if (phase == Phase.Done)
                 return;
             }
 
-            rows = result.Items.Select(i => new ReviewRow
+            rows = result.Items.Select(i =>
             {
-                LabelText = i.LabelText,
-                Evidence = i.Evidence,
-                Name = i.NormalizedName,
-                Count = i.VisibleCount,
-                Category = i.Category,
-                Confidence = i.Confidence,
                 // Trust order, one step shorter than a receipt's: there are no merchant aliases to learn
                 // from (an alias keys on a merchant and a printed line, and a shelf has neither), so the
-                // model's own match leads and ProductMatcher backs it up.
-                ProductId = Match(i)?.Id ?? 0,
-                // Unticked below 0.6 — a guess has to be opted into. A legible label or an unmistakable
-                // bunch of bananas scores above it and isn't punished for having no barcode.
-                Include = i.Confidence >= ConfidentEnough,
+                // model's own match leads and ProductMatcher backs it up. Resolved ONCE — it walks the
+                // whole catalog, and the row needs the same answer twice.
+                var matched = Match(i)?.Id ?? 0;
+                return new ReviewRow
+                {
+                    LabelText = i.LabelText,
+                    Evidence = i.Evidence,
+                    Name = i.NormalizedName,
+                    Count = i.VisibleCount,
+                    Category = i.Category,
+                    Confidence = i.Confidence,
+                    ProductId = matched,
+                    PrefilledProductId = matched,
+                    // Unticked below 0.6 — a guess has to be opted into. A legible label or an unmistakable
+                    // bunch of bananas scores above it and isn't punished for having no barcode.
+                    Include = i.Confidence >= ConfidentEnough,
+                };
             }).ToList();
 
             confirmError = null;
             phase = Phase.Review;
         }
         catch (OperationCanceledException) { throw; }
+        catch (JSDisconnectedException)
+        {
+            // The photo is downscaled over JS interop, so a tab closed mid-read lands here. That is
+            // ordinary teardown, not a fault: nothing can be rendered to anyone any more, and logging it
+            // as an error would put noise in a real deployment's log. ⚠️ It does NOT derive from
+            // JSException, which is why it needs its own clause and can't ride along with one.
+        }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Reading a shelf census failed.");
@@ -403,11 +463,13 @@ else if (phase == Phase.Done)
         {
             var confirmed = rows
                 .Where(r => r.Include)
-                .Select(r => new CensusConfirmationService.CensusRow(r.Name, r.Category, r.Count, r.ProductId))
+                .Select(r => new CensusConfirmationService.CensusRow(
+                    r.Name, r.Category, r.Count, r.ProductId, r.ChoseCreateNew))
                 .ToList();
             var outcome = await Confirmer.ConfirmAsync(confirmed);
 
             confirmSummary = Summary(outcome);
+            refusals = outcome.Refused;
             phase = Phase.Done;
         }
         catch (OperationCanceledException) { throw; }
@@ -430,20 +492,36 @@ else if (phase == Phase.Done)
         $"Counted {outcome.Counted} item{(outcome.Counted == 1 ? "" : "s")}" +
         (outcome.NewProducts > 0 ? $" ({outcome.NewProducts} new product{(outcome.NewProducts == 1 ? "" : "s")})" : "") +
         "." +
+        // The button counts ROWS and this counts PRODUCTS, and the reader's own contract makes them differ
+        // routinely — it emits a row per variety (rule 7) but matches across varieties (rule 11). Pressing
+        // "Count 3 items" and reading "Counted 2 items" with nothing explaining it reads as a dropped row,
+        // especially sitting beside a skipped-rows sentence that DOES explain itself.
+        (outcome.Rows > outcome.Counted
+            ? $" ({outcome.Rows} rows — some were the same product, and their counts were added together.)"
+            : "") +
         (outcome.AssertedOut > 0
             ? $" {outcome.AssertedOut} counted at zero — recorded as running out."
             : "") +
         (outcome.Retracked > 0
             ? $" Started tracking {outcome.Retracked} previously ignored item{(outcome.Retracked == 1 ? "" : "s")} again."
-            : "") +
-        (outcome.Refused > 0
-            ? $" {outcome.Refused} row{(outcome.Refused == 1 ? " was" : "s were")} skipped — a row needs a name and a count of zero or more."
             : "");
+
+    /// <summary>One sentence per refused row, because the three reasons need genuinely different words —
+    /// and a row the household ticked and then didn't get has to be named, not tallied.</summary>
+    private static string RefusalNote(CensusConfirmationService.RefusedRow row) => row.Reason switch
+    {
+        CensusConfirmationService.CensusRefusal.DuplicateName =>
+            $"“{row.Name}” — a product with that name already exists, so nothing was created. Count it from its own page, or run this again and pick it in the Product match column.",
+        CensusConfirmationService.CensusRefusal.OutageOnNewProduct =>
+            $"“{row.Name}” — counted as none, but it isn't something you track yet. Recording that you're out of an item you've never had would put it on your grocery list; add it with a real count instead.",
+        _ => $"“{row.Name}” — needs a name and a count of zero or more.",
+    };
 
     private void Reset()
     {
         phase = Phase.Idle;
         rows = [];
+        refusals = [];
         selectedFiles = [];
         photoCount = 0;
         errorMessage = null;

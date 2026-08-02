@@ -592,11 +592,23 @@ review-grid pattern → confirm. Three photos of a freezer beats reading thirty 
     - **A negative count is REFUSED, not clamped**, and reported back. `Attest` floors at zero, so a
       floored "-3" would land on an asserted out and write an `OutNow` off a typo — the same rule, for the
       same reason, as `SetQuantityAsync`'s refusal.
-    - **An unmatched row whose name already exists resolves to that product.** A census is the app's
+    - **An UNMATCHED row whose name already exists resolves to that product.** A census is the app's
       biggest bulk product creator and a twin splits purchase history, so this is the standing duplicate
       guard applied where it matters most — and it is also what makes a RETRY safe, which the failure
       message then promises: a confirm that commits and fails on the way back invites a second press, and
       without this that press would file a duplicate of every product the first one created.
+      ⚠️ **"Unmatched" and "the human chose create-new" are different facts and the row must carry which**
+      (`CensusRow.CreateNew`). Both arrive as `ProductId` 0, and collapsing them was a real bug: the
+      fallback resolved an explicit create-new onto the same-named product and REPLACED its count — twelve
+      packs silently becoming four, no new product, and a summary that said nothing unusual, while the grid
+      said "new product". An explicit create-new whose name is taken is **refused and named** instead:
+      merging overrules the human, and creating the twin is what the duplicate guard exists to stop, so the
+      honest move is to decline and let them say which they meant. The grid says so *before* the confirm.
+    - **A count of ZERO is refused when the row would CREATE the product.** An attested zero writes a real
+      `OutNow` (§13.4), so this path was inventing a product and immediately pinning it **Overdue** at the
+      top of the dashboard and the grocery list — forever, for an item the household has never owned. The
+      row arrives ticked and typing 0 is exactly what "fix the numbers" invites. A zero on an **existing**
+      product is untouched: that one is §13.4's real evidence.
   Seeded now as `Quarter Cow Ground Beef` (a count, no purchases) so all of the above is demonstrable and
   tested before the photo half exists.
   Census input and purchase input are different doors.
