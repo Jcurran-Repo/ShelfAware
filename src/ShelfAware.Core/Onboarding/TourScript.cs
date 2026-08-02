@@ -16,7 +16,26 @@ namespace ShelfAware.Core.Onboarding;
 /// <param name="Anchor">CSS selector for the element to ring, or null for no highlight. A selector that
 /// matches nothing is not an error: the step still reads, just without the ring. That is deliberate —
 /// a walkthrough must degrade to plain instructions rather than break on a page whose layout moved.</param>
-public sealed record TourStep(string Route, string Title, string Body, string? Anchor);
+public sealed record TourStep(string Route, string Title, string Body, string? Anchor)
+{
+    /// <summary>
+    /// What this step says on a MANAGED-key deployment — where the host supplies the AI keys, the
+    /// browser can't override them and the Settings key panel is hidden. Null means the step reads the
+    /// same either way, which is true of every step but the last.
+    ///
+    /// <para>This exists because the data-independence rule above has a second half that is easy to
+    /// miss: a step must not assert anything about the DEPLOYMENT it can't see either. "Bring your own
+    /// key" is a lie on a managed deployment, where there is nothing to bring and nowhere to put it.</para>
+    /// </summary>
+    public TourVariant? WhenManaged { get; init; }
+
+    public string TitleFor(bool managed) => managed && WhenManaged is not null ? WhenManaged.Title : Title;
+
+    public string BodyFor(bool managed) => managed && WhenManaged is not null ? WhenManaged.Body : Body;
+}
+
+/// <summary>Alternative wording for a step under a different deployment shape.</summary>
+public sealed record TourVariant(string Title, string Body);
 
 /// <summary>
 /// The walkthrough itself, and the (pure) rules for moving through it.
@@ -94,9 +113,15 @@ public static class TourScript
             PageTitle),
 
         new("/settings", "Your key, your data",
-            "Shelf Aware runs on your own API key — it stays in your browser and is never stored on the server. "
-            + "Add one here to switch the assistant on, and export or delete everything whenever you want.",
-            "[data-tour=ai-keys]"),
+            "Everything you've just seen works without an API key. Adding your own — it stays in your browser, "
+            + "never on the server — switches on the assistant, receipt reading and recipe ideas. "
+            + "You can export or delete everything from this page whenever you like.",
+            "[data-tour=ai-keys]")
+        {
+            WhenManaged = new TourVariant("Your data",
+                "The AI features here run on the keys whoever set this up provided, so there's nothing for you "
+                + "to configure. This page is where you export everything you've got, or delete the lot."),
+        },
     ];
 
     /// <summary>Number of stops in the walkthrough.</summary>

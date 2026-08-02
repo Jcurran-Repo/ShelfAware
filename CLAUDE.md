@@ -71,7 +71,7 @@ Accuracy (`/accuracy`, renders `eval-results.json`), **Recipes (`/recipes`)**, a
 Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptTotals`, Core).
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1204 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1210 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see item 31).
 
@@ -1175,6 +1175,19 @@ bUnit pages/components — see item 31).
      a demo one, so a step naming a seeded row ("see the overdue roast at the top") is a screen stating
      something the engine never produced the moment it runs against real receipts — the "one prediction,
      one story" failure, pre-empted. A test asserts no step names a hero from the demo catalog.
+   - ⚠️ **…and DEPLOYMENT-independent, which the first version missed** (found by Jordan running the tour
+     on the tailnet box, 2026-08-01). The last step pitched "bring your own API key" unconditionally,
+     which is false on a **managed** deployment — the host's keys are authoritative, the browser can't
+     override them, and the Settings key panel is HIDDEN. So the walkthrough's final act was to name a
+     control the visitor cannot see and an act they cannot take. Same class as the data rule, one level
+     up: independence from the household's DATA is only half of it. `TourStep.WhenManaged` carries the
+     alternative wording and `TitleFor`/`BodyFor` pick it from `CircuitAiSettings.Managed`; a Core test
+     asserts no step's managed body contains key-custody phrasing. ⚠️ That test names only phrases that
+     can ONLY mean key custody — a bare "your own" false-positived on Reports' "build your own report",
+     and a rule that cries wolf is one someone later loosens.
+   - The BYOK wording changed too: it opened "Shelf Aware runs on your own API key", which reads as a
+     requirement immediately after ten steps of a working app that needed no key. It now leads with
+     "everything you've just seen works without an API key" and describes what a key ADDS.
    - **It lives in `MainLayout`, not a page**, for a sharper version of VoiceAgent's reason: it NAVIGATES
      between its own steps, so a page-hosted tour destroys itself on the first Next. It also SKIPS the
      navigation when two consecutive steps share a page (steps 1–2 are both the dashboard) rather than
@@ -1223,7 +1236,7 @@ bUnit pages/components — see item 31).
      - **Escape closes it**, the gesture expected of dismissible overlay furniture (the ✕ was already
        tab-reachable, so this was a gap rather than a blocker). Mutation-checked: `"Esc"` instead of
        `"Escape"` fails the Escape test and correctly leaves the other-key test passing.
-   - **1204 tests green, 0 warnings** (1174 before; +30). Live-verified end to end: all eleven steps
+   - **1210 tests green, 0 warnings** (1174 before; +36). Live-verified end to end: all eleven steps
      navigate and find their anchor, the panel docks clear of the voice assistant (measured, no overlap),
      a reload resumes mid-tour, Done persists across a reload, Settings replays from step 1, and on mobile
      it becomes a full-width sheet with the voice FAB standing down. No console or server errors, so the

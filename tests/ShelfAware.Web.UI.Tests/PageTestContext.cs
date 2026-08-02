@@ -1,6 +1,8 @@
 using Bunit.TestDoubles;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using ShelfAware.Llm;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Settings;
@@ -81,6 +83,9 @@ public abstract class PageTestContext : BunitContext
         Services.AddSingleton<IVoiceCredentials>(Voice);
         Services.AddSingleton(Coordinator);
         Services.AddSingleton(Tour);
+        // Keyless BYOK — the public-demo shape. A test needing the managed deployment registers its own
+        // over this (RegisterAdditionalServices runs after these, so the later registration wins).
+        Services.AddSingleton(new CircuitAiSettings(Options.Create(new LlmOptions())));
         Services.AddSingleton(new ProductRenameService(Factory));
         Services.AddSingleton(new ProductMergeService(Factory));
         Services.AddLogging();

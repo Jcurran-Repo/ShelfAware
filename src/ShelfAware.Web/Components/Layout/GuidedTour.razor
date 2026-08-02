@@ -13,6 +13,7 @@
 @inject NavigationManager Nav
 @inject IJSRuntime JS
 @inject TourCoordinator Coordinator
+@inject CircuitAiSettings AiSettings
 @inject ILogger<GuidedTour> Logger
 
 @if (active)
@@ -34,8 +35,12 @@
            than being left wherever the previous step's button was. tabindex=-1 makes it focusable
            without putting the heading into the tab order; the description carries the step position
            into the same announcement. *@
-        <h2 class="tour-title" tabindex="-1" @ref="heading" aria-describedby="tour-progress">@Step.Title</h2>
-        <p class="tour-body">@Step.Body</p>
+        @* Read through the deployment's key mode, never the raw Title/Body: telling a visitor on a
+           managed deployment to bring their own key names a panel they cannot see and a step they
+           cannot take. Managed is fixed at construction from server config, so it is stable to read
+           at any point in the circuit's life. *@
+        <h2 class="tour-title" tabindex="-1" @ref="heading" aria-describedby="tour-progress">@Step.TitleFor(AiSettings.Managed)</h2>
+        <p class="tour-body">@Step.BodyFor(AiSettings.Managed)</p>
 
         <div class="tour-actions">
             <button type="button" class="secondary" @onclick="BackAsync" disabled="@TourScript.IsFirst(index)">Back</button>

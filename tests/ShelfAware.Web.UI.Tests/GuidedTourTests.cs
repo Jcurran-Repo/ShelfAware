@@ -2,9 +2,12 @@ using System.Reflection;
 using Bunit.TestDoubles;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Microsoft.JSInterop;
 using ShelfAware.Core.Onboarding;
+using ShelfAware.Llm;
 using ShelfAware.Web.Components.Layout;
+using ShelfAware.Web.Services;
 
 namespace ShelfAware.Web.UI.Tests;
 
@@ -213,6 +216,17 @@ public class GuidedTourTests : PageTestContext
     }
 
     [Fact]
+    public async Task The_last_step_pitches_bring_your_own_key_on_a_byok_deployment()
+    {
+        var cut = await StartedAsync();
+        for (var i = 0; i < TourScript.Count - 1; i++) Click(cut, "Next");
+
+        var body = Collapsed(cut.Find(".tour-body"));
+        Assert.Contains("without an API key", body, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("your browser", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Every_step_points_at_a_route_the_app_actually_serves()
     {
         // The anti-rot check. A renamed or retired page turns its step into a walkthrough stop that
@@ -224,5 +238,51 @@ public class GuidedTourTests : PageTestContext
 
         foreach (var step in TourScript.Steps)
             Assert.True(served.Contains(step.Route), $"The walkthrough visits {step.Route}, which no page serves.");
+    }
+}
+
+/// <summary>
+/// The same walkthrough on a MANAGED-key deployment (tailnet / Azure), where the host supplies the AI
+/// keys, the browser cannot override them and the Settings key panel is hidden. The tour must not send
+/// a visitor to bring a key they have nowhere to put.
+/// </summary>
+public class GuidedTourManagedDeploymentTests : PageTestContext
+{
+    protected override void RegisterAdditionalServices() =>
+        // Registered after the base's keyless one, so this wins.
+        Services.AddSingleton(new CircuitAiSettings(
+            Options.Create(new LlmOptions { KeyMode = "managed", ApiKey = "sk-host-key" })));
+
+    [Fact]
+    public async Task The_last_step_says_there_is_nothing_to_configure()
+    {
+        var cut = Render<GuidedTour>();
+        await cut.InvokeAsync(() => Tour.RequestStartAsync());
+        for (var i = 0; i < TourScript.Count - 1; i++)
+            cut.FindAll(".tour-actions button").Single(b => b.TextContent.Trim() == "Next").Click();
+
+        var title = Collapsed(cut.Find(".tour-title"));
+        var body = Collapsed(cut.Find(".tour-body"));
+
+        Assert.Equal("Your data", title);
+        Assert.Contains("nothing for you to configure", body, StringComparison.OrdinalIgnoreCase);
+        // The BYOK pitch must be absent entirely — not merely softened.
+        Assert.DoesNotContain("your own", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("your browser", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Every_other_step_reads_exactly_as_it_does_on_a_byok_deployment()
+    {
+        var cut = Render<GuidedTour>();
+        await cut.InvokeAsync(() => Tour.RequestStartAsync());
+
+        // Only the deployment-sensitive last step may differ; the rest describe features that work the
+        // same however the box is keyed.
+        for (var i = 0; i < TourScript.Count - 1; i++)
+        {
+            Assert.Equal(TourScript.Steps[i].Title, Collapsed(cut.Find(".tour-title")));
+            cut.FindAll(".tour-actions button").Single(b => b.TextContent.Trim() == "Next").Click();
+        }
     }
 }

@@ -45,6 +45,52 @@ public class TourScriptTests
         Assert.Equal(titles.Count, titles.Distinct(StringComparer.OrdinalIgnoreCase).Count());
     }
 
+    [Fact]
+    public void No_step_tells_a_managed_deployment_to_bring_its_own_key()
+    {
+        // On a managed deployment the host supplies the keys, the browser cannot override them and the
+        // Settings key panel is hidden — so "add your own key" names a control the visitor cannot see
+        // and an act they cannot take. The data-independence rule's second half: a step must not assert
+        // anything about the DEPLOYMENT either.
+        // Phrases that can ONLY mean key custody. Deliberately not a bare "your own" — the Reports step
+        // legitimately says "build your own report", and a rule that cries wolf gets loosened later by
+        // someone who assumes it always does.
+        string[] byokOnly = ["api key", "your browser", "your own key", "bring your own"];
+
+        foreach (var step in TourScript.Steps)
+        {
+            var managedBody = step.BodyFor(managed: true);
+            foreach (var phrase in byokOnly)
+                Assert.DoesNotContain(phrase, managedBody, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
+    public void A_step_without_a_managed_variant_reads_the_same_either_way()
+    {
+        // Only the Settings step differs. Every other step describes a feature that works identically
+        // however the deployment is keyed, and must not silently acquire a second voice.
+        foreach (var step in TourScript.Steps.Where(s => s.WhenManaged is null))
+        {
+            Assert.Equal(step.Title, step.TitleFor(managed: true));
+            Assert.Equal(step.Body, step.BodyFor(managed: true));
+        }
+
+        var settings = TourScript.Steps[^1];
+        Assert.NotNull(settings.WhenManaged);
+        Assert.NotEqual(settings.BodyFor(managed: false), settings.BodyFor(managed: true));
+    }
+
+    [Fact]
+    public void The_byok_wording_leads_with_what_works_without_a_key()
+    {
+        // The old copy opened "Shelf Aware runs on your own API key", which reads as a requirement — and
+        // the visitor has just been shown ten screens of a working app that needed no key at all.
+        var settings = TourScript.Steps[^1];
+
+        Assert.Contains("without an API key", settings.BodyFor(managed: false), StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData(-5, 0)]
     [InlineData(-1, 0)]
