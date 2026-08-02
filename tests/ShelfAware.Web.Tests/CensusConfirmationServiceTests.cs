@@ -389,7 +389,7 @@ public class CensusConfirmationServiceTests : IDisposable
         Assert.Empty(await db.Products.ToListAsync());
         Assert.Empty(await db.InventorySignals.ToListAsync());
         var refused = Assert.Single(outcome.Refused);
-        Assert.Equal(CensusConfirmationService.CensusRefusal.OutageWithoutHistory, refused.Reason);
+        Assert.Equal(CensusConfirmationService.CensusRefusal.ZeroOnNewProduct, refused.Reason);
         Assert.Equal("Frozen Peas", refused.Name);
     }
 
@@ -411,35 +411,55 @@ public class CensusConfirmationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task A_zero_on_an_EXISTING_product_with_no_purchases_is_refused_too()
+    public async Task A_zero_on_a_product_with_NO_purchases_is_recorded_but_files_no_outage()
     {
-        // ⚠️ The one the "is it new?" test could not catch, and the reason the rule moved to "has it ever
-        // been bought?". A census's OWN output is a product with zero purchases by construction — §13.8
-        // exists for stock no receipt knows about — so the second census of the same shelf hit exactly
-        // the state the first was refused for: an OutNow with no rhythm to re-anchor it, pinning the item
-        // Overdue permanently, unclearable by any later census.
+        // ⚠️ The split that took two attempts to get right. An OutNow needs a rhythm to argue with: with
+        // no purchases behind it nothing can re-anchor or clear the signal, so it pins the item Overdue
+        // forever. But REFUSING the whole row (the previous attempt) was worse — §13.8's own population
+        // has zero purchases by construction, so the one surface that stands at the shelf could never
+        // record that a census-tracked item had run out, and the stale positive went on telling recipes
+        // the food was there. The number is the human's honest evidence of HOW MANY; only the unclearable
+        // pin is withheld.
         var sauce = await SeedProduct("Home-Canned Sauce", counted: true, onHand: 5);
 
         var outcome = await _service.ConfirmAsync([R("Home-Canned Sauce", 0, sauce.Id)]);
 
         await using var db = _db.CreateDbContext();
-        Assert.Empty(await db.InventorySignals.ToListAsync());
-        Assert.Equal(5m, (await Reload(sauce.Id)).QuantityOnHand); // untouched, not zeroed
-        Assert.Equal(CensusConfirmationService.CensusRefusal.OutageWithoutHistory,
-            Assert.Single(outcome.Refused).Reason);
+        Assert.Empty(await db.InventorySignals.ToListAsync());        // no pin
+        Assert.Equal(0m, (await Reload(sauce.Id)).QuantityOnHand);    // but the count IS recorded
+        Assert.Empty(outcome.Refused);
+        Assert.Equal(0, outcome.AssertedOut);
+        Assert.Equal(1, outcome.ZeroedWithoutSignal);                 // and reported as its own thing
     }
 
     [Fact]
-    public async Task A_zero_row_is_refused_even_once_another_row_has_created_the_product()
+    public async Task Two_rows_summing_to_zero_are_one_statement_not_two()
     {
-        // Creating it a moment ago does not give it a rhythm, so the zero is refused for the same reason.
-        // The positive row still lands: a refusal is per row, never per census.
-        var outcome = await _service.ConfirmAsync([R("Frozen Peas", 3), R("Frozen Peas", 0)]);
+        // The signal decision is made on the TOTAL, not per row — "I took the last two" plus "there are
+        // none left" is one claim about the shelf. Bought here, so the outage IS filed.
+        var beans = await SeedBoughtProduct("Black Beans", counted: true, onHand: 4);
+
+        var outcome = await _service.ConfirmAsync([R("Black Beans", 0, beans.Id), R("Black Beans", 0, beans.Id)]);
 
         await using var db = _db.CreateDbContext();
-        Assert.Equal(3m, (await db.Products.SingleAsync()).QuantityOnHand);
+        Assert.Single(await db.InventorySignals.ToListAsync()); // one signal, not two
+        Assert.Equal(1, outcome.AssertedOut);
+        Assert.Equal(2, outcome.Rows);
+        Assert.Equal(1, outcome.Counted);
+    }
+
+    [Fact]
+    public async Task A_zero_row_is_still_refused_when_it_would_CREATE_the_product()
+    {
+        // The one zero with nothing to record: the catalog doesn't have it and the row says the shelf
+        // doesn't either, so creating it would mint a phantom the household has never owned. The positive
+        // row still lands — a refusal is per row, never per census.
+        var outcome = await _service.ConfirmAsync([R("Frozen Peas", 3), R("Sardines", 0)]);
+
+        await using var db = _db.CreateDbContext();
+        Assert.Equal("Frozen Peas", (await db.Products.SingleAsync()).Name);
         Assert.Empty(await db.InventorySignals.ToListAsync());
-        Assert.Equal(CensusConfirmationService.CensusRefusal.OutageWithoutHistory,
+        Assert.Equal(CensusConfirmationService.CensusRefusal.ZeroOnNewProduct,
             Assert.Single(outcome.Refused).Reason);
     }
 
@@ -518,7 +538,7 @@ public class CensusConfirmationServiceTests : IDisposable
     [Fact]
     public async Task A_never_counted_product_is_not_reported_as_resuming()
     {
-        // The complement: "resumed" means a stored number was overwritten, not merely that counting began.
+        // One complement: "resumed" means a stored number was overwritten, not merely that counting began.
         // Without this the summary would announce a resumption on every ordinary first count.
         var fish = await SeedProduct("Tilapia Fillets");
 
@@ -526,6 +546,23 @@ public class CensusConfirmationServiceTests : IDisposable
 
         Assert.True((await Reload(fish.Id)).TrackQuantity);
         Assert.Equal(0, outcome.ResumedCounting);
+    }
+
+    [Fact]
+    public async Task An_ALREADY_COUNTED_product_is_not_reported_as_resuming()
+    {
+        // ⚠️ The other complement, and the one that was missing: the test above is satisfied by the
+        // "has a stored number" half alone (a never-counted product has none), so deleting the
+        // `!TrackQuantity` conjunct left the whole suite green while every ordinary recount announced
+        // "Started counting 1 item you'd stopped counting" — a screen stating what the engine didn't do,
+        // in the very rule added to stop that. A rule needs BOTH halves pinned or it is pinned by luck.
+        var beans = await SeedProduct("Black Beans", counted: true, onHand: 5,
+            countedAt: DateTimeOffset.Now.AddDays(-3));
+
+        var outcome = await _service.ConfirmAsync([R("Black Beans", 2, beans.Id)]);
+
+        Assert.Equal(2m, (await Reload(beans.Id)).QuantityOnHand); // the recount landed
+        Assert.Equal(0, outcome.ResumedCounting);                  // but nothing "resumed"
     }
 
     // ---- tenancy ----

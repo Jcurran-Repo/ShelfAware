@@ -615,15 +615,24 @@ review-grid pattern → confirm. Three photos of a freezer beats reading thirty 
       said "new product". An explicit create-new whose name is taken is **refused and named** instead:
       merging overrules the human, and creating the twin is what the duplicate guard exists to stop, so the
       honest move is to decline and let them say which they meant. The grid says so *before* the confirm.
-    - ⚠️ **A count of ZERO is refused for any product with NO PURCHASE HISTORY** — not merely for one the
-      row would create. An attested zero writes a real `OutNow` (§13.4), and with no purchases behind it
-      nothing can ever re-anchor or clear that signal: it pins the item **Overdue** at the top of the
-      dashboard and the grocery list indefinitely, a later census counting it at three does not lift it,
-      and it teaches nothing either (`BurnCycles` needs purchases to form a cycle). Drawing the line at
-      *newness* looked equivalent and was not — **a census's own output has no purchases by construction**,
-      §13.8 being precisely for stock no receipt knows about, so the second census of the same shelf walked
-      into exactly the state the first one was refused for. A zero on a product the household actually buys
-      is untouched: that one is §13.4's real evidence, and its rhythm is what can later contradict it.
+    - ⚠️ **A count of ZERO records the NUMBER always; only the `OutNow` is withheld, and only where the
+      product has no purchase history.** The signal needs a rhythm to argue with: with no purchases behind
+      it nothing can re-anchor or clear it — a later census writes no signal either — so it pins the item
+      **Overdue** at the top of the dashboard and the grocery list indefinitely while teaching nothing
+      (`BurnCycles` needs purchases to form a cycle). But the count itself is the human's honest evidence
+      of *how many*, which is exactly what a census is for.
+      <br>Both halves of that were got wrong first. Refusing the zero only when the row would CREATE the
+      product missed that **a census's own output has zero purchases by construction** — §13.8 being
+      precisely for stock no receipt knows about — so the second census of a shelf hit the permanent pin
+      the first was refused for. Widening the refusal to every rhythm-less product then declined the
+      *count* along with the outage, leaving that same population unable to be zeroed from the one surface
+      that stands at the shelf, with the stale positive still telling recipes the food was there. The
+      split is not row-level at all: it is one decision on the summed **total**, taken where the signal is
+      written. The only zero still refused is one that would CREATE a product — nothing to add, nothing to
+      count, and the sole possible outcome a phantom the household has never owned.
+      <br>This mirrors, in the opposite direction, the line `PantryOnHand` already draws: *"a derived zero
+      still cannot write an `OutNow`"*. A machine's zero may not claim an outage; a human's zero may not
+      be silently discarded.
     - ⚠️ **An EMPTY count box is not a zero.** The row carries a nullable count and a null is refused, never
       coerced: `@bind` on a non-nullable decimal turns a box cleared to retype into `0`, and a ticked `0` is
       an *asserted* out — a real `OutNow` against a shelf full of the stuff, from a field nobody typed in,

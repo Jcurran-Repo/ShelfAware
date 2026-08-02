@@ -70,4 +70,34 @@ public class ProductMatcherTests
         Assert.NotNull(match);
         Assert.Equal(4, match!.Id);
     }
+
+    // ---- which rule fired, for callers that must tell an identity from a guess ----
+
+    [Fact]
+    public void ResolveWithKind_ReportsExactAcrossPunctuationAndCase()
+    {
+        // ⚠️ The case the census got wrong by re-deriving exactness itself: Normalize folds punctuation
+        // to spaces BEFORE rule 1, so these are the same name to the matcher — and a caller comparing
+        // the raw strings would call an identity a guess, then warn the user about a guess that never
+        // happened.
+        IReadOnlyList<Product> pantry = [new() { Id = 9, Name = "Home-Canned Tomato Sauce", Category = Category.Pantry }];
+
+        var (product, kind) = ProductMatcher.ResolveWithKind("home canned tomato sauce", pantry);
+
+        Assert.Equal(9, product!.Id);
+        Assert.Equal(ProductMatcher.MatchKind.ExactName, kind);
+    }
+
+    [Fact]
+    public void ResolveWithKind_SeparatesSimilarityFromIdentity()
+    {
+        // The complement: the rules that are genuinely guesses must NOT report ExactName, or the
+        // distinction buys nothing.
+        Assert.Equal(ProductMatcher.MatchKind.Substring,
+            ProductMatcher.ResolveWithKind("dog food", Pantry).Kind);
+        Assert.Equal(ProductMatcher.MatchKind.TokenOverlap,
+            ProductMatcher.ResolveWithKind("Folgers Coffee Classic", StoreBrandPantry).Kind);
+        Assert.Equal(ProductMatcher.MatchKind.None,
+            ProductMatcher.ResolveWithKind("wholly unrelated widget", Pantry).Kind);
+    }
 }

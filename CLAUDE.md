@@ -72,7 +72,7 @@ Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptT
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1285 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1328 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see item 31).
 
@@ -1466,6 +1466,59 @@ bUnit pages/components — see item 31).
      of one that is present.
      Side effect on the throwaway household, stated so it isn't mistaken for seed data later: `Cat Litter`
      is no longer dormant — it is counted 4 as of 2026-08-02.
+
+39. **The `/pre-push` gate over the finished branch (2026-08-02) — seven more, five of them regressions
+   introduced by item 38's own fix commit.** Security review CLEAN and said what it checked (both new DB
+   call sites through `IHouseholdDbFactory`; a tampered `ProductId` refused rather than resolved, and the
+   refusal doesn't leak existence — "belongs to household B" and "never existed" are the same branch, the
+   same sentence, and the name echoed back is the caller's own string; `CensusRow.CreateNew` is
+   server-authoritative; the photo verified never to touch disk). The code half is the lesson:
+   - ⚠️ **A fix pass needs its own review, and this is the evidence.** Item 38 fixed 15 findings and
+     introduced 5 — including two that the first gate's class of bug would have called serious. Reviewing
+     the branch as a whole would have missed them all: the older code came back clean, and every new
+     defect was in the 988 lines that had never been read by anyone but their author.
+   - ⚠️ **A guard must not be narrower than the thing it guards.** The content-type ALLOWLIST added for
+     the 30-second-hang fix refused real photos: Blazor's `toImageFile` never inspects MIME — it paints
+     into an `<img>` and re-encodes through a canvas — so it decodes whatever the BROWSER can, including
+     HEIC on WebKit, AVIF, BMP, TIFF. iOS transcodes HEIC→JPEG only when the accept list asks for it, so
+     the Photos path was safe and the **Files-app path was broken**. Now a `image/` prefix test, with an
+     empty content type let through (the OS supplies none for an extensionless file) and `accept="image/*"`.
+     ⚠️ **Never name `image/heic` in accept** — Safari 17+ then stops transcoding and converts JPEG and PNG
+     INTO HEIC, making the rare case universal.
+   - ⚠️ **`CancellationTokenSource.Token` THROWS after `Dispose()`** (unlike `IsCancellationRequested`,
+     which stays safe), and `ObjectDisposedException` derives from `InvalidOperationException`, so it
+     cleared every specific catch clause and logged an ERROR on an ordinary navigate-away — the exact
+     teardown noise the neighbouring `JSDisconnectedException` clause exists to prevent. Capture the token
+     ONCE before the first await; a captured token survives its source's disposal.
+   - ⚠️ **A read may be cancelled when the visitor leaves; a WRITE may not.** Threading the page token
+     into the confirm discarded a census the household had already pressed Confirm on — no row, no
+     message (the component is gone), no log line — and a census keeps no audit copy and has no Retry, so
+     recovery meant re-photographing and paying for the vision call again. The read keeps the token; the
+     confirm takes `CancellationToken.None`. **Pinned on the TOKEN (`CanBeCanceled`), not by racing a
+     detached write** — the first version of that test polled the DB after disposing the component and was
+     flaky 1 run in 5, which is the honest cost of testing a timing-dependent thing by its timing.
+   - ⚠️ **Don't re-derive from strings what a collaborator already computed.** The page decided "exact vs
+     fuzzy" by comparing raw names while `ProductMatcher` had matched on the NORMALIZED form (punctuation
+     folded to spaces), so a rule-1 identity was rendered as a guess: the seeded `Home-Canned Tomato Sauce`
+     read as "Home Canned Tomato Sauce" arrived unticked saying "not read off the package" one cell from a
+     chip reading "read the label". `ProductMatcher.ResolveWithKind` reports which rule fired now.
+   - **The zero rule, third time.** See DESIGN.md §13.8 — the decision moved off the row and onto the
+     summed total, `CensusOutcome.ZeroedWithoutSignal` reports it, and only a zero that would CREATE a
+     product is still refused.
+   - ⚠️ **"Both halves pinned" was itself unpinned.** Item 38's commit message claimed every new rule had
+     both directions covered; deleting `!product.TrackQuantity` from the resumed-counting rule left the
+     whole suite green, so every ordinary recount would have announced "Started counting 1 item you'd
+     stopped counting". The existing complement test was satisfied by the OTHER conjunct alone (a
+     never-counted product has no stored number). **A complement that shares a conjunct with the case it
+     complements pins nothing.** Both places now have an already-counted test.
+   - **`CLAUDE.md`'s build-state header said 1285 while item 38 said 1316** — the header was edited from
+     1210 and never re-read off the final run, contradicting itself 1,365 lines later. Item 21's rule,
+     broken in the file that states it. And it happened again in this very pass: 1327 was written into the
+     header before the last test was added, and corrected to **1328** only by counting the final run.
+   - **1328 tests green, 0 warnings** on a non-incremental Release build (1316 before; +12). Nine
+     mutations, each killing exactly its tests. ⚠️ Not re-verified in a browser since these changes — the
+     HEIC path in particular can only be settled on a real iOS device, and the fix is reasoned from
+     Blazor's `InputFile.ts` plus WebKit's documented transcode behaviour, not observed.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

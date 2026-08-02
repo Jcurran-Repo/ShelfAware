@@ -23,8 +23,15 @@ internal sealed class FlakyDbFactory(TestDb inner) : IHouseholdDbFactory
     /// One-shot: consumed by the create it gates.</summary>
     public TaskCompletionSource? HoldNext { get; set; }
 
+    /// <summary>The token the most recent create was handed. A page decides per operation whether its
+    /// work may be cancelled when the visitor leaves, and that decision is otherwise invisible to a
+    /// test: a re-runnable READ should carry the page's token, while a one-shot WRITE over input that
+    /// exists nowhere else must not. <c>CanBeCanceled</c> tells the two apart without any timing.</summary>
+    public CancellationToken LastToken { get; private set; }
+
     public async Task<ShelfAwareDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
     {
+        LastToken = cancellationToken;
         if (HoldNext is { } gate)
         {
             HoldNext = null;

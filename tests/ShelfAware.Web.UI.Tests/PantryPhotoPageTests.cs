@@ -212,6 +212,23 @@ public class PantryPhotoPageTests : PageTestContext
     }
 
     [Fact]
+    public async Task A_name_differing_only_in_PUNCTUATION_is_an_identity_not_a_guess()
+    {
+        // ⚠️ ProductMatcher folds punctuation to spaces before its exact rule, so this is rule 1 — an
+        // identity. Re-deriving exactness in the page by comparing raw strings called it a guess: the row
+        // arrived unticked saying "not read off the package" one cell from a chip reading "read the
+        // label", about a match the matcher had already called exact. The seeded catalog contains such a
+        // name, so this is the shipped demo's own case.
+        await SeedProduct("Home-Canned Tomato Sauce", counted: true, onHand: 4);
+
+        var cut = Review(Item("Home Canned Tomato Sauce", confidence: 0.95m));
+
+        var row = RowFor(cut, "Home Canned Tomato Sauce");
+        Assert.True(IsTicked(row));
+        Assert.DoesNotContain("Matched by name similarity", Collapsed(row));
+    }
+
+    [Fact]
     public void The_grid_says_whether_it_read_a_label_or_only_looked()
     {
         var cut = Review(
@@ -366,7 +383,7 @@ public class PantryPhotoPageTests : PageTestContext
         RowFor(cut, "Frozen Peas").QuerySelectorAll("input[type=number]").Single().Change("0");
         cut.FindAll("button").Single(b => b.TextContent.Contains("Count ")).Click();
 
-        cut.WaitForAssertion(() => Assert.Contains("you've never bought it here", Collapsed(cut.Markup)));
+        cut.WaitForAssertion(() => Assert.Contains("isn't something Shelf Aware knows about yet", Collapsed(cut.Markup)));
         await using var db = Db.CreateDbContext();
         Assert.Empty(await db.Products.ToListAsync());
         Assert.Empty(await db.InventorySignals.ToListAsync());
@@ -426,6 +443,22 @@ public class PantryPhotoPageTests : PageTestContext
         var row = Collapsed(RowFor(cut, "Ground Chuck"));
         Assert.Contains("Was 14", row);
         Assert.Contains("You'd stopped counting it", row);
+    }
+
+    [Fact]
+    public async Task An_ALREADY_COUNTED_product_is_not_told_it_had_stopped_counting()
+    {
+        // ⚠️ The complement of the dormant note, and it was missing: with only the positive case pinned,
+        // dropping the `!TrackQuantity` conjunct left every row with a stored number claiming the
+        // household had stopped counting it. The "Was N" half must still show — that's the point of the
+        // note — while the stopped-counting sentence must not.
+        await SeedProduct("Black Beans", counted: true, onHand: 5);
+
+        var cut = Review(Item("Black Beans"));
+
+        var row = Collapsed(RowFor(cut, "Black Beans"));
+        Assert.Contains("Was 5", row);
+        Assert.DoesNotContain("You'd stopped counting it", row);
     }
 
     [Fact]
@@ -531,6 +564,31 @@ public class PantryPhotoPageTests : PageTestContext
         cut.Find("button").Click();
 
         cut.WaitForAssertion(() => Assert.Contains("can't be read as a photo", Collapsed(cut.Markup)));
+    }
+
+    [Fact]
+    public async Task The_confirm_is_NOT_tied_to_the_pages_lifetime_but_the_read_is()
+    {
+        // ⚠️ A read is re-runnable, so cancelling it when the visitor leaves saves them a vision call. A
+        // CONFIRM is a one-shot write over input that exists nowhere else — a census keeps no audit copy
+        // and has no Retry — so threading the page's token into it discarded a census the household had
+        // already pressed Confirm on: no row written, no message (the component is gone), no log line.
+        //
+        // Asserted on the TOKEN rather than by racing a detached write to the database. Same guarantee,
+        // no timing: an uncancellable token cannot be cancelled by a teardown, and the first version of
+        // this test — poll the DB after disposing the component — was flaky precisely because it depended
+        // on when a deliberately-detached continuation happened to run.
+        await SeedProduct("Black Beans", counted: true, onHand: 1);
+        var cut = Review(Item("Black Beans", count: 7));
+
+        Assert.True(Factory.LastToken.CanBeCanceled,
+            "the READ's catalog load should carry the page token — leaving mid-read must stop it");
+
+        cut.FindAll("button").Single(b => b.TextContent.Trim().StartsWith("Count ")).Click();
+        cut.WaitForAssertion(() => Assert.Contains("Counted 1 item", Collapsed(cut.Markup)));
+
+        Assert.False(Factory.LastToken.CanBeCanceled,
+            "the CONFIRM must not be cancellable by the page going away — the write has to outlive it");
     }
 
     [Fact]

@@ -35,7 +35,13 @@
             behind the front can are yours to add.
         </p>
         <div hidden="@(phase == Phase.Reading)">
-            <InputFile OnChange="OnFilesSelected" multiple accept="image/jpeg,image/png,image/gif,image/webp"
+            @* ⚠️ image/* and NOT a format list. iOS transcodes a HEIC photo to JPEG only when the accept
+               list asks for JPEG and nothing it can satisfy more cheaply, so a narrow list is what makes
+               the common iPhone path work — but it also hides HEIC-capable sources rather than converting
+               them. image/* keeps every picker showing photos while letting the loader decide.
+               ⚠️ Never name image/heic here: Safari 17+ then stops transcoding and converts JPEG and PNG
+               INTO HEIC, which makes the rare case universal. *@
+            <InputFile OnChange="OnFilesSelected" multiple accept="image/*"
                        aria-label="Photos of a shelf, freezer, or cupboard" />
             @if (selectedFiles.Count > 0)
             {
@@ -447,18 +453,26 @@ else if (phase == Phase.Done)
         errorMessage = null;
         StateHasChanged();
 
+        // ⚠️ Captured ONCE, before the first await. `CancellationTokenSource.Token` THROWS
+        // ObjectDisposedException after Dispose (unlike IsCancellationRequested, which stays safe), so
+        // reading it again after a continuation resumes on a torn-down page threw — and
+        // ObjectDisposedException derives from InvalidOperationException, so it cleared every specific
+        // clause below and logged "Reading a shelf census failed" on an ordinary navigate-away, which is
+        // exactly the teardown noise the JSDisconnectedException clause exists to keep out of the log.
+        // A captured token stays usable after its source is disposed.
+        var ct = pageCts.Token;
         try
         {
             var photos = new List<ShelfPhoto>();
             foreach (var file in selectedFiles)
             {
-                photos.Add(await PhotoLoader.LoadAsync(file, pageCts.Token));
+                photos.Add(await PhotoLoader.LoadAsync(file, ct));
             }
             photoCount = photos.Count;
 
-            await LoadCatalogAsync();
+            await LoadCatalogAsync(ct);
             var result = await Reader.ReadAsync(
-                photos, products.Select(p => p.Name).Distinct().ToList(), pageCts.Token);
+                photos, products.Select(p => p.Name).Distinct().ToList(), ct);
 
             // Nothing is persisted either way: the photo of someone's freezer goes to the model and stops
             // there. That's the whole reason there's no Retry here as there is for a receipt — there is no
@@ -564,24 +578,24 @@ else if (phase == Phase.Done)
         {
             return (exact, false);
         }
-        var resolved = ProductMatcher.Resolve(item.NormalizedName, products);
-        if (resolved is null) return (null, false);
-        // ProductMatcher doesn't say which of its rules fired, so ask the question that matters directly:
-        // is this the same name, or merely a similar one? Anything short of equal is treated as a guess —
-        // erring toward "ask the human" on the side that overwrites a stored count.
-        var sameName = string.Equals(resolved.Name, item.NormalizedName.Trim(), StringComparison.OrdinalIgnoreCase);
-        return (resolved, !sameName);
+        // ⚠️ Ask the matcher WHICH rule fired rather than re-deriving it from the strings. Comparing the
+        // raw names looks equivalent and isn't: the matcher normalizes punctuation away before its exact
+        // rule, so a raw compare called a rule-1 identity a guess — "Home Canned Tomato Sauce" against
+        // the seeded "Home-Canned Tomato Sauce" arrived unticked, warning "not read off the package" one
+        // cell from a chip reading "read the label".
+        var (resolved, kind) = ProductMatcher.ResolveWithKind(item.NormalizedName, products);
+        return (resolved, kind is not (ProductMatcher.MatchKind.None or ProductMatcher.MatchKind.ExactName));
     }
 
-    private async Task LoadCatalogAsync()
+    private async Task LoadCatalogAsync(CancellationToken ct)
     {
-        await using var db = await DbFactory.CreateDbContextAsync(pageCts.Token);
+        await using var db = await DbFactory.CreateDbContextAsync(ct);
         products = await db.Products
             .AsNoTracking()
             .Include(p => p.Purchases)
             .Include(p => p.Signals)
             .OrderBy(p => p.Name)
-            .ToListAsync(pageCts.Token);
+            .ToListAsync(ct);
         nearMatches.Clear();
 
         var today = DateOnly.FromDateTime(DateTime.Today);
@@ -619,7 +633,15 @@ else if (phase == Phase.Done)
                 .Select(r => new CensusConfirmationService.CensusRow(
                     r.Name, r.Category, r.Count, r.ProductId, r.ChoseCreateNew))
                 .ToList();
-            var outcome = await Confirmer.ConfirmAsync(confirmed, pageCts.Token);
+            // ⚠️ Deliberately NOT pageCts.Token. A read is re-runnable and cancelling it on navigate-away
+            // saves the visitor a vision call; a confirm is a one-shot write over input that exists
+            // nowhere else — a census persists no audit copy and has no Retry, so an aborted write means
+            // re-photographing the shelf and paying for the read again. Threading the page token here
+            // discarded a census the household had already pressed Confirm on, with no row written, no
+            // message (the component is gone) and no log line. Even the worst case without the token —
+            // the write lands and the panel never renders — is strictly better: the counts are on the
+            // product pages, which this page already says.
+            var outcome = await Confirmer.ConfirmAsync(confirmed, CancellationToken.None);
 
             confirmSummary = Summary(outcome);
             countedAnything = outcome.Counted > 0;
@@ -668,6 +690,13 @@ else if (phase == Phase.Done)
         (outcome.AssertedOut > 0
             ? $" {outcome.AssertedOut} counted at zero — recorded as running out."
             : "") +
+        // A different claim from the one above, so it gets different words: the number is written either
+        // way, but only an item you actually buy here gets filed as having RUN OUT (that's what feeds the
+        // rhythm and the grocery list). Saying "recorded as running out" for both would tell the
+        // household the app did something it deliberately didn't.
+        (outcome.ZeroedWithoutSignal > 0
+            ? $" {outcome.ZeroedWithoutSignal} counted at zero — recorded as none on hand, but not as running out, since there's nothing bought here to measure that against."
+            : "") +
         (outcome.Retracked > 0
             ? $" Started tracking {outcome.Retracked} previously ignored item{(outcome.Retracked == 1 ? "" : "s")} again."
             : "") +
@@ -683,8 +712,8 @@ else if (phase == Phase.Done)
     {
         CensusConfirmationService.CensusRefusal.DuplicateName =>
             $"“{row.Name}” — a product with that name already exists, so nothing was created. Count it from its own page, or run this again and pick it in the Product match column.",
-        CensusConfirmationService.CensusRefusal.OutageWithoutHistory =>
-            $"“{row.Name}” — counted as none, but you've never bought it here, so there's no rhythm for Shelf Aware to un-stick it from. Recording an outage would park it at the top of your grocery list for good; count it with a real number, or mark it out from its own page.",
+        CensusConfirmationService.CensusRefusal.ZeroOnNewProduct =>
+            $"“{row.Name}” — counted as none, and it isn't something Shelf Aware knows about yet. There's nothing to add and nothing to count, so nothing was created. Give it a real number if it's on the shelf.",
         CensusConfirmationService.CensusRefusal.ProductGone =>
             $"“{row.Name}” — the item this row pointed at isn't there any more (removed or merged while you were reviewing). Nothing was guessed in its place; run this again and pick from the up-to-date list.",
         CensusConfirmationService.CensusRefusal.MissingCount =>

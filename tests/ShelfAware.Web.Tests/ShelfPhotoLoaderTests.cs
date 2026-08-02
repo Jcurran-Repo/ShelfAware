@@ -24,26 +24,28 @@ public class ShelfPhotoLoaderTests
         public long Size => 1024;
         public string ContentType => contentType;
 
-        // Reaching either of these means the guard let the file through — which on a real circuit is the
-        // 30-second hang, so failing loudly here is the point.
+        // Never actually reached: RequestImageFileAsync is an extension that rejects any IBrowserFile
+        // that isn't Blazor's own internal type, so LoadAsync stops one step earlier. That is precisely
+        // why these tests assert on WHICH exception comes back rather than on success — getting past the
+        // guard is observable, completing the resize is not.
         public Stream OpenReadStream(long maxAllowedSize = 512000, CancellationToken cancellationToken = default) =>
-            throw new InvalidOperationException("the loader should have refused this file before reading it");
+            throw new NotImplementedException("unreachable under this fake — see the note above");
     }
 
     [Theory]
-    [InlineData("application/pdf")]      // the receipt page's own input accepts these, so people will try
-    [InlineData("image/heic")]           // an iPhone photo picked through the Files app
+    [InlineData("application/pdf")]   // the receipt page's input accepts these, so people will try one here
     [InlineData("application/zip")]
-    [InlineData("")]                     // the OS dialog's "All Files" filter often supplies nothing
-    public async Task A_file_the_browser_cannot_decode_is_refused_by_name_not_left_to_time_out(string contentType)
+    [InlineData("text/plain")]
+    [InlineData("video/mp4")]         // a picker set to "All Files" happily offers these
+    public async Task A_file_that_is_plainly_not_an_image_is_refused_by_name_not_left_to_time_out(string contentType)
     {
         var ex = await Assert.ThrowsAsync<NotSupportedException>(() =>
             Loader().LoadAsync(new FakeBrowserFile("shelf.dat", contentType)));
 
-        // The message has to name the file and the way out: it is shown to the visitor verbatim, and the
-        // generic "something went wrong" it replaces never mentioned that the file was the problem.
+        // The message is shown to the visitor verbatim, so it has to name the file — the generic
+        // "something went wrong" it replaces never said the file was the problem.
         Assert.Contains("shelf.dat", ex.Message);
-        Assert.Contains("JPEG", ex.Message);
+        Assert.Contains(contentType, ex.Message);
     }
 
     [Theory]
@@ -51,17 +53,22 @@ public class ShelfPhotoLoaderTests
     [InlineData("image/png")]
     [InlineData("image/gif")]
     [InlineData("image/webp")]
-    [InlineData("IMAGE/JPEG")] // browsers are not required to lower-case it
-    public async Task Every_format_the_file_input_accepts_gets_past_the_guard(string contentType)
+    [InlineData("IMAGE/JPEG")]  // browsers are not required to lower-case it
+    [InlineData("image/heic")]  // ⚠️ a shelf photo picked through the iOS Files app; WebKit decodes it
+    [InlineData("image/avif")]
+    [InlineData("image/bmp")]
+    [InlineData("image/tiff")]
+    [InlineData("")]            // no extension, so the OS supplied no type — not a reason to refuse a photo
+    public async Task Anything_image_shaped_reaches_the_resize_rather_than_being_refused(string contentType)
     {
-        // The complement, and the one that keeps the guard from quietly becoming a wall: each of these
-        // must reach the resize. It throws from the fake stream — which is proof it got there, since the
-        // only other way out of LoadAsync is the refusal above.
-        await Assert.ThrowsAnyAsync<Exception>(() =>
-            Loader().LoadAsync(new FakeBrowserFile("shelf.jpg", contentType)));
+        // ⚠️ The half that matters, because the first version of this guard was an allowlist of four
+        // formats — narrower than the thing it guards. Blazor's toImageFile never inspects the MIME type;
+        // it paints the file into an <img> and re-encodes through a canvas, so it decodes whatever the
+        // BROWSER can. The allowlist refused real photos. Anything image-shaped that still can't be
+        // decoded falls through to the 30s timeout, which is the honest place for it.
+        var thrown = await Record.ExceptionAsync(() =>
+            Loader().LoadAsync(new FakeBrowserFile("shelf.img", contentType)));
 
-        var refusal = await Record.ExceptionAsync(() =>
-            Loader().LoadAsync(new FakeBrowserFile("shelf.jpg", contentType)));
-        Assert.IsNotType<NotSupportedException>(refusal);
+        Assert.IsNotType<NotSupportedException>(thrown);
     }
 }

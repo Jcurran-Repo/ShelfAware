@@ -10,17 +10,42 @@ namespace ShelfAware.Core.Chat;
 /// </summary>
 public static class ProductMatcher
 {
-    /// <summary>Best match, or null when nothing is close enough (caller should create or clarify).</summary>
-    public static Product? Resolve(string? query, IReadOnlyList<Product> products)
+    /// <summary>Which rule produced a match. Callers that merely need "the product" ignore this; callers
+    /// deciding how much to TRUST the match need it, because the three rules are not equally strong —
+    /// rule 1 is an identity, rules 2 and 3 are similarity.
+    /// <para>⚠️ It exists so a caller cannot re-derive exactness by comparing raw strings. That looks
+    /// equivalent and isn't: <see cref="Normalize"/> folds punctuation to spaces, so a raw comparison
+    /// calls "Home Canned Tomato Sauce" a fuzzy hit on "Home-Canned Tomato Sauce" when rule 1 matched
+    /// them outright — and the surface then warns about a guess that never happened.</para></summary>
+    public enum MatchKind
     {
-        if (string.IsNullOrWhiteSpace(query) || products.Count == 0) return null;
+        /// <summary>Nothing close enough; the product is null.</summary>
+        None,
+        /// <summary>Rule 1 — the same name once punctuation and case are folded. An identity, not a guess.</summary>
+        ExactName,
+        /// <summary>Rule 2 — one name contains the other. Similarity.</summary>
+        Substring,
+        /// <summary>Rule 3 — enough distinctive token weight overlaps. Similarity.</summary>
+        TokenOverlap,
+    }
+
+    /// <summary>Best match, or null when nothing is close enough (caller should create or clarify).</summary>
+    public static Product? Resolve(string? query, IReadOnlyList<Product> products) =>
+        ResolveWithKind(query, products).Product;
+
+    /// <summary>As <see cref="Resolve"/>, and says which rule fired — for callers that must tell an
+    /// identity from a similarity (a census attests over a product's stored count, so it may not
+    /// pre-authorize a guess at WHICH product).</summary>
+    public static (Product? Product, MatchKind Kind) ResolveWithKind(string? query, IReadOnlyList<Product> products)
+    {
+        if (string.IsNullOrWhiteSpace(query) || products.Count == 0) return (null, MatchKind.None);
 
         var q = Normalize(query);
-        if (q.Length == 0) return null;
+        if (q.Length == 0) return (null, MatchKind.None);
 
         // 1. Exact (normalized, case-insensitive).
         var exact = products.FirstOrDefault(p => Normalize(p.Name) == q);
-        if (exact is not null) return exact;
+        if (exact is not null) return (exact, MatchKind.ExactName);
 
         // 2. Substring either direction ("dog food" ⊂ "pedigree dog food").
         var contains = products.FirstOrDefault(p =>
@@ -28,7 +53,7 @@ public static class ProductMatcher
             var n = Normalize(p.Name);
             return n.Contains(q) || q.Contains(n);
         });
-        if (contains is not null) return contains;
+        if (contains is not null) return (contains, MatchKind.Substring);
 
         // 3. Weighted token-overlap. Weight each token by how rare it is across the catalog (IDF) so a
         //    shared store-brand prefix ("Great Value") or generic word ("paper") can't drive a match on
@@ -57,7 +82,7 @@ public static class ProductMatcher
         }
 
         // A solid majority of the distinctive token weight must overlap.
-        return bestScore >= 0.5 ? best : null;
+        return bestScore >= 0.5 ? (best, MatchKind.TokenOverlap) : (null, MatchKind.None);
     }
 
     /// <summary>

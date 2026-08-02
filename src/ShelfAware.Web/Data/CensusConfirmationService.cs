@@ -43,15 +43,17 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
         /// purchase history and blind the predictor; silently merging would overrule the human's choice.
         /// So the row is declined and named, and they pick which they meant.</summary>
         DuplicateName,
-        /// <summary>A count of zero on a product with NO purchase history. An attested zero writes a real
-        /// <c>OutNow</c> (§13.4), and with no purchases behind it nothing can ever re-anchor or clear
-        /// that signal — the product is pinned Overdue at the top of the dashboard and grocery list
-        /// forever, and a later census counting it at three does not lift it.
-        /// <para>⚠️ The test is <b>no history</b>, not <b>new</b>. Drawing it at newness was the bug: a
-        /// census's own output is a product with zero purchases by construction (§13.8's whole
-        /// population is stock no receipt knows about), so the second census of the same shelf walked
-        /// straight into the state the first one was refused for.</para></summary>
-        OutageWithoutHistory,
+        /// <summary>A count of zero on a row that would CREATE the product. There is nothing to record:
+        /// the item is not in the catalog and the row says none of it is on the shelf either, so the only
+        /// possible outcome is a phantom product the household has never owned.
+        /// <para>⚠️ Scoped to creation, and that scope was got wrong twice. Refusing every zero on a
+        /// rhythm-less product (the wider rule) declined the COUNT along with the outage, which left
+        /// §13.8's whole population — stock no receipt knows about — unable to be corrected to zero from
+        /// the one surface that stands at the shelf, with the stale positive still telling recipes the
+        /// food was there. The right split is not row-level at all: a zero is recorded as a number
+        /// always, and the <c>OutNow</c> it would owe is withheld where no rhythm exists to contradict
+        /// it. See the Attest loop.</para></summary>
+        ZeroOnNewProduct,
         /// <summary>The row named a product by id and that product is gone — merged or deleted while the
         /// review grid sat open. Resolving it by name instead would quietly create a twin, or land the
         /// count on a different product than the dropdown showed; the grid said where this was going, so
@@ -76,13 +78,19 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
     /// act. Stopping counting is deliberate and its stored number is a historical fact the app promises
     /// to keep; a census overwrites both, so it has to say so rather than let the one thing the household
     /// switched off be the one thing the summary doesn't mention.</param>
-    /// <param name="AssertedOut">Products counted at zero — a human statement of an outage (§13.4), each
-    /// of which wrote a real <c>OutNow</c>.</param>
+    /// <param name="AssertedOut">Products counted at zero that HAVE been bought here — a human statement
+    /// of an outage (§13.4), each of which wrote a real <c>OutNow</c> against a rhythm that can later
+    /// contradict it.</param>
+    /// <param name="ZeroedWithoutSignal">Products counted at zero with no purchase history. The number is
+    /// recorded exactly as for any other count; only the <c>OutNow</c> is withheld, because with no
+    /// rhythm behind it that signal could never be cleared. Reported separately so the summary can say
+    /// which of the two happened — "you have none" and "you have run out" are different claims, and the
+    /// household should not have to infer which one the app filed.</param>
     /// <param name="Refused">Rows that could not be recorded, each with its reason. Reported rather than
     /// swallowed: a row the household ticked and then didn't get is something they have to be told.</param>
     public record CensusOutcome(
         int Counted, int Rows, int NewProducts, int Retracked, int ResumedCounting, int AssertedOut,
-        IReadOnlyList<RefusedRow> Refused);
+        int ZeroedWithoutSignal, IReadOnlyList<RefusedRow> Refused);
 
     /// <summary>Record the reviewed rows as attested counts. Every row here is one a human ticked and
     /// checked — the reader only ever proposed them.</summary>
@@ -192,18 +200,14 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
                 }
             }
 
-            // ⚠️ Zero is real evidence only where a rhythm exists to contradict it later. Against a
-            // product with no purchases the OutNow can never be re-anchored or cleared — not by a later
-            // census, not by anything but a Restocked tap on a card the household has no reason to open —
-            // so it pins the item Overdue at the top of the dashboard and the grocery list indefinitely,
-            // and it teaches nothing either (BurnCycles needs purchases to form a cycle). The test is NO
-            // HISTORY rather than NEW because a census's own output has no purchases by construction:
-            // drawing the line at newness let the second census of the same shelf walk into exactly the
-            // state the first one was refused for. `product is null` covers the about-to-be-created case,
-            // including one this same census created a moment ago (Id 0, no purchases).
-            if (count == 0 && (product is null || !hasPurchases.Contains(product.Id)))
+            // A zero cannot bring a product into existence: the catalog doesn't have it and the row says
+            // the shelf doesn't either, so creating it would mint a phantom the household has never
+            // owned. Every other zero is recorded as a NUMBER — what gets withheld for a rhythm-less
+            // product is the OutNow, and that decision belongs on the total rather than the row (see the
+            // Attest loop), because two rows summing to zero is the same statement as one.
+            if (count == 0 && product is null)
             {
-                refused.Add(new RefusedRow(label, CensusRefusal.OutageWithoutHistory));
+                refused.Add(new RefusedRow(label, CensusRefusal.ZeroOnNewProduct));
                 continue;
             }
 
@@ -243,16 +247,28 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
 
         var now = DateTimeOffset.Now;
         var assertedOut = 0;
+        var zeroedWithoutSignal = 0;
         foreach (var (product, count) in totals)
         {
             // Attest, not Add: this is a LOOK at the shelf, so it states the total and re-anchors the
             // attestation clock §13.5's drift check measures from. It also opts the product into counting
             // (the ledger's rule: typing a number IS asking for it to be counted).
-            if (StockLedger.Attest(product, count, now))
+            if (!StockLedger.Attest(product, count, now)) continue;
+
+            // §13.4: a human's zero is real evidence and owes an OutNow, which feeds the burn-rate
+            // rhythm. Only a human can get here — the reader floors its proposals at 1, so this zero
+            // was typed.
+            // ⚠️ But the signal is withheld where the product has NO purchases, and the number is kept
+            // either way. An OutNow needs a rhythm to argue with: with no purchases behind it nothing can
+            // re-anchor or clear it — not a later census, which writes no signal — so it pins the item
+            // Overdue at the top of the dashboard and the grocery list indefinitely, while teaching
+            // nothing (BurnCycles needs purchases to form a cycle). Withholding only the signal is the
+            // split PantryOnHand already draws in the other direction: "a derived zero still cannot write
+            // an OutNow" — the human's typed zero is honest evidence of HOW MANY, and how many is exactly
+            // what a count is for. Refusing the whole row instead left §13.8's own population unable to
+            // be zeroed at all, with the stale positive still telling recipes the food was there.
+            if (hasPurchases.Contains(product.Id))
             {
-                // §13.4: a human's zero is real evidence and owes an OutNow, which feeds the burn-rate
-                // rhythm. Only a human can get here — the reader floors its proposals at 1, so this zero
-                // was typed.
                 db.InventorySignals.Add(new InventorySignal
                 {
                     Product = product,
@@ -260,6 +276,10 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
                     SignaledAt = now,
                 });
                 assertedOut++;
+            }
+            else
+            {
+                zeroedWithoutSignal++;
             }
         }
 
@@ -271,6 +291,7 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
             Retracked: retracked.Count,
             ResumedCounting: resumed.Count,
             AssertedOut: assertedOut,
+            ZeroedWithoutSignal: zeroedWithoutSignal,
             Refused: refused);
     }
 }
