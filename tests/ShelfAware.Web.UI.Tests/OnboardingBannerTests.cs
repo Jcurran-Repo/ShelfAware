@@ -65,6 +65,55 @@ public class OnboardingBannerTests : PageTestContext
     }
 
     [Fact]
+    public async Task Loading_sample_data_rolls_straight_into_the_walkthrough()
+    {
+        // A pantry suddenly full of unfamiliar sample data is the moment the tour is worth most —
+        // it finally has something to point at on every page it visits.
+        var started = 0;
+        Tour.StartRequested += () => { started++; return Task.CompletedTask; };
+        var cut = Render<OnboardingBanner>(ps => ps.Add(p => p.CatalogEmpty, true));
+
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Load sample data").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(1, started));
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.True(await raw.Products.IgnoreQueryFilters().AnyAsync()); // started AFTER the seed landed
+    }
+
+    [Fact]
+    public void A_second_load_that_seeds_nothing_does_not_start_the_walkthrough()
+    {
+        // The seeder is guarded on an empty pantry. A no-op run must not launch a tour of a catalog
+        // this household already knows — the banner would otherwise re-announce itself on every click.
+        var started = 0;
+        var cut = Render<OnboardingBanner>(ps => ps.Add(p => p.CatalogEmpty, true));
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Load sample data").Click();
+        cut.WaitForAssertion(() => Assert.NotEqual("", cut.Find("[role=status]").TextContent.Trim()));
+
+        Tour.StartRequested += () => { started++; return Task.CompletedTask; };
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Load sample data").Click();
+
+        // Wait on the GUARD's own message, not merely on "some message" — the first click already left
+        // one on screen, so anything weaker would pass without the second click having done a thing.
+        cut.WaitForAssertion(() =>
+            Assert.Contains("already has items", cut.Find("[role=status]").TextContent));
+        Assert.Equal(0, started);
+    }
+
+    [Fact]
+    public void Take_the_tour_is_offered_without_seeding_anything()
+    {
+        // A real new household with its own receipts gets the walkthrough too; it just isn't automatic.
+        var started = 0;
+        Tour.StartRequested += () => { started++; return Task.CompletedTask; };
+        var cut = Render<OnboardingBanner>(ps => ps.Add(p => p.CatalogEmpty, false));
+
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Take the tour").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal(1, started));
+    }
+
+    [Fact]
     public void Dismiss_hides_the_pitch_but_an_empty_catalog_keeps_the_banner()
     {
         // Dismissal is for the key nag; the sample-data offer survives it — the one path into the

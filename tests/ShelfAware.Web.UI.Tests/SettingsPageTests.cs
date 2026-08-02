@@ -97,6 +97,36 @@ public abstract class SettingsTestBase : PageTestContext
 /// doesn't depend on key mode.</summary>
 public class SettingsPageTests : SettingsTestBase
 {
+    // ------------------------------------------------------------------------ guided walkthrough
+
+    [Fact]
+    public void The_walkthrough_s_last_step_has_something_to_ring_here()
+    {
+        // TourScript's final step rings "[data-tour=ai-keys]" — bringing your own key is the one thing
+        // a new visitor must do on this page. The ring is best-effort by design, so a selector that
+        // stopped matching would fail SILENTLY and forever; this is what notices.
+        var cut = RenderSettings();
+
+        var step = ShelfAware.Core.Onboarding.TourScript.Steps[^1];
+        Assert.Equal("/settings", step.Route);
+        Assert.NotNull(cut.Find(step.Anchor!));
+    }
+
+    [Fact]
+    public async Task Take_the_tour_restarts_the_walkthrough()
+    {
+        // A dismissal is remembered, so this button is the only way back in for someone who closed it.
+        var started = 0;
+        Tour.StartRequested += () => { started++; return Task.CompletedTask; };
+        var cut = RenderSettings();
+
+        await cut.InvokeAsync(() =>
+            Section(cut, "Guided walkthrough").QuerySelectorAll("button")
+                .Single(b => b.TextContent.Trim() == "Take the tour").ClickAsync(new()));
+
+        Assert.Equal(1, started);
+    }
+
     // ------------------------------------------------------------------------ pantry preferences
 
     [Fact]

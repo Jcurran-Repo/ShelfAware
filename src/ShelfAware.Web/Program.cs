@@ -208,6 +208,7 @@ builder.Services.AddScoped<IChatClient, MeteredChatClient>();
 
 // Per-circuit bus wiring the layout voice agent to the pages (data-changed refresh + resume hand-off).
 builder.Services.AddScoped<VoiceCoordinator>();
+builder.Services.AddScoped<TourCoordinator>(); // lets a page start the layout-hosted guided walkthrough
 
 // The AI services depend (directly or transitively) on the per-circuit IChatClient, so they're scoped —
 // a singleton can't hold a scoped dependency. Since v3 the data services are scoped too: they read

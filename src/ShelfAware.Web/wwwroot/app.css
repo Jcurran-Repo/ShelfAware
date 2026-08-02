@@ -495,6 +495,99 @@ input:focus, select:focus {
 }
 .onboarding-x:hover { color: var(--accent-ink); }
 
+/* ---- Guided walkthrough (Components/Layout/GuidedTour.razor) ----
+   Docked bottom-LEFT because the voice assistant owns bottom-right; the two are the only fixed-position
+   furniture in the app and must not stack. Non-modal on purpose: no backdrop, nothing blocked — the page
+   under it stays usable, so a visitor can follow a step by actually doing it. */
+.tour-panel {
+    position: fixed;
+    left: 1rem;
+    bottom: 1rem;
+    z-index: 70;
+    width: min(360px, calc(100vw - 2rem));
+    margin: 0;
+    border-left: 4px solid var(--accent);
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+}
+
+.tour-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.tour-progress {
+    margin: 0;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+}
+
+.tour-title {
+    margin: 0.35rem 0 0.4rem;
+    font-size: 1.05rem;
+}
+
+/* The heading takes focus on every step change (tabindex=-1). Keep the focus ring for keyboard users
+   but spare pointer users a ring on something they didn't click into. */
+.tour-title:focus:not(:focus-visible) { outline: none; }
+
+.tour-body {
+    margin: 0;
+    color: var(--ink-soft);
+    font-size: 0.92rem;
+    line-height: 1.5;
+}
+
+.tour-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.9rem;
+}
+
+.tour-skip { margin-left: auto; }
+
+/* The ring around whatever the current step is about. Applied by wwwroot/js/tour.js, which may find
+   nothing to ring — the step still reads, so this styling is never load-bearing for comprehension. */
+.tour-spot {
+    outline: 3px solid var(--accent);
+    outline-offset: 4px;
+    border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .tour-spot { animation: tour-spot-in 0.9s ease-out; }
+}
+
+@keyframes tour-spot-in {
+    from { outline-color: transparent; }
+    50%  { outline-color: var(--accent); }
+}
+
+/* Narrow screens: the panel becomes a bottom sheet spanning the width, which would sit right on top of
+   the voice assistant's FAB. The walkthrough is transient and the assistant isn't going anywhere, so the
+   FAB stands down until the tour is closed (the tour's own copy never claims it's on screen). */
+@media (max-width: 560px) {
+    .tour-panel {
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: auto;
+        border-radius: var(--radius) var(--radius) 0 0;
+        border-left: none;
+        border-top: 4px solid var(--accent);
+        max-height: 60vh;
+    }
+
+    body.tour-active .voice-agent { display: none; }
+}
+
 .card-top {
     display: flex;
     align-items: center;

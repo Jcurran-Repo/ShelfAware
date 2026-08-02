@@ -51,6 +51,9 @@ public abstract class PageTestContext : BunitContext
     internal FakeSubstituteAdvisor SubstituteAdvisor { get; }
     internal FakeVoiceCredentials Voice { get; }
     internal VoiceCoordinator Coordinator { get; }
+    /// <summary>Real coordinator, not a fake — it is a plain event bus. Settings and the first-run banner
+    /// both raise it, and the walkthrough itself subscribes, so a test can watch either end.</summary>
+    internal TourCoordinator Tour { get; }
 
     protected PageTestContext()
     {
@@ -65,6 +68,7 @@ public abstract class PageTestContext : BunitContext
         SubstituteAdvisor = new FakeSubstituteAdvisor();
         Voice = new FakeVoiceCredentials();
         Coordinator = new VoiceCoordinator();
+        Tour = new TourCoordinator();
 
         Services.AddSingleton<IHouseholdDbFactory>(Factory);
         Services.AddSingleton<IAppSettings>(AppSettings);
@@ -76,6 +80,7 @@ public abstract class PageTestContext : BunitContext
         Services.AddSingleton<IProductSubstituteAdvisor>(SubstituteAdvisor);
         Services.AddSingleton<IVoiceCredentials>(Voice);
         Services.AddSingleton(Coordinator);
+        Services.AddSingleton(Tour);
         Services.AddSingleton(new ProductRenameService(Factory));
         Services.AddSingleton(new ProductMergeService(Factory));
         Services.AddLogging();

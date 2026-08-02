@@ -1,0 +1,161 @@
+@* Guided walkthrough of the app's core surfaces (v4.5). Lives in MainLayout — NOT in a page — for the
+   same reason VoiceAgent does: it NAVIGATES between steps, so a page-hosted tour would destroy itself on
+   its own first Next.
+
+   Two deliberate properties:
+   • Dismissable at every step, and the dismissal sticks (per browser). Nothing here is modal — the app
+     stays fully usable underneath, so a visitor can wander off mid-step and come back.
+   • The ring around each step's subject is best-effort. A selector that matches nothing leaves the step
+     reading as plain instructions rather than breaking it; see TourScript.TourStep.Anchor. *@
+@using ShelfAware.Core.Onboarding
+@using ShelfAware.Web.Services
+@implements IDisposable
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject TourCoordinator Coordinator
+@inject ILogger<GuidedTour> Logger
+
+@if (active)
+{
+    <aside class="tour-panel panel" role="region" aria-label="Guided walkthrough">
+        <div class="tour-head">
+            <p class="tour-progress" aria-hidden="true">Step @(index + 1) of @TourScript.Count</p>
+            <button type="button" class="icon-btn" @onclick="DismissAsync"
+                    aria-label="Close the walkthrough" title="Close the walkthrough">✕</button>
+        </div>
+
+        @* Focused on every step change so keyboard and screen-reader users land on the new text rather
+           than being left wherever the previous step's button was. tabindex=-1 makes it focusable
+           without putting the heading into the tab order. *@
+        <h2 class="tour-title" tabindex="-1" @ref="heading">@Step.Title</h2>
+        <p class="tour-body">@Step.Body</p>
+
+        <div class="tour-actions">
+            <button type="button" class="secondary" @onclick="BackAsync" disabled="@TourScript.IsFirst(index)">Back</button>
+            @if (TourScript.IsLast(index))
+            {
+                <button type="button" @onclick="DismissAsync">Done</button>
+            }
+            else
+            {
+                <button type="button" @onclick="NextAsync">Next</button>
+                <button type="button" class="tour-skip linkish" @onclick="DismissAsync">Skip the tour</button>
+            }
+        </div>
+    </aside>
+}
+
+@code {
+    private bool active;
+    private int index;
+    private ElementReference heading;
+
+    // Set when a step changes; consumed by OnAfterRenderAsync once the panel has actually rendered the
+    // new step (focus and the ring both need the DOM to be up to date).
+    private bool stepChanged;
+
+    private TourStep Step => TourScript.At(index);
+
+    protected override void OnInitialized() => Coordinator.StartRequested += StartAsync;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await ResumeIfUnfinishedAsync();
+            return;
+        }
+
+        if (!stepChanged) return;
+        stepChanged = false;
+
+        // Order matters: the ring scrolls the page to the anchor, so take focus first — focusing an
+        // element the browser considers off-screen scrolls it back again.
+        try { await heading.FocusAsync(); }
+        catch (JSException ex) { Logger.LogDebug(ex, "Couldn't focus the walkthrough heading."); }
+
+        await SafeJsAsync("shelfawareTour.highlight", Step.Anchor);
+    }
+
+    /// <summary>Picks a half-finished walkthrough back up on a later visit. A visitor who never started
+    /// one is left alone — the tour is offered by the dashboard banner, it does not ambush.</summary>
+    private async Task ResumeIfUnfinishedAsync()
+    {
+        try
+        {
+            var saved = await JS.InvokeAsync<TourState>("shelfawareTour.load");
+            if (saved is null || !saved.Started || saved.Done) return;
+            await GoToAsync(TourScript.ClampIndex(saved.Step), navigate: false);
+        }
+        catch (JSException ex)
+        {
+            // Storage unavailable — the tour simply doesn't resume. Never a reason to fail the layout.
+            Logger.LogDebug(ex, "Couldn't read saved walkthrough progress.");
+        }
+    }
+
+    /// <summary>Runs the walkthrough from the top. Raised by the dashboard's first-run banner (right
+    /// after sample data lands) and by the Settings replay button.</summary>
+    private Task StartAsync() => GoToAsync(0);
+
+    private Task NextAsync() => GoToAsync(index + 1);
+
+    private Task BackAsync() => GoToAsync(index - 1);
+
+    private async Task GoToAsync(int to, bool navigate = true)
+    {
+        var wasActive = active;
+        index = TourScript.ClampIndex(to);
+        active = true;
+        stepChanged = true;
+
+        if (!wasActive) await SafeJsAsync("shelfawareTour.setActive", true);
+        await SafeJsAsync("shelfawareTour.save", index, false);
+
+        // Only navigate when the step is actually somewhere else: two consecutive steps share the
+        // dashboard, and re-navigating would throw the page's state away to land where it already is.
+        if (navigate && !AlreadyOn(Step.Route)) Nav.NavigateTo(Step.Route);
+
+        // ⚠️ Requested explicitly because the two callers that AREN'T button clicks get no render for
+        // free: the coordinator raises StartAsync from another component's event, and the resume runs
+        // in OnAfterRenderAsync, which does not re-render on completion the way OnInitializedAsync
+        // does. Without this a returning visitor's walkthrough stays invisible until some unrelated
+        // render happens to occur.
+        StateHasChanged();
+    }
+
+    /// <summary>Closes the walkthrough and remembers that. The same act whether it's "Done" on the last
+    /// step or "Skip" on the first — a tour you've closed is one you've finished with, and either way
+    /// it's replayable from Settings.</summary>
+    private async Task DismissAsync()
+    {
+        active = false;
+        stepChanged = false;
+        await SafeJsAsync("shelfawareTour.save", index, true);
+        await SafeJsAsync("shelfawareTour.setActive", false);
+    }
+
+    private bool AlreadyOn(string route)
+    {
+        var current = "/" + Nav.ToBaseRelativePath(Nav.Uri).Split('?')[0];
+        return string.Equals(Normalize(current), Normalize(route), StringComparison.OrdinalIgnoreCase);
+
+        // "/products/" and "/products" are the same page; "" and "/" are the dashboard.
+        static string Normalize(string path) => path.TrimEnd('/') is { Length: > 0 } trimmed ? trimmed : "/";
+    }
+
+    // The walkthrough is decoration over a working app: if its browser half is missing or storage is
+    // blocked, the steps still read and the app is untouched. Never let that tear down the layout.
+    private async Task SafeJsAsync(string identifier, params object?[] args)
+    {
+        try { await JS.InvokeVoidAsync(identifier, args); }
+        catch (JSException ex) { Logger.LogDebug(ex, "Walkthrough interop {Identifier} failed.", identifier); }
+    }
+
+    public void Dispose() => Coordinator.StartRequested -= StartAsync;
+
+    /// <summary>Shape of the saved progress record in the visitor's browser (see wwwroot/js/tour.js).
+    /// Internal rather than private so the page-test harness can script a returning visitor, the same
+    /// way it constructs the voice components' interop records.</summary>
+    internal sealed record TourState(int Step, bool Started, bool Done);
+}

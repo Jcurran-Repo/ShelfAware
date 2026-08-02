@@ -16,6 +16,7 @@
 @inject IOptions<LlmOptions> LlmConfig
 @inject ILogger<Settings> Logger
 @inject UserDataService UserData
+@inject TourCoordinator Tour
 
 <PageTitle>Settings — Shelf Aware</PageTitle>
 
@@ -123,7 +124,9 @@
     }
 </section>
 
-<section class="panel">
+@* data-tour: the guided walkthrough's last step rings this panel — bringing your own key is the one
+   thing a new visitor has to do here. See ShelfAware.Core.Onboarding.TourScript. *@
+<section class="panel" data-tour="ai-keys">
     <h2>AI provider &amp; keys</h2>
     @if (AiSettings.Managed)
     {
@@ -435,6 +438,15 @@
     </label>
 </section>
 
+<section class="panel">
+    <h2>Guided walkthrough</h2>
+    <p class="muted">
+        A quick tour of each part of the app, one screen at a time. Closing it is remembered on this
+        device — start it again from here whenever you want.
+    </p>
+    <button type="button" class="secondary" @onclick="StartTour">Take the tour</button>
+</section>
+
 <section class="panel danger-zone">
     <h2>Your data</h2>
     <p class="muted">
@@ -481,6 +493,10 @@
 </section>
 
 @code {
+    // ---- Guided walkthrough ----
+    // The tour itself lives in MainLayout (it navigates between steps), so this only asks for it.
+    private Task StartTour() => Tour.RequestStartAsync();
+
     // ---- Household panel ----
     [CascadingParameter]
     private Task<AuthenticationState>? AuthState { get; set; }
