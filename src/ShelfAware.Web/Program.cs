@@ -9,6 +9,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using System.Threading.RateLimiting;
 using System.Text.Json;
+using ShelfAware.Core.Census;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Extraction;
 using ShelfAware.Core.Ingest;
@@ -214,6 +215,10 @@ builder.Services.AddScoped<TourCoordinator>(); // lets a page start the layout-h
 // a singleton can't hold a scoped dependency. Since v3 the data services are scoped too: they read
 // through IHouseholdDbFactory, which needs the scope's signed-in user to know whose pantry it is.
 builder.Services.AddScoped<IReceiptExtractor, AnthropicReceiptExtractor>();
+builder.Services.AddScoped<IShelfCensusReader, AnthropicShelfCensusReader>(); // §13.8: proposes what's on a shelf
+// The browser half of the same flow: downscales a picked photo before it crosses the circuit. Stateless,
+// so singleton; separate from the reader because it's a browser seam rather than an AI one.
+builder.Services.AddSingleton<IShelfPhotoLoader, BrowserShelfPhotoLoader>();
 builder.Services.AddScoped<IPantryStore, EfPantryStore>();
 builder.Services.AddScoped<IPantryChat, AnthropicPantryChat>();
 builder.Services.AddScoped<ITagAdvisor, AnthropicTagAdvisor>();
@@ -231,6 +236,9 @@ builder.Services.AddScoped<ReceiptAutoConfirmer>(); // routes an uploaded receip
 builder.Services.AddScoped<ReceiptDuplicateDetector>(); // "is this a re-upload?" — a detected dupe never auto-confirms
 builder.Services.AddScoped<ReceiptConfirmationService>();
 builder.Services.AddScoped<ReceiptRemovalService>(); // the confirm's inverse — the duplicate-upload escape hatch
+// The census's OWN confirm path, deliberately not the receipt one: a shelf photo writes counts and must
+// never write a PurchaseEvent (§13.8's ★ rule).
+builder.Services.AddScoped<CensusConfirmationService>();
 builder.Services.AddScoped<ReceiptSelfEval>(); // grades verified receipts on the circuit's key
 
 // Owns where receipt images live on disk (per household), so "delete my data" can reach them and no

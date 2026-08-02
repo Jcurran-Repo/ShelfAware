@@ -1,0 +1,445 @@
+@page "/pantry-photo"
+@using ShelfAware.Core.Census
+@using ShelfAware.Core.Chat
+@using ShelfAware.Core.Prediction
+@using ShelfAware.Core.Shopping
+@inject IHouseholdDbFactory DbFactory
+@inject IShelfCensusReader Reader
+@inject IShelfPhotoLoader PhotoLoader
+@inject CensusConfirmationService Confirmer
+@inject ILogger<PantryPhoto> Logger
+
+<PageTitle>Count from a photo — Shelf Aware</PageTitle>
+
+<h1>Count from a photo</h1>
+
+@if (phase is Phase.Idle or Phase.Error or Phase.Reading)
+{
+    @* The InputFile must stay mounted while the photos are read — IBrowserFile streams through the DOM
+       element, and unmounting it breaks them mid-read. Same rule as the receipt upload. *@
+    <section class="panel">
+        <p>
+            Photograph a shelf, a freezer, or a cupboard and Shelf Aware will list what it can see, with
+            how many of each. Correct the list and it becomes your count — so it can stop asking you to
+            buy things you already have a pile of.
+        </p>
+        <p class="muted">
+            This is for stock a receipt can't know about: bought before you started, bought elsewhere,
+            gifted, or in one big run. <strong>It records what you have, never a purchase</strong> — your
+            buying rhythms are left exactly as they were.
+        </p>
+        <p class="muted">
+            Take several photos of <strong>different</strong> parts of the same space rather than the same
+            shelf from two angles, or things get counted twice. It can only see the front row — the cans
+            behind the front can are yours to add.
+        </p>
+        <div hidden="@(phase == Phase.Reading)">
+            <InputFile OnChange="OnFilesSelected" multiple accept="image/jpeg,image/png,image/gif,image/webp"
+                       aria-label="Photos of a shelf, freezer, or cupboard" />
+            @if (selectedFiles.Count > 0)
+            {
+                <p>@selectedFiles.Count photo@(selectedFiles.Count == 1 ? "" : "s") selected.</p>
+                <button @onclick="Read">See what's there</button>
+            }
+        </div>
+        @if (phase == Phase.Reading)
+        {
+            <p class="spinner">Looking at @(selectedFiles.Count == 1 ? "your photo" : $"your {selectedFiles.Count} photos")… this usually takes a few seconds.</p>
+        }
+        @if (phase == Phase.Error)
+        {
+            <p class="error" role="alert">@errorMessage</p>
+        }
+    </section>
+}
+else if (phase == Phase.Review)
+{
+    <section class="panel">
+        @if (rows.Count == 0)
+        {
+            <p class="error">
+                Nothing recognisable turned up in @(photoCount == 1 ? "that photo" : "those photos") — if it
+                wasn't a shelf of food, that's the right answer. Try again with the labels facing the camera.
+            </p>
+            <div class="review-actions">
+                <button @onclick="Reset">Try another photo</button>
+            </div>
+        }
+        else
+        {
+            <p>
+                <strong>@rows.Count item@(rows.Count == 1 ? "" : "s")</strong> found in
+                @(photoCount == 1 ? "1 photo" : $"{photoCount} photos"). Tick what's really there and fix the
+                numbers — <strong>@ticked of @rows.Count</strong> ticked.
+            </p>
+            <p class="muted">
+                Counts are <strong>packages</strong>, not amounts: four milk means four jugs. Anything Shelf
+                Aware wasn't sure about is left unticked with its reason showing — it would rather ask than
+                put a guess in your pantry.
+            </p>
+            <div class="review-actions">
+                <button type="button" class="secondary" @onclick="() => SetAll(true)">Tick all</button>
+                <button type="button" class="secondary" @onclick="() => SetAll(false)">Untick all</button>
+            </div>
+            <div class="table-scroll table-scroll--capped">
+            <table>
+                <caption class="visually-hidden">Items found in your photos, to review before counting</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">Count it</th>
+                        <th scope="col">What it saw</th>
+                        <th scope="col">Item</th>
+                        <th scope="col">How many</th>
+                        <th scope="col">Category</th>
+                        <th scope="col">Product match</th>
+                        <th scope="col"><span class="visually-hidden">Actions</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in rows)
+                    {
+                        <tr class="@(row.Confidence < ConfidentEnough ? "low-confidence" : "")">
+                            <td>
+                                <input type="checkbox" @bind="row.Include"
+                                       aria-label="Count @DescribeRow(row)" />
+                            </td>
+                            <td class="raw">
+                                @if (row.LabelText is { } label)
+                                {
+                                    <span>“@label”</span>
+                                }
+                                <div>
+                                    <span class="chip chip-@(row.Confidence < ConfidentEnough ? "duesoon" : "stocked")"
+                                          title="@EvidenceTitle(row.Evidence)">@EvidenceChip(row.Evidence)</span>
+                                    <span class="muted small">@row.Confidence.ToString("P0") sure</span>
+                                </div>
+                            </td>
+                            <td>
+                                <input @bind="row.Name" aria-label="Item name for @DescribeRow(row)" />
+                                @if (row.Evidence == CensusEvidence.Unidentified)
+                                {
+                                    <div class="muted small">Name it if you know what it is.</div>
+                                }
+                            </td>
+                            <td>
+                                <input type="number" step="0.01" min="0" @bind="row.Count" size="5"
+                                       aria-label="How many @DescribeRow(row)" />
+                                @if (Note(row.ProductId) is { Counted: true } counted)
+                                {
+                                    <div class="muted small">
+                                        Was @QuantityFormat.Describe(counted.OnHand, counted.Unit)@(counted.CountedAt is { } at
+                                            ? $", counted {SignalDate.Of(at):MMM d}" : "").
+                                    </div>
+                                }
+                            </td>
+                            <td>
+                                <select @bind="row.Category" aria-label="Category for @DescribeRow(row)">
+                                    @foreach (var c in Enum.GetValues<Category>())
+                                    {
+                                        <option value="@c">@c</option>
+                                    }
+                                </select>
+                            </td>
+                            <td>
+                                <select @bind="row.ProductId" aria-label="Product match for @DescribeRow(row)">
+                                    <option value="0">➕ create new product</option>
+                                    @foreach (var p in products)
+                                    {
+                                        <option value="@p.Id">@p.Name</option>
+                                    }
+                                </select>
+                                @if (Note(row.ProductId) is { FastMoverDays: { } days })
+                                {
+                                    @* Steering, never a gate (CountingAdvice): a fast mover's count is wrong
+                                       within days and the drift check then keeps asking, which reads as the
+                                       feature being broken. A whole-fridge census is exactly where someone
+                                       counts the milk, so the warning belongs on the row, not just on the
+                                       product page they may never open. *@
+                                    <div class="muted small">Bought about every @days days — a count here
+                                        would be hard to keep true.</div>
+                                }
+                            </td>
+                            <td>
+                                <button class="secondary" @onclick="() => rows.Remove(row)"
+                                        aria-label="Remove @DescribeRow(row) from the list"><span aria-hidden="true">✕</span></button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            </div>
+            <div class="review-actions">
+                <button @onclick="ConfirmAll" disabled="@(ticked == 0 || confirming)">
+                    @(confirming ? "Saving…" : $"Count {ticked} item{(ticked == 1 ? "" : "s")}")
+                </button>
+                <button class="secondary" @onclick="Reset" disabled="@confirming">Start over</button>
+            </div>
+            @if (ticked == 0)
+            {
+                <p class="muted small">Nothing ticked yet — tick what's on the shelf.</p>
+            }
+            <p class="muted small">
+                Counting an item starts keeping a number for it: receipts add to it, cooking takes from it,
+                and when it drifts Shelf Aware asks rather than guessing. Stop any of them any time from the
+                product's page.
+            </p>
+            @if (confirmError is not null)
+            {
+                <p class="error" role="alert">@confirmError</p>
+            }
+        }
+    </section>
+}
+else if (phase == Phase.Done)
+{
+    <section class="panel">
+        <p>✅ @confirmSummary</p>
+        <p class="muted">
+            No purchases were recorded — a count says what you have, not what you bought, so your refill
+            rhythms are untouched.
+        </p>
+        <div class="review-actions">
+            <button @onclick="Reset">Count another shelf</button>
+        </div>
+        <p class="muted small">The numbers live on each item's page — see them on <a href="/products">Products</a>.</p>
+    </section>
+}
+
+@code {
+    private enum Phase { Idle, Reading, Review, Done, Error }
+
+    /// <summary>At or above this the reader wasn't guessing, so the row is ticked for you. The SAME 0.6 the
+    /// receipt review grid highlights a low-confidence line at — one number in the app for "the model was
+    /// guessing", rather than a second threshold that could drift away from it.</summary>
+    private const decimal ConfidentEnough = 0.6m;
+
+    private const int MaxPhotos = 8;
+
+    private Phase phase = Phase.Idle;
+    private string? errorMessage;
+    private List<IBrowserFile> selectedFiles = [];
+    private int photoCount;
+    private List<ReviewRow> rows = [];
+    private List<Product> products = [];
+    private Dictionary<int, ProductNote> notes = [];
+    private bool confirming;
+    private string? confirmError;
+    private string confirmSummary = "";
+
+    private int ticked => rows.Count(r => r.Include);
+
+    private sealed class ReviewRow
+    {
+        public bool Include { get; set; }
+        public string? LabelText { get; init; }
+        public CensusEvidence Evidence { get; init; }
+        public string Name { get; set; } = "";
+        public decimal Count { get; set; } = 1;
+        public Category Category { get; set; }
+        public decimal Confidence { get; init; }
+        public int ProductId { get; set; } // 0 = create new
+    }
+
+    /// <summary>What the app already knows about a product the grid might land on: the count it holds now,
+    /// and whether its rhythm makes counting a chore. Computed once per load and looked up by the row's
+    /// CURRENT match, so changing the dropdown updates both without another query.</summary>
+    private sealed record ProductNote(bool Counted, decimal OnHand, string? Unit, DateTimeOffset? CountedAt, int? FastMoverDays);
+
+    private ProductNote? Note(int productId) => productId > 0 && notes.TryGetValue(productId, out var n) ? n : null;
+
+    private static string EvidenceChip(CensusEvidence evidence) => evidence switch
+    {
+        CensusEvidence.Label => "read the label",
+        CensusEvidence.Appearance => "by sight",
+        _ => "couldn't tell",
+    };
+
+    private static string EvidenceTitle(CensusEvidence evidence) => evidence switch
+    {
+        CensusEvidence.Label => "Identified from text printed on the package",
+        CensusEvidence.Appearance => "No label was readable — identified by how it looks",
+        _ => "A package is there, but it couldn't be identified — name it yourself",
+    };
+
+    // Rows are edited live, so a stable description for screen readers: the name if there is one, else what
+    // little is known about the row.
+    private static string DescribeRow(ReviewRow row) =>
+        row.Name is { Length: > 0 } name ? name : row.LabelText ?? "this unidentified item";
+
+    private void SetAll(bool include)
+    {
+        foreach (var row in rows) row.Include = include;
+    }
+
+    private void OnFilesSelected(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            selectedFiles = e.GetMultipleFiles(MaxPhotos).ToList();
+        }
+        catch (InvalidOperationException)
+        {
+            selectedFiles = [];
+            errorMessage = $"Please select up to {MaxPhotos} photos at a time.";
+            phase = Phase.Error;
+            return;
+        }
+        errorMessage = null;
+        if (phase == Phase.Error) phase = Phase.Idle;
+    }
+
+    private async Task Read()
+    {
+        if (selectedFiles.Count == 0) return;
+        phase = Phase.Reading;
+        errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var photos = new List<ShelfPhoto>();
+            foreach (var file in selectedFiles)
+            {
+                photos.Add(await PhotoLoader.LoadAsync(file));
+            }
+            photoCount = photos.Count;
+
+            await LoadCatalogAsync();
+            var result = await Reader.ReadAsync(photos, products.Select(p => p.Name).Distinct().ToList());
+
+            // Nothing is persisted either way: the photo of someone's freezer goes to the model and stops
+            // there. That's the whole reason there's no Retry here as there is for a receipt — there is no
+            // saved copy to retry FROM, and re-photographing a shelf you are standing at is cheap.
+            if (!result.Success)
+            {
+                errorMessage = $"Sorry — that couldn't be read. Try again, or take the photo a bit closer. ({result.Error})";
+                phase = Phase.Error;
+                return;
+            }
+
+            rows = result.Items.Select(i => new ReviewRow
+            {
+                LabelText = i.LabelText,
+                Evidence = i.Evidence,
+                Name = i.NormalizedName,
+                Count = i.VisibleCount,
+                Category = i.Category,
+                Confidence = i.Confidence,
+                // Trust order, one step shorter than a receipt's: there are no merchant aliases to learn
+                // from (an alias keys on a merchant and a printed line, and a shelf has neither), so the
+                // model's own match leads and ProductMatcher backs it up.
+                ProductId = Match(i)?.Id ?? 0,
+                // Unticked below 0.6 — a guess has to be opted into. A legible label or an unmistakable
+                // bunch of bananas scores above it and isn't punished for having no barcode.
+                Include = i.Confidence >= ConfidentEnough,
+            }).ToList();
+
+            confirmError = null;
+            phase = Phase.Review;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Reading a shelf census failed.");
+            errorMessage = "Sorry — something went wrong reading those photos. Please try again.";
+            phase = Phase.Error;
+        }
+        finally
+        {
+            selectedFiles = [];
+        }
+    }
+
+    private Product? Match(CensusItem item)
+    {
+        // An unidentified package names a CONTAINER, so matching it against the catalog would attach a
+        // count to a product on no evidence. The reader already refuses to suggest one; this is the same
+        // rule held on the fuzzy fallback, which would happily match "unlabeled tub" to a tub of anything.
+        if (item.Evidence == CensusEvidence.Unidentified) return null;
+        if (item.SuggestedProductName is { Length: > 0 } suggested
+            && products.FirstOrDefault(p => string.Equals(p.Name, suggested, StringComparison.OrdinalIgnoreCase)) is { } exact)
+        {
+            return exact;
+        }
+        return ProductMatcher.Resolve(item.NormalizedName, products);
+    }
+
+    private async Task LoadCatalogAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        products = await db.Products
+            .AsNoTracking()
+            .Include(p => p.Purchases)
+            .Include(p => p.Signals)
+            .OrderBy(p => p.Name)
+            .ToListAsync();
+
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        notes = products.ToDictionary(p => p.Id, p =>
+        {
+            var median = ReplenishmentPredictor.Predict(p, today).MedianIntervalDays;
+            return new ProductNote(
+                Counted: p.TrackQuantity && p.QuantityOnHand is not null,
+                OnHand: p.QuantityOnHand ?? 0m,
+                Unit: p.DefaultUnit,
+                CountedAt: p.QuantityCountedAt,
+                FastMoverDays: CountingAdvice.IsHardToKeepTrue(median) ? (int)Math.Round(median!.Value) : null);
+        });
+    }
+
+    private async Task ConfirmAll()
+    {
+        if (confirming) return;
+        confirming = true;
+        confirmError = null;
+        try
+        {
+            var confirmed = rows
+                .Where(r => r.Include)
+                .Select(r => new CensusConfirmationService.CensusRow(r.Name, r.Category, r.Count, r.ProductId))
+                .ToList();
+            var outcome = await Confirmer.ConfirmAsync(confirmed);
+
+            confirmSummary = Summary(outcome);
+            phase = Phase.Done;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // One SaveChanges in a single transaction, so a failure persists nothing. Pressing it again is
+            // genuinely safe here in a way a receipt confirm isn't: a count is a total rather than an
+            // increment, and an unmatched row whose name already exists resolves to that product instead of
+            // creating a twin — so a retry after an ambiguous failure can't double anything.
+            Logger.LogError(ex, "Confirming a shelf census failed.");
+            confirmError = "Couldn't save these counts — nothing was recorded. Try again; re-counting the same numbers is safe.";
+        }
+        finally
+        {
+            confirming = false;
+        }
+    }
+
+    private static string Summary(CensusConfirmationService.CensusOutcome outcome) =>
+        $"Counted {outcome.Counted} item{(outcome.Counted == 1 ? "" : "s")}" +
+        (outcome.NewProducts > 0 ? $" ({outcome.NewProducts} new product{(outcome.NewProducts == 1 ? "" : "s")})" : "") +
+        "." +
+        (outcome.AssertedOut > 0
+            ? $" {outcome.AssertedOut} counted at zero — recorded as running out."
+            : "") +
+        (outcome.Retracked > 0
+            ? $" Started tracking {outcome.Retracked} previously ignored item{(outcome.Retracked == 1 ? "" : "s")} again."
+            : "") +
+        (outcome.Refused > 0
+            ? $" {outcome.Refused} row{(outcome.Refused == 1 ? " was" : "s were")} skipped — a row needs a name and a count of zero or more."
+            : "");
+
+    private void Reset()
+    {
+        phase = Phase.Idle;
+        rows = [];
+        selectedFiles = [];
+        photoCount = 0;
+        errorMessage = null;
+        confirmError = null;
+    }
+}

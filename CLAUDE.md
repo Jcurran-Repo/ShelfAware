@@ -67,11 +67,12 @@ Beyond the spec's 3 pages, the app now has Dashboard (`/`), Upload (`/receipt`),
 Products (`/products`), Grocery List (`/list`, by aisle + copy/print + a manual **Extras**
 section), Trends (`/trends`, price tickers + spend forecast — page component is
 `SpendInsight.razor`), Product Detail (`/product/{id}`, rhythm + price-history chart),
-Accuracy (`/accuracy`, renders `eval-results.json`), **Recipes (`/recipes`)**, and
-Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptTotals`, Core).
+Accuracy (`/accuracy`, renders `eval-results.json`), **Recipes (`/recipes`)**,
+Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptTotals`, Core), and
+**Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1210 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1270 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see item 31).
 
@@ -1241,6 +1242,71 @@ bUnit pages/components — see item 31).
      a reload resumes mid-tour, Done persists across a reload, Settings replays from step 1, and on mobile
      it becomes a full-width sheet with the voice FAB standing down. No console or server errors, so the
      strict CSP holds.
+
+37. **v4.6 — the shelf-photo census (2026-08-02, branch `feature/shelf-census`).** §13.8, the last unbuilt
+   phase of the counting arc: photograph a shelf, freezer or cupboard and the app lists what it can see with
+   how many of each; correct it and it becomes an attested count. Jordan's ask, and its ruling constraint,
+   was epistemic — *"best guess what's there… don't make stuff up, but if a can says what it is then good."*
+   - ⚠️ **`CensusEvidence` is that constraint made structural, and it is the whole design.** A receipt is
+     text — `raw_text` is either there or it isn't — so extraction never has to say how it knows. A photo
+     has no such floor: a freezer LOOKS like a freezer, and a model asked "what's in here?" can produce a
+     plausible pantry out of priors alone with every word invented, indistinguishable from having read the
+     labels. So every item says how it was known: `Label` (printed text, kept verbatim in `LabelText` — the
+     census's `raw_text`, checkable against the photo in a second), `Appearance` (no legible label, but a
+     bunch of bananas needs no barcode), `Unidentified` (a package is there and it can't say what — the NAME
+     then describes the package). One enum, three answers, rather than blending "I read it" and "I reckon"
+     into one confidence number.
+   - ⚠️ **Three of the contract's rules are enforced in the PARSE, not trusted to the prompt**, because a
+     shelf photo's output can't be checked against anything the way a receipt's can: a `Label` claim with no
+     readable text is downgraded to `Appearance` (nothing to check = not a label claim); an `Unidentified`
+     item's confidence is capped below the grid's tick threshold and may never carry a product match; and
+     `visible_count` floors at 1 — reporting an item means something was SEEN, and a zero reaching the grid
+     could be confirmed into an **attested** zero, which mints a real `OutNow` into the cadence engine
+     (§13.4). A machine's arithmetic must never mint one; a human typing 0 in the grid still can.
+   - **Ticked at ≥ 0.6, the SAME number the receipt grid highlights a low-confidence line at** — deliberately
+     not a second threshold that could drift from it. A guess is opted into; a legible label isn't punished.
+   - **`CensusConfirmationService` is the census's own confirm path** (§13.8's ⚠️), and the ★ rule is the
+     reason: it writes products + `StockLedger.Attest` and **never a `PurchaseEvent`**. Three calls the spec
+     didn't settle, all now in DESIGN.md: rows are **summed per product** before one `Attest` (an
+     attestation states a TOTAL, so row-by-row would let the second silently overwrite the first); a
+     negative count is **refused, not clamped** (clamping lands on an asserted out and files an `OutNow` off
+     a typo); and an unmatched row whose name already exists **resolves to that product** — the duplicate
+     guard where it matters most, and what lets the failure message honestly promise that pressing Confirm
+     again is safe.
+   - **Nothing is persisted but the counts** (Jordan's call). No audit copy, no census table, nothing new
+     for export or "delete my data" to reach — so a photograph of the inside of someone's home never lands
+     on disk and the feature adds no tenant table to get wrong. Costs the receipt path's Retry and an
+     abandoned review; both are cheap when you're standing at the shelf.
+   - ⚠️ **`IShelfPhotoLoader` exists because `RequestImageFileAsync` cannot run under bUnit at all** —
+     probed, not assumed: it throws outright, so without a seam the entire review grid, its tick defaults,
+     its pre-fill and its confirm would be hand-verifiable only. It's a browser seam, which is exactly what
+     `PageTestContext` fakes by policy. Worth knowing for the receipt Upload page, whose image path has the
+     same untestable shape today (it tests via PDFs, which skip the resize).
+   - ⚠️ **A live probe against the real API found a prompt gap that wasn't one.** Synthetic shelves (labelled
+     cans, a labelled box, unlabelled tubs, an EMPTY shelf, a non-shelf) went through the real reader. The
+     anti-invention rules held first time and the empty shelf is the one that matters — a shelf that *implies*
+     a pantry returned nothing. But the unlabelled tubs were dropped, so I strengthened three prompt rules;
+     they were still dropped; raising the tubs' CONTRAST fixed it. **Isolating it — original prompt, high
+     contrast — showed the tubs reported fine, so contrast was the whole story and the prompt edits had
+     addressed a failure mode with no evidence behind it.** The counterweight paragraph I'd added to rule 2
+     was reverted (rule 2 carries the primary "don't invent" instruction and must not be diluted by an
+     unvalidated hedge); rule 3's "you must still return a row" and rule 10's clutter carve-out were KEPT,
+     on wording grounds that stand on their own — rule 3 read as permissive ("is useful") where an
+     instruction was meant, and rule 10's "skip clutter / report food and household consumables" genuinely
+     left an unnamed container in neither category. **The lesson is the old one: change one thing.**
+   - ⚠️ **Every new page test was mutation-checked** (item 34's rule), and one was found vacuous by it:
+     `An_unidentified_package_is_never_pre_matched_to_a_product` passed with its guard removed, because the
+     two names I'd picked didn't fuzzy-match anyway. It now seeds "Freezer Bag" against a read of "frosted
+     freezer bag" — a collision `ProductMatcher` really makes, asserted in the test itself — so four frosted
+     parcels can't pre-fill the household's box of freezer bags. Both that guard and the tick default fail
+     when mutated.
+   - **1270 tests green, 0 warnings** on a non-incremental Release build (1210 before; +60: 19 reader, 21
+     confirm service, 20 page). No schema change — `TrackQuantity`/`QuantityOnHand`/`QuantityCountedAt`
+     already exist, and a census writes nothing else. No new demo seed either: the census's OUTPUT (a counted
+     product with no purchases) is already seeded as `Quarter Cow Ground Beef` (item 25) — a census is an act,
+     not a state.
+   - **Not yet live-verified in the browser** — the page needs a signed-in account and creating one isn't
+     mine to do. The reader half IS live-verified against the real API (above).
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
