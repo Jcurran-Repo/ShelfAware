@@ -565,9 +565,13 @@ input:focus, select:focus {
     .tour-spot { animation: tour-spot-in 0.9s ease-out; }
 }
 
+/* ⚠️ Animates the OFFSET, never the colour. An animation is not guaranteed to run — a background tab,
+   a throttled compositor, a device under load — and it holds its first keyframe when it stalls. A first
+   keyframe of "outline-color: transparent" therefore leaves the ring INVISIBLE in exactly the case the
+   visitor most needs it, which is how the first version of this shipped. Every frame here is a ring. */
 @keyframes tour-spot-in {
-    from { outline-color: transparent; }
-    50%  { outline-color: var(--accent); }
+    from { outline-offset: 12px; }
+    to   { outline-offset: 4px; }
 }
 
 /* Narrow screens: the panel becomes a bottom sheet spanning the width, which would sit right on top of

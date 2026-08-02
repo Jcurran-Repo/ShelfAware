@@ -1,4 +1,5 @@
 using System.Reflection;
+using Bunit.TestDoubles;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
@@ -19,7 +20,11 @@ public class GuidedTourTests : PageTestContext
     private const string Highlight = "shelfawareTour.highlight";
     private const string SetActive = "shelfawareTour.setActive";
 
-    private NavigationManager Nav => Services.GetRequiredService<NavigationManager>();
+    /// <summary>⚠️ History, not Uri. Re-navigating to the page you are already on leaves the URI
+    /// identical, so a Uri comparison cannot tell "didn't navigate" from "navigated to the same place"
+    /// — and it is the navigating that does the damage, tearing the page down and rebuilding it.
+    /// History counts the act.</summary>
+    private BunitNavigationManager Nav => (BunitNavigationManager)Services.GetRequiredService<NavigationManager>();
 
     private static string Title(IRenderedComponent<GuidedTour> cut) => Collapsed(cut.Find(".tour-title"));
 
@@ -53,15 +58,15 @@ public class GuidedTourTests : PageTestContext
 
         // Steps 1 and 2 are both the dashboard: the tour must advance WITHOUT re-navigating, or the
         // page it is describing is torn down and rebuilt underneath the panel.
-        var before = Nav.Uri;
+        var before = Nav.History.Count;
         Click(cut, "Next");
         Assert.Equal(TourScript.Steps[1].Title, Title(cut));
-        Assert.Equal(before, Nav.Uri);
+        Assert.Equal(before, Nav.History.Count);
 
         // Step 3 is a different page, so this one does navigate.
         Click(cut, "Next");
         Assert.Equal(TourScript.Steps[2].Title, Title(cut));
-        Assert.EndsWith(TourScript.Steps[2].Route, Nav.Uri);
+        Assert.EndsWith(TourScript.Steps[2].Route, Nav.History.Last().Uri);
     }
 
     [Fact]
@@ -136,9 +141,9 @@ public class GuidedTourTests : PageTestContext
         var cut = Render<GuidedTour>();
 
         cut.WaitForAssertion(() => Assert.Equal(TourScript.Steps[2].Title, Title(cut)));
-        // Resuming must NOT navigate: the visitor is already looking at a page, and yanking them to
-        // step three's route on a plain page load would be the tour hijacking an ordinary visit.
-        Assert.DoesNotContain(TourScript.Steps[2].Route.TrimStart('/'), Nav.Uri);
+        // Resuming must NOT navigate at all: the visitor is already looking at a page, and yanking them
+        // to step three's route on a plain page load would be the tour hijacking an ordinary visit.
+        Assert.Empty(Nav.History);
     }
 
     [Fact]
