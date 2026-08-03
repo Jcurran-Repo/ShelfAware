@@ -78,19 +78,13 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
     /// act. Stopping counting is deliberate and its stored number is a historical fact the app promises
     /// to keep; a census overwrites both, so it has to say so rather than let the one thing the household
     /// switched off be the one thing the summary doesn't mention.</param>
-    /// <param name="AssertedOut">Products counted at zero that HAVE been bought here — a human statement
-    /// of an outage (§13.4), each of which wrote a real <c>OutNow</c> against a rhythm that can later
-    /// contradict it.</param>
-    /// <param name="ZeroedWithoutSignal">Products counted at zero with no purchase history. The number is
-    /// recorded exactly as for any other count; only the <c>OutNow</c> is withheld, because with no
-    /// rhythm behind it that signal could never be cleared. Reported separately so the summary can say
-    /// which of the two happened — "you have none" and "you have run out" are different claims, and the
-    /// household should not have to infer which one the app filed.</param>
+    /// <param name="AssertedOut">Products counted at zero — a human statement of an outage (§13.4), each
+    /// of which wrote a real <c>OutNow</c>.</param>
     /// <param name="Refused">Rows that could not be recorded, each with its reason. Reported rather than
     /// swallowed: a row the household ticked and then didn't get is something they have to be told.</param>
     public record CensusOutcome(
         int Counted, int Rows, int NewProducts, int Retracked, int ResumedCounting, int AssertedOut,
-        int ZeroedWithoutSignal, IReadOnlyList<RefusedRow> Refused);
+        IReadOnlyList<RefusedRow> Refused);
 
     /// <summary>Record the reviewed rows as attested counts. Every row here is one a human ticked and
     /// checked — the reader only ever proposed them.</summary>
@@ -99,13 +93,6 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var products = await db.Products.ToListAsync(cancellationToken);
-        // Which products have ever been bought. A zero is only safe evidence against a rhythm that can
-        // later contradict it (see StockLedger.CountOutcome) — one projected id query rather
-        // than loading every purchase, since all this decides is "any at all?".
-        var hasPurchases = (await db.PurchaseEvents
-            .Select(p => p.ProductId)
-            .Distinct()
-            .ToListAsync(cancellationToken)).ToHashSet();
 
         // One trip's photos can name a single new item on two rows — map both to one new product, keyed by
         // item name, exactly as the receipt confirm does.
@@ -269,31 +256,24 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
 
         var now = DateTimeOffset.Now;
         var assertedOut = 0;
-        var zeroedWithoutSignal = 0;
         foreach (var (product, count) in totals)
         {
             // Attest, not Add: this is a LOOK at the shelf, so it states the total and re-anchors the
             // attestation clock §13.5's drift check measures from. It also opts the product into counting
             // (the ledger's rule: typing a number IS asking for it to be counted).
-            // What a zero MEANS is the LEDGER's call, not this service's — see StockLedger.CountOutcome.
-            // Holding that rule here instead was the bug: the product page kept writing the pin this path
-            // had decided to withhold, for the same act on the same product.
-            switch (StockLedger.Attest(product, count, now, hasPurchases.Contains(product.Id)))
-            {
-                case StockLedger.CountOutcome.AssertedOutage:
-                    db.InventorySignals.Add(new InventorySignal
-                    {
-                        Product = product,
-                        Kind = SignalKind.OutNow,
-                        SignaledAt = now,
-                    });
-                    assertedOut++;
-                    break;
+            if (!StockLedger.Attest(product, count, now)) continue;
 
-                case StockLedger.CountOutcome.ZeroWithoutRhythm:
-                    zeroedWithoutSignal++;
-                    break;
-            }
+            // §13.4: a human's zero is real evidence and owes an OutNow, which feeds the burn-rate
+            // rhythm. Only a human can get here — the reader floors its proposals at 1, so this zero
+            // was typed. Unconditional, and see StockLedger.Attest for why an attempt to withhold it for
+            // a product with no purchase history was measured and reverted.
+            db.InventorySignals.Add(new InventorySignal
+            {
+                Product = product,
+                Kind = SignalKind.OutNow,
+                SignaledAt = now,
+            });
+            assertedOut++;
         }
 
         await db.SaveChangesAsync(cancellationToken);
@@ -304,7 +284,6 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
             Retracked: retracked.Count,
             ResumedCounting: resumed.Count,
             AssertedOut: assertedOut,
-            ZeroedWithoutSignal: zeroedWithoutSignal,
             Refused: refused);
     }
 }

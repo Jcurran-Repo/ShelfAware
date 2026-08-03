@@ -686,13 +686,6 @@ else if (phase == Phase.Done)
         (outcome.AssertedOut > 0
             ? $" {outcome.AssertedOut} counted at zero — recorded as running out."
             : "") +
-        // A different claim from the one above, so it gets different words: the number is written either
-        // way, but only an item you actually buy here gets filed as having RUN OUT (that's what feeds the
-        // rhythm and the grocery list). Saying "recorded as running out" for both would tell the
-        // household the app did something it deliberately didn't.
-        (outcome.ZeroedWithoutSignal > 0
-            ? $" {outcome.ZeroedWithoutSignal} counted at zero — recorded as none on hand, but not as running out, since there's nothing bought here to measure that against."
-            : "") +
         (outcome.Retracked > 0
             ? $" Started tracking {outcome.Retracked} previously ignored item{(outcome.Retracked == 1 ? "" : "s")} again."
             : "") +

@@ -39,24 +39,6 @@ public class EfPantryStoreTests : IDisposable
         return (product.Id, purchase.Id);
     }
 
-    /// <summary>A counted product this household has NEVER bought — §13.8's census population (stock
-    /// bought pre-app, elsewhere, gifted, or in bulk), which has no purchase history by construction.</summary>
-    private async Task<int> CountedButNeverBought(decimal onHand)
-    {
-        await using var db = _db.CreateDbContext();
-        var product = new Product
-        {
-            Name = "Quarter Cow Ground Beef",
-            Category = Category.Meat,
-            TrackQuantity = true,
-            QuantityOnHand = onHand,
-            QuantityCountedAt = new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero),
-        };
-        db.Products.Add(product);
-        await db.SaveChangesAsync();
-        return product.Id;
-    }
-
     private async Task<Product> Reload(int productId)
     {
         await using var db = _db.CreateDbContext();
@@ -146,36 +128,6 @@ public class EfPantryStoreTests : IDisposable
         await using var db = _db.CreateDbContext();
         var signal = Assert.Single(await db.InventorySignals.Where(s => s.ProductId == productId).ToListAsync());
         Assert.Equal(SignalKind.OutNow, signal.Kind);
-    }
-
-    [Fact]
-    public async Task A_zero_on_a_product_never_bought_here_records_the_number_but_no_outage()
-    {
-        // ⚠️ The rule that must NOT differ between surfaces. It lived in the census alone for one commit,
-        // and this path went on writing the pin the census had just decided to withhold — same act, same
-        // product, two answers. It sits in StockLedger now, so every count-writer gets it; this test is
-        // the store's half of proving that.
-        var productId = await CountedButNeverBought(onHand: 5);
-
-        Assert.True(await _store.SetQuantityAsync(productId, 0));
-
-        await using var db = _db.CreateDbContext();
-        Assert.Empty(await db.InventorySignals.Where(s => s.ProductId == productId).ToListAsync());
-        Assert.Equal(0m, (await Reload(productId)).QuantityOnHand); // the NUMBER is still recorded
-    }
-
-    [Fact]
-    public async Task Using_the_last_one_of_a_product_never_bought_here_also_files_no_outage()
-    {
-        // The relative road to an empty shelf asks the same question, so it must get the same answer —
-        // otherwise "Used one" down to none pins what typing 0 does not.
-        var productId = await CountedButNeverBought(onHand: 1);
-
-        Assert.True(await _store.SetQuantityAsync(productId, -1, relative: true));
-
-        await using var db = _db.CreateDbContext();
-        Assert.Empty(await db.InventorySignals.Where(s => s.ProductId == productId).ToListAsync());
-        Assert.Equal(0m, (await Reload(productId)).QuantityOnHand);
     }
 
     [Fact]

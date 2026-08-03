@@ -164,24 +164,14 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory) : IPantryStore
         // land on the same reply: state a fresh count to (re)start.
         if (relative && (!product.TrackQuantity || product.QuantityOnHand is null)) return false;
 
-        // Whether this household has ever bought it — the ledger decides what a zero MEANS from this, and
-        // it must be asked rather than read off product.Purchases, which FindAsync above does not load.
-        // Projected to a bool so the query costs one EXISTS rather than materializing the history.
-        var hasPurchaseHistory = await db.PurchaseEvents
-            .AnyAsync(p => p.ProductId == productId, cancellationToken);
-
-        var outcome = relative
-            ? StockLedger.AdjustByHuman(product, quantity, DateTimeOffset.Now, hasPurchaseHistory)
-            : StockLedger.Attest(product, quantity, DateTimeOffset.Now, hasPurchaseHistory);
+        var assertedOut = relative
+            ? StockLedger.AdjustByHuman(product, quantity, DateTimeOffset.Now)
+            : StockLedger.Attest(product, quantity, DateTimeOffset.Now);
 
         // §13.4: a HUMAN'S zero is real evidence, so it writes the outage the burn-rate rhythm learns
         // from — dated by running out rather than by remembering to report it. A zero that automated
         // decrements merely arrived at never reaches this method.
-        // ⚠️ ZeroWithoutRhythm records the number and writes NO signal — see the ledger for why. The
-        // decision is the ledger's precisely so this surface and the census cannot answer it differently
-        // for the same act on the same product, which is exactly what happened when only one of them held
-        // the rule.
-        if (outcome is StockLedger.CountOutcome.AssertedOutage)
+        if (assertedOut)
         {
             db.InventorySignals.Add(new InventorySignal
             {

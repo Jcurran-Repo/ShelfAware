@@ -53,49 +53,6 @@ public class ProductDetailCountPanelTests : PageTestContext
         return await raw.Products.IgnoreQueryFilters().Include(p => p.Signals).SingleAsync(p => p.Id == id);
     }
 
-    // ------------------------------------------------------- what a zero on the shelf is told it means
-
-    [Fact]
-    public void A_zero_with_no_buying_history_says_it_is_recorded_but_not_filed_as_running_out()
-    {
-        // ⚠️ The copy branch the ledger change made necessary. With no purchases the outage signal is
-        // deliberately withheld (it could never be cleared), so this product is NOT pinned — and the
-        // page's not-pinned branch used to blame cooking and receipts that never touched it, tell a
-        // household who had just stood at the shelf and typed 0 that "nothing here has said so out
-        // loud", and then invite them to do the one thing that would have pinned it forever.
-        var id = Seed(p =>
-        {
-            p.TrackQuantity = true;
-            p.QuantityOnHand = 0m;
-            p.QuantityCountedAt = Clock(1);
-        });
-
-        var panel = CountPanel(RenderDetail(id));
-
-        Assert.Contains("that's on record", panel);
-        Assert.Contains("isn't filed as running out", panel);
-        Assert.DoesNotContain("nothing here has said so out loud", panel);
-    }
-
-    [Fact]
-    public void A_zero_a_receipt_or_a_cook_arrived_at_still_asks_the_household_to_confirm_it()
-    {
-        // The complement, and the branch that must survive: with buying history behind it and no OutNow
-        // on record, the zero really was arithmetic — §13.4's hypothesis worth raising.
-        var id = Seed(p =>
-        {
-            p.TrackQuantity = true;
-            p.QuantityOnHand = 0m;
-            p.QuantityCountedAt = Clock(1);
-            p.Purchases = Buys(30, 15);
-        });
-
-        var panel = CountPanel(RenderDetail(id));
-
-        Assert.Contains("nothing here has said so out loud", panel);
-        Assert.DoesNotContain("isn't filed as running out", panel);
-    }
-
     // ------------------------------------------------------------------- the confidence bands
 
     [Fact]

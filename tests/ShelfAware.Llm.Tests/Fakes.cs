@@ -205,15 +205,10 @@ internal sealed class FakePantryStore : IPantryStore
         // a typo); a relative move needs an ACTIVE baseline — unknown and dormant counts both refuse.
         if (!relative && quantity < 0) return Task.FromResult(false);
         if (relative && (!product.TrackQuantity || product.QuantityOnHand is null)) return Task.FromResult(false);
-        // ⚠️ The real store asks its database whether this product has EVER been bought, and the ledger
-        // decides from that whether a zero owes an OutNow. Modelled here off the seeded purchases so this
-        // fake cannot be more permissive than the thing it stands in for — a fake that always said "yes"
-        // would file outages the product withholds and make any test of that rule pass vacuously.
-        var hasPurchaseHistory = product.Purchases.Count > 0;
-        var outcome = relative
-            ? StockLedger.AdjustByHuman(product, quantity, DateTimeOffset.Now, hasPurchaseHistory)
-            : StockLedger.Attest(product, quantity, DateTimeOffset.Now, hasPurchaseHistory);
-        if (outcome is StockLedger.CountOutcome.AssertedOutage) Signals.Add((productId, SignalKind.OutNow));
+        var assertedOut = relative
+            ? StockLedger.AdjustByHuman(product, quantity, DateTimeOffset.Now)
+            : StockLedger.Attest(product, quantity, DateTimeOffset.Now);
+        if (assertedOut) Signals.Add((productId, SignalKind.OutNow));
         Quantities.Add((productId, quantity, relative, stopCounting));
         return Task.FromResult(true);
     }

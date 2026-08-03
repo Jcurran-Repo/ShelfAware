@@ -72,7 +72,7 @@ Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptT
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1340 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1333 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see item 31).
 
@@ -1525,27 +1525,42 @@ bUnit pages/components — see item 31).
    done that (8 fixes → 15 found → 7 found → 7 found), so the pattern itself became the finding: **a fix
    pass needs its own review, and patching a rule at one call site keeps producing the next round's
    defects.** Jordan's call was to stop patching and fix the altitude. What that meant:
-   - ⚠️ **The zero rule moved into `StockLedger`** — see DESIGN.md §13.8. Held in the census alone it had
-     already drifted: `EfPantryStore.SetQuantityAsync` still wrote the pin the census withheld, and
-     `ProductDetail` then told a census-zeroed household *"nothing here has said so out loud"* — blaming
-     cooking and receipts that never touched it, beside "you last counted Aug 2", and offering as the
-     remedy the one act that would pin the item forever. `Attest`/`AdjustByHuman` return `CountOutcome`
-     now and take `hasPurchaseHistory` as a REQUIRED parameter, so the compiler catches every caller and
-     no surface can answer the question differently. **Proof it is genuinely central: one mutation in the
-     ledger kills 6 tests across three suites; its inverse kills 11.** Before the move, the same defect
-     needed a separate test per surface and had one.
+   - ⚠️ **The zero rule moved into `StockLedger` — and was then REVERTED WHOLESALE, because the rule
+     itself was wrong.** ✗ **Do not rebuild it.** The premise for withholding an `OutNow` on a
+     rhythm-less product was *"nothing can ever clear it, so the item pins Overdue forever"*. That is
+     false, and one `grep` of `lastStockBack` would have shown it: it is the max of purchase dates **and
+     restock dates**, so a one-tap **Restocked clears the pin** — on the very dashboard card the pin
+     creates. Probed: `zero + OutNow → Overdue/Pinned=True`; `+ Restocked → Unknown/Pinned=False`.
+     <br>The original gate finding said only *"a later census counting it at 3 does not lift it"*, which
+     is true and still is. I generalised that to "unclearable" without checking, and three rounds of
+     design followed from it.
+     <br>⚠️ **And withholding actively broke something**: the `OutNow` was the only thing holding a zero
+     once the count went stale. Probed — `zero, no purchases, counted 200d ago`: with the signal
+     `InStock=0`; without it `InStock=1`, so recipes offered food the household had counted as none.
+     That is item 24's bug with a 90-day fuse, and the change spread it from the census to the product
+     page and the chat tool.
+     <br>What survives the revert: the census's order-independence fix, the `ZeroOnNewProduct` refusal,
+     the dead-clause and stale-comment cleanups. What went: `CountOutcome`, `hasPurchaseHistory`,
+     `ZeroedWithoutSignal`, and `ProductDetail`'s third copy branch (unreachable again once a zero
+     always pins).
+     <br>**The transferable lesson is the cheap check I skipped**: before designing around "X can never
+     happen", probe X. The whole arc cost three rounds and was refuted by four lines of probe output.
    - ⚠️ **A row-level decision that depends on other rows must be settled after all of them.** The
      `ZeroOnNewProduct` refusal was decided where the row sat, so `[Sardines 0, Sardines 2]` refused a row
      and said "nothing was created" about a product the next row created, while `[Sardines 2, Sardines 0]`
      refused nothing. Zero rows are deferred and settled once the census has been read. Pinned by a
      `[Theory]` running both orderings against one assertion set.
-   - ⚠️ **bUnit stops pumping continuations once a component is disposed** — measured, not assumed: park
-     the read, dispose, release the gate, and the reader records ZERO calls. So the captured-token fix
-     (item 39) **cannot be tested at the page level**; a test asserting "no error was logged" passed
-     identically with the fix reverted. It is replaced by a unit test pinning the language fact it rests
-     on (a captured token outlives its source; re-reading `.Token` throws `ObjectDisposedException`, which
-     derives from `InvalidOperationException` and so clears every specific clause), with the page-flow gap
-     stated in the test body rather than left implied. Same honesty as item 27's review-verified handlers.
+   - ⚠️ **"bUnit stops pumping continuations once a component is disposed" was MY false claim, corrected
+     here.** It doesn't. The observation behind it was real — the reader recorded zero calls — but
+     mis-attributed: disposal cancels `pageCts`, so `LoadCatalogAsync`'s own query throws
+     `OperationCanceledException`, the `when` clause rethrows, and control never reaches the reader. The
+     continuation ran fine. Classic failure to isolate one variable.
+     <br>The captured-token fix **is** testable at the page level, and now is:
+     `Leaving_the_page_mid_read_tears_down_quietly_instead_of_logging_an_error`. ⚠️ Two things make it
+     work — upload **TWO** photos and gate the **FIRST** load, so the second loop iteration re-reads the
+     token before any other token-aware work and nothing else can throw first. Gating the catalog load
+     instead is what produced the vacuous version. Mutation-checked: the pre-fix `pageCts.Token` shape
+     fails it.
    - **`RecordingLoggerProvider` (Web.UI.Tests)** exists because teardown behaviour is invisible in
      markup: once a component is disposed there is nothing left to render, so "this navigate-away wrote an
      ERROR into a real deployment's log" can only be observed through the log. Errors only — the level is
@@ -1555,10 +1570,15 @@ bUnit pages/components — see item 31).
      named the deleted `OutageWithoutHistory` (one in a test helper's docstring that asserted the OPPOSITE
      of the rule the same commit shipped); and a page test hard-coded loader copy the product no longer
      produces — the wording is pinned on both sides now.
-   - **1340 tests green, 0 warnings** on a non-incremental Release build (1328 before; +12), UI suite
-     stable across four consecutive runs. ⚠️ Still not browser-verified since item 39: the HEIC path needs
-     a real iOS device, and the `ProductDetail` third-branch copy has unit coverage but has not been seen
-     on screen.
+   - **1333 tests green, 0 warnings** on a non-incremental Release build (1328 before; +5 net — the
+     withholding rule's tests went with it, and the teardown test that replaced a vacuous one is new).
+     ⚠️ Still not browser-verified since item 39: the HEIC path needs a real iOS device.
+   - **The shape of this whole arc, for whoever reads it next.** Item 38 found 15, its fix introduced 5 of
+     item 39's 7, whose fix introduced 5 of item 40's 7 — and item 40's "real" fix turned out to be built
+     on a premise that four lines of probe output refute. **Every round after the first was spent on a
+     problem that did not exist.** The gate caught it each time, which is the argument for the gate; the
+     cheaper argument is the one skipped at the start — *before designing around "X can never happen",
+     spend the grep.*
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

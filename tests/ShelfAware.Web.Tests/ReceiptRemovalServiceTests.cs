@@ -120,7 +120,7 @@ public class ReceiptRemovalServiceTests : IDisposable
         await using (var db = _db.CreateDbContext())
         {
             var p = await db.Products.SingleAsync(x => x.Id == id);
-            StockLedger.Attest(p, 6, DateTimeOffset.Now.AddMinutes(1), hasPurchaseHistory: true); // the look, after the confirm
+            StockLedger.Attest(p, 6, DateTimeOffset.Now.AddMinutes(1)); // the look, after the confirm
             await db.SaveChangesAsync();
         }
 
@@ -141,7 +141,7 @@ public class ReceiptRemovalServiceTests : IDisposable
         await using (var db = _db.CreateDbContext())
         {
             var p = await db.Products.SingleAsync(x => x.Id == id);
-            StockLedger.AdjustByHuman(p, -1, DateTimeOffset.Now.AddMinutes(1), hasPurchaseHistory: true); // 6 → 5, clock untouched
+            StockLedger.AdjustByHuman(p, -1, DateTimeOffset.Now.AddMinutes(1)); // 6 → 5, clock untouched
             await db.SaveChangesAsync();
         }
 
@@ -162,7 +162,7 @@ public class ReceiptRemovalServiceTests : IDisposable
         {
             (await db.Receipts.SingleAsync(r => r.Id == receipt)).ConfirmedAt = null; // a pre-v4.1 confirm
             var p = await db.Products.SingleAsync(x => x.Id == id);
-            StockLedger.Attest(p, 6, DateTimeOffset.Now.AddMinutes(1), hasPurchaseHistory: true); // even with a newer look…
+            StockLedger.Attest(p, 6, DateTimeOffset.Now.AddMinutes(1)); // even with a newer look…
             await db.SaveChangesAsync();
         }
 

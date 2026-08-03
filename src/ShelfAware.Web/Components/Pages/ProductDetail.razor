@@ -336,19 +336,6 @@ else
                     <p class="muted">Down to none, and that's on record as running out — which is what
                         teaches the burn rate. Bought more? Set the new number.</p>
                 }
-                else if (product.Purchases.Count == 0)
-                {
-                    @* ⚠️ A THIRD case, and it exists because the ledger now withholds the outage for a
-                       product with no buying history (StockLedger.CountOutcome.ZeroWithoutRhythm): the
-                       zero is on record as a number but deliberately not as running out. Without this
-                       branch such a household read "nothing here has said so out loud" straight after
-                       standing at the shelf and typing 0 — blamed on cooking and receipts that never
-                       touched it — and was told to do the one thing that would have pinned the item
-                       forever, which is why the signal was withheld. *@
-                    <p class="muted">Down to none, and that's on record. It isn't filed as running
-                        out — nothing's ever been bought here, so there's no rhythm to measure that
-                        against. Bought some? Set the new number and Shelf Aware starts learning one.</p>
-                }
                 else
                 {
                     <p class="muted">Down to none, but nothing here has said so out loud — cooking and

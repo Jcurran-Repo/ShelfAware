@@ -615,33 +615,26 @@ review-grid pattern → confirm. Three photos of a freezer beats reading thirty 
       said "new product". An explicit create-new whose name is taken is **refused and named** instead:
       merging overrules the human, and creating the twin is what the duplicate guard exists to stop, so the
       honest move is to decline and let them say which they meant. The grid says so *before* the confirm.
-    - ⚠️ **A count of ZERO records the NUMBER always; only the `OutNow` is withheld, and only where the
-      product has no purchase history — and that rule lives in `StockLedger`, not here.** The signal needs
-      a rhythm to argue with: with no purchases behind it nothing can re-anchor or clear it — a later
-      census writes no signal either — so it pins the item **Overdue** at the top of the dashboard and the
-      grocery list indefinitely while teaching nothing (`BurnCycles` needs purchases to form a cycle). But
-      the count itself is the human's honest evidence of *how many*, which is exactly what a census is for.
-      <br>⚠️ **Altitude was the fourth mistake and the instructive one.** Implemented in the census alone,
-      the rule immediately drifted: `EfPantryStore.SetQuantityAsync` — the path documented as *the* count
-      writer, shared by the product page and the `set_quantity` chat tool — went on writing the pin the
-      census had just decided to withhold, for the same act on the same product. It is a property of the
-      DATA, not of the surface, so `StockLedger.Attest`/`AdjustByHuman` now take `hasPurchaseHistory` and
-      return `CountOutcome`, and every count writer gets the same answer by construction. The fact is
-      PASSED IN rather than read off `Product.Purchases` because that nav collection is not loaded at
-      every call site — reading it there would silently answer "no history" for a product with years of
-      it. A required parameter also makes the compiler catch the next caller that appears.
-      <br>Both halves of that were got wrong first. Refusing the zero only when the row would CREATE the
-      product missed that **a census's own output has zero purchases by construction** — §13.8 being
-      precisely for stock no receipt knows about — so the second census of a shelf hit the permanent pin
-      the first was refused for. Widening the refusal to every rhythm-less product then declined the
-      *count* along with the outage, leaving that same population unable to be zeroed from the one surface
-      that stands at the shelf, with the stale positive still telling recipes the food was there. The
-      split is not row-level at all: it is one decision on the summed **total**, taken where the signal is
-      written. The only zero still refused is one that would CREATE a product — nothing to add, nothing to
-      count, and the sole possible outcome a phantom the household has never owned.
-      <br>This mirrors, in the opposite direction, the line `PantryOnHand` already draws: *"a derived zero
-      still cannot write an `OutNow`"*. A machine's zero may not claim an outage; a human's zero may not
-      be silently discarded.
+    - **A count of ZERO is §13.4's ordinary evidence and writes an `OutNow`, exactly as everywhere else.**
+      The only zero refused is one that would CREATE the product — nothing to add, nothing to count, and
+      the sole possible outcome a phantom the household has never owned. That refusal is decided on the
+      summed **total**, not on the row, because two rows naming one new item is the reader's ordinary
+      output (a row per variety, matched across varieties) and deciding it per row made the result depend
+      on their order.
+      <br>✗ **A rule withholding the `OutNow` for a product with no purchase history was built and
+      reverted. Do not rebuild it.** Its premise — that such a signal could never be cleared, pinning the
+      item Overdue forever — is false: `lastStockBack` is the max of purchase dates **and restock dates**,
+      so one Restocked tap clears it, on the dashboard card the pin itself creates. Probed:
+      `zero + OutNow → Overdue/Pinned`; `+ Restocked → Unknown/not pinned`. The true statement it was
+      generalised from is narrower and still holds — *a later count* doesn't lift a pin, because attesting
+      touches no signals.
+      <br>Withholding it also cost something real: the `OutNow` is the only thing holding a zero once the
+      count goes stale (`CountLooksStale` then defers to a rhythm, and a rhythm-less product's `Unknown`
+      reads as in-stock). Probed at 200 days: with the signal `InStock=0`, without it `InStock=1` — recipes
+      offering food the household had counted as none, which is §13.5's beef bug with a 90-day fuse.
+      <br>⚠️ Worth keeping separately: that stale-count fallback treats a *positive* stale count on a
+      rhythm-less product as in-stock too. Pre-existing, not caused by the census, and unfixed — the
+      `OutNow` was only ever masking the zero case of it.
     - ⚠️ **An EMPTY count box is not a zero.** The row carries a nullable count and a null is refused, never
       coerced: `@bind` on a non-nullable decimal turns a box cleared to retype into `0`, and a ticked `0` is
       an *asserted* out — a real `OutNow` against a shelf full of the stuff, from a field nobody typed in,

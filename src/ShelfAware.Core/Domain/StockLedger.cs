@@ -9,62 +9,31 @@ namespace ShelfAware.Core.Domain;
 /// </summary>
 public static class StockLedger
 {
-    /// <summary>What a human's count amounted to, and therefore what the caller owes. Returned instead
-    /// of a bare bool because a zero has two meanings, and the difference is not the caller's to invent.
-    /// </summary>
-    public enum CountOutcome
-    {
-        /// <summary>A number was recorded. Nothing further is owed.</summary>
-        Recorded,
-
-        /// <summary>The human stated ZERO on a product this household buys here. §13.4: real evidence,
-        /// dated by running out rather than by remembering to report it, so the caller owes an
-        /// <c>OutNow</c> — it is what the burn-rate rhythm learns from.</summary>
-        AssertedOutage,
-
-        /// <summary>The human stated ZERO on a product with NO purchase history. The number is recorded
-        /// exactly as any other — it is their honest evidence of how many, which is what a count is for
-        /// — but the <c>OutNow</c> is WITHHELD, and the caller must not write one.
-        /// <para>⚠️ An outage signal needs a rhythm to argue with. With no purchases behind it nothing
-        /// can ever re-anchor or clear it: not a receipt, not a later count (attesting touches no
-        /// signals), so the product sits <c>Pinned</c>/<c>Overdue</c> at the top of the dashboard and
-        /// the grocery list indefinitely — while teaching nothing either, since <c>BurnCycles</c> needs
-        /// purchases to form a cycle. This is the exact complement of the line <c>PantryOnHand</c> draws
-        /// from the other side: a machine's zero may not CLAIM an outage, and a human's zero may not be
-        /// silently DISCARDED.</para></summary>
-        ZeroWithoutRhythm,
-    }
-
     /// <summary>A HUMAN states the count — typing it on the product page, answering the app's "still got
     /// them?", correcting a decrement, or reviewing a shelf photo. Unlike <see cref="Add"/>/<see
     /// cref="Remove"/> this is an attestation, so it stamps the date the staleness check reads, and it
     /// opts the product in: typing a number IS asking for it to be counted, and making you find a
     /// separate switch first would be ceremony for its own sake. <see cref="StopCounting"/> is the way
-    /// back out.</summary>
-    /// <param name="hasPurchaseHistory">Whether this household has ever bought this product. ⚠️ Passed
-    /// in rather than read off <see cref="Product.Purchases"/> ON PURPOSE: the nav collection is not
-    /// loaded at every call site (<c>EfPantryStore</c> reaches its product through <c>FindAsync</c>), so
-    /// reading it here would silently answer "no history" for a product with years of it and withhold an
-    /// outage that was owed. A required parameter makes every caller state the fact, and the compiler
-    /// catches the next one that appears.
-    /// <para>This lives here, and not in a caller, because it is a property of the DATA rather than of
-    /// the surface. Implemented in the census alone, it immediately drifted: the product page kept
-    /// writing the pin the census had just decided not to write, for the same act on the same
-    /// product.</para></param>
-    public static CountOutcome Attest(Product product, decimal quantity, DateTimeOffset at, bool hasPurchaseHistory)
+    /// back out.
+    /// <para><b>Returns true when this is an ASSERTED ZERO</b> — a human saying "we're out". §13.4: that
+    /// is real evidence and the caller owes an <c>OutNow</c> signal for it, which feeds the burn-rate
+    /// rhythm exactly like the button does — better, even, because it's dated by running out rather than
+    /// by remembering to report it. A zero that arithmetic merely ARRIVED at (see <see cref="Remove"/>)
+    /// returns nothing and writes nothing.</para>
+    /// <para>⚠️ This is unconditional, and an attempt to make it conditional on the product having
+    /// PURCHASE history was reverted after being measured. The reasoning was that an outage on a
+    /// rhythm-less product could never be cleared and would pin it Overdue forever — which is false:
+    /// <c>lastStockBack</c> is the max of purchase dates AND restock dates, so a one-tap Restocked clears
+    /// it, on the very dashboard card the pin creates. Withholding the signal also removed the only thing
+    /// holding a zero once the count went stale, so recipes began offering food the household had counted
+    /// as none. Both were probed. Don't re-add the condition without re-probing those two facts.</para></summary>
+    public static bool Attest(Product product, decimal quantity, DateTimeOffset at)
     {
         product.TrackQuantity = true;
         product.QuantityOnHand = Math.Max(0m, quantity);
         product.QuantityCountedAt = at;
-        return Judge(product.QuantityOnHand == 0m, hasPurchaseHistory);
+        return product.QuantityOnHand == 0m;
     }
-
-    private static CountOutcome Judge(bool isZero, bool hasPurchaseHistory) => (isZero, hasPurchaseHistory) switch
-    {
-        (false, _) => CountOutcome.Recorded,
-        (true, true) => CountOutcome.AssertedOutage,
-        (true, false) => CountOutcome.ZeroWithoutRhythm,
-    };
 
     /// <summary>A HUMAN adjusts the count by a delta — "used two", the lists' one-tap "Used one". They
     /// are at the cupboard, but they are stating what they TOOK, not what is there: taking one from the
@@ -79,21 +48,18 @@ public static class StockLedger
     /// <para>Requires an established count — a delta against "unknown" has no baseline, and inventing
     /// one is the error §13.2 exists to avoid. Callers refuse before reaching here; the null check is
     /// the ledger holding its own invariant.</para></summary>
-    /// <param name="hasPurchaseHistory">See <see cref="Attest"/> — the same fact, for the same reason.
-    /// Landing at zero is an assertion about the level, so it faces the same question about whether an
-    /// outage signal can ever be cleared.</param>
-    public static CountOutcome AdjustByHuman(Product product, decimal delta, DateTimeOffset at, bool hasPurchaseHistory)
+    public static bool AdjustByHuman(Product product, decimal delta, DateTimeOffset at)
     {
         // Dormant means FROZEN: a stopped count is a historical fact ("you counted 14 on Mar 12"), and
         // a delta must not edit history — resuming starts from a fresh Attest, never from arithmetic
         // against a number nobody is maintaining. Same structural gate Move holds.
-        if (!product.TrackQuantity) return CountOutcome.Recorded;
-        if (product.QuantityOnHand is not { } onHand) return CountOutcome.Recorded;
+        if (!product.TrackQuantity) return false;
+        if (product.QuantityOnHand is not { } onHand) return false;
         var landed = Math.Max(0m, onHand + delta);
         product.QuantityOnHand = landed;
-        if (landed != 0m) return CountOutcome.Recorded;
+        if (landed != 0m) return false;
         product.QuantityCountedAt = at;
-        return Judge(isZero: true, hasPurchaseHistory);
+        return true;
     }
 
     /// <summary>Stop counting this item: the product returns to running on the learned cadence alone.

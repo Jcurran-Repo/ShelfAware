@@ -412,25 +412,24 @@ public class CensusConfirmationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task A_zero_on_a_product_with_NO_purchases_is_recorded_but_files_no_outage()
+    public async Task A_zero_on_a_product_with_no_purchases_still_records_the_outage()
     {
-        // ⚠️ The split that took two attempts to get right. An OutNow needs a rhythm to argue with: with
-        // no purchases behind it nothing can re-anchor or clear the signal, so it pins the item Overdue
-        // forever. But REFUSING the whole row (the previous attempt) was worse — §13.8's own population
-        // has zero purchases by construction, so the one surface that stands at the shelf could never
-        // record that a census-tracked item had run out, and the stale positive went on telling recipes
-        // the food was there. The number is the human's honest evidence of HOW MANY; only the unclearable
-        // pin is withheld.
+        // ⚠️ §13.8's own population (bought pre-app, gifted, bulk) has no purchase history by
+        // construction, and its zero is treated exactly like any other. An attempt to WITHHOLD the
+        // OutNow here was built and reverted: the reason given — that with no rhythm the pin could
+        // never be cleared — is false. `lastStockBack` is the max of purchase dates AND restock dates,
+        // so one Restocked tap clears it, on the dashboard card the pin itself creates. Withholding it
+        // also removed the only thing holding the zero once the count went stale, so recipes began
+        // offering food the household had counted as none. Both probed; see StockLedger.Attest.
         var sauce = await SeedProduct("Home-Canned Sauce", counted: true, onHand: 5);
 
         var outcome = await _service.ConfirmAsync([R("Home-Canned Sauce", 0, sauce.Id)]);
 
         await using var db = _db.CreateDbContext();
-        Assert.Empty(await db.InventorySignals.ToListAsync());        // no pin
-        Assert.Equal(0m, (await Reload(sauce.Id)).QuantityOnHand);    // but the count IS recorded
+        Assert.Equal(SignalKind.OutNow, Assert.Single(await db.InventorySignals.ToListAsync()).Kind);
+        Assert.Equal(0m, (await Reload(sauce.Id)).QuantityOnHand);
+        Assert.Equal(1, outcome.AssertedOut);
         Assert.Empty(outcome.Refused);
-        Assert.Equal(0, outcome.AssertedOut);
-        Assert.Equal(1, outcome.ZeroedWithoutSignal);                 // and reported as its own thing
     }
 
     [Fact]

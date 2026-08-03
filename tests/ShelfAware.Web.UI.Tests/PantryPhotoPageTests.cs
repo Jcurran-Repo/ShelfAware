@@ -61,10 +61,21 @@ public class PantryPhotoPageTests : PageTestContext
     {
         public Exception? Throws { get; set; }
 
-        public Task<ShelfPhoto> LoadAsync(IBrowserFile file, CancellationToken cancellationToken = default) =>
-            Throws is not null
-                ? Task.FromException<ShelfPhoto>(Throws)
-                : Task.FromResult(new ShelfPhoto([1, 2, 3], "image/jpeg"));
+        /// <summary>When set, the next load parks here — so a test can interleave something (a
+        /// navigate-away, a second click) with a read that is genuinely mid-flight. One-shot, same
+        /// shape as QueueReader.Hold.</summary>
+        public TaskCompletionSource? Hold { get; set; }
+
+        public async Task<ShelfPhoto> LoadAsync(IBrowserFile file, CancellationToken cancellationToken = default)
+        {
+            if (Hold is { } gate)
+            {
+                Hold = null;
+                await gate.Task;
+            }
+            if (Throws is not null) throw Throws;
+            return new ShelfPhoto([1, 2, 3], "image/jpeg");
+        }
     }
 
     internal RecordingLoggerProvider Logs = null!;
@@ -601,11 +612,11 @@ public class PantryPhotoPageTests : PageTestContext
     }
 
     [Fact]
-    public async Task A_zero_with_no_buying_history_is_reported_as_recorded_not_as_running_out()
+    public async Task A_zero_counted_from_a_photo_is_reported_as_running_out()
     {
-        // "You have none" and "you have run out" are different claims — the first is a number, the second
-        // feeds the rhythm and the grocery list. The service withholds the signal; this is the half that
-        // tells the household which one happened, and it had no test.
+        // The census's zero is §13.4's evidence like any other — including for §13.8's own population,
+        // which has no purchase history by construction (see the service test of the same name for why
+        // an attempt to treat that case differently was reverted).
         await SeedProduct("Quarter Cow Ground Beef", counted: true, onHand: 9);
 
         var cut = Review(Item("Quarter Cow Ground Beef", count: 1));
@@ -613,40 +624,38 @@ public class PantryPhotoPageTests : PageTestContext
         cut.FindAll("button").Single(b => b.TextContent.Trim().StartsWith("Count ")).Click();
 
         cut.WaitForAssertion(() =>
-        {
-            var text = Collapsed(cut.Markup);
-            Assert.Contains("recorded as none on hand, but not as running out", text);
-            Assert.DoesNotContain("1 counted at zero — recorded as running out", text);
-        });
+            Assert.Contains("1 counted at zero — recorded as running out", Collapsed(cut.Markup)));
     }
 
     [Fact]
-    public void A_captured_token_outlives_its_source_but_reading_Token_again_does_not()
+    public async Task Leaving_the_page_mid_read_tears_down_quietly_instead_of_logging_an_error()
     {
-        // ⚠️ The language fact the page's `var ct = pageCts.Token;` rests on, pinned here because the
-        // PAGE-LEVEL behaviour is not reachable from this harness — see the note below. Reading .Token
-        // after Dispose throws ObjectDisposedException, which derives from InvalidOperationException and
-        // therefore clears every specific catch clause the read has, landing in the generic one and
-        // logging LogError("Reading a shelf census failed") on an ordinary navigate-away — precisely the
-        // teardown noise the JSDisconnectedException clause beside it exists to prevent. A token captured
-        // BEFORE disposal stays usable, which is why the capture is the fix.
+        // ⚠️ CancellationTokenSource.Token THROWS once its source is disposed (IsCancellationRequested
+        // does not), and ObjectDisposedException derives from InvalidOperationException — so it cleared
+        // every specific clause the read has and landed in the generic one, writing
+        // LogError("Reading a shelf census failed") on an ordinary navigate-away. That is exactly the
+        // teardown noise the JSDisconnectedException clause beside it exists to keep out of a real
+        // deployment's log. The page captures the token once before the first await; a captured token
+        // outlives its source.
         //
-        // ⚠️ GAP, stated rather than papered over: the page flow itself cannot be tested here. bUnit
-        // stops pumping continuations once a component is disposed — measured, not assumed: parking the
-        // read at the catalog load, disposing, then releasing the gate leaves the reader with ZERO calls,
-        // so the post-disposal token read never happens and a test cannot observe it either way. An
-        // earlier version of this test asserted "no error was logged" and passed identically with the
-        // fix reverted. The page's three uses of `ct` are review-verified, not test-pinned.
-        var cts = new CancellationTokenSource();
-        var captured = cts.Token;
-        cts.Cancel();
-        cts.Dispose();
+        // ⚠️ TWO photos, and the gate on the FIRST, is what makes this observable. The second loop
+        // iteration re-reads the token before any other token-aware work, so nothing else can throw
+        // first. Parking at the catalog load instead makes the test vacuous: disposal cancels the token,
+        // LoadCatalogAsync's own query then throws OperationCanceledException, the `when` clause
+        // rethrows, and control never reaches a second token read — an earlier version of this test did
+        // exactly that and passed identically with the fix reverted.
+        var gate = new TaskCompletionSource();
+        Reader.Results.Enqueue(ShelfCensusResult.Ok([Item("Black Beans")], "{}"));
+        var cut = Render<PantryPhoto>();
+        Upload(cut, 2);
+        PhotoLoader.Hold = gate;
+        cut.Find("button").Click();
 
-        Assert.True(captured.IsCancellationRequested);      // the capture still answers
-        Assert.True(cts.IsCancellationRequested);           // and so does this property…
-        Assert.Throws<ObjectDisposedException>(() => cts.Token); // …while re-reading Token does not
-        Assert.IsAssignableFrom<InvalidOperationException>(
-            Record.Exception(() => cts.Token));             // which is why no specific clause caught it
+        await DisposeComponentsAsync();  // the visitor navigates away mid-read
+        gate.SetResult();
+        await Task.Delay(50);            // let the continuation reach the next token read
+
+        Assert.DoesNotContain(Logs.Errors, e => e.Message.Contains("Reading a shelf census failed"));
     }
 
     [Fact]
