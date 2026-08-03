@@ -13,8 +13,9 @@ namespace ShelfAware.Web.Data;
 ///  - Its purchases (traced by <see cref="PurchaseEvent.ReceiptId"/> — never by matching values,
 ///    which is why a pre-provenance receipt is refused rather than guessed at).
 ///  - Products the receipt INTRODUCED (<see cref="Product.CreatedByReceiptId"/>) — but only while
-///    they have no other history: a purchase from any other source or an inventory signal means the
-///    household has invested in the product, and it stays (with the breadcrumb cleared).
+///    they have no other history: a purchase from any other source, an inventory signal, or an
+///    attested count means the household has invested in the product, and it stays (with the
+///    breadcrumb cleared).
 ///  - The merchant aliases it taught (<see cref="ProductAlias.TaughtByReceiptId"/>) — a later
 ///    confirm that re-pointed one became its new teacher, so that newer lesson is kept.
 ///  - The receipt row, its lines, and its saved image.
@@ -79,14 +80,22 @@ public sealed class ReceiptRemovalService(
             db.PurchaseEvents.RemoveRange(linked);
 
             // Products this receipt introduced: gone only while nothing else ever touched them.
-            // "Something else" = a purchase from any other receipt / chat / manual entry, or an
-            // inventory signal. Deleting a product cascades its tags, substitutes, and aliases.
+            // "Something else" = a purchase from any other receipt / chat / manual entry, an
+            // inventory signal, or an ATTESTED COUNT — a census or the count panel is a human at
+            // the shelf saying "I have these", the same investment a signal proves, and it counts
+            // even dormant (stop-counting keeps the number as history, §13.1). A census writes no
+            // purchase and, for a positive count, no signal, so without this clause the census's
+            // own population — a receipt-introduced product carrying a fresh count — died with its
+            // receipt. The subtract guard above already treats a post-confirm attestation as the
+            // better evidence about the count; the two halves must not disagree about whether an
+            // attestation is history. Deleting a product cascades its tags, substitutes, and aliases.
             var introduced = await db.Products
                 .Where(p => p.CreatedByReceiptId == receipt.Id).ToListAsync(cancellationToken);
             var removedProductIds = new HashSet<int>();
             foreach (var product in introduced)
             {
                 var hasOtherHistory =
+                    product.QuantityCountedAt is not null ||
                     await db.PurchaseEvents.AnyAsync(
                         p => p.ProductId == product.Id && p.ReceiptId != receipt.Id, cancellationToken) ||
                     await db.InventorySignals.AnyAsync(

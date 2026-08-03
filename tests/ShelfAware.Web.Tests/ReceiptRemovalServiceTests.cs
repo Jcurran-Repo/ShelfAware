@@ -268,6 +268,63 @@ public class ReceiptRemovalServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task A_counted_product_is_kept_when_its_introducing_receipt_is_removed()
+    {
+        // The census aftermath (§13.8): a receipt introduces a product, a shelf census attests a
+        // count — which writes NO purchase and, for a positive count, NO signal — and the receipt
+        // is later removed. The attestation is a human act on the product, so it is history:
+        // deleting the product here destroyed the count with it, while a stray RunningLow tap
+        // would have saved what a deliberate count could not.
+        var receipt = await ConfirmReceipt(writeAliases: false, ("FRZ PEAS", "Frozen Peas", 0));
+        int productId;
+        await using (var db = _db.CreateDbContext())
+        {
+            productId = (await db.Products.SingleAsync()).Id;
+        }
+        // The census's own write path — the real service, so the probe can't be kinder than the app.
+        var census = await new CensusConfirmationService(_db).ConfirmAsync(
+            [new CensusConfirmationService.CensusRow("Frozen Peas", Category.Frozen, 12m, productId)]);
+        Assert.Equal(1, census.Counted);
+
+        var outcome = await Service().RemoveAsync(receipt);
+
+        Assert.Equal(0, outcome.ProductsRemoved);
+        Assert.Equal(1, outcome.ProductsKept);
+        await using var check = _db.CreateDbContext();
+        var kept = await check.Products.SingleAsync(p => p.Id == productId);
+        Assert.Null(kept.CreatedByReceiptId); // breadcrumb cleared, like any kept product
+        // Exactly 12: counted after the confirm, so the subtract guard also stands down — 11 here
+        // means the delete was fixed but the subtract ran anyway.
+        Assert.Equal(12m, kept.QuantityOnHand);
+        Assert.Equal(0, await check.PurchaseEvents.CountAsync()); // the purchase itself still goes
+    }
+
+    [Fact]
+    public async Task A_dormant_count_is_history_too()
+    {
+        // Stop-counting keeps the number and its date as a historical fact the app promises to show
+        // (§13.1), so a dormant attestation must keep the product exactly as a live one does. This
+        // is what pins the check to the attestation DATE: keying it on TrackQuantity instead would
+        // delete precisely the kept history dormancy exists to preserve.
+        var receipt = await ConfirmReceipt(writeAliases: false, ("FRZ PEAS", "Frozen Peas", 0));
+        await using (var db = _db.CreateDbContext())
+        {
+            var p = await db.Products.SingleAsync();
+            StockLedger.Attest(p, 12m, DateTimeOffset.Now.AddMinutes(1));
+            StockLedger.StopCounting(p);
+            await db.SaveChangesAsync();
+        }
+
+        var outcome = await Service().RemoveAsync(receipt);
+
+        Assert.Equal(1, outcome.ProductsKept);
+        await using var check = _db.CreateDbContext();
+        var kept = await check.Products.SingleAsync();
+        Assert.False(kept.TrackQuantity);
+        Assert.Equal(12m, kept.QuantityOnHand); // the frozen pair survives untouched
+    }
+
+    [Fact]
     public async Task An_alias_retaught_to_a_different_product_since_is_kept()
     {
         var first = await ConfirmReceipt(writeAliases: true, ("GV WHL MLK", "Whole Milk", 0));
