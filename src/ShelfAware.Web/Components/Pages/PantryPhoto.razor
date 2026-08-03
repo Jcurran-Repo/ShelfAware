@@ -137,6 +137,15 @@ else if (phase == Phase.Review)
                             </td>
                             <td>
                                 <input @bind="row.Name" aria-label="Item name for @DescribeRow(row)" />
+                                @if (Distinguishers(row) is { } detail)
+                                {
+                                    @* What tells two same-named rows apart. The reader emits a row per
+                                       variety and matches across varieties, so two rows of one product are
+                                       its ORDINARY output — rendered bare they read as a double-count, and
+                                       the page's own "counted twice" warning invites deleting one, which
+                                       silently shorts the summed total. *@
+                                    <div class="muted small">@detail</div>
+                                }
                                 @if (row.Evidence == CensusEvidence.Unidentified)
                                 {
                                     <div class="muted small">Name it if you know what it is.</div>
@@ -162,12 +171,24 @@ else if (phase == Phase.Review)
                                 }
                             </td>
                             <td>
-                                <select @bind="row.Category" aria-label="Category for @DescribeRow(row)">
-                                    @foreach (var c in Enum.GetValues<Category>())
-                                    {
-                                        <option value="@c">@c</option>
-                                    }
-                                </select>
+                                @if (Note(row.ProductId) is { } matchedNote)
+                                {
+                                    @* A matched row's category is the PRODUCT's, read from the store — the
+                                       reader's guess is consumed only when a row creates a product, so an
+                                       editable select here showed a category the engine never held and
+                                       dropped every edit silently. Switching the row to "create new"
+                                       brings the select back, guess intact as the default. *@
+                                    <span>@matchedNote.Category</span>
+                                }
+                                else
+                                {
+                                    <select @bind="row.Category" aria-label="Category for @DescribeRow(row)">
+                                        @foreach (var c in Enum.GetValues<Category>())
+                                        {
+                                            <option value="@c">@c</option>
+                                        }
+                                    </select>
+                                }
                             </td>
                             <td>
                                 <select @bind="row.ProductId" aria-label="Product match for @DescribeRow(row)">
@@ -177,7 +198,7 @@ else if (phase == Phase.Review)
                                         <option value="@p.Id">@p.Name</option>
                                     }
                                 </select>
-                                @if (row.FuzzyMatch && row.ProductId == row.PrefilledProductId && row.ProductId > 0)
+                                @if (row.FuzzyStillSelected)
                                 {
                                     @* The tick default measures how sure the reader was of the ITEM; this
                                        match was made afterwards by name similarity and nobody scored it,
@@ -339,6 +360,12 @@ else if (phase == Phase.Done)
         public string? LabelText { get; init; }
         public CensusEvidence Evidence { get; init; }
         public string Name { get; set; } = "";
+        /// <summary>Per-purchase-style metadata the reader saw (v3.5's rule) — display only, since a
+        /// census attests a count and stores none of it. Carried because it is what tells two
+        /// same-named rows apart on the grid and in their accessible names.</summary>
+        public string? Brand { get; init; }
+        public string? Size { get; init; }
+        public string? Variety { get; init; }
         /// <summary>⚠️ Nullable, and that is the whole point: <c>@bind</c> on a non-nullable decimal turns
         /// an emptied box into 0, and a ticked 0 is an ASSERTED outage that files a real OutNow. Null
         /// means "nobody has said", which the confirm refuses rather than guesses.</summary>
@@ -357,6 +384,11 @@ else if (phase == Phase.Done)
 
         /// <summary>The human deliberately turned a matched row into a new product.</summary>
         public bool ChoseCreateNew => ProductId == 0 && PrefilledProductId > 0;
+
+        /// <summary>The similarity match is still what the row would write to — the human hasn't
+        /// resolved it by picking something in the dropdown. The ONE definition, shared by the row's
+        /// warning and by Tick all, so the two can't disagree about which rows are still a guess.</summary>
+        public bool FuzzyStillSelected => FuzzyMatch && ProductId == PrefilledProductId && ProductId > 0;
     }
 
     /// <summary>What the app already knows about a product the grid might land on: the count it holds now
@@ -365,7 +397,7 @@ else if (phase == Phase.Done)
     /// all of them without another query.</summary>
     private sealed record ProductNote(
         bool HasNumber, bool Dormant, decimal OnHand, string? Unit, DateTimeOffset? CountedAt,
-        bool IsTracked, int? FastMoverDays);
+        bool IsTracked, int? FastMoverDays, Category Category);
 
     private ProductNote? Note(int productId) => productId > 0 && notes.TryGetValue(productId, out var n) ? n : null;
 
@@ -415,13 +447,37 @@ else if (phase == Phase.Done)
     };
 
     // Rows are edited live, so a stable description for screen readers: the name if there is one, else what
-    // little is known about the row.
-    private static string DescribeRow(ReviewRow row) =>
-        row.Name is { Length: > 0 } name ? name : row.LabelText ?? "this unidentified item";
+    // little is known about the row — plus what tells same-named rows apart, or two varieties of one item
+    // are identical to a screen reader while sighted users see two subtitles.
+    private static string DescribeRow(ReviewRow row)
+    {
+        var name = row.Name is { Length: > 0 } n ? n : row.LabelText ?? "this unidentified item";
+        return Distinguishers(row) is { } detail ? $"{name} ({detail})" : name;
+    }
+
+    /// <summary>Variety · brand · size, when the reader saw any — null otherwise.</summary>
+    private static string? Distinguishers(ReviewRow row)
+    {
+        var parts = new[] { row.Variety, row.Brand, row.Size }
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .ToList();
+        return parts.Count > 0 ? string.Join(" · ", parts) : null;
+    }
 
     private void SetAll(bool include)
     {
-        foreach (var row in rows) row.Include = include;
+        // Tick all overrides the CONFIDENCE default only (§13.8: "the guard is the default, not a
+        // lock"). The other two tick conditions are not about confidence — an Unidentified row's name
+        // describes a package, and a still-selected similarity match is an unscored guess at WHICH
+        // product the tick would overwrite — so each of those waits for a human to look at the row
+        // itself. Both still tick individually, and both say their reason inline. Unticking clears
+        // everything: it asserts nothing, so it needs no guard.
+        foreach (var row in rows)
+        {
+            row.Include = include
+                && row.Evidence != CensusEvidence.Unidentified
+                && !row.FuzzyStillSelected;
+        }
     }
 
     private void OnFilesSelected(InputFileChangeEventArgs e)
@@ -497,6 +553,9 @@ else if (phase == Phase.Done)
                     LabelText = i.LabelText,
                     Evidence = i.Evidence,
                     Name = i.NormalizedName,
+                    Brand = i.Brand,
+                    Size = i.Size,
+                    Variety = i.Variety,
                     Count = i.VisibleCount,
                     Category = i.Category,
                     Confidence = i.Confidence,
@@ -617,7 +676,8 @@ else if (phase == Phase.Done)
                 // same gate the product page's version carries.
                 FastMoverDays: !p.TrackQuantity && CountingAdvice.IsHardToKeepTrue(median)
                     ? (int)Math.Round(median!.Value)
-                    : null);
+                    : null,
+                Category: p.Category);
         });
     }
 

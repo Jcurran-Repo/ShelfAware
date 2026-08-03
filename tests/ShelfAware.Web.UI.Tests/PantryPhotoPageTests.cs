@@ -96,7 +96,8 @@ public class PantryPhotoPageTests : PageTestContext
     private static CensusItem Item(
         string name, int count = 1, decimal confidence = 0.9m,
         CensusEvidence evidence = CensusEvidence.Label, string? label = "SOMETHING",
-        Category category = Category.Frozen, string? suggested = null) =>
+        Category category = Category.Frozen, string? suggested = null,
+        string? variety = null, string? brand = null, string? size = null) =>
         new()
         {
             NormalizedName = name,
@@ -106,6 +107,9 @@ public class PantryPhotoPageTests : PageTestContext
             LabelText = evidence == CensusEvidence.Label ? label : null,
             Category = category,
             SuggestedProductName = suggested,
+            Variety = variety,
+            Brand = brand,
+            Size = size,
         };
 
     private async Task<Product> SeedProduct(
@@ -267,6 +271,134 @@ public class PantryPhotoPageTests : PageTestContext
 
         cut.FindAll("button").Single(b => b.TextContent.Contains("Untick all")).Click();
         Assert.All(cut.FindAll("tbody tr"), r => Assert.False(IsTicked(r)));
+    }
+
+    [Fact]
+    public async Task Tick_all_leaves_unidentified_and_similarity_rows_for_a_human()
+    {
+        // §13.8 licenses Tick all against the CONFIDENCE default only — the other two tick
+        // conditions answer different questions (what the name means; WHICH product gets
+        // overwritten), and one click must not opt into thirty of them. The unidentified row sits
+        // at 0.99 so the skip can't be the threshold's doing, and the low-confidence Label row IS
+        // ticked — the licensed override, in the same fixture, so the three-way difference is
+        // pinned in one place.
+        await SeedProduct("Butter", counted: true, onHand: 9);
+
+        var cut = Review(
+            Item("frosted freezer bag", confidence: 0.99m, evidence: CensusEvidence.Unidentified),
+            Item("Peanut Butter", confidence: 0.95m),  // similarity-matches the seeded Butter
+            Item("Chicken Breast", confidence: 0.3m)); // uncertain, but honestly read
+
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Tick all")).Click();
+
+        Assert.False(IsTicked(RowFor(cut, "frosted freezer bag")));
+        Assert.False(IsTicked(RowFor(cut, "Peanut Butter")));
+        Assert.True(IsTicked(RowFor(cut, "Chicken Breast")));
+    }
+
+    [Fact]
+    public async Task Tick_all_ticks_a_similarity_row_the_human_already_resolved()
+    {
+        // The guard is about the match still being a GUESS. Once the human has picked — here,
+        // turned the row into a create-new — the question Tick all was deferring is answered.
+        // Pins the shared FuzzyStillSelected definition against a bare "was ever fuzzy" flag,
+        // which would leave a resolved row permanently second-class.
+        await SeedProduct("Butter", counted: true, onHand: 9);
+
+        var cut = Review(Item("Peanut Butter", confidence: 0.95m));
+        RowFor(cut, "Peanut Butter").QuerySelectorAll("select")
+            .Single(s => s.GetAttribute("aria-label")!.StartsWith("Product match"))
+            .Change("0"); // ➕ create new — the human has looked
+
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Tick all")).Click();
+
+        Assert.True(IsTicked(RowFor(cut, "Peanut Butter")));
+    }
+
+    [Fact]
+    public void Untick_all_clears_even_rows_a_human_ticked_by_hand()
+    {
+        // Unticking asserts nothing, so it has no guard — a reset must reset.
+        var cut = Review(Item("foil-wrapped parcel", confidence: 0.2m,
+            evidence: CensusEvidence.Unidentified, category: Category.Other));
+        TickOf(RowFor(cut, "foil-wrapped parcel")).Change(true); // the human opts the guess in
+        Assert.True(IsTicked(RowFor(cut, "foil-wrapped parcel")));
+
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Untick all")).Click();
+
+        Assert.False(IsTicked(RowFor(cut, "foil-wrapped parcel")));
+    }
+
+    [Fact]
+    public void Two_varieties_of_one_item_are_told_apart_on_the_grid()
+    {
+        // The reader emits a row per variety of one item (rule 7) and matches across varieties
+        // (rule 11), so two same-named rows are its ORDINARY output — and the page's own "counted
+        // twice" warning primes the household to ✕ an apparent duplicate, which silently shorts
+        // the summed total. The metadata must survive to the grid AND to the accessible name: two
+        // rows that differ only in a subtitle are still identical to a screen reader.
+        var cut = Review(
+            Item("Drink Mix", count: 3, variety: "Strawberry", brand: "Kool-Aid"),
+            Item("Drink Mix", count: 2, variety: "Grape"));
+
+        var rows = cut.FindAll("tbody tr");
+        Assert.Contains(rows, r => Collapsed(r).Contains("Strawberry · Kool-Aid"));
+        Assert.Contains(rows, r => Collapsed(r).Contains("Grape"));
+        var labels = rows.Select(r => TickOf(r).GetAttribute("aria-label")).ToList();
+        Assert.Equal(2, labels.Distinct().Count());
+        Assert.Contains(labels, l => l!.Contains("Strawberry"));
+    }
+
+    [Fact]
+    public async Task A_matched_rows_category_is_the_products_own_and_not_an_editable_guess()
+    {
+        // The reader's category is consumed only when a row CREATES a product, so an editable
+        // select on a matched row showed a category the store never held and dropped every edit
+        // silently. The fixture makes the two DISAGREE — reader says Pantry, the product is
+        // Frozen — because a fixture where they agree cannot tell the branches apart.
+        await SeedProduct("Tilapia Fillets"); // the helper seeds Frozen
+
+        var cut = Review(Item("Tilapia Fillets", category: Category.Pantry, suggested: "Tilapia Fillets"));
+
+        var row = RowFor(cut, "Tilapia Fillets");
+        Assert.DoesNotContain(row.QuerySelectorAll("select"),
+            s => s.GetAttribute("aria-label")!.StartsWith("Category"));
+        Assert.Contains("Frozen", Collapsed(row));
+        Assert.DoesNotContain("Pantry", Collapsed(row));
+    }
+
+    [Fact]
+    public async Task Switching_a_matched_row_to_create_new_brings_the_category_select_back()
+    {
+        // On a create-new the guess IS what gets written, so the select has to come back — with
+        // the reader's guess still in it as the default.
+        await SeedProduct("Ground Beef");
+        var cut = Review(Item("Ground Beef", category: Category.Meat, suggested: "Ground Beef"));
+        Assert.DoesNotContain(RowFor(cut, "Ground Beef").QuerySelectorAll("select"),
+            s => s.GetAttribute("aria-label")!.StartsWith("Category"));
+
+        RowFor(cut, "Ground Beef").QuerySelectorAll("select")
+            .Single(s => s.GetAttribute("aria-label")!.StartsWith("Product match"))
+            .Change("0");
+
+        Assert.Contains(RowFor(cut, "Ground Beef").QuerySelectorAll("select"),
+            s => s.GetAttribute("aria-label")!.StartsWith("Category"));
+    }
+
+    [Fact]
+    public async Task A_create_new_rows_category_edit_is_what_the_confirm_writes()
+    {
+        // The complement that keeps the cell honest end to end: on a creating row the edit is real.
+        var cut = Review(Item("Tilapia Fillets", count: 2, category: Category.Frozen));
+        RowFor(cut, "Tilapia Fillets").QuerySelectorAll("select")
+            .Single(s => s.GetAttribute("aria-label")!.StartsWith("Category"))
+            .Change(nameof(Category.Meat));
+
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Count ")).Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("Counted 1 item", Collapsed(cut.Markup)));
+        await using var db = Db.CreateDbContext();
+        Assert.Equal(Category.Meat, (await db.Products.SingleAsync()).Category);
     }
 
     [Fact]
