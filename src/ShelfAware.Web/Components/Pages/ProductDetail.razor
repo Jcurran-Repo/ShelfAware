@@ -336,6 +336,19 @@ else
                     <p class="muted">Down to none, and that's on record as running out — which is what
                         teaches the burn rate. Bought more? Set the new number.</p>
                 }
+                else if (product.Signals.Any(s => s.Kind == SignalKind.OutNow))
+                {
+                    @* ⚠️ A THIRD state, and the one the app's own recovery path produces: an outage WAS
+                       asserted, and a Restocked (or a purchase) has since superseded it — which is
+                       exactly how an outage is meant to be cleared. Restocked is status-only, so the
+                       number stays at zero while the pin goes away. Without this branch that lands in
+                       the derived-zero copy below and tells someone who said they were out, and then
+                       said they'd restocked, that nothing here said so — blaming cooking and receipts,
+                       and inviting them to re-file the outage they just cleared. *@
+                    <p class="muted">Down to none, and you did say so — but you've marked it restocked
+                        since, so it isn't on the list. The count still reads none: set the number you
+                        actually have.</p>
+                }
                 else
                 {
                     <p class="muted">Down to none, but nothing here has said so out loud — cooking and

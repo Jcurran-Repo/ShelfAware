@@ -72,7 +72,7 @@ Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptT
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1333 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1338 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see item 31).
 
@@ -1502,9 +1502,10 @@ bUnit pages/components — see item 31).
      folded to spaces), so a rule-1 identity was rendered as a guess: the seeded `Home-Canned Tomato Sauce`
      read as "Home Canned Tomato Sauce" arrived unticked saying "not read off the package" one cell from a
      chip reading "read the label". `ProductMatcher.ResolveWithKind` reports which rule fired now.
-   - **The zero rule, third time.** See DESIGN.md §13.8 — the decision moved off the row and onto the
-     summed total, `CensusOutcome.ZeroedWithoutSignal` reports it, and only a zero that would CREATE a
-     product is still refused.
+   - **The zero rule, third time.** See DESIGN.md §13.8 — the decision moved off the row, and only a zero
+     that would CREATE a product is still refused. (This round also added a `ZeroedWithoutSignal` outcome
+     for a withheld signal; both it and the rule behind it were reverted in item 41 — the premise was
+     false. Don't go looking for the member.)
    - ⚠️ **"Both halves pinned" was itself unpinned.** Item 38's commit message claimed every new rule had
      both directions covered; deleting `!product.TrackQuantity` from the resumed-counting rule left the
      whole suite green, so every ordinary recount would have announced "Started counting 1 item you'd
@@ -1570,9 +1571,29 @@ bUnit pages/components — see item 31).
      named the deleted `OutageWithoutHistory` (one in a test helper's docstring that asserted the OPPOSITE
      of the rule the same commit shipped); and a page test hard-coded loader copy the product no longer
      produces — the wording is pinned on both sides now.
-   - **1333 tests green, 0 warnings** on a non-incremental Release build (1328 before; +5 net — the
-     withholding rule's tests went with it, and the teardown test that replaced a vacuous one is new).
-     ⚠️ Still not browser-verified since item 39: the HEIC path needs a real iOS device.
+   - **1338 tests green, 0 warnings** on a non-incremental Release build. ⚠️ Still not browser-verified
+     since item 39: the HEIC path needs a real iOS device.
+   - **The gate over the revert found no behaviour regressions — the first round of five that didn't.**
+     What it did find was the revert's blind spot: deleting the withholding also deleted its tests, and
+     the replacements went onto the census path only. Mutation-proven twice by independent reviewers —
+     re-adding the withholding to `EfPantryStore.SetQuantityAsync` left **all 1333 green**, on the exact
+     surface (product page + `set_quantity`) this arc says the rule had drifted to. ⚠️ **When a rule is
+     deleted, its tests must be replaced with inverted ones on every surface that held it, not just the
+     one the change was about.** Same for `ProductDetailCountPanelTests`: both zero-copy tests were
+     deleted, but only one described the removed branch — mutating `@if (prediction.Pinned …)` to
+     `@if (true)` then passed the whole 292-test UI suite.
+   - ⚠️ **A third zero-copy state exists and had no branch: outage asserted, then CLEARED by a Restocked.**
+     That is the app's own recovery path — the one this arc cites as proof the pin is safe — and the
+     panel then told the household "nothing here has said so out loud", blamed cooking and receipts, and
+     invited them to re-file the outage they had just cleared. `Restocked` is status-only, so the number
+     stays at zero while the pin goes.
+   - **My own numbers, corrected:** the revert commit said "16 tests across three suites"; it is **17
+     cases / 16 methods across FOUR** — the UI suite simply wasn't run. Understating coverage is the safe
+     direction, but it is a false number in the commit whose subject is correcting false numbers.
+   - ⚠️ **Gate agents must isolate.** Reviewers running mutations concurrently in the shared working tree
+     corrupted one reviewer's measurements (results came back inverted until it re-ran in a
+     `git worktree`), and stray `Zz*Probe.cs` files from an earlier session compiled into the test
+     projects and inflated a suite 532→535. A gate reviewer's numbers are only trustworthy if it isolated.
    - **The shape of this whole arc, for whoever reads it next.** Item 38 found 15, its fix introduced 5 of
      item 39's 7, whose fix introduced 5 of item 40's 7 — and item 40's "real" fix turned out to be built
      on a premise that four lines of probe output refute. **Every round after the first was spent on a

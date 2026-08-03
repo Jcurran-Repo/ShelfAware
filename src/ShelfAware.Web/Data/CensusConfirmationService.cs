@@ -46,13 +46,14 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
         /// <summary>A count of zero on a row that would CREATE the product. There is nothing to record:
         /// the item is not in the catalog and the row says none of it is on the shelf either, so the only
         /// possible outcome is a phantom product the household has never owned.
-        /// <para>⚠️ Scoped to creation, and that scope was got wrong twice. Refusing every zero on a
-        /// rhythm-less product (the wider rule) declined the COUNT along with the outage, which left
-        /// §13.8's whole population — stock no receipt knows about — unable to be corrected to zero from
-        /// the one surface that stands at the shelf, with the stale positive still telling recipes the
-        /// food was there. The right split is not row-level at all: a zero is recorded as a number
-        /// always, and the <c>OutNow</c> it would owe is withheld where no rhythm exists to contradict
-        /// it. See the Attest loop.</para></summary>
+        /// <para>⚠️ Scoped to creation, and nothing wider. Every other zero — including one on a product
+        /// with no purchase history, which is §13.8's whole population — is recorded as a number AND
+        /// writes its <c>OutNow</c>, exactly as on every other surface. A rule withholding the signal for
+        /// rhythm-less products was built and reverted; see <c>StockLedger.Attest</c> for why, and do not
+        /// rebuild it.</para>
+        /// <para>Decided once, after every row has been read, rather than where the row sits: two rows
+        /// naming one new item is the reader's ordinary output, so a row-level decision made the outcome
+        /// depend on their order.</para></summary>
         ZeroOnNewProduct,
         /// <summary>The row named a product by id and that product is gone — merged or deleted while the
         /// review grid sat open. Resolving it by name instead would quietly create a twin, or land the

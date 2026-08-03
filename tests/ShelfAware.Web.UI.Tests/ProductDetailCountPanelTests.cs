@@ -53,6 +53,76 @@ public class ProductDetailCountPanelTests : PageTestContext
         return await raw.Products.IgnoreQueryFilters().Include(p => p.Signals).SingleAsync(p => p.Id == id);
     }
 
+    // ------------------------------------------------------- what a zero on the shelf is told it means
+
+    [Fact]
+    public void A_zero_a_receipt_or_a_cook_arrived_at_asks_the_household_to_confirm_it()
+    {
+        // §13.4's derived zero: cooking and receipt removals move the number without anyone claiming an
+        // outage, so this is the hypothesis worth raising. Nothing pinned the item, and no OutNow was
+        // ever filed — which is what tells the two kinds of zero apart.
+        var id = Seed(p =>
+        {
+            p.TrackQuantity = true;
+            p.QuantityOnHand = 0m;
+            p.QuantityCountedAt = Clock(1);
+            p.Purchases = Buys(30, 15);
+        });
+
+        var panel = CountPanel(RenderDetail(id));
+
+        Assert.Contains("nothing here has said so out loud", panel);
+        Assert.DoesNotContain("that's on record as running out", panel);
+    }
+
+    [Fact]
+    public void A_zero_the_human_asserted_says_it_is_on_record()
+    {
+        // The complement, and the branch that must not swallow the one above: an active OutNow pins, and
+        // asking someone to "say so" about an outage already on record implies the app ignored them.
+        var id = Seed(p =>
+        {
+            p.TrackQuantity = true;
+            p.QuantityOnHand = 0m;
+            p.QuantityCountedAt = Clock(1);
+            p.Purchases = Buys(30, 15);
+            p.Signals = [new InventorySignal { Kind = SignalKind.OutNow, SignaledAt = Clock(1) }];
+        });
+
+        var panel = CountPanel(RenderDetail(id));
+
+        Assert.Contains("that's on record as running out", panel);
+        Assert.DoesNotContain("nothing here has said so out loud", panel);
+    }
+
+    [Fact]
+    public void A_zero_whose_outage_was_cleared_by_a_restock_says_so_rather_than_denying_it()
+    {
+        // ⚠️ The state the app's own recovery path produces — assert the outage, then tap Restocked,
+        // which is how an outage is MEANT to be cleared. Restocked is status-only, so the number stays
+        // at zero while the pin goes. Without its own branch this fell into the derived-zero copy and
+        // told someone who had said they were out, then said they'd restocked, that nothing here said
+        // so — inviting them to re-file the outage they had just cleared.
+        var id = Seed(p =>
+        {
+            p.TrackQuantity = true;
+            p.QuantityOnHand = 0m;
+            p.QuantityCountedAt = Clock(5);
+            p.Purchases = Buys(30, 15);
+            p.Signals =
+            [
+                new InventorySignal { Kind = SignalKind.OutNow, SignaledAt = Clock(5) },
+                new InventorySignal { Kind = SignalKind.Restocked, SignaledAt = Clock(1) },
+            ];
+        });
+
+        var panel = CountPanel(RenderDetail(id));
+
+        Assert.Contains("you did say so", panel);
+        Assert.Contains("marked it restocked", panel);
+        Assert.DoesNotContain("nothing here has said so out loud", panel);
+    }
+
     // ------------------------------------------------------------------- the confidence bands
 
     [Fact]

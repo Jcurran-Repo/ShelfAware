@@ -38,9 +38,9 @@ public class CensusConfirmationServiceTests : IDisposable
         return product;
     }
 
-    /// <summary>A product with buying history behind it — the shape whose attested ZERO earns a real
-    /// <c>OutNow</c>, since a rhythm is what can later contradict the outage. Without history the zero is
-    /// still recorded as a number; only the signal is withheld (see <c>StockLedger.CountOutcome</c>).</summary>
+    /// <summary>A product with buying history behind it — a learned rhythm, so predictions about it are
+    /// meaningful. Purchase history does NOT change what a zero means (every zero writes its
+    /// <c>OutNow</c>); it is here for the tests that need a cadence to exist.</summary>
     private Task<Product> SeedBoughtProduct(string name, bool tracked = true, bool counted = false, decimal? onHand = null) =>
         SeedProduct(name, tracked, counted, onHand, null,
             DateOnly.FromDateTime(DateTime.Today.AddDays(-40)), DateOnly.FromDateTime(DateTime.Today.AddDays(-12)));

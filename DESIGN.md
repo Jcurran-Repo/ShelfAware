@@ -617,10 +617,11 @@ review-grid pattern → confirm. Three photos of a freezer beats reading thirty 
       honest move is to decline and let them say which they meant. The grid says so *before* the confirm.
     - **A count of ZERO is §13.4's ordinary evidence and writes an `OutNow`, exactly as everywhere else.**
       The only zero refused is one that would CREATE the product — nothing to add, nothing to count, and
-      the sole possible outcome a phantom the household has never owned. That refusal is decided on the
-      summed **total**, not on the row, because two rows naming one new item is the reader's ordinary
-      output (a row per variety, matched across varieties) and deciding it per row made the result depend
-      on their order.
+      the sole possible outcome a phantom the household has never owned. That refusal is **deferred and
+      settled once the whole census has been read** — a zero row is set aside, and refused only if no
+      other row brought the product into existence — because two rows naming one new item is the reader's
+      ordinary output (a row per variety, matched across varieties), and deciding it where the row sat
+      made the result depend on their order.
       <br>✗ **A rule withholding the `OutNow` for a product with no purchase history was built and
       reverted. Do not rebuild it.** Its premise — that such a signal could never be cleared, pinning the
       item Overdue forever — is false: `lastStockBack` is the max of purchase dates **and restock dates**,

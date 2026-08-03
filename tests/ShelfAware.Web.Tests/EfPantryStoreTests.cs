@@ -39,6 +39,24 @@ public class EfPantryStoreTests : IDisposable
         return (product.Id, purchase.Id);
     }
 
+    /// <summary>A counted product this household has NEVER bought — §13.8's census population (stock
+    /// bought pre-app, elsewhere, gifted, or in bulk), which has no purchase history by construction.</summary>
+    private async Task<int> CountedButNeverBought(decimal onHand)
+    {
+        await using var db = _db.CreateDbContext();
+        var product = new Product
+        {
+            Name = "Quarter Cow Ground Beef",
+            Category = Category.Meat,
+            TrackQuantity = true,
+            QuantityOnHand = onHand,
+            QuantityCountedAt = new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero),
+        };
+        db.Products.Add(product);
+        await db.SaveChangesAsync();
+        return product.Id;
+    }
+
     private async Task<Product> Reload(int productId)
     {
         await using var db = _db.CreateDbContext();
@@ -128,6 +146,42 @@ public class EfPantryStoreTests : IDisposable
         await using var db = _db.CreateDbContext();
         var signal = Assert.Single(await db.InventorySignals.Where(s => s.ProductId == productId).ToListAsync());
         Assert.Equal(SignalKind.OutNow, signal.Kind);
+    }
+
+    [Fact]
+    public async Task A_zero_on_a_product_never_bought_here_records_the_outage_like_any_other()
+    {
+        // ⚠️ This surface, not just the census, and that is the whole point of having it. A rule
+        // withholding the OutNow for a rhythm-less product was built HERE and reverted (see
+        // StockLedger.Attest): its premise — that such a signal could never be cleared — is false, a
+        // Restocked or a purchase clears it, and withholding it removed the only thing holding a zero
+        // once the count went stale.
+        // Without this test the withholding can be re-added to SetQuantityAsync and the whole suite
+        // stays green: every OTHER zero test here seeds a purchase, so the no-history case had no
+        // coverage at the layer the product page and the set_quantity chat tool both go through.
+        var productId = await CountedButNeverBought(onHand: 5);
+
+        Assert.True(await _store.SetQuantityAsync(productId, 0));
+
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(SignalKind.OutNow,
+            Assert.Single(await db.InventorySignals.Where(s => s.ProductId == productId).ToListAsync()).Kind);
+        Assert.Equal(0m, (await Reload(productId)).QuantityOnHand);
+    }
+
+    [Fact]
+    public async Task Using_the_last_one_of_a_product_never_bought_here_also_records_the_outage()
+    {
+        // The relative road to an empty shelf asks the same question and must give the same answer, or
+        // "Used one" down to none and typing 0 disagree about the same shelf.
+        var productId = await CountedButNeverBought(onHand: 1);
+
+        Assert.True(await _store.SetQuantityAsync(productId, -1, relative: true));
+
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(SignalKind.OutNow,
+            Assert.Single(await db.InventorySignals.Where(s => s.ProductId == productId).ToListAsync()).Kind);
+        Assert.Equal(0m, (await Reload(productId)).QuantityOnHand);
     }
 
     [Fact]
