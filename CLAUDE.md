@@ -72,7 +72,7 @@ Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptT
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1338 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1339 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see item 31).
 
@@ -1571,7 +1571,7 @@ bUnit pages/components — see item 31).
      named the deleted `OutageWithoutHistory` (one in a test helper's docstring that asserted the OPPOSITE
      of the rule the same commit shipped); and a page test hard-coded loader copy the product no longer
      produces — the wording is pinned on both sides now.
-   - **1338 tests green, 0 warnings** on a non-incremental Release build. ⚠️ Still not browser-verified
+   - **1339 tests green, 0 warnings** on a non-incremental Release build. ⚠️ Still not browser-verified
      since item 39: the HEIC path needs a real iOS device.
    - **The gate over the revert found no behaviour regressions — the first round of five that didn't.**
      What it did find was the revert's blind spot: deleting the withholding also deleted its tests, and
@@ -1582,11 +1582,20 @@ bUnit pages/components — see item 31).
      one the change was about.** Same for `ProductDetailCountPanelTests`: both zero-copy tests were
      deleted, but only one described the removed branch — mutating `@if (prediction.Pinned …)` to
      `@if (true)` then passed the whole 292-test UI suite.
-   - ⚠️ **A third zero-copy state exists and had no branch: outage asserted, then CLEARED by a Restocked.**
+   - ⚠️ **A third zero-copy state exists and had no branch: an outage asserted, then superseded.**
      That is the app's own recovery path — the one this arc cites as proof the pin is safe — and the
-     panel then told the household "nothing here has said so out loud", blamed cooking and receipts, and
+     panel told the household "nothing here has said so out loud", blamed cooking and receipts, and
      invited them to re-file the outage they had just cleared. `Restocked` is status-only, so the number
      stays at zero while the pin goes.
+     <br>⚠️ **The first version of that branch's copy was itself wrong, twice over, and the gate caught
+     both.** It named a **Restocked** while the predicate is "an `OutNow` exists" — equally true when a
+     **purchase** cleared it (tap Out → buy it → cook back to zero), so it told people they had marked
+     something restocked when they never had. And it claimed **"it isn't on the list"** from `!Pinned`,
+     but the grocery list takes `Overdue` OR `DueSoon` — probed at `Status=Overdue Pinned=False`, the
+     list showed it 23 days overdue while the panel denied it. That second one is item 21's bug
+     reintroduced from the opposite direction. The copy now says only what `Pinned` licenses.
+     <br>Fell out of it: `InventorySignal` rows are never pruned, so once a household has ever tapped
+     Out on a product, the derived-zero branch is unreachable for it forever.
    - **My own numbers, corrected:** the revert commit said "16 tests across three suites"; it is **17
      cases / 16 methods across FOUR** — the UI suite simply wasn't run. Understating coverage is the safe
      direction, but it is a false number in the commit whose subject is correcting false numbers.

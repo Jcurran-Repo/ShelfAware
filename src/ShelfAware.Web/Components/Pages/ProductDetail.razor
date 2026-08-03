@@ -338,16 +338,21 @@ else
                 }
                 else if (product.Signals.Any(s => s.Kind == SignalKind.OutNow))
                 {
-                    @* ⚠️ A THIRD state, and the one the app's own recovery path produces: an outage WAS
-                       asserted, and a Restocked (or a purchase) has since superseded it — which is
-                       exactly how an outage is meant to be cleared. Restocked is status-only, so the
-                       number stays at zero while the pin goes away. Without this branch that lands in
-                       the derived-zero copy below and tells someone who said they were out, and then
-                       said they'd restocked, that nothing here said so — blaming cooking and receipts,
-                       and inviting them to re-file the outage they just cleared. *@
-                    <p class="muted">Down to none, and you did say so — but you've marked it restocked
-                        since, so it isn't on the list. The count still reads none: set the number you
-                        actually have.</p>
+                    @* ⚠️ A THIRD state: an outage WAS asserted here before, and something has since
+                       superseded it — which is how §6.6 clears one. Without this branch it fell into the
+                       derived-zero copy below, which tells someone who did say they were out that
+                       nothing here said so, and blames cooking and receipts that never ran.
+                       ⚠️ This copy says ONLY what `Pinned` licenses, and the first version of it said
+                       two things that were false. It named a RESTOCKED — but the predicate is "an OutNow
+                       exists", equally true when a PURCHASE cleared it (tap Out, buy it, cook it back to
+                       zero), so it told people they'd marked something restocked when they never had.
+                       And it claimed "it isn't on the list" from `!Pinned` — but the grocery list takes
+                       Overdue OR DueSoon, so a superseded outage on an item the rhythm has since made
+                       due sat on that list while this panel denied it. Don't reintroduce either claim
+                       without reading it off the engine. *@
+                    <p class="muted">Down to none, and you've said so before — but that's not in force
+                        now, so Shelf Aware isn't treating you as out. If it's still right, set it to 0
+                        again; otherwise set the number you have.</p>
                 }
                 else
                 {

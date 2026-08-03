@@ -96,13 +96,12 @@ public class ProductDetailCountPanelTests : PageTestContext
     }
 
     [Fact]
-    public void A_zero_whose_outage_was_cleared_by_a_restock_says_so_rather_than_denying_it()
+    public void A_zero_whose_outage_is_no_longer_in_force_says_so_rather_than_denying_it()
     {
         // ⚠️ The state the app's own recovery path produces — assert the outage, then tap Restocked,
         // which is how an outage is MEANT to be cleared. Restocked is status-only, so the number stays
         // at zero while the pin goes. Without its own branch this fell into the derived-zero copy and
-        // told someone who had said they were out, then said they'd restocked, that nothing here said
-        // so — inviting them to re-file the outage they had just cleared.
+        // told someone who had said they were out that nothing here said so.
         var id = Seed(p =>
         {
             p.TrackQuantity = true;
@@ -118,8 +117,37 @@ public class ProductDetailCountPanelTests : PageTestContext
 
         var panel = CountPanel(RenderDetail(id));
 
-        Assert.Contains("you did say so", panel);
-        Assert.Contains("marked it restocked", panel);
+        Assert.Contains("you've said so before", panel);
+        Assert.Contains("not in force now", panel);
+        Assert.DoesNotContain("nothing here has said so out loud", panel);
+        // ⚠️ The copy must not name HOW the outage was cleared, nor claim list membership. The first
+        // version did both and both were false — see the branch's comment.
+        Assert.DoesNotContain("restocked", panel);
+        Assert.DoesNotContain("isn't on the list", panel);
+    }
+
+    [Fact]
+    public void A_zero_whose_outage_a_PURCHASE_cleared_gets_the_same_sentence()
+    {
+        // ⚠️ The mutation-killer, and the case the first version of this branch got wrong. There is no
+        // Restocked here at all: the outage was superseded by BUYING some (the predictor's own primary
+        // flow — "pinned Overdue → Bought today"), and the count came back to zero by cooking. The
+        // branch keys on "an OutNow exists", so it must fire here too — which is exactly why the copy
+        // cannot name a restock. Without this test, swapping the predicate to Restocked left the whole
+        // UI suite green.
+        var id = Seed(p =>
+        {
+            p.TrackQuantity = true;
+            p.QuantityOnHand = 0m;
+            p.QuantityCountedAt = Clock(10);
+            p.Purchases = Buys(30, 4);   // the later buy is what cleared the outage
+            p.Signals = [new InventorySignal { Kind = SignalKind.OutNow, SignaledAt = Clock(10) }];
+        });
+
+        var panel = CountPanel(RenderDetail(id));
+
+        Assert.Contains("you've said so before", panel);
+        Assert.DoesNotContain("restocked", panel);
         Assert.DoesNotContain("nothing here has said so out loud", panel);
     }
 
