@@ -33,6 +33,19 @@ public static class ProductMatcher
     public static Product? Resolve(string? query, IReadOnlyList<Product> products) =>
         ResolveWithKind(query, products).Product;
 
+    /// <summary>Every product rule 1 calls an identity for this query — same normalization, full set.
+    /// <see cref="ResolveWithKind"/> returns the FIRST and cannot say there were two, and no unique
+    /// index exists on product names — so a caller about to write over "the" exact match needs to know
+    /// when that name is actually a name two products share (§13.8's twins rule: a census attests over
+    /// a product's stored count, and picking a twin arbitrarily replaces the wrong household number).</summary>
+    public static IReadOnlyList<Product> ExactMatches(string? query, IReadOnlyList<Product> products)
+    {
+        if (string.IsNullOrWhiteSpace(query) || products.Count == 0) return [];
+        var q = Normalize(query);
+        if (q.Length == 0) return [];
+        return [.. products.Where(p => Normalize(p.Name) == q)];
+    }
+
     /// <summary>As <see cref="Resolve"/>, and says which rule fired — for callers that must tell an
     /// identity from a similarity (a census attests over a product's stored count, so it may not
     /// pre-authorize a guess at WHICH product).</summary>

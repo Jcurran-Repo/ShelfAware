@@ -55,6 +55,44 @@ public class CensusConfirmationServiceTests : IDisposable
         return await db.Products.SingleAsync(p => p.Id == id);
     }
 
+    // ---- twins: a shared name is not an address ----
+
+    [Fact]
+    public async Task An_unmatched_row_naming_twins_is_refused_not_guessed()
+    {
+        // No unique index exists on product names, and Attest REPLACES a count — so "which twin?"
+        // is not a question the service may answer with First(). Both counts are asserted untouched:
+        // landing on either would be a wrong answer, so the assertion covers both.
+        var a = await SeedProduct("Sardines", counted: true, onHand: 5, countedAt: DateTimeOffset.Now);
+        var b = await SeedProduct("Sardines", counted: true, onHand: 2, countedAt: DateTimeOffset.Now);
+
+        var outcome = await _service.ConfirmAsync([R("Sardines", 9)]);
+
+        Assert.Equal(0, outcome.Counted);
+        var refusal = Assert.Single(outcome.Refused);
+        Assert.Equal(CensusConfirmationService.CensusRefusal.AmbiguousName, refusal.Reason);
+        Assert.Equal(5m, (await Reload(a.Id)).QuantityOnHand);
+        Assert.Equal(2m, (await Reload(b.Id)).QuantityOnHand);
+    }
+
+    [Fact]
+    public async Task An_explicit_create_new_on_a_twin_name_is_still_the_duplicate_refusal()
+    {
+        // The order of the two refusals matters: a human who chose "create new" gets the answer about
+        // THEIR choice (the name is taken), not a lecture about a pick they weren't making — and no
+        // third twin appears either way.
+        await SeedProduct("Sardines", counted: true, onHand: 5, countedAt: DateTimeOffset.Now);
+        await SeedProduct("Sardines", counted: true, onHand: 2, countedAt: DateTimeOffset.Now);
+
+        var outcome = await _service.ConfirmAsync(
+            [new CensusConfirmationService.CensusRow("Sardines", Category.Frozen, 9, 0, CreateNew: true)]);
+
+        var refusal = Assert.Single(outcome.Refused);
+        Assert.Equal(CensusConfirmationService.CensusRefusal.DuplicateName, refusal.Reason);
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(2, await db.Products.CountAsync());
+    }
+
     // ---- ★ the rule the whole service exists to hold ----
 
     [Fact]

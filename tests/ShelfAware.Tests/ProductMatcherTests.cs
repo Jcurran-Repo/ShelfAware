@@ -41,6 +41,27 @@ public class ProductMatcherTests
         Assert.Null(ProductMatcher.Resolve("coffee", []));
     }
 
+    [Fact]
+    public void ExactMatches_returns_every_rule1_identity_not_just_the_first()
+    {
+        // ResolveWithKind returns the FIRST exact match and cannot say there were two — and no unique
+        // index exists on product names, so "the" exact match can be a name two products share. A
+        // caller about to write over it (a census attests over the stored count) needs the full set.
+        // The twins here differ only in punctuation, which rule 1's own normalization folds away — the
+        // pair a raw-string comparison would call distinct.
+        var hyphenated = new Product { Id = 1, Name = "Home-Canned Tomato Sauce" };
+        var spaced = new Product { Id = 2, Name = "Home Canned Tomato Sauce" };
+        var other = new Product { Id = 3, Name = "Ketchup" };
+
+        var twins = ProductMatcher.ExactMatches("home canned tomato sauce", [hyphenated, spaced, other]);
+
+        Assert.Equal(2, twins.Count);
+        Assert.DoesNotContain(other, twins);
+        Assert.Single(ProductMatcher.ExactMatches("ketchup", [hyphenated, spaced, other]));
+        Assert.Empty(ProductMatcher.ExactMatches("mustard", [hyphenated, spaced, other]));
+        Assert.Empty(ProductMatcher.ExactMatches("   ", [hyphenated, spaced, other]));
+    }
+
     // A pantry of same-brand items: a shared store-brand prefix must not be enough to match.
     private static readonly IReadOnlyList<Product> StoreBrandPantry =
     [

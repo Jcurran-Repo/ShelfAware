@@ -63,6 +63,12 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
         /// <summary>The "how many" box was left empty. Not a zero (see <see cref="CensusRow.Count"/>) and
         /// not a guess — the one thing the household has to supply is the number.</summary>
         MissingCount,
+        /// <summary>An unmatched row whose name is carried by MORE THAN ONE product. No unique index
+        /// exists on product names, and <c>Attest</c> REPLACES a count — so resolving to the first
+        /// twin would overwrite an arbitrary household number. The app declines to guess, the same
+        /// refusal <c>MealStock</c> makes when a name cannot address a single product; the grid says
+        /// so before the confirm and its dropdown tells the twins apart by their counts.</summary>
+        AmbiguousName,
     }
 
     public record RefusedRow(string Name, CensusRefusal Reason);
@@ -169,7 +175,7 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
                 {
                     product = existingNew;
                 }
-                else if (products.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)) is { } sameName)
+                else
                 {
                     // ⚠️ Only for a row the grid never matched. An UNMATCHED row whose name is exactly an
                     // existing product's is that product: a census is the app's biggest bulk product
@@ -182,12 +188,26 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
                     // wrong answer; the standing duplicate guard blocks exact-name dupes outright.
                     // A near-miss is the GRID's business, not this method's: resolving a fuzzy match here
                     // would attach a count to a guessed product with nobody asked.
-                    if (row.CreateNew)
+                    // ⚠️ Plural on purpose. Two products CAN share the name (no unique index), the rows
+                    // arrive naming a NAME — and Attest replaces a count, so First() here would overwrite
+                    // an arbitrary twin's. Which twin was counted is not the app's call to make.
+                    var sameName = products
+                        .Where(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    if (sameName.Count > 0)
                     {
-                        refused.Add(new RefusedRow(name, CensusRefusal.DuplicateName));
-                        continue;
+                        if (row.CreateNew)
+                        {
+                            refused.Add(new RefusedRow(name, CensusRefusal.DuplicateName));
+                            continue;
+                        }
+                        if (sameName.Count > 1)
+                        {
+                            refused.Add(new RefusedRow(name, CensusRefusal.AmbiguousName));
+                            continue;
+                        }
+                        product = sameName[0];
                     }
-                    product = sameName;
                 }
             }
 

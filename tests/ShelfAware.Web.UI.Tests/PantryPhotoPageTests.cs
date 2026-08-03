@@ -462,6 +462,65 @@ public class PantryPhotoPageTests : PageTestContext
     }
 
     [Fact]
+    public async Task Twin_products_are_never_pre_filled_and_the_dropdown_tells_them_apart()
+    {
+        // Two products share a name (no unique index, and the duplicate guard has a real "Add
+        // anyway"), and the reader's Distinct() hint list means its suggestion names a NAME — so a
+        // First() prefill pre-authorized a write over an arbitrary twin's count. The row waits for a
+        // human, says why, and the option labels carry the counts that make the pick possible —
+        // MealStock refuses this state and the "Ate it" picker disambiguates by live count; the
+        // census now does both.
+        await SeedProduct("Ground Beef", counted: true, onHand: 9);
+        await SeedProduct("Ground Beef");
+
+        var cut = Review(Item("Ground Beef", count: 4, suggested: "Ground Beef"));
+
+        var row = RowFor(cut, "Ground Beef");
+        Assert.False(IsTicked(row));
+        var select = row.QuerySelectorAll("select")
+            .Single(s => s.GetAttribute("aria-label")!.StartsWith("Product match"));
+        Assert.Equal("0", ((IHtmlSelectElement)select).Value);
+        Assert.Contains("More than one of your products is named", Collapsed(row));
+        Assert.Contains("9 on hand", Collapsed(row));   // the counted twin's option label
+        Assert.Contains("not counted", Collapsed(row)); // the other's
+    }
+
+    [Fact]
+    public async Task Tick_all_skips_a_row_whose_name_two_products_share()
+    {
+        // No suggestion here, so this is the MATCHER path: rule 1 finds an "exact" match that is
+        // really a coin flip between twins, and both the arrival tick and the bulk tick stand down.
+        await SeedProduct("Ground Beef", counted: true, onHand: 9);
+        await SeedProduct("Ground Beef");
+        var cut = Review(Item("Ground Beef", count: 4));
+
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Tick all")).Click();
+
+        Assert.False(IsTicked(RowFor(cut, "Ground Beef")));
+    }
+
+    [Fact]
+    public async Task A_twin_picked_by_hand_is_counted_and_the_other_is_untouched()
+    {
+        // The whole point of refusing to guess: once the HUMAN picks, the write is ordinary — the
+        // chosen twin's count is replaced and its sibling's isn't.
+        var a = await SeedProduct("Ground Beef", counted: true, onHand: 9);
+        var b = await SeedProduct("Ground Beef", counted: true, onHand: 2);
+        var cut = Review(Item("Ground Beef", count: 4, suggested: "Ground Beef"));
+
+        RowFor(cut, "Ground Beef").QuerySelectorAll("select")
+            .Single(s => s.GetAttribute("aria-label")!.StartsWith("Product match"))
+            .Change(b.Id.ToString());
+        TickOf(RowFor(cut, "Ground Beef")).Change(true);
+        cut.FindAll("button").Single(btn => btn.TextContent.Contains("Count ")).Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("Counted 1 item", Collapsed(cut.Markup)));
+        await using var db = Db.CreateDbContext();
+        Assert.Equal(4m, (await db.Products.SingleAsync(p => p.Id == b.Id)).QuantityOnHand);
+        Assert.Equal(9m, (await db.Products.SingleAsync(p => p.Id == a.Id)).QuantityOnHand);
+    }
+
+    [Fact]
     public async Task An_existing_count_is_shown_beside_the_new_one_and_FOLLOWS_the_dropdown()
     {
         // Attesting REPLACES the number, so the one being replaced belongs on screen — otherwise a recount
