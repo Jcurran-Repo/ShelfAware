@@ -616,11 +616,20 @@ review-grid pattern → confirm. Three photos of a freezer beats reading thirty 
       merging overrules the human, and creating the twin is what the duplicate guard exists to stop, so the
       honest move is to decline and let them say which they meant. The grid says so *before* the confirm.
     - ⚠️ **A count of ZERO records the NUMBER always; only the `OutNow` is withheld, and only where the
-      product has no purchase history.** The signal needs a rhythm to argue with: with no purchases behind
-      it nothing can re-anchor or clear it — a later census writes no signal either — so it pins the item
-      **Overdue** at the top of the dashboard and the grocery list indefinitely while teaching nothing
-      (`BurnCycles` needs purchases to form a cycle). But the count itself is the human's honest evidence
-      of *how many*, which is exactly what a census is for.
+      product has no purchase history — and that rule lives in `StockLedger`, not here.** The signal needs
+      a rhythm to argue with: with no purchases behind it nothing can re-anchor or clear it — a later
+      census writes no signal either — so it pins the item **Overdue** at the top of the dashboard and the
+      grocery list indefinitely while teaching nothing (`BurnCycles` needs purchases to form a cycle). But
+      the count itself is the human's honest evidence of *how many*, which is exactly what a census is for.
+      <br>⚠️ **Altitude was the fourth mistake and the instructive one.** Implemented in the census alone,
+      the rule immediately drifted: `EfPantryStore.SetQuantityAsync` — the path documented as *the* count
+      writer, shared by the product page and the `set_quantity` chat tool — went on writing the pin the
+      census had just decided to withhold, for the same act on the same product. It is a property of the
+      DATA, not of the surface, so `StockLedger.Attest`/`AdjustByHuman` now take `hasPurchaseHistory` and
+      return `CountOutcome`, and every count writer gets the same answer by construction. The fact is
+      PASSED IN rather than read off `Product.Purchases` because that nav collection is not loaded at
+      every call site — reading it there would silently answer "no history" for a product with years of
+      it. A required parameter also makes the compiler catch the next caller that appears.
       <br>Both halves of that were got wrong first. Refusing the zero only when the row would CREATE the
       product missed that **a census's own output has zero purchases by construction** — §13.8 being
       precisely for stock no receipt knows about — so the second census of a shelf hit the permanent pin

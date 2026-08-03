@@ -4,6 +4,7 @@ using Bunit;
 using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using ShelfAware.Core.Census;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
@@ -66,12 +67,16 @@ public class PantryPhotoPageTests : PageTestContext
                 : Task.FromResult(new ShelfPhoto([1, 2, 3], "image/jpeg"));
     }
 
+    internal RecordingLoggerProvider Logs = null!;
+
     protected override void RegisterAdditionalServices()
     {
         Reader = new QueueReader();
         PhotoLoader = new StubPhotoLoader();
+        Logs = new RecordingLoggerProvider();
         Services.AddSingleton<IShelfCensusReader>(Reader);
         Services.AddSingleton<IShelfPhotoLoader>(PhotoLoader);
+        Services.AddSingleton<ILoggerProvider>(Logs);
         Services.AddSingleton(new CensusConfirmationService(Factory));
     }
 
@@ -558,12 +563,16 @@ public class PantryPhotoPageTests : PageTestContext
     {
         // The loader refuses by content type instead of handing an undecodable file to a JS promise that
         // never settles — 30 seconds of spinner followed by a message that never mentions the file.
-        PhotoLoader.Throws = new NotSupportedException("“shelf.pdf” is application/pdf, which can't be read as a photo. Use a JPEG, PNG, GIF, or WebP.");
+        // The exact sentence the real loader produces for this file, so a reworded refusal fails here
+        // rather than passing against a string this fixture invented. Pinned the other side too:
+        // ShelfPhotoLoaderTests asserts the loader really says this.
+        PhotoLoader.Throws = new NotSupportedException(
+            "“shelf.pdf” is application/pdf, which isn't a photo. Take or pick a picture of the shelf instead.");
         var cut = Render<PantryPhoto>();
         Upload(cut, 1);
         cut.Find("button").Click();
 
-        cut.WaitForAssertion(() => Assert.Contains("can't be read as a photo", Collapsed(cut.Markup)));
+        cut.WaitForAssertion(() => Assert.Contains("isn't a photo", Collapsed(cut.Markup)));
     }
 
     [Fact]
@@ -589,6 +598,68 @@ public class PantryPhotoPageTests : PageTestContext
 
         Assert.False(Factory.LastToken.CanBeCanceled,
             "the CONFIRM must not be cancellable by the page going away — the write has to outlive it");
+    }
+
+    [Fact]
+    public async Task A_zero_with_no_buying_history_is_reported_as_recorded_not_as_running_out()
+    {
+        // "You have none" and "you have run out" are different claims — the first is a number, the second
+        // feeds the rhythm and the grocery list. The service withholds the signal; this is the half that
+        // tells the household which one happened, and it had no test.
+        await SeedProduct("Quarter Cow Ground Beef", counted: true, onHand: 9);
+
+        var cut = Review(Item("Quarter Cow Ground Beef", count: 1));
+        RowFor(cut, "Quarter Cow Ground Beef").QuerySelectorAll("input[type=number]").Single().Change("0");
+        cut.FindAll("button").Single(b => b.TextContent.Trim().StartsWith("Count ")).Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            var text = Collapsed(cut.Markup);
+            Assert.Contains("recorded as none on hand, but not as running out", text);
+            Assert.DoesNotContain("1 counted at zero — recorded as running out", text);
+        });
+    }
+
+    [Fact]
+    public void A_captured_token_outlives_its_source_but_reading_Token_again_does_not()
+    {
+        // ⚠️ The language fact the page's `var ct = pageCts.Token;` rests on, pinned here because the
+        // PAGE-LEVEL behaviour is not reachable from this harness — see the note below. Reading .Token
+        // after Dispose throws ObjectDisposedException, which derives from InvalidOperationException and
+        // therefore clears every specific catch clause the read has, landing in the generic one and
+        // logging LogError("Reading a shelf census failed") on an ordinary navigate-away — precisely the
+        // teardown noise the JSDisconnectedException clause beside it exists to prevent. A token captured
+        // BEFORE disposal stays usable, which is why the capture is the fix.
+        //
+        // ⚠️ GAP, stated rather than papered over: the page flow itself cannot be tested here. bUnit
+        // stops pumping continuations once a component is disposed — measured, not assumed: parking the
+        // read at the catalog load, disposing, then releasing the gate leaves the reader with ZERO calls,
+        // so the post-disposal token read never happens and a test cannot observe it either way. An
+        // earlier version of this test asserted "no error was logged" and passed identically with the
+        // fix reverted. The page's three uses of `ct` are review-verified, not test-pinned.
+        var cts = new CancellationTokenSource();
+        var captured = cts.Token;
+        cts.Cancel();
+        cts.Dispose();
+
+        Assert.True(captured.IsCancellationRequested);      // the capture still answers
+        Assert.True(cts.IsCancellationRequested);           // and so does this property…
+        Assert.Throws<ObjectDisposedException>(() => cts.Token); // …while re-reading Token does not
+        Assert.IsAssignableFrom<InvalidOperationException>(
+            Record.Exception(() => cts.Token));             // which is why no specific clause caught it
+    }
+
+    [Fact]
+    public void The_file_input_accepts_any_image_the_browser_can_decode()
+    {
+        // ⚠️ Pinned because the accept list is load-bearing in a way that reads like decoration: a
+        // FORMAT list is what makes iOS transcode HEIC to JPEG, so narrowing it hid real photos behind
+        // "can't be read". And naming image/heic here would be worse than either — Safari 17+ then stops
+        // transcoding and converts JPEG and PNG INTO HEIC.
+        var cut = Render<PantryPhoto>();
+
+        var accept = cut.Find("input[type=file]").GetAttribute("accept");
+        Assert.Equal("image/*", accept);
     }
 
     [Fact]

@@ -43,9 +43,12 @@ public class ShelfPhotoLoaderTests
             Loader().LoadAsync(new FakeBrowserFile("shelf.dat", contentType)));
 
         // The message is shown to the visitor verbatim, so it has to name the file — the generic
-        // "something went wrong" it replaces never said the file was the problem.
+        // "something went wrong" it replaces never said the file was the problem. The wording is pinned
+        // here AND in the page test that renders it, so the two cannot drift into asserting a sentence
+        // the product no longer produces.
         Assert.Contains("shelf.dat", ex.Message);
         Assert.Contains(contentType, ex.Message);
+        Assert.Contains("isn't a photo", ex.Message);
     }
 
     [Theory]

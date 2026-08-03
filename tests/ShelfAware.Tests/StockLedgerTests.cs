@@ -9,6 +9,11 @@ public class StockLedgerTests
 
     private static readonly DateTimeOffset Now = new(2026, 7, 28, 9, 0, 0, TimeSpan.Zero);
 
+    /// <summary>Most of these tests are about the NUMBER, not about what a zero means, so they assert
+    /// against a product the household buys — the ordinary case. The zero-meaning rule has its own tests
+    /// below, both directions.</summary>
+    private const bool Bought = true;
+
     [Fact]
     public void Typing_a_count_opts_the_product_in_and_stamps_the_attestation()
     {
@@ -17,12 +22,12 @@ public class StockLedgerTests
         // check reads.
         var product = new Product { Name = "Beef Chuck Roast" };
 
-        var assertedOut = StockLedger.Attest(product, 6, Now);
+        var outcome = StockLedger.Attest(product, 6, Now, Bought);
 
         Assert.True(product.TrackQuantity);
         Assert.Equal(6m, product.QuantityOnHand);
         Assert.Equal(Now, product.QuantityCountedAt);
-        Assert.False(assertedOut);
+        Assert.Equal(StockLedger.CountOutcome.Recorded, outcome);
     }
 
     [Fact]
@@ -32,8 +37,49 @@ public class StockLedgerTests
         // remembering to report it, which makes it BETTER burn-rate data than the button.
         var product = Counted(2);
 
-        Assert.True(StockLedger.Attest(product, 0, Now));
+        Assert.Equal(StockLedger.CountOutcome.AssertedOutage, StockLedger.Attest(product, 0, Now, Bought));
         Assert.Equal(0m, product.QuantityOnHand);
+    }
+
+    // ---- what a zero MEANS, which is the ledger's call and not any caller's ----
+
+    [Fact]
+    public void A_zero_on_a_product_never_bought_here_records_the_number_but_owes_no_outage()
+    {
+        // ⚠️ An outage signal needs a rhythm to argue with. With no purchases nothing can ever re-anchor
+        // or clear it — not a receipt, not a later count — so it would pin the item Overdue at the top of
+        // the dashboard and the grocery list indefinitely, while teaching nothing (BurnCycles needs
+        // purchases to form a cycle). The NUMBER is still the household's honest evidence of how many,
+        // so it is recorded exactly as any other.
+        var product = Counted(5);
+
+        var outcome = StockLedger.Attest(product, 0, Now, hasPurchaseHistory: false);
+
+        Assert.Equal(StockLedger.CountOutcome.ZeroWithoutRhythm, outcome);
+        Assert.Equal(0m, product.QuantityOnHand);   // recorded, not discarded
+        Assert.Equal(Now, product.QuantityCountedAt);
+    }
+
+    [Fact]
+    public void A_relative_move_landing_at_zero_asks_the_same_question()
+    {
+        // "Used one" down to none is a statement about the LEVEL, so it faces the same question as a
+        // typed zero — and must answer it the same way, or the two roads to an empty shelf disagree.
+        var product = Counted(1);
+
+        Assert.Equal(StockLedger.CountOutcome.ZeroWithoutRhythm,
+            StockLedger.AdjustByHuman(product, -1, Now, hasPurchaseHistory: false));
+        Assert.Equal(StockLedger.CountOutcome.AssertedOutage,
+            StockLedger.AdjustByHuman(Counted(1), -1, Now, hasPurchaseHistory: true));
+    }
+
+    [Fact]
+    public void A_POSITIVE_count_is_the_same_answer_whatever_the_history()
+    {
+        // The complement that stops the rule leaking beyond zero: history decides what an EMPTY shelf
+        // means, and nothing else.
+        Assert.Equal(StockLedger.CountOutcome.Recorded, StockLedger.Attest(Counted(1), 4, Now, true));
+        Assert.Equal(StockLedger.CountOutcome.Recorded, StockLedger.Attest(Counted(1), 4, Now, false));
     }
 
     [Fact]
@@ -57,7 +103,7 @@ public class StockLedgerTests
         // -2 would have passed it.)
         var product = Counted(3);
 
-        Assert.True(StockLedger.Attest(product, -2, Now));
+        Assert.Equal(StockLedger.CountOutcome.AssertedOutage, StockLedger.Attest(product, -2, Now, Bought));
         Assert.Equal(0m, product.QuantityOnHand);
         Assert.Equal(Now, product.QuantityCountedAt);
     }
@@ -101,9 +147,9 @@ public class StockLedgerTests
         var product = Counted(4);
         product.QuantityCountedAt = counted;
 
-        var assertedOut = StockLedger.AdjustByHuman(product, -2, Now);
+        var outcome = StockLedger.AdjustByHuman(product, -2, Now, Bought);
 
-        Assert.False(assertedOut);
+        Assert.Equal(StockLedger.CountOutcome.Recorded, outcome);
         Assert.Equal(2m, product.QuantityOnHand);
         Assert.Equal(counted, product.QuantityCountedAt);
     }
@@ -117,9 +163,9 @@ public class StockLedgerTests
         var product = Counted(1);
         product.QuantityCountedAt = counted;
 
-        var assertedOut = StockLedger.AdjustByHuman(product, -2, Now);
+        var outcome = StockLedger.AdjustByHuman(product, -2, Now, Bought);
 
-        Assert.True(assertedOut);
+        Assert.Equal(StockLedger.CountOutcome.AssertedOutage, outcome);
         Assert.Equal(0m, product.QuantityOnHand);
         Assert.Equal(Now, product.QuantityCountedAt);
     }
@@ -134,7 +180,7 @@ public class StockLedgerTests
         product.QuantityCountedAt = Now;
         StockLedger.StopCounting(product);
 
-        Assert.False(StockLedger.AdjustByHuman(product, -2, Now.AddDays(1)));
+        Assert.Equal(StockLedger.CountOutcome.Recorded, StockLedger.AdjustByHuman(product, -2, Now.AddDays(1), Bought));
         Assert.Equal(6m, product.QuantityOnHand);
         Assert.Equal(Now, product.QuantityCountedAt);
         Assert.False(product.TrackQuantity);
@@ -149,7 +195,7 @@ public class StockLedgerTests
         var product = Counted(6);
         StockLedger.StopCounting(product);
 
-        Assert.False(StockLedger.Attest(product, 4, Now));
+        Assert.Equal(StockLedger.CountOutcome.Recorded, StockLedger.Attest(product, 4, Now, Bought));
         Assert.True(product.TrackQuantity);
         Assert.Equal(4m, product.QuantityOnHand);
         Assert.Equal(Now, product.QuantityCountedAt);
@@ -162,7 +208,7 @@ public class StockLedgerTests
         // same line rather than trusting them to.
         var product = Counted(onHand: null);
 
-        Assert.False(StockLedger.AdjustByHuman(product, -1, Now));
+        Assert.Equal(StockLedger.CountOutcome.Recorded, StockLedger.AdjustByHuman(product, -1, Now, Bought));
         Assert.Null(product.QuantityOnHand);
         Assert.Null(product.QuantityCountedAt);
     }

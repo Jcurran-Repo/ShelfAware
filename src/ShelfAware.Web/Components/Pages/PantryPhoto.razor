@@ -648,14 +648,10 @@ else if (phase == Phase.Done)
             refusals = outcome.Refused;
             phase = Phase.Done;
         }
-        // Same split, same reason, as Read's: only our own token means teardown, and a swallowed
-        // cancellation here would leave the button reading "Saving…" with nothing ever saying otherwise.
-        catch (OperationCanceledException) when (pageCts.IsCancellationRequested) { throw; }
-        catch (OperationCanceledException ex)
-        {
-            Logger.LogError(ex, "Confirming a shelf census was cancelled from outside the page (a timeout).");
-            confirmError = "That took too long and was stopped — nothing was recorded. Try again; re-counting the same numbers is safe.";
-        }
+        // No OperationCanceledException clause, deliberately: the confirm is passed CancellationToken.None
+        // above, so nothing on this path can raise one. The clauses that were here claimed a timeout that
+        // cannot occur and read as though the write were time-bounded, which is the opposite of the
+        // guarantee the None is there to give.
         catch (Exception ex)
         {
             // One SaveChanges in a single transaction, so a failure persists nothing. Pressing it again is

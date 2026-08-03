@@ -72,7 +72,7 @@ Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptT
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1328 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1340 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see item 31).
 
@@ -1519,6 +1519,46 @@ bUnit pages/components — see item 31).
      mutations, each killing exactly its tests. ⚠️ Not re-verified in a browser since these changes — the
      HEIC path in particular can only be settled on a real iOS device, and the fix is reasoned from
      Blazor's `InputFile.ts` plus WebKit's documented transcode behaviour, not observed.
+
+40. **The re-gate, and the end of the patch cycle (2026-08-02).** The gate over item 39's own fix commit
+   found seven more — five of them regressions that commit had introduced. Three rounds in a row had now
+   done that (8 fixes → 15 found → 7 found → 7 found), so the pattern itself became the finding: **a fix
+   pass needs its own review, and patching a rule at one call site keeps producing the next round's
+   defects.** Jordan's call was to stop patching and fix the altitude. What that meant:
+   - ⚠️ **The zero rule moved into `StockLedger`** — see DESIGN.md §13.8. Held in the census alone it had
+     already drifted: `EfPantryStore.SetQuantityAsync` still wrote the pin the census withheld, and
+     `ProductDetail` then told a census-zeroed household *"nothing here has said so out loud"* — blaming
+     cooking and receipts that never touched it, beside "you last counted Aug 2", and offering as the
+     remedy the one act that would pin the item forever. `Attest`/`AdjustByHuman` return `CountOutcome`
+     now and take `hasPurchaseHistory` as a REQUIRED parameter, so the compiler catches every caller and
+     no surface can answer the question differently. **Proof it is genuinely central: one mutation in the
+     ledger kills 6 tests across three suites; its inverse kills 11.** Before the move, the same defect
+     needed a separate test per surface and had one.
+   - ⚠️ **A row-level decision that depends on other rows must be settled after all of them.** The
+     `ZeroOnNewProduct` refusal was decided where the row sat, so `[Sardines 0, Sardines 2]` refused a row
+     and said "nothing was created" about a product the next row created, while `[Sardines 2, Sardines 0]`
+     refused nothing. Zero rows are deferred and settled once the census has been read. Pinned by a
+     `[Theory]` running both orderings against one assertion set.
+   - ⚠️ **bUnit stops pumping continuations once a component is disposed** — measured, not assumed: park
+     the read, dispose, release the gate, and the reader records ZERO calls. So the captured-token fix
+     (item 39) **cannot be tested at the page level**; a test asserting "no error was logged" passed
+     identically with the fix reverted. It is replaced by a unit test pinning the language fact it rests
+     on (a captured token outlives its source; re-reading `.Token` throws `ObjectDisposedException`, which
+     derives from `InvalidOperationException` and so clears every specific clause), with the page-flow gap
+     stated in the test body rather than left implied. Same honesty as item 27's review-verified handlers.
+   - **`RecordingLoggerProvider` (Web.UI.Tests)** exists because teardown behaviour is invisible in
+     markup: once a component is disposed there is nothing left to render, so "this navigate-away wrote an
+     ERROR into a real deployment's log" can only be observed through the log. Errors only — the level is
+     the point.
+   - Also fixed: `ConfirmAll`'s two cancellation clauses were dead by construction once the confirm took
+     `CancellationToken.None`, and their message claimed a timeout that cannot occur; two comments still
+     named the deleted `OutageWithoutHistory` (one in a test helper's docstring that asserted the OPPOSITE
+     of the rule the same commit shipped); and a page test hard-coded loader copy the product no longer
+     produces — the wording is pinned on both sides now.
+   - **1340 tests green, 0 warnings** on a non-incremental Release build (1328 before; +12), UI suite
+     stable across four consecutive runs. ⚠️ Still not browser-verified since item 39: the HEIC path needs
+     a real iOS device, and the `ProductDetail` third-branch copy has unit coverage but has not been seen
+     on screen.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

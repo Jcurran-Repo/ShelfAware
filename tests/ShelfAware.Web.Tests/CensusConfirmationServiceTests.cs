@@ -38,8 +38,9 @@ public class CensusConfirmationServiceTests : IDisposable
         return product;
     }
 
-    /// <summary>A product with buying history behind it — the only shape against which an attested ZERO is
-    /// safe, since a rhythm is what can later contradict the outage (see OutageWithoutHistory).</summary>
+    /// <summary>A product with buying history behind it — the shape whose attested ZERO earns a real
+    /// <c>OutNow</c>, since a rhythm is what can later contradict the outage. Without history the zero is
+    /// still recorded as a number; only the signal is withheld (see <c>StockLedger.CountOutcome</c>).</summary>
     private Task<Product> SeedBoughtProduct(string name, bool tracked = true, bool counted = false, decimal? onHand = null) =>
         SeedProduct(name, tracked, counted, onHand, null,
             DateOnly.FromDateTime(DateTime.Today.AddDays(-40)), DateOnly.FromDateTime(DateTime.Today.AddDays(-12)));
@@ -446,6 +447,33 @@ public class CensusConfirmationServiceTests : IDisposable
         Assert.Equal(1, outcome.AssertedOut);
         Assert.Equal(2, outcome.Rows);
         Assert.Equal(1, outcome.Counted);
+    }
+
+    [Theory]
+    [InlineData(true)]   // the zero row first
+    [InlineData(false)]  // the zero row second
+    public async Task A_zero_beside_a_real_count_of_the_same_new_item_reads_the_same_either_way(bool zeroFirst)
+    {
+        // ⚠️ Deciding a zero row's fate WHERE IT SAT made the outcome depend on the order the reader
+        // happened to emit rows in: the zero-first ordering refused a row and then told the household
+        // "nothing was created" about a product sitting on their Products page, while zero-second refused
+        // nothing. The reader emits a row per variety and matches across varieties, so two rows naming one
+        // new item is its ordinary output — not an edge case. Settled once, after every row is read.
+        CensusConfirmationService.CensusRow[] rows = zeroFirst
+            ? [R("Sardines", 0), R("Sardines", 2)]
+            : [R("Sardines", 2), R("Sardines", 0)];
+
+        var outcome = await _service.ConfirmAsync(rows);
+
+        await using var db = _db.CreateDbContext();
+        var product = await db.Products.SingleAsync();
+        Assert.Equal("Sardines", product.Name);
+        Assert.Equal(2m, product.QuantityOnHand);
+        Assert.Empty(outcome.Refused);          // ← the half that failed in one ordering
+        Assert.Equal(1, outcome.NewProducts);
+        Assert.Equal(2, outcome.Rows);          // both rows landed
+        Assert.Equal(1, outcome.Counted);
+        Assert.Empty(await db.InventorySignals.ToListAsync());
     }
 
     [Fact]

@@ -100,7 +100,7 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var products = await db.Products.ToListAsync(cancellationToken);
         // Which products have ever been bought. A zero is only safe evidence against a rhythm that can
-        // later contradict it (see CensusRefusal.OutageWithoutHistory) — one projected id query rather
+        // later contradict it (see StockLedger.CountOutcome) — one projected id query rather
         // than loading every purchase, since all this decides is "any at all?".
         var hasPurchases = (await db.PurchaseEvents
             .Select(p => p.ProductId)
@@ -120,6 +120,9 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
         // runs in the second loop, so two rows resolving to one dormant product would both count it.
         var resumed = new HashSet<Product>();
         var refused = new List<RefusedRow>();
+        // Zero rows that no product exists for YET. Held until every row has been read, because a later
+        // row naming the same new item settles them (see where they are added).
+        var deferredZeros = new List<(string Name, string Label)>();
         int created = 0, counted = 0;
 
         foreach (var row in rows)
@@ -200,14 +203,16 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
                 }
             }
 
-            // A zero cannot bring a product into existence: the catalog doesn't have it and the row says
-            // the shelf doesn't either, so creating it would mint a phantom the household has never
-            // owned. Every other zero is recorded as a NUMBER — what gets withheld for a rhythm-less
-            // product is the OutNow, and that decision belongs on the total rather than the row (see the
-            // Attest loop), because two rows summing to zero is the same statement as one.
+            // ⚠️ A zero cannot bring a product into existence — but whether it WOULD is not knowable yet,
+            // so this row is set aside and settled once every row has been read. Deciding it here made
+            // the outcome depend on row ORDER: [Sardines 0, Sardines 2] refused the first row while the
+            // second created Sardines, then told the household "nothing was created" about a product
+            // sitting on their Products page, where [Sardines 2, Sardines 0] refused nothing. The reader
+            // emits a row per variety and matches across varieties, so two rows naming one new item is
+            // its ordinary output, not an edge case.
             if (count == 0 && product is null)
             {
-                refused.Add(new RefusedRow(label, CensusRefusal.ZeroOnNewProduct));
+                deferredZeros.Add((name, label));
                 continue;
             }
 
@@ -245,6 +250,23 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
             counted++;
         }
 
+        // Settle the zero rows now that the whole census has been read, so the answer is a property of
+        // the rows rather than of their order. A sibling row naming the same item makes this one part of
+        // the same statement — it contributes its zero and counts as a row that landed; with nothing to
+        // attach to it is refused, which is the only zero that genuinely has nothing to record.
+        foreach (var (name, label) in deferredZeros)
+        {
+            if (createdByName.TryGetValue(name, out var product))
+            {
+                totals[product] = totals.GetValueOrDefault(product);
+                counted++;
+            }
+            else
+            {
+                refused.Add(new RefusedRow(label, CensusRefusal.ZeroOnNewProduct));
+            }
+        }
+
         var now = DateTimeOffset.Now;
         var assertedOut = 0;
         var zeroedWithoutSignal = 0;
@@ -253,33 +275,24 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
             // Attest, not Add: this is a LOOK at the shelf, so it states the total and re-anchors the
             // attestation clock §13.5's drift check measures from. It also opts the product into counting
             // (the ledger's rule: typing a number IS asking for it to be counted).
-            if (!StockLedger.Attest(product, count, now)) continue;
+            // What a zero MEANS is the LEDGER's call, not this service's — see StockLedger.CountOutcome.
+            // Holding that rule here instead was the bug: the product page kept writing the pin this path
+            // had decided to withhold, for the same act on the same product.
+            switch (StockLedger.Attest(product, count, now, hasPurchases.Contains(product.Id)))
+            {
+                case StockLedger.CountOutcome.AssertedOutage:
+                    db.InventorySignals.Add(new InventorySignal
+                    {
+                        Product = product,
+                        Kind = SignalKind.OutNow,
+                        SignaledAt = now,
+                    });
+                    assertedOut++;
+                    break;
 
-            // §13.4: a human's zero is real evidence and owes an OutNow, which feeds the burn-rate
-            // rhythm. Only a human can get here — the reader floors its proposals at 1, so this zero
-            // was typed.
-            // ⚠️ But the signal is withheld where the product has NO purchases, and the number is kept
-            // either way. An OutNow needs a rhythm to argue with: with no purchases behind it nothing can
-            // re-anchor or clear it — not a later census, which writes no signal — so it pins the item
-            // Overdue at the top of the dashboard and the grocery list indefinitely, while teaching
-            // nothing (BurnCycles needs purchases to form a cycle). Withholding only the signal is the
-            // split PantryOnHand already draws in the other direction: "a derived zero still cannot write
-            // an OutNow" — the human's typed zero is honest evidence of HOW MANY, and how many is exactly
-            // what a count is for. Refusing the whole row instead left §13.8's own population unable to
-            // be zeroed at all, with the stale positive still telling recipes the food was there.
-            if (hasPurchases.Contains(product.Id))
-            {
-                db.InventorySignals.Add(new InventorySignal
-                {
-                    Product = product,
-                    Kind = SignalKind.OutNow,
-                    SignaledAt = now,
-                });
-                assertedOut++;
-            }
-            else
-            {
-                zeroedWithoutSignal++;
+                case StockLedger.CountOutcome.ZeroWithoutRhythm:
+                    zeroedWithoutSignal++;
+                    break;
             }
         }
 
