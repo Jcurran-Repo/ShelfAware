@@ -51,6 +51,14 @@ public record PredictionResult
     /// True when an active OutNow signal pins this item to the top of the list (§6.6 / §8).
     public bool Pinned { get; init; }
 
+    /// <summary>The last stock-back (a purchase or a restock) is dated TODAY, so an OutNow filed today
+    /// would tie with it and LOSE — permanently, since neither date ever changes (§6.6 gives same-day
+    /// ties to the stock on purpose; the primary flow is "pinned Overdue → Bought today", which must
+    /// clear the pin). Computed here, beside the tie rule, so a surface offering "say you're out"
+    /// advice can stop promising an act the engine will disregard — a fresh outage report only takes
+    /// effect from tomorrow. The classic road in: mis-tap Restocked, then try to undo it the same day.</summary>
+    public bool OutNowTodayWouldBeInert { get; init; }
+
     /// The governing expiration date — the LATEST purchase's labeled date (same-day purchases: the
     /// longest, since you'd open the shorter-dated one first). Null when the latest purchase carries no
     /// date or expiration tracking is off. A future value lets the UI say "expires Jul 22".

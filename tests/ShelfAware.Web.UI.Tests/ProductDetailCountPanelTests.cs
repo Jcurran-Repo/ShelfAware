@@ -127,6 +127,83 @@ public class ProductDetailCountPanelTests : PageTestContext
     }
 
     [Fact]
+    public void A_superseded_outage_with_stock_recorded_today_stops_promising_an_act_that_wont_work()
+    {
+        // ⚠️ The advice trap: with the stock-back dated TODAY, a fresh 0 ties with it and loses —
+        // permanently (§6.6's same-day rule; the signal's date never changes) — so "set it to 0
+        // again" was a silent no-op that re-rendered this same branch, advice included, for the
+        // rest of the day. The classic road in is a mis-tapped Restocked and a same-day attempt to
+        // undo it. The page words what the engine states (OutNowTodayWouldBeInert); it derives
+        // nothing itself.
+        var id = Seed(p =>
+        {
+            p.TrackQuantity = true;
+            p.QuantityOnHand = 0m;
+            p.QuantityCountedAt = Clock(5);
+            p.Purchases = Buys(30, 15);
+            p.Signals =
+            [
+                new InventorySignal { Kind = SignalKind.OutNow, SignaledAt = Clock(5) },
+                new InventorySignal { Kind = SignalKind.Restocked, SignaledAt = Clock(0) },
+            ];
+        });
+
+        var panel = CountPanel(RenderDetail(id));
+
+        Assert.Contains("you've said so before", panel);
+        Assert.Contains("wins a same-day tie", panel);
+        Assert.Contains("set it to 0 then", panel);
+        Assert.DoesNotContain("set it to 0 again", panel);
+    }
+
+    [Fact]
+    public void A_derived_zero_with_stock_recorded_today_gets_the_same_honest_timing()
+    {
+        // The derived-zero advice makes the same promise ("set it to 0 and it counts as running
+        // out"), so a same-day stock-back needs the same split — a promise the tie rule breaks
+        // today must not be made today.
+        var id = Seed(p =>
+        {
+            p.TrackQuantity = true;
+            p.QuantityOnHand = 0m;
+            p.QuantityCountedAt = Clock(1);
+            p.Purchases = Buys(30, 0); // bought TODAY, cooked to zero the same day
+        });
+
+        var panel = CountPanel(RenderDetail(id));
+
+        Assert.Contains("nothing here has said so out loud", panel);
+        Assert.Contains("wins a same-day tie", panel);
+        Assert.DoesNotContain("set it to 0 and it counts as running out", panel);
+    }
+
+    [Fact]
+    public void A_later_running_low_that_displaces_the_outage_gets_the_same_mechanism_free_sentence()
+    {
+        // The not-in-force branch has a SECOND road in: no stock event anywhere, just a later
+        // RunningLow displacing the OutNow as the active signal. The copy survives because it
+        // names no mechanism — which is exactly why it must never regain one.
+        var id = Seed(p =>
+        {
+            p.TrackQuantity = true;
+            p.QuantityOnHand = 0m;
+            p.QuantityCountedAt = Clock(5);
+            p.Purchases = Buys(30, 15);
+            p.Signals =
+            [
+                new InventorySignal { Kind = SignalKind.OutNow, SignaledAt = Clock(5) },
+                new InventorySignal { Kind = SignalKind.RunningLow, SignaledAt = Clock(2) },
+            ];
+        });
+
+        var panel = CountPanel(RenderDetail(id));
+
+        Assert.Contains("you've said so before", panel);
+        Assert.Contains("not in force now", panel);
+        Assert.DoesNotContain("nothing here has said so out loud", panel);
+    }
+
+    [Fact]
     public void A_zero_whose_outage_a_PURCHASE_cleared_gets_the_same_sentence()
     {
         // ⚠️ The mutation-killer, and the case the first version of this branch got wrong. There is no

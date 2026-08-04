@@ -150,7 +150,10 @@ public static class ReplenishmentPredictor
         //    stock-back. Same-day ties are ambiguous at date granularity (purchases carry no time), and
         //    the purchase deliberately wins: the primary flow is "item pinned Overdue → [Bought today]",
         //    which must clear the pin. The cost is the rare inverse ("bought this morning, discovered
-        //    we're out tonight") — that OutNow is ignored until tomorrow. Pinned by a unit test.
+        //    we're out tonight") — that OutNow is ignored FOREVER, not just today: neither date ever
+        //    changes, so the tie never resolves the other way. What works is filing a fresh one
+        //    tomorrow, which is why OutNowTodayWouldBeInert exists — a surface inviting "say you're
+        //    out" must not promise an act this filter will disregard. Pinned by a unit test.
         var activeSignal = product.Signals
             .Where(s => s.Kind is SignalKind.OutNow or SignalKind.RunningLow)
             .Where(s => lastStockBack is null || SignalDate.Of(s.SignaledAt) > lastStockBack)
@@ -343,6 +346,10 @@ public static class ReplenishmentPredictor
             SignalNote = SignalNoteFor(activeSignal?.Kind),
             RecommendedSize = dominantSize,
             Pinned = pinned,
+            // Beside the tie rule in spirit: == today is exactly "a signal dated now fails the strict->
+            // filter above". Null lastStockBack compares false, which is right — with no stock-back a
+            // fresh OutNow is always active.
+            OutNowTodayWouldBeInert = lastStockBack == today,
             ExpiresOn = expiresOn,
             Expired = expired,
             ExpirationOverridden = expirationOverridden,
