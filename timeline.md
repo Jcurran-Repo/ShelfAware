@@ -366,7 +366,7 @@ _Last updated: 7/30/2026_
   singularizes case-insensitively; the pick-clock test seeds a real date (null==null pinned nothing);
   a blank Quick update send answers with a hint. **889 tests green, 0 warnings.** Regated and PUSHED
   — 7/30/2026
-- [ ] Shelf-photo census — the intake path for stock receipts can never know about (pre-app, elsewhere, gifted, bulk): photo → candidates → the review-grid shape → confirm. ★ Never creates PurchaseEvents (invented purchases would poison every rhythm); proposes a front-row count the human corrects, with occlusion/stacking designed for rather than papered over — Not complete
+- [x] Shelf-photo census — the intake path for stock receipts can never know about (pre-app, elsewhere, gifted, bulk): photo → candidates → the review-grid shape → confirm. ★ Never creates PurchaseEvents (invented purchases would poison every rhythm); proposes a front-row count the human corrects, with occlusion/stacking designed for rather than papered over — **built 8/2/2026 as v4.6 below** — 8/2/2026
 
 ---
 
@@ -455,6 +455,43 @@ _Last updated: 7/30/2026_
 
 ---
 
+## v4.5 — The guided walkthrough
+- [x] **`GuidedTour` walks a new visitor through eleven surfaces** — docked coach panel, all core
+  features, offered to any new user and auto-started after loading the sample pantry; closes for good
+  the moment they've had enough. Copy is deliberately data-independent (a step naming a seeded row would
+  be a false statement against real receipts) AND deployment-independent (`TourStep.WhenManaged` — the
+  BYOK pitch is false on a managed box, found by Jordan running it on the tailnet). Progress is per
+  BROWSER, the ring degrades to nothing, and every navigation test asserts on `History`, never `Uri`.
+  Full detail: CLAUDE.md item 36. **1210 green** — 8/1/2026
+
+## v4.6 — Shelf-photo census (DESIGN.md §13.8)
+- [x] **"Count from a photo" (`/pantry-photo`)** — photograph a shelf and the app lists what it can see
+  with how many of each; correct it and it becomes an attested count. `CensusEvidence` (Label /
+  Appearance / Unidentified) is the ruling constraint made structural — every item says HOW it was
+  known, with three honesty rules enforced in the parse rather than trusted to the prompt.
+  `CensusConfirmationService` is its own confirm path: products (if new) + `StockLedger.Attest`,
+  **never a PurchaseEvent**, rows summed per product, refusals NAMED. Nothing is persisted but the
+  counts — a photo of someone's home never lands on disk. Six review rounds (two `/pre-push` gates, two
+  `/code-review`s, a live-verified walkthrough, a wholesale revert of a rule built on an unprobed false
+  premise) are CLAUDE.md items 37–40; the lesson the branch keeps teaching is *before designing around
+  "X can never happen", spend the probe*. **1339 green** — 8/2/2026
+- [x] **The merge triage — ten open findings probed, five phase commits of fixes, two deliberate
+  stands** — every claim verified against the code before acting (the report's own instruction, learned
+  from rounds 2–5). Fixed: removal now counts an attested count as history (probed data loss: census
+  counts 12 → remove the introducing receipt → product AND count gone); Tick all respects the two
+  non-confidence guards; variety/brand/size reach the grid and the aria-labels; the Category cell stops
+  showing a category the store never held; name-twins are refused/disambiguated instead of `First()`
+  (`ProductMatcher.ExactMatches`, `CensusRefusal.AmbiguousName`); the zero-panel's advice splits on the
+  engine's new `OutNowTodayWouldBeInert` so it stops promising an act §6.6's tie rule will ignore; four
+  test gaps closed (evadable case-sensitive guards, three untested `IsDefined` sites, the >8-photo cap,
+  a `Task.Delay` before a negative assertion). Corrected in the report: the advice loop is day-scoped,
+  not permanent; the ancient-outage copy asymmetry was already recorded and stays accepted; the
+  RunningLow road was a comment bug, not a copy bug. Kept as recorded (Jordan's call): a stale positive
+  count still reads in-stock — "if they said it's in stock we shouldn't consider it out unless they say
+  so." Full detail: CLAUDE.md item 41. **1362 green, 0 warnings** — 8/3/2026
+
+---
+
 ## Backlog (unscheduled)
 - [x] Double-scroll fix (Grocery List + Upload review) — 7/2/2026
 - [x] Photo-upload fix (CSP `img-src blob:` + bounded resize) — 7/21/2026 (the first real photo upload hung forever: the strict CSP blocked Blazor's in-browser resize and its JS never settles the promise; PDFs skip the path, so it hid since 7/5)
@@ -463,7 +500,8 @@ _Last updated: 7/30/2026_
 - [x] Per-size Trends price chart — 7/8/2026 (dominant-size ticker/chart; see v3.1)
 - [ ] "Dapper blob" mascot / branding — Not complete
 - [ ] Food diary — photo of a meal → which foods you ate: candidates matched to pantry products, logging the dated MealEvent (today only ~1/3 of meals arrive via a saved recipe's "Ate it") and feeding the eat/Waist-watch reports. A third door — consumption — distinct from purchases (receipts) and attestation (census) — Idea, 7/30/2026
-- [ ] Interactive demo mode — a guided, hands-on tour that walks a new user through the app's features against the seeded demo catalog (extends the onboarding banner + demo seeder; every major concept already has a seeded hero to point at) — Idea, 7/30/2026
+- [x] Interactive demo mode — a guided, hands-on tour that walks a new user through the app's features against the seeded demo catalog (extends the onboarding banner + demo seeder; every major concept already has a seeded hero to point at) — **shipped as v4.5's guided walkthrough** — 8/1/2026
+- [ ] Stale-counts view — one place to see which counts the app has stopped believing (`CountConfidence` Aging/Spent, dormant pairs), maybe a Reports preset or a products-grid filter. Floated by Jordan during the 8/3 merge triage as the counterpart to keeping finding 10 as-is: a stale positive stays in-stock on purpose, so the visibility should come from a view, not from the engine second-guessing the household — Idea, 8/3/2026
 - [ ] Voice assistant help mode — "what can I say?" describes the assistant's available commands, generated from the live tool registry rather than hand-written (documented tool lists have drifted before); cook-along answers with its own step-command grammar — Idea, 7/30/2026
 - [ ] Chat-layer eval harness — the drift gap the 7/30 discussion named: nothing scores real-model chat behavior (utterance → expected tool calls, e.g. "we're out of milk" → record_signal), so a model-pin move is currently ungated for chat while extraction has its eval. Same shape as the extraction eval: hand-labelled cases, live key, manual/on-demand — Planned, 7/30/2026
 - [ ] Self-eval drift nudge — verified-receipt self-eval is a button, so drift is caught when someone looks, not when it happens; surface a nudge when enough new receipts accumulate since the last run (a prompt to spend, never an automatic token spend) — Planned, 7/30/2026

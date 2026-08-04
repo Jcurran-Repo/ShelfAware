@@ -554,7 +554,10 @@ review-grid pattern → confirm. Three photos of a freezer beats reading thirty 
   ticked; below it the row is shown, styled low-confidence, with its reason visible and its box empty. A
   guess has to be opted into; a legible label or an unmistakable banana is not punished for having no
   barcode. `Tick all` / `Untick all` exist because thirty rows otherwise cost thirty taps — the guard is the
-  default, not a lock.
+  default, not a lock. ⚠️ **Tick all overrides the CONFIDENCE default alone**: it skips Unidentified rows,
+  still-selected similarity matches, and twin-ambiguous rows, because those three wait on a human answer a
+  bulk click doesn't give — each still ticks individually, which is exactly what "not a lock" licenses, and
+  each says its reason on the row. Untick all clears everything; a reset asserts nothing.
   ⚠️ **Confidence is necessary and not sufficient, because a tick authorizes a WRITE.** Two more conditions
   hold, each because the number alone is about the wrong question:
   - **Never an `Unidentified` row**, enforced on the page and not merely implied by the reader's 0.3 cap.
@@ -650,6 +653,17 @@ review-grid pattern → confirm. Three photos of a freezer beats reading thirty 
       know what it is" on an unidentified package invites exactly that. Fuzzy matching false-positives, so
       the service still resolves only on an exact name and the *grid* raises the near-miss for the household
       to settle. Same shape as the standing duplicate guard elsewhere: exact blocked, fuzzy asked.
+    - **A name two products SHARE is refused, not resolved.** No unique index exists on product names, so
+      "the" exact match can be a coin flip between twins — and `Attest` REPLACES the chosen twin's stored
+      count. The grid never pre-fills one (the reader's hint list is `Distinct()`, so its suggestion names
+      a NAME; and rule 1's own normalization can call two products the same — `ProductMatcher.ExactMatches`
+      answers the plural question so the page doesn't re-derive it), the row arrives unticked with the
+      reason said before the confirm, Tick all skips it, the dropdown tells twins apart by their counts,
+      and the service's name-fallback refuses (`AmbiguousName`) instead of taking `First()` — the same
+      refusal `MealStock` makes when a name cannot address a single product. A human's pick by id is
+      ordinary; an explicit create-new on a twin name keeps its `DuplicateName` answer. Twins with
+      identical counts stay indistinguishable in the dropdown, which is the honest limit of what a
+      dropdown can say.
     - **Resuming a DORMANT count is reported.** Stopping counting keeps the number and its date as history
       (§13.1); a census overwrites both and starts believing them again — right for someone who just counted
       the shelf, but it is the one switch they deliberately turned off, so the row shows the stored number

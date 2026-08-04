@@ -72,7 +72,7 @@ Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptT
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1339 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1362 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see item 31).
 
@@ -1504,7 +1504,7 @@ bUnit pages/components — see item 31).
      chip reading "read the label". `ProductMatcher.ResolveWithKind` reports which rule fired now.
    - **The zero rule, third time.** See DESIGN.md §13.8 — the decision moved off the row, and only a zero
      that would CREATE a product is still refused. (This round also added a `ZeroedWithoutSignal` outcome
-     for a withheld signal; both it and the rule behind it were reverted in item 41 — the premise was
+     for a withheld signal; both it and the rule behind it were reverted in item 40 — the premise was
      false. Don't go looking for the member.)
    - ⚠️ **"Both halves pinned" was itself unpinned.** Item 38's commit message claimed every new rule had
      both directions covered; deleting `!product.TrackQuantity` from the resumed-counting rule left the
@@ -1609,6 +1609,68 @@ bUnit pages/components — see item 31).
      problem that did not exist.** The gate caught it each time, which is the argument for the gate; the
      cheaper argument is the one skipped at the start — *before designing around "X can never happen",
      spend the grep.*
+
+41. **The merge triage over the finished branch (2026-08-03, same branch) — ten findings probed, five
+   phase commits of fixes, two deliberate stands.** Jordan's report listed ten open findings from the six
+   review rounds with the standing instruction to probe before accepting any claim. Every claim was
+   verified against b50a217 first: the baseline reproduced exactly (1339 green, 0 warnings), finding 1's
+   data loss reproduced end to end through the real services (census counts 12 → remove the introducing
+   receipt → product and count gone; the same product with one stray RunningLow survived), and finding
+   8's mutation claim measured true — all 1339 stayed green with the three `IsDefined` guards deleted.
+   All ten were real in substance; three sub-claims were corrected by probing; eighteen mutation rounds
+   across the fixes, each failing exactly its tests.
+   - **The fixes, one commit per phase:**
+     (1) *Removal counts an attested count as history* — `ReceiptRemovalService`'s delete half now agrees
+     with its own subtract guard that an attestation is investment, keyed on `QuantityCountedAt`, NOT
+     `TrackQuantity`: a dormant count is kept history (item 28) and must keep its product. Both
+     directions pinned; the kept count asserts exactly 12 so the subtract stand-down rides in the same
+     test. Pre-existing, but the census made "receipt-introduced product carrying a fresh count" the
+     bulk state.
+     (2) *Census grid honesty* — Tick all overrides the CONFIDENCE default only (§13.8's words), skipping
+     Unidentified rows and STILL-SELECTED similarity matches via a shared `FuzzyStillSelected` so the
+     row's warning and the bulk action can't drift; a similarity row the human resolved ticks normally.
+     Variety/Brand/Size ride `ReviewRow` into a subtitle and `DescribeRow` — two same-named variety rows
+     were identical to a screen reader while the page's own "counted twice" warning invited ✕ing one,
+     silently shorting the summed total. The Category cell renders the matched product's REAL category
+     as text and stays a select only where the value is actually written (create-new); the fixture for
+     that test makes reader and store disagree, per item 38's cannot-tell-branches-apart lesson.
+     (3) *Twins* — §13.8 gained the rule: never pre-filled (suggestion and matcher paths both), arrival-
+     and bulk-tick stand down, dropdown options carry counts, the service refuses `AmbiguousName` rather
+     than `First()`, and an explicit create-new on a twin name keeps its `DuplicateName` answer.
+     `ProductMatcher.ExactMatches` (Core) answers the plural question so no page re-derives the
+     matcher's normalization (item 39's rule). A human's pick by id is ordinary and pinned end to end.
+     (4) *The zero-panel's advice* — `PredictionResult.OutNowTodayWouldBeInert`, computed in the engine
+     beside §6.6's tie rule; both zero-copy branches split their advice on it, so "set it to 0 again"
+     is no longer offered on a day it cannot work. The engine comment's "ignored until tomorrow" now
+     says the truth (that signal is ignored forever; a fresh one tomorrow works). The 2c comment names
+     the RunningLow road, the dead `!prediction.Expired` conjunct is gone (the chain's expiry arm above
+     already takes every Expired state), and the RunningLow road's mechanism-free copy is pinned.
+     (5) *Test hardening* — the zero-panel's negative guards are case-insensitive and phrase-loose now
+     ("you Restocked it" and "it's not on the list" both previously passed all 296 UI tests — proven by
+     planting them); the three `IsDefined` sites each have a numeric-smuggling test (`record_signal`'s
+     pins that nothing is WRITTEN); the >8-photo refusal is pinned with its recovery; the teardown test
+     awaits the click handler's own completed task instead of `Task.Delay(50)` before a negative
+     assertion (item 34's class — under load the old wait could pass before the continuation ran).
+   - ⚠️ **Corrections to the report, each probed:** (a) 2a is DAY-scoped, not permanent — each signal
+     filed that day is permanently inert (strict `>` on dates that never change), but a fresh one works
+     from tomorrow; `BurnCycles`' strict `o > start` keeps the dead rows out of the burn rhythm, so the
+     residue is inert rows and nothing else. The sharpest road in is a mis-tapped Restocked and a
+     same-day undo attempt. (b) 2b was already recorded (item 40) and STAYS accepted — Jordan's call:
+     the rendered copy is true in every road, and every principled predicate collapses back to `Pinned`,
+     so a day-window would be the judgment-call-around-an-edge pattern that produced rounds 2-5.
+     (c) 2c's harm was the branch COMMENT, not the copy — the sentence survives the RunningLow road
+     precisely because it names no mechanism.
+   - **Finding 10 stays as §13.8 records it, with Jordan's rationale now part of the record:** a stale
+     positive count keeps reading as in-stock — "if they said it's in stock we shouldn't consider it out
+     unless they say so; marking out of stock or zero is one tap, and a recipe suggesting it lets them
+     go 'oh snap, I'm out.'" The floated "show me my stale counts" view went to the backlog as its own
+     idea, not a census-branch feature.
+   - **Known residuals, stated rather than silent:** a census ZERO on a product whose stock-back is
+     today writes an OutNow that is permanently inert (the same §6.6 tie — the summary's "recorded as
+     running out" is true of the row and void of effect); twins with identical counts remain
+     indistinguishable in the dropdown, said on `OptionLabel` itself.
+   - **1362 tests green, 0 warnings** on a non-incremental Release build (1339 before; +23). Read off
+     the final run before being written here, per item 21's rule.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
