@@ -42,6 +42,21 @@ public class ReceiptExtractorTests
     }
 
     [Fact]
+    public async Task A_numeric_category_cannot_smuggle_an_undefined_enum_onto_a_line()
+    {
+        // ⚠️ Enum.TryParse SUCCEEDS on a numeric string, so "12" would become an undefined Category —
+        // persisted onto a real Product and rendered as a blank aisle. Same guard, same reason, as
+        // the census reader's numeric-smuggling test; this pins the extractor's own site, which
+        // shipped untested (deleting its IsDefined left the whole suite green).
+        var json = ValidJson.Replace("\"category\": \"Dairy\"", "\"category\": \"12\"");
+
+        var result = await Extractor(FakeChatClient.Returning(Responses.Text(json))).ExtractAsync(OneImage);
+
+        Assert.True(result.Success);
+        Assert.Equal(Category.Other, Assert.Single(result.Receipt!.Lines).Category);
+    }
+
+    [Fact]
     public async Task Retries_once_on_unparseable_output_then_succeeds()
     {
         var client = new FakeChatClient(

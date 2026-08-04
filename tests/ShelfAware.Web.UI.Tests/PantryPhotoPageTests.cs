@@ -2,6 +2,7 @@ using AngleSharp.Dom;
 using AngleSharp.Html.Dom;
 using Bunit;
 using Microsoft.AspNetCore.Components.Forms;
+using Microsoft.AspNetCore.Components.Web;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -840,13 +841,39 @@ public class PantryPhotoPageTests : PageTestContext
         var cut = Render<PantryPhoto>();
         Upload(cut, 2);
         PhotoLoader.Hold = gate;
-        cut.Find("button").Click();
+        // ⚠️ The awaitable trigger, not Click(): the handler's task completes only when Read()
+        // has fully unwound — catches, logging and all — so waiting on it replaces the old
+        // Task.Delay(50), which under load could elapse before the continuation ran and pass
+        // this NEGATIVE assertion without exercising anything (a wait that cannot fail, item
+        // 34's class). The 5s WhenAny is a failsafe against a hang, not a race window: a slow
+        // run completes late and still passes; only a genuine hang fails, loudly.
+        var handler = cut.Find("button").ClickAsync(new MouseEventArgs());
 
         await DisposeComponentsAsync();  // the visitor navigates away mid-read
         gate.SetResult();
-        await Task.Delay(50);            // let the continuation reach the next token read
+        var settled = await Task.WhenAny(handler, Task.Delay(TimeSpan.FromSeconds(5)));
+        Assert.Same(handler, settled);   // the continuation ran to completion — nothing left pending
+        try { await handler; } catch (OperationCanceledException) { /* the quiet path itself */ }
 
         Assert.DoesNotContain(Logs.Errors, e => e.Message.Contains("Reading a shelf census failed"));
+    }
+
+    [Fact]
+    public void More_than_eight_photos_are_refused_with_the_limit_named()
+    {
+        // The refusal existed (GetMultipleFiles throws past the cap and the page catches it) but
+        // nothing pinned it — a repro-shaped gap: nine phone photos is one over-eager multi-select
+        // away, and the failure must name the limit rather than read as a broken page.
+        var cut = Render<PantryPhoto>();
+
+        Upload(cut, 9);
+
+        Assert.Contains("up to 8 photos", cut.Markup);
+        Assert.Empty(Reader.PhotoCounts); // nothing was read
+        // And the recovery is ordinary: a conforming selection clears the error and proceeds.
+        Upload(cut, 8);
+        Assert.DoesNotContain("up to 8 photos", cut.Markup);
+        Assert.Contains("8 photos selected", cut.Markup);
     }
 
     [Fact]

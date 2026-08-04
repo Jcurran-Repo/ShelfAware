@@ -121,9 +121,12 @@ public class ProductDetailCountPanelTests : PageTestContext
         Assert.Contains("not in force now", panel);
         Assert.DoesNotContain("nothing here has said so out loud", panel);
         // ⚠️ The copy must not name HOW the outage was cleared, nor claim list membership. The first
-        // version did both and both were false — see the branch's comment.
-        Assert.DoesNotContain("restocked", panel);
-        Assert.DoesNotContain("isn't on the list", panel);
+        // version did both and both were false — see the branch's comment. Case-insensitive and
+        // phrased loosely on purpose: the original guards pinned one exact casing and one exact
+        // contraction, so "you Restocked it" and "it's not on the list" both slid past them.
+        Assert.DoesNotContain("restock", panel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("on the list", panel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("grocery list", panel, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -154,6 +157,9 @@ public class ProductDetailCountPanelTests : PageTestContext
         Assert.Contains("wins a same-day tie", panel);
         Assert.Contains("set it to 0 then", panel);
         Assert.DoesNotContain("set it to 0 again", panel);
+        // "Stock was recorded today" is deliberately mechanism-vague: the stock-back here is a
+        // Restocked, but it is a purchase in the sibling road, and the copy must fit both.
+        Assert.DoesNotContain("restock", panel, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -201,6 +207,8 @@ public class ProductDetailCountPanelTests : PageTestContext
         Assert.Contains("you've said so before", panel);
         Assert.Contains("not in force now", panel);
         Assert.DoesNotContain("nothing here has said so out loud", panel);
+        // No stock event exists on this road at all, so naming one would be outright invention.
+        Assert.DoesNotContain("restock", panel, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -224,7 +232,9 @@ public class ProductDetailCountPanelTests : PageTestContext
         var panel = CountPanel(RenderDetail(id));
 
         Assert.Contains("you've said so before", panel);
-        Assert.DoesNotContain("restocked", panel);
+        Assert.DoesNotContain("restock", panel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("on the list", panel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("grocery list", panel, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("nothing here has said so out loud", panel);
     }
 

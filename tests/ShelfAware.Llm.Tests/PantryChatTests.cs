@@ -373,6 +373,41 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task A_numeric_signal_kind_is_refused_not_written()
+    {
+        // ⚠️ Enum.TryParse SUCCEEDS on a numeric string, so "7" would parse and write an undefined
+        // SignalKind no reader in the app has a branch for. The IsDefined guard existed; this is the
+        // test it shipped without — deleting it left all 1339 green, which is item 39's "both halves
+        // pinned was itself unpinned" class at the tool boundary.
+        var store = new FakePantryStore(P(1, "Coffee", Category.Beverage));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("record_signal", ("product_name", "coffee"), ("kind", "7"))),
+            () => Responses.Text("Sorry — that didn't work."));
+
+        var result = await Chat(client, store).HandleAsync("weird tool call");
+
+        Assert.True(result.Success);
+        Assert.Empty(store.Signals);
+    }
+
+    [Fact]
+    public async Task A_numeric_category_on_create_falls_back_to_Other()
+    {
+        // The same smuggling shape as above, but this site's guard DEFAULTS rather than refuses —
+        // an aisle guess is recoverable, an undefined enum persisted onto a Product is not.
+        var store = new FakePantryStore();
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("create_product",
+                ("name", "Mystery Snack"), ("category", "12"), ("tags", Array.Empty<string>()))),
+            () => Responses.Text("Created."));
+
+        await Chat(client, store).HandleAsync("add mystery snack");
+
+        var created = Assert.Single(store.Products);
+        Assert.Equal(Category.Other, created.Category);
+    }
+
+    [Fact]
     public async Task Handles_several_tool_calls_in_one_turn()
     {
         var store = new FakePantryStore(P(1, "Coffee", Category.Beverage), P(2, "Dog Food", Category.PetCare));
