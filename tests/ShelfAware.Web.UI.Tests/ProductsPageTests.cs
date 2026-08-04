@@ -227,12 +227,39 @@ public class ProductsPageTests : PageTestContext
         {
             Assert.Contains("Overdue", cut.Find("tbody .chip").TextContent);
             Assert.Contains("(today)", cut.Find("td.nextbuy").TextContent);
+            // The other conjunct of the same-day note below: on an effective tap there is no hedge.
+            Assert.DoesNotContain("won't show as out", cut.Markup);
         });
 
         await using var raw = Db.CreateUnscopedContext();
         var signal = Assert.Single(await raw.InventorySignals.IgnoreQueryFilters().ToListAsync());
         Assert.Equal(SignalKind.OutNow, signal.Kind);
         Assert.Equal(id, signal.ProductId);
+    }
+
+    [Fact]
+    public async Task An_out_tap_on_a_day_stock_arrived_says_it_wont_take_effect_yet()
+    {
+        // §6.6 gives a same-day tie to the stock, so this tap files a signal the engine discards for
+        // good — the row re-renders unchanged, which read as the tap being ignored. The note reads
+        // the engine's OutNowTodayWouldBeInert off the same predictions dictionary the row renders
+        // from; the tap still records the signal (honesty, not a refusal).
+        Seed("Dog Food", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-16), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today, Quantity = 1m }, // stocked TODAY
+        ]);
+        var cut = RenderGrid();
+
+        cut.Find("button.mark-out").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("won't show as out yet", cut.Markup);
+            Assert.Contains("Stocked", cut.Find("tbody .chip").TextContent); // and indeed it didn't pin
+        });
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Single(await raw.InventorySignals.IgnoreQueryFilters().ToListAsync());
     }
 
     [Fact]

@@ -373,6 +373,54 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task An_out_report_on_a_day_stock_arrived_carries_the_tie_caveat()
+    {
+        // §6.6's same-day tie makes this signal permanently inert, and this surface TALKS — a bare
+        // "Recorded" would speak the count panel's silent no-op aloud (item 27's query_status class).
+        // The signal is still written (the caveat is honesty, not a refusal), and the handler asks
+        // the ENGINE rather than re-deriving the tie.
+        var coffee = P(1, "Coffee", Category.Beverage);
+        coffee.Purchases.Add(new PurchaseEvent
+        {
+            ProductId = 1, PurchasedAt = DateOnly.FromDateTime(DateTime.Today), Quantity = 1m,
+        });
+        var store = new FakePantryStore(coffee);
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("record_signal", ("product_name", "coffee"), ("kind", "OutNow"))),
+            () => Responses.Text("Noted."));
+
+        await Chat(client, store).HandleAsync("we're out of coffee");
+
+        Assert.Contains((1, SignalKind.OutNow), store.Signals);
+        var toolResult = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single();
+        Assert.Contains("same-day tie", toolResult.Result!.ToString()!);
+    }
+
+    [Fact]
+    public async Task An_out_report_on_an_ordinary_day_stays_plain()
+    {
+        // The complement, on the other conjunct: stock came three days ago, so the outage takes
+        // effect and the reply must not hedge.
+        var coffee = P(1, "Coffee", Category.Beverage);
+        coffee.Purchases.Add(new PurchaseEvent
+        {
+            ProductId = 1, PurchasedAt = DateOnly.FromDateTime(DateTime.Today).AddDays(-3), Quantity = 1m,
+        });
+        var store = new FakePantryStore(coffee);
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("record_signal", ("product_name", "coffee"), ("kind", "OutNow"))),
+            () => Responses.Text("Noted."));
+
+        await Chat(client, store).HandleAsync("we're out of coffee");
+
+        var toolResult = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single();
+        Assert.Contains("Recorded OutNow", toolResult.Result!.ToString()!);
+        Assert.DoesNotContain("same-day tie", toolResult.Result!.ToString()!);
+    }
+
+    [Fact]
     public async Task A_numeric_signal_kind_is_refused_not_written()
     {
         // ⚠️ Enum.TryParse SUCCEEDS on a numeric string, so "7" would parse and write an undefined

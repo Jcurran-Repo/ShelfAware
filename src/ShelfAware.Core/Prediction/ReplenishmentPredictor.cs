@@ -346,10 +346,13 @@ public static class ReplenishmentPredictor
             SignalNote = SignalNoteFor(activeSignal?.Kind),
             RecommendedSize = dominantSize,
             Pinned = pinned,
-            // Beside the tie rule in spirit: == today is exactly "a signal dated now fails the strict->
-            // filter above". Null lastStockBack compares false, which is right — with no stock-back a
-            // fresh OutNow is always active.
-            OutNowTodayWouldBeInert = lastStockBack == today,
+            // ⚠️ >= and not ==: a signal dated now fails the strict > filter whenever the stock-back is
+            // today OR LATER. Future stock-backs are real — chat's add_purchase parses any date with no
+            // clamp ("log the milk I'm picking up Friday"), and the documented TZ gotcha can date a
+            // restock tomorrow — and == judged those "not inert" while the filter discarded the signal,
+            // which is the exact silent no-op this member exists to name. Null compares false, which is
+            // right: with no stock-back a fresh OutNow is always active.
+            OutNowTodayWouldBeInert = lastStockBack >= today,
             ExpiresOn = expiresOn,
             Expired = expired,
             ExpirationOverridden = expirationOverridden,

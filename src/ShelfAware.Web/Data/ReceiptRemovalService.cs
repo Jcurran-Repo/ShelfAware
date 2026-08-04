@@ -68,12 +68,18 @@ public sealed class ReceiptRemovalService(
             // because ONLY an absolute count advances QuantityCountedAt: a relative "Used one"
             // carries phantom stock forward rather than re-baselining, so it must not (and does not)
             // shield the count from the subtract. Null ConfirmedAt is a pre-v4.1 confirm with no
-            // moment to compare against — subtract as always.
+            // moment to compare against — subtract as always, erring toward an early rebuy —
+            // ⚠️ EXCEPT for a product this receipt INTRODUCED: it did not exist before its own
+            // confirm, so every attestation on it provably postdates the confirm and the null
+            // timestamp still has a decidable order. Without this, keeping the product (below) while
+            // subtracting here silently corrupted the very count the keep exists to preserve.
             foreach (var purchase in linked)
             {
                 if (purchase.Product is not { } product) continue;
-                if (receipt.ConfirmedAt is { } confirmedAt
-                    && product.QuantityCountedAt is { } counted && counted > confirmedAt) continue;
+                if (product.QuantityCountedAt is { } counted
+                    && (receipt.ConfirmedAt is { } confirmedAt
+                        ? counted > confirmedAt
+                        : product.CreatedByReceiptId == receipt.Id)) continue;
                 StockLedger.Remove(product, purchase.Quantity);
             }
 

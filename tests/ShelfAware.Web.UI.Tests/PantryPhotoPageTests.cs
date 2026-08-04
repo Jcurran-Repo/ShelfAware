@@ -481,7 +481,7 @@ public class PantryPhotoPageTests : PageTestContext
         var select = row.QuerySelectorAll("select")
             .Single(s => s.GetAttribute("aria-label")!.StartsWith("Product match"));
         Assert.Equal("0", ((IHtmlSelectElement)select).Value);
-        Assert.Contains("More than one of your products is named", Collapsed(row));
+        Assert.Contains("More than one of your products answers to", Collapsed(row));
         Assert.Contains("9 on hand", Collapsed(row));   // the counted twin's option label
         Assert.Contains("not counted", Collapsed(row)); // the other's
     }
@@ -498,6 +498,27 @@ public class PantryPhotoPageTests : PageTestContext
         cut.FindAll("button").Single(b => b.TextContent.Contains("Tick all")).Click();
 
         Assert.False(IsTicked(RowFor(cut, "Ground Beef")));
+    }
+
+    [Fact]
+    public async Task A_punctuation_twin_is_ambiguous_to_every_guard_not_just_the_arrival_tick()
+    {
+        // ⚠️ The pair rule 1's own normalization folds together — and the drift the gate caught:
+        // the arrival tick judged ambiguity by the matcher while the warning and Tick all judged it
+        // by raw names, so this row arrived unticked with NO reason shown and Tick all walked
+        // straight through the gap, replacing a real count on the strength of how the vision model
+        // happened to punctuate. One definition now (ProductMatcher.ExactMatches), asserted at all
+        // three guards in one fixture.
+        await SeedProduct("Home-Canned Tomato Sauce", counted: true, onHand: 9);
+        await SeedProduct("Home Canned Tomato Sauce", counted: true, onHand: 2);
+
+        var cut = Review(Item("Home Canned Tomato Sauce", count: 4));
+
+        var row = RowFor(cut, "Home Canned Tomato Sauce");
+        Assert.False(IsTicked(row));                                                  // arrival
+        Assert.Contains("More than one of your products answers to", Collapsed(row)); // the reason shows
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Tick all")).Click();
+        Assert.False(IsTicked(RowFor(cut, "Home Canned Tomato Sauce")));              // bulk
     }
 
     [Fact]

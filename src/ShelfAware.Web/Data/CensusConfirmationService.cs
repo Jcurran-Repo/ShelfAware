@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 
 namespace ShelfAware.Web.Data;
@@ -194,18 +195,25 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
                     var sameName = products
                         .Where(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
                         .ToList();
-                    if (sameName.Count > 0)
+                    if (sameName.Count > 0 && row.CreateNew)
                     {
-                        if (row.CreateNew)
-                        {
-                            refused.Add(new RefusedRow(name, CensusRefusal.DuplicateName));
-                            continue;
-                        }
-                        if (sameName.Count > 1)
-                        {
-                            refused.Add(new RefusedRow(name, CensusRefusal.AmbiguousName));
-                            continue;
-                        }
+                        refused.Add(new RefusedRow(name, CensusRefusal.DuplicateName));
+                        continue;
+                    }
+                    // ⚠️ Ambiguity is the MATCHER's rule-1 identity set, not raw equality alone. Raw-equal
+                    // twins are a subset; the pair raw-only missed is punctuation ("Home-Canned" beside
+                    // "Home Canned"), where a deterministic raw match is still a coin flip about which
+                    // jar the household MEANT — decided by how the vision model happened to punctuate.
+                    // One definition, shared with the grid's warning, the arrival tick, and Tick all, so
+                    // the guards cannot drift apart about the same row. It also stops this resolve path
+                    // minting a THIRD member of an identity set the matcher already can't tell apart.
+                    if (!row.CreateNew && ProductMatcher.ExactMatches(name, products).Count > 1)
+                    {
+                        refused.Add(new RefusedRow(name, CensusRefusal.AmbiguousName));
+                        continue;
+                    }
+                    if (sameName.Count == 1)
+                    {
                         product = sameName[0];
                     }
                 }

@@ -488,7 +488,13 @@ _Last updated: 7/30/2026_
   not permanent; the ancient-outage copy asymmetry was already recorded and stays accepted; the
   RunningLow road was a comment bug, not a copy bug. Kept as recorded (Jordan's call): a stale positive
   count still reads in-stock — "if they said it's in stock we shouldn't consider it out unless they say
-  so." Full detail: CLAUDE.md item 41. **1362 green, 0 warnings** — 8/3/2026
+  so." The gate over the pass itself (two review agents in isolated worktrees; both arrived STALE at
+  master and self-corrected via verify-first) found five more, all fixed and mutation-checked: the
+  removal fix's null-ConfirmedAt hole (kept the product, still subtracted its count), `>=` not `==` on
+  the tie member (a future stock-back revived the silent no-op), ONE twins definition at every guard
+  (the punctuation pair had walked through Tick all with no reason shown), the tie caveat on
+  record_signal and the grid's Out button, and a guard-miscounting comment. Full detail: CLAUDE.md
+  item 41. **1368 green, 0 warnings** — 8/3/2026
 
 ---
 

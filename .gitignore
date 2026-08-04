@@ -492,3 +492,6 @@ tests/ShelfAware.Evals/fixtures/*.jpeg
 tests/ShelfAware.Evals/fixtures/*.webp
 tests/ShelfAware.Evals/fixtures/*.gif
 
+
+# Claude Code review-agent worktrees (session scratch, never part of the repo)
+.claude/worktrees/

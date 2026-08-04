@@ -244,6 +244,10 @@ else
             }
         </tbody>
     </table>
+    @if (markOutNote is not null)
+    {
+        <p class="muted" role="status">@markOutNote</p>
+    }
     @if (deleteError is not null)
     {
         <p class="error" role="alert">@deleteError</p>
@@ -480,20 +484,34 @@ else
     }
 
     // Mark a product out of stock from here (always available, unlike the dashboard which only lists
-    // items already running low). Records an OutNow signal → the item reads Overdue/"due today" and
-    // surfaces on the dashboard, where Restocked clears it.
+    // items already running low). Records an OutNow signal — which USUALLY pins the item Overdue/"due
+    // today" onto the dashboard, where Restocked clears it. ⚠️ Not always: §6.6 gives a same-day tie
+    // to the stock, so an OutNow filed while the last stock-back is today (or later) is discarded for
+    // good, and the row re-renders unchanged — a tap that looks ignored. The note below says so,
+    // reading the fact off the SAME predictions dictionary every other cell renders from.
     private async Task MarkOut(Product p)
     {
-        await using var db = await DbFactory.CreateDbContextAsync();
-        db.InventorySignals.Add(new InventorySignal
+        markOutNote = null;
+        await using (var db = await DbFactory.CreateDbContextAsync())
         {
-            ProductId = p.Id,
-            Kind = SignalKind.OutNow,
-            SignaledAt = DateTimeOffset.Now
-        });
-        await db.SaveChangesAsync();
+            db.InventorySignals.Add(new InventorySignal
+            {
+                ProductId = p.Id,
+                Kind = SignalKind.OutNow,
+                SignaledAt = DateTimeOffset.Now
+            });
+            await db.SaveChangesAsync();
+        }
         await LoadAsync();
+        if (predictions is not null && predictions.TryGetValue(p.Id, out var prediction)
+            && prediction.OutNowTodayWouldBeInert)
+        {
+            markOutNote = $"Marked \"{p.Name}\" out — but stock was recorded today, and a same-day tie " +
+                "goes to the stock, so it won't show as out yet. Still out tomorrow? Tap Out again then.";
+        }
     }
+
+    private string? markOutNote;
 
     private async Task Delete(Product p)
     {

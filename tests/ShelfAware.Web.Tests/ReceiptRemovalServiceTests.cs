@@ -300,6 +300,32 @@ public class ReceiptRemovalServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task A_pre_timestamp_confirm_still_cannot_corrupt_an_introduced_products_count()
+    {
+        // The null-ConfirmedAt rule ("no moment to compare — subtract as always") is right for a
+        // product that PRE-dated the receipt and wrong for one the receipt INTRODUCED: it did not
+        // exist before its own confirm, so every attestation on it provably postdates that confirm
+        // even with the timestamp missing. Without the introduced-arm, keeping the product while
+        // subtracting silently corrupted the very count the keep exists to preserve — attested 12
+        // read back as 11. The pre-existing-product sibling above pins the other arm: there the
+        // order really is unknowable, and the subtract still errs toward an early rebuy.
+        var receipt = await ConfirmReceipt(writeAliases: false, ("FRZ PEAS", "Frozen Peas", 0));
+        await using (var db = _db.CreateDbContext())
+        {
+            (await db.Receipts.SingleAsync(r => r.Id == receipt)).ConfirmedAt = null; // pre-v4.1
+            var p = await db.Products.SingleAsync();
+            StockLedger.Attest(p, 12m, DateTimeOffset.Now.AddMinutes(1));
+            await db.SaveChangesAsync();
+        }
+
+        var outcome = await Service().RemoveAsync(receipt);
+
+        Assert.Equal(1, outcome.ProductsKept);
+        await using var check = _db.CreateDbContext();
+        Assert.Equal(12m, (await check.Products.SingleAsync()).QuantityOnHand); // kept AND whole
+    }
+
+    [Fact]
     public async Task A_dormant_count_is_history_too()
     {
         // Stop-counting keeps the number and its date as a historical fact the app promises to show

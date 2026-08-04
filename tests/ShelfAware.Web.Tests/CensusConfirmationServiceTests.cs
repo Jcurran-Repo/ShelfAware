@@ -76,6 +76,25 @@ public class CensusConfirmationServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task A_row_naming_a_punctuation_twin_pair_is_refused_like_raw_twins()
+    {
+        // Raw equality resolved this row deterministically to the raw match — which is still a coin
+        // flip about which jar the household MEANT, decided by how the vision model punctuated the
+        // label. Ambiguity is the matcher's rule-1 identity set at every layer now, so no write can
+        // land on a member of an ambiguous pair without an explicit id.
+        var hyphenated = await SeedProduct("Home-Canned Tomato Sauce", counted: true, onHand: 9, countedAt: DateTimeOffset.Now);
+        var spaced = await SeedProduct("Home Canned Tomato Sauce", counted: true, onHand: 2, countedAt: DateTimeOffset.Now);
+
+        var outcome = await _service.ConfirmAsync([R("Home Canned Tomato Sauce", 4)]);
+
+        Assert.Equal(0, outcome.Counted);
+        var refusal = Assert.Single(outcome.Refused);
+        Assert.Equal(CensusConfirmationService.CensusRefusal.AmbiguousName, refusal.Reason);
+        Assert.Equal(9m, (await Reload(hyphenated.Id)).QuantityOnHand);
+        Assert.Equal(2m, (await Reload(spaced.Id)).QuantityOnHand);
+    }
+
+    [Fact]
     public async Task An_explicit_create_new_on_a_twin_name_is_still_the_duplicate_refusal()
     {
         // The order of the two refusals matters: a human who chose "create new" gets the answer about

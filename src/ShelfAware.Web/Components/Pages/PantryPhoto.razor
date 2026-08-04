@@ -246,7 +246,7 @@ else if (phase == Phase.Review)
                                        first — and must not let NameClash promise "will go to X" about a
                                        write that would be declined. *@
                                     <div class="error small" role="status">
-                                        More than one of your products is named “@row.Name.Trim()” — pick
+                                        More than one of your products answers to “@row.Name.Trim()” — pick
                                         which one you counted above. Twins that keep a count show it beside
                                         their name.
                                     </div>
@@ -478,11 +478,12 @@ else if (phase == Phase.Done)
     private void SetAll(bool include)
     {
         // Tick all overrides the CONFIDENCE default only (§13.8: "the guard is the default, not a
-        // lock"). The other two tick conditions are not about confidence — an Unidentified row's name
-        // describes a package, and a still-selected similarity match is an unscored guess at WHICH
-        // product the tick would overwrite — so each of those waits for a human to look at the row
-        // itself. Both still tick individually, and both say their reason inline. Unticking clears
-        // everything: it asserts nothing, so it needs no guard.
+        // lock"). The other three tick conditions are not about confidence — an Unidentified row's
+        // name describes a package, a still-selected similarity match is an unscored guess at WHICH
+        // product the tick would overwrite, and a name two products answer to is a pick nobody has
+        // made — so each of those waits for a human to look at the row itself. All three still tick
+        // individually, and all three say their reason inline. Unticking clears everything: it
+        // asserts nothing, so it needs no guard.
         foreach (var row in rows)
         {
             row.Include = include
@@ -492,13 +493,31 @@ else if (phase == Phase.Done)
         }
     }
 
-    /// <summary>More than one existing product carries this row's name — the write-side rule (the
+    /// <summary>More than one existing product answers to this row's name — the write-side rule (the
     /// confirm refuses to guess between twins), said on the grid BEFORE the confirm and honored by
     /// Tick all. Live, like NameClash: picking a product in the dropdown answers the question, and an
-    /// explicit create-new is NameClash's business ("already exists … skipped").</summary>
-    private bool AmbiguousClash(ReviewRow row) =>
-        row.ProductId == 0 && !row.ChoseCreateNew && row.Name.Trim() is { Length: > 0 } name
-            && products.Count(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)) > 1;
+    /// explicit create-new is NameClash's business ("already exists … skipped").
+    /// <para>⚠️ The definition is <see cref="ProductMatcher.ExactMatches"/> — the matcher's rule-1
+    /// identity set — everywhere ambiguity is judged: the arrival tick, this warning, Tick all, and
+    /// the confirm's refusal. A raw-equality version here judged the punctuation pair ("Home-Canned"
+    /// beside "Home Canned") fine while Match() had stood the arrival tick down for it, so the row
+    /// arrived unticked with NO reason shown and Tick all overrode the judgment — the exact drift
+    /// FuzzyStillSelected exists to prevent, rebuilt one guard over. Memoized like NearMatch, because
+    /// ExactMatches normalizes the whole catalog per call and this runs per row per render.</para></summary>
+    private bool AmbiguousClash(ReviewRow row)
+    {
+        if (row.ProductId != 0 || row.ChoseCreateNew) return false;
+        var name = row.Name.Trim();
+        if (name.Length == 0) return false;
+        if (!ambiguousNames.TryGetValue(name, out var ambiguous))
+        {
+            ambiguous = ProductMatcher.ExactMatches(name, products).Count > 1;
+            ambiguousNames[name] = ambiguous;
+        }
+        return ambiguous;
+    }
+
+    private readonly Dictionary<string, bool> ambiguousNames = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Twins are told apart by their counts — the ambiguity picker's precedent. Identical
     /// option text is a choice nobody can make; twins with identical counts stay indistinguishable
@@ -675,9 +694,11 @@ else if (phase == Phase.Done)
             // hint list is Distinct(), so its suggestion names a NAME — and Attest replaces a count, so
             // First() here pre-authorized a write over an arbitrary twin. Which twin was counted is the
             // household's call; the row waits, and the dropdown's counts make the pick possible.
-            var exact = products
-                .Where(p => string.Equals(p.Name, suggested, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            // The identity set is the MATCHER's (rule 1), the same definition the live guards and the
+            // confirm's refusal use — raw equality judged the punctuation pair unambiguous here while
+            // this method's own fallback below called it ambiguous, and two answers to one question is
+            // how Tick all walked through the gap.
+            var exact = ProductMatcher.ExactMatches(suggested, products);
             if (exact.Count > 1) return (null, false, true);
             if (exact.Count == 1) return (exact[0], false, false);
         }
@@ -707,10 +728,13 @@ else if (phase == Phase.Done)
             .OrderBy(p => p.Name)
             .ToListAsync(ct);
         nearMatches.Clear();
+        ambiguousNames.Clear();
+        // The matcher's identity sets, not raw grouping: punctuation twins ("Home-Canned" beside
+        // "Home Canned") need their counts on the options too — they are the pair the ambiguity
+        // warning tells the household to tell apart here.
         twinNames = products
-            .GroupBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
-            .Where(g => g.Count() > 1)
-            .Select(g => g.Key)
+            .Where(p => ProductMatcher.ExactMatches(p.Name, products).Count > 1)
+            .Select(p => p.Name)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var today = DateOnly.FromDateTime(DateTime.Today);
@@ -824,7 +848,7 @@ else if (phase == Phase.Done)
         CensusConfirmationService.CensusRefusal.MissingCount =>
             $"“{row.Name}” — the “how many” box was empty. An empty box isn't a zero, and Shelf Aware won't guess a number for you.",
         CensusConfirmationService.CensusRefusal.AmbiguousName =>
-            $"“{row.Name}” — more than one of your products has that name, so Shelf Aware won't guess which one you counted. Run this again and pick it in the Product match column.",
+            $"“{row.Name}” — more than one of your products answers to that name, so Shelf Aware won't guess which one you counted. Run this again and pick it in the Product match column.",
         _ => $"“{row.Name}” — needs a name and a count of zero or more.",
     };
 
@@ -841,6 +865,7 @@ else if (phase == Phase.Done)
         errorMessage = null;
         confirmError = null;
         nearMatches.Clear();
+        ambiguousNames.Clear();
     }
 
     public void Dispose()

@@ -186,6 +186,18 @@ public class AnthropicPantryChat : IPantryChat
                     return ($"No product matches \"{name}\". Call create_product first if it's new.", true);
                 await _store.RecordSignalAsync(product.Id, kind, ct);
                 actions.Add($"{kind} → {product.Name}");
+                // ⚠️ "Recorded" alone is a lie when the signal can't take effect: §6.6 gives a same-day
+                // tie to the stock, so an OutNow filed while the last stock-back is today (or later —
+                // add_purchase accepts future dates) is discarded by the engine, permanently. This
+                // surface TALKS, so the silent-no-op trap the count panel had would be spoken here.
+                // Ask the ENGINE — the member computed beside the tie rule — never re-derive.
+                if (kind == SignalKind.OutNow && ReplenishmentPredictor
+                        .Predict(product, DateOnly.FromDateTime(DateTime.Today)).OutNowTodayWouldBeInert)
+                {
+                    return ($"Recorded OutNow for {product.Name} — but stock was also recorded today, and " +
+                        "a same-day tie goes to the stock, so this outage won't take effect. Tell the user: " +
+                        "if they're still out tomorrow, saying so again then will stick.", false);
+                }
                 return ($"Recorded {kind} for {product.Name}.", false);
             }
 

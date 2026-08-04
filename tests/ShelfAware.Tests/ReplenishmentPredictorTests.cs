@@ -304,6 +304,13 @@ public class ReplenishmentPredictorTests
 
         // No stock-back at all: a fresh OutNow is always active, so nothing is inert.
         Assert.False(ReplenishmentPredictor.Predict(ProductWith(), D(20)).OutNowTodayWouldBeInert);
+
+        // ⚠️ A stock-back LATER than today discards a signal filed today just the same — the filter is
+        // "strictly after the stock-back", not "not the same day". Reachable: add_purchase accepts any
+        // date with no future clamp, and the documented TZ gotcha can date a restock tomorrow. == here
+        // called that state "not inert" while the engine discarded the signal — the exact silent no-op
+        // the member exists to name, surviving one state over.
+        Assert.True(ReplenishmentPredictor.Predict(ProductWith([D(0), D(25)]), D(20)).OutNowTodayWouldBeInert);
     }
 
     [Fact]

@@ -72,7 +72,7 @@ Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptT
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1362 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1368 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see item 31).
 
@@ -1617,8 +1617,8 @@ bUnit pages/components — see item 31).
    data loss reproduced end to end through the real services (census counts 12 → remove the introducing
    receipt → product and count gone; the same product with one stray RunningLow survived), and finding
    8's mutation claim measured true — all 1339 stayed green with the three `IsDefined` guards deleted.
-   All ten were real in substance; three sub-claims were corrected by probing; eighteen mutation rounds
-   across the fixes, each failing exactly its tests.
+   All ten were real in substance; three sub-claims were corrected by probing; twenty-four mutation
+   rounds across the fixes and the gate round below, each failing exactly its tests.
    - **The fixes, one commit per phase:**
      (1) *Removal counts an attested count as history* — `ReceiptRemovalService`'s delete half now agrees
      with its own subtract guard that an attestation is investment, keyed on `QuantityCountedAt`, NOT
@@ -1669,8 +1669,33 @@ bUnit pages/components — see item 31).
      today writes an OutNow that is permanently inert (the same §6.6 tie — the summary's "recorded as
      running out" is true of the row and void of effect); twins with identical counts remain
      indistinguishable in the dropdown, said on `OptionLabel` itself.
-   - **1362 tests green, 0 warnings** on a non-incremental Release build (1339 before; +23). Read off
-     the final run before being written here, per item 21's rule.
+   - ⚠️ **The gate over this pass found five more, all fixed — item 39's lesson held: a fix pass needs
+     eyes that didn't write it.** Two review agents ran in ISOLATED worktrees; both worktrees arrived
+     STALE at master — the exact failure the brief warned about — and both caught it through the
+     verify-your-commit-first instruction and reset to the right SHA before reviewing. Security came
+     back clean with probes (a cross-household plant wearing this household's receipt breadcrumb is
+     invisible to removal — mutation-validated). Code review, each CONFIRMED with a probe:
+     (a) the removal fix KEPT a null-`ConfirmedAt` introduced product but still SUBTRACTED — attested
+     12 read back as 11, silently, on exactly the population the fix was for. The introduced-arm
+     closes it: a product this receipt introduced did not exist before its own confirm, so every
+     attestation provably postdates it even with the timestamp missing; the pre-existing-product
+     sibling keeps the documented subtract-as-always arm.
+     (b) `OutNowTodayWouldBeInert` was `==` where the filter is strictly-after — a FUTURE stock-back
+     (chat's `add_purchase` has no future clamp; the TZ gotcha) discarded the signal while the member
+     said otherwise, reviving the silent no-op one state over. `>=` now, future case pinned.
+     (c) the twins guards held TWO definitions of "ambiguous" — `Match()` judged by the matcher while
+     the warning, Tick all and the service judged by raw names — so the punctuation pair arrived
+     unticked with NO reason shown and Tick all walked through the gap onto a real count: the exact
+     drift `FuzzyStillSelected` exists to prevent, rebuilt one guard over. ONE definition now
+     (`ProductMatcher.ExactMatches`) at every layer, pinned at all three guards and the service.
+     (d) the member had no consumer beyond the count panel while two louder surfaces still promised
+     the act: `record_signal` — which TALKS, item 27's class — now appends the tie caveat (the signal
+     is still written; the caveat is honesty, not refusal), and the products grid's Out button says
+     when a tap can't take effect, read off the same predictions dictionary its rows render from.
+     Both directions pinned on both surfaces.
+     (e) the SetAll comment counted "two" non-confidence guards; there are three.
+   - **1368 tests green, 0 warnings** on a non-incremental Release build (1339 at the start of the
+     pass; +29). Read off the final run before being written here, per item 21's rule.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
