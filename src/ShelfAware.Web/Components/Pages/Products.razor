@@ -491,27 +491,39 @@ else
     // reading the fact off the SAME predictions dictionary every other cell renders from.
     private async Task MarkOut(Product p)
     {
+        // Same double-tap guard as the dashboard's quick buttons: a second tap can be queued before
+        // the first's render lands, and both would file — two OutNow rows from one intent.
+        if (markingOut) return;
+        markingOut = true;
         markOutNote = null;
-        await using (var db = await DbFactory.CreateDbContextAsync())
+        try
         {
-            db.InventorySignals.Add(new InventorySignal
+            await using (var db = await DbFactory.CreateDbContextAsync())
             {
-                ProductId = p.Id,
-                Kind = SignalKind.OutNow,
-                SignaledAt = DateTimeOffset.Now
-            });
-            await db.SaveChangesAsync();
+                db.InventorySignals.Add(new InventorySignal
+                {
+                    ProductId = p.Id,
+                    Kind = SignalKind.OutNow,
+                    SignaledAt = DateTimeOffset.Now
+                });
+                await db.SaveChangesAsync();
+            }
+            await LoadAsync();
+            if (predictions is not null && predictions.TryGetValue(p.Id, out var prediction)
+                && prediction.SignalTodayWouldBeInert)
+            {
+                markOutNote = $"Marked \"{p.Name}\" out — but stock was recorded today, and a same-day tie " +
+                    "goes to the stock, so it won't show as out yet. Still out tomorrow? Tap Out again then.";
+            }
         }
-        await LoadAsync();
-        if (predictions is not null && predictions.TryGetValue(p.Id, out var prediction)
-            && prediction.OutNowTodayWouldBeInert)
+        finally
         {
-            markOutNote = $"Marked \"{p.Name}\" out — but stock was recorded today, and a same-day tie " +
-                "goes to the stock, so it won't show as out yet. Still out tomorrow? Tap Out again then.";
+            markingOut = false;
         }
     }
 
     private string? markOutNote;
+    private bool markingOut;
 
     private async Task Delete(Product p)
     {
@@ -519,6 +531,7 @@ else
         if (!await JS.InvokeAsync<bool>("confirm", $"Delete \"{p.Name}\" and its purchase history?")) return;
 
         deleteError = null;
+        markOutNote = null; // the shelf is changing under the note — don't let it claim currency
         try
         {
             await using var db = await DbFactory.CreateDbContextAsync();

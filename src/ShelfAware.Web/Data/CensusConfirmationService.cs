@@ -207,14 +207,24 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
                     // One definition, shared with the grid's warning, the arrival tick, and Tick all, so
                     // the guards cannot drift apart about the same row. It also stops this resolve path
                     // minting a THIRD member of an identity set the matcher already can't tell apart.
-                    if (!row.CreateNew && ProductMatcher.ExactMatches(name, products).Count > 1)
+                    var identity = ProductMatcher.ExactMatches(name, products);
+                    if (!row.CreateNew && identity.Count > 1)
                     {
                         refused.Add(new RefusedRow(name, CensusRefusal.AmbiguousName));
                         continue;
                     }
-                    if (sameName.Count == 1)
+                    // ⚠️ Resolve by the SAME identity set the refusal judges by, never by raw equality.
+                    // Refusing on the matcher's rule while resolving on a narrower one let one census
+                    // MINT the punctuation pair — the reader emits a row per variety, transcribing
+                    // label text with and without a hyphen, and both rows read "new" — after which the
+                    // NEXT census of that shelf was refused AmbiguousName forever. Rule 1 is identity,
+                    // not similarity, so resolving on it is exactly as safe as the raw resolve — and
+                    // it is what makes ConfirmAll's retry promise fully true. An explicit create-new
+                    // still creates (its raw-taken case was refused above); that residual is
+                    // unreachable from the grid, which never sets CreateNew on an ambiguous row.
+                    if (!row.CreateNew && identity.Count == 1)
                     {
-                        product = sameName[0];
+                        product = identity[0];
                     }
                 }
             }

@@ -352,11 +352,11 @@ else
                        Overdue OR DueSoon, so a superseded outage on an item the rhythm has since made
                        due sat on that list while this panel denied it. Don't reintroduce either claim
                        without reading it off the engine.
-                       ⚠️ The advice splits on OutNowTodayWouldBeInert: with stock recorded TODAY, a
+                       ⚠️ The advice splits on SignalTodayWouldBeInert: with stock recorded TODAY, a
                        fresh 0 ties with it and loses — permanently (§6.6's same-day rule) — so "set it
                        to 0 again" was a silent no-op that re-rendered this same branch, advice and all.
                        The engine states the fact; this page only words it. *@
-                    @if (prediction.OutNowTodayWouldBeInert)
+                    @if (prediction.SignalTodayWouldBeInert)
                     {
                         <p class="muted">Down to none, and you've said so before — but that's not in
                             force now, and stock was recorded today, which wins a same-day tie. If
@@ -370,7 +370,7 @@ else
                             again; otherwise set the number you have.</p>
                     }
                 }
-                else if (prediction.OutNowTodayWouldBeInert)
+                else if (prediction.SignalTodayWouldBeInert)
                 {
                     @* The derived-zero advice makes the same promise ("set it to 0 and it counts as
                        running out"), so it needs the same split — a promise the tie rule breaks today

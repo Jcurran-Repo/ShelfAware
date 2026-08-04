@@ -493,8 +493,11 @@ _Last updated: 7/30/2026_
   removal fix's null-ConfirmedAt hole (kept the product, still subtracted its count), `>=` not `==` on
   the tie member (a future stock-back revived the silent no-op), ONE twins definition at every guard
   (the punctuation pair had walked through Tick all with no reason shown), the tie caveat on
-  record_signal and the grid's Out button, and a guard-miscounting comment. Full detail: CLAUDE.md
-  item 41. **1368 green, 0 warnings** — 8/3/2026
+  record_signal and the grid's Out button, and a guard-miscounting comment. The re-gate over that fix
+  found three more, all fixed and mutation-checked: the RunningLow twin of the caveat (hidden by the
+  member's OutNow-specific name — `SignalTodayWouldBeInert` now), the census minting the punctuation
+  pair it then refused forever (one identity set for refusal AND resolution), and MarkOut's double-tap
+  guard + note hygiene. Full detail: CLAUDE.md item 41. **1372 green, 0 warnings** — 8/3/2026
 
 ---
 

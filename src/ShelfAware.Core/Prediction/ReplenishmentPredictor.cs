@@ -152,7 +152,7 @@ public static class ReplenishmentPredictor
         //    which must clear the pin. The cost is the rare inverse ("bought this morning, discovered
         //    we're out tonight") — that OutNow is ignored FOREVER, not just today: neither date ever
         //    changes, so the tie never resolves the other way. What works is filing a fresh one
-        //    tomorrow, which is why OutNowTodayWouldBeInert exists — a surface inviting "say you're
+        //    tomorrow, which is why SignalTodayWouldBeInert exists — a surface inviting "say you're
         //    out" must not promise an act this filter will disregard. Pinned by a unit test.
         var activeSignal = product.Signals
             .Where(s => s.Kind is SignalKind.OutNow or SignalKind.RunningLow)
@@ -352,7 +352,7 @@ public static class ReplenishmentPredictor
             // restock tomorrow — and == judged those "not inert" while the filter discarded the signal,
             // which is the exact silent no-op this member exists to name. Null compares false, which is
             // right: with no stock-back a fresh OutNow is always active.
-            OutNowTodayWouldBeInert = lastStockBack >= today,
+            SignalTodayWouldBeInert = lastStockBack >= today,
             ExpiresOn = expiresOn,
             Expired = expired,
             ExpirationOverridden = expirationOverridden,

@@ -72,7 +72,7 @@ Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptT
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1368 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1372 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see item 31).
 
@@ -1617,8 +1617,8 @@ bUnit pages/components — see item 31).
    data loss reproduced end to end through the real services (census counts 12 → remove the introducing
    receipt → product and count gone; the same product with one stray RunningLow survived), and finding
    8's mutation claim measured true — all 1339 stayed green with the three `IsDefined` guards deleted.
-   All ten were real in substance; three sub-claims were corrected by probing; twenty-four mutation
-   rounds across the fixes and the gate round below, each failing exactly its tests.
+   All ten were real in substance; three sub-claims were corrected by probing; twenty-seven mutation
+   rounds across the fixes and the two gate rounds below, each failing exactly its tests.
    - **The fixes, one commit per phase:**
      (1) *Removal counts an attested count as history* — `ReceiptRemovalService`'s delete half now agrees
      with its own subtract guard that an attestation is investment, keyed on `QuantityCountedAt`, NOT
@@ -1639,7 +1639,8 @@ bUnit pages/components — see item 31).
      than `First()`, and an explicit create-new on a twin name keeps its `DuplicateName` answer.
      `ProductMatcher.ExactMatches` (Core) answers the plural question so no page re-derives the
      matcher's normalization (item 39's rule). A human's pick by id is ordinary and pinned end to end.
-     (4) *The zero-panel's advice* — `PredictionResult.OutNowTodayWouldBeInert`, computed in the engine
+     (4) *The zero-panel's advice* — `PredictionResult.SignalTodayWouldBeInert` (born
+     `OutNowTodayWouldBeInert`; renamed in the re-gate below), computed in the engine
      beside §6.6's tie rule; both zero-copy branches split their advice on it, so "set it to 0 again"
      is no longer offered on a day it cannot work. The engine comment's "ignored until tomorrow" now
      says the truth (that signal is ignored forever; a fresh one tomorrow works). The 2c comment names
@@ -1694,8 +1695,27 @@ bUnit pages/components — see item 31).
      when a tap can't take effect, read off the same predictions dictionary its rows render from.
      Both directions pinned on both surfaces.
      (e) the SetAll comment counted "two" non-confidence guards; there are three.
-   - **1368 tests green, 0 warnings** on a non-incremental Release build (1339 at the start of the
-     pass; +29). Read off the final run before being written here, per item 21's rule.
+   - ⚠️ **The re-gate over the gate's own fix commit found three more.**
+     (f) The tie caveat covered ONE of the two signal kinds the engine's filter discards identically —
+     "I'm running low on milk" the day milk arrived was the same spoken no-op one enum value over. The
+     member's OutNow-specific NAME is what invited the OutNow-specific consumer, so it is
+     **`SignalTodayWouldBeInert`** now (the doc says why) and `record_signal` caveats both kinds;
+     Restocked is exempt because it IS a stock-back, not a subject of the filter.
+     (g) The census refused ambiguity by the matcher's identity rule but RESOLVED by raw equality — so
+     one census could MINT the punctuation pair (a row per variety, transcribed with and without a
+     hyphen, both "new"), after which every later census of that shelf was refused `AmbiguousName`
+     forever, the refusal's advice costing another vision call. One identity set for refusal AND
+     resolution now: a same-visit variant row folds into the first row's product and the counts sum,
+     and a lone variant resolves onto the existing product instead of minting its twin (rule 1 is
+     identity, not similarity, so this is exactly as safe as the raw resolve).
+     (h) `MarkOut` gained the dashboard-pattern double-tap guard — raced honestly in its test via the
+     harness's HoldNext — and its note clears when a delete changes the shelf under it.
+     Three more mutation rounds, each killing exactly its tests. The residual the re-gate signed off:
+     an explicit CreateNew with a raw-unique, normalized-colliding name still creates (unreachable
+     from the grid — an ambiguous row never gets `ChoseCreateNew`); and the introduced-product
+     premise in (a) depends on every `Attest` caller passing "now", which all production callers do.
+   - **1372 tests green, 0 warnings** on a non-incremental Release build (1339 at the start of the
+     pass; +33). Read off the final run before being written here, per item 21's rule.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

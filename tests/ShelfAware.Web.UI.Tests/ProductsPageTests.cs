@@ -238,11 +238,33 @@ public class ProductsPageTests : PageTestContext
     }
 
     [Fact]
+    public async Task A_double_tapped_out_button_files_one_signal_not_two()
+    {
+        // The guard the dashboard's quick buttons carry, on the grid's Out too: a second tap can be
+        // queued before the first's render lands, and both would file — two OutNow rows from one
+        // intent, both feeding the signal history. HoldNext parks the first tap at its context
+        // create, exactly the mid-flight window a real circuit has.
+        Seed("Dog Food", p => p.Purchases =
+            [new PurchaseEvent { PurchasedAt = Today.AddDays(-16), Quantity = 1m }]);
+        var cut = RenderGrid();
+
+        var gate = new TaskCompletionSource();
+        Factory.HoldNext = gate;
+        cut.Find("button.mark-out").Click();
+        cut.Find("button.mark-out").Click(); // must no-op against the guard
+        gate.SetResult();
+
+        cut.WaitForAssertion(() => Assert.Contains("Overdue", cut.Find("tbody .chip").TextContent));
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Single(await raw.InventorySignals.IgnoreQueryFilters().ToListAsync());
+    }
+
+    [Fact]
     public async Task An_out_tap_on_a_day_stock_arrived_says_it_wont_take_effect_yet()
     {
         // §6.6 gives a same-day tie to the stock, so this tap files a signal the engine discards for
         // good — the row re-renders unchanged, which read as the tap being ignored. The note reads
-        // the engine's OutNowTodayWouldBeInert off the same predictions dictionary the row renders
+        // the engine's SignalTodayWouldBeInert off the same predictions dictionary the row renders
         // from; the tap still records the signal (honesty, not a refusal).
         Seed("Dog Food", p => p.Purchases =
         [

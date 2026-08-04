@@ -398,6 +398,33 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task A_running_low_report_on_a_day_stock_arrived_carries_the_same_caveat()
+    {
+        // The engine's active-signal filter covers OutNow and RunningLow with ONE date test, so the
+        // caveat must too — it first shipped OutNow-only, and "I'm running low on milk" the day milk
+        // arrived was the identical spoken no-op one enum value over. The member's rename
+        // (SignalTodayWouldBeInert) is this test's twin: an OutNow-specific name invited an
+        // OutNow-specific consumer.
+        var coffee = P(1, "Coffee", Category.Beverage);
+        coffee.Purchases.Add(new PurchaseEvent
+        {
+            ProductId = 1, PurchasedAt = DateOnly.FromDateTime(DateTime.Today), Quantity = 1m,
+        });
+        var store = new FakePantryStore(coffee);
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("record_signal", ("product_name", "coffee"), ("kind", "RunningLow"))),
+            () => Responses.Text("Noted."));
+
+        await Chat(client, store).HandleAsync("running low on coffee");
+
+        Assert.Contains((1, SignalKind.RunningLow), store.Signals);
+        var toolResult = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single();
+        Assert.Contains("same-day tie", toolResult.Result!.ToString()!);
+        Assert.Contains("still looking low", toolResult.Result!.ToString()!);
+    }
+
+    [Fact]
     public async Task An_out_report_on_an_ordinary_day_stays_plain()
     {
         // The complement, on the other conjunct: stock came three days ago, so the outage takes

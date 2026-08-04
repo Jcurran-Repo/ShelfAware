@@ -187,16 +187,20 @@ public class AnthropicPantryChat : IPantryChat
                 await _store.RecordSignalAsync(product.Id, kind, ct);
                 actions.Add($"{kind} → {product.Name}");
                 // ⚠️ "Recorded" alone is a lie when the signal can't take effect: §6.6 gives a same-day
-                // tie to the stock, so an OutNow filed while the last stock-back is today (or later —
-                // add_purchase accepts future dates) is discarded by the engine, permanently. This
-                // surface TALKS, so the silent-no-op trap the count panel had would be spoken here.
-                // Ask the ENGINE — the member computed beside the tie rule — never re-derive.
-                if (kind == SignalKind.OutNow && ReplenishmentPredictor
-                        .Predict(product, DateOnly.FromDateTime(DateTime.Today)).OutNowTodayWouldBeInert)
+                // tie to the stock, so an OutNow OR a RunningLow filed while the last stock-back is
+                // today (or later — add_purchase accepts future dates) is discarded by the engine,
+                // permanently. This surface TALKS, so the silent-no-op trap the count panel had would
+                // be spoken here. Both kinds, because the engine's filter covers both with one date
+                // test — the caveat first shipped OutNow-only and the re-gate caught the twin. Ask
+                // the ENGINE — the member computed beside the tie rule — never re-derive. Restocked
+                // is exempt: it IS a stock-back, not a subject of the filter.
+                if (kind is SignalKind.OutNow or SignalKind.RunningLow && ReplenishmentPredictor
+                        .Predict(product, DateOnly.FromDateTime(DateTime.Today)).SignalTodayWouldBeInert)
                 {
-                    return ($"Recorded OutNow for {product.Name} — but stock was also recorded today, and " +
-                        "a same-day tie goes to the stock, so this outage won't take effect. Tell the user: " +
-                        "if they're still out tomorrow, saying so again then will stick.", false);
+                    var still = kind == SignalKind.OutNow ? "still out" : "still looking low";
+                    return ($"Recorded {kind} for {product.Name} — but stock was also recorded today, and " +
+                        "a same-day tie goes to the stock, so this won't take effect. Tell the user: " +
+                        $"if it's {still} tomorrow, saying so again then will stick.", false);
                 }
                 return ($"Recorded {kind} for {product.Name}.", false);
             }

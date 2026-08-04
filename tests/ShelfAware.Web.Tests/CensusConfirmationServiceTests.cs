@@ -95,6 +95,42 @@ public class CensusConfirmationServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task One_census_reading_a_name_two_ways_makes_one_product_not_a_refused_pair()
+    {
+        // ⚠️ The re-gate's sharpest find: refusing on the matcher's identity rule while RESOLVING on
+        // raw equality let one census MINT the punctuation pair — the reader emits a row per variety,
+        // transcribing label text with and without a hyphen, both "new" — after which every later
+        // census of that shelf was refused AmbiguousName forever. One identity set for refusal AND
+        // resolution: the second row folds into the first row's product and the counts sum.
+        var outcome = await _service.ConfirmAsync(
+            [R("Home-Canned Sauce", 4), R("Home Canned Sauce", 2)]);
+
+        Assert.Equal(1, outcome.Counted);
+        Assert.Equal(2, outcome.Rows);
+        Assert.Equal(1, outcome.NewProducts);
+        Assert.Empty(outcome.Refused);
+        await using var db = _db.CreateDbContext();
+        var product = Assert.Single(await db.Products.ToListAsync());
+        Assert.Equal(6m, product.QuantityOnHand);
+    }
+
+    [Fact]
+    public async Task A_punctuation_variant_of_one_existing_product_resolves_to_it()
+    {
+        // The identity set has ONE member, so this is rule 1 — an identity, not a guess — and the
+        // count lands where the household's product already lives instead of minting its twin.
+        var existing = await SeedProduct("Home-Canned Sauce", counted: true, onHand: 9, countedAt: DateTimeOffset.Now);
+
+        var outcome = await _service.ConfirmAsync([R("Home Canned Sauce", 4)]);
+
+        Assert.Equal(1, outcome.Counted);
+        Assert.Equal(0, outcome.NewProducts);
+        await using var db = _db.CreateDbContext();
+        Assert.Single(await db.Products.ToListAsync());
+        Assert.Equal(4m, (await Reload(existing.Id)).QuantityOnHand);
+    }
+
+    [Fact]
     public async Task An_explicit_create_new_on_a_twin_name_is_still_the_duplicate_refusal()
     {
         // The order of the two refusals matters: a human who chose "create new" gets the answer about

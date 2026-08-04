@@ -136,7 +136,7 @@ public class ProductDetailCountPanelTests : PageTestContext
         // permanently (§6.6's same-day rule; the signal's date never changes) — so "set it to 0
         // again" was a silent no-op that re-rendered this same branch, advice included, for the
         // rest of the day. The classic road in is a mis-tapped Restocked and a same-day attempt to
-        // undo it. The page words what the engine states (OutNowTodayWouldBeInert); it derives
+        // undo it. The page words what the engine states (SignalTodayWouldBeInert); it derives
         // nothing itself.
         var id = Seed(p =>
         {
