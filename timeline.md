@@ -509,7 +509,11 @@ _Last updated: 7/30/2026_
   first fix pass of four to add none. It found the same class one level up: the identity rule had been
   applied to the nine census sites and not to the app's other three product-identity guards (the add
   form, chat's create_product, rename), two of which MINT the pair the census refuses. All three
-  converted and pinned. Full detail: CLAUDE.md item 41. **1382 green, 0 warnings** — 8/3/2026
+  converted, pinned, and live-verified in a browser. Then one more: an ambiguous SUGGESTION left a row
+  unticked with nothing able to explain it (the live guards judge the row's name; the ambiguous string
+  is the reader's suggestion) — reproduced on ordinary model output during that browser pass and
+  fixed, so the row now names what the reader thought it was. Full detail: CLAUDE.md item 41.
+  **1384 green, 0 warnings** — 8/4/2026
 
 ---
 

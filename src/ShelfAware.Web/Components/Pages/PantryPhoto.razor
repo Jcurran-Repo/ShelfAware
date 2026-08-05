@@ -240,7 +240,21 @@ else if (phase == Phase.Review)
                                         thing, or leave this to create a separate item.
                                     </div>
                                 }
-                                @if (AmbiguousClash(row))
+                                @if (row.SuggestionUnresolved)
+                                {
+                                    @* ⚠️ The row is unticked because the READER's suggestion named a
+                                       name more than one product answers to — a read-time fact about a
+                                       DIFFERENT string from row.Name, so no live guard can recover it.
+                                       Without this the row sat unticked explained by nothing, or worse
+                                       by NearMatch's "leave this to create a separate item", which is
+                                       about something else. Reproduced live on ordinary model output. *@
+                                    <div class="error small" role="status">
+                                        Shelf Aware read this as “@row.AmbiguousSuggestion”, but more than
+                                        one of your products answers to that name — pick which one you
+                                        counted above, or leave it to add this as a new item.
+                                    </div>
+                                }
+                                else if (AmbiguousClash(row))
                                 {
                                     @* The confirm refuses to guess between twins, so the grid must say so
                                        first — and must not let NameClash promise "will go to X" about a
@@ -400,6 +414,19 @@ else if (phase == Phase.Done)
         /// resolved it by picking something in the dropdown. The ONE definition, shared by the row's
         /// warning and by Tick all, so the two can't disagree about which rows are still a guess.</summary>
         public bool FuzzyStillSelected => FuzzyMatch && ProductId == PrefilledProductId && ProductId > 0;
+
+        /// <summary>The name the reader said this was, when more than one product answers to it — so
+        /// its suggestion could not be honored and nothing was pre-filled. Null when the suggestion was
+        /// usable, absent, or when the ambiguous name is the row's OWN (which AmbiguousClash states
+        /// live instead).</summary>
+        public string? AmbiguousSuggestion { get; init; }
+
+        /// <summary>The reader's suggestion was ambiguous and the human still hasn't said which product
+        /// they meant. Read-time fact, so it is carried rather than re-derived: the live guards judge
+        /// <see cref="Name"/>, and the suggestion is a different string — which is exactly why this row
+        /// used to sit unticked with nothing on screen able to explain it. Picking anything in the
+        /// dropdown answers the question, the same shape as <see cref="FuzzyStillSelected"/>.</summary>
+        public bool SuggestionUnresolved => AmbiguousSuggestion is not null && ProductId == 0;
     }
 
     /// <summary>What the app already knows about a product the grid might land on: the count it holds now
@@ -458,7 +485,9 @@ else if (phase == Phase.Done)
         // — or leave this to create a separate item" can no longer be offered over a write that would
         // land ON X. This guard is what keeps the two sentences mutually exclusive; it also subsumes
         // the ambiguous case, since >1 identity hit is >0 and NameClash returns the first.
-        if (name.Length == 0 || NameClash(row) is not null) return null;
+        // An unresolved ambiguous SUGGESTION speaks for itself too — and more precisely, since it names
+        // what the reader thought this was rather than what the row's name resembles.
+        if (name.Length == 0 || row.SuggestionUnresolved || NameClash(row) is not null) return null;
         if (!nearMatches.TryGetValue(name, out var near))
         {
             near = ProductMatcher.Resolve(name, products);
@@ -504,17 +533,18 @@ else if (phase == Phase.Done)
     private void SetAll(bool include)
     {
         // Tick all overrides the CONFIDENCE default only (§13.8: "the guard is the default, not a
-        // lock"). The other three tick conditions are not about confidence — an Unidentified row's
-        // name describes a package, a still-selected similarity match is an unscored guess at WHICH
-        // product the tick would overwrite, and a name two products answer to is a pick nobody has
-        // made — so each of those waits for a human to look at the row itself. All three still tick
-        // individually, and all three say their reason inline. Unticking clears everything: it
-        // asserts nothing, so it needs no guard.
+        // lock"). The other conditions are not about confidence — an Unidentified row's name describes
+        // a package, a still-selected similarity match is an unscored guess at WHICH product the tick
+        // would overwrite, a name two products answer to is a pick nobody has made, and an ambiguous
+        // SUGGESTION is the same pick unmade about a different string — so each waits for a human to
+        // look at the row itself. Every one still ticks individually, and every one says its reason
+        // inline. Unticking clears everything: it asserts nothing, so it needs no guard.
         foreach (var row in rows)
         {
             row.Include = include
                 && row.Evidence != CensusEvidence.Unidentified
                 && !row.FuzzyStillSelected
+                && !row.SuggestionUnresolved
                 && !AmbiguousClash(row);
         }
     }
@@ -624,7 +654,7 @@ else if (phase == Phase.Done)
                 // from (an alias keys on a merchant and a printed line, and a shelf has neither), so the
                 // model's own match leads and ProductMatcher backs it up. Resolved ONCE — it walks the
                 // whole catalog, and the row needs the same answer twice.
-                var (product, fuzzy, ambiguous) = Match(i);
+                var (product, fuzzy, ambiguous, ambiguousSuggestion) = Match(i);
                 var matched = product?.Id ?? 0;
                 return new ReviewRow
                 {
@@ -651,6 +681,7 @@ else if (phase == Phase.Done)
                     //  · Not a fuzzy match — confidence measures certainty in the ITEM, and says nothing
                     //    about WHICH product a name-similarity pass then picked. Attesting replaces that
                     //    product's count, so an unscored guess must not be pre-authorized.
+                    AmbiguousSuggestion = ambiguousSuggestion,
                     //  · Not ambiguous — a name two products share is a pick nobody has made yet, and
                     //    the confirm would refuse it anyway; arriving ticked would just move the refusal
                     //    to after the click.
@@ -705,15 +736,23 @@ else if (phase == Phase.Done)
         }
     }
 
-    /// <summary>The product this item pre-fills to, and whether that came from a NAMED source (the model's
-    /// own suggestion, or an exact name) or from fuzzy similarity. The caller needs both: a similarity
-    /// match is a guess at which product, and the count it would replace belongs to a real one.</summary>
-    private (Product? Product, bool Fuzzy, bool Ambiguous) Match(CensusItem item)
+    /// <summary>The product this item pre-fills to, whether that came from a NAMED source (the model's
+    /// own suggestion, or an exact name) or from fuzzy similarity, and — when the reader's suggestion
+    /// could not be honored because more than one product answers to it — THAT NAME, so the row can say
+    /// so. The caller needs all three: a similarity match is a guess at which product, and the count it
+    /// would replace belongs to a real one.
+    /// <para>⚠️ The ambiguous-suggestion name is RETURNED rather than just acted on, because it is a
+    /// read-time fact the live guards cannot recover: they judge <c>row.Name</c>, and the reader's
+    /// suggestion is a DIFFERENT string. Dropping it left the row unticked for a reason nothing on
+    /// screen could state — and, worse, explained by <c>NearMatch</c>'s "or leave this to create a
+    /// separate item", which is about something else entirely. Reproduced live: a can read as "Canned
+    /// Tomato Sauce" suggesting "Home Canned Tomato Sauce", which two products answer to.</para></summary>
+    private (Product? Product, bool Fuzzy, bool Ambiguous, string? AmbiguousSuggestion) Match(CensusItem item)
     {
         // An unidentified package names a CONTAINER, so matching it against the catalog would attach a
         // count to a product on no evidence. The reader already refuses to suggest one; this is the same
         // rule held on the fuzzy fallback, which would happily match "unlabeled tub" to a tub of anything.
-        if (item.Evidence == CensusEvidence.Unidentified) return (null, false, false);
+        if (item.Evidence == CensusEvidence.Unidentified) return (null, false, false, null);
         if (item.SuggestedProductName is { Length: > 0 } suggested)
         {
             // ⚠️ Plural on purpose: two products can share a name (no unique index exists), the reader's
@@ -725,8 +764,15 @@ else if (phase == Phase.Done)
             // this method's own fallback below called it ambiguous, and two answers to one question is
             // how Tick all walked through the gap.
             var exact = ProductMatcher.ExactMatches(suggested, products);
-            if (exact.Count > 1) return (null, false, true);
-            if (exact.Count == 1) return (exact[0], false, false);
+            if (exact.Count > 1)
+            {
+                // The NAME rides along only when it is one the live guards cannot see — i.e. when it
+                // isn't the row's own name. When it IS, AmbiguousClash says the same thing and keeps
+                // saying it as the human edits, so carrying it too would put two sentences on one row.
+                var hidden = ProductMatcher.IdentityKey(suggested) != ProductMatcher.IdentityKey(item.NormalizedName);
+                return (null, false, true, hidden ? suggested : null);
+            }
+            if (exact.Count == 1) return (exact[0], false, false, null);
         }
         // ⚠️ Ask the matcher WHICH rule fired rather than re-deriving it from the strings. Comparing the
         // raw names looks equivalent and isn't: the matcher normalizes punctuation away before its exact
@@ -739,9 +785,13 @@ else if (phase == Phase.Done)
         {
             // Rule 1 found an identity that isn't one product — the matcher's own normalization says two
             // products carry this name, so "the" exact match is a coin flip the app must not make.
-            return (null, false, true);
+            // Ambiguous for the TICK, but no name for the message: here the ambiguous name IS row.Name,
+            // so AmbiguousClash states it live (and keeps stating it as the human edits). The flag is
+            // still required — Include is computed once, HERE, before any live guard can run, so
+            // dropping it let the row arrive ticked.
+            return (null, false, true, null);
         }
-        return (resolved, kind is not (ProductMatcher.MatchKind.None or ProductMatcher.MatchKind.ExactName), false);
+        return (resolved, kind is not (ProductMatcher.MatchKind.None or ProductMatcher.MatchKind.ExactName), false, null);
     }
 
     private async Task LoadCatalogAsync(CancellationToken ct)

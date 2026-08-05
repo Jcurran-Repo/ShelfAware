@@ -93,7 +93,7 @@ Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptT
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1382 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1384 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see item 31).
 
@@ -1802,15 +1802,37 @@ bUnit pages/components — see item 31).
      `"Yogurt - Strawberry"` as `"yogurt  strawberry"`, so the documented dictionary KEY was neither
      equal to its own spaced form nor idempotent (it failed safe — rule 1 missed, rule 3 caught it as
      similarity — but a near-key is not a key).
-   - **Recorded, not fixed:** `Match()` judges ambiguity on the reader's SUGGESTED name while every
-     live guard judges `row.Name`, so a row whose suggestion is ambiguous but whose own name is not
-     arrives unticked with **no reason rendered**, and Tick all re-ticks it. Pre-existing, not
-     introduced by the census work, and the harm is a missing explanation rather than a silent write
-     (the row shows "➕ create new product" and its name). Fixing it is a design question — whether an
-     ambiguous suggestion should block a tick at all when the row would create a differently-named
-     product — and this branch has been punished repeatedly for late judgement calls.
-   - **1382 tests green, 0 warnings** on a non-incremental Release build (1339 at the start of the
-     pass; +43). Read off the final run before being written here, per item 21's rule.
+   - ⚠️ **An ambiguous SUGGESTION now says so — recorded as "leave it" and then FIXED, because the
+     browser pass reproduced it on ordinary model output.** A can read as "Canned Tomato Sauce" whose
+     `existing_product` was "Home Canned Tomato Sauce" — a name two products answer to — arrived
+     unticked (right) with nothing able to explain it (wrong), because every live guard judges
+     `row.Name` and the ambiguous string is the SUGGESTION. Worse, `NearMatch` filled the silence with
+     *"or leave this to create a separate item"*, which answers a different question. Jordan's call:
+     if the app knows why it withheld the tick, the row must say so. The read-time fact rides on
+     `ReviewRow.AmbiguousSuggestion` now (the same shape as `FuzzyMatch`), gets its own sentence
+     naming what the reader thought it was, stands `NearMatch` down, and is honored by Tick all;
+     picking anything in the dropdown resolves it, exactly like `FuzzyStillSelected`.
+     ⚠️ **The name rides along only when it is one the live guards cannot see.** When the ambiguous
+     suggestion IS the row's own name, `AmbiguousClash` already says it and keeps saying it as the
+     human edits — carrying it too put two sentences about one problem on one row (caught by an
+     existing test, not by review).
+     ⚠️ **And the flag is separate from the name for a reason found the hard way**: `Include` is
+     computed once, at read time, before any live guard can run — so returning only the name (on the
+     theory that `AmbiguousClash` would cover the tick) let a punctuation-twin row arrive **ticked**.
+     The existing twin test caught it immediately, which is what a both-halves-pinned test is for.
+   - **Live-verified after the conversions** (2026-08-04, dev server on the alt port, the throwaway
+     household from the census walkthrough): the add form blocks "Slow Cooked Beans" against a catalog
+     "Slow-Cooked Beans" outright — *"You already have Slow-Cooked Beans"*, no "Add anyway", no twin —
+     where pre-fix it offered the fuzzy branch and one click minted the pair; renaming a DIFFERENT
+     product to a punctuation variant is refused while renaming a product to its OWN de-punctuated
+     form still works (the check excludes itself, so a household can still fix its own punctuation);
+     and typing "Slow-Cooked Beans" into a census row renders *"This will go to the existing 'Slow
+     Cooked Beans'"* instead of offering a separate item, with the confirm then reporting "Counted 2
+     items" and no new product — screen and write agreeing, which is the whole of finding 1. Zero
+     server errors. (The console's SignalR reconnect errors were ~87 minutes stale, from stopping the
+     PREVIOUS dev server with the tab open — check timestamps before believing that class of error.)
+   - **1384 tests green, 0 warnings** on a non-incremental Release build (1339 at the start of the
+     pass; +45). Read off the final run before being written here, per item 21's rule.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

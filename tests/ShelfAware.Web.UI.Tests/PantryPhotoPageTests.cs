@@ -523,6 +523,48 @@ public class PantryPhotoPageTests : PageTestContext
     }
 
     [Fact]
+    public async Task An_ambiguous_SUGGESTION_says_so_instead_of_leaving_the_row_silently_unticked()
+    {
+        // ⚠️ Found live on ordinary model output: a can read as "Canned Tomato Sauce" whose
+        // `existing_product` suggestion was "Home Canned Tomato Sauce" — a name two products answer
+        // to. The row was unticked (right) with nothing able to say why (wrong): every live guard
+        // judges row.Name, and the ambiguous string is the SUGGESTION. Worse, NearMatch then filled
+        // the silence with "or leave this to create a separate item", which is about a different
+        // question entirely. The read-time fact is carried onto the row now.
+        await SeedProduct("Home-Canned Tomato Sauce", counted: true, onHand: 9);
+        await SeedProduct("Home Canned Tomato Sauce");
+
+        var cut = Review(Item("Canned Tomato Sauce", suggested: "Home Canned Tomato Sauce"));
+
+        var row = RowFor(cut, "Canned Tomato Sauce");
+        Assert.False(IsTicked(row));
+        Assert.Contains("more than one of your products answers to that name", Collapsed(row));
+        Assert.Contains("Home Canned Tomato Sauce", Collapsed(row));     // names what it read it as
+        Assert.DoesNotContain("create a separate item", Collapsed(row)); // NearMatch stands down
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Tick all")).Click();
+        Assert.False(IsTicked(RowFor(cut, "Canned Tomato Sauce")));      // and Tick all honors it
+    }
+
+    [Fact]
+    public async Task Picking_a_product_answers_the_ambiguous_suggestion_and_the_row_ticks()
+    {
+        // The complement: the guard is about a pick nobody has made, so making one clears it — the
+        // same shape as FuzzyStillSelected. Without this the row would be permanently second-class.
+        var keeper = await SeedProduct("Home-Canned Tomato Sauce", counted: true, onHand: 9);
+        await SeedProduct("Home Canned Tomato Sauce");
+        var cut = Review(Item("Canned Tomato Sauce", suggested: "Home Canned Tomato Sauce"));
+
+        RowFor(cut, "Canned Tomato Sauce").QuerySelectorAll("select")
+            .Single(s => s.GetAttribute("aria-label")!.StartsWith("Product match"))
+            .Change(keeper.Id.ToString());
+
+        var row = RowFor(cut, "Canned Tomato Sauce");
+        Assert.DoesNotContain("more than one of your products answers to that name", Collapsed(row));
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Tick all")).Click();
+        Assert.True(IsTicked(RowFor(cut, "Canned Tomato Sauce")));
+    }
+
+    [Fact]
     public async Task A_punctuation_twin_is_ambiguous_to_every_guard_not_just_the_arrival_tick()
     {
         // ⚠️ The pair rule 1's own normalization folds together — and the drift the gate caught:
