@@ -154,11 +154,15 @@ public class ProductDetailCountPanelTests : PageTestContext
         var panel = CountPanel(RenderDetail(id));
 
         Assert.Contains("you've said so before", panel);
-        Assert.Contains("wins a same-day tie", panel);
-        Assert.Contains("set it to 0 then", panel);
+        Assert.Contains("wins that tie", panel);
+        Assert.Contains("Once that date has passed", panel);
         Assert.DoesNotContain("set it to 0 again", panel);
-        // "Stock was recorded today" is deliberately mechanism-vague: the stock-back here is a
-        // Restocked, but it is a purchase in the sibling road, and the copy must fit both.
+        // ⚠️ "as of today or later", never "today": the flag is lastStockBack >= today, so it also
+        // fires for a FUTURE stock-back, where naming today — or promising tomorrow — is false.
+        Assert.DoesNotContain("recorded today", panel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("tomorrow", panel, StringComparison.OrdinalIgnoreCase);
+        // The stock-back here is a Restocked, but it is a purchase in the sibling road, so the copy
+        // must name no mechanism.
         Assert.DoesNotContain("restock", panel, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -179,8 +183,11 @@ public class ProductDetailCountPanelTests : PageTestContext
         var panel = CountPanel(RenderDetail(id));
 
         Assert.Contains("nothing here has said so out loud", panel);
-        Assert.Contains("wins a same-day tie", panel);
+        Assert.Contains("wins that tie", panel);
+        Assert.Contains("Once that date has passed", panel);
         Assert.DoesNotContain("set it to 0 and it counts as running out", panel);
+        Assert.DoesNotContain("recorded today", panel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("tomorrow", panel, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

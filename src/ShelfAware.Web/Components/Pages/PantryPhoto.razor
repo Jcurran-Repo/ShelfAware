@@ -412,13 +412,23 @@ else if (phase == Phase.Done)
 
     private ProductNote? Note(int productId) => productId > 0 && notes.TryGetValue(productId, out var n) ? n : null;
 
-    /// <summary>The existing product this row's name would collide with, or null. Only meaningful while the
+    /// <summary>The existing product this row's name would land on, or null. Only meaningful while the
     /// row resolves by NAME (no product picked) — that's the one case where what the confirm does isn't
-    /// visible from the dropdown alone.</summary>
-    private Product? NameClash(ReviewRow row) =>
-        row.ProductId != 0
-            ? null
-            : products.FirstOrDefault(p => string.Equals(p.Name, row.Name.Trim(), StringComparison.OrdinalIgnoreCase));
+    /// visible from the dropdown alone.
+    /// <para>⚠️ Asks the same identity question the CONFIRM asks (<see cref="ProductMatcher.ExactMatches"/>),
+    /// never raw equality. Left raw while the service resolved by identity, this returned null for a
+    /// name that only normalized-matches — so the row fell through to NearMatch and promised "leave this
+    /// to create a separate item" over a write that REPLACED that product's count, with no "Was N" note
+    /// (which keys on the dropdown) and no refusal. The screen and the write must answer this once.</para></summary>
+    private Product? NameClash(ReviewRow row)
+    {
+        if (row.ProductId != 0) return null;
+        var identity = ProductMatcher.ExactMatches(row.Name.Trim(), products);
+        // Count > 1 on an ordinary row is AmbiguousClash's story and it renders first; on a CreateNew row
+        // AmbiguousClash stands down, and the service still refuses (DuplicateName), so this must speak
+        // for that case too — otherwise the grid is silent about a row that won't be counted.
+        return identity.Count >= 1 ? identity[0] : null;
+    }
 
     /// <summary>An existing product this row's name merely RESEMBLES, or null — the standing duplicate
     /// guard (a twin splits purchase history and blinds the predictor) applied where a name is typed
@@ -432,7 +442,10 @@ else if (phase == Phase.Done)
     {
         if (row.ProductId != 0) return null;
         var name = row.Name.Trim();
-        if (name.Length == 0 || NameClash(row) is not null) return null;
+        // NameClash answers first and now speaks for every identity hit, so "looks like your existing X
+        // — or leave this to create a separate item" can no longer be offered over a write that would
+        // land ON X. This guard is what keeps the two sentences mutually exclusive.
+        if (name.Length == 0 || NameClash(row) is not null || AmbiguousClash(row)) return null;
         if (!nearMatches.TryGetValue(name, out var near))
         {
             near = ProductMatcher.Resolve(name, products);

@@ -131,6 +131,51 @@ public class CensusConfirmationServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task An_explicit_create_new_cannot_MINT_an_identity_twin()
+    {
+        // ⚠️ The residual a previous round signed off as "unreachable": an explicit create-new whose
+        // name is raw-unique but identity-colliding. Judging "taken" raw while resolving by identity
+        // let it through, and the pair it minted then poisoned the product forever — every later
+        // census naming either twin refused AmbiguousName. One rule now, so the refusal sees it.
+        var existing = await SeedProduct("Half and Half", counted: true, onHand: 9, countedAt: DateTimeOffset.Now);
+
+        var outcome = await _service.ConfirmAsync(
+            [new CensusConfirmationService.CensusRow("Half-and-Half", Category.Dairy, 1, 0, CreateNew: true)]);
+
+        Assert.Equal(0, outcome.NewProducts);
+        Assert.Equal(CensusConfirmationService.CensusRefusal.DuplicateName,
+            Assert.Single(outcome.Refused).Reason);
+        await using var db = _db.CreateDbContext();
+        Assert.Single(await db.Products.ToListAsync());               // no twin minted
+        Assert.Equal(9m, (await Reload(existing.Id)).QuantityOnHand); // and nothing overwritten
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_zero_beside_an_identity_variant_of_the_same_new_item_reads_the_same_either_way(bool zeroFirst)
+    {
+        // ⚠️ The deferred-zeros settle-up keyed on the RAW name while the main loop resolved by
+        // identity, so the punctuation pair — the reader's ordinary output, transcribing a label with
+        // and without a hyphen — rebuilt the row-ORDER dependence the deferral exists to remove: one
+        // ordering refused a row and claimed "nothing was created" about a product the census had just
+        // put on the household's Products page. The existing ordering test uses two IDENTICAL raw
+        // names, so it cannot see this shape.
+        var rows = zeroFirst
+            ? new[] { R("Home Canned Sauce", 0), R("Home-Canned Sauce", 2) }
+            : [R("Home-Canned Sauce", 2), R("Home Canned Sauce", 0)];
+
+        var outcome = await _service.ConfirmAsync(rows);
+
+        Assert.Empty(outcome.Refused);
+        Assert.Equal(1, outcome.Counted);
+        Assert.Equal(2, outcome.Rows);
+        Assert.Equal(1, outcome.NewProducts);
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(2m, (await db.Products.SingleAsync()).QuantityOnHand);
+    }
+
+    [Fact]
     public async Task An_explicit_create_new_on_a_twin_name_is_still_the_duplicate_refusal()
     {
         // The order of the two refusals matters: a human who chose "create new" gets the answer about

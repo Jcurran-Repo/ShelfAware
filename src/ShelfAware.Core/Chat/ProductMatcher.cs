@@ -33,6 +33,18 @@ public static class ProductMatcher
     public static Product? Resolve(string? query, IReadOnlyList<Product> products) =>
         ResolveWithKind(query, products).Product;
 
+    /// <summary>The key two names share exactly when rule 1 calls them the same product — punctuation
+    /// folded to spaces, case dropped. THE one answer to "does this name mean that product", so every
+    /// guard, dictionary and warning that has an opinion about product identity can be built on the
+    /// same string instead of on raw equality.
+    /// <para>⚠️ It exists because "which product does this name mean?" was being answered in nine
+    /// places, and converting them one at a time is what produced three rounds of defects: each
+    /// half-converted state left one guard promising something a neighbour then contradicted (a grid
+    /// offering "leave this to create a separate item" over a write that replaced an existing count).
+    /// A new site that needs product identity uses this or <see cref="ExactMatches"/> — never
+    /// <c>string.Equals</c> on names.</para></summary>
+    public static string IdentityKey(string? name) => Normalize(name ?? "");
+
     /// <summary>Every product rule 1 calls an identity for this query — same normalization, full set.
     /// <see cref="ResolveWithKind"/> returns the FIRST and cannot say there were two, and no unique
     /// index exists on product names — so a caller about to write over "the" exact match needs to know
@@ -41,9 +53,9 @@ public static class ProductMatcher
     public static IReadOnlyList<Product> ExactMatches(string? query, IReadOnlyList<Product> products)
     {
         if (string.IsNullOrWhiteSpace(query) || products.Count == 0) return [];
-        var q = Normalize(query);
+        var q = IdentityKey(query);
         if (q.Length == 0) return [];
-        return [.. products.Where(p => Normalize(p.Name) == q)];
+        return [.. products.Where(p => IdentityKey(p.Name) == q)];
     }
 
     /// <summary>As <see cref="Resolve"/>, and says which rule fired — for callers that must tell an

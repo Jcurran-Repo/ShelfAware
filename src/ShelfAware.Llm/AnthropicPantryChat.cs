@@ -186,6 +186,13 @@ public class AnthropicPantryChat : IPantryChat
                     return ($"No product matches \"{name}\". Call create_product first if it's new.", true);
                 await _store.RecordSignalAsync(product.Id, kind, ct);
                 actions.Add($"{kind} → {product.Name}");
+                // ⚠️ Re-read before asking the engine. `products` is the snapshot taken at the START of
+                // the turn, and a store write never touches that detached graph — so "I bought coffee
+                // today but I'm still running low on it" ran add_purchase and record_signal against the
+                // SAME stale product, the caveat below saw no purchase, and the reply said a bare
+                // "Recorded" — aloud — about a signal the engine had already discarded.
+                var current = (await _store.GetProductsAsync(ct)).FirstOrDefault(p => p.Id == product.Id)
+                    ?? product;
                 // ⚠️ "Recorded" alone is a lie when the signal can't take effect: §6.6 gives a same-day
                 // tie to the stock, so an OutNow OR a RunningLow filed while the last stock-back is
                 // today (or later — add_purchase accepts future dates) is discarded by the engine,
@@ -195,12 +202,14 @@ public class AnthropicPantryChat : IPantryChat
                 // the ENGINE — the member computed beside the tie rule — never re-derive. Restocked
                 // is exempt: it IS a stock-back, not a subject of the filter.
                 if (kind is SignalKind.OutNow or SignalKind.RunningLow && ReplenishmentPredictor
-                        .Predict(product, DateOnly.FromDateTime(DateTime.Today)).SignalTodayWouldBeInert)
+                        .Predict(current, DateOnly.FromDateTime(DateTime.Today)).SignalTodayWouldBeInert)
                 {
-                    var still = kind == SignalKind.OutNow ? "still out" : "still looking low";
-                    return ($"Recorded {kind} for {product.Name} — but stock was also recorded today, and " +
-                        "a same-day tie goes to the stock, so this won't take effect. Tell the user: " +
-                        $"if it's {still} tomorrow, saying so again then will stick.", false);
+                    // ⚠️ "as of today or later", not "today": the flag is lastStockBack >= today, so a
+                    // FUTURE-dated purchase (this very tool takes any date, unclamped) fires it too —
+                    // and there "recorded today" and "try tomorrow" are both false, sometimes by days.
+                    return ($"Recorded {kind} for {product.Name} — but there's stock recorded for it as " +
+                        "of today or later, and a tie goes to the stock, so this won't take effect yet. " +
+                        "Tell the user it'll register if they say so again once that stock date has passed.", false);
                 }
                 return ($"Recorded {kind} for {product.Name}.", false);
             }

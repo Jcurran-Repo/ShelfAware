@@ -501,6 +501,28 @@ public class PantryPhotoPageTests : PageTestContext
     }
 
     [Fact]
+    public async Task A_typed_name_that_only_normalized_matches_says_where_the_count_will_LAND()
+    {
+        // ⚠️ The grid's two "which product does this row land on?" sentences must agree with the write.
+        // With NameClash on raw equality while the confirm resolved by identity, a typed
+        // "Half-and-Half" fell past NameClash to NearMatch and promised "leave this to create a
+        // separate item" — over a write that REPLACED the existing product's count, with no "Was N"
+        // note (it keys on the dropdown) and no refusal. The household was told the opposite of what
+        // happened to their 9.
+        await SeedProduct("Half and Half", counted: true, onHand: 9);
+        var cut = Review(Item("frosted carton", confidence: 0.2m,
+            evidence: CensusEvidence.Unidentified, category: Category.Other));
+
+        // "Name it if you know what it is" — the row invites exactly this.
+        RowFor(cut, "frosted carton").QuerySelectorAll("input")
+            .Single(i => (i.GetAttribute("aria-label") ?? "").StartsWith("Item name")).Change("Half-and-Half");
+
+        var row = Collapsed(RowFor(cut, "Half-and-Half"));
+        Assert.Contains("This will go to the existing", row);
+        Assert.DoesNotContain("create a separate item", row);
+    }
+
+    [Fact]
     public async Task A_punctuation_twin_is_ambiguous_to_every_guard_not_just_the_arrival_tick()
     {
         // ⚠️ The pair rule 1's own normalization folds together — and the drift the gate caught:

@@ -260,6 +260,36 @@ public class ProductsPageTests : PageTestContext
     }
 
     [Fact]
+    public async Task An_out_tap_mid_flight_is_refused_by_the_BUTTON_not_swallowed_by_the_handler()
+    {
+        // ⚠️ The guard is page-wide, so without a `disabled` binding a tap on a DIFFERENT product
+        // during the in-flight write was accepted by the browser and then silently dropped — no
+        // signal, no note, no busy state, on the page whose whole purpose is marking any product out.
+        // The dashboard pattern this copies is flag AND disabled; only half had been taken.
+        Seed("Dog Food", p => p.Purchases = [new PurchaseEvent { PurchasedAt = Today.AddDays(-16), Quantity = 1m }]);
+        Seed("Cat Litter", p => p.Purchases = [new PurchaseEvent { PurchasedAt = Today.AddDays(-16), Quantity = 1m }]);
+        var cut = RenderGrid();
+
+        var gate = new TaskCompletionSource();
+        Factory.HoldNext = gate;
+        cut.FindAll("button.mark-out")[0].Click();
+
+        // Every Out button reports busy while the write is in flight, so the second tap can't be made
+        // rather than being accepted and thrown away.
+        cut.WaitForAssertion(() =>
+            Assert.All(cut.FindAll("button.mark-out"), b => Assert.True(b.HasAttribute("disabled"))));
+        gate.SetResult();
+
+        // …and once it settles, the other product is markable again.
+        cut.WaitForAssertion(() =>
+            Assert.All(cut.FindAll("button.mark-out"), b => Assert.False(b.HasAttribute("disabled"))));
+        cut.FindAll("button.mark-out")[1].Click();
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("tbody .chip").Count(c => c.TextContent.Contains("Overdue"))));
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Equal(2, await raw.InventorySignals.IgnoreQueryFilters().CountAsync());
+    }
+
+    [Fact]
     public async Task An_out_tap_on_a_day_stock_arrived_says_it_wont_take_effect_yet()
     {
         // §6.6 gives a same-day tie to the stock, so this tap files a signal the engine discards for

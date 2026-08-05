@@ -233,7 +233,8 @@ else
                         </div>
                     </td>
                     <td class="row-actions">
-                        <button class="mark-out" @onclick="() => MarkOut(p)" aria-label="Mark @p.Name out of stock" title="Mark @p.Name out of stock">Out</button>
+                        <button class="mark-out" @onclick="() => MarkOut(p)" disabled="@markingOut"
+                aria-label="Mark @p.Name out of stock" title="Mark @p.Name out of stock">Out</button>
                         <button class="icon-btn" @onclick="() => Delete(p)" aria-label="Delete @p.Name" title="Delete @p.Name"><span aria-hidden="true">🗑</span></button>
                     </td>
                 </tr>
@@ -491,8 +492,13 @@ else
     // reading the fact off the SAME predictions dictionary every other cell renders from.
     private async Task MarkOut(Product p)
     {
-        // Same double-tap guard as the dashboard's quick buttons: a second tap can be queued before
-        // the first's render lands, and both would file — two OutNow rows from one intent.
+        // Same double-tap guard as the dashboard's quick buttons — and, like them, paired with a
+        // `disabled` binding on every Out button. ⚠️ The flag alone is not the pattern: it is page-wide,
+        // so without the disabled state a tap on a DIFFERENT product during the in-flight write (one
+        // save plus a full reload that re-predicts every row) was accepted by the browser and then
+        // silently dropped here — no signal, no note, no busy state. On the page that exists to mark
+        // ANY product out, marking two things in a row is the ordinary workflow, so a dropped tap is
+        // the very "tap that looks ignored" failure markOutNote was added to fix.
         if (markingOut) return;
         markingOut = true;
         markOutNote = null;
@@ -512,9 +518,25 @@ else
             if (predictions is not null && predictions.TryGetValue(p.Id, out var prediction)
                 && prediction.SignalTodayWouldBeInert)
             {
-                markOutNote = $"Marked \"{p.Name}\" out — but stock was recorded today, and a same-day tie " +
-                    "goes to the stock, so it won't show as out yet. Still out tomorrow? Tap Out again then.";
+                // ⚠️ "as of today or later", not "today": the engine's flag is lastStockBack >= today, so
+                // it fires for a FUTURE stock-back too (chat's add_purchase takes any date; the TZ
+                // gotcha). Naming today, and promising "tomorrow", was false in exactly that case — and
+                // the retry day is the stock's date, not tomorrow.
+                markOutNote = $"Marked \"{p.Name}\" out — but there's stock recorded for it as of today " +
+                    "or later, and stock wins that tie, so it won't show as out yet. Tap Out again once " +
+                    "that date has passed.";
             }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // Same shape as Delete below: a DB failure must not tear the circuit down mid-grid. The
+            // signal either landed or it didn't, and LoadAsync above re-reads either way — so the advice
+            // is "look at the row", not "tap again", which would file a second outage if the first
+            // actually committed.
+            Logger.LogError(ex, "Marking product {ProductId} out of stock failed.", p.Id);
+            markOutNote = $"Couldn't mark {p.Name} out just now — check the row to see whether it took, " +
+                "and try again if it didn't.";
         }
         finally
         {

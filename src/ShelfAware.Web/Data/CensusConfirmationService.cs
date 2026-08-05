@@ -102,9 +102,11 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var products = await db.Products.ToListAsync(cancellationToken);
 
-        // One trip's photos can name a single new item on two rows — map both to one new product, keyed by
-        // item name, exactly as the receipt confirm does.
-        var createdByName = new Dictionary<string, Product>(StringComparer.OrdinalIgnoreCase);
+        // One trip's photos can name a single new item on two rows — map both to one new product. Keyed by
+        // ProductMatcher's IDENTITY key, not the raw name: the reader transcribes label text, so the two
+        // rows are "Home-Canned Sauce" and "Home Canned Sauce" as often as they are character-identical,
+        // and a raw key let that pair create two products the matcher then calls one.
+        var createdByName = new Dictionary<string, Product>();
         // ⚠️ Counts are SUMMED per product before a single Attest, not attested row by row. An attestation
         // states a TOTAL, so two rows resolving to one product (the same food in two photos, or two
         // varieties of it) would otherwise have the second silently overwrite the first — a household with
@@ -116,8 +118,11 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
         var resumed = new HashSet<Product>();
         var refused = new List<RefusedRow>();
         // Zero rows that no product exists for YET. Held until every row has been read, because a later
-        // row naming the same new item settles them (see where they are added).
-        var deferredZeros = new List<(string Name, string Label)>();
+        // row naming the same new item settles them (see where they are added). Carries the identity KEY
+        // rather than the raw name, so the settle-up below asks the same question the main loop did —
+        // keying it raw rebuilt the row-ORDER dependence this deferral exists to remove, for exactly the
+        // punctuation pair the identity rule was introduced for.
+        var deferredZeros = new List<(string Key, string Label)>();
         int created = 0, counted = 0;
 
         foreach (var row in rows)
@@ -172,7 +177,7 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
                 }
 
                 // One census's photos can name a single new item on two rows — both map to one new product.
-                if (createdByName.TryGetValue(name, out var existingNew))
+                if (createdByName.TryGetValue(ProductMatcher.IdentityKey(name), out var existingNew))
                 {
                     product = existingNew;
                 }
@@ -189,39 +194,29 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
                     // wrong answer; the standing duplicate guard blocks exact-name dupes outright.
                     // A near-miss is the GRID's business, not this method's: resolving a fuzzy match here
                     // would attach a count to a guessed product with nobody asked.
-                    // ⚠️ Plural on purpose. Two products CAN share the name (no unique index), the rows
-                    // arrive naming a NAME — and Attest replaces a count, so First() here would overwrite
-                    // an arbitrary twin's. Which twin was counted is not the app's call to make.
-                    var sameName = products
-                        .Where(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
-                        .ToList();
-                    if (sameName.Count > 0 && row.CreateNew)
+                    // ⚠️ ONE definition of "is this name taken, and by how many?" — ProductMatcher's
+                    // rule-1 identity set — feeding all three branches below AND the grid that previews
+                    // them (NameClash, AmbiguousClash, the arrival tick, Tick all, the twin dropdown).
+                    // Judging one branch raw and its neighbour by identity is what produced three rounds
+                    // of defects: an explicit create-new whose name was raw-unique but identity-colliding
+                    // MINTED the punctuation pair (after which every later census naming either twin was
+                    // refused forever), and the grid promised "leave this to create a separate item" over
+                    // a write that replaced an existing product's count.
+                    // Rule 1 is identity, not similarity — same words, same order, punctuation and case
+                    // folded — so resolving on it is exactly as safe as a raw resolve, and it is what
+                    // makes ConfirmAll's retry promise true. A near-miss stays the GRID's business:
+                    // resolving a fuzzy match here would attach a count to a guessed product unasked.
+                    var identity = ProductMatcher.ExactMatches(name, products);
+                    if (identity.Count > 0 && row.CreateNew)
                     {
                         refused.Add(new RefusedRow(name, CensusRefusal.DuplicateName));
                         continue;
                     }
-                    // ⚠️ Ambiguity is the MATCHER's rule-1 identity set, not raw equality alone. Raw-equal
-                    // twins are a subset; the pair raw-only missed is punctuation ("Home-Canned" beside
-                    // "Home Canned"), where a deterministic raw match is still a coin flip about which
-                    // jar the household MEANT — decided by how the vision model happened to punctuate.
-                    // One definition, shared with the grid's warning, the arrival tick, and Tick all, so
-                    // the guards cannot drift apart about the same row. It also stops this resolve path
-                    // minting a THIRD member of an identity set the matcher already can't tell apart.
-                    var identity = ProductMatcher.ExactMatches(name, products);
-                    if (!row.CreateNew && identity.Count > 1)
+                    if (identity.Count > 1)
                     {
                         refused.Add(new RefusedRow(name, CensusRefusal.AmbiguousName));
                         continue;
                     }
-                    // ⚠️ Resolve by the SAME identity set the refusal judges by, never by raw equality.
-                    // Refusing on the matcher's rule while resolving on a narrower one let one census
-                    // MINT the punctuation pair — the reader emits a row per variety, transcribing
-                    // label text with and without a hyphen, and both rows read "new" — after which the
-                    // NEXT census of that shelf was refused AmbiguousName forever. Rule 1 is identity,
-                    // not similarity, so resolving on it is exactly as safe as the raw resolve — and
-                    // it is what makes ConfirmAll's retry promise fully true. An explicit create-new
-                    // still creates (its raw-taken case was refused above); that residual is
-                    // unreachable from the grid, which never sets CreateNew on an ambiguous row.
                     if (!row.CreateNew && identity.Count == 1)
                     {
                         product = identity[0];
@@ -238,7 +233,7 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
             // its ordinary output, not an edge case.
             if (count == 0 && product is null)
             {
-                deferredZeros.Add((name, label));
+                deferredZeros.Add((ProductMatcher.IdentityKey(name), label));
                 continue;
             }
 
@@ -249,7 +244,7 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
                 product = new Product { Name = name, Category = row.Category };
                 db.Products.Add(product);
                 products.Add(product); // later rows in this census can resolve to it
-                createdByName[name] = product;
+                createdByName[ProductMatcher.IdentityKey(name)] = product;
                 created++;
             }
 
@@ -280,9 +275,9 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
         // the rows rather than of their order. A sibling row naming the same item makes this one part of
         // the same statement — it contributes its zero and counts as a row that landed; with nothing to
         // attach to it is refused, which is the only zero that genuinely has nothing to record.
-        foreach (var (name, label) in deferredZeros)
+        foreach (var (key, label) in deferredZeros)
         {
-            if (createdByName.TryGetValue(name, out var product))
+            if (createdByName.TryGetValue(key, out var product))
             {
                 totals[product] = totals.GetValueOrDefault(product);
                 counted++;

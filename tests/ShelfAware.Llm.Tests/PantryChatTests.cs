@@ -394,7 +394,7 @@ public class PantryChatTests
         Assert.Contains((1, SignalKind.OutNow), store.Signals);
         var toolResult = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
             .Contents.OfType<FunctionResultContent>().Single();
-        Assert.Contains("same-day tie", toolResult.Result!.ToString()!);
+        Assert.Contains("a tie goes to the stock", toolResult.Result!.ToString()!);
     }
 
     [Fact]
@@ -420,8 +420,56 @@ public class PantryChatTests
         Assert.Contains((1, SignalKind.RunningLow), store.Signals);
         var toolResult = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
             .Contents.OfType<FunctionResultContent>().Single();
-        Assert.Contains("same-day tie", toolResult.Result!.ToString()!);
-        Assert.Contains("still looking low", toolResult.Result!.ToString()!);
+        Assert.Contains("Recorded RunningLow", toolResult.Result!.ToString()!);
+        Assert.Contains("a tie goes to the stock", toolResult.Result!.ToString()!);
+    }
+
+    [Fact]
+    public async Task A_purchase_earlier_in_the_SAME_turn_is_seen_by_the_tie_caveat()
+    {
+        // ⚠️ "I bought coffee today but I'm still running low on it" — one turn, two tool calls. The
+        // product list is snapshotted at the START of the turn and a store write never touches that
+        // detached graph, so the caveat used to look at a product with no purchase today, find nothing
+        // inert, and answer a bare "Recorded" — spoken aloud — about a signal the engine had already
+        // discarded. The handler re-reads before asking the engine.
+        var store = new FakePantryStore(P(1, "Coffee", Category.Beverage));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(
+                Responses.Call("add_purchase", ("product_name", "coffee")),
+                Responses.Call("record_signal", ("product_name", "coffee"), ("kind", "RunningLow"))),
+            () => Responses.Text("Noted."));
+
+        await Chat(client, store).HandleAsync("bought coffee today but I'm still running low on it");
+
+        var results = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Select(r => r.Result!.ToString()!).ToList();
+        Assert.Contains(results, r => r.Contains("a tie goes to the stock"));
+    }
+
+    [Fact]
+    public async Task The_tie_caveat_never_claims_the_stock_landed_today()
+    {
+        // The flag is lastStockBack >= today, so a FUTURE-dated purchase fires it — add_purchase takes
+        // any date with no clamp ("log the milk I'm picking up Friday"). Saying "recorded today", or
+        // promising "tomorrow", is false there, sometimes by days.
+        var coffee = P(1, "Coffee", Category.Beverage);
+        coffee.Purchases.Add(new PurchaseEvent
+        {
+            ProductId = 1, PurchasedAt = DateOnly.FromDateTime(DateTime.Today).AddDays(5), Quantity = 1m,
+        });
+        var store = new FakePantryStore(coffee);
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("record_signal", ("product_name", "coffee"), ("kind", "OutNow"))),
+            () => Responses.Text("Noted."));
+
+        await Chat(client, store).HandleAsync("we're out of coffee");
+
+        var text = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result!.ToString()!;
+        Assert.Contains("a tie goes to the stock", text);
+        Assert.Contains("as of today or later", text);
+        Assert.DoesNotContain("recorded today", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("tomorrow", text, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

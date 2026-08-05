@@ -149,11 +149,13 @@ public static class ReplenishmentPredictor
         // 6. Signal overrides on top of the statistical base. Active = STRICTLY later than the last
         //    stock-back. Same-day ties are ambiguous at date granularity (purchases carry no time), and
         //    the purchase deliberately wins: the primary flow is "item pinned Overdue → [Bought today]",
-        //    which must clear the pin. The cost is the rare inverse ("bought this morning, discovered
-        //    we're out tonight") — that OutNow is ignored FOREVER, not just today: neither date ever
-        //    changes, so the tie never resolves the other way. What works is filing a fresh one
-        //    tomorrow, which is why SignalTodayWouldBeInert exists — a surface inviting "say you're
-        //    out" must not promise an act this filter will disregard. Pinned by a unit test.
+        //    which must clear the pin. The cost is the inverse — "bought this morning, discovered we're
+        //    out tonight", and the far more ordinary "bought it today and I'm STILL running low" — and
+        //    that signal, either KIND, is ignored FOREVER, not just today: neither date ever changes, so
+        //    the tie never resolves the other way. What works is filing a fresh one once today is past
+        //    the stock-back, which is why SignalTodayWouldBeInert exists — a surface inviting "say
+        //    you're out" or "say you're low" must not promise an act this filter will disregard. Both
+        //    kinds, because this one predicate discards both. Pinned by a unit test.
         var activeSignal = product.Signals
             .Where(s => s.Kind is SignalKind.OutNow or SignalKind.RunningLow)
             .Where(s => lastStockBack is null || SignalDate.Of(s.SignaledAt) > lastStockBack)

@@ -72,7 +72,7 @@ Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptT
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1372 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1379 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see item 31).
 
@@ -1714,8 +1714,46 @@ bUnit pages/components — see item 31).
      an explicit CreateNew with a raw-unique, normalized-colliding name still creates (unreachable
      from the grid — an ambiguous row never gets `ChoseCreateNew`); and the introduced-product
      premise in (a) depends on every `Attest` caller passing "now", which all production callers do.
-   - **1372 tests green, 0 warnings** on a non-incremental Release build (1339 at the start of the
-     pass; +33). Read off the final run before being written here, per item 21's rule.
+   - ⚠️ **The THIRD review round found eight more, all in the ~90 lines the previous fix touched —
+     and the pattern itself became the finding.** Rounds went 5 → 3 → 8: each fix converted one more
+     site of a shared rule and left its neighbours, so every round shipped a fresh half-state. The
+     three worst were all one defect wearing different hats — **"which product does this name mean?"
+     was answered in nine places** (`Match`, `AmbiguousClash`, `NameClash`, `NearMatch`, `twinNames`,
+     the service's resolve, its DuplicateName guard, `createdByName`, the deferred-zeros key) and I
+     had been converting them one at a time:
+     (a) broadening the RESOLVE to the identity set while `NameClash` stayed raw made the grid's own
+     copy a lie — a typed "Half-and-Half" fell past it to `NearMatch`, which offers *"or leave this to
+     create a separate item"*, over a write that REPLACED the existing product's count of 9 with 1,
+     with no "Was N" note (it keys on the dropdown) and no refusal. Probed end to end by the reviewer.
+     (b) the create-new guard judged "taken" RAW, so an explicit create-new whose name was raw-unique
+     but identity-colliding **minted** the punctuation pair — after which every later census naming
+     either twin was refused `AmbiguousName` forever. That is the residual the previous round had
+     signed off as "unreachable from the grid"; it is two clicks.
+     (c) the deferred-zeros settle-up keyed RAW, rebuilding item 40's row-ORDER dependence for exactly
+     the pair the identity rule exists for — invisible to its own `[Theory]`, which uses two
+     *identical* raw names.
+     **The altitude fix, per item 40's lesson: `ProductMatcher.IdentityKey` is now THE answer**, used
+     by every guard, dictionary and warning on both sides of the census. A new site uses it or
+     `ExactMatches` — never `string.Equals` on names.
+   - Also from that round: the page-wide `markingOut` flag had no `disabled` binding, so a tap on a
+     DIFFERENT product mid-write was accepted and **silently dropped** — the "tap that looks ignored"
+     failure `markOutNote` exists to fix, reintroduced by the guard added beside it (the dashboard
+     pattern is flag AND disabled; only half had been copied). `MarkOut` also gained the catch its
+     `try` had been sitting there without. And the tie copy claimed "stock was recorded today" and
+     "try tomorrow" — both false for a FUTURE stock-back, which `>=` deliberately covers; all four
+     surfaces now say "as of today or later … once that date has passed".
+   - ⚠️ **A fake that hands back its own live objects cannot model staleness — and hid both a bug and
+     its fix.** `record_signal` asked the engine about the START-OF-TURN snapshot, so *"I bought coffee
+     today but I'm still running low on it"* — one turn, two tool calls — answered a bare "Recorded",
+     **aloud**, about a signal the engine had already discarded. The handler re-reads now; and
+     `FakePantryStore.GetProductsAsync` returns a fresh snapshot per call (writes since an earlier read
+     appear; objects from that earlier read do not change under them), which is what makes the fix
+     observable. My first attempt at this instead taught `AddPurchaseAsync` to mutate the shared
+     product — which made the mutation test pass with the fix reverted, i.e. it masked the very defect
+     under repair. **Item 20's rule, in the other direction: a fake must not be more CONVENIENT than
+     the real store either.**
+   - **1379 tests green, 0 warnings** on a non-incremental Release build (1339 at the start of the
+     pass; +40). Read off the final run before being written here, per item 21's rule.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

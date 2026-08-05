@@ -100,8 +100,42 @@ internal sealed class FakePantryStore : IPantryStore
     public Task<IReadOnlyList<RecipeRef>> GetRecipesAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<RecipeRef>>(Recipes);
 
+    /// <summary>A FRESH read, the way the real store's AsNoTracking query is: writes made since an
+    /// earlier read show up, and the objects handed out by that earlier read do NOT change under them.
+    /// <para>⚠️ Modelling both halves is what makes staleness testable. Handing back the same live
+    /// list meant a handler that re-reads a product before asking the engine about it looked identical
+    /// to one that used its start-of-turn snapshot — so the bug (a purchase recorded earlier in the
+    /// SAME turn being invisible, and the reply speaking a bare "Recorded" about a signal the engine
+    /// had already discarded) and its fix were equally invisible here.</para></summary>
     public Task<IReadOnlyList<Product>> GetProductsAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult<IReadOnlyList<Product>>(Products);
+        Task.FromResult<IReadOnlyList<Product>>([.. Products.Select(Snapshot)]);
+
+    private Product Snapshot(Product p) => new()
+    {
+        Id = p.Id,
+        Name = p.Name,
+        Category = p.Category,
+        IsTracked = p.IsTracked,
+        TrackQuantity = p.TrackQuantity,
+        QuantityOnHand = p.QuantityOnHand,
+        QuantityCountedAt = p.QuantityCountedAt,
+        DefaultUnit = p.DefaultUnit,
+        Tags = p.Tags,
+        Substitutes = p.Substitutes,
+        // The rows this store has been told about, materialized the way an Include would.
+        Purchases =
+        [
+            .. p.Purchases,
+            .. Purchases.Where(x => x.ProductId == p.Id)
+                .Select(x => new PurchaseEvent { ProductId = x.ProductId, PurchasedAt = x.Date, Quantity = x.Qty }),
+        ],
+        Signals =
+        [
+            .. p.Signals,
+            .. Signals.Where(x => x.ProductId == p.Id)
+                .Select(x => new InventorySignal { ProductId = x.ProductId, Kind = x.Kind, SignaledAt = DateTimeOffset.Now }),
+        ],
+    };
 
     public List<string> KnownTags { get; } = [];
 

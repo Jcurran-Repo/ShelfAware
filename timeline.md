@@ -497,7 +497,15 @@ _Last updated: 7/30/2026_
   found three more, all fixed and mutation-checked: the RunningLow twin of the caveat (hidden by the
   member's OutNow-specific name — `SignalTodayWouldBeInert` now), the census minting the punctuation
   pair it then refused forever (one identity set for refusal AND resolution), and MarkOut's double-tap
-  guard + note hygiene. Full detail: CLAUDE.md item 41. **1372 green, 0 warnings** — 8/3/2026
+  guard + note hygiene. A THIRD round then found eight more, every one inside the ~90 lines the second
+  fix touched — and the pattern became the finding: 5 → 3 → 8, because each round converted one more
+  site of a shared rule and left its neighbours. Three of the eight were one defect wearing different
+  hats: **"which product does this name mean?" was answered in nine places.** `ProductMatcher.IdentityKey`
+  is THE answer now, on both sides of the census — the altitude fix item 40 prescribes, instead of a
+  fourth round of patching. Also: the Out button's guard was dropping taps on OTHER products (flag
+  without the paired `disabled`), the tie copy claimed "today"/"tomorrow" where the flag is `>=`, and
+  a chat fake that handed back its own live objects had been hiding both a spoken silent no-op and its
+  fix. Full detail: CLAUDE.md item 41. **1379 green, 0 warnings** — 8/3/2026
 
 ---
 
