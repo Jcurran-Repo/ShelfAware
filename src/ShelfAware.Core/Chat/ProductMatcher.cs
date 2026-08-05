@@ -131,8 +131,13 @@ public static class ProductMatcher
     private static HashSet<string> Tokens(string normalized) =>
         normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet();
 
+    // ⚠️ Every run of separators collapses to ONE space, not just doubles. A single Replace("  ", " ")
+    // left "yogurt  strawberry" for "Yogurt - Strawberry" (two adjacent non-alphanumerics), so it was
+    // neither equal to "Yogurt Strawberry" nor idempotent — which a documented dictionary KEY
+    // (IdentityKey) has to be. It failed safe (rule 1 missed, rule 3 caught it as similarity, the grid
+    // asked) but it made the key a near-key, and "collapses whitespace" was already what the code read
+    // as doing. Split/join says it once and holds for any run length.
     private static string Normalize(string s) =>
-        new string(s.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : ' ').ToArray())
-            .Trim()
-            .Replace("  ", " ");
+        string.Join(' ', new string(s.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : ' ').ToArray())
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries));
 }

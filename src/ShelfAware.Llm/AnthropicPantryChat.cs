@@ -186,30 +186,35 @@ public class AnthropicPantryChat : IPantryChat
                     return ($"No product matches \"{name}\". Call create_product first if it's new.", true);
                 await _store.RecordSignalAsync(product.Id, kind, ct);
                 actions.Add($"{kind} → {product.Name}");
-                // ⚠️ Re-read before asking the engine. `products` is the snapshot taken at the START of
-                // the turn, and a store write never touches that detached graph — so "I bought coffee
-                // today but I'm still running low on it" ran add_purchase and record_signal against the
-                // SAME stale product, the caveat below saw no purchase, and the reply said a bare
-                // "Recorded" — aloud — about a signal the engine had already discarded.
-                var current = (await _store.GetProductsAsync(ct)).FirstOrDefault(p => p.Id == product.Id)
-                    ?? product;
                 // ⚠️ "Recorded" alone is a lie when the signal can't take effect: §6.6 gives a same-day
                 // tie to the stock, so an OutNow OR a RunningLow filed while the last stock-back is
-                // today (or later — add_purchase accepts future dates) is discarded by the engine,
-                // permanently. This surface TALKS, so the silent-no-op trap the count panel had would
-                // be spoken here. Both kinds, because the engine's filter covers both with one date
-                // test — the caveat first shipped OutNow-only and the re-gate caught the twin. Ask
-                // the ENGINE — the member computed beside the tie rule — never re-derive. Restocked
-                // is exempt: it IS a stock-back, not a subject of the filter.
-                if (kind is SignalKind.OutNow or SignalKind.RunningLow && ReplenishmentPredictor
-                        .Predict(current, DateOnly.FromDateTime(DateTime.Today)).SignalTodayWouldBeInert)
+                // today (or later) is discarded by the engine, permanently. This surface TALKS, so the
+                // silent-no-op trap the count panel had would be SPOKEN here. Both kinds, because the
+                // engine's filter covers both with one date test. Ask the ENGINE — the member computed
+                // beside the tie rule — never re-derive.
+                // Only these two kinds are subject to that tie, so only they pay for the re-read below;
+                // Restocked IS a stock-back, never a subject of the filter.
+                if (kind is SignalKind.OutNow or SignalKind.RunningLow)
                 {
-                    // ⚠️ "as of today or later", not "today": the flag is lastStockBack >= today, so a
-                    // FUTURE-dated purchase (this very tool takes any date, unclamped) fires it too —
-                    // and there "recorded today" and "try tomorrow" are both false, sometimes by days.
-                    return ($"Recorded {kind} for {product.Name} — but there's stock recorded for it as " +
-                        "of today or later, and a tie goes to the stock, so this won't take effect yet. " +
-                        "Tell the user it'll register if they say so again once that stock date has passed.", false);
+                    // ⚠️ Re-read before asking the engine. `products` is the snapshot taken at the START
+                    // of the turn, and a store write never touches that detached graph — so "I bought
+                    // coffee today but I'm still running low on it" ran add_purchase and record_signal
+                    // against the SAME stale product, the caveat saw no purchase, and the reply said a
+                    // bare "Recorded" — aloud — about a signal the engine had already discarded.
+                    // A product that vanished mid-turn yields nothing to reason from: say the plain
+                    // thing rather than compute a caveat from the snapshot these lines just called
+                    // untrustworthy.
+                    var current = (await _store.GetProductsAsync(ct)).FirstOrDefault(p => p.Id == product.Id);
+                    if (current is not null && ReplenishmentPredictor
+                            .Predict(current, DateOnly.FromDateTime(DateTime.Today)).SignalTodayWouldBeInert)
+                    {
+                        // ⚠️ "as of today or later", not "today": the flag is lastStockBack >= today, so a
+                        // FUTURE-dated purchase (this very tool takes any date, unclamped) fires it too —
+                        // and there "recorded today" and "try tomorrow" are both false, sometimes by days.
+                        return ($"Recorded {kind} for {product.Name} — but there's stock recorded for it as " +
+                            "of today or later, and a tie goes to the stock, so this won't take effect yet. " +
+                            "Tell the user it'll register if they say so again once that stock date has passed.", false);
+                    }
                 }
                 return ($"Recorded {kind} for {product.Name}.", false);
             }
@@ -354,9 +359,13 @@ public class AnthropicPantryChat : IPantryChat
                 // exists under another spelling, and a twin would split its purchase history. Exact dupes
                 // are always refused; a fuzzy match is refused until the user confirms it's different and
                 // the model retries with confirmed_distinct — the chat mirror of the page's "Add anyway".
-                if (ProductMatcher.Resolve(name, products) is { } existing)
+                // ⚠️ Exactness comes from the MATCHER (rule 1), never from comparing the raw strings:
+                // punctuation and case are folded, so "Half and Half" IS "Half-and-Half" — and a raw
+                // compare let confirmed_distinct mint that identity pair, which then jams the census.
+                var (existing, existingKind) = ProductMatcher.ResolveWithKind(name, products);
+                if (existing is not null)
                 {
-                    if (string.Equals(existing.Name, name, StringComparison.OrdinalIgnoreCase))
+                    if (existingKind == ProductMatcher.MatchKind.ExactName)
                         return ($"\"{existing.Name}\" already exists — use it instead.", false);
                     if (Bool("confirmed_distinct") is not true)
                         return ($"That sounds like \"{existing.Name}\", which already exists. If it's the same item, use \"{existing.Name}\"; if the user confirms it's genuinely different, call create_product again with confirmed_distinct=true.", false);

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using ShelfAware.Core.Chat;
 
 namespace ShelfAware.Web.Data;
 
@@ -24,9 +25,14 @@ public class ProductRenameService(IHouseholdDbFactory dbFactory)
 
         // A rename can't merge two products — matching, aliases, and history all key on distinct rows.
         // (Case-only fixes of the SAME product pass: the check excludes productId itself.)
-        var taken = await db.Products
-            .AnyAsync(p => p.Id != productId && p.Name.ToLower() == name.ToLower(), cancellationToken);
-        if (taken) return new(false, $"\"{name}\" already exists — pick a different name (renames can't merge products).");
+        // ⚠️ "Taken" is the MATCHER's rule-1 identity, not raw equality: it folds punctuation, so
+        // renaming to "Half and Half" beside an existing "Half-and-Half" produced a pair the matcher
+        // treats as one product — splitting its history, and jamming every later shelf census on that
+        // item with an AmbiguousName refusal it can only escape by picking from the dropdown. One
+        // definition of product identity, the same one the census and the add form ask.
+        var others = await db.Products.Where(p => p.Id != productId).ToListAsync(cancellationToken);
+        if (ProductMatcher.ExactMatches(name, others) is { Count: > 0 } taken)
+            return new(false, $"\"{taken[0].Name}\" already exists — pick a different name (renames can't merge products).");
 
         var oldName = product.Name;
         product.Name = name;

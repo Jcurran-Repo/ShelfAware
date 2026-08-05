@@ -23,6 +23,26 @@ public class ProductRenameServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task A_rename_cannot_create_a_name_the_MATCHER_cannot_tell_apart()
+    {
+        // ⚠️ "Taken" is rule-1 identity, not raw equality: renaming to "Half and Half" beside an
+        // existing "Half-and-Half" made two products the matcher treats as one — splitting the item's
+        // history, and jamming every later shelf census of it with an AmbiguousName refusal escapable
+        // only by picking from the dropdown (another vision call). This is the third guard that was
+        // still comparing raw names after the census moved to one identity rule; the browser pass
+        // built its twin fixture through exactly this hole.
+        await SeedProduct("Half-and-Half");
+        var otherId = await SeedProduct("Oat Milk");
+
+        var result = await _service.RenameAsync(otherId, "Half and Half");
+
+        Assert.False(result.Ok);
+        Assert.Contains("already exists", result.Message);
+        await using var db = _db.CreateDbContext();
+        Assert.Equal("Oat Milk", (await db.Products.SingleAsync(p => p.Id == otherId)).Name);
+    }
+
+    [Fact]
     public async Task Renames_and_relinks_matched_recipe_ingredients()
     {
         // RecipeIngredient.MatchedProduct is a name string grounded at save time — it drives

@@ -505,7 +505,11 @@ _Last updated: 7/30/2026_
   fourth round of patching. Also: the Out button's guard was dropping taps on OTHER products (flag
   without the paired `disabled`), the tie copy claimed "today"/"tomorrow" where the flag is `>=`, and
   a chat fake that handed back its own live objects had been hiding both a spoken silent no-op and its
-  fix. Full detail: CLAUDE.md item 41. **1379 green, 0 warnings** — 8/3/2026
+  fix. **The fourth round is where the cascade broke** — zero behaviour regressions introduced, the
+  first fix pass of four to add none. It found the same class one level up: the identity rule had been
+  applied to the nine census sites and not to the app's other three product-identity guards (the add
+  form, chat's create_product, rename), two of which MINT the pair the census refuses. All three
+  converted and pinned. Full detail: CLAUDE.md item 41. **1382 green, 0 warnings** — 8/3/2026
 
 ---
 

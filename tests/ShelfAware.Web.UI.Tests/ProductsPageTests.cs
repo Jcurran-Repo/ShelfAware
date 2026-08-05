@@ -93,6 +93,31 @@ public class ProductsPageTests : PageTestContext
     }
 
     [Fact]
+    public async Task A_name_differing_only_in_PUNCTUATION_is_blocked_like_any_exact_duplicate()
+    {
+        // ⚠️ Rule 1 folds punctuation and case, so this IS the catalog's product — but the page used
+        // to re-derive exactness by comparing the RAW strings, land in the fuzzy branch, and offer
+        // [Add anyway]. One click then minted an identity pair, which splits the item's history and
+        // jams every later shelf census of it with an AmbiguousName refusal that costs another vision
+        // call to escape. The census now asks ProductMatcher for identity everywhere; this is the same
+        // question, so it asks the same way (ResolveWithKind, never string.Equals).
+        var id = Seed("Half-and-Half");
+        var cut = RenderGrid();
+
+        SubmitAdd(cut, "Half and Half");
+
+        cut.WaitForAssertion(() =>
+        {
+            var prompt = cut.Find(".dup-check");
+            Assert.Contains("You already have", prompt.TextContent);
+            Assert.Equal($"/product/{id}", prompt.QuerySelector("a")!.GetAttribute("href"));
+            Assert.DoesNotContain("anyway", prompt.TextContent); // blocked, not asked
+        });
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Equal(1, await raw.Products.IgnoreQueryFilters().CountAsync());
+    }
+
+    [Fact]
     public async Task A_fuzzy_duplicate_asks_and_the_user_can_overrule_it()
     {
         Seed("93% Lean Ground Beef");
@@ -309,6 +334,14 @@ public class ProductsPageTests : PageTestContext
         {
             Assert.Contains("won't show as out yet", cut.Markup);
             Assert.Contains("Stocked", cut.Find("tbody .chip").TextContent); // and indeed it didn't pin
+            // ⚠️ The claim, not just the effect. The flag is lastStockBack >= today, so it also fires
+            // for a FUTURE stock-back — where "recorded today" and "try tomorrow" are both false. This
+            // surface's copy fix was the one of four with nothing pinning it: reverting it to the old
+            // wording left all 315 UI tests green, because "won't show as out yet" is in both.
+            Assert.Contains("as of today or later", cut.Markup);
+            Assert.Contains("once that date has passed", cut.Markup);
+            Assert.DoesNotContain("recorded today", cut.Markup, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("tomorrow", cut.Markup, StringComparison.OrdinalIgnoreCase);
         });
         await using var raw = Db.CreateUnscopedContext();
         Assert.Single(await raw.InventorySignals.IgnoreQueryFilters().ToListAsync());

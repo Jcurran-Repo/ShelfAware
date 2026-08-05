@@ -419,10 +419,16 @@ else
         // Same resolver the chat tools and receipt confirm trust (exact → substring → weighted tokens).
         // A second product for the same item splits its purchase history and blinds the predictor, so
         // surface the match before inserting instead of silently creating a twin.
-        if (ProductMatcher.Resolve(name, products ?? []) is { } match)
+        // ⚠️ Ask the MATCHER which rule fired; never re-derive exactness from the raw strings. Rule 1
+        // folds punctuation and case, so "Half and Half" IS the catalog's "Half-and-Half" — but a raw
+        // compare called that a fuzzy near-miss and offered [Add anyway], which minted the identity
+        // pair every later census of that shelf is then refused over. Same rule, one definition, as
+        // the census grid and confirm (ProductMatcher.IdentityKey).
+        var (match, kind) = ProductMatcher.ResolveWithKind(name, products ?? []);
+        if (match is not null)
         {
             duplicateOf = match;
-            duplicateIsExact = string.Equals(match.Name, name, StringComparison.OrdinalIgnoreCase);
+            duplicateIsExact = kind == ProductMatcher.MatchKind.ExactName;
             pendingName = name;
             return;
         }

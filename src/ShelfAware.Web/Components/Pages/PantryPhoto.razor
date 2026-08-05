@@ -423,12 +423,24 @@ else if (phase == Phase.Done)
     private Product? NameClash(ReviewRow row)
     {
         if (row.ProductId != 0) return null;
-        var identity = ProductMatcher.ExactMatches(row.Name.Trim(), products);
-        // Count > 1 on an ordinary row is AmbiguousClash's story and it renders first; on a CreateNew row
-        // AmbiguousClash stands down, and the service still refuses (DuplicateName), so this must speak
-        // for that case too — otherwise the grid is silent about a row that won't be counted.
-        return identity.Count >= 1 ? identity[0] : null;
+        var name = row.Name.Trim();
+        if (name.Length == 0) return null;
+        // Memoized like its two neighbours: ExactMatches normalizes the whole catalog per call, and
+        // this now runs twice per row per render (the markup, then NearMatch's guard).
+        if (!nameClashes.TryGetValue(name, out var clash))
+        {
+            // Count > 1 on an ordinary row is AmbiguousClash's story and it renders first; on a
+            // CreateNew row AmbiguousClash stands down, and the service still refuses (DuplicateName),
+            // so this must speak for that case too — otherwise the grid is silent about a row that
+            // won't be counted.
+            var identity = ProductMatcher.ExactMatches(name, products);
+            clash = identity.Count >= 1 ? identity[0] : null;
+            nameClashes[name] = clash;
+        }
+        return clash;
     }
+
+    private readonly Dictionary<string, Product?> nameClashes = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>An existing product this row's name merely RESEMBLES, or null — the standing duplicate
     /// guard (a twin splits purchase history and blinds the predictor) applied where a name is typed
@@ -444,8 +456,9 @@ else if (phase == Phase.Done)
         var name = row.Name.Trim();
         // NameClash answers first and now speaks for every identity hit, so "looks like your existing X
         // — or leave this to create a separate item" can no longer be offered over a write that would
-        // land ON X. This guard is what keeps the two sentences mutually exclusive.
-        if (name.Length == 0 || NameClash(row) is not null || AmbiguousClash(row)) return null;
+        // land ON X. This guard is what keeps the two sentences mutually exclusive; it also subsumes
+        // the ambiguous case, since >1 identity hit is >0 and NameClash returns the first.
+        if (name.Length == 0 || NameClash(row) is not null) return null;
         if (!nearMatches.TryGetValue(name, out var near))
         {
             near = ProductMatcher.Resolve(name, products);
@@ -742,6 +755,7 @@ else if (phase == Phase.Done)
             .ToListAsync(ct);
         nearMatches.Clear();
         ambiguousNames.Clear();
+        nameClashes.Clear();
         // The matcher's identity sets, not raw grouping: punctuation twins ("Home-Canned" beside
         // "Home Canned") need their counts on the options too — they are the pair the ambiguity
         // warning tells the household to tell apart here.
@@ -879,6 +893,7 @@ else if (phase == Phase.Done)
         confirmError = null;
         nearMatches.Clear();
         ambiguousNames.Clear();
+        nameClashes.Clear();
     }
 
     public void Dispose()

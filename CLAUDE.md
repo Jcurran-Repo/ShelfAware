@@ -93,7 +93,7 @@ Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptT
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1379 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1382 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see item 31).
 
@@ -1773,8 +1773,44 @@ bUnit pages/components — see item 31).
      product — which made the mutation test pass with the fix reverted, i.e. it masked the very defect
      under repair. **Item 20's rule, in the other direction: a fake must not be more CONVENIENT than
      the real store either.**
-   - **1379 tests green, 0 warnings** on a non-incremental Release build (1339 at the start of the
-     pass; +40). Read off the final run before being written here, per item 21's rule.
+   - ✅ **The FOURTH round is where the cascade broke: zero behaviour regressions introduced by the
+     altitude fix** — the first fix pass of four that created no new defect. The reviewer pushed hard
+     on the census write path and could not make it destroy or invent a count. What it did find was
+     the same class **one level up**, which is the lesson: the rule was raised into `ProductMatcher`
+     and then applied only to the nine census sites, leaving the app's other three product-identity
+     guards on `string.Equals` — the Products add form (`duplicateIsExact`), chat's `create_product`,
+     and `ProductRenameService`. Two of them MINT the very pair the census refuses: probed, typing
+     "Half and Half" beside a catalog's "Half-and-Half" reached the FUZZY branch and offered
+     "Add anyway", and one click then jammed every later census of that item on `AmbiguousName` —
+     escapable only by picking from the dropdown, i.e. another vision call. All three now ask the
+     matcher (`ResolveWithKind`/`ExactMatches`), each pinned by a punctuation-pair test.
+     ⚠️ **"Convert the sites you were looking at, leave the neighbours" survived the very commit that
+     named it** — which is why the directive at the top of this file says a partial conversion IS the
+     bug, and why the scope of "every caller" has to be the app, not the file you have open.
+   - Also from that round: the fourth surface's copy fix (`markOutNote`) was a **mutation survivor** —
+     its only test asserted a phrase both wordings contained, so reverting it left 315/315 green,
+     while the commit message claimed "two tests forbid the old claims" across four surfaces (item
+     21's false-number class, in a claim about tests). And ProductDetail's negative guards pinned two
+     literal phrasings rather than the rule: an evasive re-wording ("stock was **logged for it**
+     today") restored the false claim and passed them. Both now assert the positive
+     "as of today or later" as well. Smaller: `NearMatch`'s new `|| AmbiguousClash` was dead by
+     construction (`NameClash` returns first for >1 too), `NameClash` is memoized like its two
+     neighbours now that it normalizes the catalog, `record_signal`'s re-read moved inside the
+     kind check (every `Restocked` was paying for a value it never used) and a product deleted
+     mid-turn now gets the plain reply instead of a caveat computed from data those lines just called
+     stale, and `Normalize` collapses ANY run of separators — a single `Replace("  ", " ")` left
+     `"Yogurt - Strawberry"` as `"yogurt  strawberry"`, so the documented dictionary KEY was neither
+     equal to its own spaced form nor idempotent (it failed safe — rule 1 missed, rule 3 caught it as
+     similarity — but a near-key is not a key).
+   - **Recorded, not fixed:** `Match()` judges ambiguity on the reader's SUGGESTED name while every
+     live guard judges `row.Name`, so a row whose suggestion is ambiguous but whose own name is not
+     arrives unticked with **no reason rendered**, and Tick all re-ticks it. Pre-existing, not
+     introduced by the census work, and the harm is a missing explanation rather than a silent write
+     (the row shows "➕ create new product" and its name). Fixing it is a design question — whether an
+     ambiguous suggestion should block a tick at all when the row would create a differently-named
+     product — and this branch has been punished repeatedly for late judgement calls.
+   - **1382 tests green, 0 warnings** on a non-incremental Release build (1339 at the start of the
+     pass; +43). Read off the final run before being written here, per item 21's rule.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

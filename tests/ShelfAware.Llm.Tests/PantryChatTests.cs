@@ -752,6 +752,28 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task A_punctuation_variant_is_an_exact_dupe_that_confirmed_distinct_cannot_override()
+    {
+        // ⚠️ Rule 1 folds punctuation, so this IS the existing product — and an exact dupe is refused
+        // outright, with no escape hatch, precisely because two products the matcher cannot tell apart
+        // jam every later census of that item. Deriving exactness from the RAW strings put this on the
+        // fuzzy path instead, where confirmed_distinct=true minted the identity pair.
+        var store = new FakePantryStore(P(4, "Half-and-Half", Category.Dairy));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("create_product",
+                ("name", "Half and Half"), ("category", "Dairy"), ("confirmed_distinct", true))),
+            () => Responses.Text("It already exists."));
+
+        await Chat(client, store).HandleAsync("add half and half, it's different");
+
+        Assert.Empty(store.Created);
+        var toolResult = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result!.ToString()!;
+        Assert.Contains("already exists", toolResult);
+        Assert.DoesNotContain("confirmed_distinct", toolResult); // no escape hatch on an identity hit
+    }
+
+    [Fact]
     public async Task A_user_confirmed_distinct_product_is_created_despite_the_fuzzy_match()
     {
         // The chat mirror of the page's "Add anyway": once the user says it's genuinely different,

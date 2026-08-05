@@ -159,6 +159,9 @@ public class ProductDetailCountPanelTests : PageTestContext
         Assert.DoesNotContain("set it to 0 again", panel);
         // ⚠️ "as of today or later", never "today": the flag is lastStockBack >= today, so it also
         // fires for a FUTURE stock-back, where naming today — or promising tomorrow — is false.
+        // The POSITIVE claim, not just the absence of two phrasings: negative guards alone are
+        // evadable — "stock was logged for it today" restores the false today-claim and passes them.
+        Assert.Contains("as of today or later", panel);
         Assert.DoesNotContain("recorded today", panel, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("tomorrow", panel, StringComparison.OrdinalIgnoreCase);
         // The stock-back here is a Restocked, but it is a purchase in the sibling road, so the copy
@@ -186,6 +189,9 @@ public class ProductDetailCountPanelTests : PageTestContext
         Assert.Contains("wins that tie", panel);
         Assert.Contains("Once that date has passed", panel);
         Assert.DoesNotContain("set it to 0 and it counts as running out", panel);
+        // The POSITIVE claim, not just the absence of two phrasings: negative guards alone are
+        // evadable — "stock was logged for it today" restores the false today-claim and passes them.
+        Assert.Contains("as of today or later", panel);
         Assert.DoesNotContain("recorded today", panel, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("tomorrow", panel, StringComparison.OrdinalIgnoreCase);
     }
