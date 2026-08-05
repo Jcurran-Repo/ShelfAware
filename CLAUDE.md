@@ -42,6 +42,27 @@ as overkill "because it's single-user."
   class** — only asking "where did this number come from, and did the due date beside it come from
   the same place?" can.
 
+- **If a fact is shown or used in more than one place, it gets ONE accessible definition — and
+  converting the sites one at a time is worse than not starting.** The general form of the rule above.
+  Any value a surface displays, or a guard acts on, that more than one place needs: give it a single
+  property, method, or shared helper that everyone asks. Never let two call sites answer the same
+  question with their own arithmetic, their own string comparison, or their own copy of a predicate.
+  **This is the single most expensive failure in this repo's history**, and it is always the same
+  shape: two places agree today, one is edited later, and the disagreement ships silently because
+  every test still passes. Cases on file — the ✓ mark and the "Ate it" decrement using two different
+  matchers (item 25); a suppressed row's phrasing reinvented per page (item 20's `CountNote`); seven
+  readings of when a signal happened, one of them different (item 19's `SignalDate.Of`); a page
+  re-deriving "exact vs fuzzy" from raw strings the matcher had already normalized (item 39).
+  ⚠️ **And the sharpest lesson, from the census branch's own review cascade (item 41): "which product
+  does this name mean?" was answered in NINE places, and fixing them one per round produced three
+  consecutive rounds of new data-harm defects** — each round left a half-converted state where one
+  guard promised something its neighbour then contradicted (a grid offering "leave this to create a
+  separate item" over a write that replaced an existing product's count). Rounds ran 5 → 3 → 8
+  findings; the count only fell when the *rule* moved into one place (`ProductMatcher.IdentityKey`)
+  instead of the sites moving one at a time. So: when you find two sites disagreeing, the fix is the
+  shared definition and **every** caller in the same change — a partial conversion is a new bug with a
+  green suite over it.
+
 - **Craftsmanship — take pride in every change; no shortcuts.** Always do the polished,
   professional thing, not the quickest thing that happens to pass. Concretely: **no empty
   or catch-all `catch` blocks that swallow errors** — catch specific exceptions, log via
