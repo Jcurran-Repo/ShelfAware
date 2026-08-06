@@ -468,7 +468,10 @@ else
 
     private async Task SetCategory(Product p, string? value)
     {
-        if (!Enum.TryParse<Category>(value, out var category)) return;
+        // Enum.TryParse SUCCEEDS on any numeric string ("9999"), so a browser-supplied out-of-range value
+        // would be persisted as an undefined Category — the one Category parse that both takes a circuit
+        // message and writes the DB. IsDefined is the same guard create_product already carries.
+        if (!Enum.TryParse<Category>(value, out var category) || !Enum.IsDefined(category)) return;
         p.Category = category;
         await Save(p);
     }

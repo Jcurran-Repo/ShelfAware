@@ -348,6 +348,27 @@ public class ProductsPageTests : PageTestContext
     }
 
     [Fact]
+    public async Task An_out_of_range_category_value_is_refused_not_persisted()
+    {
+        // ⚠️ Enum.TryParse SUCCEEDS on any numeric string, so a browser-supplied "9999" would persist as an
+        // undefined Category — the one Category parse that both takes a circuit message and writes the DB.
+        // IsDefined is the same guard create_product already carries.
+        var id = Seed("Ketchup"); // seeded Pantry
+        var cut = RenderGrid();
+
+        cut.Find("select[aria-label='Category for Ketchup']").Change("9999");
+
+        // Without the guard the row saves (Category)9999; with it, the value is dropped and Pantry stands.
+        await cut.WaitForAssertionAsync(async () =>
+        {
+            await using var raw = Db.CreateUnscopedContext();
+            var saved = (await raw.Products.IgnoreQueryFilters().SingleAsync(p => p.Id == id)).Category;
+            Assert.True(Enum.IsDefined(saved));
+            Assert.Equal(Category.Pantry, saved);
+        });
+    }
+
+    [Fact]
     public async Task The_tracking_checkbox_writes_through()
     {
         var id = Seed("Seasonal Thing");
