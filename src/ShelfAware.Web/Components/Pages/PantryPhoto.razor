@@ -88,6 +88,9 @@ else if (phase == Phase.Review)
         }
         else
         {
+            @* One whole-census plan per render: the grid and the confirm both ask CensusPlan, so a row's
+               tick, its "why" message, and where its count lands all come from the same answer. *@
+            var plans = PlanRows();
             <p>
                 <strong>@rows.Count item@(rows.Count == 1 ? "" : "s")</strong> found in
                 @(photoCount == 1 ? "1 photo" : $"{photoCount} photos"). Tick what's really there and fix the
@@ -99,8 +102,8 @@ else if (phase == Phase.Review)
                 put a guess in your pantry.
             </p>
             <div class="review-actions">
-                <button type="button" class="secondary" @onclick="() => SetAll(true)">Tick all</button>
-                <button type="button" class="secondary" @onclick="() => SetAll(false)">Untick all</button>
+                <button type="button" class="secondary" @onclick="() => SetAll(true)" disabled="@confirming">Tick all</button>
+                <button type="button" class="secondary" @onclick="() => SetAll(false)" disabled="@confirming">Untick all</button>
             </div>
             <div class="table-scroll table-scroll--capped">
             <table>
@@ -117,11 +120,14 @@ else if (phase == Phase.Review)
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var row in rows)
+                    @for (var i = 0; i < rows.Count; i++)
                     {
+                        var row = rows[i];
+                        var plan = plans[i];
+                        var noteTarget = plan.LandsOn ?? row.ProductId;
                         <tr class="@(row.Confidence < ConfidentEnough ? "low-confidence" : "")">
                             <td>
-                                <input type="checkbox" @bind="row.Include"
+                                <input type="checkbox" @bind="row.Include" disabled="@confirming"
                                        aria-label="Count @DescribeRow(row)" />
                             </td>
                             <td class="raw">
@@ -136,7 +142,7 @@ else if (phase == Phase.Review)
                                 </div>
                             </td>
                             <td>
-                                <input @bind="row.Name" aria-label="Item name for @DescribeRow(row)" />
+                                <input @bind="row.Name" disabled="@confirming" aria-label="Item name for @DescribeRow(row)" />
                                 @if (Distinguishers(row) is { } detail)
                                 {
                                     @* What tells two same-named rows apart. The reader emits a row per
@@ -152,7 +158,7 @@ else if (phase == Phase.Review)
                                 }
                             </td>
                             <td>
-                                <input type="number" step="0.01" min="0" @bind="row.Count" size="5"
+                                <input type="number" step="0.01" min="0" @bind="row.Count" size="5" disabled="@confirming"
                                        aria-label="How many @DescribeRow(row)" />
                                 @if (row.Count is null)
                                 {
@@ -161,7 +167,7 @@ else if (phase == Phase.Review)
                                        here so it's fixed before the confirm, not discovered after. *@
                                     <div class="error small" role="status">Enter how many.</div>
                                 }
-                                @if (Note(row.ProductId) is { } note && note.HasNumber)
+                                @if (Note(noteTarget) is { } note && note.HasNumber)
                                 {
                                     <div class="muted small">
                                         Was @QuantityFormat.Describe(note.OnHand, note.Unit)@(note.CountedAt is { } at
@@ -171,7 +177,7 @@ else if (phase == Phase.Review)
                                 }
                             </td>
                             <td>
-                                @if (Note(row.ProductId) is { } matchedNote)
+                                @if (Note(noteTarget) is { } matchedNote)
                                 {
                                     @* A matched row's category is the PRODUCT's, read from the store — the
                                        reader's guess is consumed only when a row creates a product, so an
@@ -182,7 +188,7 @@ else if (phase == Phase.Review)
                                 }
                                 else
                                 {
-                                    <select @bind="row.Category" aria-label="Category for @DescribeRow(row)">
+                                    <select @bind="row.Category" disabled="@confirming" aria-label="Category for @DescribeRow(row)">
                                         @foreach (var c in Enum.GetValues<Category>())
                                         {
                                             <option value="@c">@c</option>
@@ -191,32 +197,27 @@ else if (phase == Phase.Review)
                                 }
                             </td>
                             <td>
-                                <select @bind="row.ProductId" aria-label="Product match for @DescribeRow(row)">
+                                <select @bind="row.ProductId" disabled="@confirming" aria-label="Product match for @DescribeRow(row)">
                                     <option value="0">➕ create new product</option>
                                     @foreach (var p in products)
                                     {
                                         <option value="@p.Id">@OptionLabel(p)</option>
                                     }
                                 </select>
-                                @if (row.FuzzyStillSelected)
+                                @* ⚠️ The one place the grid's "why" is decided: a switch on the plan's reason,
+                                   so exactly one message shows and no if/else ORDER is load-bearing. The plan
+                                   is whole-census, so this row already knows what its siblings did. *@
+                                @if (MatchMessage(row, plan) is { } m)
                                 {
-                                    @* The tick default measures how sure the reader was of the ITEM; this
-                                       match was made afterwards by name similarity and nobody scored it,
-                                       so a perfect read of "Peanut Butter" can land on "Butter". Attesting
-                                       REPLACES that product's count, so the row says so and stays unticked
-                                       until someone looks. *@
-                                    <div class="muted small" role="status">
-                                        Matched by name similarity, not read off the package — check this is
-                                        the right item before counting it.
-                                    </div>
+                                    <div class="@(m.IsError ? "error" : "muted") small" role="status">@m.Text</div>
                                 }
-                                @if (Note(row.ProductId) is { IsTracked: false })
+                                @if (Note(noteTarget) is { IsTracked: false })
                                 {
                                     @* Same notice, same words, as the receipt review grid gives for the
                                        same situation — counting an item ends its "ignore this for a while". *@
                                     <div class="muted small" role="status">Currently ignored — counting it starts tracking it again.</div>
                                 }
-                                @if (Note(row.ProductId) is { FastMoverDays: { } days })
+                                @if (Note(noteTarget) is { FastMoverDays: { } days })
                                 {
                                     @* Steering, never a gate (CountingAdvice): a fast mover's count is wrong
                                        within days and the drift check then keeps asking, which reads as the
@@ -228,63 +229,9 @@ else if (phase == Phase.Review)
                                     <div class="muted small">Bought about every @days day@(days == 1 ? "" : "s") —
                                         a count here would be hard to keep true.</div>
                                 }
-                                @if (NearMatch(row) is { } near)
-                                {
-                                    @* The standing duplicate guard, applied where a name is TYPED rather
-                                       than read: an exact clash is decided below, but a near-miss would
-                                       silently create a twin, and a twin splits purchase history and
-                                       blinds the predictor. Named, not resolved — fuzzy can false-positive,
-                                       so the household picks (the dropdown is right above). *@
-                                    <div class="muted small" role="status">
-                                        Looks like your existing “@near.Name” — pick it above if it's the same
-                                        thing, or leave this to create a separate item.
-                                    </div>
-                                }
-                                @if (row.SuggestionUnresolved)
-                                {
-                                    @* ⚠️ The row is unticked because the READER's suggestion named a
-                                       name more than one product answers to — a read-time fact about a
-                                       DIFFERENT string from row.Name, so no live guard can recover it.
-                                       Without this the row sat unticked explained by nothing, or worse
-                                       by NearMatch's "leave this to create a separate item", which is
-                                       about something else. Reproduced live on ordinary model output. *@
-                                    <div class="error small" role="status">
-                                        Shelf Aware read this as “@row.AmbiguousSuggestion”, but more than
-                                        one of your products answers to that name — pick which one you
-                                        counted above, or leave it to add this as a new item.
-                                    </div>
-                                }
-                                else if (AmbiguousClash(row))
-                                {
-                                    @* The confirm refuses to guess between twins, so the grid must say so
-                                       first — and must not let NameClash promise "will go to X" about a
-                                       write that would be declined. *@
-                                    <div class="error small" role="status">
-                                        More than one of your products answers to “@row.Name.Trim()” — pick
-                                        which one you counted above. Twins that keep a count show it beside
-                                        their name.
-                                    </div>
-                                }
-                                else if (NameClash(row) is { } clash)
-                                {
-                                    @* The write and the screen must not disagree about which product a row
-                                       lands on. Said BEFORE the confirm, so a name clash is something the
-                                       household resolves rather than discovers afterwards. *@
-                                    <div class="error small" role="status">
-                                        @if (row.ChoseCreateNew)
-                                        {
-                                            <text>“@clash.Name” already exists, so this row will be skipped —
-                                            pick it above to set its count, or rename this row.</text>
-                                        }
-                                        else
-                                        {
-                                            <text>This will go to the existing “@clash.Name”.</text>
-                                        }
-                                    </div>
-                                }
                             </td>
                             <td>
-                                <button class="secondary" @onclick="() => rows.Remove(row)"
+                                <button class="secondary" @onclick="() => rows.Remove(row)" disabled="@confirming"
                                         aria-label="Remove @DescribeRow(row) from the list"><span aria-hidden="true">✕</span></button>
                             </td>
                         </tr>
@@ -349,9 +296,9 @@ else if (phase == Phase.Done)
     private enum Phase { Idle, Reading, Review, Done, Error }
 
     /// <summary>At or above this the reader wasn't guessing, so the row is ticked for you. The SAME 0.6 the
-    /// receipt review grid highlights a low-confidence line at — one number in the app for "the model was
-    /// guessing", rather than a second threshold that could drift away from it.</summary>
-    private const decimal ConfidentEnough = 0.6m;
+    /// receipt review grid highlights a low-confidence line at — the one number in the app for "the model was
+    /// guessing" — and the same constant <see cref="CensusPlan.ConfidentEnough"/> the plan is written against.</summary>
+    private const decimal ConfidentEnough = CensusPlan.ConfidentEnough;
 
     private const int MaxPhotos = 8;
 
@@ -364,6 +311,9 @@ else if (phase == Phase.Done)
     private int readItemCount;
     private List<ReviewRow> rows = [];
     private List<Product> products = [];
+    /// <summary>The catalog indexed for identity questions — the ONE thing the plan is asked, so the grid and
+    /// the confirm can't answer "which product does this name mean?" differently.</summary>
+    private CatalogIndex catalog = new([]);
     private Dictionary<int, ProductNote> notes = [];
     private bool reading;
     private bool confirming;
@@ -398,40 +348,25 @@ else if (phase == Phase.Done)
         public Category Category { get; set; }
         public decimal Confidence { get; init; }
         public int ProductId { get; set; } // 0 = create new
-        /// <summary>What the grid pre-filled, so "the human chose create-new" can be told apart from "we
-        /// never matched it" — both of which leave <see cref="ProductId"/> at 0. The confirm treats them
-        /// differently and must not have to guess (see CensusRow.CreateNew).</summary>
+        /// <summary>What the grid pre-filled (<see cref="CensusPlan.Prefill"/>), so "the human chose
+        /// create-new" can be told apart from "we never matched it" — both leave <see cref="ProductId"/> 0.</summary>
         public int PrefilledProductId { get; init; }
-        /// <summary>The pre-filled match came from name similarity rather than the label or the model's
-        /// own suggestion — an unscored guess at WHICH product, which the row says out loud and which
-        /// keeps it off the auto-tick list.</summary>
+        /// <summary>The pre-fill came from name similarity rather than a label/suggestion/identity match — an
+        /// unscored guess at WHICH product, which the plan flags and keeps off the auto-tick list.</summary>
         public bool FuzzyMatch { get; init; }
-
-        /// <summary>The human deliberately turned a matched row into a new product.</summary>
-        public bool ChoseCreateNew => ProductId == 0 && PrefilledProductId > 0;
-
-        /// <summary>The similarity match is still what the row would write to — the human hasn't
-        /// resolved it by picking something in the dropdown. The ONE definition, shared by the row's
-        /// warning and by Tick all, so the two can't disagree about which rows are still a guess.</summary>
-        public bool FuzzyStillSelected => FuzzyMatch && ProductId == PrefilledProductId && ProductId > 0;
-
-        /// <summary>The name the reader said this was, when more than one product answers to it — so
-        /// its suggestion could not be honored and nothing was pre-filled. Null when the suggestion was
-        /// usable, absent, or when the ambiguous name is the row's OWN (which AmbiguousClash states
-        /// live instead).</summary>
+        /// <summary>The name the reader said this was, when more than one product answers to it — carried
+        /// because it is a read-time fact about a DIFFERENT string than <see cref="Name"/>, which the live
+        /// guards judge and cannot recover. Null when the suggestion was usable, absent, or the row's own name.</summary>
         public string? AmbiguousSuggestion { get; init; }
 
-        /// <summary>The reader's suggestion was ambiguous and the human still hasn't said which product
-        /// they meant. Read-time fact, so it is carried rather than re-derived: the live guards judge
-        /// <see cref="Name"/>, and the suggestion is a different string — which is exactly why this row
-        /// used to sit unticked with nothing on screen able to explain it. Picking anything in the
-        /// dropdown answers the question, the same shape as <see cref="FuzzyStillSelected"/>.</summary>
-        public bool SuggestionUnresolved => AmbiguousSuggestion is not null && ProductId == 0;
+        /// <summary>The human deliberately turned a matched row into a new product — the one derivation the
+        /// grid still needs, to build the plan's <c>ChoseCreateNew</c> and the confirm's <c>CreateNew</c>.</summary>
+        public bool ChoseCreateNew => ProductId == 0 && PrefilledProductId > 0;
     }
 
     /// <summary>What the app already knows about a product the grid might land on: the count it holds now
     /// (live or dormant), whether it is being ignored, and whether its rhythm makes counting a chore.
-    /// Computed once per load and looked up by the row's CURRENT match, so changing the dropdown updates
+    /// Computed once per load and looked up by the row's CURRENT target, so changing the dropdown updates
     /// all of them without another query.</summary>
     private sealed record ProductNote(
         bool HasNumber, bool Dormant, decimal OnHand, string? Unit, DateTimeOffset? CountedAt,
@@ -439,64 +374,64 @@ else if (phase == Phase.Done)
 
     private ProductNote? Note(int productId) => productId > 0 && notes.TryGetValue(productId, out var n) ? n : null;
 
-    /// <summary>The existing product this row's name would land on, or null. Only meaningful while the
-    /// row resolves by NAME (no product picked) — that's the one case where what the confirm does isn't
-    /// visible from the dropdown alone.
-    /// <para>⚠️ Asks the same identity question the CONFIRM asks (<see cref="ProductMatcher.ExactMatches"/>),
-    /// never raw equality. Left raw while the service resolved by identity, this returned null for a
-    /// name that only normalized-matches — so the row fell through to NearMatch and promised "leave this
-    /// to create a separate item" over a write that REPLACED that product's count, with no "Was N" note
-    /// (which keys on the dropdown) and no refusal. The screen and the write must answer this once.</para></summary>
-    private Product? NameClash(ReviewRow row)
+    /// <summary>The pure state the plan reasons over, built from the row's live edits plus the two read-time
+    /// derivations the grid owns: whether a similarity pre-fill is still selected, and whether the human turned
+    /// a matched row into a create-new. Everything else the plan needs rides on the row directly.</summary>
+    private CensusPlan.CensusRowState StateOf(ReviewRow row) => new(
+        row.Name, row.Count, row.ProductId,
+        ChoseCreateNew: row.ChoseCreateNew,
+        SimilaritySelected: row.FuzzyMatch && row.ProductId == row.PrefilledProductId && row.ProductId > 0,
+        AmbiguousSuggestion: row.AmbiguousSuggestion,
+        Evidence: row.Evidence,
+        Confidence: row.Confidence);
+
+    private IReadOnlyList<CensusPlan.CensusRowPlan> PlanRows() =>
+        CensusPlan.Plan([.. rows.Select(StateOf)], catalog);
+
+    /// <summary>The row's one "why" message, chosen by the plan's reason — future tense, since this is the
+    /// review grid (the Done panel speaks past tense from the same reasons). A clean landing or creation, and
+    /// the refuse reasons the Done panel owns, return null: the evidence chip, the dropdown, and the count
+    /// cell's own "enter how many" carry those. The related product NAME is a display fetch for a decision the
+    /// plan already made — the same catalog function the plan used, so it can't disagree with it.</summary>
+    private (string Text, bool IsError)? MatchMessage(ReviewRow row, CensusPlan.CensusRowPlan plan)
     {
-        if (row.ProductId != 0) return null;
         var name = row.Name.Trim();
-        if (name.Length == 0) return null;
-        // Memoized like its two neighbours: ExactMatches normalizes the whole catalog per call, and
-        // this now runs twice per row per render (the markup, then NearMatch's guard).
-        if (!nameClashes.TryGetValue(name, out var clash))
+        switch (plan.Reason)
         {
-            // Count > 1 on an ordinary row is AmbiguousClash's story and it renders first; on a
-            // CreateNew row AmbiguousClash stands down, and the service still refuses (DuplicateName),
-            // so this must speak for that case too — otherwise the grid is silent about a row that
-            // won't be counted.
-            var identity = ProductMatcher.ExactMatches(name, products);
-            clash = identity.Count >= 1 ? identity[0] : null;
-            nameClashes[name] = clash;
+            case CensusPlan.CensusReason.MatchedBySimilarity:
+                return ("Matched by name similarity, not read off the package — check this is the right item before counting it.", false);
+            case CensusPlan.CensusReason.ResemblesExisting:
+                return catalog.ResolveWithKind(name).Product is { } near
+                    ? ($"Looks like your existing “{near.Name}” — pick it above if it's the same thing, or leave this to create a separate item.", false)
+                    : null;
+            case CensusPlan.CensusReason.AmbiguousSuggestion:
+                return ($"Shelf Aware read this as “{row.AmbiguousSuggestion}”, but more than one of your products answers to that name — pick which one you counted above, or leave it to add this as a new item.", true);
+            case CensusPlan.CensusReason.AmbiguousName:
+                return ($"More than one of your products answers to “{name}” — pick which one you counted above. Twins that keep a count show it beside their name.", true);
+            case CensusPlan.CensusReason.WillLandOnExisting:
+                return catalog.ById(plan.LandsOn!.Value) is { } existing
+                    ? ($"This will go to the existing “{existing.Name}”.", true)
+                    : null;
+            case CensusPlan.CensusReason.NameTaken:
+                return catalog.ExactMatches(name).FirstOrDefault() is { } taken
+                    ? ($"“{taken.Name}” already exists, so this row will be skipped — pick it above to set its count, or rename this row.", true)
+                    : null;
+            default:
+                return null;
         }
-        return clash;
     }
 
-    private readonly Dictionary<string, Product?> nameClashes = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Twins are told apart by their counts — the ambiguity picker's precedent. Identical option text
+    /// is a choice nobody can make; twins with identical counts stay indistinguishable here, the honest limit.</summary>
+    private string OptionLabel(Product p) =>
+        !twinNames.Contains(p.Name) ? p.Name
+            : Note(p.Id) is { HasNumber: true, Dormant: false } live
+                ? $"{p.Name} — {QuantityFormat.Describe(live.OnHand, live.Unit)} on hand"
+                : Note(p.Id) is { HasNumber: true } stopped
+                    ? $"{p.Name} — had {QuantityFormat.Describe(stopped.OnHand, stopped.Unit)}, counting stopped"
+                    : $"{p.Name} — not counted";
 
-    /// <summary>An existing product this row's name merely RESEMBLES, or null — the standing duplicate
-    /// guard (a twin splits purchase history and blinds the predictor) applied where a name is typed
-    /// rather than read. The reader's own match runs once, at read time, so it never sees a name the
-    /// human enters afterwards — and "Name it if you know what it is" on an unidentified package is an
-    /// invitation to do exactly that. Named, never resolved: fuzzy matching false-positives, so the
-    /// household decides. Exact clashes are NameClash's job, and it answers first.
-    /// <para>Memoized because it runs per row per render and <c>ProductMatcher.Resolve</c> re-normalizes
-    /// the whole catalog on every call.</para></summary>
-    private Product? NearMatch(ReviewRow row)
-    {
-        if (row.ProductId != 0) return null;
-        var name = row.Name.Trim();
-        // NameClash answers first and now speaks for every identity hit, so "looks like your existing X
-        // — or leave this to create a separate item" can no longer be offered over a write that would
-        // land ON X. This guard is what keeps the two sentences mutually exclusive; it also subsumes
-        // the ambiguous case, since >1 identity hit is >0 and NameClash returns the first.
-        // An unresolved ambiguous SUGGESTION speaks for itself too — and more precisely, since it names
-        // what the reader thought this was rather than what the row's name resembles.
-        if (name.Length == 0 || row.SuggestionUnresolved || NameClash(row) is not null) return null;
-        if (!nearMatches.TryGetValue(name, out var near))
-        {
-            near = ProductMatcher.Resolve(name, products);
-            nearMatches[name] = near;
-        }
-        return near;
-    }
-
-    private readonly Dictionary<string, Product?> nearMatches = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> twinNames = new(StringComparer.OrdinalIgnoreCase);
 
     private static string EvidenceChip(CensusEvidence evidence) => evidence switch
     {
@@ -532,61 +467,15 @@ else if (phase == Phase.Done)
 
     private void SetAll(bool include)
     {
-        // Tick all overrides the CONFIDENCE default only (§13.8: "the guard is the default, not a
-        // lock"). The other conditions are not about confidence — an Unidentified row's name describes
-        // a package, a still-selected similarity match is an unscored guess at WHICH product the tick
-        // would overwrite, a name two products answer to is a pick nobody has made, and an ambiguous
-        // SUGGESTION is the same pick unmade about a different string — so each waits for a human to
-        // look at the row itself. Every one still ticks individually, and every one says its reason
-        // inline. Unticking clears everything: it asserts nothing, so it needs no guard.
-        foreach (var row in rows)
-        {
-            row.Include = include
-                && row.Evidence != CensusEvidence.Unidentified
-                && !row.FuzzyStillSelected
-                && !row.SuggestionUnresolved
-                && !AmbiguousClash(row);
-        }
+        // Tick all overrides the CONFIDENCE default only — <c>!NeedsAHumanLook</c>, the exact value the arrival
+        // tick pairs with the confidence floor. The plan already withholds a look for an unidentified package,
+        // a still-selected similarity guess, an ambiguous name or suggestion, and anything it would refuse — so
+        // one click can't opt into thirty of them, and each still ticks individually with its reason showing.
+        // Unticking clears everything: it asserts nothing, so it needs no guard.
+        var plans = PlanRows();
+        for (var i = 0; i < rows.Count; i++)
+            rows[i].Include = include && !plans[i].NeedsAHumanLook;
     }
-
-    /// <summary>More than one existing product answers to this row's name — the write-side rule (the
-    /// confirm refuses to guess between twins), said on the grid BEFORE the confirm and honored by
-    /// Tick all. Live, like NameClash: picking a product in the dropdown answers the question, and an
-    /// explicit create-new is NameClash's business ("already exists … skipped").
-    /// <para>⚠️ The definition is <see cref="ProductMatcher.ExactMatches"/> — the matcher's rule-1
-    /// identity set — everywhere ambiguity is judged: the arrival tick, this warning, Tick all, and
-    /// the confirm's refusal. A raw-equality version here judged the punctuation pair ("Home-Canned"
-    /// beside "Home Canned") fine while Match() had stood the arrival tick down for it, so the row
-    /// arrived unticked with NO reason shown and Tick all overrode the judgment — the exact drift
-    /// FuzzyStillSelected exists to prevent, rebuilt one guard over. Memoized like NearMatch, because
-    /// ExactMatches normalizes the whole catalog per call and this runs per row per render.</para></summary>
-    private bool AmbiguousClash(ReviewRow row)
-    {
-        if (row.ProductId != 0 || row.ChoseCreateNew) return false;
-        var name = row.Name.Trim();
-        if (name.Length == 0) return false;
-        if (!ambiguousNames.TryGetValue(name, out var ambiguous))
-        {
-            ambiguous = ProductMatcher.ExactMatches(name, products).Count > 1;
-            ambiguousNames[name] = ambiguous;
-        }
-        return ambiguous;
-    }
-
-    private readonly Dictionary<string, bool> ambiguousNames = new(StringComparer.OrdinalIgnoreCase);
-
-    /// <summary>Twins are told apart by their counts — the ambiguity picker's precedent. Identical
-    /// option text is a choice nobody can make; twins with identical counts stay indistinguishable
-    /// here, which is the honest limit of what a dropdown can say.</summary>
-    private string OptionLabel(Product p) =>
-        !twinNames.Contains(p.Name) ? p.Name
-            : Note(p.Id) is { HasNumber: true, Dormant: false } live
-                ? $"{p.Name} — {QuantityFormat.Describe(live.OnHand, live.Unit)} on hand"
-                : Note(p.Id) is { HasNumber: true } stopped
-                    ? $"{p.Name} — had {QuantityFormat.Describe(stopped.OnHand, stopped.Unit)}, counting stopped"
-                    : $"{p.Name} — not counted";
-
-    private HashSet<string> twinNames = new(StringComparer.OrdinalIgnoreCase);
 
     private void OnFilesSelected(InputFileChangeEventArgs e)
     {
@@ -648,50 +537,38 @@ else if (phase == Phase.Done)
                 return;
             }
 
-            rows = result.Items.Select(i =>
+            rows = result.Items.Select(item =>
             {
-                // Trust order, one step shorter than a receipt's: there are no merchant aliases to learn
-                // from (an alias keys on a merchant and a printed line, and a shelf has neither), so the
-                // model's own match leads and ProductMatcher backs it up. Resolved ONCE — it walks the
-                // whole catalog, and the row needs the same answer twice.
-                var (product, fuzzy, ambiguous, ambiguousSuggestion) = Match(i);
-                var matched = product?.Id ?? 0;
+                // Trust order, one step shorter than a receipt's: there are no merchant aliases to learn from
+                // (an alias keys on a merchant and a printed line, and a shelf has neither), so the model's own
+                // match leads and ProductMatcher backs it up — all of it in CensusPlan.Prefill now.
+                var prefill = CensusPlan.Prefill(item, catalog);
                 return new ReviewRow
                 {
-                    LabelText = i.LabelText,
-                    Evidence = i.Evidence,
-                    Name = i.NormalizedName,
-                    Brand = i.Brand,
-                    Size = i.Size,
-                    Variety = i.Variety,
-                    Count = i.VisibleCount,
-                    Category = i.Category,
-                    Confidence = i.Confidence,
-                    ProductId = matched,
-                    PrefilledProductId = matched,
-                    FuzzyMatch = fuzzy,
-                    // A tick authorizes a WRITE, so all three things it rests on have to hold.
-                    //  · Confidence — unticked below 0.6, because a guess has to be opted into. A legible
-                    //    label or an unmistakable bunch of bananas clears it and isn't punished for
-                    //    having no barcode.
-                    //  · Not Unidentified — enforced here and not merely implied by the reader's 0.3 cap.
-                    //    Leaving it implied meant the rule lived in one number in another assembly: raise
-                    //    that cap, or swap the reader, and rows literally named "foil-wrapped parcel"
-                    //    arrive ticked and become real products named after packaging.
-                    //  · Not a fuzzy match — confidence measures certainty in the ITEM, and says nothing
-                    //    about WHICH product a name-similarity pass then picked. Attesting replaces that
-                    //    product's count, so an unscored guess must not be pre-authorized.
-                    AmbiguousSuggestion = ambiguousSuggestion,
-                    //  · Not ambiguous — a name two products share is a pick nobody has made yet, and
-                    //    the confirm would refuse it anyway; arriving ticked would just move the refusal
-                    //    to after the click.
-                    Include = i.Confidence >= ConfidentEnough
-                        && i.Evidence != CensusEvidence.Unidentified
-                        && !fuzzy
-                        && !ambiguous,
+                    LabelText = item.LabelText,
+                    Evidence = item.Evidence,
+                    Name = item.NormalizedName,
+                    Brand = item.Brand,
+                    Size = item.Size,
+                    Variety = item.Variety,
+                    Count = item.VisibleCount,
+                    Category = item.Category,
+                    Confidence = item.Confidence,
+                    ProductId = prefill.ProductId,
+                    PrefilledProductId = prefill.ProductId,
+                    FuzzyMatch = prefill.BySimilarity,
+                    AmbiguousSuggestion = prefill.AmbiguousSuggestion,
+                    // Include is set below, once the whole census can be planned together.
                 };
             }).ToList();
             readItemCount = rows.Count;
+
+            // The arrival tick: a legible label is ready to confirm, a guess has to be opted into. Exactly the
+            // plan's rule — !NeedsAHumanLook (evidence, a similarity guess, an ambiguity) AND confident enough.
+            // Planned as a whole census so a row can already see what a sibling did.
+            var arrival = PlanRows();
+            for (var j = 0; j < rows.Count; j++)
+                rows[j].Include = !arrival[j].NeedsAHumanLook && rows[j].Confidence >= ConfidentEnough;
 
             confirmError = null;
             phase = Phase.Review;
@@ -708,12 +585,17 @@ else if (phase == Phase.Done)
             errorMessage = "Sorry — that took too long and was stopped. Please try again.";
             phase = Phase.Error;
         }
-        catch (JSDisconnectedException)
+        // ⚠️ A JS-interop failure while the page is STILL ALIVE (a transient circuit drop during the photo
+        // downscale, then a reconnect) must escape the spinner — the empty catch left phase == Reading forever,
+        // recoverable only by reload. Real teardown (Dispose has cancelled pageCts) is still swallowed, the same
+        // split the OperationCanceledException clause above uses; JSDisconnectedException does NOT derive from
+        // JSException, so it needs its own clause and can't ride along with one.
+        catch (JSDisconnectedException) when (pageCts.IsCancellationRequested) { }
+        catch (JSDisconnectedException ex)
         {
-            // The photo is downscaled over JS interop, so a tab closed mid-read lands here. That is
-            // ordinary teardown, not a fault: nothing can be rendered to anyone any more, and logging it
-            // as an error would put noise in a real deployment's log. ⚠️ It does NOT derive from
-            // JSException, which is why it needs its own clause and can't ride along with one.
+            Logger.LogError(ex, "Reading a shelf census lost the browser connection mid-read.");
+            errorMessage = "Sorry — the connection dropped while reading those photos. Please try again.";
+            phase = Phase.Error;
         }
         catch (NotSupportedException ex)
         {
@@ -736,64 +618,6 @@ else if (phase == Phase.Done)
         }
     }
 
-    /// <summary>The product this item pre-fills to, whether that came from a NAMED source (the model's
-    /// own suggestion, or an exact name) or from fuzzy similarity, and — when the reader's suggestion
-    /// could not be honored because more than one product answers to it — THAT NAME, so the row can say
-    /// so. The caller needs all three: a similarity match is a guess at which product, and the count it
-    /// would replace belongs to a real one.
-    /// <para>⚠️ The ambiguous-suggestion name is RETURNED rather than just acted on, because it is a
-    /// read-time fact the live guards cannot recover: they judge <c>row.Name</c>, and the reader's
-    /// suggestion is a DIFFERENT string. Dropping it left the row unticked for a reason nothing on
-    /// screen could state — and, worse, explained by <c>NearMatch</c>'s "or leave this to create a
-    /// separate item", which is about something else entirely. Reproduced live: a can read as "Canned
-    /// Tomato Sauce" suggesting "Home Canned Tomato Sauce", which two products answer to.</para></summary>
-    private (Product? Product, bool Fuzzy, bool Ambiguous, string? AmbiguousSuggestion) Match(CensusItem item)
-    {
-        // An unidentified package names a CONTAINER, so matching it against the catalog would attach a
-        // count to a product on no evidence. The reader already refuses to suggest one; this is the same
-        // rule held on the fuzzy fallback, which would happily match "unlabeled tub" to a tub of anything.
-        if (item.Evidence == CensusEvidence.Unidentified) return (null, false, false, null);
-        if (item.SuggestedProductName is { Length: > 0 } suggested)
-        {
-            // ⚠️ Plural on purpose: two products can share a name (no unique index exists), the reader's
-            // hint list is Distinct(), so its suggestion names a NAME — and Attest replaces a count, so
-            // First() here pre-authorized a write over an arbitrary twin. Which twin was counted is the
-            // household's call; the row waits, and the dropdown's counts make the pick possible.
-            // The identity set is the MATCHER's (rule 1), the same definition the live guards and the
-            // confirm's refusal use — raw equality judged the punctuation pair unambiguous here while
-            // this method's own fallback below called it ambiguous, and two answers to one question is
-            // how Tick all walked through the gap.
-            var exact = ProductMatcher.ExactMatches(suggested, products);
-            if (exact.Count > 1)
-            {
-                // The NAME rides along only when it is one the live guards cannot see — i.e. when it
-                // isn't the row's own name. When it IS, AmbiguousClash says the same thing and keeps
-                // saying it as the human edits, so carrying it too would put two sentences on one row.
-                var hidden = ProductMatcher.IdentityKey(suggested) != ProductMatcher.IdentityKey(item.NormalizedName);
-                return (null, false, true, hidden ? suggested : null);
-            }
-            if (exact.Count == 1) return (exact[0], false, false, null);
-        }
-        // ⚠️ Ask the matcher WHICH rule fired rather than re-deriving it from the strings. Comparing the
-        // raw names looks equivalent and isn't: the matcher normalizes punctuation away before its exact
-        // rule, so a raw compare called a rule-1 identity a guess — "Home Canned Tomato Sauce" against
-        // the seeded "Home-Canned Tomato Sauce" arrived unticked, warning "not read off the package" one
-        // cell from a chip reading "read the label".
-        var (resolved, kind) = ProductMatcher.ResolveWithKind(item.NormalizedName, products);
-        if (resolved is not null && kind == ProductMatcher.MatchKind.ExactName
-            && ProductMatcher.ExactMatches(item.NormalizedName, products).Count > 1)
-        {
-            // Rule 1 found an identity that isn't one product — the matcher's own normalization says two
-            // products carry this name, so "the" exact match is a coin flip the app must not make.
-            // Ambiguous for the TICK, but no name for the message: here the ambiguous name IS row.Name,
-            // so AmbiguousClash states it live (and keeps stating it as the human edits). The flag is
-            // still required — Include is computed once, HERE, before any live guard can run, so
-            // dropping it let the row arrive ticked.
-            return (null, false, true, null);
-        }
-        return (resolved, kind is not (ProductMatcher.MatchKind.None or ProductMatcher.MatchKind.ExactName), false, null);
-    }
-
     private async Task LoadCatalogAsync(CancellationToken ct)
     {
         await using var db = await DbFactory.CreateDbContextAsync(ct);
@@ -803,14 +627,12 @@ else if (phase == Phase.Done)
             .Include(p => p.Signals)
             .OrderBy(p => p.Name)
             .ToListAsync(ct);
-        nearMatches.Clear();
-        ambiguousNames.Clear();
-        nameClashes.Clear();
-        // The matcher's identity sets, not raw grouping: punctuation twins ("Home-Canned" beside
-        // "Home Canned") need their counts on the options too — they are the pair the ambiguity
-        // warning tells the household to tell apart here.
+        catalog = new CatalogIndex(products);
+        // The matcher's identity sets, not raw grouping: punctuation twins ("Home-Canned" beside "Home
+        // Canned") need their counts on the options too — they are the pair the ambiguity warning tells the
+        // household to tell apart here. One O(1) ExactMatches per product now, not an O(N) re-normalization.
         twinNames = products
-            .Where(p => ProductMatcher.ExactMatches(p.Name, products).Count > 1)
+            .Where(p => catalog.ExactMatches(p.Name).Count > 1)
             .Select(p => p.Name)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -819,18 +641,18 @@ else if (phase == Phase.Done)
         {
             var median = ReplenishmentPredictor.Predict(p, today).MedianIntervalDays;
             return new ProductNote(
-                // A DORMANT count still has a number, and it is exactly the number about to be
-                // overwritten — so it shows, with what stopping means said plainly. Gating this on
-                // TrackQuantity made a stopped count indistinguishable from a never-counted one, which
-                // is the one state where the grid most owes the household a sentence.
+                // A DORMANT count still has a number, and it is exactly the number about to be overwritten —
+                // so it shows, with what stopping means said plainly. Gating this on TrackQuantity made a
+                // stopped count indistinguishable from a never-counted one, the one state the grid most owes
+                // the household a sentence.
                 HasNumber: p.QuantityOnHand is not null,
                 Dormant: !p.TrackQuantity && p.QuantityOnHand is not null,
                 OnHand: p.QuantityOnHand ?? 0m,
                 Unit: p.DefaultUnit,
                 CountedAt: p.QuantityCountedAt,
                 IsTracked: p.IsTracked,
-                // Advice about signing UP — so it is not shown for a product already being counted, the
-                // same gate the product page's version carries.
+                // Advice about signing UP — so not shown for a product already being counted, the same gate
+                // the product page's version carries.
                 FastMoverDays: !p.TrackQuantity && CountingAdvice.IsHardToKeepTrue(median)
                     ? (int)Math.Round(median!.Value)
                     : null,
@@ -851,13 +673,13 @@ else if (phase == Phase.Done)
                     r.Name, r.Category, r.Count, r.ProductId, r.ChoseCreateNew))
                 .ToList();
             // ⚠️ Deliberately NOT pageCts.Token. A read is re-runnable and cancelling it on navigate-away
-            // saves the visitor a vision call; a confirm is a one-shot write over input that exists
-            // nowhere else — a census persists no audit copy and has no Retry, so an aborted write means
+            // saves the visitor a vision call; a confirm is a one-shot write over input that exists nowhere
+            // else — a census persists no audit copy and has no Retry, so an aborted write means
             // re-photographing the shelf and paying for the read again. Threading the page token here
             // discarded a census the household had already pressed Confirm on, with no row written, no
-            // message (the component is gone) and no log line. Even the worst case without the token —
-            // the write lands and the panel never renders — is strictly better: the counts are on the
-            // product pages, which this page already says.
+            // message (the component is gone) and no log line. Even the worst case without the token — the
+            // write lands and the panel never renders — is strictly better: the counts are on the product
+            // pages, which this page already says.
             var outcome = await Confirmer.ConfirmAsync(confirmed, CancellationToken.None);
 
             confirmSummary = Summary(outcome);
@@ -912,8 +734,8 @@ else if (phase == Phase.Done)
             ? $" Started counting {outcome.ResumedCounting} item{(outcome.ResumedCounting == 1 ? "" : "s")} you'd stopped counting."
             : "");
 
-    /// <summary>One sentence per refused row, because the three reasons need genuinely different words —
-    /// and a row the household ticked and then didn't get has to be named, not tallied.</summary>
+    /// <summary>One sentence per refused row, because the reasons need genuinely different words — and a row
+    /// the household ticked and then didn't get has to be named, not tallied.</summary>
     private static string RefusalNote(CensusConfirmationService.RefusedRow row) => row.Reason switch
     {
         CensusConfirmationService.CensusRefusal.DuplicateName =>
@@ -941,9 +763,6 @@ else if (phase == Phase.Done)
         confirmSummary = "";
         errorMessage = null;
         confirmError = null;
-        nearMatches.Clear();
-        ambiguousNames.Clear();
-        nameClashes.Clear();
     }
 
     public void Dispose()

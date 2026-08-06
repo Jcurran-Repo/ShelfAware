@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Components.Web;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.JSInterop;
 using ShelfAware.Core.Census;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
@@ -1005,6 +1006,45 @@ public class PantryPhotoPageTests : PageTestContext
             Assert.Contains("Counted 1 item", done);
             Assert.Contains("2 rows — some were the same product", done);
         });
+    }
+
+    [Fact]
+    public async Task The_grid_is_disabled_while_a_confirm_is_in_flight()
+    {
+        // ⚠️ The confirm snapshots the ticked rows when the button is pressed, so a ✕ or a count edit
+        // mid-save would look like it un-counted a row it didn't. The whole grid disables while confirming —
+        // the same double-tap discipline the dashboard's quick buttons carry. HoldNext parks the confirm at
+        // its context create, exactly the in-flight window a real circuit has.
+        var cut = Review(Item("Tilapia Fillets", count: 3), Item("Frozen Peas", count: 2));
+
+        var gate = new TaskCompletionSource();
+        Factory.HoldNext = gate;
+        cut.FindAll("button").Single(b => b.TextContent.Trim().StartsWith("Count ")).Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.All(cut.FindAll("tbody button"), b => Assert.True(b.HasAttribute("disabled"))); // the ✕
+            Assert.All(cut.FindAll("tbody input"), i => Assert.True(i.HasAttribute("disabled")));   // tick + name + count
+        });
+        gate.SetResult();
+
+        cut.WaitForAssertion(() => Assert.Contains("Counted 2 items", Collapsed(cut.Markup)));
+    }
+
+    [Fact]
+    public void A_transient_JS_disconnect_mid_read_shows_an_error_not_a_permanent_spinner()
+    {
+        // ⚠️ A JSDisconnectedException while the page is still ALIVE (a circuit blip during the photo
+        // downscale, then a reconnect) must escape the spinner — the empty catch left phase == Reading
+        // forever, recoverable only by reload. Real teardown (pageCts cancelled by Dispose) is still
+        // swallowed, the same split the OperationCanceledException clause beside it uses.
+        PhotoLoader.Throws = new JSDisconnectedException("interop lost mid-read");
+        var cut = Render<PantryPhoto>();
+        Upload(cut, 1);
+        cut.Find("button").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("connection dropped", Collapsed(cut.Markup)));
+        Assert.DoesNotContain("Looking at your photo", Collapsed(cut.Markup)); // not stuck on the spinner
     }
 
     [Fact]

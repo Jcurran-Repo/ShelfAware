@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using ShelfAware.Core.Census;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 
@@ -14,17 +15,21 @@ namespace ShelfAware.Web.Data;
 /// reuses the receipt review GRID, and that similarity is precisely why this
 /// has its own service — "reuses the extraction shape end to end" is true of the line contract and false of
 /// the writing.</para>
-/// <para>One SaveChanges, one transaction: a failure persists nothing, so a half-recorded census can't
-/// leave the household with counts for the top of the shelf and none for the bottom.</para>
+/// <para><b>What decides each row's fate lives in Core.</b> <see cref="CensusPlan"/> is the one pure
+/// function the review grid and this service both consume, so the screen and the write cannot disagree about
+/// which product a row lands on. This service does the EF: it asks the plan, then attests, creates, and
+/// signals exactly as the plan says. One SaveChanges, one transaction — a failure persists nothing, so a
+/// half-recorded census can't leave counts for the top of the shelf and none for the bottom.</para>
 /// </summary>
 public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
 {
     /// <param name="ProductId">The product this row resolved to, or 0 for none.</param>
     /// <param name="CreateNew">⚠️ Whether the HUMAN explicitly chose "create a new product" for this row,
     /// as opposed to the grid simply never having matched it. Both arrive as <paramref name="ProductId"/>
-    /// 0, and collapsing them is a real bug this once had: the name fallback below would then resolve an
-    /// explicit create-new onto the existing product of the same name and REPLACE its count — the screen
-    /// saying "new product" while the write destroyed an old one.</param>
+    /// 0, and collapsing them is a real bug this once had: an explicit create-new whose name is taken must be
+    /// declined and named (<see cref="CensusRefusal.DuplicateName"/>), not silently resolved onto the
+    /// existing product and REPLACE its count — the screen saying "new product" while the write destroyed an
+    /// old one.</param>
     /// <param name="Count">What the human says is there, or null when the box is EMPTY. ⚠️ Null is not
     /// zero and must never be coerced to one: an attested zero writes a real <c>OutNow</c> (§13.4), so
     /// `?? 0` would turn a box someone cleared to retype into a household statement that they had run
@@ -52,9 +57,9 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
         /// writes its <c>OutNow</c>, exactly as on every other surface. A rule withholding the signal for
         /// rhythm-less products was built and reverted; see <c>StockLedger.Attest</c> for why, and do not
         /// rebuild it.</para>
-        /// <para>Decided once, after every row has been read, rather than where the row sits: two rows
-        /// naming one new item is the reader's ordinary output, so a row-level decision made the outcome
-        /// depend on their order.</para></summary>
+        /// <para>Decided once, after every row has been read (see <see cref="CensusPlan.Plan"/>), rather
+        /// than where the row sits: two rows naming one new item is the reader's ordinary output, so a
+        /// row-level decision made the outcome depend on their order.</para></summary>
         ZeroOnNewProduct,
         /// <summary>The row named a product by id and that product is gone — merged or deleted while the
         /// review grid sat open. Resolving it by name instead would quietly create a twin, or land the
@@ -95,229 +100,132 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
         IReadOnlyList<RefusedRow> Refused);
 
     /// <summary>Record the reviewed rows as attested counts. Every row here is one a human ticked and
-    /// checked — the reader only ever proposed them.</summary>
+    /// checked — the reader only ever proposed them. The fate of each row is <see cref="CensusPlan"/>'s
+    /// call; this method carries it out.</summary>
     public async Task<CensusOutcome> ConfirmAsync(
         IReadOnlyList<CensusRow> rows, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var products = await db.Products.ToListAsync(cancellationToken);
+        var catalog = new CatalogIndex(products);
 
-        // One trip's photos can name a single new item on two rows — map both to one new product. Keyed by
-        // ProductMatcher's IDENTITY key, not the raw name: the reader transcribes label text, so the two
-        // rows are "Home-Canned Sauce" and "Home Canned Sauce" as often as they are character-identical,
-        // and a raw key let that pair create two products the matcher then calls one.
-        var createdByName = new Dictionary<string, Product>();
-        // ⚠️ Counts are SUMMED per product before a single Attest, not attested row by row. An attestation
+        // The plan reasons over the pure projection of each row. The read-time facts a grid supplies
+        // (evidence/confidence/similarity/suggestion) only ever affect whether a row arrives TICKED, which a
+        // write path never renders — so the neutral defaults are exactly right here.
+        var states = rows.Select(r => new CensusPlan.CensusRowState(r.Name, r.Count, r.ProductId, r.CreateNew)).ToList();
+        var plans = CensusPlan.Plan(states, catalog);
+
+        // ⚠️ Counts are SUMMED per TARGET before a single Attest, not attested row by row. An attestation
         // states a TOTAL, so two rows resolving to one product (the same food in two photos, or two
-        // varieties of it) would otherwise have the second silently overwrite the first — a household with
-        // five would be left believing they had two, with nothing on screen saying so.
+        // varieties of it) would otherwise have the second silently overwrite the first. Existing products
+        // key by identity (their instance); new products key by ProductMatcher's IDENTITY, so a name
+        // transcribed "Home-Canned Sauce" one row and "Home Canned Sauce" the next still makes one product.
         var totals = new Dictionary<Product, decimal>();
+        var createdByKey = new Dictionary<string, Product>();
         var retracked = new HashSet<Product>();
-        // A HashSet and not a counter: unlike IsTracked below, TrackQuantity is not flipped until Attest
-        // runs in the second loop, so two rows resolving to one dormant product would both count it.
         var resumed = new HashSet<Product>();
         var refused = new List<RefusedRow>();
-        // Zero rows that no product exists for YET. Held until every row has been read, because a later
-        // row naming the same new item settles them (see where they are added). Carries the identity KEY
-        // rather than the raw name, so the settle-up below asks the same question the main loop did —
-        // keying it raw rebuilt the row-ORDER dependence this deferral exists to remove, for exactly the
-        // punctuation pair the identity rule was introduced for.
-        var deferredZeros = new List<(string Key, string Label)>();
-        int created = 0, counted = 0;
+        int rowsLanded = 0, created = 0;
 
-        foreach (var row in rows)
+        for (var i = 0; i < rows.Count; i++)
         {
+            var row = rows[i];
+            var plan = plans[i];
             var name = row.Name.Trim();
 
-            // The id first — and a row that named a product which no longer exists is REFUSED, not
-            // redirected. Resolving it by name instead would land the count on a different product than
-            // the dropdown showed, or create a twin of the one that just went away; a merge or a delete
-            // in another tab is all it takes. The grid said where this row was going, so a row that can
-            // no longer go there is the household's business, not something to quietly re-decide.
-            var product = row.ProductId > 0
-                ? products.FirstOrDefault(p => p.Id == row.ProductId)
-                : null;
-
-            if (row.ProductId > 0 && product is null)
+            switch (plan.Action)
             {
-                refused.Add(new RefusedRow(name.Length > 0 ? name : "(unnamed)", CensusRefusal.ProductGone));
-                continue;
-            }
+                case CensusPlan.CensusAction.Refuse:
+                    // A matched row can have its name box blanked (it resolves by id), so name the refusal by
+                    // the product when there's no typed name — "(unnamed)" among thirty rows names nothing.
+                    var label = name.Length > 0 ? name : catalog.ById(row.ProductId)?.Name ?? "(unnamed)";
+                    refused.Add(new RefusedRow(label, MapRefusal(plan.Reason)));
+                    break;
 
-            // A row matched to a product resolves BY that product, so blanking its name box (to retype it,
-            // say) must not drop it — but every refusal below still has to be able to name the row, and
-            // "(unnamed)" among thirty rows is not a name.
-            var label = name.Length > 0 ? name : product?.Name ?? "(unnamed)";
-
-            // ⚠️ An EMPTY box is not a zero, and coercing it to one is the sharpest edge on this page:
-            // an attested zero writes a real OutNow (§13.4), so a box cleared to retype would become a
-            // household statement that they had run out, pinning the item Overdue. Same rule as the
-            // product page's count panel, for the same reason.
-            if (row.Count is not { } count)
-            {
-                refused.Add(new RefusedRow(label, CensusRefusal.MissingCount));
-                continue;
-            }
-
-            // A negative count is REFUSED, never clamped. StockLedger.Attest floors at zero, and a floored
-            // "-3" would land on zero — which is an ASSERTED out, writing a real OutNow into the cadence
-            // engine off a typo. Same rule, same reason, as EfPantryStore.SetQuantityAsync's refusal.
-            if (count < 0)
-            {
-                refused.Add(new RefusedRow(label, CensusRefusal.Unusable));
-                continue;
-            }
-
-            if (product is null)
-            {
-                if (name.Length == 0)
+                case CensusPlan.CensusAction.LandOnProduct:
                 {
-                    refused.Add(new RefusedRow("(unnamed)", CensusRefusal.Unusable));
-                    continue;
+                    // Planned against this same catalog, so the id is present.
+                    var product = catalog.ById(plan.LandsOn!.Value)!;
+                    MarkTrackAndResume(product, retracked, resumed);
+                    // A LandOnProduct row is never MissingCount, so the count is real.
+                    totals[product] = totals.GetValueOrDefault(product) + (row.Count ?? 0m);
+                    rowsLanded++;
+                    break;
                 }
 
-                // One census's photos can name a single new item on two rows — both map to one new product.
-                if (createdByName.TryGetValue(ProductMatcher.IdentityKey(name), out var existingNew))
+                case CensusPlan.CensusAction.CreateProduct:
                 {
-                    product = existingNew;
+                    var key = ProductMatcher.IdentityKey(name);
+                    if (!createdByKey.TryGetValue(key, out var product))
+                    {
+                        // CreatedByReceiptId stays null: no receipt introduced this product, and claiming
+                        // one would offer it up to that receipt's removal.
+                        product = new Product { Name = name, Category = row.Category };
+                        db.Products.Add(product);
+                        createdByKey[key] = product;
+                        created++;
+                    }
+                    MarkTrackAndResume(product, retracked, resumed);
+                    totals[product] = totals.GetValueOrDefault(product) + (row.Count ?? 0m);
+                    rowsLanded++;
+                    break;
                 }
-                else
-                {
-                    // ⚠️ Only for a row the grid never matched. An UNMATCHED row whose name is exactly an
-                    // existing product's is that product: a census is the app's biggest bulk product
-                    // creator, a twin splits purchase history and blinds the predictor, and this is also
-                    // what makes a RETRY safe (a confirm that commits then fails on the way back invites a
-                    // second press, which would otherwise duplicate every product the first one created).
-                    // But when the human EXPLICITLY chose "create new", doing this overrules them and
-                    // replaces the existing product's count — so that row is declined and named instead,
-                    // and they say which of the two they meant. Creating the twin silently is the other
-                    // wrong answer; the standing duplicate guard blocks exact-name dupes outright.
-                    // A near-miss is the GRID's business, not this method's: resolving a fuzzy match here
-                    // would attach a count to a guessed product with nobody asked.
-                    // ⚠️ ONE definition of "is this name taken, and by how many?" — ProductMatcher's
-                    // rule-1 identity set — feeding all three branches below AND the grid that previews
-                    // them (NameClash, AmbiguousClash, the arrival tick, Tick all, the twin dropdown).
-                    // Judging one branch raw and its neighbour by identity is what produced three rounds
-                    // of defects: an explicit create-new whose name was raw-unique but identity-colliding
-                    // MINTED the punctuation pair (after which every later census naming either twin was
-                    // refused forever), and the grid promised "leave this to create a separate item" over
-                    // a write that replaced an existing product's count.
-                    // Rule 1 is identity, not similarity — same words, same order, punctuation and case
-                    // folded — so resolving on it is exactly as safe as a raw resolve, and it is what
-                    // makes ConfirmAll's retry promise true. A near-miss stays the GRID's business:
-                    // resolving a fuzzy match here would attach a count to a guessed product unasked.
-                    var identity = ProductMatcher.ExactMatches(name, products);
-                    if (identity.Count > 0 && row.CreateNew)
-                    {
-                        refused.Add(new RefusedRow(name, CensusRefusal.DuplicateName));
-                        continue;
-                    }
-                    if (identity.Count > 1)
-                    {
-                        refused.Add(new RefusedRow(name, CensusRefusal.AmbiguousName));
-                        continue;
-                    }
-                    if (!row.CreateNew && identity.Count == 1)
-                    {
-                        product = identity[0];
-                    }
-                }
-            }
-
-            // ⚠️ A zero cannot bring a product into existence — but whether it WOULD is not knowable yet,
-            // so this row is set aside and settled once every row has been read. Deciding it here made
-            // the outcome depend on row ORDER: [Sardines 0, Sardines 2] refused the first row while the
-            // second created Sardines, then told the household "nothing was created" about a product
-            // sitting on their Products page, where [Sardines 2, Sardines 0] refused nothing. The reader
-            // emits a row per variety and matches across varieties, so two rows naming one new item is
-            // its ordinary output, not an edge case.
-            if (count == 0 && product is null)
-            {
-                deferredZeros.Add((ProductMatcher.IdentityKey(name), label));
-                continue;
-            }
-
-            if (product is null)
-            {
-                // CreatedByReceiptId stays null: no receipt introduced this product, and claiming one
-                // would offer it up to that receipt's removal.
-                product = new Product { Name = name, Category = row.Category };
-                db.Products.Add(product);
-                products.Add(product); // later rows in this census can resolve to it
-                createdByName[ProductMatcher.IdentityKey(name)] = product;
-                created++;
-            }
-
-            // A count that was stopped is DORMANT, not gone: its number and date stay true as history, and
-            // Attest is about to overwrite both and start believing them again. That is the right thing to
-            // do for someone who just counted the shelf — but it is the one switch they deliberately
-            // turned off, so it gets said out loud rather than being the only change the summary omits.
-            if (!product.TrackQuantity && product.QuantityOnHand is not null)
-            {
-                resumed.Add(product);
-            }
-
-            // Counting an item is a deliberate statement of interest in it, so — like buying it again — it
-            // ends the grocery list's "ignore this for a while". Without this an untracked product would
-            // take a count that no prediction, list, or dashboard ever reads: a silent no-op on the one
-            // row the household had just gone to the trouble of counting.
-            if (!product.IsTracked)
-            {
-                product.IsTracked = true;
-                retracked.Add(product);
-            }
-
-            totals[product] = totals.GetValueOrDefault(product) + count;
-            counted++;
-        }
-
-        // Settle the zero rows now that the whole census has been read, so the answer is a property of
-        // the rows rather than of their order. A sibling row naming the same item makes this one part of
-        // the same statement — it contributes its zero and counts as a row that landed; with nothing to
-        // attach to it is refused, which is the only zero that genuinely has nothing to record.
-        foreach (var (key, label) in deferredZeros)
-        {
-            if (createdByName.TryGetValue(key, out var product))
-            {
-                totals[product] = totals.GetValueOrDefault(product);
-                counted++;
-            }
-            else
-            {
-                refused.Add(new RefusedRow(label, CensusRefusal.ZeroOnNewProduct));
             }
         }
 
         var now = DateTimeOffset.Now;
         var assertedOut = 0;
-        foreach (var (product, count) in totals)
+        foreach (var (product, total) in totals)
         {
             // Attest, not Add: this is a LOOK at the shelf, so it states the total and re-anchors the
-            // attestation clock §13.5's drift check measures from. It also opts the product into counting
-            // (the ledger's rule: typing a number IS asking for it to be counted).
-            if (!StockLedger.Attest(product, count, now)) continue;
+            // attestation clock §13.5's drift check measures from. It also opts the product into counting.
+            if (!StockLedger.Attest(product, total, now)) continue;
 
-            // §13.4: a human's zero is real evidence and owes an OutNow, which feeds the burn-rate
-            // rhythm. Only a human can get here — the reader floors its proposals at 1, so this zero
-            // was typed. Unconditional, and see StockLedger.Attest for why an attempt to withhold it for
-            // a product with no purchase history was measured and reverted.
-            db.InventorySignals.Add(new InventorySignal
-            {
-                Product = product,
-                Kind = SignalKind.OutNow,
-                SignaledAt = now,
-            });
+            // §13.4: a human's zero is real evidence and owes an OutNow, which feeds the burn-rate rhythm.
+            // Only a human can get here — the reader floors its proposals at 1, so this zero was typed.
+            db.InventorySignals.Add(new InventorySignal { Product = product, Kind = SignalKind.OutNow, SignaledAt = now });
             assertedOut++;
         }
 
         await db.SaveChangesAsync(cancellationToken);
         return new CensusOutcome(
             Counted: totals.Count,
-            Rows: counted,
+            Rows: rowsLanded,
             NewProducts: created,
             Retracked: retracked.Count,
             ResumedCounting: resumed.Count,
             AssertedOut: assertedOut,
             Refused: refused);
     }
+
+    /// <summary>Note that a count is about to resume for a dormant product, and re-track an ignored one —
+    /// both checked BEFORE the later <c>Attest</c> flips those flags, and both idempotent so two rows
+    /// resolving to one product count each act once.</summary>
+    private static void MarkTrackAndResume(Product product, HashSet<Product> retracked, HashSet<Product> resumed)
+    {
+        // A count that was stopped is DORMANT, not gone: its number and date stay true as history, and Attest
+        // is about to overwrite both and start believing them again. That is the right thing for someone who
+        // just counted the shelf — but it is the one switch they deliberately turned off, so it gets said.
+        if (!product.TrackQuantity && product.QuantityOnHand is not null) resumed.Add(product);
+
+        // Counting an item is a deliberate statement of interest, so — like buying it again — it ends the
+        // grocery list's "ignore this for a while". Without this an untracked product would take a count no
+        // prediction, list, or dashboard ever reads.
+        if (!product.IsTracked)
+        {
+            product.IsTracked = true;
+            retracked.Add(product);
+        }
+    }
+
+    private static CensusRefusal MapRefusal(CensusPlan.CensusReason reason) => reason switch
+    {
+        CensusPlan.CensusReason.ProductGone => CensusRefusal.ProductGone,
+        CensusPlan.CensusReason.MissingCount => CensusRefusal.MissingCount,
+        CensusPlan.CensusReason.AmbiguousName => CensusRefusal.AmbiguousName,
+        CensusPlan.CensusReason.NameTaken => CensusRefusal.DuplicateName,
+        CensusPlan.CensusReason.ZeroOnNewProduct => CensusRefusal.ZeroOnNewProduct,
+        // NegativeCount and NoName both mean "nothing usable here"; every other reason is not a refusal.
+        _ => CensusRefusal.Unusable,
+    };
 }
