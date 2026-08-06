@@ -258,4 +258,26 @@ public class ReceiptConfirmationServiceTests : IDisposable
         Assert.Equal(1, await db.ProductAliases.CountAsync()); // unique (Merchant, RawText) index holds
         Assert.All(await db.ReceiptLines.ToListAsync(), l => Assert.NotNull(l.ProductId));
     }
+
+    // --- one new item transcribed two ways is one product ----------------------
+
+    [Fact]
+    public async Task Two_new_lines_of_one_item_differing_only_in_PUNCTUATION_make_one_product()
+    {
+        // ⚠️ createdByName keys on the matcher's IDENTITY, not the raw name. The reader transcribes a
+        // label with and without a hyphen as often as identically, so a raw key minted a twin the matcher
+        // then treats as one product — splitting purchase history on the app's highest-volume creation path.
+        var receipt = await SeedPending("Walmart",
+            L("HOME CANNED SAUCE", "Home-Canned Sauce"), L("HOME-CANNED SAUCE", "Home Canned Sauce"));
+
+        var outcome = await _service.ConfirmAsync(receipt.Id, new DateOnly(2026, 7, 1),
+            [C("HOME CANNED SAUCE", "Home-Canned Sauce"), C("HOME-CANNED SAUCE", "Home Canned Sauce")],
+            writeAliases: false);
+
+        Assert.Equal(1, outcome.NewProducts);
+        Assert.Equal(2, outcome.Purchases);
+        await using var db = _db.CreateDbContext();
+        Assert.Single(await db.Products.ToListAsync());
+        Assert.Equal(2, await db.PurchaseEvents.CountAsync());
+    }
 }

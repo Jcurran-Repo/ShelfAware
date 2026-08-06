@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Tagging;
 
@@ -70,8 +71,11 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
             : null;
         var unmatchedLines = receipt.Lines.ToList();
         // One trip can list a single NEW item on two lines — map both to one new product, keyed by
-        // item name; each line still records its own purchase.
-        var createdByName = new Dictionary<string, Product>(StringComparer.OrdinalIgnoreCase);
+        // ProductMatcher's IDENTITY, not the raw name: the reader transcribes label text, so the two
+        // lines are "Home-Canned Sauce" and "Home Canned Sauce" as often as they are character-identical,
+        // and a raw key let that pair mint two products the matcher then calls one — on the app's
+        // highest-volume creation path. Each line still records its own purchase.
+        var createdByName = new Dictionary<string, Product>();
         var retracked = new HashSet<Product>(); // distinct — two lines of one item re-track it once
         int purchases = 0, created = 0;
 
@@ -89,7 +93,7 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
             {
                 product = resolved;
             }
-            else if (createdByName.TryGetValue(name, out var existingNew))
+            else if (createdByName.TryGetValue(ProductMatcher.IdentityKey(name), out var existingNew))
             {
                 product = existingNew;
             }
@@ -100,7 +104,7 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
                 product = new Product { Name = name, Category = line.Category, CreatedByReceiptId = receipt.Id };
                 db.Products.Add(product);
                 products.Add(product); // later lines in this receipt can resolve to it
-                createdByName[name] = product;
+                createdByName[ProductMatcher.IdentityKey(name)] = product;
                 created++;
             }
 

@@ -36,9 +36,17 @@ public class ProductRenameService(IHouseholdDbFactory dbFactory)
 
         var oldName = product.Name;
         product.Name = name;
-        var linked = await db.RecipeIngredients
-            .Where(i => i.MatchedProduct != null && i.MatchedProduct.ToLower() == oldName.ToLower())
-            .ToListAsync(cancellationToken);
+        // ⚠️ Re-point by the matcher's rule-1 IDENTITY, not ToLower(): a MatchedProduct stored as
+        // "Home Canned Sauce" for a product named "Home-Canned Sauce" is the same product to every other
+        // guard (line 34 above already uses ExactMatches), so a raw compare here left that link silently
+        // stale — the partial conversion this finishes. IdentityKey isn't SQL-translatable, so filter in
+        // memory, the same load-then-match shape the collision check above uses.
+        var oldKey = ProductMatcher.IdentityKey(oldName);
+        var linked = (await db.RecipeIngredients
+                .Where(i => i.MatchedProduct != null)
+                .ToListAsync(cancellationToken))
+            .Where(i => ProductMatcher.IdentityKey(i.MatchedProduct!) == oldKey)
+            .ToList();
         foreach (var ingredient in linked) ingredient.MatchedProduct = name;
 
         await db.SaveChangesAsync(cancellationToken);

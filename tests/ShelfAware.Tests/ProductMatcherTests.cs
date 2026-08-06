@@ -62,6 +62,23 @@ public class ProductMatcherTests
         Assert.Empty(ProductMatcher.ExactMatches("   ", [hyphenated, spaced, other]));
     }
 
+    [Fact]
+    public void IdentityKey_folds_any_run_of_separators_to_one_space_and_is_idempotent()
+    {
+        // ⚠️ Normalize collapses EVERY run of separators to a single space, not just doubles. A name like
+        // "Yogurt - Strawberry" has a space-hyphen-space RUN, so a single Replace("  ", " ") left
+        // "yogurt  strawberry" — neither equal to the plain-spaced form nor idempotent, which a documented
+        // dictionary KEY (IdentityKey, keyed on across the census's whole-pass resolution) has to be. It
+        // failed safe (rule 1 missed, rule 3 caught it as similarity), but a near-key is not a key.
+        Assert.Equal(
+            ProductMatcher.IdentityKey("Yogurt Strawberry"),
+            ProductMatcher.IdentityKey("Yogurt - Strawberry"));
+
+        var key = ProductMatcher.IdentityKey("Yogurt - Strawberry");
+        Assert.Equal("yogurt strawberry", key);
+        Assert.Equal(key, ProductMatcher.IdentityKey(key)); // re-normalizing a key is a no-op
+    }
+
     // A pantry of same-brand items: a shared store-brand prefix must not be enough to match.
     private static readonly IReadOnlyList<Product> StoreBrandPantry =
     [

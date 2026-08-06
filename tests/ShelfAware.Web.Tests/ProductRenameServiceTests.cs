@@ -75,6 +75,31 @@ public class ProductRenameServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Relinks_a_recipe_ingredient_whose_MatchedProduct_differs_only_in_PUNCTUATION()
+    {
+        // ⚠️ The recipe re-point is by rule-1 identity, not ToLower(): a MatchedProduct stored as
+        // "Home Canned Sauce" for a product named "Home-Canned Sauce" is the same product to every other
+        // guard, so a rename that skipped it left "recipes that use this" and makeability silently stale.
+        var id = await SeedProduct("Home-Canned Sauce");
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Recipes.Add(new Recipe
+            {
+                Name = "Pasta",
+                Ingredients = [new RecipeIngredient { Name = "Sauce", IsMain = true, MatchedProduct = "Home Canned Sauce" }],
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var result = await _service.RenameAsync(id, "Grandma's Canned Sauce");
+
+        Assert.True(result.Ok);
+        Assert.Equal(1, result.RelinkedIngredients);
+        await using var read = _db.CreateDbContext();
+        Assert.Equal("Grandma's Canned Sauce", (await read.RecipeIngredients.SingleAsync()).MatchedProduct);
+    }
+
+    [Fact]
     public async Task Rejects_a_name_another_product_already_uses()
     {
         var beefId = await SeedProduct("Ground Beef");
