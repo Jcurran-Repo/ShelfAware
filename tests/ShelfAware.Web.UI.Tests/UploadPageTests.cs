@@ -213,6 +213,36 @@ public class UploadPageTests : PageTestContext
     }
 
     [Fact]
+    public void Review_does_not_pre_select_an_arbitrary_twin_but_folds_a_punctuation_variant()
+    {
+        // ⚠️ The model's suggestion names a NAME, and two products can share one (the duplicate guard has
+        // a real "Add anyway"). A FirstOrDefault(string.Equals) — or the matcher's own First()-over-twins —
+        // pre-selected an arbitrary twin whose count a confirm would overwrite. The identity resolver leaves
+        // the (name-indistinguishable) dropdown for the human on twins, while still folding a punctuation
+        // variant onto the ONE product it names.
+        int variantId;
+        using (var db = Db.CreateDbContext())
+        {
+            db.Products.AddRange(
+                new Product { Name = "Whole Milk", Category = Category.Dairy },   // twin A
+                new Product { Name = "Whole Milk", Category = Category.Dairy });  // twin B
+            var variant = new Product { Name = "Half-and-Half", Category = Category.Dairy };
+            db.Products.Add(variant);
+            db.SaveChanges();
+            variantId = variant.Id;
+        }
+        SeedPending("Walmart", Today.AddDays(-1),
+            new ReceiptLine { RawText = "GV MILK", NormalizedName = "Milk", Quantity = 1m, SuggestedProduct = "Whole Milk" },
+            new ReceiptLine { RawText = "GV HH", NormalizedName = "creamer", Quantity = 1m, SuggestedProduct = "Half and Half" });
+
+        var cut = OpenReview();
+
+        var selects = cut.FindAll("td select[aria-label^='Product match']");
+        Assert.Equal("0", selects[0].GetAttribute("value"));                  // ambiguous twins → create-new, human picks
+        Assert.Equal(variantId.ToString(), selects[1].GetAttribute("value")); // identity folds the punctuation variant
+    }
+
+    [Fact]
     public void An_undated_receipt_demands_a_date_and_a_dated_one_just_offers_correction()
     {
         SeedPending("Walmart", null, DbLine("A", "Thing"));

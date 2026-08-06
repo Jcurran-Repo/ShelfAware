@@ -214,6 +214,41 @@ public class ReceiptAutoConfirmerTests : IDisposable
     }
 
     [Fact]
+    public async Task Smart_queues_a_line_whose_suggestion_names_TWO_products()
+    {
+        // ⚠️ No unique index on product names, and a purchase lands on ONE product's history — so a model
+        // suggestion (or matcher hit) that names TWINS is a coin flip a machine confirm must not make.
+        // FirstOrDefault(string.Equals) silently picked one and committed with no review; the line is
+        // ambiguous now and the receipt queues for a human to pick the right twin.
+        await SeedProduct("Whole Milk");
+        await SeedProduct("Whole Milk"); // a twin — the duplicate guard has a real "Add anyway"
+        var id = await SeedReceipt(Dated, new SeedLine("GV WHL MLK", "Whole Milk", 0.95m, Suggested: "Whole Milk"));
+
+        var outcome = await Confirmer().TryConfirmAsync(id);
+
+        Assert.False(outcome.Confirmed);
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(ReceiptStatus.PendingReview, (await db.Receipts.SingleAsync()).Status);
+        Assert.Equal(0, await db.PurchaseEvents.CountAsync()); // committed to neither twin
+    }
+
+    [Fact]
+    public async Task Auto_also_queues_a_line_whose_suggestion_names_TWO_products()
+    {
+        // Auto means "confirm everything" — except the cases it genuinely cannot decide. Attaching a
+        // purchase to an arbitrary twin is one, breaking Auto's contract exactly as an exact duplicate does.
+        await _settings.SetAsync(SettingKeys.ImportMode, "Auto");
+        await SeedProduct("Whole Milk");
+        await SeedProduct("Whole Milk");
+        var id = await SeedReceipt(Dated, new SeedLine("GV WHL MLK", "Whole Milk", 0.95m, Suggested: "Whole Milk"));
+
+        Assert.False((await Confirmer().TryConfirmAsync(id)).Confirmed);
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(ReceiptStatus.PendingReview, (await db.Receipts.SingleAsync()).Status);
+        Assert.Equal(0, await db.PurchaseEvents.CountAsync());
+    }
+
+    [Fact]
     public async Task A_zero_line_receipt_always_queues_even_in_Auto_mode()
     {
         // Confirming an empty receipt (a failed read, or not a receipt at all) would just hide it.

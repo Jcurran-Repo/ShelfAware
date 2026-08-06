@@ -453,11 +453,18 @@ else if (phase == Phase.Done)
             Product? match = null;
             if (alias is null)
             {
-                // Size is metadata, not identity — match on item name only (all sizes roll up).
+                // Size is metadata, not identity — match on item name only (all sizes roll up). Resolve the
+                // model's suggestion by the matcher's rule-1 identity set, not string.Equals: it folds a
+                // punctuation variant onto the one product it names.
                 match = l.SuggestedProduct is { Length: > 0 }
-                    ? products.FirstOrDefault(p => string.Equals(p.Name, l.SuggestedProduct, StringComparison.OrdinalIgnoreCase))
+                        && ProductMatcher.ExactMatches(l.SuggestedProduct, products) is { Count: 1 } one
+                    ? one[0]
                     : null;
                 match ??= ProductMatcher.Resolve(l.NormalizedName, products);
+                // Never pre-select an ARBITRARY twin, however the match was reached (the matcher's own
+                // First()-over-twins included): a name two products share is a pick only the human can
+                // make, and a confirm would overwrite the wrong one's count. Leave the dropdown to them.
+                if (match is not null && ProductMatcher.ExactMatches(match.Name, products).Count > 1) match = null;
             }
             return new ReviewLine
             {
