@@ -237,12 +237,17 @@ public class AnthropicPantryChat : IPantryChat
             {
                 var name = Str("product_name");
                 var today = DateOnly.FromDateTime(DateTime.Today);
-                var nameById = products.ToDictionary(p => p.Id, p => p.Name);
+                // ⚠️ Re-read. A signal or purchase recorded earlier in this SAME turn (record_signal +
+                // query_status in one model round) isn't in the start-of-turn snapshot, so "we're out of
+                // milk — how are we doing?" spoke "Stocked, due <future>" about a product just reported out.
+                // record_signal already re-reads for its caveat; this is the same fix one call site over.
+                var current = await _store.GetProductsAsync(ct);
+                var nameById = current.ToDictionary(p => p.Id, p => p.Name);
                 var trackExpirations = _settings is not null && await _settings.GetTrackExpirationDatesAsync(ct);
 
                 if (string.IsNullOrWhiteSpace(name))
                 {
-                    var low = products.Where(p => p.IsTracked)
+                    var low = current.Where(p => p.IsTracked)
                         .Select(p => ReplenishmentPredictor.Predict(p, today, trackExpirations, honorQuantity: true))
                         .Where(r => r.Status is PredictionStatus.Overdue or PredictionStatus.DueSoon)
                         .OrderByDescending(r => r.Status)
@@ -254,7 +259,7 @@ public class AnthropicPantryChat : IPantryChat
                     return ($"Running low: {list}.", false);
                 }
 
-                var product = ProductMatcher.Resolve(name, products);
+                var product = ProductMatcher.Resolve(name, current);
                 if (product is null) return ($"No product matches \"{name}\".", true);
                 var pr = ReplenishmentPredictor.Predict(product, today, trackExpirations, honorQuantity: true);
                 // A suppressed item must not read "Stocked, due <last week>". Suppression deliberately
@@ -344,9 +349,24 @@ public class AnthropicPantryChat : IPantryChat
                 // Deliberately not echoing a computed total for a relative move: this method doesn't
                 // read the result back, and stating a number the engine might have clamped would be
                 // exactly the "screen says something the engine didn't do" mistake.
-                return (relative
+                var reply = relative
                     ? $"Noted — adjusted what's on hand for {product.Name}."
-                    : $"Noted — {product.Name}: {quantity:0.##} on hand.", false);
+                    : $"Noted — {product.Name}: {quantity:0.##} on hand.";
+
+                // ⚠️ A count that landed at zero files an OutNow (§13.4) exactly like record_signal, and
+                // this surface SPEAKS — so if that outage is inert (stock recorded as of today or later,
+                // §6.6's tie goes to the stock), say so rather than let the count panel's silent no-op be
+                // spoken aloud. Re-read: the write just changed the count, and the start-of-turn snapshot
+                // never sees it — an absolute 0 lands here, and so does a relative move that clamps to 0.
+                if (((!relative && quantity == 0m) || relative)
+                    && (await _store.GetProductsAsync(ct)).FirstOrDefault(p => p.Id == product.Id) is { QuantityOnHand: 0m } current
+                    && ReplenishmentPredictor.Predict(current, DateOnly.FromDateTime(DateTime.Today)).SignalTodayWouldBeInert)
+                {
+                    reply += " But there's stock recorded for it as of today or later, and a tie goes to the " +
+                        "stock, so that out won't take effect yet — tell the user it'll register if they say " +
+                        "so again once that stock date has passed.";
+                }
+                return (reply, false);
             }
 
             case "create_product":

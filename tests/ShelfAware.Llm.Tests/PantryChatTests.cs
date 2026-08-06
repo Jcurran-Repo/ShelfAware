@@ -223,6 +223,50 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task A_spoken_zero_on_a_day_stock_arrived_carries_the_tie_caveat()
+    {
+        // ⚠️ set_quantity's absolute zero files an OutNow exactly like record_signal, and this surface
+        // SPEAKS — a bare "0 on hand" would speak the count panel's silent no-op aloud (§6.6's same-day
+        // tie makes the outage inert). Same SignalTodayWouldBeInert caveat, re-read before asking the
+        // engine — the third talking OutNow-writer the caveat reaches (item 27's class, one tool over).
+        var roast = Counted(7, "Beef Chuck Roast", onHand: 6m);
+        roast.Purchases.Add(new PurchaseEvent
+        {
+            ProductId = 7, PurchasedAt = DateOnly.FromDateTime(DateTime.Today), Quantity = 1m, // stocked TODAY
+        });
+        var store = new FakePantryStore(roast);
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("set_quantity", ("product_name", "chuck roast"), ("quantity", 0))),
+            () => Responses.Text("Noted — you're out."));
+
+        await Chat(client, store).HandleAsync("no roasts left");
+
+        Assert.Contains((7, SignalKind.OutNow), store.Signals); // the outage is still written (caveat is honesty, not a refusal)
+        var toolResult = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result!.ToString()!;
+        Assert.Contains("a tie goes to the stock", toolResult);
+        Assert.Contains("as of today or later", toolResult);
+    }
+
+    [Fact]
+    public async Task A_spoken_zero_on_an_ordinary_day_stays_plain()
+    {
+        // The complement, both halves pinned (item 39): the last stock-back is weeks in the past, so the
+        // outage takes effect and the reply must not hedge.
+        var store = new FakePantryStore(Counted(7, "Beef Chuck Roast", onHand: 6m)); // one purchase, well in the past
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("set_quantity", ("product_name", "chuck roast"), ("quantity", 0))),
+            () => Responses.Text("Noted — you're out."));
+
+        await Chat(client, store).HandleAsync("no roasts left");
+
+        var toolResult = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result!.ToString()!;
+        Assert.Contains("0 on hand", toolResult);
+        Assert.DoesNotContain("a tie goes to the stock", toolResult);
+    }
+
+    [Fact]
     public async Task Set_quantity_refuses_an_absolute_count_below_zero()
     {
         // Clamping -5 to 0 would file an OutNow (§13.4) off a typo — a fake outage in the cadence
@@ -345,6 +389,37 @@ public class PantryChatTests
             .Single(m => m.Role == ChatRole.Tool)
             .Contents.OfType<FunctionResultContent>().Single().Result?.ToString();
         Assert.Equal("Nothing is running low right now.", toolResult);
+    }
+
+    [Fact]
+    public async Task Query_status_reflects_a_signal_recorded_earlier_in_the_same_turn()
+    {
+        // ⚠️ "We're out of milk — how are we doing?" is one turn, two tool calls. query_status read the
+        // START-OF-TURN snapshot, so it spoke a stale "Stocked, due <future>" about a product the user had
+        // just reported out. record_signal already re-reads; this is the same fix one call site over.
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var milk = new Product
+        {
+            Id = 5, Name = "Whole Milk", Category = Category.Dairy,
+            Purchases =
+            [
+                new PurchaseEvent { ProductId = 5, PurchasedAt = today.AddDays(-19), Quantity = 1 },
+                new PurchaseEvent { ProductId = 5, PurchasedAt = today.AddDays(-5), Quantity = 1 }, // ~14d rhythm → Stocked
+            ],
+        };
+        var store = new FakePantryStore(milk);
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(
+                Responses.Call("record_signal", ("product_name", "milk"), ("kind", "OutNow")),
+                Responses.Call("query_status", ("product_name", "milk"))),
+            () => Responses.Text("You're out of milk."));
+
+        await Chat(client, store).HandleAsync("we're out of milk — how are we doing?");
+
+        var results = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Select(r => r.Result!.ToString()!).ToList();
+        var status = results.Single(r => r.StartsWith("Whole Milk:"));
+        Assert.Contains("Overdue", status); // the just-filed OutNow pins it — a stale snapshot would read Stocked
     }
 
     [Fact]
