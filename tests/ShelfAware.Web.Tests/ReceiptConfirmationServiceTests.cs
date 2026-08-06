@@ -259,6 +259,23 @@ public class ReceiptConfirmationServiceTests : IDisposable
         Assert.All(await db.ReceiptLines.ToListAsync(), l => Assert.NotNull(l.ProductId));
     }
 
+    // --- out-of-range category from a tampered review grid --------------------
+
+    [Fact]
+    public async Task A_new_products_out_of_range_category_defaults_to_Other()
+    {
+        // ⚠️ Category rides on the ConfirmLine from the review grid's <select>; a tampered circuit message
+        // could bind (Category)9999. IsDefined must default it to Other rather than persist an undefined
+        // enum — the same guard SetCategory (#11) and create_product carry.
+        var receipt = await SeedPending("Walmart", L("SAUCE", "Novel Sauce"));
+
+        await _service.ConfirmAsync(receipt.Id, new DateOnly(2026, 7, 1),
+            [C("SAUCE", "Novel Sauce", category: (Category)9999)], writeAliases: false);
+
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(Category.Other, (await db.Products.SingleAsync(p => p.Name == "Novel Sauce")).Category);
+    }
+
     // --- one new item transcribed two ways is one product ----------------------
 
     [Fact]

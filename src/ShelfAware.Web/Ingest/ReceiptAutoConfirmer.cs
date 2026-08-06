@@ -120,14 +120,19 @@ public sealed class ReceiptAutoConfirmer(
                 : null;
             resolved ??= ProductMatcher.Resolve(name, products);
 
-            // A resolution that lands on a name TWO products share is a coin flip about which one this line
-            // means — however it was reached, including the matcher's own First()-over-twins. Attaching a
-            // purchase to an arbitrary twin's history is exactly the machine judgement this router must not
-            // make unreviewed, so an ambiguous line is NOT auto-confirmable in any mode — the same "break
-            // Auto for the one case it can't decide" contract ReceiptDuplicateDetector holds for exact
-            // duplicates. It routes to review, where a human picks the right twin (the census refuses to
-            // guess between twins for the same reason: an attest, like a purchase, lands on ONE product).
-            var ambiguous = resolved is not null && ProductMatcher.ExactMatches(resolved.Name, products).Count > 1;
+            // A NAME-based resolution that lands on a name TWO products share is a coin flip about which one
+            // this line means — the matcher's own First()-over-twins. Attaching a purchase to an arbitrary
+            // twin's history is exactly the machine judgement this router must not make unreviewed, so such a
+            // line is NOT auto-confirmable in any mode — the same "break Auto for the one case it can't
+            // decide" contract ReceiptDuplicateDetector holds for exact duplicates. It routes to review,
+            // where a human picks the right twin.
+            // ⚠️ Only when `alias is null`. A learned alias resolves by ProductId, so it names ONE product
+            // outright even when that product's name is a twin — the human already taught which one, and
+            // bouncing that certain pairing to review is a false alarm. (A suggestion resolves only at
+            // ExactMatches.Count == 1, so the matcher fallback is the sole path that can land on a twin by
+            // name.) The census refuses to guess between twins for the same reason: an attest, like a
+            // purchase, lands on ONE product.
+            var ambiguous = alias is null && resolved is not null && ProductMatcher.ExactMatches(resolved.Name, products).Count > 1;
             if (ambiguous) autoBlocked = true;
 
             // Trusted = a human-taught alias vouches for it, or it's a confident match to a product

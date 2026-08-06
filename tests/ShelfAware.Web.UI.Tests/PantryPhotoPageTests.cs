@@ -719,6 +719,20 @@ public class PantryPhotoPageTests : PageTestContext
     }
 
     [Fact]
+    public void A_negative_count_says_so_on_the_row_before_the_confirm()
+    {
+        // A negative count is refused at confirm (Unusable) — say so inline beside the empty-count message,
+        // rather than only in the Done panel after the click. min="0" is only a browser hint; @bind binds -3.
+        var cut = Review(Item("Black Beans", count: 3));
+        var row = RowFor(cut, "Black Beans");
+        Assert.DoesNotContain("Use zero or more", Collapsed(row));
+
+        row.QuerySelectorAll("input[type=number]").Single().Change("-3");
+
+        Assert.Contains("Use zero or more", Collapsed(RowFor(cut, "Black Beans")));
+    }
+
+    [Fact]
     public async Task A_dormant_count_shows_its_stored_number_and_that_counting_will_restart()
     {
         // Stop-counting is dormant, not destructive: the number and date are KEPT as history. A census

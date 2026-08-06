@@ -133,6 +133,25 @@ public class ReceiptAutoConfirmerTests : IDisposable
     }
 
     [Fact]
+    public async Task Smart_trusts_an_alias_even_when_the_product_name_is_a_twin()
+    {
+        // ⚠️ An alias resolves by ProductId — it names ONE product outright even when that product's name is
+        // a twin. The twin-ambiguity guard (which routes NAME-matched twins to review) must NOT fire for an
+        // alias, or a human-taught, certain pairing gets bounced to review for nothing. Regression from the
+        // twin fix (commit 52f9597), which over-generalised "however it resolved".
+        var milkA = await SeedProduct("Whole Milk");
+        await SeedProduct("Whole Milk");            // a twin: same name, different id
+        await SeedAlias("GV WHL MLK", milkA);       // the human taught: this raw line IS milkA
+        var id = await SeedReceipt(Dated, new SeedLine("GV WHL MLK", "Whole Milk", 0.4m)); // low conf — only the alias vouches
+
+        var outcome = await Confirmer().TryConfirmAsync(id);
+
+        Assert.True(outcome.Confirmed); // the alias's certainty wins over the twin name
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(milkA, (await db.PurchaseEvents.SingleAsync()).ProductId); // committed to the TAUGHT twin
+    }
+
+    [Fact]
     public async Task Smart_queues_when_no_purchase_date_was_detected()
     {
         // Stricter than the retired folder importer: the date drives every prediction, and "assume

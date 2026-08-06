@@ -271,6 +271,20 @@ public class CensusConfirmationServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task A_new_products_out_of_range_category_defaults_to_Other()
+    {
+        // ⚠️ Category comes from a circuit <select>; a tampered message could bind (Category)9999. IsDefined
+        // must default it to Other rather than persist an undefined enum — the same guard SetCategory (#11)
+        // and create_product carry.
+        var outcome = await _service.ConfirmAsync([R("Home-Canned Sauce", 3, category: (Category)9999)]);
+
+        await using var db = _db.CreateDbContext();
+        var created = await db.Products.SingleAsync();
+        Assert.Equal(Category.Other, created.Category);
+        Assert.Equal(1, outcome.NewProducts);
+    }
+
+    [Fact]
     public async Task An_unmatched_row_whose_name_already_exists_resolves_to_that_product()
     {
         // A census is the app's biggest bulk product creator, and a twin splits purchase history and blinds

@@ -167,6 +167,13 @@ else if (phase == Phase.Review)
                                        here so it's fixed before the confirm, not discovered after. *@
                                     <div class="error small" role="status">Enter how many.</div>
                                 }
+                                else if (row.Count < 0)
+                                {
+                                    @* A negative count is refused at confirm (Unusable) — min="0" is only a
+                                       browser hint, @bind still binds -3. Say so inline beside the empty-count
+                                       message rather than only in the Done panel after the click. *@
+                                    <div class="error small" role="status">Use zero or more.</div>
+                                }
                                 @if (Note(noteTarget) is { } note && note.HasNumber)
                                 {
                                     <div class="muted small">
@@ -667,6 +674,17 @@ else if (phase == Phase.Done)
         confirmError = null;
         try
         {
+            // ⚠️ Accepted safe-direction edge. The grid previews the plan over ALL rows (PlanRows); the
+            // confirm runs it over just the TICKED ones. The only cross-row rule in CensusPlan is
+            // deferred-zero settlement (a count-0 novel row joins a sibling that CREATES the same identity
+            // key), so a ticked count-0 novel row whose positive sibling is UNTICKED previews as "will
+            // create" but confirms as ZeroOnNewProduct. This is NOT fixed on purpose: it is safe-direction
+            // only (a ticked subset can never GAIN a positive sibling, so the dangerous
+            // preview-refuse-then-confirm-creates-a-phantom is impossible), it is REPORTED in the Done
+            // panel, and it needs a contrived sequence (two same-identity novel rows, a 0 typed AFTER
+            // arrival since the reader floors VisibleCount at 1, and the positive sibling unticked). A
+            // "fix" would couple CensusPlan's settlement to tick-state (Include isn't in CensusRowState) —
+            // the exact new-defect trap this arc hit six times.
             var confirmed = rows
                 .Where(r => r.Include)
                 .Select(r => new CensusConfirmationService.CensusRow(

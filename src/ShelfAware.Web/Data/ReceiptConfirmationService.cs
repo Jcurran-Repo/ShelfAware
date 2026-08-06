@@ -100,8 +100,11 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
             else
             {
                 // CreatedByReceiptId is the provenance "remove this receipt" needs to know which
-                // products the receipt introduced (vs merely bought again).
-                product = new Product { Name = name, Category = line.Category, CreatedByReceiptId = receipt.Id };
+                // products the receipt introduced (vs merely bought again). Category comes from a circuit
+                // <select> on the review grid, so IsDefined-guard it — a tampered message must not persist an
+                // undefined enum (same guard SetCategory and create_product carry; default to Other).
+                var category = Enum.IsDefined(line.Category) ? line.Category : Category.Other;
+                product = new Product { Name = name, Category = category, CreatedByReceiptId = receipt.Id };
                 db.Products.Add(product);
                 products.Add(product); // later lines in this receipt can resolve to it
                 createdByName[ProductMatcher.IdentityKey(name)] = product;

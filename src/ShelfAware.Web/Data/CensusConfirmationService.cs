@@ -159,8 +159,12 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
                     if (!createdByKey.TryGetValue(key, out var product))
                     {
                         // CreatedByReceiptId stays null: no receipt introduced this product, and claiming
-                        // one would offer it up to that receipt's removal.
-                        product = new Product { Name = name, Category = row.Category };
+                        // one would offer it up to that receipt's removal. The Category comes from a circuit
+                        // <select>, so IsDefined-guard it — Enum.TryParse succeeds on a numeric string, and a
+                        // tampered message must not persist an undefined enum (same guard SetCategory and
+                        // create_product carry; default to Other rather than drop the whole row).
+                        var category = Enum.IsDefined(row.Category) ? row.Category : Category.Other;
+                        product = new Product { Name = name, Category = category };
                         db.Products.Add(product);
                         createdByKey[key] = product;
                         created++;
