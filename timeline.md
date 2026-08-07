@@ -514,6 +514,38 @@ _Last updated: 7/30/2026_
   is the reader's suggestion) — reproduced on ordinary model output during that browser pass and
   fixed, so the row now names what the reader thought it was. Full detail: CLAUDE.md item 41.
   **1384 green, 0 warnings** — 8/4/2026
+- [x] **The census cascade RESOLVED — Group A + the `CensusPlan` redesign** — picked up the branch
+  handoff cold (item 41's `/code-review` left 15 findings: 8 stable-code bugs, 6 grid/service guard bugs
+  the handoff wanted *deleted by a redesign, not patched*, one Normalize nit). The redesign is the "one
+  accessible definition" directive made structural at the whole-FEATURE level: `CensusPlan` (Core, pure)
+  is the ONE function both the review grid and the write service ask — `Prefill` (dropdown pre-fill) +
+  `Plan` (one whole-census pass → Action/LandsOn/Reason/NeedsAHumanLook), so the message is a `switch` on
+  the reason (one per row by construction) and the six group-B findings are DELETED, not patched (525 lines
+  of guard soup out, 292 in). One function serves both callers because the WRITE decision depends only on
+  name/count/dropdown, never on the read-time facts (evidence/confidence/similarity/suggestion) which move
+  only the tick — so screen and write cannot disagree about which product a row lands on, the "one
+  prediction, one story" fault this arc broke through six rounds, now unexpressible. `CatalogIndex` kills
+  the O(N²) twin scan; deferred-zero settlement is whole-census (order-independent by construction).
+  38-case pure `CensusPlanTests` + the 46 service and ~65 page tests kept green untouched. Group A (six
+  stable-code bugs the cascade never touched, each mutation-checked): #1/#14 took item 41's "which product
+  does this name mean" to two more guards (the receipt confirm's raw `createdByName` key on the app's
+  biggest creation path; rename's `ToLower` beside an `ExactMatches` one line up); #5 routes a twin-named
+  suggestion/matcher hit to review instead of committing to a coin flip; #3/#6 two chat tools re-read
+  before speaking; #11 SetCategory IsDefined; #15 KEPT Normalize's split/join (the handoff wanted it
+  reverted — reverting reintroduces a known near-key defect) and pinned it. Census-page findings folded
+  in: #12 the grid disables during a confirm, #13 the empty JSDisconnected catch that left a permanent
+  spinner on a live circuit. **Live-verified on real model output**: a synthetic shelf read
+  matched/created/nudged/left-unidentified correctly, the flagship identity fix said "This will go to the
+  existing 'Home-Canned Tomato Sauce'" (not "create a separate item"), and confirm wrote counts with no
+  PurchaseEvent (attest REPLACED, not added). Independent security review CLEAN (tenancy holds);
+  independent code review found the core sound + four LOW: three fixed (A — a regression THIS branch
+  introduced, an alias-resolved twin bounced to review, now gated on `alias is null`; B — Category
+  IsDefined at the two create sites, parity with #11; D — a negative-count inline message), one documented
+  NOT fixed (C — the grid-previews-all vs confirm-runs-ticked deferred-zero edge is safe-direction +
+  reported; a "fix" couples the plan to tick-state). The fix pass got its own independent review, clean.
+  ⚠️ `/code-review` (local) is model-invocation-disabled — user-only; the reviews ran as one helper agent
+  each (NOT the $100 cloud ultra), so an independent human pass is still owed before merge. Full detail:
+  CLAUDE.md item 42. **1438 green, 0 warnings** — 8/5/2026
 
 ---
 

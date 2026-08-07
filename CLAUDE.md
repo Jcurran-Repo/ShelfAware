@@ -93,9 +93,9 @@ Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptT
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1384 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1438 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
-bUnit pages/components — see item 31).
+bUnit pages/components — see items 31 and 42).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -1833,6 +1833,102 @@ bUnit pages/components — see item 31).
      PREVIOUS dev server with the tab open — check timestamps before believing that class of error.)
    - **1384 tests green, 0 warnings** on a non-incremental Release build (1339 at the start of the
      pass; +45). Read off the final run before being written here, per item 21's rule.
+
+42. **The census cascade RESOLVED — Group A + the `CensusPlan` redesign (2026-08-05, same branch).**
+   Picked up `docs/census-branch-handoff.md` cold: item 41's `/code-review` had left 15 confirmed findings,
+   partitioned into 8 stable-code bugs (Group A), 6 grid/service guard bugs the handoff wanted **deleted by a
+   redesign, not patched** (Group B — patching this exact cluster had produced a fresh defect six passes
+   running), and a `Normalize` nit. All addressed; **1438 green / 0 warnings**, live-verified, both halves
+   independently reviewed clean, unpushed. This session added 7 commits (`b2142f6..a37a946`), 29 ahead of master.
+   - **The redesign is the "one accessible definition" directive made structural, at the whole-FEATURE level.**
+     The census grid answered FIVE questions — arrive ticked? tick-all eligible? what will confirm do? why
+     isn't it ticked? what does confirm actually write? — each in a different place from a different subset of
+     inputs, with the markup's if/else ORDER load-bearing. `CensusPlan` (Core, pure) is now the ONE function
+     both the grid and the write path ask: `Prefill` (the read-time dropdown pre-fill, the old grid `Match`) +
+     `Plan` (classifies every row in one whole-census pass into `Action` land/create/refuse, `LandsOn`, a
+     single `Reason`, and `NeedsAHumanLook`). The grid message is a `switch` on `Reason` — one per row by
+     construction, so no ordering bug is expressible. This DELETES the six Group-B findings rather than
+     patching them (525 lines of guard soup out, 292 in): `Match`/`NameClash`/`NearMatch`/`AmbiguousClash`,
+     their caches, the derived `FuzzyStillSelected`/`SuggestionUnresolved`, the whole if/else chain — gone.
+     Precedent: `ReportSpecRules` (§16), one rules class the builder UI and the engine both consult.
+   - ⚠️ **One function, two callers, because the WRITE decision depends only on name/count/dropdown — never on
+     how the reader saw it.** The grid supplies the real read-time facts (evidence, confidence, a still-selected
+     similarity guess, an ambiguous suggestion) and reads all four plan fields; the service supplies NEUTRAL
+     facts and reads only `Action`/`LandsOn`/`Reason`. The neutral facts can only ever move `NeedsAHumanLook`
+     (the tick), which a write path never renders — independently verified: the service reads `Reason` only in
+     the `Refuse` branch, and every refuse reason is a function of name/count/dropdown/catalog alone. So the
+     screen and the write CANNOT disagree about which product a row lands on — the "one prediction, one story"
+     fault this arc broke through six rounds is now unexpressible.
+   - `CatalogIndex` (identityKey→products, built once) replaces the O(N²) twin scan and the three per-render
+     `ExactMatches` memos. ⚠️ **Deferred-zero settlement is whole-census** (a count-0 novel row joins a sibling
+     that CREATES the same identity key, else `ZeroOnNewProduct`) — order-independent by construction, the exact
+     row-order dependence items 40/41 kept re-introducing, now structural. The service keeps its public contract
+     (46 tests untouched) and the grid its ~65 page tests: behaviour preserved, verified by keeping every one green.
+   - **38-case pure `CensusPlanTests`** (Core, no EF/bUnit): evidence × suggestion × name × dropdown × count,
+     plus the whole-census interactions. Every branch mutation-checked. Two deliberate deviations from the
+     handoff's sketch: `CensusReason` isn't its exact 11 (the four match-provenance values collapse — only
+     *similarity* is behaviourally distinct — and `ResemblesExisting`/`WillLandOnExisting`/`NoName` are added);
+     and `ResemblesExisting` is a soft warning, NOT a tick-blocker — a page test
+     (`Tick_all_ticks_a_similarity_row_the_human_already_resolved`) rejected the "improvement" of blocking it,
+     so it was reverted, matching the app's standing NearMatch behaviour.
+   - **Group A — six stable-code bugs the census cascade never touched, each tested + mutation-checked:**
+     ⚠️ #1/#14 are item 41's "which product does this name mean, EVERYWHERE" reaching two more guards —
+     `ReceiptConfirmationService`'s within-receipt `createdByName` keyed on the RAW name (two lines of one new
+     item transcribed with/without a hyphen minted a twin, on the app's highest-volume creation path), and
+     `ProductRenameService` re-pointing recipe links by `ToLower()` while the collision check one line above
+     already used `ExactMatches` (a partial conversion INSIDE one method). Both on `ProductMatcher.IdentityKey`/
+     `ExactMatches` now. #5: a model suggestion or matcher hit that names TWINS is a coin flip a machine confirm
+     must not make — `ReceiptAutoConfirmer` + the Upload pre-fill route it to review (the break-Auto contract
+     `ReceiptDuplicateDetector` holds for exact dupes). #3/#6: two chat tools re-read before speaking —
+     `query_status` spoke a stale "Stocked, due <future>" about a product reported out earlier in the SAME turn,
+     and `set_quantity`'s zero got the `SignalTodayWouldBeInert` caveat (the third talking OutNow-writer to
+     reach it). #11: `Products.SetCategory` guards a browser-supplied `Category` with `Enum.IsDefined`.
+     #15: **`Normalize` KEPT, not reverted** — the handoff recommended reverting its split/join body to a single
+     `Replace`; that reintroduces a known near-key defect (`IdentityKey("Yogurt - Strawberry")` must equal
+     `"Yogurt Strawberry"` and be idempotent), so it was kept and pinned instead.
+   - Census-page findings folded into the grid rewrite: **#12** the whole grid (row inputs + the ✕) disables
+     during a confirm (the confirm snapshots the ticked rows, so a mid-save edit would look like it un-counted
+     a row it didn't); **#13** the empty `catch (JSDisconnectedException)` left a permanent spinner if it fired
+     while the page was still ALIVE (a transient circuit drop mid-read) — split like the
+     `OperationCanceledException` clause beside it (swallow on real teardown = `pageCts` cancelled, surface an
+     error otherwise). Both mutation-checked.
+   - **The gate. Live-verified on real model output** (throwaway household, alt port 5180): a synthetic 4-item
+     shelf read produced a clean suggestion match (ticked, "Was N" note, read-only category), a novel create
+     (editable category), a matched fast-mover (the nudge, keyed on the resolved product), and an unidentified
+     parcel (unticked, "couldn't tell", "name it"); the flagship identity fix — typing `home canned tomato sauce`
+     said **"This will go to the existing 'Home-Canned Tomato Sauce'"**, NOT "create a separate item", flipped
+     the category read-only and showed "Was 9" keyed on the resolved target; confirm wrote counts with **no
+     PurchaseEvent** (★) and attest REPLACED the old count (3→1), purchase history untouched. No console/CSP/
+     server errors. ⚠️ Blocked from an interactive walkthrough by the auth wall until Jordan signed in (creating
+     an account / entering a password is a prohibited action).
+   - ⚠️ **`/code-review` (local) is model-invocation-disabled — user-trigger only.** The independent security
+     and code reviews ran as one `general-purpose` helper agent each (NOT the billed cloud `ultra`). Security:
+     CLEAN — no new DbContext outside `IHouseholdDbFactory`, no new `IgnoreQueryFilters`, no write path carrying
+     a foreign household id, no new endpoint/settings-key/per-household disk write; a tampered circuit
+     `ProductId` fails the household-filtered `ById` → `ProductGone`, never reaches across. Code: core sound
+     (the read-facts/write-decision separation above was traced and confirmed), four LOW findings.
+   - **The four LOW findings — three fixed, one documented (each fix mutation-checked, and the fix pass then got
+     its OWN independent review, clean — item 39):**
+     - **A** (a regression THIS branch introduced): #5's twin fix over-generalised "however it resolved" — an
+       ALIAS resolves by `ProductId`, so it names one product outright even when that product's name is a twin,
+       and bouncing that taught pairing to review was a false alarm. Gated on `alias is null` now (only a
+       name-based resolution can be a coin flip; the review confirmed the gate rests on `ProductAlias.ProductId`
+       being a non-nullable required FK, so an alias never falls through to the matcher).
+     - **B** (parity with #11): the census and receipt create-product sites bound `Category` from a circuit
+       `<select>` without `Enum.IsDefined`; a tampered message could persist `(Category)9999`. Both default to
+       `Other` now. Self-scoped (own household, no tenancy crossing — graded LOW/not-a-vuln), same class as #11.
+     - **D** (polish): a negative count showed no inline grid message though an empty count did — added.
+     - ⚠️ **C — documented, NOT fixed.** The grid previews `Plan` over ALL rows while the confirm runs it over
+       the TICKED ones, so a count-0 novel row with an UNTICKED positive sibling previews as "will create" but
+       confirms as `ZeroOnNewProduct`. Safe-direction only (a ticked subset can never GAIN a positive sibling,
+       so the dangerous preview-refuse→confirm-creates-a-phantom is impossible), REPORTED in the Done panel, and
+       needs a contrived sequence. A "fix" would couple `CensusPlan`'s settlement to tick-state (`Include` isn't
+       in `CensusRowState`) — the exact new-defect trap this arc hit six times. Comment at `ConfirmAll`.
+   - **1438 tests green, 0 warnings** on a non-incremental Release build (1384 at the start; +54: 38 pure
+     `CensusPlan` + 10 Group A + 2 census-page + 4 follow-ups). Read off the final run (item 21). ⚠️ **`/pre-push`
+     was run with INLINE/agent reviews, not the independent cloud gate** — the two agent reviews are the closest
+     available substitute and are author-adjacent by construction; a fresh independent pass is still the ideal
+     before merge. Pushing is Jordan's call; unpushed.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
