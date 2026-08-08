@@ -10,7 +10,10 @@ there's no coffee.
 &nbsp; [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE)
 &nbsp;·&nbsp; .NET 10 · Blazor · EF Core/SQLite · Anthropic Claude · ElevenLabs voice
 
-> **Live demo:** _coming soon_ — `<!-- LIVE_DEMO_URL -->` (Azure App Service; one-line swap once deployed)
+> **Live demo:** _coming soon_ (Azure App Service). Until then, [run it locally](#run-it-locally) — it
+> boots and works without any API key.
+
+<!-- LIVE_DEMO_URL — replace the blockquote above with the deployed link once Azure is live. -->
 
 ![30-second tour: a receipt confirms itself, the dashboard says what's low, "we're out of dog food" updates it, and the grocery list is ready by aisle](docs/demo.gif)
 
@@ -315,6 +318,7 @@ ShelfAware.slnx
   tests/ShelfAware.Tests/    xUnit — prediction engine, backtest, estimator, tag dedup  (pure)
   tests/ShelfAware.Llm.Tests/xUnit — tool loop, extractor retry, speech services (faked clients)
   tests/ShelfAware.Web.Tests/xUnit — confirmation + import persistence (real EF on in-memory SQLite)
+  tests/ShelfAware.Web.UI.Tests/  bUnit — real pages over that same EF/SQLite harness; fakes only at the AI + browser seams
   tests/ShelfAware.Evals/    Console harness scoring extraction vs hand-labeled fixtures
   DESIGN.md                  The spec (rules, data model, phases)
   CLAUDE.md                  Build state, decisions, environment notes
