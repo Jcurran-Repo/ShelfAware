@@ -62,6 +62,33 @@ public class ProductDetailEditFlowsTests : PageTestContext
     }
 
     [Fact]
+    public void Recipes_that_use_this_lists_a_recipe_grounded_by_a_PUNCTUATION_variant()
+    {
+        // ⚠️ Finding P. RecipeIngredient.MatchedProduct is a name captured at save time; a punctuation
+        // variant of this product's name is the same product to every write-side guard, so "recipes that use
+        // this" matches by IDENTITY, not raw equality — else a recipe grounded to "Home Canned Sauce" would
+        // not show on the "Home-Canned Sauce" page (and a raw string.Equals did exactly that).
+        var id = Seed("Home-Canned Sauce");
+        using (var db = Db.CreateDbContext())
+        {
+            db.Recipes.Add(new Recipe
+            {
+                Name = "Pasta Night",
+                Ingredients = [new RecipeIngredient { Name = "Sauce", IsMain = true, MatchedProduct = "Home Canned Sauce" }],
+            });
+            db.SaveChanges();
+        }
+
+        var cut = RenderDetail(id);
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("Recipes that use this", cut.Markup);
+            Assert.Contains("Pasta Night", cut.Markup);
+        });
+    }
+
+    [Fact]
     public async Task Enter_saves_a_rename_and_Escape_cancels_one()
     {
         var id = Seed("Old Name");

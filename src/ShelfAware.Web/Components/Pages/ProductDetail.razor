@@ -831,9 +831,14 @@ else
 
         // Saved recipes whose ingredient→product map points at this item (grounded match captured at
         // save time). Just links out to the recipe on /recipes — no recipe content duplicated here.
-        var productName = product.Name;
+        // ⚠️ Match by the matcher's rule-1 IDENTITY, not raw equality: MatchedProduct stores a NAME, and a
+        // punctuation variant of this product's name is the same product to every write-side guard — so a
+        // raw compare left a recipe grounded to "Home Canned Sauce" off a "Home-Canned Sauce" page. Same one
+        // identity definition as IngredientMatcher, the census, rename and merge. Filtered in memory, since
+        // IdentityKey isn't SQL-translatable (the Recipes are already materialised here anyway).
+        var productKey = ProductMatcher.IdentityKey(product.Name);
         usedInRecipes = (await db.Recipes.Include(r => r.Ingredients).ToListAsync())
-            .Where(r => r.Ingredients.Any(i => string.Equals(i.MatchedProduct, productName, StringComparison.OrdinalIgnoreCase)))
+            .Where(r => r.Ingredients.Any(i => i.MatchedProduct is { } mp && ProductMatcher.IdentityKey(mp) == productKey))
             .OrderBy(r => r.Name)
             .Select(r => new RecipeLink(r.Id, r.Name))
             .ToList();
