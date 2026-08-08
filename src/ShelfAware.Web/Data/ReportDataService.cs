@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Prediction;
 using ShelfAware.Core.Reporting;
@@ -217,7 +218,7 @@ public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
         bool honorExpirations, int recentMealWindowDays, CancellationToken ct = default)
     {
         var products = await LoadHistoriesAsync(ct);
-        var mealUses = RecentMealUsesByProductName(source, recipeMains, today, recentMealWindowDays);
+        var mealUses = RecentMealUsesByProductKey(source, recipeMains, today, recentMealWindowDays);
 
         // Money comes from the report facts, priced exactly the way the Spend metric prices it
         // (ReportEngine.PurchaseValue): unit price × quantity, unpriced purchases counted not guessed.
@@ -261,7 +262,7 @@ public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
                     money.Unpriced,
                     prediction.RebuyIntervalDays,
                     prediction.DueDate,
-                    mealUses.GetValueOrDefault(p.Name));
+                    mealUses.GetValueOrDefault(ProductMatcher.IdentityKey(p.Name)));
             }),
             today);
     }
@@ -288,26 +289,34 @@ public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
             .ToListAsync(ct);
     }
 
-    /// <summary>Meals in the recent window, counted per main-ingredient product NAME — the same key
-    /// <c>RecipeIngredient.MatchedProduct</c> stores, so the join is a name lookup, not an id one. A
-    /// recipe cooked twice counts twice for each of its mains, once per meal.</summary>
-    private static Dictionary<string, int> RecentMealUsesByProductName(
+    /// <summary>Meals in the recent window, counted per main-ingredient product — keyed by
+    /// <see cref="ProductMatcher.IdentityKey"/>, the one product-identity definition the census, the add
+    /// form, rename, merge and <c>IngredientMatcher</c>'s grounded leg all ask. <c>MatchedProduct</c>
+    /// stores a NAME captured at save time, so a punctuation variant of the current product name
+    /// ("Home Canned Sauce" for "Home-Canned Sauce") is the same product to every other surface — a raw
+    /// name compare here would read 0 uses while "recipes that use this" listed the recipe, two surfaces
+    /// of one app disagreeing. A recipe cooked twice counts twice for each of its mains, once per meal;
+    /// mains that fold to the same product count once per meal.</summary>
+    private static Dictionary<string, int> RecentMealUsesByProductKey(
         ReportSourceData source, IReadOnlyList<RecipeMains> recipeMains, DateOnly today, int windowDays)
     {
         var since = today.AddDays(-windowDays);
         var mainsByRecipe = recipeMains.ToDictionary(r => r.RecipeId, r => r.Mains);
-        var uses = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        // IdentityKey already lowercases and folds punctuation, so the keys are directly comparable —
+        // no OrdinalIgnoreCase comparer needed.
+        var uses = new Dictionary<string, int>();
 
         foreach (var meal in source.Meals.Where(m => m.Date >= since))
         {
             if (!mainsByRecipe.TryGetValue(meal.RecipeId, out var mains)) continue;
-            foreach (var name in mains
+            foreach (var key in mains
                 .Select(m => m.MatchedProduct)
                 .OfType<string>()
                 .Where(n => n.Length > 0)
-                .Distinct(StringComparer.OrdinalIgnoreCase))
+                .Select(ProductMatcher.IdentityKey)
+                .Distinct())
             {
-                uses[name] = uses.GetValueOrDefault(name) + 1;
+                uses[key] = uses.GetValueOrDefault(key) + 1;
             }
         }
 

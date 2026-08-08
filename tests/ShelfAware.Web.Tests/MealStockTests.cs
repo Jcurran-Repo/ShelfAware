@@ -417,6 +417,35 @@ public class MealStockTests : IDisposable
     }
 
     [Fact]
+    public async Task A_grounded_link_to_an_uncounted_product_asks_even_when_its_name_differs_only_in_PUNCTUATION()
+    {
+        // The uncounted-asks case above, but the grounded MatchedProduct is a PUNCTUATION variant of the
+        // uncounted product's name ("Home Canned…" vs "Home-Canned…") — the identity IngredientMatcher
+        // folds. A raw-name check called the live shelf pack GONE and silently auto-took the token-matched
+        // counted stand-in; by identity it is uncounted-but-present, so the app ASKS. The casing sibling
+        // (A_matched_product_whose_casing_drifted…) already passed under OrdinalIgnoreCase — only
+        // punctuation exercises the fold, the same one Covering and ReportDataService now use.
+        await Product("Home-Canned Tomato Sauce", counted: false, onHand: null, unit: null, 1m, 1m);
+        var jarredId = await Product("Jarred Tomato Sauce", counted: true, onHand: 6m, unit: null, 1m, 1m);
+        var recipeId = await Recipe("Home Canned Tomato Sauce"); // grounded to the variant spelling
+        await using (var db = _db.CreateDbContext())
+        {
+            var ing = await db.RecipeIngredients.SingleAsync(i => i.RecipeId == recipeId && i.IsMain);
+            ing.Name = "tomato sauce";
+            await db.SaveChangesAsync();
+        }
+
+        var (taken, after) = await Cook(recipeId, jarredId);
+
+        Assert.Empty(taken);
+        Assert.Equal(6m, after); // the counted stand-in was NOT silently taken
+        await using var read = _db.CreateDbContext();
+        var recipe = await read.Recipes.Include(r => r.Ingredients).SingleAsync(r => r.Id == recipeId);
+        var pick = Assert.Single((await MealStock.ResolveAsync(read, recipe)).Ambiguous);
+        Assert.Equal("Jarred Tomato Sauce", Assert.Single(pick.Candidates).ProductName);
+    }
+
+    [Fact]
     public async Task A_stale_grounded_link_still_falls_through_automatically()
     {
         // The census story (§13.8) must survive the rule above: a link naming a product that no longer

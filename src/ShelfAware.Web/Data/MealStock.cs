@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Recipes;
 
@@ -127,21 +128,25 @@ public static class MealStock
             .ToListAsync(ct);
         if (counted.Count == 0) return ([], []);
 
-        var countedNames = counted.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // ⚠️ Identity KEYS, not raw names: a grounded MatchedProduct can be a punctuation variant of the
+        // product's name ("Home Canned Sauce" for "Home-Canned Sauce"), the same identity
+        // IngredientMatcher.Covering now folds — so a raw-name set would call a live grounded product
+        // GONE and silently auto-take a token-matched stand-in. One identity definition, matching Covering.
+        var countedKeys = counted.Select(c => ProductMatcher.IdentityKey(c.Name)).ToHashSet();
 
-        // Every product NAME in the household, counted or not — needed only to tell a grounded link
+        // Every product identity in the household, counted or not — needed only to tell a grounded link
         // whose product exists-but-uncounted (a live pairing the household simply doesn't count —
         // decrementing a token-matched stand-in would be a guess) from one whose product is GONE
         // (renamed/deleted — a stale link, where the token fall-through is the whole §13.8 census
         // story and must stay automatic). Paid only when some grounded link actually points outside
         // the counted set: the common cases (no grounded link, or grounded to a counted product)
-        // short-circuit on countedNames and never consult it.
+        // short-circuit on countedKeys and never consult it.
         var groundedOutside = mains.Any(m =>
-            m.MatchedProduct is { Length: > 0 } g && !countedNames.Contains(g));
-        var allNames = groundedOutside
+            m.MatchedProduct is { Length: > 0 } g && !countedKeys.Contains(ProductMatcher.IdentityKey(g)));
+        var allKeys = groundedOutside
             ? (await db.Products.Select(p => p.Name).ToListAsync(ct))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase)
-            : countedNames;
+                .Select(ProductMatcher.IdentityKey).ToHashSet()
+            : countedKeys;
 
         // IngredientMatcher.Covering already prefers the grounded MatchedProduct over an inference, so
         // there is no precedence to re-implement here — a pinned ingredient simply comes back as one
@@ -167,8 +172,12 @@ public static class MealStock
         {
             var covering = IngredientMatcher.Covering(main.Name, main.MatchedProduct, candidates);
             if (covering.Count == 0) continue;
-            var groundedUncounted = main.MatchedProduct is { Length: > 0 } grounded
-                && !countedNames.Contains(grounded) && allNames.Contains(grounded);
+            var groundedUncounted = false;
+            if (main.MatchedProduct is { Length: > 0 } grounded)
+            {
+                var gk = ProductMatcher.IdentityKey(grounded);
+                groundedUncounted = !countedKeys.Contains(gk) && allKeys.Contains(gk);
+            }
             if (covering.Count == 1 && !groundedUncounted) chosen.Add(idOf[covering[0]]);
             else unsettled.Add((main.Name, covering));
         }
