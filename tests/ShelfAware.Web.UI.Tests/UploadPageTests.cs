@@ -271,6 +271,31 @@ public class UploadPageTests : PageTestContext
     }
 
     [Fact]
+    public void Renaming_a_twin_line_away_from_the_twin_name_drops_the_warning()
+    {
+        // ⚠️ Re-gate finding: the twin warning is a READ-TIME fact, so once the human RENAMES the line to a
+        // distinct name it is stale — dropped via ShowTwinWarning, the same rename-suppression the census grid
+        // gives its ambiguous-suggestion warning (finding C). Without it the warning kept claiming "more than
+        // one of your products answers to this" about a name that no longer matches any.
+        using (var db = Db.CreateDbContext())
+        {
+            db.Products.AddRange(
+                new Product { Name = "Ground Beef", Category = Category.Meat, TrackQuantity = true, QuantityOnHand = 2m },
+                new Product { Name = "Ground Beef", Category = Category.Meat, TrackQuantity = true, QuantityOnHand = 5m });
+            db.SaveChanges();
+        }
+        SeedPending("Walmart", Today.AddDays(-1),
+            new ReceiptLine { RawText = "GV BEEF", NormalizedName = "Ground Beef", Quantity = 1m, SuggestedProduct = "Ground Beef" });
+
+        var cut = OpenReview();
+        Assert.Contains("More than one of your products answers", Collapsed(cut.FindAll("tbody tr").Single())); // shown at first
+
+        cut.FindAll("tbody tr").Single().QuerySelector("input[aria-label^='Item name']")!.Change("Ground Chuck");
+
+        Assert.DoesNotContain("More than one of your products answers", Collapsed(cut.FindAll("tbody tr").Single()));
+    }
+
+    [Fact]
     public void An_undated_receipt_demands_a_date_and_a_dated_one_just_offers_correction()
     {
         SeedPending("Walmart", null, DbLine("A", "Thing"));

@@ -406,7 +406,7 @@ else if (phase == Phase.Done)
     /// which only ever DROPS a low-value warning, so erring eager is safe.</summary>
     private static string? EffectiveAmbiguousSuggestion(ReviewRow row) =>
         row.AmbiguousSuggestion is { } s
-            && string.Equals(row.Name.Trim(), row.ReadName, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(row.Name.Trim(), row.ReadName.Trim(), StringComparison.OrdinalIgnoreCase)
             ? s : null;
 
     private IReadOnlyList<CensusPlan.CensusRowPlan> PlanRows() =>

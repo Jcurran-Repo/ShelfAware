@@ -266,12 +266,12 @@ else if (phase == Phase.Review && receipt is not null)
                             {
                                 <span role="img" aria-label="Matched a previous receipt line from this merchant" title="Matched a previous receipt line from this merchant">🔗</span>
                             }
-                            @if (line.AmbiguousTwin && line.ProductId == 0)
+                            @if (ShowTwinWarning(line))
                             {
                                 @* ⚠️ Finding F: the name matches more than one product, so it was left unmatched
                                    rather than pre-selecting an arbitrary twin (or minting a third at confirm).
                                    Say so, and the options above carry their counts so the household can tell the
-                                   twins apart. Clears once they pick. *@
+                                   twins apart. Clears once they pick — OR rename the line (ShowTwinWarning). *@
                                 <div class="error small" role="status">
                                     More than one of your products answers to this name — pick which one above
                                     (they're shown with their counts), or leave it to add a new item.
@@ -397,11 +397,23 @@ else if (phase == Phase.Done)
         public bool Checking { get; set; }             // an async synonym check is running
         public int ProductId { get; set; }            // 0 = create new
         public bool AliasMatched { get; set; }
-        /// <summary>The line's name matches TWO OR MORE products (a twin), so it was left unmatched: the
-        /// confirm can't tell twins apart, and left at create-new would mint a THIRD twin. Drives the
-        /// grid's "pick which one" warning; cleared once the human picks a product (finding F).</summary>
+        /// <summary>The line's name matches TWO OR MORE products (a twin) AT READ TIME, so it was left
+        /// unmatched: the confirm can't tell twins apart, and left at create-new would mint a THIRD twin.
+        /// Drives the grid's "pick which one" warning (finding F); see <see cref="ReadName"/>.</summary>
         public bool AmbiguousTwin { get; set; }
+        /// <summary>The line's name as READ, before any human edit. <see cref="AmbiguousTwin"/> is a read-time
+        /// fact, so once the human RENAMES the line they've taken over its identity and the stale twin warning
+        /// is dropped — the same rename-suppression the census grid applies to its ambiguous-suggestion
+        /// warning (finding C's EffectiveAmbiguousSuggestion). Cleared by a pick too (ProductId &gt; 0).</summary>
+        public string ReadName { get; set; } = "";
     }
+
+    /// <summary>Whether to show the twin "pick which one" warning: a read-time ambiguity, on an unresolved
+    /// line, whose name the human hasn't edited away from what was read (the census grid's finding-C
+    /// rename-suppression, applied to its sibling here). Live per render, so a rename drops it.</summary>
+    private static bool ShowTwinWarning(ReviewLine line) =>
+        line.AmbiguousTwin && line.ProductId == 0
+            && string.Equals(line.NormalizedName.Trim(), line.ReadName.Trim(), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Recompute which product names are twins (shared by 2+ products, by the matcher's identity
     /// rule) — called whenever <see cref="products"/> is loaded, so <see cref="OptionLabel"/> is O(1).</summary>
@@ -527,6 +539,7 @@ else if (phase == Phase.Done)
                 ProductId = alias?.ProductId ?? match?.Id ?? 0,
                 AliasMatched = alias is not null,
                 AmbiguousTwin = ambiguousTwin,
+                ReadName = l.NormalizedName,
             };
         }).ToList();
 

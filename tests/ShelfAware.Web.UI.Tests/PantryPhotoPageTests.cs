@@ -770,6 +770,21 @@ public class PantryPhotoPageTests : PageTestContext
     }
 
     [Fact]
+    public async Task An_ambiguous_suggestion_withholds_the_tick_even_when_the_read_name_has_stray_whitespace()
+    {
+        // ⚠️ Re-gate finding: EffectiveAmbiguousSuggestion compared Name.Trim() to an UN-trimmed ReadName, so a
+        // read name with surrounding whitespace made them unequal AT ARRIVAL (no human edit) — dropping the
+        // suggestion and auto-ticking a row finding A withholds. Both sides are trimmed now.
+        await SeedProduct("Home Canned Sauce");
+        await SeedProduct("Home-Canned Sauce"); // twins the suggestion answers to
+        var cut = Review(Item("  Canned Sauce  ", confidence: 0.9m, suggested: "Home Canned Sauce"));
+
+        var row = cut.FindAll("tbody tr").Single();
+        Assert.False(IsTicked(row));                    // the ambiguous suggestion still withholds the tick
+        Assert.Contains("read this as", Collapsed(row)); // and still explains why
+    }
+
+    [Fact]
     public void A_zero_on_a_new_item_says_it_wont_be_recorded_before_the_confirm()
     {
         // ⚠️ Finding D. A confident novel item arrives ticked at 1; typing 0 makes it ZeroOnNewProduct
