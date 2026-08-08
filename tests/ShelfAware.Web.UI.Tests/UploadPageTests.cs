@@ -243,6 +243,34 @@ public class UploadPageTests : PageTestContext
     }
 
     [Fact]
+    public void A_twin_named_line_warns_and_annotates_the_twins_with_their_counts()
+    {
+        // ⚠️ Finding F. A receipt line whose name matches TWO products can't be auto-attached — the confirm
+        // can't tell the twins apart, and left at create-new it would mint a THIRD zero-history twin. So it
+        // is left unmatched, the grid WARNS, and the dropdown annotates the twins with their on-hand counts
+        // so the household can tell them apart and pick — the same treatment the census grid gives twins.
+        using (var db = Db.CreateDbContext())
+        {
+            db.Products.AddRange(
+                new Product { Name = "Ground Beef", Category = Category.Meat, TrackQuantity = true, QuantityOnHand = 2m },
+                new Product { Name = "Ground Beef", Category = Category.Meat, TrackQuantity = true, QuantityOnHand = 5m });
+            db.SaveChanges();
+        }
+        SeedPending("Walmart", Today.AddDays(-1),
+            new ReceiptLine { RawText = "GV BEEF", NormalizedName = "Ground Beef", Quantity = 1m, SuggestedProduct = "Ground Beef" });
+
+        var cut = OpenReview();
+
+        var row = cut.FindAll("tbody tr").Single();
+        Assert.Equal("0", row.QuerySelector("select[aria-label^='Product match']")!.GetAttribute("value")); // not auto-attached
+        Assert.Contains("More than one of your products answers", Collapsed(row));                           // the warning
+        // The twin options carry their counts, so they aren't two identical "Ground Beef" entries.
+        var options = row.QuerySelectorAll("select[aria-label^='Product match'] option").Select(o => o.TextContent).ToList();
+        Assert.Contains(options, t => t.Contains("Ground Beef") && t.Contains("2 on hand"));
+        Assert.Contains(options, t => t.Contains("Ground Beef") && t.Contains("5 on hand"));
+    }
+
+    [Fact]
     public void An_undated_receipt_demands_a_date_and_a_dated_one_just_offers_correction()
     {
         SeedPending("Walmart", null, DbLine("A", "Thing"));
