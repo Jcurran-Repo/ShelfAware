@@ -366,6 +366,11 @@ else if (phase == Phase.Done)
         /// guards judge and cannot recover. Null when the suggestion was usable, absent, or the row's own name.</summary>
         public string? AmbiguousSuggestion { get; init; }
 
+        /// <summary>The item name as READ, before any human edit. A stale <see cref="AmbiguousSuggestion"/>
+        /// is about what the reader saw, so once the human RENAMES the row (its identity no longer matches
+        /// what was read) they've taken over — see <see cref="EffectiveAmbiguousSuggestion"/>.</summary>
+        public string ReadName { get; init; } = "";
+
         /// <summary>The human deliberately turned a matched row into a new product — the one derivation the
         /// grid still needs, to build the plan's <c>ChoseCreateNew</c> and the confirm's <c>CreateNew</c>.</summary>
         public bool ChoseCreateNew => ProductId == 0 && PrefilledProductId > 0;
@@ -388,9 +393,21 @@ else if (phase == Phase.Done)
         row.Name, row.Count, row.ProductId,
         ChoseCreateNew: row.ChoseCreateNew,
         SimilaritySelected: row.FuzzyMatch && row.ProductId == row.PrefilledProductId && row.ProductId > 0,
-        AmbiguousSuggestion: row.AmbiguousSuggestion,
+        AmbiguousSuggestion: EffectiveAmbiguousSuggestion(row),
         Evidence: row.Evidence,
         Confidence: row.Confidence);
+
+    /// <summary>The reader's ambiguous suggestion applies to the row AS READ. Once the human RENAMES it
+    /// (its identity no longer matches what the reader saw), they've taken over the row's identity and the
+    /// suggestion is moot — so it stops driving the tick and the message, exactly as picking a product in
+    /// the dropdown resolves it. Threaded through BOTH the plan (StateOf) and the message (MatchMessage) so
+    /// the two can't disagree: a renamed row must not sit unticked explained by a name it no longer bears.
+    /// Compared case-insensitively (a case fix is not a rename); a punctuation edit counts as a rename,
+    /// which only ever DROPS a low-value warning, so erring eager is safe.</summary>
+    private static string? EffectiveAmbiguousSuggestion(ReviewRow row) =>
+        row.AmbiguousSuggestion is { } s
+            && string.Equals(row.Name.Trim(), row.ReadName, StringComparison.OrdinalIgnoreCase)
+            ? s : null;
 
     private IReadOnlyList<CensusPlan.CensusRowPlan> PlanRows() =>
         CensusPlan.Plan([.. rows.Select(StateOf)], catalog);
@@ -412,17 +429,28 @@ else if (phase == Phase.Done)
                     ? ($"Looks like your existing “{near.Name}” — pick it above if it's the same thing, or leave this to create a separate item.", false)
                     : null;
             case CensusPlan.CensusReason.AmbiguousSuggestion:
-                return ($"Shelf Aware read this as “{row.AmbiguousSuggestion}”, but more than one of your products answers to that name — pick which one you counted above, or leave it to add this as a new item.", true);
+                return ($"Shelf Aware read this as “{EffectiveAmbiguousSuggestion(row)}”, but more than one of your products answers to that name — pick which one you counted above, or leave it to add this as a new item.", true);
             case CensusPlan.CensusReason.AmbiguousName:
                 return ($"More than one of your products answers to “{name}” — pick which one you counted above. Twins that keep a count show it beside their name.", true);
             case CensusPlan.CensusReason.WillLandOnExisting:
-                return catalog.ById(plan.LandsOn!.Value) is { } existing
-                    ? ($"This will go to the existing “{existing.Name}”.", true)
-                    : null;
+                if (catalog.ById(plan.LandsOn!.Value) is not { } existing) return null;
+                // ⚠️ When the reader ALSO handed us an ambiguous suggestion (a twin name), the name-match and
+                // the read conflict — surface both so the household resolves it, rather than let the row land
+                // on the name-matched product unremarked (finding A: the plan withholds the tick for exactly
+                // this case). Otherwise the plain "goes to X" is the whole story.
+                return EffectiveAmbiguousSuggestion(row) is { } read
+                    ? ($"The name matches your “{existing.Name}”, but the photo was read as “{read}”, which more than one of your products answers to — pick the one you counted above, or leave it to use “{existing.Name}”.", true)
+                    : ($"This will go to the existing “{existing.Name}”.", true);
             case CensusPlan.CensusReason.NameTaken:
                 return catalog.ExactMatches(name).FirstOrDefault() is { } taken
                     ? ($"“{taken.Name}” already exists, so this row will be skipped — pick it above to set its count, or rename this row.", true)
                     : null;
+            case CensusPlan.CensusReason.ZeroOnNewProduct:
+                // ⚠️ Finding D: a ticked count-0 row on a NEW item is refused at confirm, but the count cell
+                // only messages null/negative and Note() is empty for a create row — so without this the row
+                // sat ticked with nothing on screen saying it won't be recorded. Said before the confirm,
+                // like the empty-count and negative-count cases beside it.
+                return ("Counted as none, and this isn't a product yet — there's nothing to record. Give it a real number if it's on the shelf, or untick it.", true);
             default:
                 return null;
         }
@@ -555,6 +583,7 @@ else if (phase == Phase.Done)
                     LabelText = item.LabelText,
                     Evidence = item.Evidence,
                     Name = item.NormalizedName,
+                    ReadName = item.NormalizedName,
                     Brand = item.Brand,
                     Size = item.Size,
                     Variety = item.Variety,

@@ -317,6 +317,25 @@ public class CensusPlanTests
         Assert.True(plan.NeedsAHumanLook);
     }
 
+    [Fact]
+    public void A_would_land_on_existing_row_carrying_an_ambiguous_suggestion_withholds_the_tick()
+    {
+        // ⚠️ Finding A. The row's own name identity-matches ONE product (P1 "Tomato Sauce"), so it lands
+        // there — but the reader SUGGESTED a twin ("Home Canned Tomato Sauce", which P2/P3 share). The two
+        // read-time facts conflict, so the tick is withheld: auto-ticking would silently overwrite P1's
+        // count while the twin the reader saw gets nothing. The OLD code returned look:false here and the
+        // row auto-ticked at 0.95, because WillLandOnExisting returned before CreateReason ever saw the
+        // suggestion. The complement (no ambiguous suggestion → auto-ticks) is
+        // A_typed_name_that_IS_an_existing_product_lands_on_it above.
+        var catalog = Cat(P(1, "Tomato Sauce"), P(2, "Home-Canned Tomato Sauce"), P(3, "Home Canned Tomato Sauce"));
+        var plan = Plan1(Row("Tomato Sauce", 3m, ambiguousSuggestion: "Home Canned Tomato Sauce"), catalog);
+        Assert.Equal(Action.LandOnProduct, plan.Action); // still resolves to P1 by name...
+        Assert.Equal(1, plan.LandsOn);
+        Assert.Equal(Reason.WillLandOnExisting, plan.Reason);
+        Assert.True(plan.NeedsAHumanLook);               // ...but the conflicting read withholds the tick
+        Assert.False(ArrivalTicks(plan, 0.95m));
+    }
+
     // ---- Plan: whole-census (deferred zeros, sibling creates, twins) -------------------------------
 
     [Fact]

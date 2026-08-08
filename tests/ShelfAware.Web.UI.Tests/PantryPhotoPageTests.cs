@@ -733,6 +733,60 @@ public class PantryPhotoPageTests : PageTestContext
     }
 
     [Fact]
+    public async Task A_name_match_that_conflicts_with_an_ambiguous_read_is_unticked_and_says_so()
+    {
+        // ⚠️ Finding A, end-to-end on the grid. The row's own name identity-matches P1 exactly, but the
+        // reader SUGGESTED a twin — so it must NOT auto-tick (that silently attests over P1's count while
+        // the twin the reader actually saw gets nothing), and it must say why. The old code returned
+        // look:false in this branch and the row auto-ticked at 0.95.
+        await SeedProduct("Tomato Sauce");             // P1 — the name match
+        await SeedProduct("Home Canned Tomato Sauce"); // the twins the suggestion answers to
+        await SeedProduct("Home-Canned Tomato Sauce");
+        var cut = Review(Item("Tomato Sauce", confidence: 0.95m, suggested: "Home Canned Tomato Sauce"));
+
+        var row = RowFor(cut, "Tomato Sauce");
+        Assert.False(IsTicked(row));                    // not auto-ticked despite 0.95
+        Assert.Contains("The name matches your", Collapsed(row));
+        Assert.Contains("read as", Collapsed(row));     // surfaces the conflicting read
+    }
+
+    [Fact]
+    public async Task Renaming_a_row_away_from_an_ambiguous_read_drops_the_stale_warning()
+    {
+        // ⚠️ Finding C. The reader's suggestion named a twin, so the row arrived unticked explaining "read
+        // this as X". That suggestion is frozen at read time — but once the human RENAMES the row to a
+        // clean novel name they've taken over its identity, and the warning is about a name it no longer
+        // bears (the message even invites "…or leave it to add this as a new item").
+        await SeedProduct("Home Canned Sauce");
+        await SeedProduct("Home-Canned Sauce"); // an identity twin — the suggestion answers to both
+        var cut = Review(Item("Canned Sauce", suggested: "Home Canned Sauce"));
+
+        var row = RowFor(cut, "Canned Sauce");
+        Assert.Contains("read this as", Collapsed(row)); // the stale-suggestion warning shows at first
+
+        row.QuerySelector("input[aria-label^='Item name']")!.Change("Marinara Sauce");
+
+        Assert.DoesNotContain("read this as", Collapsed(RowFor(cut, "Marinara Sauce")));
+    }
+
+    [Fact]
+    public void A_zero_on_a_new_item_says_it_wont_be_recorded_before_the_confirm()
+    {
+        // ⚠️ Finding D. A confident novel item arrives ticked at 1; typing 0 makes it ZeroOnNewProduct
+        // (refused at confirm). The count cell only messages null/negative, and there's no matched product
+        // to note — so the row sat ticked with nothing saying it won't be recorded. Said inline now, like
+        // the empty-count and negative cases beside it.
+        var cut = Review(Item("Frozen Peas", count: 1, confidence: 0.9m));
+        var row = RowFor(cut, "Frozen Peas");
+        Assert.True(IsTicked(row));                        // arrives ticked at 1
+        Assert.DoesNotContain("nothing to record", Collapsed(row));
+
+        row.QuerySelectorAll("input[type=number]").Single().Change("0");
+
+        Assert.Contains("nothing to record", Collapsed(RowFor(cut, "Frozen Peas")));
+    }
+
+    [Fact]
     public async Task A_dormant_count_shows_its_stored_number_and_that_counting_will_restart()
     {
         // Stop-counting is dormant, not destructive: the number and date are KEPT as history. A census

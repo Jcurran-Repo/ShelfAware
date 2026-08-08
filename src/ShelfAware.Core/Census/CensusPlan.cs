@@ -243,7 +243,13 @@ public static class CensusPlan
             if (identity.Count > 1) return Refuse(CensusReason.AmbiguousName);
             // An unmatched name that IS an existing product resolves to it (the retry-safety rule) — said, so
             // the screen and the write agree about where the count lands.
-            if (identity.Count == 1) return Land(identity[0].Id, CensusReason.WillLandOnExisting, look: false);
+            // ⚠️ Withhold the tick when the reader ALSO handed us an ambiguous suggestion: the row's own name
+            // identity-matches ONE product, but the reader thought it was a twin — a conflict the household
+            // must resolve. Auto-ticking here (the old look:false) silently attested over the name-matched
+            // product's count while the twin the reader saw got nothing. This branch returns before
+            // CreateReason, so the suggestion is consulted right here or not at all.
+            if (identity.Count == 1)
+                return Land(identity[0].Id, CensusReason.WillLandOnExisting, look: state.AmbiguousSuggestion is not null);
         }
 
         // A genuinely novel name: create. The reason turns on what the reader or the typed name suggests, but

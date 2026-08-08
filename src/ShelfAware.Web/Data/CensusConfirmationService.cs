@@ -147,8 +147,12 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
                     // Planned against this same catalog, so the id is present.
                     var product = catalog.ById(plan.LandsOn!.Value)!;
                     MarkTrackAndResume(product, retracked, resumed);
-                    // A LandOnProduct row is never MissingCount, so the count is real.
-                    totals[product] = totals.GetValueOrDefault(product) + (row.Count ?? 0m);
+                    // ⚠️ .Value, not `?? 0m`: the plan refuses a null count (MissingCount) before any Land or
+                    // Create, so the count is real here — and coalescing a null to 0m would file a real OutNow
+                    // (§13.4), the "empty box becomes an asserted out" harm the CensusRow.Count doc calls the
+                    // sharpest edge on this page. If that invariant ever broke, .Value fails LOUD into the
+                    // single transaction's rollback (the page's catch) rather than silently attesting a zero.
+                    totals[product] = totals.GetValueOrDefault(product) + row.Count!.Value;
                     rowsLanded++;
                     break;
                 }
@@ -170,7 +174,8 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
                         created++;
                     }
                     MarkTrackAndResume(product, retracked, resumed);
-                    totals[product] = totals.GetValueOrDefault(product) + (row.Count ?? 0m);
+                    // .Value, not `?? 0m` — see the LandOnProduct case above; the plan guarantees non-null.
+                    totals[product] = totals.GetValueOrDefault(product) + row.Count!.Value;
                     rowsLanded++;
                     break;
                 }
