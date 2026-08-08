@@ -267,6 +267,43 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task The_inert_signal_caveat_is_ONE_shared_wording_across_both_talking_tools()
+    {
+        // ⚠️ record_signal and set_quantity both speak the §6.6 same-day-tie caveat, and its wording had
+        // DRIFTED between two hand-copies ("so this won't take effect yet." vs "so that out won't take
+        // effect yet —"). It lives in one helper (InertSignalCaveatAsync) now; this pins that the two
+        // surfaces emit the byte-identical clause, so a re-inline can't silently diverge them again — the
+        // existing substring asserts ("a tie goes to the stock") wouldn't have caught that tail drift.
+        const string caveat = "there's stock recorded for it as of today or later, and a tie goes to the " +
+            "stock, so it won't take effect yet — tell the user it'll register if they say so again once " +
+            "that stock date has passed.";
+
+        Product InertRoast()
+        {
+            var roast = Counted(7, "Beef Chuck Roast", onHand: 6m);
+            roast.Purchases.Add(new PurchaseEvent { ProductId = 7, PurchasedAt = DateOnly.FromDateTime(DateTime.Today), Quantity = 1m });
+            return roast;
+        }
+
+        var sigClient = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("record_signal", ("product_name", "chuck roast"), ("kind", "OutNow"))),
+            () => Responses.Text("ok"));
+        await Chat(sigClient, new FakePantryStore(InertRoast())).HandleAsync("out of roast");
+        var sigResult = sigClient.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result!.ToString()!;
+
+        var qtyClient = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("set_quantity", ("product_name", "chuck roast"), ("quantity", 0))),
+            () => Responses.Text("ok"));
+        await Chat(qtyClient, new FakePantryStore(InertRoast())).HandleAsync("none left");
+        var qtyResult = qtyClient.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result!.ToString()!;
+
+        Assert.Contains(caveat, sigResult); // record_signal
+        Assert.Contains(caveat, qtyResult); // set_quantity — same clause, not a drifted copy
+    }
+
+    [Fact]
     public async Task Set_quantity_refuses_an_absolute_count_below_zero()
     {
         // Clamping -5 to 0 would file an OutNow (§13.4) off a typo — a fake outage in the cadence

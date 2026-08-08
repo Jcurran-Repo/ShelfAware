@@ -187,34 +187,16 @@ public class AnthropicPantryChat : IPantryChat
                 await _store.RecordSignalAsync(product.Id, kind, ct);
                 actions.Add($"{kind} → {product.Name}");
                 // ⚠️ "Recorded" alone is a lie when the signal can't take effect: §6.6 gives a same-day
-                // tie to the stock, so an OutNow OR a RunningLow filed while the last stock-back is
-                // today (or later) is discarded by the engine, permanently. This surface TALKS, so the
-                // silent-no-op trap the count panel had would be SPOKEN here. Both kinds, because the
-                // engine's filter covers both with one date test. Ask the ENGINE — the member computed
-                // beside the tie rule — never re-derive.
-                // Only these two kinds are subject to that tie, so only they pay for the re-read below;
-                // Restocked IS a stock-back, never a subject of the filter.
-                if (kind is SignalKind.OutNow or SignalKind.RunningLow)
+                // tie to the stock, so an OutNow OR a RunningLow filed while the last stock-back is today
+                // (or later) is discarded by the engine, permanently — and this surface TALKS, so that
+                // silent no-op would be SPOKEN. Both kinds are subject to the tie (Restocked IS a
+                // stock-back, never a subject), so both consult the shared caveat, whose wording lives in
+                // one place so it can't drift from set_quantity's copy (it had). onlyIfAtZero: false — a
+                // signal was filed explicitly here, whatever the count.
+                if (kind is SignalKind.OutNow or SignalKind.RunningLow
+                    && await InertSignalCaveatAsync(product.Id, onlyIfAtZero: false, ct) is { } caveat)
                 {
-                    // ⚠️ Re-read before asking the engine. `products` is the snapshot taken at the START
-                    // of the turn, and a store write never touches that detached graph — so "I bought
-                    // coffee today but I'm still running low on it" ran add_purchase and record_signal
-                    // against the SAME stale product, the caveat saw no purchase, and the reply said a
-                    // bare "Recorded" — aloud — about a signal the engine had already discarded.
-                    // A product that vanished mid-turn yields nothing to reason from: say the plain
-                    // thing rather than compute a caveat from the snapshot these lines just called
-                    // untrustworthy.
-                    var current = (await _store.GetProductsAsync(ct)).FirstOrDefault(p => p.Id == product.Id);
-                    if (current is not null && ReplenishmentPredictor
-                            .Predict(current, DateOnly.FromDateTime(DateTime.Today)).SignalTodayWouldBeInert)
-                    {
-                        // ⚠️ "as of today or later", not "today": the flag is lastStockBack >= today, so a
-                        // FUTURE-dated purchase (this very tool takes any date, unclamped) fires it too —
-                        // and there "recorded today" and "try tomorrow" are both false, sometimes by days.
-                        return ($"Recorded {kind} for {product.Name} — but there's stock recorded for it as " +
-                            "of today or later, and a tie goes to the stock, so this won't take effect yet. " +
-                            "Tell the user it'll register if they say so again once that stock date has passed.", false);
-                    }
+                    return ($"Recorded {kind} for {product.Name} — but {caveat}", false);
                 }
                 return ($"Recorded {kind} for {product.Name}.", false);
             }
@@ -354,17 +336,14 @@ public class AnthropicPantryChat : IPantryChat
                     : $"Noted — {product.Name}: {quantity:0.##} on hand.";
 
                 // ⚠️ A count that landed at zero files an OutNow (§13.4) exactly like record_signal, and
-                // this surface SPEAKS — so if that outage is inert (stock recorded as of today or later,
-                // §6.6's tie goes to the stock), say so rather than let the count panel's silent no-op be
-                // spoken aloud. Re-read: the write just changed the count, and the start-of-turn snapshot
-                // never sees it — an absolute 0 lands here, and so does a relative move that clamps to 0.
+                // this surface SPEAKS — so if that out is inert (§6.6's same-day tie goes to the stock),
+                // say so via the shared caveat rather than speak the count panel's silent no-op. Gate: only
+                // a zero write filed an out — an absolute 0, or a relative move that clamped to 0 (which
+                // onlyIfAtZero re-checks against the re-read count), never a relative move that landed above.
                 if (((!relative && quantity == 0m) || relative)
-                    && (await _store.GetProductsAsync(ct)).FirstOrDefault(p => p.Id == product.Id) is { QuantityOnHand: 0m } current
-                    && ReplenishmentPredictor.Predict(current, DateOnly.FromDateTime(DateTime.Today)).SignalTodayWouldBeInert)
+                    && await InertSignalCaveatAsync(product.Id, onlyIfAtZero: true, ct) is { } caveat)
                 {
-                    reply += " But there's stock recorded for it as of today or later, and a tie goes to the " +
-                        "stock, so that out won't take effect yet — tell the user it'll register if they say " +
-                        "so again once that stock date has passed.";
+                    reply += $" But {caveat}";
                 }
                 return (reply, false);
             }
@@ -605,6 +584,32 @@ public class AnthropicPantryChat : IPantryChat
             default:
                 return ($"Unknown tool: {call.Name}.", true);
         }
+    }
+
+    /// <summary>
+    /// The §6.6 same-day-tie caveat, shared by the two tools that can file an inert OutNow/RunningLow and
+    /// then SPEAK about it — <c>record_signal</c> and <c>set_quantity</c> — so its wording lives in ONE
+    /// place and can't drift between them (it had). Re-reads the product because a write earlier in the
+    /// SAME turn isn't in the start-of-turn <c>products</c> snapshot, and asks the ENGINE whether a signal
+    /// today would be inert (<see cref="PredictionResult.SignalTodayWouldBeInert"/> = lastStockBack &gt;=
+    /// today: a stock-back today OR later wins the tie). Returns the caveat clause (lowercase, so each
+    /// caller supplies its own "but"/"But " lead-in), or null when there is nothing to caveat.
+    /// <para><paramref name="onlyIfAtZero"/> is set by <c>set_quantity</c>, whose "an out was filed"
+    /// condition is the re-read count landing at zero (an absolute 0, or a relative move that clamped to
+    /// 0). <c>record_signal</c> filed its signal explicitly regardless of the count, so it passes false.
+    /// A product that vanished mid-turn yields nothing to reason from — say the plain thing.</para>
+    /// </summary>
+    private async Task<string?> InertSignalCaveatAsync(int productId, bool onlyIfAtZero, CancellationToken ct)
+    {
+        var current = (await _store.GetProductsAsync(ct)).FirstOrDefault(p => p.Id == productId);
+        if (current is null) return null;
+        if (onlyIfAtZero && current.QuantityOnHand != 0m) return null;
+        if (!ReplenishmentPredictor.Predict(current, DateOnly.FromDateTime(DateTime.Today)).SignalTodayWouldBeInert)
+            return null;
+        // ⚠️ "as of today or later", not "today": the flag is lastStockBack >= today, so a FUTURE-dated
+        // stock-back fires it too — there "recorded today" and "try tomorrow" would both be false, by days.
+        return "there's stock recorded for it as of today or later, and a tie goes to the stock, so it " +
+            "won't take effect yet — tell the user it'll register if they say so again once that stock date has passed.";
     }
 
     private static IList<AITool> BuildTools()
