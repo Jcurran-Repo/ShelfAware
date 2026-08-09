@@ -230,6 +230,14 @@ public static class CensusPlan
         if (count is null) return Refuse(CensusReason.MissingCount);
         if (count < 0) return Refuse(CensusReason.NegativeCount);
         if (name.Length == 0) return Refuse(CensusReason.NoName);
+        // A name with no letters or digits ("!!") folds to an EMPTY identity key, which the identity
+        // system cannot see: ExactMatches refuses empty keys and CatalogIndex never indexes one, so such
+        // a name could only ever create a sight-unseen twin per census — and every other junk name in the
+        // SAME census would share its empty key and silently merge with it. To the one definition of
+        // product identity it IS no name, so it is refused as one. (A dropdown pick above is untouched:
+        // the id names the product and the name box is free text.)
+        var identityKey = ProductMatcher.IdentityKey(name);
+        if (identityKey.Length == 0) return Refuse(CensusReason.NoName);
 
         var identity = catalog.ExactMatches(name);
         if (state.ChoseCreateNew)
@@ -260,7 +268,7 @@ public static class CensusPlan
         var reason = CreateReason(state, name, catalog);
         var needsLook = reason is CensusReason.AmbiguousSuggestion;
         var plan = new CensusRowPlan(CensusAction.CreateProduct, null, reason, needsLook || evidenceLook);
-        return (plan, ProductMatcher.IdentityKey(name), count == 0m);
+        return (plan, identityKey, count == 0m);
     }
 
     private static CensusReason CreateReason(CensusRowState state, string name, CatalogIndex catalog)

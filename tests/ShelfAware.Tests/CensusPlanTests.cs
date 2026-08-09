@@ -280,6 +280,28 @@ public class CensusPlanTests
     }
 
     [Fact]
+    public void A_name_with_no_identity_content_is_refused_as_no_name()
+    {
+        // "!!" folds to an EMPTY identity key, which the identity system cannot see: ExactMatches refuses
+        // empty keys and CatalogIndex never indexes one, so the name could only ever create a sight-unseen
+        // twin — and every other junk name in the SAME census would share its empty key and merge with it
+        // ("!!" 3 and "--" 2 becoming one product carrying five). To product identity it IS no name.
+        var plans = CensusPlan.Plan([Row("!!", 3m), Row("--", 2m)], Cat());
+        Assert.All(plans, p => Assert.Equal(Reason.NoName, p.Reason));
+        Assert.All(plans, p => Assert.Equal(Action.Refuse, p.Action));
+    }
+
+    [Fact]
+    public void A_junk_name_beside_a_dropdown_pick_still_lands()
+    {
+        // The complement: a dropdown pick names the product by ID, and the name box is free text — the
+        // identity guard must sit on the CREATE path only, never refuse a row the id already settles.
+        var plan = Plan1(Row("!!", 2m, chosen: 1), Cat(P(1, "Whole Milk")));
+        Assert.Equal(Action.LandOnProduct, plan.Action);
+        Assert.Equal(1, plan.LandsOn);
+    }
+
+    [Fact]
     public void A_create_row_with_an_empty_box_is_MissingCount()
     {
         var plan = Plan1(Row("Tilapia Fillets", null), Cat(P(1, "Whole Milk")));

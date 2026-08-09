@@ -63,6 +63,31 @@ public class EfPantryStoreTests : IDisposable
         return await db.Products.AsNoTracking().SingleAsync(p => p.Id == productId);
     }
 
+    // --- GetProductAsync: the single-product re-read the same-day-tie caveat runs on ---------------
+
+    [Fact]
+    public async Task GetProduct_returns_the_product_with_its_history_loaded()
+    {
+        var (productId, _) = await CountedWithPurchase(onHand: 3, bought: 2);
+
+        var product = await _store.GetProductAsync(productId);
+
+        Assert.NotNull(product);
+        Assert.Equal(3m, product!.QuantityOnHand);
+        Assert.Single(product.Purchases); // the caveat runs the predictor, which reads purchases + signals
+    }
+
+    [Fact]
+    public async Task GetProduct_for_an_id_outside_the_household_returns_null()
+    {
+        // The household filter scopes the lookup, so another household's id answers exactly like an id
+        // that never existed — the tenancy drill every new read path walks.
+        var (productId, _) = await CountedWithPurchase(onHand: 3, bought: 2);
+        _db.HouseholdId = "someone-else";
+
+        Assert.Null(await _store.GetProductAsync(productId));
+    }
+
     [Fact]
     public async Task Correcting_a_purchase_moves_the_count_by_the_difference()
     {

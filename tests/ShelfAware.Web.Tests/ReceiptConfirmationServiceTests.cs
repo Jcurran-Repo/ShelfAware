@@ -297,4 +297,24 @@ public class ReceiptConfirmationServiceTests : IDisposable
         Assert.Single(await db.Products.ToListAsync());
         Assert.Equal(2, await db.PurchaseEvents.CountAsync());
     }
+
+    [Fact]
+    public async Task Two_junk_named_lines_stay_two_products_instead_of_colliding_on_the_empty_key()
+    {
+        // The identity key of a name with no letters or digits is EMPTY, so keying the roll-up on it alone
+        // made "!!" and "--" one dictionary entry — two different (if silly) items silently merged into one
+        // product with the first line's name. Such names key by their raw text instead; the two key kinds
+        // can't cross (an identity key is letters/digits/spaces only).
+        var receipt = await SeedPending("Walmart", L("MYSTERY A", "!!"), L("MYSTERY B", "--"));
+
+        var outcome = await _service.ConfirmAsync(receipt.Id, new DateOnly(2026, 7, 1),
+            [C("MYSTERY A", "!!"), C("MYSTERY B", "--")],
+            writeAliases: false);
+
+        Assert.Equal(2, outcome.NewProducts);
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(2, await db.Products.CountAsync());
+        Assert.NotNull(await db.Products.SingleOrDefaultAsync(p => p.Name == "!!"));
+        Assert.NotNull(await db.Products.SingleOrDefaultAsync(p => p.Name == "--"));
+    }
 }

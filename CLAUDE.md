@@ -93,9 +93,9 @@ Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptT
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1438 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1463 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
-bUnit pages/components — see items 31 and 42).
+bUnit pages/components — see items 31, 42 and 43).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -1929,6 +1929,55 @@ bUnit pages/components — see items 31 and 42).
      was run with INLINE/agent reviews, not the independent cloud gate** — the two agent reviews are the closest
      available substitute and are author-adjacent by construction; a fresh independent pass is still the ideal
      before merge. Pushing is Jordan's call; unpushed.
+
+43. **The max-effort `/code-review` over the whole branch + its same-session fix pass (2026-08-08,
+   Jordan-triggered).** Ten finder angles, one-vote verification, a gap sweep — nine of the ten finder
+   agents died on the session limit, so those angles ran INLINE per Jordan's instruction (the efficiency
+   agent completed first and its candidates were re-verified inline). Nine findings, **zero serious
+   correctness defects** — the first full-branch pass of this arc to come back without one; two PLAUSIBLE
+   edges and seven cleanup/efficiency items, all nine fixed on Jordan's "fix all 9". What the fixes carry:
+   - ⚠️ **Tool calls within ONE model round shared the round's product snapshot.** Parallel tool use ships
+     several calls per assistant turn, and `products` refreshed only BETWEEN rounds — so a duplicated
+     create_product ("Half and Half" beside "Half-and-Half", or the same name twice) walked past the twin
+     guard and minted the identity pair item 41 closed everywhere else, and a create-then-use pair in one
+     round answered "call create_product first" to the model that just did. The snapshot refreshes after
+     each create_product WITHIN the round now (keyed on the one tool that adds products; the between-round
+     refresh stays for counts/signals). Both directions pinned.
+   - ⚠️ **A name with no letters or digits folds to an EMPTY `IdentityKey`, which the identity system
+     cannot see** — `CatalogIndex` skips empty keys and `ExactMatches` refuses them, so a punctuation-only
+     name ("!!") could only ever create a sight-unseen twin per census, and DISTINCT junk names in one
+     census/receipt shared the "" key and silently merged into one product. Fixed at two altitudes,
+     matching the architecture: `CensusPlan` refuses it as `NoName` (to product identity it IS no name;
+     the dropdown-pick path deliberately untouched — the id names the product, complement pinned), and
+     the receipt confirm's roll-up key falls back to the RAW text (the key kinds can't cross: an identity
+     key is alnum+spaces only, and a name whose key is empty leads with a character no key contains).
+   - **`ProductOptionLabel` (Core/Shopping) is THE twin-dropdown phrasing** — "N on hand / had N, counting
+     stopped / not counted" existed twice (census grid + Upload), the top directive's two-definition
+     shape on a rule this branch itself introduced. Both grids call the one helper; wording pinned in Core.
+   - **`IPantryStore.GetProductAsync`** — the same-day-tie caveat's re-read loaded the ENTIRE catalog
+     (purchases+signals includes) on every relative "used one" and discarded it whenever the landed count
+     wasn't zero; it reads one product now. New store surface, so it walks the tenancy drill: a foreign
+     household's id answers null exactly like a nonexistent one, pinned.
+   - **`CatalogIndex.ResolveWithKind` memoizes per query** — the census grid re-ran a full catalog
+     re-normalization + IDF rebuild per create-candidate row on EVERY render, and `MatchMessage` asked
+     the identical question again per resembles-row; the catalog is immutable for the index's lifetime,
+     so a resolve is pure (⚠️ the doc now says so — build a fresh index after any catalog change). The
+     index also serves `ReceiptAutoConfirmer` and Upload's pre-fill now (one per receipt), replacing two
+     full-catalog `ExactMatches` scans per line.
+   - Smaller: census `Read()` starts the catalog load BEFORE the photo-transfer loop (independent work on
+     one spinner) — ⚠️ the finally OBSERVES the still-in-flight task when a photo fails, and that observe
+     block is review-verified, not test-pinned (an unobserved-task exception is invisible to bUnit;
+     stated per item 27's precedent); `ShelfPhotoLoader` pre-sizes its buffer to the browser-reported
+     size and skips `ToArray`'s second copy when that size was exact; the rename collision check reads
+     `AsNoTracking` (the list only feeds `ExactMatches`, and tracked entities rode into SaveChanges'
+     diff scan for nothing).
+   - ⚠️ **The header's test count was stale AGAIN** — it read 1438 while the suite at HEAD stood at 1451:
+     the three post-item-42 commits added 13 tests without re-reading the number off a run. Item 21's
+     rule, third occurrence, in the file that states it.
+   - **1463 tests green, 0 warnings** on a non-incremental Release build (1451 at the start of the pass;
+     +12), read off the final run. Every new test mutation-checked in four batches — six mutations, each
+     killing exactly the tests it should and nothing else (including the guard-placed-too-early mutation
+     the dropdown-pick complement exists for).
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

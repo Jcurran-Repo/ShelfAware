@@ -68,11 +68,17 @@ public sealed class BrowserShelfPhotoLoader(IOptions<LlmOptions> options) : IShe
         // `await using` on the stream, not just the buffer: disposing a browser file stream is what
         // releases the JS-side stream reference, and the class has no finalizer — an undisposed one is
         // never reclaimed for the life of the page, times eight photos per census.
-        using var buffer = new MemoryStream();
+        // Pre-sized to the resized file's own reported size so the copy neither grows through
+        // reallocations nor duplicates at the end: the browser measured the file it just encoded, so
+        // when that size is exact GetBuffer() IS the payload and ToArray()'s second copy is skipped
+        // (the fallback covers a size that lied). These are megabyte buffers on the Large Object Heap,
+        // eight per census — the copies were the dominant allocation of the whole read.
+        using var buffer = new MemoryStream(capacity: (int)Math.Clamp(resized.Size, 0, MaxUploadBytes));
         await using (var source = resized.OpenReadStream(MaxUploadBytes, cancellationToken))
         {
             await source.CopyToAsync(buffer, cancellationToken);
         }
-        return new ShelfPhoto(buffer.ToArray(), "image/jpeg");
+        var bytes = buffer.Length == buffer.GetBuffer().Length ? buffer.GetBuffer() : buffer.ToArray();
+        return new ShelfPhoto(bytes, "image/jpeg");
     }
 }

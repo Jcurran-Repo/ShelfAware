@@ -87,13 +87,20 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
             var size = string.IsNullOrWhiteSpace(line.Size) ? null : line.Size!.Trim();
             var variety = string.IsNullOrWhiteSpace(line.Variety) ? null : line.Variety!.Trim();
             var quantity = line.Quantity > 0 ? line.Quantity : 1m;
+            // The roll-up key: the matcher's identity — or, for a name with no identity content at all
+            // ("!!" folds to an EMPTY key), the raw text itself, so two DIFFERENT junk names in one
+            // receipt can't collide on "" and silently merge into one product. The two key kinds can't
+            // cross: an identity key is letters/digits/spaces only, and a name whose key is empty
+            // necessarily leads with a character no identity key contains.
+            var identityKey = ProductMatcher.IdentityKey(name);
+            var rollUpKey = identityKey.Length > 0 ? identityKey : name;
 
             Product product;
             if (line.ProductId > 0 && products.FirstOrDefault(p => p.Id == line.ProductId) is { } resolved)
             {
                 product = resolved;
             }
-            else if (createdByName.TryGetValue(ProductMatcher.IdentityKey(name), out var existingNew))
+            else if (createdByName.TryGetValue(rollUpKey, out var existingNew))
             {
                 product = existingNew;
             }
@@ -107,7 +114,7 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
                 product = new Product { Name = name, Category = category, CreatedByReceiptId = receipt.Id };
                 db.Products.Add(product);
                 products.Add(product); // later lines in this receipt can resolve to it
-                createdByName[ProductMatcher.IdentityKey(name)] = product;
+                createdByName[rollUpKey] = product;
                 created++;
             }
 

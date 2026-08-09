@@ -456,15 +456,16 @@ else if (phase == Phase.Done)
         }
     }
 
-    /// <summary>Twins are told apart by their counts — the ambiguity picker's precedent. Identical option text
-    /// is a choice nobody can make; twins with identical counts stay indistinguishable here, the honest limit.</summary>
-    private string OptionLabel(Product p) =>
-        !twinNames.Contains(p.Name) ? p.Name
-            : Note(p.Id) is { HasNumber: true, Dormant: false } live
-                ? $"{p.Name} — {QuantityFormat.Describe(live.OnHand, live.Unit)} on hand"
-                : Note(p.Id) is { HasNumber: true } stopped
-                    ? $"{p.Name} — had {QuantityFormat.Describe(stopped.OnHand, stopped.Unit)}, counting stopped"
-                    : $"{p.Name} — not counted";
+    /// <summary>Twins are told apart by their counts — the ambiguity picker's precedent. The phrasing itself
+    /// is <see cref="ProductOptionLabel"/> — ONE definition shared with the receipt grid's dropdown, so the
+    /// two can't drift apart the first time one wording is edited.</summary>
+    private string OptionLabel(Product p)
+    {
+        if (!twinNames.Contains(p.Name)) return p.Name;
+        return Note(p.Id) is { HasNumber: true } n
+            ? ProductOptionLabel.ForTwin(p.Name, n.OnHand, counting: !n.Dormant, n.Unit)
+            : ProductOptionLabel.ForTwin(p.Name, null, counting: false, null);
+    }
 
     private HashSet<string> twinNames = new(StringComparer.OrdinalIgnoreCase);
 
@@ -549,6 +550,11 @@ else if (phase == Phase.Done)
         // exactly the teardown noise the JSDisconnectedException clause exists to keep out of the log.
         // A captured token stays usable after its source is disposed.
         var ct = pageCts.Token;
+        // Started BEFORE the photo loop so the DB load overlaps the multi-second browser transfers —
+        // independent work, and both sit on the visitor's spinner. Awaited on the happy path below, and
+        // OBSERVED in the finally when a photo failure exits early, so a late fault can't become an
+        // unobserved-task exception nobody logged.
+        var catalogTask = LoadCatalogAsync(ct);
         try
         {
             var photos = new List<ShelfPhoto>();
@@ -558,7 +564,7 @@ else if (phase == Phase.Done)
             }
             photoCount = photos.Count;
 
-            await LoadCatalogAsync(ct);
+            await catalogTask;
             var result = await Reader.ReadAsync(
                 photos, products.Select(p => p.Name).Distinct().ToList(), ct);
 
@@ -651,6 +657,15 @@ else if (phase == Phase.Done)
         {
             selectedFiles = [];
             reading = false;
+            // A photo failure above leaves the catalog task in flight — observe it. Its real failures
+            // either already rethrew from the happy-path await, or belong to a page that is showing the
+            // photo's error; cancellation here is the expected teardown/stop shape, not news.
+            if (!catalogTask.IsCompleted)
+            {
+                try { await catalogTask; }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+                catch (Exception ex) { Logger.LogError(ex, "Loading the catalog for a shelf census failed after the photos did."); }
+            }
         }
     }
 

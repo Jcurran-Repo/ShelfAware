@@ -546,6 +546,21 @@ _Last updated: 7/30/2026_
   ⚠️ `/code-review` (local) is model-invocation-disabled — user-only; the reviews ran as one helper agent
   each (NOT the $100 cloud ultra), so an independent human pass is still owed before merge. Full detail:
   CLAUDE.md item 42. **1438 green, 0 warnings** — 8/5/2026
+- **Max-effort `/code-review` over the whole branch + same-session fix pass** (Jordan-triggered; nine of
+  ten finder agents hit the session limit, so the angles ran inline). Nine findings, **no serious
+  correctness defect** — the first full-branch review of this arc to come back without one. Fixed all
+  nine: tool calls within ONE model round shared a stale product snapshot (a duplicated create_product
+  in one parallel-tool round could mint the identity twins item 41 closed; refreshes per create now);
+  punctuation-only names fold to an EMPTY IdentityKey (census refuses them as NoName, the receipt
+  roll-up keys them raw — distinct junk names no longer merge); `ProductOptionLabel` (Core) is THE twin
+  dropdown phrasing (was duplicated census/Upload); `IPantryStore.GetProductAsync` ends the
+  full-catalog reload every relative "used one" paid for the tie caveat; `CatalogIndex` memoizes
+  fuzzy resolves (the census grid re-ran full catalog re-normalization per row per RENDER) and now
+  also serves the auto-confirmer + Upload pre-fill (two full scans per line gone); census `Read()`
+  overlaps the catalog load with the photo transfers; the photo loader stops triple-buffering; the
+  rename collision check reads untracked. Twelve new tests, every one mutation-checked (six
+  mutations, each killing exactly its tests). Full detail: CLAUDE.md item 43. **1463 green, 0
+  warnings** — 8/8/2026
 
 ---
 

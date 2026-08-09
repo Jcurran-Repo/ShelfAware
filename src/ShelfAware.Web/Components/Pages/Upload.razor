@@ -1,4 +1,5 @@
 @page "/receipt"
+@using ShelfAware.Core.Census
 @using ShelfAware.Core.Chat
 @using ShelfAware.Core.Extraction
 @using ShelfAware.Core.Ingest
@@ -425,15 +426,13 @@ else if (phase == Phase.Done)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>A twin-named product's dropdown option carries its on-hand count so the household can tell
-    /// two identically-named products apart, exactly as the census grid does; a non-twin shows its plain
-    /// name. Identical/uncounted twins stay indistinguishable — the honest limit a dropdown can't beat.</summary>
+    /// two identically-named products apart; a non-twin shows its plain name. The phrasing itself is
+    /// <see cref="ProductOptionLabel"/> — ONE definition shared with the census grid, so the two dropdowns
+    /// can't drift apart the first time one wording is edited.</summary>
     private string OptionLabel(Product p) =>
-        !twinNames.Contains(p.Name) ? p.Name
-            : p.QuantityOnHand is { } q
-                ? (p.TrackQuantity
-                    ? $"{p.Name} — {QuantityFormat.Describe(q, p.DefaultUnit)} on hand"
-                    : $"{p.Name} — had {QuantityFormat.Describe(q, p.DefaultUnit)}, counting stopped")
-                : $"{p.Name} — not counted";
+        !twinNames.Contains(p.Name)
+            ? p.Name
+            : ProductOptionLabel.ForTwin(p.Name, p.QuantityOnHand, counting: p.TrackQuantity, p.DefaultUnit);
 
     // Tag universe for suggestions + dedup: seed vocabulary ∪ tags already stored on products.
     private List<string> allKnownTags = [];
@@ -499,6 +498,9 @@ else if (phase == Phase.Done)
 
         var merchant = r.Merchant ?? "";
         var aliases = await db.ProductAliases.Where(a => a.Merchant == merchant).ToListAsync();
+        // One identity index per load, not a full-catalog ExactMatches scan per line — the same move the
+        // census grid and the auto-confirmer make (they and this loop ask the identical questions).
+        var catalogIndex = new CatalogIndex(products);
         reviewLines = r.Lines.Select(l =>
         {
             var alias = aliases.FirstOrDefault(a => a.RawText == l.RawText);
@@ -510,7 +512,7 @@ else if (phase == Phase.Done)
                 // model's suggestion by the matcher's rule-1 identity set, not string.Equals: it folds a
                 // punctuation variant onto the one product it names.
                 match = l.SuggestedProduct is { Length: > 0 }
-                        && ProductMatcher.ExactMatches(l.SuggestedProduct, products) is { Count: 1 } one
+                        && catalogIndex.ExactMatches(l.SuggestedProduct) is { Count: 1 } one
                     ? one[0]
                     : null;
                 match ??= ProductMatcher.Resolve(l.NormalizedName, products);
@@ -520,7 +522,7 @@ else if (phase == Phase.Done)
                 // the grid warns and the dropdown distinguishes the twins by count, the same treatment the
                 // census grid gives them (finding F). The human picks; the auto-importer already routes such
                 // lines to review, so an unreviewed confirm never reaches this branch.
-                ambiguousTwin = match is not null && ProductMatcher.ExactMatches(match.Name, products).Count > 1;
+                ambiguousTwin = match is not null && catalogIndex.ExactMatches(match.Name).Count > 1;
                 if (ambiguousTwin) match = null;
             }
             return new ReviewLine

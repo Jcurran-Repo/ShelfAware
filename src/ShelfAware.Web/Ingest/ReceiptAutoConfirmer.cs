@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using ShelfAware.Core.Census;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Ingest;
@@ -87,6 +88,9 @@ public sealed class ReceiptAutoConfirmer(
 
         var merchant = receipt.Merchant ?? "";
         var products = await db.Products.AsNoTracking().OrderBy(p => p.Name).ToListAsync(cancellationToken);
+        // Identity questions below (suggestion resolve, twin check) go through one index built per
+        // receipt, not a full-catalog ExactMatches scan per line — same move the census grid made.
+        var catalog = new CatalogIndex(products);
         var aliases = await db.ProductAliases.AsNoTracking()
             .Where(a => a.Merchant == merchant).ToListAsync(cancellationToken);
 
@@ -115,7 +119,7 @@ public sealed class ReceiptAutoConfirmer(
             // a punctuation variant onto the one product it names): exactly one match uses it; twins fall
             // through unresolved and are caught by the ambiguity check below.
             resolved ??= line.SuggestedProduct is { Length: > 0 }
-                    && ProductMatcher.ExactMatches(line.SuggestedProduct, products) is { Count: 1 } one
+                    && catalog.ExactMatches(line.SuggestedProduct) is { Count: 1 } one
                 ? one[0]
                 : null;
             resolved ??= ProductMatcher.Resolve(name, products);
@@ -132,7 +136,7 @@ public sealed class ReceiptAutoConfirmer(
             // ExactMatches.Count == 1, so the matcher fallback is the sole path that can land on a twin by
             // name.) The census refuses to guess between twins for the same reason: an attest, like a
             // purchase, lands on ONE product.
-            var ambiguous = alias is null && resolved is not null && ProductMatcher.ExactMatches(resolved.Name, products).Count > 1;
+            var ambiguous = alias is null && resolved is not null && catalog.ExactMatches(resolved.Name).Count > 1;
             if (ambiguous) autoBlocked = true;
 
             // Trusted = a human-taught alias vouches for it, or it's a confident match to a product

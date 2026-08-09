@@ -19,6 +19,18 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory) : IPantryStore
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<Product?> GetProductAsync(int productId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        // Same read-only shape as GetProductsAsync above, one row: the household query filter scopes the
+        // lookup, so a foreign household's id comes back null exactly like an id that never existed.
+        return await db.Products
+            .AsNoTracking()
+            .Include(p => p.Purchases)
+            .Include(p => p.Signals)
+            .FirstOrDefaultAsync(p => p.Id == productId, cancellationToken);
+    }
+
     public async Task<int> CreateProductAsync(string name, Category category, IReadOnlyList<string> tags, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);

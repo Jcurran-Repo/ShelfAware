@@ -1282,4 +1282,45 @@ public class PantryChatTests
         Assert.True(result.Success);
         Assert.Equal(5, client.CallCount); // MaxTurns
     }
+
+    // ⚠️ Parallel tool use ships several calls in ONE assistant round, and they used to share the
+    // round's stale product snapshot — so a duplicated create walked straight past the twin guard and
+    // minted the identity pair every later census of that item is refused over. The snapshot refreshes
+    // after each create_product now, so the second call in the SAME round must see the first's product.
+    [Fact]
+    public async Task Two_create_calls_in_one_round_cannot_mint_identity_twins()
+    {
+        var store = new FakePantryStore();
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(
+                Responses.Call("create_product", ("name", "Half and Half"), ("category", "Dairy")),
+                Responses.Call("create_product", ("name", "Half-and-Half"), ("category", "Dairy"))),
+            () => Responses.Text("Added."));
+
+        var result = await Chat(client, store).HandleAsync("add half and half");
+
+        Assert.True(result.Success);
+        Assert.Single(store.Created); // ONE product — the second call met the twin guard
+        var toolResults = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Select(r => r.Result!.ToString()!).ToList();
+        Assert.Contains(toolResults, t => t.Contains("already exists"));
+    }
+
+    // The companion direction: a create-then-use pair in ONE round now works, instead of answering
+    // "call create_product first" to the model in the very round that did.
+    [Fact]
+    public async Task A_product_created_earlier_in_the_same_round_is_visible_to_later_calls()
+    {
+        var store = new FakePantryStore();
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(
+                Responses.Call("create_product", ("name", "Oat Milk"), ("category", "Dairy")),
+                Responses.Call("record_signal", ("product_name", "oat milk"), ("kind", "RunningLow"))),
+            () => Responses.Text("Added and noted."));
+
+        await Chat(client, store).HandleAsync("add oat milk and note we're already low");
+
+        Assert.Single(store.Created);
+        Assert.Single(store.Signals); // resolved against the refreshed list, not refused as unknown
+    }
 }

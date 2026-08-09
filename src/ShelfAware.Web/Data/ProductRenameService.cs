@@ -30,7 +30,9 @@ public class ProductRenameService(IHouseholdDbFactory dbFactory)
         // treats as one product — splitting its history, and jamming every later shelf census on that
         // item with an AmbiguousName refusal it can only escape by picking from the dropdown. One
         // definition of product identity, the same one the census and the add form ask.
-        var others = await db.Products.Where(p => p.Id != productId).ToListAsync(cancellationToken);
+        // AsNoTracking: this list is only READ (ExactMatches over it), and tracked entities would ride
+        // into SaveChanges' change-tracker diff for no reason.
+        var others = await db.Products.AsNoTracking().Where(p => p.Id != productId).ToListAsync(cancellationToken);
         if (ProductMatcher.ExactMatches(name, others) is { Count: > 0 } taken)
             return new(false, $"\"{taken[0].Name}\" already exists — pick a different name (renames can't merge products).");
 

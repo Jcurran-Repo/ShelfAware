@@ -110,6 +110,11 @@ internal sealed class FakePantryStore : IPantryStore
     public Task<IReadOnlyList<Product>> GetProductsAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<Product>>([.. Products.Select(Snapshot)]);
 
+    /// <summary>Same fresh-read semantics as <see cref="GetProductsAsync"/>, one product — the real
+    /// store's single-row query through the same household filter (null = no such product here).</summary>
+    public Task<Product?> GetProductAsync(int productId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(Products.Where(p => p.Id == productId).Select(Snapshot).FirstOrDefault());
+
     private Product Snapshot(Product p) => new()
     {
         Id = p.Id,
@@ -290,6 +295,9 @@ internal sealed class ThrowingPantryStore(params Product[] products) : IPantrySt
 {
     public Task<IReadOnlyList<Product>> GetProductsAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<Product>>(products);
+    // A read, like GetProductsAsync — only WRITES simulate failure in this fake.
+    public Task<Product?> GetProductAsync(int productId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(products.FirstOrDefault(p => p.Id == productId));
     public Task<bool> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("simulated DB write failure");
     public Task<int> CreateProductAsync(string name, Category category, IReadOnlyList<string> tags, CancellationToken cancellationToken = default) => throw new NotSupportedException();

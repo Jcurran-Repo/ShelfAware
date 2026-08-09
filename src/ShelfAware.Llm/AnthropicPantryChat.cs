@@ -143,10 +143,20 @@ public class AnthropicPantryChat : IPantryChat
                     text = $"That step ({call.Name}) hit an error and couldn't be completed.";
                 }
                 results.Add(new FunctionResultContent(call.CallId, text));
+
+                // ⚠️ Refresh MID-round too, not only between rounds: parallel tool use ships several
+                // calls in one assistant turn, and every later call in this round resolves names against
+                // `products` — so without this a duplicated create ("Half and Half" beside
+                // "Half-and-Half", or the same name twice) walked straight past the twin guard, and a
+                // create-then-use pair was told "call create_product first" by the round that just did.
+                // Keyed on the one tool that adds products; the between-round refresh below still covers
+                // everything else.
+                if (call.Name == "create_product")
+                    products = await _store.GetProductsAsync(cancellationToken);
             }
             messages.Add(new ChatMessage(ChatRole.Tool, results));
 
-            // create_product may have added rows — refresh so later fuzzy matches see them.
+            // Tools may have changed counts/signals — refresh so the next round reads current state.
             products = await _store.GetProductsAsync(cancellationToken);
         }
 
@@ -601,7 +611,9 @@ public class AnthropicPantryChat : IPantryChat
     /// </summary>
     private async Task<string?> InertSignalCaveatAsync(int productId, bool onlyIfAtZero, CancellationToken ct)
     {
-        var current = (await _store.GetProductsAsync(ct)).FirstOrDefault(p => p.Id == productId);
+        // One product, not the catalog: every relative "used one" lands here, and the full three-table
+        // load was almost always discarded at the zero check below.
+        var current = await _store.GetProductAsync(productId, ct);
         if (current is null) return null;
         if (onlyIfAtZero && current.QuantityOnHand != 0m) return null;
         if (!ReplenishmentPredictor.Predict(current, DateOnly.FromDateTime(DateTime.Today)).SignalTodayWouldBeInert)
