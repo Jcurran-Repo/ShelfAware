@@ -558,9 +558,13 @@ _Last updated: 7/30/2026_
   fuzzy resolves (the census grid re-ran full catalog re-normalization per row per RENDER) and now
   also serves the auto-confirmer + Upload pre-fill (two full scans per line gone); census `Read()`
   overlaps the catalog load with the photo transfers; the photo loader stops triple-buffering; the
-  rename collision check reads untracked. Twelve new tests, every one mutation-checked (six
-  mutations, each killing exactly its tests). Full detail: CLAUDE.md item 43. **1463 green, 0
-  warnings** — 8/8/2026
+  rename collision check reads untracked. Twelve new tests, every one mutation-checked (seven
+  mutations across five runs, each killing exactly its tests). Full detail: CLAUDE.md item 43.
+  **1463 green, 0 warnings** — 8/8/2026. A re-review of the fix commit itself (item 39's discipline)
+  found two, both fixed: this entry's own mutation count was wrong (it said "six" — the commit message
+  still does, uncorrectably), and the new junk-name refusal showed nothing on the row before the
+  confirm — the MatchMessage arm added covers BOTH NoName shapes, so blank names gained the inline
+  message they always lacked too. **1465 green, 0 warnings** — 8/9/2026
 
 ---
 

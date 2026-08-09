@@ -451,6 +451,15 @@ else if (phase == Phase.Done)
                 // sat ticked with nothing on screen saying it won't be recorded. Said before the confirm,
                 // like the empty-count and negative-count cases beside it.
                 return ("Counted as none, and this isn't a product yet — there's nothing to record. Give it a real number if it's on the shelf, or untick it.", true);
+            case CensusPlan.CensusReason.NoName:
+                // Said before the confirm, like every other refusal message here — and covering BOTH NoName
+                // shapes, so the blank-name case gains the message it always lacked rather than the junk-name
+                // case inheriting its silence. A name with no letters or digits folds to an empty IdentityKey,
+                // which product identity cannot see, so the confirm refuses it; the row says so while it is
+                // still fixable instead of first explaining itself in the Done panel.
+                return (name.Length == 0
+                    ? "Give this row a name, or it'll be skipped."
+                    : "That name has no letters or numbers, so it can't name a product — rename it, or it'll be skipped.", true);
             default:
                 return null;
         }

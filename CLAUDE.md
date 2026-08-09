@@ -93,7 +93,7 @@ Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptT
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1463 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1465 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see items 31, 42 and 43).
 
@@ -1975,9 +1975,19 @@ bUnit pages/components — see items 31, 42 and 43).
      the three post-item-42 commits added 13 tests without re-reading the number off a run. Item 21's
      rule, third occurrence, in the file that states it.
    - **1463 tests green, 0 warnings** on a non-incremental Release build (1451 at the start of the pass;
-     +12), read off the final run. Every new test mutation-checked in four batches — six mutations, each
+     +12), read off the final run. Every new test mutation-checked — SEVEN mutations across five runs, each
      killing exactly the tests it should and nothing else (including the guard-placed-too-early mutation
-     the dropdown-pick complement exists for).
+     the dropdown-pick complement exists for). ⚠️ This line first read "six mutations in four batches",
+     and the fix commit's message still does (uncorrectable) — item 21's false-number class, written from
+     memory instead of recounted from the transcript, caught by the re-review below.
+   - **The re-review of the fix commit itself (2026-08-09 — item 39's discipline, applied to this pass
+     too) found two, both fixed:** the mutation-count error above, and the new junk-name `NoName` refusal
+     rendering NO pre-confirm message — a visibly-named "!!" row was first told about its refusal in the
+     Done panel, the say-it-before-the-confirm rule item 42's finding D applied to negative counts. The
+     `MatchMessage` arm added covers BOTH `NoName` shapes, so the blank-name case gained the inline
+     message it always lacked rather than the junk case inheriting its silence. Both mutation-checked
+     (case disabled + branches swapped, each killing exactly the two new page tests). **1465 tests green,
+     0 warnings** on a non-incremental Release build (+2), read off the final run.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

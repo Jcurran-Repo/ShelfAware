@@ -733,6 +733,37 @@ public class PantryPhotoPageTests : PageTestContext
     }
 
     [Fact]
+    public void A_junk_name_says_it_cannot_name_a_product_before_the_confirm()
+    {
+        // A name with no letters or digits folds to an empty IdentityKey, so the confirm refuses it
+        // (NoName) — but the refusal used to speak only in the Done panel, after the click. Same
+        // say-it-before-the-confirm rule as the empty-count and negative-count messages above.
+        var cut = Review(Item("Canned Beans"));
+
+        RowFor(cut, "Canned Beans").QuerySelectorAll("input")
+            .Single(i => (i.GetAttribute("aria-label") ?? "").StartsWith("Item name")).Change("!!");
+
+        var row = Collapsed(RowFor(cut, "!!"));
+        Assert.Contains("no letters or numbers", row);
+        Assert.Contains("skipped", row);
+    }
+
+    [Fact]
+    public void A_blanked_name_asks_for_one_before_the_confirm()
+    {
+        // The other NoName shape. Blanking the box on an unmatched row never had an inline message
+        // either — both shapes gained one together, so the parity is closed rather than shifted.
+        var cut = Review(Item("Canned Beans"));
+
+        cut.FindAll("tbody tr").Single().QuerySelectorAll("input")
+            .Single(i => (i.GetAttribute("aria-label") ?? "").StartsWith("Item name")).Change("");
+
+        var row = Collapsed(cut.FindAll("tbody tr").Single());
+        Assert.Contains("Give this row a name", row);
+        Assert.Contains("skipped", row);
+    }
+
+    [Fact]
     public async Task A_name_match_that_conflicts_with_an_ambiguous_read_is_unticked_and_says_so()
     {
         // ⚠️ Finding A, end-to-end on the grid. The row's own name identity-matches P1 exactly, but the
