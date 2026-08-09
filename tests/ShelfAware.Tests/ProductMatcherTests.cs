@@ -41,6 +41,44 @@ public class ProductMatcherTests
         Assert.Null(ProductMatcher.Resolve("coffee", []));
     }
 
+    [Fact]
+    public void ExactMatches_returns_every_rule1_identity_not_just_the_first()
+    {
+        // ResolveWithKind returns the FIRST exact match and cannot say there were two — and no unique
+        // index exists on product names, so "the" exact match can be a name two products share. A
+        // caller about to write over it (a census attests over the stored count) needs the full set.
+        // The twins here differ only in punctuation, which rule 1's own normalization folds away — the
+        // pair a raw-string comparison would call distinct.
+        var hyphenated = new Product { Id = 1, Name = "Home-Canned Tomato Sauce" };
+        var spaced = new Product { Id = 2, Name = "Home Canned Tomato Sauce" };
+        var other = new Product { Id = 3, Name = "Ketchup" };
+
+        var twins = ProductMatcher.ExactMatches("home canned tomato sauce", [hyphenated, spaced, other]);
+
+        Assert.Equal(2, twins.Count);
+        Assert.DoesNotContain(other, twins);
+        Assert.Single(ProductMatcher.ExactMatches("ketchup", [hyphenated, spaced, other]));
+        Assert.Empty(ProductMatcher.ExactMatches("mustard", [hyphenated, spaced, other]));
+        Assert.Empty(ProductMatcher.ExactMatches("   ", [hyphenated, spaced, other]));
+    }
+
+    [Fact]
+    public void IdentityKey_folds_any_run_of_separators_to_one_space_and_is_idempotent()
+    {
+        // ⚠️ Normalize collapses EVERY run of separators to a single space, not just doubles. A name like
+        // "Yogurt - Strawberry" has a space-hyphen-space RUN, so a single Replace("  ", " ") left
+        // "yogurt  strawberry" — neither equal to the plain-spaced form nor idempotent, which a documented
+        // dictionary KEY (IdentityKey, keyed on across the census's whole-pass resolution) has to be. It
+        // failed safe (rule 1 missed, rule 3 caught it as similarity), but a near-key is not a key.
+        Assert.Equal(
+            ProductMatcher.IdentityKey("Yogurt Strawberry"),
+            ProductMatcher.IdentityKey("Yogurt - Strawberry"));
+
+        var key = ProductMatcher.IdentityKey("Yogurt - Strawberry");
+        Assert.Equal("yogurt strawberry", key);
+        Assert.Equal(key, ProductMatcher.IdentityKey(key)); // re-normalizing a key is a no-op
+    }
+
     // A pantry of same-brand items: a shared store-brand prefix must not be enough to match.
     private static readonly IReadOnlyList<Product> StoreBrandPantry =
     [
@@ -69,5 +107,35 @@ public class ProductMatcherTests
 
         Assert.NotNull(match);
         Assert.Equal(4, match!.Id);
+    }
+
+    // ---- which rule fired, for callers that must tell an identity from a guess ----
+
+    [Fact]
+    public void ResolveWithKind_ReportsExactAcrossPunctuationAndCase()
+    {
+        // ⚠️ The case the census got wrong by re-deriving exactness itself: Normalize folds punctuation
+        // to spaces BEFORE rule 1, so these are the same name to the matcher — and a caller comparing
+        // the raw strings would call an identity a guess, then warn the user about a guess that never
+        // happened.
+        IReadOnlyList<Product> pantry = [new() { Id = 9, Name = "Home-Canned Tomato Sauce", Category = Category.Pantry }];
+
+        var (product, kind) = ProductMatcher.ResolveWithKind("home canned tomato sauce", pantry);
+
+        Assert.Equal(9, product!.Id);
+        Assert.Equal(ProductMatcher.MatchKind.ExactName, kind);
+    }
+
+    [Fact]
+    public void ResolveWithKind_SeparatesSimilarityFromIdentity()
+    {
+        // The complement: the rules that are genuinely guesses must NOT report ExactName, or the
+        // distinction buys nothing.
+        Assert.Equal(ProductMatcher.MatchKind.Substring,
+            ProductMatcher.ResolveWithKind("dog food", Pantry).Kind);
+        Assert.Equal(ProductMatcher.MatchKind.TokenOverlap,
+            ProductMatcher.ResolveWithKind("Folgers Coffee Classic", StoreBrandPantry).Kind);
+        Assert.Equal(ProductMatcher.MatchKind.None,
+            ProductMatcher.ResolveWithKind("wholly unrelated widget", Pantry).Kind);
     }
 }

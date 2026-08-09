@@ -329,12 +329,58 @@ else
                    OutNow — asking them to "say so" invites them to report an outage that is on record,
                    and implies the app ignored them. A DERIVED zero (a receipt removal, an "Ate it")
                    wrote nothing and is exactly the hypothesis §13.4 says to raise. Ask the ENGINE which
-                   one this is rather than re-deriving it: an active outage is what pins, and only
-                   expiry pins otherwise. *@
-                @if (prediction.Pinned && !prediction.Expired)
+                   one this is rather than re-deriving it: an active outage is what pins (expiry also
+                   pins, but the branch above this chain has already taken every expired state). *@
+                @if (prediction.Pinned)
                 {
                     <p class="muted">Down to none, and that's on record as running out — which is what
                         teaches the burn rate. Bought more? Set the new number.</p>
+                }
+                else if (product.Signals.Any(s => s.Kind == SignalKind.OutNow))
+                {
+                    @* ⚠️ A THIRD state: an outage WAS asserted here before and is not in force now.
+                       Supersession (§6.6 — a later purchase or restock) is the USUAL road in, but not
+                       the only one: a later RunningLow displaces an OutNow as the active signal too,
+                       with no stock event anywhere — so the copy must not name a mechanism. Without
+                       this branch it fell into the derived-zero copy below, which tells someone who
+                       did say they were out that nothing here said so.
+                       ⚠️ This copy says ONLY what `Pinned` licenses, and the first version of it said
+                       two things that were false. It named a RESTOCKED — but the predicate is "an OutNow
+                       exists", equally true when a PURCHASE cleared it (tap Out, buy it, cook it back to
+                       zero), so it told people they'd marked something restocked when they never had.
+                       And it claimed "it isn't on the list" from `!Pinned` — but the grocery list takes
+                       Overdue OR DueSoon, so a superseded outage on an item the rhythm has since made
+                       due sat on that list while this panel denied it. Don't reintroduce either claim
+                       without reading it off the engine.
+                       ⚠️ The advice splits on SignalTodayWouldBeInert: with stock recorded as of today
+                       or later, a fresh 0 loses that tie — permanently (§6.6) — so "set it to 0 again"
+                       was a silent no-op that re-rendered this same branch, advice and all. The copy
+                       says "today or later" because the flag is `>=`: a future-dated stock-back (chat
+                       takes any purchase date) makes "recorded today" and "try tomorrow" both false.
+                       The engine states the fact; this page only words it. *@
+                    @if (prediction.SignalTodayWouldBeInert)
+                    {
+                        <p class="muted">Down to none, and you've said so before — but that's not in
+                            force now, and there's stock recorded as of today or later, which wins that
+                            tie. Once that date has passed, set it to 0 and it'll stick; if the number's
+                            just wrong, set the right one now.</p>
+                    }
+                    else
+                    {
+                        <p class="muted">Down to none, and you've said so before — but that's not in force
+                            now, so Shelf Aware isn't treating you as out. If it's still right, set it to 0
+                            again; otherwise set the number you have.</p>
+                    }
+                }
+                else if (prediction.SignalTodayWouldBeInert)
+                {
+                    @* The derived-zero advice makes the same promise ("set it to 0 and it counts as
+                       running out"), so it needs the same split — a promise the tie rule breaks today
+                       must not be made today. *@
+                    <p class="muted">Down to none, but nothing here has said so out loud — and there's
+                        stock recorded as of today or later, which wins that tie. Once that date has
+                        passed, set it to 0 and it'll count as running out; otherwise correct the
+                        number.</p>
                 }
                 else
                 {
@@ -785,9 +831,14 @@ else
 
         // Saved recipes whose ingredient→product map points at this item (grounded match captured at
         // save time). Just links out to the recipe on /recipes — no recipe content duplicated here.
-        var productName = product.Name;
+        // ⚠️ Match by the matcher's rule-1 IDENTITY, not raw equality: MatchedProduct stores a NAME, and a
+        // punctuation variant of this product's name is the same product to every write-side guard — so a
+        // raw compare left a recipe grounded to "Home Canned Sauce" off a "Home-Canned Sauce" page. Same one
+        // identity definition as IngredientMatcher, the census, rename and merge. Filtered in memory, since
+        // IdentityKey isn't SQL-translatable (the Recipes are already materialised here anyway).
+        var productKey = ProductMatcher.IdentityKey(product.Name);
         usedInRecipes = (await db.Recipes.Include(r => r.Ingredients).ToListAsync())
-            .Where(r => r.Ingredients.Any(i => string.Equals(i.MatchedProduct, productName, StringComparison.OrdinalIgnoreCase)))
+            .Where(r => r.Ingredients.Any(i => i.MatchedProduct is { } mp && ProductMatcher.IdentityKey(mp) == productKey))
             .OrderBy(r => r.Name)
             .Select(r => new RecipeLink(r.Id, r.Name))
             .ToList();

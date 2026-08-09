@@ -258,4 +258,63 @@ public class ReceiptConfirmationServiceTests : IDisposable
         Assert.Equal(1, await db.ProductAliases.CountAsync()); // unique (Merchant, RawText) index holds
         Assert.All(await db.ReceiptLines.ToListAsync(), l => Assert.NotNull(l.ProductId));
     }
+
+    // --- out-of-range category from a tampered review grid --------------------
+
+    [Fact]
+    public async Task A_new_products_out_of_range_category_defaults_to_Other()
+    {
+        // ⚠️ Category rides on the ConfirmLine from the review grid's <select>; a tampered circuit message
+        // could bind (Category)9999. IsDefined must default it to Other rather than persist an undefined
+        // enum — the same guard SetCategory (#11) and create_product carry.
+        var receipt = await SeedPending("Walmart", L("SAUCE", "Novel Sauce"));
+
+        await _service.ConfirmAsync(receipt.Id, new DateOnly(2026, 7, 1),
+            [C("SAUCE", "Novel Sauce", category: (Category)9999)], writeAliases: false);
+
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(Category.Other, (await db.Products.SingleAsync(p => p.Name == "Novel Sauce")).Category);
+    }
+
+    // --- one new item transcribed two ways is one product ----------------------
+
+    [Fact]
+    public async Task Two_new_lines_of_one_item_differing_only_in_PUNCTUATION_make_one_product()
+    {
+        // ⚠️ createdByName keys on the matcher's IDENTITY, not the raw name. The reader transcribes a
+        // label with and without a hyphen as often as identically, so a raw key minted a twin the matcher
+        // then treats as one product — splitting purchase history on the app's highest-volume creation path.
+        var receipt = await SeedPending("Walmart",
+            L("HOME CANNED SAUCE", "Home-Canned Sauce"), L("HOME-CANNED SAUCE", "Home Canned Sauce"));
+
+        var outcome = await _service.ConfirmAsync(receipt.Id, new DateOnly(2026, 7, 1),
+            [C("HOME CANNED SAUCE", "Home-Canned Sauce"), C("HOME-CANNED SAUCE", "Home Canned Sauce")],
+            writeAliases: false);
+
+        Assert.Equal(1, outcome.NewProducts);
+        Assert.Equal(2, outcome.Purchases);
+        await using var db = _db.CreateDbContext();
+        Assert.Single(await db.Products.ToListAsync());
+        Assert.Equal(2, await db.PurchaseEvents.CountAsync());
+    }
+
+    [Fact]
+    public async Task Two_junk_named_lines_stay_two_products_instead_of_colliding_on_the_empty_key()
+    {
+        // The identity key of a name with no letters or digits is EMPTY, so keying the roll-up on it alone
+        // made "!!" and "--" one dictionary entry — two different (if silly) items silently merged into one
+        // product with the first line's name. Such names key by their raw text instead; the two key kinds
+        // can't cross (an identity key is letters/digits/spaces only).
+        var receipt = await SeedPending("Walmart", L("MYSTERY A", "!!"), L("MYSTERY B", "--"));
+
+        var outcome = await _service.ConfirmAsync(receipt.Id, new DateOnly(2026, 7, 1),
+            [C("MYSTERY A", "!!"), C("MYSTERY B", "--")],
+            writeAliases: false);
+
+        Assert.Equal(2, outcome.NewProducts);
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(2, await db.Products.CountAsync());
+        Assert.NotNull(await db.Products.SingleOrDefaultAsync(p => p.Name == "!!"));
+        Assert.NotNull(await db.Products.SingleOrDefaultAsync(p => p.Name == "--"));
+    }
 }

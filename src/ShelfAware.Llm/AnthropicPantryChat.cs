@@ -143,10 +143,20 @@ public class AnthropicPantryChat : IPantryChat
                     text = $"That step ({call.Name}) hit an error and couldn't be completed.";
                 }
                 results.Add(new FunctionResultContent(call.CallId, text));
+
+                // ⚠️ Refresh MID-round too, not only between rounds: parallel tool use ships several
+                // calls in one assistant turn, and every later call in this round resolves names against
+                // `products` — so without this a duplicated create ("Half and Half" beside
+                // "Half-and-Half", or the same name twice) walked straight past the twin guard, and a
+                // create-then-use pair was told "call create_product first" by the round that just did.
+                // Keyed on the one tool that adds products; the between-round refresh below still covers
+                // everything else.
+                if (call.Name == "create_product")
+                    products = await _store.GetProductsAsync(cancellationToken);
             }
             messages.Add(new ChatMessage(ChatRole.Tool, results));
 
-            // create_product may have added rows — refresh so later fuzzy matches see them.
+            // Tools may have changed counts/signals — refresh so the next round reads current state.
             products = await _store.GetProductsAsync(cancellationToken);
         }
 
@@ -177,13 +187,27 @@ public class AnthropicPantryChat : IPantryChat
             case "record_signal":
             {
                 var name = Str("product_name");
-                if (!Enum.TryParse<SignalKind>(Str("kind"), ignoreCase: true, out var kind))
+                // IsDefined because Enum.TryParse SUCCEEDS on a numeric string, so "7" would sail past this
+                // refusal and write an undefined SignalKind that no reader in the app has a branch for.
+                if (!Enum.TryParse<SignalKind>(Str("kind"), ignoreCase: true, out var kind) || !Enum.IsDefined(kind))
                     return ("Invalid 'kind' — use OutNow, RunningLow, or Restocked.", true);
                 var product = ProductMatcher.Resolve(name, products);
                 if (product is null)
                     return ($"No product matches \"{name}\". Call create_product first if it's new.", true);
                 await _store.RecordSignalAsync(product.Id, kind, ct);
                 actions.Add($"{kind} → {product.Name}");
+                // ⚠️ "Recorded" alone is a lie when the signal can't take effect: §6.6 gives a same-day
+                // tie to the stock, so an OutNow OR a RunningLow filed while the last stock-back is today
+                // (or later) is discarded by the engine, permanently — and this surface TALKS, so that
+                // silent no-op would be SPOKEN. Both kinds are subject to the tie (Restocked IS a
+                // stock-back, never a subject), so both consult the shared caveat, whose wording lives in
+                // one place so it can't drift from set_quantity's copy (it had). onlyIfAtZero: false — a
+                // signal was filed explicitly here, whatever the count.
+                if (kind is SignalKind.OutNow or SignalKind.RunningLow
+                    && await InertSignalCaveatAsync(product.Id, onlyIfAtZero: false, ct) is { } caveat)
+                {
+                    return ($"Recorded {kind} for {product.Name} — but {caveat}", false);
+                }
                 return ($"Recorded {kind} for {product.Name}.", false);
             }
 
@@ -205,12 +229,17 @@ public class AnthropicPantryChat : IPantryChat
             {
                 var name = Str("product_name");
                 var today = DateOnly.FromDateTime(DateTime.Today);
-                var nameById = products.ToDictionary(p => p.Id, p => p.Name);
+                // ⚠️ Re-read. A signal or purchase recorded earlier in this SAME turn (record_signal +
+                // query_status in one model round) isn't in the start-of-turn snapshot, so "we're out of
+                // milk — how are we doing?" spoke "Stocked, due <future>" about a product just reported out.
+                // record_signal already re-reads for its caveat; this is the same fix one call site over.
+                var current = await _store.GetProductsAsync(ct);
+                var nameById = current.ToDictionary(p => p.Id, p => p.Name);
                 var trackExpirations = _settings is not null && await _settings.GetTrackExpirationDatesAsync(ct);
 
                 if (string.IsNullOrWhiteSpace(name))
                 {
-                    var low = products.Where(p => p.IsTracked)
+                    var low = current.Where(p => p.IsTracked)
                         .Select(p => ReplenishmentPredictor.Predict(p, today, trackExpirations, honorQuantity: true))
                         .Where(r => r.Status is PredictionStatus.Overdue or PredictionStatus.DueSoon)
                         .OrderByDescending(r => r.Status)
@@ -222,7 +251,7 @@ public class AnthropicPantryChat : IPantryChat
                     return ($"Running low: {list}.", false);
                 }
 
-                var product = ProductMatcher.Resolve(name, products);
+                var product = ProductMatcher.Resolve(name, current);
                 if (product is null) return ($"No product matches \"{name}\".", true);
                 var pr = ReplenishmentPredictor.Predict(product, today, trackExpirations, honorQuantity: true);
                 // A suppressed item must not read "Stocked, due <last week>". Suppression deliberately
@@ -312,24 +341,40 @@ public class AnthropicPantryChat : IPantryChat
                 // Deliberately not echoing a computed total for a relative move: this method doesn't
                 // read the result back, and stating a number the engine might have clamped would be
                 // exactly the "screen says something the engine didn't do" mistake.
-                return (relative
+                var reply = relative
                     ? $"Noted — adjusted what's on hand for {product.Name}."
-                    : $"Noted — {product.Name}: {quantity:0.##} on hand.", false);
+                    : $"Noted — {product.Name}: {quantity:0.##} on hand.";
+
+                // ⚠️ A count that landed at zero files an OutNow (§13.4) exactly like record_signal, and
+                // this surface SPEAKS — so if that out is inert (§6.6's same-day tie goes to the stock),
+                // say so via the shared caveat rather than speak the count panel's silent no-op. Gate: only
+                // a zero write filed an out — an absolute 0, or a relative move that clamped to 0 (which
+                // onlyIfAtZero re-checks against the re-read count), never a relative move that landed above.
+                if (((!relative && quantity == 0m) || relative)
+                    && await InertSignalCaveatAsync(product.Id, onlyIfAtZero: true, ct) is { } caveat)
+                {
+                    reply += $" But {caveat}";
+                }
+                return (reply, false);
             }
 
             case "create_product":
             {
                 var name = Str("name")?.Trim();
                 if (string.IsNullOrWhiteSpace(name)) return ("A product name is required.", true);
-                if (!Enum.TryParse<Category>(Str("category"), ignoreCase: true, out var category))
+                if (!Enum.TryParse<Category>(Str("category"), ignoreCase: true, out var category) || !Enum.IsDefined(category))
                     category = Category.Other;
                 // Same resolver the other tools trust — a near-match means this product likely already
                 // exists under another spelling, and a twin would split its purchase history. Exact dupes
                 // are always refused; a fuzzy match is refused until the user confirms it's different and
                 // the model retries with confirmed_distinct — the chat mirror of the page's "Add anyway".
-                if (ProductMatcher.Resolve(name, products) is { } existing)
+                // ⚠️ Exactness comes from the MATCHER (rule 1), never from comparing the raw strings:
+                // punctuation and case are folded, so "Half and Half" IS "Half-and-Half" — and a raw
+                // compare let confirmed_distinct mint that identity pair, which then jams the census.
+                var (existing, existingKind) = ProductMatcher.ResolveWithKind(name, products);
+                if (existing is not null)
                 {
-                    if (string.Equals(existing.Name, name, StringComparison.OrdinalIgnoreCase))
+                    if (existingKind == ProductMatcher.MatchKind.ExactName)
                         return ($"\"{existing.Name}\" already exists — use it instead.", false);
                     if (Bool("confirmed_distinct") is not true)
                         return ($"That sounds like \"{existing.Name}\", which already exists. If it's the same item, use \"{existing.Name}\"; if the user confirms it's genuinely different, call create_product again with confirmed_distinct=true.", false);
@@ -549,6 +594,34 @@ public class AnthropicPantryChat : IPantryChat
             default:
                 return ($"Unknown tool: {call.Name}.", true);
         }
+    }
+
+    /// <summary>
+    /// The §6.6 same-day-tie caveat, shared by the two tools that can file an inert OutNow/RunningLow and
+    /// then SPEAK about it — <c>record_signal</c> and <c>set_quantity</c> — so its wording lives in ONE
+    /// place and can't drift between them (it had). Re-reads the product because a write earlier in the
+    /// SAME turn isn't in the start-of-turn <c>products</c> snapshot, and asks the ENGINE whether a signal
+    /// today would be inert (<see cref="PredictionResult.SignalTodayWouldBeInert"/> = lastStockBack &gt;=
+    /// today: a stock-back today OR later wins the tie). Returns the caveat clause (lowercase, so each
+    /// caller supplies its own "but"/"But " lead-in), or null when there is nothing to caveat.
+    /// <para><paramref name="onlyIfAtZero"/> is set by <c>set_quantity</c>, whose "an out was filed"
+    /// condition is the re-read count landing at zero (an absolute 0, or a relative move that clamped to
+    /// 0). <c>record_signal</c> filed its signal explicitly regardless of the count, so it passes false.
+    /// A product that vanished mid-turn yields nothing to reason from — say the plain thing.</para>
+    /// </summary>
+    private async Task<string?> InertSignalCaveatAsync(int productId, bool onlyIfAtZero, CancellationToken ct)
+    {
+        // One product, not the catalog: every relative "used one" lands here, and the full three-table
+        // load was almost always discarded at the zero check below.
+        var current = await _store.GetProductAsync(productId, ct);
+        if (current is null) return null;
+        if (onlyIfAtZero && current.QuantityOnHand != 0m) return null;
+        if (!ReplenishmentPredictor.Predict(current, DateOnly.FromDateTime(DateTime.Today)).SignalTodayWouldBeInert)
+            return null;
+        // ⚠️ "as of today or later", not "today": the flag is lastStockBack >= today, so a FUTURE-dated
+        // stock-back fires it too — there "recorded today" and "try tomorrow" would both be false, by days.
+        return "there's stock recorded for it as of today or later, and a tie goes to the stock, so it " +
+            "won't take effect yet — tell the user it'll register if they say so again once that stock date has passed.";
     }
 
     private static IList<AITool> BuildTools()

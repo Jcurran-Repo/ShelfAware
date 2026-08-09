@@ -257,6 +257,40 @@ public class ReportDataServiceTests
         Assert.Equal(2, Assert.Single(report.Findings).RecentMealUses);
     }
 
+    [Fact]
+    public async Task Cooked_with_counts_a_meal_grounded_by_a_PUNCTUATION_variant()
+    {
+        // The join keys on product IDENTITY, not the raw name. MatchedProduct is captured at save time,
+        // so a punctuation variant ("Home Canned Sauce" for "Home-Canned Sauce") is the same product to
+        // every other surface — "recipes that use this" lists it, so the "cooked with" count must too, or
+        // two surfaces of one app disagree. A raw OrdinalIgnoreCase compare read 0 here.
+        using var db = new TestDb();
+        await SeedProductAsync(db, "Home-Canned Sauce", StockUpHistory(130, 6));
+
+        await using (var ctx = db.CreateDbContext())
+        {
+            var recipe = new Recipe { Name = "Pasta Night" };
+            recipe.Ingredients.Add(new RecipeIngredient
+            {
+                Name = "sauce",
+                IsMain = true,
+                MatchedProduct = "Home Canned Sauce", // grounded to the variant spelling, not the product name
+            });
+            ctx.Recipes.Add(recipe);
+            await ctx.SaveChangesAsync();
+
+            ctx.MealEvents.Add(new MealEvent { RecipeId = recipe.Id, AteAt = DaysAgo(10) });
+            ctx.MealEvents.Add(new MealEvent { RecipeId = recipe.Id, AteAt = DaysAgo(30) });
+            await ctx.SaveChangesAsync();
+        }
+
+        var service = new ReportDataService(db);
+        var report = await service.LoadBacklogAsync(
+            await service.LoadAsync(), await service.LoadRecipeMainsAsync(), Today, honorExpirations: false, 60);
+
+        Assert.Equal(2, Assert.Single(report.Findings).RecentMealUses);
+    }
+
     // ---- The gap report -------------------------------------------------------------------------
 
     [Fact]

@@ -73,7 +73,7 @@ Category enum (store aisle): Dairy, Meat, Produce, Pantry, Frozen, Beverage, Hou
 
 > Brand and Size are per-purchase metadata on both ReceiptLine and PurchaseEvent — the product is the brand/size-agnostic item, so the same item bought across brands/sizes rolls up. See CLAUDE.md for the matching + dominant-size prediction model.
 
-> **v4.0 adds an opt-in stock count to `Product`** (`TrackQuantity`, `QuantityOnHand`, `QuantityCountedAt`) — the first thing in the model that measures *stock* rather than *flow*. Spec + invariants in **§13** (built, except the §13.8 census).
+> **v4.0 adds an opt-in stock count to `Product`** (`TrackQuantity`, `QuantityOnHand`, `QuantityCountedAt`) — the first thing in the model that measures *stock* rather than *flow*. Spec + invariants in **§13** (built).
 
 ## 5. Receipt extraction (the AI centerpiece)
 **Flow:** Upload → client resize (longest edge ≤ 1568px, JPEG q≈80) → `IReceiptExtractor.ExtractAsync(images)` → editable review table → user confirms → persist `PurchaseEvent`s + aliases.
@@ -112,7 +112,7 @@ set_tracking(product_name, tracked)         # start/stop tracking a product (unt
 Chat prompt: resolve names against the provided product list with fuzzy matching; clarify ONLY when two products are plausibly intended; multiple statements → multiple tool calls; reply with a one-line confirmation. Same pinned Haiku ID.
 
 ## 8. UI
-Spec baseline was three pages — Dashboard (`/`), Upload (`/receipt`), Products (`/products`); the build added Grocery List (`/list`), Trends (`/trends`), Product Detail (`/product/{id}`), Accuracy (`/accuracy`), and Recipes (`/recipes`) (CLAUDE.md). Dashboard = "Running Low" (Overdue + DueSoon, signal-pinned first), each row name / status chip / `Basis` / [Bought today][Restocked], plus the chat box and a collapsed "everything else" table. Upload = image → spinner → editable review table (name, qty, category, tags editor, product-match dropdown w/ "create new", low-confidence highlight) → [Confirm all]. Products grid = filters + an always-available **[Out]** button + a clickable **tag cloud** that filters the grid (deep-linkable `?tag=`). Grocery List = by aisle + copy/print + a manual **Extras** section. Recipes = won't-eat list, NL "what can I make?" suggestions grounded in on-hand products, saved recipes with "Ready to make"/"Missing items" badges, "Ate it", "Pick for me", and "Add missing to list". Visual polish deferred until after Phase 4.
+Spec baseline was three pages — Dashboard (`/`), Upload (`/receipt`), Products (`/products`); the build added Grocery List (`/list`), Trends (`/trends`), Product Detail (`/product/{id}`), Accuracy (`/accuracy`), Recipes (`/recipes`), and Count from a photo (`/pantry-photo`, §13.8) (CLAUDE.md). Dashboard = "Running Low" (Overdue + DueSoon, signal-pinned first), each row name / status chip / `Basis` / [Bought today][Restocked], plus the chat box and a collapsed "everything else" table. Upload = image → spinner → editable review table (name, qty, category, tags editor, product-match dropdown w/ "create new", low-confidence highlight) → [Confirm all]. Products grid = filters + an always-available **[Out]** button + a clickable **tag cloud** that filters the grid (deep-linkable `?tag=`). Grocery List = by aisle + copy/print + a manual **Extras** section. Recipes = won't-eat list, NL "what can I make?" suggestions grounded in on-hand products, saved recipes with "Ready to make"/"Missing items" badges, "Ate it", "Pick for me", and "Add missing to list". Visual polish deferred until after Phase 4.
 
 ## 9. Eval harness (`tests/ShelfAware.Evals`)
 Console app: `dotnet run --project tests/ShelfAware.Evals`.
@@ -141,7 +141,7 @@ Auth/accounts · multi-user · mobile apps · push/SMS/email (digest is stretch-
 
 ---
 
-## 13. Quantity on hand (v4.0 — built through §13.7; §13.8 is the remaining phase)
+## 13. Quantity on hand (v4.0 — built, §13.8's shelf-photo census included)
 
 **Why it exists.** §6 models *flow* — purchases in, a learned rhythm out. A backed-up pantry/freezer is
 a *stock* problem, and the household's actual goal is to answer **"do we have it?" without walking to the
@@ -532,10 +532,43 @@ caught it. Moved down, they're covered by `ReportDataServiceTests` on the same r
 harness as everything else in `ShelfAware.Web.Tests` — no new packages, no auth harness, no browser.
 The page keeps only what is genuinely UI: which preset is open, and whether expiration tracking is on.
 
-### 13.8 Shelf-photo census (later phase)
+### 13.8 Shelf-photo census ✅ *built: "Count from a photo" (`/pantry-photo`)*
 The intake answer for stock that receipts can never know about — bought pre-app, bought elsewhere,
 gifted, bulk. Reuses the extraction **line shape** — photo → candidate items with confidence → the
 review-grid pattern → confirm. Three photos of a freezer beats reading thirty items aloud.
+- ⚠️ **Every item carries an EVIDENCE grade, and that is what keeps a photo honest.** A receipt is text:
+  `raw_text` is either there or it isn't. A photo has no such floor — a freezer looks like a freezer, and a
+  model asked "what's in here?" can produce a plausible pantry out of priors alone, every word invented. So
+  `CensusItem.Evidence` says HOW the item was known: **`Label`** (printed text it could read, kept verbatim
+  in `LabelText` — the census's `raw_text`, checkable against the photo in a second), **`Appearance`** (no
+  legible label, recognised by sight — a bunch of bananas needs no barcode), or **`Unidentified`** (a package
+  is there and it could not say what; the NAME then describes the package, not the food).
+  Three of the contract's rules are **enforced in the parse rather than trusted to the prompt**, because a
+  shelf photo's output cannot be checked against anything: a `Label` claim with no readable text is
+  downgraded to `Appearance`; an `Unidentified` item's confidence is capped below the review grid's tick
+  threshold and it may never carry a product match; and `visible_count` is floored at 1 — reporting an item
+  means something was seen, and a zero surviving to the grid could be confirmed into an **attested** zero,
+  which mints a real `OutNow` (§13.4). A machine's arithmetic must never mint one.
+- **The grid ticks what it read and leaves what it guessed.** At or above **0.6** — the same threshold the
+  receipt review grid highlights a low-confidence line at, deliberately not a second number — a row arrives
+  ticked; below it the row is shown, styled low-confidence, with its reason visible and its box empty. A
+  guess has to be opted into; a legible label or an unmistakable banana is not punished for having no
+  barcode. `Tick all` / `Untick all` exist because thirty rows otherwise cost thirty taps — the guard is the
+  default, not a lock. ⚠️ **Tick all overrides the CONFIDENCE default alone**: it skips Unidentified rows,
+  still-selected similarity matches, and twin-ambiguous rows, because those three wait on a human answer a
+  bulk click doesn't give — each still ticks individually, which is exactly what "not a lock" licenses, and
+  each says its reason on the row. Untick all clears everything; a reset asserts nothing.
+  ⚠️ **Confidence is necessary and not sufficient, because a tick authorizes a WRITE.** Two more conditions
+  hold, each because the number alone is about the wrong question:
+  - **Never an `Unidentified` row**, enforced on the page and not merely implied by the reader's 0.3 cap.
+    Leaving it implied put the rule in one constant in another assembly: raise that cap, or swap the
+    reader, and rows literally named "foil-wrapped parcel" arrive ticked and become real products named
+    after packaging.
+  - **Never a row matched by name SIMILARITY.** Confidence states certainty in the ITEM — how sure the
+    reader is this is peanut butter — and says nothing about *which* product a `ProductMatcher` pass then
+    picked. Its substring rule lands "Peanut Butter" on a catalog's "Butter", and `Attest` REPLACES that
+    product's count with no undo, so a flawless read must not pre-authorize an unscored guess at the
+    target. The row says it was matched by similarity and waits to be looked at.
 - ★ **It must never create `PurchaseEvent`s.** You did not buy those today, and invented purchases would
   poison every rhythm in the app. A census writes products (if new) and an attested count — nothing else.
 - ⚠️ **What that output can and cannot do, measured before building any of it.** Census stock has 0 or 1
@@ -561,16 +594,95 @@ review-grid pattern → confirm. Three photos of a freezer beats reading thirty 
     measured on the real household at ~3–4 "Ate it" taps a week against ~537 purchases, so call it a third
     of meals. The count will therefore be *directionally* right and *precisely* wrong, which is exactly what
     `CountConfidence`'s attribute-don't-assert rendering is for.
-  - ⚠️ **A second write path.** `ReceiptConfirmationService` is THE confirm path and it creates
-    `PurchaseEvent`s, which the ★ rule above forbids. The census reuses the review-grid *UI* and needs its
-    own persistence: products (if new) + `StockLedger.Attest`, nothing else. "Reuses the extraction shape
-    end to end" was true of the line contract and false of the writing.
+  - ⚠️ **A second write path.** ✅ *built: `CensusConfirmationService`.* `ReceiptConfirmationService` is THE
+    confirm path and it creates `PurchaseEvent`s, which the ★ rule above forbids. The census reuses the
+    review-grid *UI* and needs its own persistence: products (if new) + `StockLedger.Attest`, nothing else.
+    "Reuses the extraction shape end to end" was true of the line contract and false of the writing.
+    Three calls inside it the code can't say for itself:
+    - ⚠️ **Rows are SUMMED per product before a single `Attest`.** An attestation states a TOTAL, so
+      attesting row by row would let a second row resolving to the same product silently overwrite the
+      first — a household with five left believing they had two, and nothing on screen saying a number had
+      been dropped. Two photos of one food, or two varieties of it, are exactly that case.
+    - **A negative count is REFUSED, not clamped**, and reported back. `Attest` floors at zero, so a
+      floored "-3" would land on an asserted out and write an `OutNow` off a typo — the same rule, for the
+      same reason, as `SetQuantityAsync`'s refusal.
+    - **An UNMATCHED row whose name already exists resolves to that product.** A census is the app's
+      biggest bulk product creator and a twin splits purchase history, so this is the standing duplicate
+      guard applied where it matters most — and it is also what makes a RETRY safe, which the failure
+      message then promises: a confirm that commits and fails on the way back invites a second press, and
+      without this that press would file a duplicate of every product the first one created.
+      ⚠️ **"Unmatched" and "the human chose create-new" are different facts and the row must carry which**
+      (`CensusRow.CreateNew`). Both arrive as `ProductId` 0, and collapsing them was a real bug: the
+      fallback resolved an explicit create-new onto the same-named product and REPLACED its count — twelve
+      packs silently becoming four, no new product, and a summary that said nothing unusual, while the grid
+      said "new product". An explicit create-new whose name is taken is **refused and named** instead:
+      merging overrules the human, and creating the twin is what the duplicate guard exists to stop, so the
+      honest move is to decline and let them say which they meant. The grid says so *before* the confirm.
+    - **A count of ZERO is §13.4's ordinary evidence and writes an `OutNow`, exactly as everywhere else.**
+      The only zero refused is one that would CREATE the product — nothing to add, nothing to count, and
+      the sole possible outcome a phantom the household has never owned. That refusal is **deferred and
+      settled once the whole census has been read** — a zero row is set aside, and refused only if no
+      other row brought the product into existence — because two rows naming one new item is the reader's
+      ordinary output (a row per variety, matched across varieties), and deciding it where the row sat
+      made the result depend on their order.
+      <br>✗ **A rule withholding the `OutNow` for a product with no purchase history was built and
+      reverted. Do not rebuild it.** Its premise — that such a signal could never be cleared, pinning the
+      item Overdue forever — is false: `lastStockBack` is the max of purchase dates **and restock dates**,
+      so one Restocked tap clears it, on the dashboard card the pin itself creates. Probed:
+      `zero + OutNow → Overdue/Pinned`; `+ Restocked → Unknown/not pinned`. The true statement it was
+      generalised from is narrower and still holds — *a later count* doesn't lift a pin, because attesting
+      touches no signals.
+      <br>Withholding it also cost something real: the `OutNow` is the only thing holding a zero once the
+      count goes stale (`CountLooksStale` then defers to a rhythm, and a rhythm-less product's `Unknown`
+      reads as in-stock). Probed at 200 days: with the signal `InStock=0`, without it `InStock=1` — recipes
+      offering food the household had counted as none, which is §13.5's beef bug with a 90-day fuse.
+      <br>⚠️ Worth keeping separately: that stale-count fallback treats a *positive* stale count on a
+      rhythm-less product as in-stock too. Pre-existing, not caused by the census, and unfixed — the
+      `OutNow` was only ever masking the zero case of it.
+    - ⚠️ **An EMPTY count box is not a zero.** The row carries a nullable count and a null is refused, never
+      coerced: `@bind` on a non-nullable decimal turns a box cleared to retype into `0`, and a ticked `0` is
+      an *asserted* out — a real `OutNow` against a shelf full of the stuff, from a field nobody typed in,
+      with the blur beating the click so the zero is never even seen. Same rule, same reason, as the product
+      page's count panel (§13.4's "a machine's arithmetic must never mint one", applied to a widget's).
+    - **A row naming a product that has since VANISHED is refused, not redirected.** A merge or a delete in
+      another tab while the grid sits open, and resolving by name instead would create a twin of the product
+      that just went away, or land the count on a different product than the dropdown showed. The grid said
+      where the row was going; a row that can no longer go there is the household's business.
+    - **A NEAR-miss on a typed name is named on the grid, never resolved in the write.** The reader's match
+      runs once, at read time, so it never sees a name the human enters afterwards — and "Name it if you
+      know what it is" on an unidentified package invites exactly that. Fuzzy matching false-positives, so
+      the service still resolves only on an exact name and the *grid* raises the near-miss for the household
+      to settle. Same shape as the standing duplicate guard elsewhere: exact blocked, fuzzy asked.
+    - **A name two products SHARE is refused, not resolved.** No unique index exists on product names, so
+      "the" exact match can be a coin flip between twins — and `Attest` REPLACES the chosen twin's stored
+      count. The grid never pre-fills one (the reader's hint list is `Distinct()`, so its suggestion names
+      a NAME; and rule 1's own normalization can call two products the same — `ProductMatcher.ExactMatches`
+      answers the plural question so the page doesn't re-derive it), the row arrives unticked with the
+      reason said before the confirm, Tick all skips it, the dropdown tells twins apart by their counts,
+      and the service's name-fallback refuses (`AmbiguousName`) instead of taking `First()` — the same
+      refusal `MealStock` makes when a name cannot address a single product. A human's pick by id is
+      ordinary; an explicit create-new on a twin name keeps its `DuplicateName` answer. Twins with
+      identical counts stay indistinguishable in the dropdown, which is the honest limit of what a
+      dropdown can say.
+    - **Resuming a DORMANT count is reported.** Stopping counting keeps the number and its date as history
+      (§13.1); a census overwrites both and starts believing them again — right for someone who just counted
+      the shelf, but it is the one switch they deliberately turned off, so the row shows the stored number
+      beforehand and the summary names the resumption afterwards. `Retracked` is a different property
+      (`IsTracked`) and would have stayed silent.
   Seeded now as `Quarter Cow Ground Beef` (a count, no purchases) so all of the above is demonstrable and
   tested before the photo half exists.
   Census input and purchase input are different doors.
 - Honest limits, designed for rather than papered over: occlusion (the back row), stacking (one visible
   can may be five), and unlabeled freezer parcels. The photo **proposes** a front-row count; the human
-  corrects it. Still an audit, not an authoring session.
+  corrects it. Still an audit, not an authoring session. The page states all three out loud rather than
+  letting the household discover them: photograph *different* areas or things get counted twice, only the
+  front row can be seen, and counts are **packages** (§13.1 — an unqualified "4" would read as a claim
+  about volume).
+- **Nothing is persisted but the counts.** The photo goes to the model and stops there — no audit copy, no
+  census table, nothing new for the export or "delete my data" to reach. It costs the receipt path's Retry
+  (there is no saved copy to retry FROM) and loses an abandoned review, and both are cheap when you are
+  standing at the shelf you just photographed. What it buys is that a photograph of the inside of someone's
+  home never lands on disk, and that the feature adds no new tenant table to get wrong.
 
 ### 13.9 Considered and rejected
 - **Barcode scanning stays out of scope (§12).** Fast per item but still linear in item count, patchy

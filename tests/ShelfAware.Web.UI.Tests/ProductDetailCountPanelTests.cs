@@ -53,6 +53,204 @@ public class ProductDetailCountPanelTests : PageTestContext
         return await raw.Products.IgnoreQueryFilters().Include(p => p.Signals).SingleAsync(p => p.Id == id);
     }
 
+    // ------------------------------------------------------- what a zero on the shelf is told it means
+
+    [Fact]
+    public void A_zero_a_receipt_or_a_cook_arrived_at_asks_the_household_to_confirm_it()
+    {
+        // §13.4's derived zero: cooking and receipt removals move the number without anyone claiming an
+        // outage, so this is the hypothesis worth raising. Nothing pinned the item, and no OutNow was
+        // ever filed — which is what tells the two kinds of zero apart.
+        var id = Seed(p =>
+        {
+            p.TrackQuantity = true;
+            p.QuantityOnHand = 0m;
+            p.QuantityCountedAt = Clock(1);
+            p.Purchases = Buys(30, 15);
+        });
+
+        var panel = CountPanel(RenderDetail(id));
+
+        Assert.Contains("nothing here has said so out loud", panel);
+        Assert.DoesNotContain("that's on record as running out", panel);
+    }
+
+    [Fact]
+    public void A_zero_the_human_asserted_says_it_is_on_record()
+    {
+        // The complement, and the branch that must not swallow the one above: an active OutNow pins, and
+        // asking someone to "say so" about an outage already on record implies the app ignored them.
+        var id = Seed(p =>
+        {
+            p.TrackQuantity = true;
+            p.QuantityOnHand = 0m;
+            p.QuantityCountedAt = Clock(1);
+            p.Purchases = Buys(30, 15);
+            p.Signals = [new InventorySignal { Kind = SignalKind.OutNow, SignaledAt = Clock(1) }];
+        });
+
+        var panel = CountPanel(RenderDetail(id));
+
+        Assert.Contains("that's on record as running out", panel);
+        Assert.DoesNotContain("nothing here has said so out loud", panel);
+    }
+
+    [Fact]
+    public void A_zero_whose_outage_is_no_longer_in_force_says_so_rather_than_denying_it()
+    {
+        // ⚠️ The state the app's own recovery path produces — assert the outage, then tap Restocked,
+        // which is how an outage is MEANT to be cleared. Restocked is status-only, so the number stays
+        // at zero while the pin goes. Without its own branch this fell into the derived-zero copy and
+        // told someone who had said they were out that nothing here said so.
+        var id = Seed(p =>
+        {
+            p.TrackQuantity = true;
+            p.QuantityOnHand = 0m;
+            p.QuantityCountedAt = Clock(5);
+            p.Purchases = Buys(30, 15);
+            p.Signals =
+            [
+                new InventorySignal { Kind = SignalKind.OutNow, SignaledAt = Clock(5) },
+                new InventorySignal { Kind = SignalKind.Restocked, SignaledAt = Clock(1) },
+            ];
+        });
+
+        var panel = CountPanel(RenderDetail(id));
+
+        Assert.Contains("you've said so before", panel);
+        Assert.Contains("not in force now", panel);
+        Assert.DoesNotContain("nothing here has said so out loud", panel);
+        // ⚠️ The copy must not name HOW the outage was cleared, nor claim list membership. The first
+        // version did both and both were false — see the branch's comment. Case-insensitive and
+        // phrased loosely on purpose: the original guards pinned one exact casing and one exact
+        // contraction, so "you Restocked it" and "it's not on the list" both slid past them.
+        Assert.DoesNotContain("restock", panel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("on the list", panel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("grocery list", panel, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void A_superseded_outage_with_stock_recorded_today_stops_promising_an_act_that_wont_work()
+    {
+        // ⚠️ The advice trap: with the stock-back dated TODAY, a fresh 0 ties with it and loses —
+        // permanently (§6.6's same-day rule; the signal's date never changes) — so "set it to 0
+        // again" was a silent no-op that re-rendered this same branch, advice included, for the
+        // rest of the day. The classic road in is a mis-tapped Restocked and a same-day attempt to
+        // undo it. The page words what the engine states (SignalTodayWouldBeInert); it derives
+        // nothing itself.
+        var id = Seed(p =>
+        {
+            p.TrackQuantity = true;
+            p.QuantityOnHand = 0m;
+            p.QuantityCountedAt = Clock(5);
+            p.Purchases = Buys(30, 15);
+            p.Signals =
+            [
+                new InventorySignal { Kind = SignalKind.OutNow, SignaledAt = Clock(5) },
+                new InventorySignal { Kind = SignalKind.Restocked, SignaledAt = Clock(0) },
+            ];
+        });
+
+        var panel = CountPanel(RenderDetail(id));
+
+        Assert.Contains("you've said so before", panel);
+        Assert.Contains("wins that tie", panel);
+        Assert.Contains("Once that date has passed", panel);
+        Assert.DoesNotContain("set it to 0 again", panel);
+        // ⚠️ "as of today or later", never "today": the flag is lastStockBack >= today, so it also
+        // fires for a FUTURE stock-back, where naming today — or promising tomorrow — is false.
+        // The POSITIVE claim, not just the absence of two phrasings: negative guards alone are
+        // evadable — "stock was logged for it today" restores the false today-claim and passes them.
+        Assert.Contains("as of today or later", panel);
+        Assert.DoesNotContain("recorded today", panel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("tomorrow", panel, StringComparison.OrdinalIgnoreCase);
+        // The stock-back here is a Restocked, but it is a purchase in the sibling road, so the copy
+        // must name no mechanism.
+        Assert.DoesNotContain("restock", panel, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void A_derived_zero_with_stock_recorded_today_gets_the_same_honest_timing()
+    {
+        // The derived-zero advice makes the same promise ("set it to 0 and it counts as running
+        // out"), so a same-day stock-back needs the same split — a promise the tie rule breaks
+        // today must not be made today.
+        var id = Seed(p =>
+        {
+            p.TrackQuantity = true;
+            p.QuantityOnHand = 0m;
+            p.QuantityCountedAt = Clock(1);
+            p.Purchases = Buys(30, 0); // bought TODAY, cooked to zero the same day
+        });
+
+        var panel = CountPanel(RenderDetail(id));
+
+        Assert.Contains("nothing here has said so out loud", panel);
+        Assert.Contains("wins that tie", panel);
+        Assert.Contains("Once that date has passed", panel);
+        Assert.DoesNotContain("set it to 0 and it counts as running out", panel);
+        // The POSITIVE claim, not just the absence of two phrasings: negative guards alone are
+        // evadable — "stock was logged for it today" restores the false today-claim and passes them.
+        Assert.Contains("as of today or later", panel);
+        Assert.DoesNotContain("recorded today", panel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("tomorrow", panel, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void A_later_running_low_that_displaces_the_outage_gets_the_same_mechanism_free_sentence()
+    {
+        // The not-in-force branch has a SECOND road in: no stock event anywhere, just a later
+        // RunningLow displacing the OutNow as the active signal. The copy survives because it
+        // names no mechanism — which is exactly why it must never regain one.
+        var id = Seed(p =>
+        {
+            p.TrackQuantity = true;
+            p.QuantityOnHand = 0m;
+            p.QuantityCountedAt = Clock(5);
+            p.Purchases = Buys(30, 15);
+            p.Signals =
+            [
+                new InventorySignal { Kind = SignalKind.OutNow, SignaledAt = Clock(5) },
+                new InventorySignal { Kind = SignalKind.RunningLow, SignaledAt = Clock(2) },
+            ];
+        });
+
+        var panel = CountPanel(RenderDetail(id));
+
+        Assert.Contains("you've said so before", panel);
+        Assert.Contains("not in force now", panel);
+        Assert.DoesNotContain("nothing here has said so out loud", panel);
+        // No stock event exists on this road at all, so naming one would be outright invention.
+        Assert.DoesNotContain("restock", panel, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void A_zero_whose_outage_a_PURCHASE_cleared_gets_the_same_sentence()
+    {
+        // ⚠️ The mutation-killer, and the case the first version of this branch got wrong. There is no
+        // Restocked here at all: the outage was superseded by BUYING some (the predictor's own primary
+        // flow — "pinned Overdue → Bought today"), and the count came back to zero by cooking. The
+        // branch keys on "an OutNow exists", so it must fire here too — which is exactly why the copy
+        // cannot name a restock. Without this test, swapping the predicate to Restocked left the whole
+        // UI suite green.
+        var id = Seed(p =>
+        {
+            p.TrackQuantity = true;
+            p.QuantityOnHand = 0m;
+            p.QuantityCountedAt = Clock(10);
+            p.Purchases = Buys(30, 4);   // the later buy is what cleared the outage
+            p.Signals = [new InventorySignal { Kind = SignalKind.OutNow, SignaledAt = Clock(10) }];
+        });
+
+        var panel = CountPanel(RenderDetail(id));
+
+        Assert.Contains("you've said so before", panel);
+        Assert.DoesNotContain("restock", panel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("on the list", panel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("grocery list", panel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("nothing here has said so out loud", panel);
+    }
+
     // ------------------------------------------------------------------- the confidence bands
 
     [Fact]

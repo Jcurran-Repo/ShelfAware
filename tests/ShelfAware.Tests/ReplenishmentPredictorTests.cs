@@ -287,6 +287,33 @@ public class ReplenishmentPredictorTests
     }
 
     [Fact]
+    public void SignalTodayWouldBeInert_IsTrueExactlyWhileTheStockBackIsToday()
+    {
+        // The member exists for surfaces whose copy invites "say you're out": an OutNow dated today
+        // fails the strict > filter whenever the last stock-back is also today — and neither date
+        // ever changes, so that signal stays dead for good. A page must not promise the act works;
+        // the engine states the fact beside the tie rule so no surface re-derives it.
+        var bought = ProductWith([D(0), D(20)]);
+        Assert.True(ReplenishmentPredictor.Predict(bought, D(20)).SignalTodayWouldBeInert);
+        Assert.False(ReplenishmentPredictor.Predict(bought, D(21)).SignalTodayWouldBeInert);
+
+        // A restock is a stock-back too — the mis-tapped-Restocked road, where a same-day attempt
+        // to undo the tap is exactly the advice that silently fails.
+        var restocked = ProductWith([D(0), D(10)], [Signal(SignalKind.Restocked, D(20))]);
+        Assert.True(ReplenishmentPredictor.Predict(restocked, D(20)).SignalTodayWouldBeInert);
+
+        // No stock-back at all: a fresh OutNow is always active, so nothing is inert.
+        Assert.False(ReplenishmentPredictor.Predict(ProductWith(), D(20)).SignalTodayWouldBeInert);
+
+        // ⚠️ A stock-back LATER than today discards a signal filed today just the same — the filter is
+        // "strictly after the stock-back", not "not the same day". Reachable: add_purchase accepts any
+        // date with no future clamp, and the documented TZ gotcha can date a restock tomorrow. == here
+        // called that state "not inert" while the engine discarded the signal — the exact silent no-op
+        // the member exists to name, surviving one state over.
+        Assert.True(ReplenishmentPredictor.Predict(ProductWith([D(0), D(25)]), D(20)).SignalTodayWouldBeInert);
+    }
+
+    [Fact]
     public void Restocked_ClearsAnEarlierOutNow()
     {
         var product = ProductWith([D(0), D(20)],

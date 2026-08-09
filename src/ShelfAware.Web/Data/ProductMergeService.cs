@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 
 namespace ShelfAware.Web.Data;
@@ -71,9 +72,18 @@ public class ProductMergeService(IHouseholdDbFactory dbFactory)
         }
 
         // Same rule as ProductRenameService: recipe links key on the product NAME, so they follow it.
-        var linked = await db.RecipeIngredients
-            .Where(i => i.MatchedProduct != null && i.MatchedProduct.ToLower() == source.Name.ToLower())
-            .ToListAsync(cancellationToken);
+        // ⚠️ Match by the matcher's rule-1 IDENTITY, not ToLower(): a MatchedProduct stored as "Home
+        // Canned Sauce" for a source named "Home-Canned Sauce" is the same product to every other guard
+        // (the census, the add form, the rename service), so a raw compare left that link stale — and the
+        // source delete below then ORPHANED it. IdentityKey isn't SQL-translatable, so filter in memory,
+        // the same load-then-match shape ProductRenameService uses. This finishes the identity conversion
+        // the rename service's own comment named; the two are the only recipe-link re-pointers.
+        var sourceKey = ProductMatcher.IdentityKey(source.Name);
+        var linked = (await db.RecipeIngredients
+                .Where(i => i.MatchedProduct != null)
+                .ToListAsync(cancellationToken))
+            .Where(i => ProductMatcher.IdentityKey(i.MatchedProduct!) == sourceKey)
+            .ToList();
         foreach (var ingredient in linked) ingredient.MatchedProduct = target.Name;
 
         // The merged product is tracked if either half was, and keeps the target's identity otherwise.

@@ -23,6 +23,26 @@ public class ProductRenameServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task A_rename_cannot_create_a_name_the_MATCHER_cannot_tell_apart()
+    {
+        // ⚠️ "Taken" is rule-1 identity, not raw equality: renaming to "Half and Half" beside an
+        // existing "Half-and-Half" made two products the matcher treats as one — splitting the item's
+        // history, and jamming every later shelf census of it with an AmbiguousName refusal escapable
+        // only by picking from the dropdown (another vision call). This is the third guard that was
+        // still comparing raw names after the census moved to one identity rule; the browser pass
+        // built its twin fixture through exactly this hole.
+        await SeedProduct("Half-and-Half");
+        var otherId = await SeedProduct("Oat Milk");
+
+        var result = await _service.RenameAsync(otherId, "Half and Half");
+
+        Assert.False(result.Ok);
+        Assert.Contains("already exists", result.Message);
+        await using var db = _db.CreateDbContext();
+        Assert.Equal("Oat Milk", (await db.Products.SingleAsync(p => p.Id == otherId)).Name);
+    }
+
+    [Fact]
     public async Task Renames_and_relinks_matched_recipe_ingredients()
     {
         // RecipeIngredient.MatchedProduct is a name string grounded at save time — it drives
@@ -52,6 +72,31 @@ public class ProductRenameServiceTests : IDisposable
         var ingredients = await read.RecipeIngredients.OrderBy(i => i.Name).ToListAsync();
         Assert.Equal("Chicken Breast", ingredients.Single(i => i.Name == "Chicken").MatchedProduct);
         Assert.Equal("Wagyu Ground Beef", ingredients.Single(i => i.Name == "Ground beef").MatchedProduct);
+    }
+
+    [Fact]
+    public async Task Relinks_a_recipe_ingredient_whose_MatchedProduct_differs_only_in_PUNCTUATION()
+    {
+        // ⚠️ The recipe re-point is by rule-1 identity, not ToLower(): a MatchedProduct stored as
+        // "Home Canned Sauce" for a product named "Home-Canned Sauce" is the same product to every other
+        // guard, so a rename that skipped it left "recipes that use this" and makeability silently stale.
+        var id = await SeedProduct("Home-Canned Sauce");
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Recipes.Add(new Recipe
+            {
+                Name = "Pasta",
+                Ingredients = [new RecipeIngredient { Name = "Sauce", IsMain = true, MatchedProduct = "Home Canned Sauce" }],
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var result = await _service.RenameAsync(id, "Grandma's Canned Sauce");
+
+        Assert.True(result.Ok);
+        Assert.Equal(1, result.RelinkedIngredients);
+        await using var read = _db.CreateDbContext();
+        Assert.Equal("Grandma's Canned Sauce", (await read.RecipeIngredients.SingleAsync()).MatchedProduct);
     }
 
     [Fact]

@@ -233,7 +233,8 @@ else
                         </div>
                     </td>
                     <td class="row-actions">
-                        <button class="mark-out" @onclick="() => MarkOut(p)" aria-label="Mark @p.Name out of stock" title="Mark @p.Name out of stock">Out</button>
+                        <button class="mark-out" @onclick="() => MarkOut(p)" disabled="@markingOut"
+                aria-label="Mark @p.Name out of stock" title="Mark @p.Name out of stock">Out</button>
                         <button class="icon-btn" @onclick="() => Delete(p)" aria-label="Delete @p.Name" title="Delete @p.Name"><span aria-hidden="true">🗑</span></button>
                     </td>
                 </tr>
@@ -244,6 +245,10 @@ else
             }
         </tbody>
     </table>
+    @if (markOutNote is not null)
+    {
+        <p class="muted" role="status">@markOutNote</p>
+    }
     @if (deleteError is not null)
     {
         <p class="error" role="alert">@deleteError</p>
@@ -414,10 +419,16 @@ else
         // Same resolver the chat tools and receipt confirm trust (exact → substring → weighted tokens).
         // A second product for the same item splits its purchase history and blinds the predictor, so
         // surface the match before inserting instead of silently creating a twin.
-        if (ProductMatcher.Resolve(name, products ?? []) is { } match)
+        // ⚠️ Ask the MATCHER which rule fired; never re-derive exactness from the raw strings. Rule 1
+        // folds punctuation and case, so "Half and Half" IS the catalog's "Half-and-Half" — but a raw
+        // compare called that a fuzzy near-miss and offered [Add anyway], which minted the identity
+        // pair every later census of that shelf is then refused over. Same rule, one definition, as
+        // the census grid and confirm (ProductMatcher.IdentityKey).
+        var (match, kind) = ProductMatcher.ResolveWithKind(name, products ?? []);
+        if (match is not null)
         {
             duplicateOf = match;
-            duplicateIsExact = string.Equals(match.Name, name, StringComparison.OrdinalIgnoreCase);
+            duplicateIsExact = kind == ProductMatcher.MatchKind.ExactName;
             pendingName = name;
             return;
         }
@@ -457,7 +468,10 @@ else
 
     private async Task SetCategory(Product p, string? value)
     {
-        if (!Enum.TryParse<Category>(value, out var category)) return;
+        // Enum.TryParse SUCCEEDS on any numeric string ("9999"), so a browser-supplied out-of-range value
+        // would be persisted as an undefined Category — the one Category parse that both takes a circuit
+        // message and writes the DB. IsDefined is the same guard create_product already carries.
+        if (!Enum.TryParse<Category>(value, out var category) || !Enum.IsDefined(category)) return;
         p.Category = category;
         await Save(p);
     }
@@ -480,20 +494,67 @@ else
     }
 
     // Mark a product out of stock from here (always available, unlike the dashboard which only lists
-    // items already running low). Records an OutNow signal → the item reads Overdue/"due today" and
-    // surfaces on the dashboard, where Restocked clears it.
+    // items already running low). Records an OutNow signal — which USUALLY pins the item Overdue/"due
+    // today" onto the dashboard, where Restocked clears it. ⚠️ Not always: §6.6 gives a same-day tie
+    // to the stock, so an OutNow filed while the last stock-back is today (or later) is discarded for
+    // good, and the row re-renders unchanged — a tap that looks ignored. The note below says so,
+    // reading the fact off the SAME predictions dictionary every other cell renders from.
     private async Task MarkOut(Product p)
     {
-        await using var db = await DbFactory.CreateDbContextAsync();
-        db.InventorySignals.Add(new InventorySignal
+        // Same double-tap guard as the dashboard's quick buttons — and, like them, paired with a
+        // `disabled` binding on every Out button. ⚠️ The flag alone is not the pattern: it is page-wide,
+        // so without the disabled state a tap on a DIFFERENT product during the in-flight write (one
+        // save plus a full reload that re-predicts every row) was accepted by the browser and then
+        // silently dropped here — no signal, no note, no busy state. On the page that exists to mark
+        // ANY product out, marking two things in a row is the ordinary workflow, so a dropped tap is
+        // the very "tap that looks ignored" failure markOutNote was added to fix.
+        if (markingOut) return;
+        markingOut = true;
+        markOutNote = null;
+        try
         {
-            ProductId = p.Id,
-            Kind = SignalKind.OutNow,
-            SignaledAt = DateTimeOffset.Now
-        });
-        await db.SaveChangesAsync();
-        await LoadAsync();
+            await using (var db = await DbFactory.CreateDbContextAsync())
+            {
+                db.InventorySignals.Add(new InventorySignal
+                {
+                    ProductId = p.Id,
+                    Kind = SignalKind.OutNow,
+                    SignaledAt = DateTimeOffset.Now
+                });
+                await db.SaveChangesAsync();
+            }
+            await LoadAsync();
+            if (predictions is not null && predictions.TryGetValue(p.Id, out var prediction)
+                && prediction.SignalTodayWouldBeInert)
+            {
+                // ⚠️ "as of today or later", not "today": the engine's flag is lastStockBack >= today, so
+                // it fires for a FUTURE stock-back too (chat's add_purchase takes any date; the TZ
+                // gotcha). Naming today, and promising "tomorrow", was false in exactly that case — and
+                // the retry day is the stock's date, not tomorrow.
+                markOutNote = $"Marked \"{p.Name}\" out — but there's stock recorded for it as of today " +
+                    "or later, and stock wins that tie, so it won't show as out yet. Tap Out again once " +
+                    "that date has passed.";
+            }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // Same shape as Delete below: a DB failure must not tear the circuit down mid-grid. The
+            // signal either landed or it didn't, and LoadAsync above re-reads either way — so the advice
+            // is "look at the row", not "tap again", which would file a second outage if the first
+            // actually committed.
+            Logger.LogError(ex, "Marking product {ProductId} out of stock failed.", p.Id);
+            markOutNote = $"Couldn't mark {p.Name} out just now — check the row to see whether it took, " +
+                "and try again if it didn't.";
+        }
+        finally
+        {
+            markingOut = false;
+        }
     }
+
+    private string? markOutNote;
+    private bool markingOut;
 
     private async Task Delete(Product p)
     {
@@ -501,6 +562,7 @@ else
         if (!await JS.InvokeAsync<bool>("confirm", $"Delete \"{p.Name}\" and its purchase history?")) return;
 
         deleteError = null;
+        markOutNote = null; // the shelf is changing under the note — don't let it claim currency
         try
         {
             await using var db = await DbFactory.CreateDbContextAsync();

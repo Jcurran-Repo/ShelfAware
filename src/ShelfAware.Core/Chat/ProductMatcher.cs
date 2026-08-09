@@ -10,17 +10,67 @@ namespace ShelfAware.Core.Chat;
 /// </summary>
 public static class ProductMatcher
 {
-    /// <summary>Best match, or null when nothing is close enough (caller should create or clarify).</summary>
-    public static Product? Resolve(string? query, IReadOnlyList<Product> products)
+    /// <summary>Which rule produced a match. Callers that merely need "the product" ignore this; callers
+    /// deciding how much to TRUST the match need it, because the three rules are not equally strong —
+    /// rule 1 is an identity, rules 2 and 3 are similarity.
+    /// <para>⚠️ It exists so a caller cannot re-derive exactness by comparing raw strings. That looks
+    /// equivalent and isn't: <see cref="Normalize"/> folds punctuation to spaces, so a raw comparison
+    /// calls "Home Canned Tomato Sauce" a fuzzy hit on "Home-Canned Tomato Sauce" when rule 1 matched
+    /// them outright — and the surface then warns about a guess that never happened.</para></summary>
+    public enum MatchKind
     {
-        if (string.IsNullOrWhiteSpace(query) || products.Count == 0) return null;
+        /// <summary>Nothing close enough; the product is null.</summary>
+        None,
+        /// <summary>Rule 1 — the same name once punctuation and case are folded. An identity, not a guess.</summary>
+        ExactName,
+        /// <summary>Rule 2 — one name contains the other. Similarity.</summary>
+        Substring,
+        /// <summary>Rule 3 — enough distinctive token weight overlaps. Similarity.</summary>
+        TokenOverlap,
+    }
+
+    /// <summary>Best match, or null when nothing is close enough (caller should create or clarify).</summary>
+    public static Product? Resolve(string? query, IReadOnlyList<Product> products) =>
+        ResolveWithKind(query, products).Product;
+
+    /// <summary>The key two names share exactly when rule 1 calls them the same product — punctuation
+    /// folded to spaces, case dropped. THE one answer to "does this name mean that product", so every
+    /// guard, dictionary and warning that has an opinion about product identity can be built on the
+    /// same string instead of on raw equality.
+    /// <para>⚠️ It exists because "which product does this name mean?" was being answered in nine
+    /// places, and converting them one at a time is what produced three rounds of defects: each
+    /// half-converted state left one guard promising something a neighbour then contradicted (a grid
+    /// offering "leave this to create a separate item" over a write that replaced an existing count).
+    /// A new site that needs product identity uses this or <see cref="ExactMatches"/> — never
+    /// <c>string.Equals</c> on names.</para></summary>
+    public static string IdentityKey(string? name) => Normalize(name ?? "");
+
+    /// <summary>Every product rule 1 calls an identity for this query — same normalization, full set.
+    /// <see cref="ResolveWithKind"/> returns the FIRST and cannot say there were two, and no unique
+    /// index exists on product names — so a caller about to write over "the" exact match needs to know
+    /// when that name is actually a name two products share (§13.8's twins rule: a census attests over
+    /// a product's stored count, and picking a twin arbitrarily replaces the wrong household number).</summary>
+    public static IReadOnlyList<Product> ExactMatches(string? query, IReadOnlyList<Product> products)
+    {
+        if (string.IsNullOrWhiteSpace(query) || products.Count == 0) return [];
+        var q = IdentityKey(query);
+        if (q.Length == 0) return [];
+        return [.. products.Where(p => IdentityKey(p.Name) == q)];
+    }
+
+    /// <summary>As <see cref="Resolve"/>, and says which rule fired — for callers that must tell an
+    /// identity from a similarity (a census attests over a product's stored count, so it may not
+    /// pre-authorize a guess at WHICH product).</summary>
+    public static (Product? Product, MatchKind Kind) ResolveWithKind(string? query, IReadOnlyList<Product> products)
+    {
+        if (string.IsNullOrWhiteSpace(query) || products.Count == 0) return (null, MatchKind.None);
 
         var q = Normalize(query);
-        if (q.Length == 0) return null;
+        if (q.Length == 0) return (null, MatchKind.None);
 
         // 1. Exact (normalized, case-insensitive).
         var exact = products.FirstOrDefault(p => Normalize(p.Name) == q);
-        if (exact is not null) return exact;
+        if (exact is not null) return (exact, MatchKind.ExactName);
 
         // 2. Substring either direction ("dog food" ⊂ "pedigree dog food").
         var contains = products.FirstOrDefault(p =>
@@ -28,7 +78,7 @@ public static class ProductMatcher
             var n = Normalize(p.Name);
             return n.Contains(q) || q.Contains(n);
         });
-        if (contains is not null) return contains;
+        if (contains is not null) return (contains, MatchKind.Substring);
 
         // 3. Weighted token-overlap. Weight each token by how rare it is across the catalog (IDF) so a
         //    shared store-brand prefix ("Great Value") or generic word ("paper") can't drive a match on
@@ -57,7 +107,7 @@ public static class ProductMatcher
         }
 
         // A solid majority of the distinctive token weight must overlap.
-        return bestScore >= 0.5 ? best : null;
+        return bestScore >= 0.5 ? (best, MatchKind.TokenOverlap) : (null, MatchKind.None);
     }
 
     /// <summary>
@@ -81,8 +131,13 @@ public static class ProductMatcher
     private static HashSet<string> Tokens(string normalized) =>
         normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet();
 
+    // ⚠️ Every run of separators collapses to ONE space, not just doubles. A single Replace("  ", " ")
+    // left "yogurt  strawberry" for "Yogurt - Strawberry" (two adjacent non-alphanumerics), so it was
+    // neither equal to "Yogurt Strawberry" nor idempotent — which a documented dictionary KEY
+    // (IdentityKey) has to be. It failed safe (rule 1 missed, rule 3 caught it as similarity, the grid
+    // asked) but it made the key a near-key, and "collapses whitespace" was already what the code read
+    // as doing. Split/join says it once and holds for any run length.
     private static string Normalize(string s) =>
-        new string(s.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : ' ').ToArray())
-            .Trim()
-            .Replace("  ", " ");
+        string.Join(' ', new string(s.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : ' ').ToArray())
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries));
 }

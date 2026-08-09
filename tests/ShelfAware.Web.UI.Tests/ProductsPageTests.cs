@@ -93,6 +93,31 @@ public class ProductsPageTests : PageTestContext
     }
 
     [Fact]
+    public async Task A_name_differing_only_in_PUNCTUATION_is_blocked_like_any_exact_duplicate()
+    {
+        // ⚠️ Rule 1 folds punctuation and case, so this IS the catalog's product — but the page used
+        // to re-derive exactness by comparing the RAW strings, land in the fuzzy branch, and offer
+        // [Add anyway]. One click then minted an identity pair, which splits the item's history and
+        // jams every later shelf census of it with an AmbiguousName refusal that costs another vision
+        // call to escape. The census now asks ProductMatcher for identity everywhere; this is the same
+        // question, so it asks the same way (ResolveWithKind, never string.Equals).
+        var id = Seed("Half-and-Half");
+        var cut = RenderGrid();
+
+        SubmitAdd(cut, "Half and Half");
+
+        cut.WaitForAssertion(() =>
+        {
+            var prompt = cut.Find(".dup-check");
+            Assert.Contains("You already have", prompt.TextContent);
+            Assert.Equal($"/product/{id}", prompt.QuerySelector("a")!.GetAttribute("href"));
+            Assert.DoesNotContain("anyway", prompt.TextContent); // blocked, not asked
+        });
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Equal(1, await raw.Products.IgnoreQueryFilters().CountAsync());
+    }
+
+    [Fact]
     public async Task A_fuzzy_duplicate_asks_and_the_user_can_overrule_it()
     {
         Seed("93% Lean Ground Beef");
@@ -227,12 +252,120 @@ public class ProductsPageTests : PageTestContext
         {
             Assert.Contains("Overdue", cut.Find("tbody .chip").TextContent);
             Assert.Contains("(today)", cut.Find("td.nextbuy").TextContent);
+            // The other conjunct of the same-day note below: on an effective tap there is no hedge.
+            Assert.DoesNotContain("won't show as out", cut.Markup);
         });
 
         await using var raw = Db.CreateUnscopedContext();
         var signal = Assert.Single(await raw.InventorySignals.IgnoreQueryFilters().ToListAsync());
         Assert.Equal(SignalKind.OutNow, signal.Kind);
         Assert.Equal(id, signal.ProductId);
+    }
+
+    [Fact]
+    public async Task A_double_tapped_out_button_files_one_signal_not_two()
+    {
+        // The guard the dashboard's quick buttons carry, on the grid's Out too: a second tap can be
+        // queued before the first's render lands, and both would file — two OutNow rows from one
+        // intent, both feeding the signal history. HoldNext parks the first tap at its context
+        // create, exactly the mid-flight window a real circuit has.
+        Seed("Dog Food", p => p.Purchases =
+            [new PurchaseEvent { PurchasedAt = Today.AddDays(-16), Quantity = 1m }]);
+        var cut = RenderGrid();
+
+        var gate = new TaskCompletionSource();
+        Factory.HoldNext = gate;
+        cut.Find("button.mark-out").Click();
+        cut.Find("button.mark-out").Click(); // must no-op against the guard
+        gate.SetResult();
+
+        cut.WaitForAssertion(() => Assert.Contains("Overdue", cut.Find("tbody .chip").TextContent));
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Single(await raw.InventorySignals.IgnoreQueryFilters().ToListAsync());
+    }
+
+    [Fact]
+    public async Task An_out_tap_mid_flight_is_refused_by_the_BUTTON_not_swallowed_by_the_handler()
+    {
+        // ⚠️ The guard is page-wide, so without a `disabled` binding a tap on a DIFFERENT product
+        // during the in-flight write was accepted by the browser and then silently dropped — no
+        // signal, no note, no busy state, on the page whose whole purpose is marking any product out.
+        // The dashboard pattern this copies is flag AND disabled; only half had been taken.
+        Seed("Dog Food", p => p.Purchases = [new PurchaseEvent { PurchasedAt = Today.AddDays(-16), Quantity = 1m }]);
+        Seed("Cat Litter", p => p.Purchases = [new PurchaseEvent { PurchasedAt = Today.AddDays(-16), Quantity = 1m }]);
+        var cut = RenderGrid();
+
+        var gate = new TaskCompletionSource();
+        Factory.HoldNext = gate;
+        cut.FindAll("button.mark-out")[0].Click();
+
+        // Every Out button reports busy while the write is in flight, so the second tap can't be made
+        // rather than being accepted and thrown away.
+        cut.WaitForAssertion(() =>
+            Assert.All(cut.FindAll("button.mark-out"), b => Assert.True(b.HasAttribute("disabled"))));
+        gate.SetResult();
+
+        // …and once it settles, the other product is markable again.
+        cut.WaitForAssertion(() =>
+            Assert.All(cut.FindAll("button.mark-out"), b => Assert.False(b.HasAttribute("disabled"))));
+        cut.FindAll("button.mark-out")[1].Click();
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("tbody .chip").Count(c => c.TextContent.Contains("Overdue"))));
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Equal(2, await raw.InventorySignals.IgnoreQueryFilters().CountAsync());
+    }
+
+    [Fact]
+    public async Task An_out_tap_on_a_day_stock_arrived_says_it_wont_take_effect_yet()
+    {
+        // §6.6 gives a same-day tie to the stock, so this tap files a signal the engine discards for
+        // good — the row re-renders unchanged, which read as the tap being ignored. The note reads
+        // the engine's SignalTodayWouldBeInert off the same predictions dictionary the row renders
+        // from; the tap still records the signal (honesty, not a refusal).
+        Seed("Dog Food", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-16), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today, Quantity = 1m }, // stocked TODAY
+        ]);
+        var cut = RenderGrid();
+
+        cut.Find("button.mark-out").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("won't show as out yet", cut.Markup);
+            Assert.Contains("Stocked", cut.Find("tbody .chip").TextContent); // and indeed it didn't pin
+            // ⚠️ The claim, not just the effect. The flag is lastStockBack >= today, so it also fires
+            // for a FUTURE stock-back — where "recorded today" and "try tomorrow" are both false. This
+            // surface's copy fix was the one of four with nothing pinning it: reverting it to the old
+            // wording left all 315 UI tests green, because "won't show as out yet" is in both.
+            Assert.Contains("as of today or later", cut.Markup);
+            Assert.Contains("once that date has passed", cut.Markup);
+            Assert.DoesNotContain("recorded today", cut.Markup, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("tomorrow", cut.Markup, StringComparison.OrdinalIgnoreCase);
+        });
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Single(await raw.InventorySignals.IgnoreQueryFilters().ToListAsync());
+    }
+
+    [Fact]
+    public async Task An_out_of_range_category_value_is_refused_not_persisted()
+    {
+        // ⚠️ Enum.TryParse SUCCEEDS on any numeric string, so a browser-supplied "9999" would persist as an
+        // undefined Category — the one Category parse that both takes a circuit message and writes the DB.
+        // IsDefined is the same guard create_product already carries.
+        var id = Seed("Ketchup"); // seeded Pantry
+        var cut = RenderGrid();
+
+        cut.Find("select[aria-label='Category for Ketchup']").Change("9999");
+
+        // Without the guard the row saves (Category)9999; with it, the value is dropped and Pantry stands.
+        await cut.WaitForAssertionAsync(async () =>
+        {
+            await using var raw = Db.CreateUnscopedContext();
+            var saved = (await raw.Products.IgnoreQueryFilters().SingleAsync(p => p.Id == id)).Category;
+            Assert.True(Enum.IsDefined(saved));
+            Assert.Equal(Category.Pantry, saved);
+        });
     }
 
     [Fact]

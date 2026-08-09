@@ -1,3 +1,5 @@
+using ShelfAware.Core.Chat;
+
 namespace ShelfAware.Core.Recipes;
 
 /// <summary>An on-hand product for makeability: its name plus the recipe ingredients it can stand in for
@@ -56,8 +58,15 @@ public static class IngredientMatcher
     {
         if (matchedProduct is { Length: > 0 })
         {
+            // ⚠️ Match the grounded product by the matcher's rule-1 IDENTITY, not raw equality: MatchedProduct
+            // stores a NAME captured at save time, and a punctuation variant of the current product name
+            // ("Home Canned Sauce" for "Home-Canned Sauce") is the same product to every write-side guard (the
+            // census, the add form, rename and merge) — so a raw compare left the grounded link silently
+            // uncovered, the ✓ tick and makeability going blind. One definition of identity, everywhere.
+            // The core-token fallback below is untouched — only this exact-name leg changes.
+            var groundedKey = ProductMatcher.IdentityKey(matchedProduct);
             var grounded = onHand
-                .Where(p => string.Equals(p.Name, matchedProduct, StringComparison.OrdinalIgnoreCase))
+                .Where(p => ProductMatcher.IdentityKey(p.Name) == groundedKey)
                 .ToList();
             if (grounded.Count > 0) return grounded;
         }

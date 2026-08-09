@@ -223,6 +223,87 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task A_spoken_zero_on_a_day_stock_arrived_carries_the_tie_caveat()
+    {
+        // ⚠️ set_quantity's absolute zero files an OutNow exactly like record_signal, and this surface
+        // SPEAKS — a bare "0 on hand" would speak the count panel's silent no-op aloud (§6.6's same-day
+        // tie makes the outage inert). Same SignalTodayWouldBeInert caveat, re-read before asking the
+        // engine — the third talking OutNow-writer the caveat reaches (item 27's class, one tool over).
+        var roast = Counted(7, "Beef Chuck Roast", onHand: 6m);
+        roast.Purchases.Add(new PurchaseEvent
+        {
+            ProductId = 7, PurchasedAt = DateOnly.FromDateTime(DateTime.Today), Quantity = 1m, // stocked TODAY
+        });
+        var store = new FakePantryStore(roast);
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("set_quantity", ("product_name", "chuck roast"), ("quantity", 0))),
+            () => Responses.Text("Noted — you're out."));
+
+        await Chat(client, store).HandleAsync("no roasts left");
+
+        Assert.Contains((7, SignalKind.OutNow), store.Signals); // the outage is still written (caveat is honesty, not a refusal)
+        var toolResult = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result!.ToString()!;
+        Assert.Contains("a tie goes to the stock", toolResult);
+        Assert.Contains("as of today or later", toolResult);
+    }
+
+    [Fact]
+    public async Task A_spoken_zero_on_an_ordinary_day_stays_plain()
+    {
+        // The complement, both halves pinned (item 39): the last stock-back is weeks in the past, so the
+        // outage takes effect and the reply must not hedge.
+        var store = new FakePantryStore(Counted(7, "Beef Chuck Roast", onHand: 6m)); // one purchase, well in the past
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("set_quantity", ("product_name", "chuck roast"), ("quantity", 0))),
+            () => Responses.Text("Noted — you're out."));
+
+        await Chat(client, store).HandleAsync("no roasts left");
+
+        var toolResult = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result!.ToString()!;
+        Assert.Contains("0 on hand", toolResult);
+        Assert.DoesNotContain("a tie goes to the stock", toolResult);
+    }
+
+    [Fact]
+    public async Task The_inert_signal_caveat_is_ONE_shared_wording_across_both_talking_tools()
+    {
+        // ⚠️ record_signal and set_quantity both speak the §6.6 same-day-tie caveat, and its wording had
+        // DRIFTED between two hand-copies ("so this won't take effect yet." vs "so that out won't take
+        // effect yet —"). It lives in one helper (InertSignalCaveatAsync) now; this pins that the two
+        // surfaces emit the byte-identical clause, so a re-inline can't silently diverge them again — the
+        // existing substring asserts ("a tie goes to the stock") wouldn't have caught that tail drift.
+        const string caveat = "there's stock recorded for it as of today or later, and a tie goes to the " +
+            "stock, so it won't take effect yet — tell the user it'll register if they say so again once " +
+            "that stock date has passed.";
+
+        Product InertRoast()
+        {
+            var roast = Counted(7, "Beef Chuck Roast", onHand: 6m);
+            roast.Purchases.Add(new PurchaseEvent { ProductId = 7, PurchasedAt = DateOnly.FromDateTime(DateTime.Today), Quantity = 1m });
+            return roast;
+        }
+
+        var sigClient = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("record_signal", ("product_name", "chuck roast"), ("kind", "OutNow"))),
+            () => Responses.Text("ok"));
+        await Chat(sigClient, new FakePantryStore(InertRoast())).HandleAsync("out of roast");
+        var sigResult = sigClient.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result!.ToString()!;
+
+        var qtyClient = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("set_quantity", ("product_name", "chuck roast"), ("quantity", 0))),
+            () => Responses.Text("ok"));
+        await Chat(qtyClient, new FakePantryStore(InertRoast())).HandleAsync("none left");
+        var qtyResult = qtyClient.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result!.ToString()!;
+
+        Assert.Contains(caveat, sigResult); // record_signal
+        Assert.Contains(caveat, qtyResult); // set_quantity — same clause, not a drifted copy
+    }
+
+    [Fact]
     public async Task Set_quantity_refuses_an_absolute_count_below_zero()
     {
         // Clamping -5 to 0 would file an OutNow (§13.4) off a typo — a fake outage in the cadence
@@ -348,6 +429,37 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task Query_status_reflects_a_signal_recorded_earlier_in_the_same_turn()
+    {
+        // ⚠️ "We're out of milk — how are we doing?" is one turn, two tool calls. query_status read the
+        // START-OF-TURN snapshot, so it spoke a stale "Stocked, due <future>" about a product the user had
+        // just reported out. record_signal already re-reads; this is the same fix one call site over.
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var milk = new Product
+        {
+            Id = 5, Name = "Whole Milk", Category = Category.Dairy,
+            Purchases =
+            [
+                new PurchaseEvent { ProductId = 5, PurchasedAt = today.AddDays(-19), Quantity = 1 },
+                new PurchaseEvent { ProductId = 5, PurchasedAt = today.AddDays(-5), Quantity = 1 }, // ~14d rhythm → Stocked
+            ],
+        };
+        var store = new FakePantryStore(milk);
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(
+                Responses.Call("record_signal", ("product_name", "milk"), ("kind", "OutNow")),
+                Responses.Call("query_status", ("product_name", "milk"))),
+            () => Responses.Text("You're out of milk."));
+
+        await Chat(client, store).HandleAsync("we're out of milk — how are we doing?");
+
+        var results = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Select(r => r.Result!.ToString()!).ToList();
+        var status = results.Single(r => r.StartsWith("Whole Milk:"));
+        Assert.Contains("Overdue", status); // the just-filed OutNow pins it — a stale snapshot would read Stocked
+    }
+
+    [Fact]
     public async Task Blank_input_is_rejected_without_calling_the_model()
     {
         var client = FakeChatClient.Returning(Responses.Text("unused"));
@@ -370,6 +482,164 @@ public class PantryChatTests
         Assert.True(result.Success);
         Assert.Contains((1, SignalKind.OutNow), store.Signals);
         Assert.Equal(2, client.CallCount); // tool turn, then the final reply
+    }
+
+    [Fact]
+    public async Task An_out_report_on_a_day_stock_arrived_carries_the_tie_caveat()
+    {
+        // §6.6's same-day tie makes this signal permanently inert, and this surface TALKS — a bare
+        // "Recorded" would speak the count panel's silent no-op aloud (item 27's query_status class).
+        // The signal is still written (the caveat is honesty, not a refusal), and the handler asks
+        // the ENGINE rather than re-deriving the tie.
+        var coffee = P(1, "Coffee", Category.Beverage);
+        coffee.Purchases.Add(new PurchaseEvent
+        {
+            ProductId = 1, PurchasedAt = DateOnly.FromDateTime(DateTime.Today), Quantity = 1m,
+        });
+        var store = new FakePantryStore(coffee);
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("record_signal", ("product_name", "coffee"), ("kind", "OutNow"))),
+            () => Responses.Text("Noted."));
+
+        await Chat(client, store).HandleAsync("we're out of coffee");
+
+        Assert.Contains((1, SignalKind.OutNow), store.Signals);
+        var toolResult = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single();
+        Assert.Contains("a tie goes to the stock", toolResult.Result!.ToString()!);
+    }
+
+    [Fact]
+    public async Task A_running_low_report_on_a_day_stock_arrived_carries_the_same_caveat()
+    {
+        // The engine's active-signal filter covers OutNow and RunningLow with ONE date test, so the
+        // caveat must too — it first shipped OutNow-only, and "I'm running low on milk" the day milk
+        // arrived was the identical spoken no-op one enum value over. The member's rename
+        // (SignalTodayWouldBeInert) is this test's twin: an OutNow-specific name invited an
+        // OutNow-specific consumer.
+        var coffee = P(1, "Coffee", Category.Beverage);
+        coffee.Purchases.Add(new PurchaseEvent
+        {
+            ProductId = 1, PurchasedAt = DateOnly.FromDateTime(DateTime.Today), Quantity = 1m,
+        });
+        var store = new FakePantryStore(coffee);
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("record_signal", ("product_name", "coffee"), ("kind", "RunningLow"))),
+            () => Responses.Text("Noted."));
+
+        await Chat(client, store).HandleAsync("running low on coffee");
+
+        Assert.Contains((1, SignalKind.RunningLow), store.Signals);
+        var toolResult = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single();
+        Assert.Contains("Recorded RunningLow", toolResult.Result!.ToString()!);
+        Assert.Contains("a tie goes to the stock", toolResult.Result!.ToString()!);
+    }
+
+    [Fact]
+    public async Task A_purchase_earlier_in_the_SAME_turn_is_seen_by_the_tie_caveat()
+    {
+        // ⚠️ "I bought coffee today but I'm still running low on it" — one turn, two tool calls. The
+        // product list is snapshotted at the START of the turn and a store write never touches that
+        // detached graph, so the caveat used to look at a product with no purchase today, find nothing
+        // inert, and answer a bare "Recorded" — spoken aloud — about a signal the engine had already
+        // discarded. The handler re-reads before asking the engine.
+        var store = new FakePantryStore(P(1, "Coffee", Category.Beverage));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(
+                Responses.Call("add_purchase", ("product_name", "coffee")),
+                Responses.Call("record_signal", ("product_name", "coffee"), ("kind", "RunningLow"))),
+            () => Responses.Text("Noted."));
+
+        await Chat(client, store).HandleAsync("bought coffee today but I'm still running low on it");
+
+        var results = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Select(r => r.Result!.ToString()!).ToList();
+        Assert.Contains(results, r => r.Contains("a tie goes to the stock"));
+    }
+
+    [Fact]
+    public async Task The_tie_caveat_never_claims_the_stock_landed_today()
+    {
+        // The flag is lastStockBack >= today, so a FUTURE-dated purchase fires it — add_purchase takes
+        // any date with no clamp ("log the milk I'm picking up Friday"). Saying "recorded today", or
+        // promising "tomorrow", is false there, sometimes by days.
+        var coffee = P(1, "Coffee", Category.Beverage);
+        coffee.Purchases.Add(new PurchaseEvent
+        {
+            ProductId = 1, PurchasedAt = DateOnly.FromDateTime(DateTime.Today).AddDays(5), Quantity = 1m,
+        });
+        var store = new FakePantryStore(coffee);
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("record_signal", ("product_name", "coffee"), ("kind", "OutNow"))),
+            () => Responses.Text("Noted."));
+
+        await Chat(client, store).HandleAsync("we're out of coffee");
+
+        var text = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result!.ToString()!;
+        Assert.Contains("a tie goes to the stock", text);
+        Assert.Contains("as of today or later", text);
+        Assert.DoesNotContain("recorded today", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("tomorrow", text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task An_out_report_on_an_ordinary_day_stays_plain()
+    {
+        // The complement, on the other conjunct: stock came three days ago, so the outage takes
+        // effect and the reply must not hedge.
+        var coffee = P(1, "Coffee", Category.Beverage);
+        coffee.Purchases.Add(new PurchaseEvent
+        {
+            ProductId = 1, PurchasedAt = DateOnly.FromDateTime(DateTime.Today).AddDays(-3), Quantity = 1m,
+        });
+        var store = new FakePantryStore(coffee);
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("record_signal", ("product_name", "coffee"), ("kind", "OutNow"))),
+            () => Responses.Text("Noted."));
+
+        await Chat(client, store).HandleAsync("we're out of coffee");
+
+        var toolResult = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single();
+        Assert.Contains("Recorded OutNow", toolResult.Result!.ToString()!);
+        Assert.DoesNotContain("same-day tie", toolResult.Result!.ToString()!);
+    }
+
+    [Fact]
+    public async Task A_numeric_signal_kind_is_refused_not_written()
+    {
+        // ⚠️ Enum.TryParse SUCCEEDS on a numeric string, so "7" would parse and write an undefined
+        // SignalKind no reader in the app has a branch for. The IsDefined guard existed; this is the
+        // test it shipped without — deleting it left all 1339 green, which is item 39's "both halves
+        // pinned was itself unpinned" class at the tool boundary.
+        var store = new FakePantryStore(P(1, "Coffee", Category.Beverage));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("record_signal", ("product_name", "coffee"), ("kind", "7"))),
+            () => Responses.Text("Sorry — that didn't work."));
+
+        var result = await Chat(client, store).HandleAsync("weird tool call");
+
+        Assert.True(result.Success);
+        Assert.Empty(store.Signals);
+    }
+
+    [Fact]
+    public async Task A_numeric_category_on_create_falls_back_to_Other()
+    {
+        // The same smuggling shape as above, but this site's guard DEFAULTS rather than refuses —
+        // an aisle guess is recoverable, an undefined enum persisted onto a Product is not.
+        var store = new FakePantryStore();
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("create_product",
+                ("name", "Mystery Snack"), ("category", "12"), ("tags", Array.Empty<string>()))),
+            () => Responses.Text("Created."));
+
+        await Chat(client, store).HandleAsync("add mystery snack");
+
+        var created = Assert.Single(store.Products);
+        Assert.Equal(Category.Other, created.Category);
     }
 
     [Fact]
@@ -591,6 +861,28 @@ public class PantryChatTests
         Assert.Contains("Pedigree Dog Food", toolResult);
         Assert.Contains("already exists", toolResult);
         Assert.Contains("confirmed_distinct", toolResult); // the refusal must name the escape hatch
+    }
+
+    [Fact]
+    public async Task A_punctuation_variant_is_an_exact_dupe_that_confirmed_distinct_cannot_override()
+    {
+        // ⚠️ Rule 1 folds punctuation, so this IS the existing product — and an exact dupe is refused
+        // outright, with no escape hatch, precisely because two products the matcher cannot tell apart
+        // jam every later census of that item. Deriving exactness from the RAW strings put this on the
+        // fuzzy path instead, where confirmed_distinct=true minted the identity pair.
+        var store = new FakePantryStore(P(4, "Half-and-Half", Category.Dairy));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("create_product",
+                ("name", "Half and Half"), ("category", "Dairy"), ("confirmed_distinct", true))),
+            () => Responses.Text("It already exists."));
+
+        await Chat(client, store).HandleAsync("add half and half, it's different");
+
+        Assert.Empty(store.Created);
+        var toolResult = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result!.ToString()!;
+        Assert.Contains("already exists", toolResult);
+        Assert.DoesNotContain("confirmed_distinct", toolResult); // no escape hatch on an identity hit
     }
 
     [Fact]
@@ -989,5 +1281,46 @@ public class PantryChatTests
 
         Assert.True(result.Success);
         Assert.Equal(5, client.CallCount); // MaxTurns
+    }
+
+    // ⚠️ Parallel tool use ships several calls in ONE assistant round, and they used to share the
+    // round's stale product snapshot — so a duplicated create walked straight past the twin guard and
+    // minted the identity pair every later census of that item is refused over. The snapshot refreshes
+    // after each create_product now, so the second call in the SAME round must see the first's product.
+    [Fact]
+    public async Task Two_create_calls_in_one_round_cannot_mint_identity_twins()
+    {
+        var store = new FakePantryStore();
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(
+                Responses.Call("create_product", ("name", "Half and Half"), ("category", "Dairy")),
+                Responses.Call("create_product", ("name", "Half-and-Half"), ("category", "Dairy"))),
+            () => Responses.Text("Added."));
+
+        var result = await Chat(client, store).HandleAsync("add half and half");
+
+        Assert.True(result.Success);
+        Assert.Single(store.Created); // ONE product — the second call met the twin guard
+        var toolResults = client.ReceivedMessages[1].Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Select(r => r.Result!.ToString()!).ToList();
+        Assert.Contains(toolResults, t => t.Contains("already exists"));
+    }
+
+    // The companion direction: a create-then-use pair in ONE round now works, instead of answering
+    // "call create_product first" to the model in the very round that did.
+    [Fact]
+    public async Task A_product_created_earlier_in_the_same_round_is_visible_to_later_calls()
+    {
+        var store = new FakePantryStore();
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(
+                Responses.Call("create_product", ("name", "Oat Milk"), ("category", "Dairy")),
+                Responses.Call("record_signal", ("product_name", "oat milk"), ("kind", "RunningLow"))),
+            () => Responses.Text("Added and noted."));
+
+        await Chat(client, store).HandleAsync("add oat milk and note we're already low");
+
+        Assert.Single(store.Created);
+        Assert.Single(store.Signals); // resolved against the refreshed list, not refused as unknown
     }
 }

@@ -1,9 +1,11 @@
 @page "/receipt"
+@using ShelfAware.Core.Census
 @using ShelfAware.Core.Chat
 @using ShelfAware.Core.Extraction
 @using ShelfAware.Core.Ingest
 @using ShelfAware.Core.Settings
 @using ShelfAware.Core.Tagging
+@using ShelfAware.Core.Shopping
 @using Microsoft.Extensions.Options
 @using ShelfAware.Web.Ingest
 @inject IHouseholdDbFactory DbFactory
@@ -258,12 +260,23 @@ else if (phase == Phase.Review && receipt is not null)
                                 <option value="0">➕ create new product</option>
                                 @foreach (var p in products)
                                 {
-                                    <option value="@p.Id">@p.Name</option>
+                                    <option value="@p.Id">@OptionLabel(p)</option>
                                 }
                             </select>
                             @if (line.AliasMatched)
                             {
                                 <span role="img" aria-label="Matched a previous receipt line from this merchant" title="Matched a previous receipt line from this merchant">🔗</span>
+                            }
+                            @if (ShowTwinWarning(line))
+                            {
+                                @* ⚠️ Finding F: the name matches more than one product, so it was left unmatched
+                                   rather than pre-selecting an arbitrary twin (or minting a third at confirm).
+                                   Say so, and the options above carry their counts so the household can tell the
+                                   twins apart. Clears once they pick — OR rename the line (ShowTwinWarning). *@
+                                <div class="error small" role="status">
+                                    More than one of your products answers to this name — pick which one above
+                                    (they're shown with their counts), or leave it to add a new item.
+                                </div>
                             }
                             @if (line.ProductId > 0 && products.FirstOrDefault(p => p.Id == line.ProductId) is { IsTracked: false })
                             {
@@ -341,6 +354,9 @@ else if (phase == Phase.Done)
     private DateOnly reviewDate = DateOnly.FromDateTime(DateTime.Today);
     private List<ReviewLine> reviewLines = [];
     private List<Product> products = [];
+    // Product names TWO OR MORE products share (by identity) — so the dropdown can annotate them with
+    // their counts to tell them apart, the same way the census grid does. Recomputed with `products`.
+    private HashSet<string> twinNames = new(StringComparer.OrdinalIgnoreCase);
     private string confirmSummary = "";
     private string? confirmError;
     private bool confirming;
@@ -382,7 +398,41 @@ else if (phase == Phase.Done)
         public bool Checking { get; set; }             // an async synonym check is running
         public int ProductId { get; set; }            // 0 = create new
         public bool AliasMatched { get; set; }
+        /// <summary>The line's name matches TWO OR MORE products (a twin) AT READ TIME, so it was left
+        /// unmatched: the confirm can't tell twins apart, and left at create-new would mint a THIRD twin.
+        /// Drives the grid's "pick which one" warning (finding F); see <see cref="ReadName"/>.</summary>
+        public bool AmbiguousTwin { get; set; }
+        /// <summary>The line's name as READ, before any human edit. <see cref="AmbiguousTwin"/> is a read-time
+        /// fact, so once the human RENAMES the line they've taken over its identity and the stale twin warning
+        /// is dropped — the same rename-suppression the census grid applies to its ambiguous-suggestion
+        /// warning (finding C's EffectiveAmbiguousSuggestion). Cleared by a pick too (ProductId &gt; 0).</summary>
+        public string ReadName { get; set; } = "";
     }
+
+    /// <summary>Whether to show the twin "pick which one" warning: a read-time ambiguity, on an unresolved
+    /// line, whose name the human hasn't edited away from what was read (the census grid's finding-C
+    /// rename-suppression, applied to its sibling here). Live per render, so a rename drops it.</summary>
+    private static bool ShowTwinWarning(ReviewLine line) =>
+        line.AmbiguousTwin && line.ProductId == 0
+            && string.Equals(line.NormalizedName.Trim(), line.ReadName.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Recompute which product names are twins (shared by 2+ products, by the matcher's identity
+    /// rule) — called whenever <see cref="products"/> is loaded, so <see cref="OptionLabel"/> is O(1).</summary>
+    private void RecomputeTwinNames() =>
+        twinNames = products
+            .GroupBy(p => ProductMatcher.IdentityKey(p.Name))
+            .Where(g => g.Count() > 1)
+            .SelectMany(g => g.Select(p => p.Name))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>A twin-named product's dropdown option carries its on-hand count so the household can tell
+    /// two identically-named products apart; a non-twin shows its plain name. The phrasing itself is
+    /// <see cref="ProductOptionLabel"/> — ONE definition shared with the census grid, so the two dropdowns
+    /// can't drift apart the first time one wording is edited.</summary>
+    private string OptionLabel(Product p) =>
+        !twinNames.Contains(p.Name)
+            ? p.Name
+            : ProductOptionLabel.ForTwin(p.Name, p.QuantityOnHand, counting: p.TrackQuantity, p.DefaultUnit);
 
     // Tag universe for suggestions + dedup: seed vocabulary ∪ tags already stored on products.
     private List<string> allKnownTags = [];
@@ -442,22 +492,38 @@ else if (phase == Phase.Done)
         reviewDate = r.PurchasedAt ?? DateOnly.FromDateTime(DateTime.Today);
         trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
         products = await db.Products.OrderBy(p => p.Name).ToListAsync();
+        RecomputeTwinNames();
         var stored = await db.ProductTags.Select(t => t.Value).Distinct().ToListAsync();
         allKnownTags = TagVocabulary.Seed.Concat(stored).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t).ToList();
 
         var merchant = r.Merchant ?? "";
         var aliases = await db.ProductAliases.Where(a => a.Merchant == merchant).ToListAsync();
+        // One identity index per load, not a full-catalog ExactMatches scan per line — the same move the
+        // census grid and the auto-confirmer make (they and this loop ask the identical questions).
+        var catalogIndex = new CatalogIndex(products);
         reviewLines = r.Lines.Select(l =>
         {
             var alias = aliases.FirstOrDefault(a => a.RawText == l.RawText);
             Product? match = null;
+            var ambiguousTwin = false;
             if (alias is null)
             {
-                // Size is metadata, not identity — match on item name only (all sizes roll up).
+                // Size is metadata, not identity — match on item name only (all sizes roll up). Resolve the
+                // model's suggestion by the matcher's rule-1 identity set, not string.Equals: it folds a
+                // punctuation variant onto the one product it names.
                 match = l.SuggestedProduct is { Length: > 0 }
-                    ? products.FirstOrDefault(p => string.Equals(p.Name, l.SuggestedProduct, StringComparison.OrdinalIgnoreCase))
+                        && catalogIndex.ExactMatches(l.SuggestedProduct) is { Count: 1 } one
+                    ? one[0]
                     : null;
                 match ??= ProductMatcher.Resolve(l.NormalizedName, products);
+                // ⚠️ A name TWO OR MORE products share is a pick only the human can make: the confirm can't
+                // tell the twins apart, so pre-selecting one is an arbitrary machine judgement — and left at
+                // create-new it would mint a THIRD zero-history twin. So don't pre-select; flag the line so
+                // the grid warns and the dropdown distinguishes the twins by count, the same treatment the
+                // census grid gives them (finding F). The human picks; the auto-importer already routes such
+                // lines to review, so an unreviewed confirm never reaches this branch.
+                ambiguousTwin = match is not null && catalogIndex.ExactMatches(match.Name).Count > 1;
+                if (ambiguousTwin) match = null;
             }
             return new ReviewLine
             {
@@ -474,6 +540,8 @@ else if (phase == Phase.Done)
                 Tags = ReceiptConfirmationService.DeserializeTags(l.TagsJson),
                 ProductId = alias?.ProductId ?? match?.Id ?? 0,
                 AliasMatched = alias is not null,
+                AmbiguousTwin = ambiguousTwin,
+                ReadName = l.NormalizedName,
             };
         }).ToList();
 
@@ -825,6 +893,7 @@ else if (phase == Phase.Done)
     {
         await using var pdb = await DbFactory.CreateDbContextAsync();
         products = await pdb.Products.OrderBy(p => p.Name).ToListAsync();
+        RecomputeTwinNames();
         var stored = await pdb.ProductTags.Select(t => t.Value).Distinct().ToListAsync();
         allKnownTags = TagVocabulary.Seed.Concat(stored)
             .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t).ToList();

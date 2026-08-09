@@ -366,7 +366,7 @@ _Last updated: 7/30/2026_
   singularizes case-insensitively; the pick-clock test seeds a real date (null==null pinned nothing);
   a blank Quick update send answers with a hint. **889 tests green, 0 warnings.** Regated and PUSHED
   — 7/30/2026
-- [ ] Shelf-photo census — the intake path for stock receipts can never know about (pre-app, elsewhere, gifted, bulk): photo → candidates → the review-grid shape → confirm. ★ Never creates PurchaseEvents (invented purchases would poison every rhythm); proposes a front-row count the human corrects, with occlusion/stacking designed for rather than papered over — Not complete
+- [x] Shelf-photo census — the intake path for stock receipts can never know about (pre-app, elsewhere, gifted, bulk): photo → candidates → the review-grid shape → confirm. ★ Never creates PurchaseEvents (invented purchases would poison every rhythm); proposes a front-row count the human corrects, with occlusion/stacking designed for rather than papered over — **built 8/2/2026 as v4.6 below** — 8/2/2026
 
 ---
 
@@ -455,6 +455,119 @@ _Last updated: 7/30/2026_
 
 ---
 
+## v4.5 — The guided walkthrough
+- [x] **`GuidedTour` walks a new visitor through eleven surfaces** — docked coach panel, all core
+  features, offered to any new user and auto-started after loading the sample pantry; closes for good
+  the moment they've had enough. Copy is deliberately data-independent (a step naming a seeded row would
+  be a false statement against real receipts) AND deployment-independent (`TourStep.WhenManaged` — the
+  BYOK pitch is false on a managed box, found by Jordan running it on the tailnet). Progress is per
+  BROWSER, the ring degrades to nothing, and every navigation test asserts on `History`, never `Uri`.
+  Full detail: CLAUDE.md item 36. **1210 green** — 8/1/2026
+
+## v4.6 — Shelf-photo census (DESIGN.md §13.8)
+- [x] **"Count from a photo" (`/pantry-photo`)** — photograph a shelf and the app lists what it can see
+  with how many of each; correct it and it becomes an attested count. `CensusEvidence` (Label /
+  Appearance / Unidentified) is the ruling constraint made structural — every item says HOW it was
+  known, with three honesty rules enforced in the parse rather than trusted to the prompt.
+  `CensusConfirmationService` is its own confirm path: products (if new) + `StockLedger.Attest`,
+  **never a PurchaseEvent**, rows summed per product, refusals NAMED. Nothing is persisted but the
+  counts — a photo of someone's home never lands on disk. Six review rounds (two `/pre-push` gates, two
+  `/code-review`s, a live-verified walkthrough, a wholesale revert of a rule built on an unprobed false
+  premise) are CLAUDE.md items 37–40; the lesson the branch keeps teaching is *before designing around
+  "X can never happen", spend the probe*. **1339 green** — 8/2/2026
+- [x] **The merge triage — ten open findings probed, five phase commits of fixes, two deliberate
+  stands** — every claim verified against the code before acting (the report's own instruction, learned
+  from rounds 2–5). Fixed: removal now counts an attested count as history (probed data loss: census
+  counts 12 → remove the introducing receipt → product AND count gone); Tick all respects the two
+  non-confidence guards; variety/brand/size reach the grid and the aria-labels; the Category cell stops
+  showing a category the store never held; name-twins are refused/disambiguated instead of `First()`
+  (`ProductMatcher.ExactMatches`, `CensusRefusal.AmbiguousName`); the zero-panel's advice splits on the
+  engine's new `OutNowTodayWouldBeInert` so it stops promising an act §6.6's tie rule will ignore; four
+  test gaps closed (evadable case-sensitive guards, three untested `IsDefined` sites, the >8-photo cap,
+  a `Task.Delay` before a negative assertion). Corrected in the report: the advice loop is day-scoped,
+  not permanent; the ancient-outage copy asymmetry was already recorded and stays accepted; the
+  RunningLow road was a comment bug, not a copy bug. Kept as recorded (Jordan's call): a stale positive
+  count still reads in-stock — "if they said it's in stock we shouldn't consider it out unless they say
+  so." The gate over the pass itself (two review agents in isolated worktrees; both arrived STALE at
+  master and self-corrected via verify-first) found five more, all fixed and mutation-checked: the
+  removal fix's null-ConfirmedAt hole (kept the product, still subtracted its count), `>=` not `==` on
+  the tie member (a future stock-back revived the silent no-op), ONE twins definition at every guard
+  (the punctuation pair had walked through Tick all with no reason shown), the tie caveat on
+  record_signal and the grid's Out button, and a guard-miscounting comment. The re-gate over that fix
+  found three more, all fixed and mutation-checked: the RunningLow twin of the caveat (hidden by the
+  member's OutNow-specific name — `SignalTodayWouldBeInert` now), the census minting the punctuation
+  pair it then refused forever (one identity set for refusal AND resolution), and MarkOut's double-tap
+  guard + note hygiene. A THIRD round then found eight more, every one inside the ~90 lines the second
+  fix touched — and the pattern became the finding: 5 → 3 → 8, because each round converted one more
+  site of a shared rule and left its neighbours. Three of the eight were one defect wearing different
+  hats: **"which product does this name mean?" was answered in nine places.** `ProductMatcher.IdentityKey`
+  is THE answer now, on both sides of the census — the altitude fix item 40 prescribes, instead of a
+  fourth round of patching. Also: the Out button's guard was dropping taps on OTHER products (flag
+  without the paired `disabled`), the tie copy claimed "today"/"tomorrow" where the flag is `>=`, and
+  a chat fake that handed back its own live objects had been hiding both a spoken silent no-op and its
+  fix. **The fourth round is where the cascade broke** — zero behaviour regressions introduced, the
+  first fix pass of four to add none. It found the same class one level up: the identity rule had been
+  applied to the nine census sites and not to the app's other three product-identity guards (the add
+  form, chat's create_product, rename), two of which MINT the pair the census refuses. All three
+  converted, pinned, and live-verified in a browser. Then one more: an ambiguous SUGGESTION left a row
+  unticked with nothing able to explain it (the live guards judge the row's name; the ambiguous string
+  is the reader's suggestion) — reproduced on ordinary model output during that browser pass and
+  fixed, so the row now names what the reader thought it was. Full detail: CLAUDE.md item 41.
+  **1384 green, 0 warnings** — 8/4/2026
+- [x] **The census cascade RESOLVED — Group A + the `CensusPlan` redesign** — picked up the branch
+  handoff cold (item 41's `/code-review` left 15 findings: 8 stable-code bugs, 6 grid/service guard bugs
+  the handoff wanted *deleted by a redesign, not patched*, one Normalize nit). The redesign is the "one
+  accessible definition" directive made structural at the whole-FEATURE level: `CensusPlan` (Core, pure)
+  is the ONE function both the review grid and the write service ask — `Prefill` (dropdown pre-fill) +
+  `Plan` (one whole-census pass → Action/LandsOn/Reason/NeedsAHumanLook), so the message is a `switch` on
+  the reason (one per row by construction) and the six group-B findings are DELETED, not patched (525 lines
+  of guard soup out, 292 in). One function serves both callers because the WRITE decision depends only on
+  name/count/dropdown, never on the read-time facts (evidence/confidence/similarity/suggestion) which move
+  only the tick — so screen and write cannot disagree about which product a row lands on, the "one
+  prediction, one story" fault this arc broke through six rounds, now unexpressible. `CatalogIndex` kills
+  the O(N²) twin scan; deferred-zero settlement is whole-census (order-independent by construction).
+  38-case pure `CensusPlanTests` + the 46 service and ~65 page tests kept green untouched. Group A (six
+  stable-code bugs the cascade never touched, each mutation-checked): #1/#14 took item 41's "which product
+  does this name mean" to two more guards (the receipt confirm's raw `createdByName` key on the app's
+  biggest creation path; rename's `ToLower` beside an `ExactMatches` one line up); #5 routes a twin-named
+  suggestion/matcher hit to review instead of committing to a coin flip; #3/#6 two chat tools re-read
+  before speaking; #11 SetCategory IsDefined; #15 KEPT Normalize's split/join (the handoff wanted it
+  reverted — reverting reintroduces a known near-key defect) and pinned it. Census-page findings folded
+  in: #12 the grid disables during a confirm, #13 the empty JSDisconnected catch that left a permanent
+  spinner on a live circuit. **Live-verified on real model output**: a synthetic shelf read
+  matched/created/nudged/left-unidentified correctly, the flagship identity fix said "This will go to the
+  existing 'Home-Canned Tomato Sauce'" (not "create a separate item"), and confirm wrote counts with no
+  PurchaseEvent (attest REPLACED, not added). Independent security review CLEAN (tenancy holds);
+  independent code review found the core sound + four LOW: three fixed (A — a regression THIS branch
+  introduced, an alias-resolved twin bounced to review, now gated on `alias is null`; B — Category
+  IsDefined at the two create sites, parity with #11; D — a negative-count inline message), one documented
+  NOT fixed (C — the grid-previews-all vs confirm-runs-ticked deferred-zero edge is safe-direction +
+  reported; a "fix" couples the plan to tick-state). The fix pass got its own independent review, clean.
+  ⚠️ `/code-review` (local) is model-invocation-disabled — user-only; the reviews ran as one helper agent
+  each (NOT the $100 cloud ultra), so an independent human pass is still owed before merge. Full detail:
+  CLAUDE.md item 42. **1438 green, 0 warnings** — 8/5/2026
+- **Max-effort `/code-review` over the whole branch + same-session fix pass** (Jordan-triggered; nine of
+  ten finder agents hit the session limit, so the angles ran inline). Nine findings, **no serious
+  correctness defect** — the first full-branch review of this arc to come back without one. Fixed all
+  nine: tool calls within ONE model round shared a stale product snapshot (a duplicated create_product
+  in one parallel-tool round could mint the identity twins item 41 closed; refreshes per create now);
+  punctuation-only names fold to an EMPTY IdentityKey (census refuses them as NoName, the receipt
+  roll-up keys them raw — distinct junk names no longer merge); `ProductOptionLabel` (Core) is THE twin
+  dropdown phrasing (was duplicated census/Upload); `IPantryStore.GetProductAsync` ends the
+  full-catalog reload every relative "used one" paid for the tie caveat; `CatalogIndex` memoizes
+  fuzzy resolves (the census grid re-ran full catalog re-normalization per row per RENDER) and now
+  also serves the auto-confirmer + Upload pre-fill (two full scans per line gone); census `Read()`
+  overlaps the catalog load with the photo transfers; the photo loader stops triple-buffering; the
+  rename collision check reads untracked. Twelve new tests, every one mutation-checked (seven
+  mutations across five runs, each killing exactly its tests). Full detail: CLAUDE.md item 43.
+  **1463 green, 0 warnings** — 8/8/2026. A re-review of the fix commit itself (item 39's discipline)
+  found two, both fixed: this entry's own mutation count was wrong (it said "six" — the commit message
+  still does, uncorrectably), and the new junk-name refusal showed nothing on the row before the
+  confirm — the MatchMessage arm added covers BOTH NoName shapes, so blank names gained the inline
+  message they always lacked too. **1465 green, 0 warnings** — 8/9/2026
+
+---
+
 ## Backlog (unscheduled)
 - [x] Double-scroll fix (Grocery List + Upload review) — 7/2/2026
 - [x] Photo-upload fix (CSP `img-src blob:` + bounded resize) — 7/21/2026 (the first real photo upload hung forever: the strict CSP blocked Blazor's in-browser resize and its JS never settles the promise; PDFs skip the path, so it hid since 7/5)
@@ -463,7 +576,8 @@ _Last updated: 7/30/2026_
 - [x] Per-size Trends price chart — 7/8/2026 (dominant-size ticker/chart; see v3.1)
 - [ ] "Dapper blob" mascot / branding — Not complete
 - [ ] Food diary — photo of a meal → which foods you ate: candidates matched to pantry products, logging the dated MealEvent (today only ~1/3 of meals arrive via a saved recipe's "Ate it") and feeding the eat/Waist-watch reports. A third door — consumption — distinct from purchases (receipts) and attestation (census) — Idea, 7/30/2026
-- [ ] Interactive demo mode — a guided, hands-on tour that walks a new user through the app's features against the seeded demo catalog (extends the onboarding banner + demo seeder; every major concept already has a seeded hero to point at) — Idea, 7/30/2026
+- [x] Interactive demo mode — a guided, hands-on tour that walks a new user through the app's features against the seeded demo catalog (extends the onboarding banner + demo seeder; every major concept already has a seeded hero to point at) — **shipped as v4.5's guided walkthrough** — 8/1/2026
+- [ ] Stale-counts view — one place to see which counts the app has stopped believing, so a stale number gets re-counted instead of quietly deciding things. Floated by Jordan during the 8/3 merge triage as the counterpart to keeping finding 10 as-is: a stale POSITIVE count still reads in-stock on purpose ("if they said it's in stock we shouldn't consider it out unless they say so; marking out or setting zero is one tap, and a recipe suggesting it lets them go 'oh snap, I'm out'"), so the fix for a drifting count is **visibility**, not the engine second-guessing the household. Shows the three states a surface currently only mentions in passing: `CountConfidence.Aging` (no rhythm, past §13.5's 90-day `Unattested` threshold), `CountConfidence.Spent` (a rhythm says it should be gone — `CountRunsOutOn` is past), and DORMANT pairs (`TrackQuantity` false with a kept number + date, §13.1's "off is dormant, not destructive"). Home is undecided: a `/reports` preset (must pass `ReportSpecRules`, and a saved spec the engine refuses would greet a visitor with an error) or a `/products` filter beside the existing tag/category ones — the report reads better for "go fix these", the filter for "while I'm already here". ⚠️ Whatever renders it must **attribute, never assert** ("you counted 9 on Mar 12"), which is `CountConfidence`'s whole reason for existing (§13.5) — a view of distrusted numbers that states them as facts is the one thing this must not become. It asks the engine for `Status`/confidence rather than re-deriving staleness from dates (the "one prediction, one story" rule; `CountLooksStale` reports AGE only and licenses no conclusion about lists). Natural companions if it ships: a one-tap re-count from the row, and the census as the bulk answer when several have drifted at once — Idea, 8/3/2026
 - [ ] Voice assistant help mode — "what can I say?" describes the assistant's available commands, generated from the live tool registry rather than hand-written (documented tool lists have drifted before); cook-along answers with its own step-command grammar — Idea, 7/30/2026
 - [ ] Chat-layer eval harness — the drift gap the 7/30 discussion named: nothing scores real-model chat behavior (utterance → expected tool calls, e.g. "we're out of milk" → record_signal), so a model-pin move is currently ungated for chat while extraction has its eval. Same shape as the extraction eval: hand-labelled cases, live key, manual/on-demand — Planned, 7/30/2026
 - [ ] Self-eval drift nudge — verified-receipt self-eval is a button, so drift is caught when someone looks, not when it happens; surface a nudge when enough new receipts accumulate since the last run (a prompt to spend, never an automatic token spend) — Planned, 7/30/2026

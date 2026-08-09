@@ -51,6 +51,20 @@ public record PredictionResult
     /// True when an active OutNow signal pins this item to the top of the list (§6.6 / §8).
     public bool Pinned { get; init; }
 
+    /// <summary>The last stock-back (a purchase or a restock) is dated TODAY OR LATER, so a signal
+    /// filed today — an OutNow OR a RunningLow, the two kinds the active-signal filter covers — would
+    /// fail the strictly-after test and stay dead, permanently, since neither date ever changes
+    /// (§6.6 gives same-day ties to the stock on purpose; the primary flow is "pinned Overdue →
+    /// Bought today", which must clear the pin). Computed in the engine, beside the tie rule, so a
+    /// surface inviting "say you're out" or "say you're low" can stop promising an act the engine
+    /// will disregard — a fresh report only takes effect once today is past the stock-back.
+    /// ⚠️ Kind-agnostic on purpose, and named that way: the first name was OutNow-specific, and an
+    /// OutNow-specific name invited an OutNow-specific consumer — record_signal's caveat shipped
+    /// covering one of the two kinds the filter discards identically. The classic roads in: a
+    /// mis-tapped Restocked with a same-day undo attempt, an unclamped chat purchase date, the
+    /// documented timezone gotcha.</summary>
+    public bool SignalTodayWouldBeInert { get; init; }
+
     /// The governing expiration date — the LATEST purchase's labeled date (same-day purchases: the
     /// longest, since you'd open the shorter-dated one first). Null when the latest purchase carries no
     /// date or expiration tracking is off. A future value lets the UI say "expires Jul 22".

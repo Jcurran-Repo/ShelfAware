@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using ShelfAware.Core.Chat;
 
 namespace ShelfAware.Web.Data;
 
@@ -24,15 +25,30 @@ public class ProductRenameService(IHouseholdDbFactory dbFactory)
 
         // A rename can't merge two products — matching, aliases, and history all key on distinct rows.
         // (Case-only fixes of the SAME product pass: the check excludes productId itself.)
-        var taken = await db.Products
-            .AnyAsync(p => p.Id != productId && p.Name.ToLower() == name.ToLower(), cancellationToken);
-        if (taken) return new(false, $"\"{name}\" already exists — pick a different name (renames can't merge products).");
+        // ⚠️ "Taken" is the MATCHER's rule-1 identity, not raw equality: it folds punctuation, so
+        // renaming to "Half and Half" beside an existing "Half-and-Half" produced a pair the matcher
+        // treats as one product — splitting its history, and jamming every later shelf census on that
+        // item with an AmbiguousName refusal it can only escape by picking from the dropdown. One
+        // definition of product identity, the same one the census and the add form ask.
+        // AsNoTracking: this list is only READ (ExactMatches over it), and tracked entities would ride
+        // into SaveChanges' change-tracker diff for no reason.
+        var others = await db.Products.AsNoTracking().Where(p => p.Id != productId).ToListAsync(cancellationToken);
+        if (ProductMatcher.ExactMatches(name, others) is { Count: > 0 } taken)
+            return new(false, $"\"{taken[0].Name}\" already exists — pick a different name (renames can't merge products).");
 
         var oldName = product.Name;
         product.Name = name;
-        var linked = await db.RecipeIngredients
-            .Where(i => i.MatchedProduct != null && i.MatchedProduct.ToLower() == oldName.ToLower())
-            .ToListAsync(cancellationToken);
+        // ⚠️ Re-point by the matcher's rule-1 IDENTITY, not ToLower(): a MatchedProduct stored as
+        // "Home Canned Sauce" for a product named "Home-Canned Sauce" is the same product to every other
+        // guard (line 34 above already uses ExactMatches), so a raw compare here left that link silently
+        // stale — the partial conversion this finishes. IdentityKey isn't SQL-translatable, so filter in
+        // memory, the same load-then-match shape the collision check above uses.
+        var oldKey = ProductMatcher.IdentityKey(oldName);
+        var linked = (await db.RecipeIngredients
+                .Where(i => i.MatchedProduct != null)
+                .ToListAsync(cancellationToken))
+            .Where(i => ProductMatcher.IdentityKey(i.MatchedProduct!) == oldKey)
+            .ToList();
         foreach (var ingredient in linked) ingredient.MatchedProduct = name;
 
         await db.SaveChangesAsync(cancellationToken);

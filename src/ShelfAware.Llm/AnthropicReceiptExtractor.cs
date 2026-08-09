@@ -174,7 +174,10 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
                 Size = GetNullableString(line, "size"),
                 Variety = GetNullableString(line, "variety"),
                 UnitPrice = line.TryGetProperty("unit_price", out var up) && up.ValueKind == JsonValueKind.Number ? up.GetDecimal() : null,
-                Category = Enum.TryParse<Category>(line.GetProperty("category").GetString(), ignoreCase: true, out var cat) ? cat : Category.Other,
+                // IsDefined because Enum.TryParse SUCCEEDS on a numeric string — "12" would become an
+                // undefined Category, persisted onto a real Product and rendered as a blank aisle.
+                Category = Enum.TryParse<Category>(line.GetProperty("category").GetString(), ignoreCase: true, out var cat)
+                    && Enum.IsDefined(cat) ? cat : Category.Other,
                 Tags = ParseTags(line),
                 Confidence = Math.Clamp(line.GetProperty("confidence").GetDecimal(), 0m, 1m),
                 SuggestedProductName = GetNullableString(line, "existing_product"),

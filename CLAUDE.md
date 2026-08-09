@@ -42,6 +42,27 @@ as overkill "because it's single-user."
   class** — only asking "where did this number come from, and did the due date beside it come from
   the same place?" can.
 
+- **If a fact is shown or used in more than one place, it gets ONE accessible definition — and
+  converting the sites one at a time is worse than not starting.** The general form of the rule above.
+  Any value a surface displays, or a guard acts on, that more than one place needs: give it a single
+  property, method, or shared helper that everyone asks. Never let two call sites answer the same
+  question with their own arithmetic, their own string comparison, or their own copy of a predicate.
+  **This is the single most expensive failure in this repo's history**, and it is always the same
+  shape: two places agree today, one is edited later, and the disagreement ships silently because
+  every test still passes. Cases on file — the ✓ mark and the "Ate it" decrement using two different
+  matchers (item 25); a suppressed row's phrasing reinvented per page (item 20's `CountNote`); seven
+  readings of when a signal happened, one of them different (item 19's `SignalDate.Of`); a page
+  re-deriving "exact vs fuzzy" from raw strings the matcher had already normalized (item 39).
+  ⚠️ **And the sharpest lesson, from the census branch's own review cascade (item 41): "which product
+  does this name mean?" was answered in NINE places, and fixing them one per round produced three
+  consecutive rounds of new data-harm defects** — each round left a half-converted state where one
+  guard promised something its neighbour then contradicted (a grid offering "leave this to create a
+  separate item" over a write that replaced an existing product's count). Rounds ran 5 → 3 → 8
+  findings; the count only fell when the *rule* moved into one place (`ProductMatcher.IdentityKey`)
+  instead of the sites moving one at a time. So: when you find two sites disagreeing, the fix is the
+  shared definition and **every** caller in the same change — a partial conversion is a new bug with a
+  green suite over it.
+
 - **Craftsmanship — take pride in every change; no shortcuts.** Always do the polished,
   professional thing, not the quickest thing that happens to pass. Concretely: **no empty
   or catch-all `catch` blocks that swallow errors** — catch specific exceptions, log via
@@ -67,13 +88,14 @@ Beyond the spec's 3 pages, the app now has Dashboard (`/`), Upload (`/receipt`),
 Products (`/products`), Grocery List (`/list`, by aisle + copy/print + a manual **Extras**
 section), Trends (`/trends`, price tickers + spend forecast — page component is
 `SpendInsight.razor`), Product Detail (`/product/{id}`, rhythm + price-history chart),
-Accuracy (`/accuracy`, renders `eval-results.json`), **Recipes (`/recipes`)**, and
-Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptTotals`, Core).
+Accuracy (`/accuracy`, renders `eval-results.json`), **Recipes (`/recipes`)**,
+Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptTotals`, Core), and
+**Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1210 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1465 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
-bUnit pages/components — see item 31).
+bUnit pages/components — see items 31, 42 and 43).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -1241,6 +1263,731 @@ bUnit pages/components — see item 31).
      a reload resumes mid-tour, Done persists across a reload, Settings replays from step 1, and on mobile
      it becomes a full-width sheet with the voice FAB standing down. No console or server errors, so the
      strict CSP holds.
+
+37. **v4.6 — the shelf-photo census (2026-08-02, branch `feature/shelf-census`).** §13.8, the last unbuilt
+   phase of the counting arc: photograph a shelf, freezer or cupboard and the app lists what it can see with
+   how many of each; correct it and it becomes an attested count. Jordan's ask, and its ruling constraint,
+   was epistemic — *"best guess what's there… don't make stuff up, but if a can says what it is then good."*
+   - ⚠️ **`CensusEvidence` is that constraint made structural, and it is the whole design.** A receipt is
+     text — `raw_text` is either there or it isn't — so extraction never has to say how it knows. A photo
+     has no such floor: a freezer LOOKS like a freezer, and a model asked "what's in here?" can produce a
+     plausible pantry out of priors alone with every word invented, indistinguishable from having read the
+     labels. So every item says how it was known: `Label` (printed text, kept verbatim in `LabelText` — the
+     census's `raw_text`, checkable against the photo in a second), `Appearance` (no legible label, but a
+     bunch of bananas needs no barcode), `Unidentified` (a package is there and it can't say what — the NAME
+     then describes the package). One enum, three answers, rather than blending "I read it" and "I reckon"
+     into one confidence number.
+   - ⚠️ **Three of the contract's rules are enforced in the PARSE, not trusted to the prompt**, because a
+     shelf photo's output can't be checked against anything the way a receipt's can: a `Label` claim with no
+     readable text is downgraded to `Appearance` (nothing to check = not a label claim); an `Unidentified`
+     item's confidence is capped below the grid's tick threshold and may never carry a product match; and
+     `visible_count` floors at 1 — reporting an item means something was SEEN, and a zero reaching the grid
+     could be confirmed into an **attested** zero, which mints a real `OutNow` into the cadence engine
+     (§13.4). A machine's arithmetic must never mint one; a human typing 0 in the grid still can.
+   - **Ticked at ≥ 0.6, the SAME number the receipt grid highlights a low-confidence line at** — deliberately
+     not a second threshold that could drift from it. A guess is opted into; a legible label isn't punished.
+     ⚠️ **Confidence is necessary, not sufficient** (added by the post-merge review, item 38): a tick
+     authorizes a WRITE, so it also requires the row not be `Unidentified` (held on the PAGE, not left
+     implied by the reader's 0.3 cap in another assembly) and not be a name-SIMILARITY match (confidence is
+     certainty in the ITEM and says nothing about which product `ProductMatcher` then picked).
+   - **`CensusConfirmationService` is the census's own confirm path** (§13.8's ⚠️), and the ★ rule is the
+     reason: it writes products + `StockLedger.Attest` and **never a `PurchaseEvent`**. Three calls the spec
+     didn't settle, all now in DESIGN.md: rows are **summed per product** before one `Attest` (an
+     attestation states a TOTAL, so row-by-row would let the second silently overwrite the first); a
+     negative count is **refused, not clamped** (clamping lands on an asserted out and files an `OutNow` off
+     a typo); and an unmatched row whose name already exists **resolves to that product** — the duplicate
+     guard where it matters most, and what lets the failure message honestly promise that pressing Confirm
+     again is safe. (Item 38 added three more refusals and reworked the zero rule — see below.)
+   - **Nothing is persisted but the counts** (Jordan's call). No audit copy, no census table, nothing new
+     for export or "delete my data" to reach — so a photograph of the inside of someone's home never lands
+     on disk and the feature adds no tenant table to get wrong. Costs the receipt path's Retry and an
+     abandoned review; both are cheap when you're standing at the shelf.
+   - ⚠️ **`IShelfPhotoLoader` exists because `RequestImageFileAsync` cannot run under bUnit at all** —
+     probed, not assumed: it throws outright, so without a seam the entire review grid, its tick defaults,
+     its pre-fill and its confirm would be hand-verifiable only. It's a browser seam, which is exactly what
+     `PageTestContext` fakes by policy. Worth knowing for the receipt Upload page, whose image path has the
+     same untestable shape today (it tests via PDFs, which skip the resize).
+   - ⚠️ **A live probe against the real API found a prompt gap that wasn't one.** Synthetic shelves (labelled
+     cans, a labelled box, unlabelled tubs, an EMPTY shelf, a non-shelf) went through the real reader. The
+     anti-invention rules held first time and the empty shelf is the one that matters — a shelf that *implies*
+     a pantry returned nothing. But the unlabelled tubs were dropped, so I strengthened three prompt rules;
+     they were still dropped; raising the tubs' CONTRAST fixed it. **Isolating it — original prompt, high
+     contrast — showed the tubs reported fine, so contrast was the whole story and the prompt edits had
+     addressed a failure mode with no evidence behind it.** The counterweight paragraph I'd added to rule 2
+     was reverted (rule 2 carries the primary "don't invent" instruction and must not be diluted by an
+     unvalidated hedge); rule 3's "you must still return a row" and rule 10's clutter carve-out were KEPT,
+     on wording grounds that stand on their own — rule 3 read as permissive ("is useful") where an
+     instruction was meant, and rule 10's "skip clutter / report food and household consumables" genuinely
+     left an unnamed container in neither category. **The lesson is the old one: change one thing.**
+   - ⚠️ **Every new page test was mutation-checked** (item 34's rule), and one was found vacuous by it:
+     `An_unidentified_package_is_never_pre_matched_to_a_product` passed with its guard removed, because the
+     two names I'd picked didn't fuzzy-match anyway. It now seeds "Freezer Bag" against a read of "frosted
+     freezer bag" — a collision `ProductMatcher` really makes, asserted in the test itself — so four frosted
+     parcels can't pre-fill the household's box of freezer bags. Both that guard and the tick default fail
+     when mutated.
+   - **The `/pre-push` gate found eight, two of them able to destroy or invent data (2026-08-02).** Security
+     review came back clean and said what it checked: both new DB call sites go through `IHouseholdDbFactory`,
+     no new `IgnoreQueryFilters`, no new settings key / endpoint / per-household disk write, `[Authorize]`
+     cascades and isn't shadowed, and a foreign `ProductId` from a tampered circuit message fails to resolve
+     against the already-filtered list rather than reaching across. All three top code findings were
+     REPRODUCED with probes before being accepted:
+     - ⚠️ **An explicit "➕ create new product" silently overwrote the product it collided with.** `ProductId`
+       0 meant both "the grid never matched it" and "the human chose create-new", and the exact-name fallback
+       couldn't tell them apart: a household's `Ground Beef` counted at **12** became **4**, no new product,
+       summary silent — and the grid had just *removed* the "Was 12" note, so the screen stated the opposite
+       of what the write did. `CensusRow.CreateNew` now carries the intent, an explicit create-new whose name
+       is taken is refused and named, and the row warns before the confirm. **This is the "one prediction,
+       one story" class in code written by the same session that cited the rule.**
+     - ⚠️ **A zero on an unmatched row invented a product and pinned it Overdue forever.** Probed:
+       `'Frozen Peas' onHand=0 signals=[OutNow] purchases=0 → Status=Overdue Pinned=True`. The row arrives
+       ticked and typing 0 is what "fix the numbers" invites, so an item the household has never owned went
+       to the top of the dashboard AND the grocery list permanently. Refused now when the row would CREATE
+       the product; a zero on an existing product is still §13.4's real evidence.
+     - The button counted ROWS and the result counted PRODUCTS with nothing explaining the gap — which the
+       reader's own contract makes routine (a row per variety, matched across varieties), and which read as
+       a dropped row beside a refusals clause that *does* explain itself. `CensusOutcome.Rows` reports it.
+     - Smaller: a blank name refused a row that named its product by id (the name is only needed to resolve
+       BY name); "every **1 days**", the third outing of that bug here; a comment on `MaxUploadBytes` that
+       claimed a guarantee it does not provide (it bounds the *resized* stream); and a missing
+       `JSDisconnectedException` clause, so closing the tab mid-read logged an error.
+     - ⚠️ **Refusals are NAMED, not tallied** (`RefusedRow` + `CensusRefusal`), because the three reasons need
+       genuinely different sentences — a typo, a name clash the household can resolve, and a claim the app
+       declines to make for them. A row someone ticked and then didn't get is the one outcome they cannot
+       discover for themselves; every other one is visible on the product's own page.
+     - **Test gaps the same review found, all closed:** `A_read_that_names_an_existing_product_pre_selects_it`
+       was a **mutation survivor** — its suggestion named a product `ProductMatcher` would have found anyway,
+       so deleting the entire suggestion branch left 21/21 green. It now makes the reader and the matcher
+       *disagree* and asserts the reader wins. Also: the "Was N" note couldn't tell right-product from
+       any-product (two products now, and the test changes the dropdown and watches the note follow); a
+       two-rows-one-product test never asserted the sum; the unidentified confidence `Math.Min` was untested
+       (a flat assignment survived); and the ✕ button, zero rows, and every summary sentence but one had no
+       coverage. **Every new test was mutation-checked in three batches** — 11 mutations, each failing
+       exactly the tests it should and nothing else.
+   - **1285 tests green, 0 warnings** on a non-incremental Release build (1210 before; +75).
+     No schema change — `TrackQuantity`/`QuantityOnHand`/`QuantityCountedAt`
+     already exist, and a census writes nothing else. No new demo seed either: the census's OUTPUT (a counted
+     product with no purchases) is already seeded as `Quarter Cow Ground Beef` (item 25) — a census is an act,
+     not a state.
+   - **Live-verified end to end** (2026-08-02, dev server on the alt port against the sample catalog; the
+     photo was drawn on a canvas and handed to the file input, the documented no-real-files technique). One
+     synthetic shelf produced exactly three rows: `Canned Black Beans` ×3 read off the label at 95%, ticked,
+     **matched to the existing seeded product** and annotated "Was 5, counted Jul 29"; `Tilapia Fillets` ×1
+     at 95%, ticked, create-new; and `lidded plastic tub` ×2 as **Unidentified at 20%, unticked,
+     `low-confidence`, unmatched**. Confirming said "Counted 2 items (1 new product)", and the two product
+     pages then proved the ★ rule: the beans read "3 on hand · you last counted Aug 2" with **the same four
+     purchases as before** and the suppression sentence beside a `Stocked` chip, and the new Tilapia product
+     read "1 on hand" with **"Last bought: never"** and no purchases at all. No console or server errors, so
+     the strict CSP holds.
+   - **Two findings the run and a re-read produced, both fixed:**
+     - ⚠️ **`Read()` had no busy guard.** Setting the phase hides the button, but a second click can already
+       be queued before that render reaches the browser — and on a slow circuit it will be — so BOTH would
+       run: **two vision calls billed to the visitor's own key for one press**, the second overwriting the
+       first's rows. The same class the dashboard's quick buttons were guarded for in item 8. Pinned by a
+       test that parks the reader mid-flight, mutation-checked.
+     - **A two-word nav label wrapped INSIDE itself.** With 11 links the row wraps, and "Count Stock" split
+       across two lines — both halves highlighted when active — reading as two separate links. Measured
+       (`getClientRects().length === 2`), not eyeballed. `white-space: nowrap` on `.site-header nav a` fixes
+       it and closes the same latent hole for "Grocery List", which had simply never landed on the break.
+       ⚠️ **A CSS edit needs a server RESTART to show up** — static assets are fingerprinted
+       (`app.mq67gixxrj.css`), so the running server keeps serving the old file and a reload proves nothing.
+
+38. **A second `/code-review` over the finished census branch (2026-08-02, same branch) — 15 findings, all
+   fixed.** Ten finder angles plus a gap sweep, every finding independently verified (two by throwaway
+   probes: a bUnit harness for the page flows, a console probe against the real `ReplenishmentPredictor`).
+   The `/pre-push` gate in item 37 had already swept this code; this pass found a further fifteen, which is
+   the honest measure of how much a second reviewer is worth on a branch this size. The ones carrying a rule:
+   - ⚠️ **An EMPTY count box bound to `0` and filed a real `OutNow`** — the sharpest defect in the arc, and
+     a rule this repo had already written down and then not applied. `@bind` on a non-nullable `decimal`
+     converts `""` to `default`, so clearing the "how many" box to retype it and then clicking Confirm
+     (the blur's `change` beats the click, so the 0 is never even seen) attested an outage against a
+     freezer full of the stuff. `ReceiptConfirmationService` defends the identical control
+     (`line.Quantity > 0 ? line.Quantity : 1m`) and ProductDetail's `editQuantity` is nullable for exactly
+     this reason — item 20 states it as "An EMPTY count box is not a zero". `CensusRow.Count` is
+     `decimal?` now and null is REFUSED, never coerced.
+   - ⚠️ **The zero-refusal was drawn at "the product is NEW" when the harm tracks "it has no PURCHASES".**
+     Probed: `onHand=0, OutNow, zero purchases → Status=Overdue Pinned=True`, unchanged two years later,
+     and **a later census counting it at 3 does not lift it** (no purchases → `lastStockBack` null → every
+     OutNow stays active). So the second census of a shelf hit precisely the state the first was refused
+     for — because **a census's own output has no purchases by construction**, which is the entire point
+     of §13.8. A guard keyed on the wrong property looked equivalent for one release and was reachable by
+     the feature's own happy path.
+   - ⚠️ **A census silently re-armed and destroyed a DORMANT count.** `ProductNote.Counted` required
+     `TrackQuantity`, so a stopped count rendered no "Was N" note and was indistinguishable from
+     never-counted; `Attest` then overwrote the number and date item 28 promises to keep, and the summary
+     stayed silent because `Retracked` counts `IsTracked` — a different property. Every other mutator
+     respects dormancy (`AdjustByHuman` and `Move` both return early). The grid shows the stored number now
+     and `CensusOutcome.ResumedCounting` names the act. The demo catalog already ships an instance
+     (`Cat Litter`), and the page harness could not even express dormancy, so nothing could have caught it.
+   - ⚠️ **A tick authorizes a WRITE, so confidence alone must not grant one.** Two conditions were missing.
+     `ProductMatcher`'s bidirectional substring rule matches "Peanut Butter" to a catalog's `Butter`, and
+     `Attest` REPLACES that product's count with no undo — a flawless 0.95 read of the ITEM pre-authorizing
+     an unscored guess at the TARGET. And `Unidentified ⇒ unticked` was left implied by the reader's 0.3
+     cap in another assembly; the page holds it itself now.
+   - ⚠️ **`Enum.TryParse` SUCCEEDS on a numeric string.** `"evidence": "3"` produced an undefined value that
+     was neither `Label` nor `Unidentified`, slipping past BOTH honesty rules the parse exists to enforce
+     while the grid's switches fell to their "couldn't tell" arms — a row reading "couldn't tell, 95% sure",
+     ticked and pre-matched. `Category` was the same and **persisted** onto a real Product. The repo already
+     knew this (`ReportSpecUrl` pairs it with `IsDefined` under a test named
+     `Enum_parsing_is_case_insensitive_but_refuses_numeric_smuggling`); fixed as a SET, including the three
+     pre-existing sites in `AnthropicReceiptExtractor` and `AnthropicPantryChat`.
+   - ⚠️ **`catch (OperationCanceledException) { throw; }` produced a silent, permanent spinner.**
+     `ComponentBase` IGNORES a canceled task, so the rethrow yielded no error, no log line and no final
+     render — and the reachable trigger is the vision call's own `TaskCanceledException` on an HttpClient
+     timeout. The page owns a `CancellationTokenSource` now and threads it, so "the visitor left" and "the
+     call timed out" are distinguishable: only our own token is teardown. **The house convention
+     ("let cancellation propagate") is right where a token means what it says and wrong where nothing
+     supplies one.**
+   - **Two screens stating what the engine didn't do**, the class this arc keeps producing: "✅ Counted 0
+     items" when every ticked row was refused, and "Nothing recognisable turned up in that photo" after the
+     human ✕'d every row of a read that worked fine.
+   - Also: an unresolvable `ProductId` fell through to create-new/by-name silently (a merge in another tab
+     is enough) — refused as `ProductGone` now, and **the tenancy test got stronger for it**: it asserted
+     the row lands on household B's own same-named product, which is a second wrong answer, and now asserts
+     the refusal; the census created products behind an exact-name check only, where every other creation
+     path resolves fuzzily first (the grid names a near-miss now — resolving one in the service would
+     attach a count to a guessed product); `ShelfPhotoLoader` handed undecodable files to a JS promise that
+     never settles (Blazor's `toImageFile` revokes the object URL on error and never rejects), so a PDF or a
+     corrupt JPEG bought 30 seconds of spinner and a message that never named the file; and the fast-mover
+     nudge had dropped ProductDetail's `!TrackQuantity` gate, so it argued against a count the household
+     already keeps, on the act that refreshes it.
+   - **The prompt's one worked example contradicted its own arithmetic** — "FIVE items in three rows" then
+     enumerating two — inside the `Unidentified` rule, the one the parse can least check.
+   - ⚠️ **A test that asserted what its own fixture guaranteed.** `An_unidentified_package_is_shown_unticked`
+     seeded confidence 0.2, so it re-tested the threshold and would survive deleting every `Unidentified`
+     branch on the page. That it survived the earlier gate is the point: item 34's rule is that **green is
+     what the defect produces**, so a test is not evidence until it has been made to fail.
+   - **All 17 mutations killed exactly their tests and nothing else**, run in four batches. Both halves of
+     each new rule are pinned (the guard AND its complement), so no fix can quietly become a wall.
+   - **1316 tests green, 0 warnings** on a non-incremental Release build (1285 before; +31).
+   - **Live-verified end to end** (2026-08-02, dev server on the alt port, throwaway `test@shelfaware.net`
+     household on the sample catalog; three real vision calls on synthetic canvas-drawn shelves). What the
+     run proved, in the order it was checked:
+     - An unidentified tub came back at 20% and arrived **unticked** with "couldn't tell"; the labelled cans
+       came back at 95% **matched via the model's own `existing_product`** — so ticked with no similarity
+       warning, which is the trust order working rather than the fuzzy path failing to fire.
+     - Clearing the "how many" box rendered **"Enter how many."** inline, and confirming refused the row:
+       *"the 'how many' box was empty. An empty box isn't a zero."*
+     - A zero on a would-be-new product refused with the no-rhythm sentence, and the panel led with
+       **"Nothing was counted."** and **no ✅** — verified `innerHTML` carries no tick glyph.
+     - **Nothing was written by that refused confirm**: no `Diced Tomatoes` twin on `/products`, and
+       `Canned Black Beans` still read "You have 3, counted Aug 2". Pre-fix, the same click would have
+       zeroed the beans, filed an `OutNow`, and left a permanently-pinned ghost product.
+     - Typing "Diced Tomatoes" on a create-new row raised **"Looks like your existing 'Canned Diced
+       Tomatoes'"** — the twin that would otherwise have been created silently.
+     - `Cat Litter` (the dormant hero) showed **"Was 2, counted Jul 2. You'd stopped counting it — this
+       starts again from your new number."** on a genuinely-read match; pre-fix that row showed *nothing*.
+       Confirming said **"✅ Counted 1 item. Started counting 1 item you'd stopped counting."**, the product
+       page then read "You have 4, counted Aug 2", and its purchase count stayed **×4** — the ★ rule holding.
+     - Deleting every row said **"You've removed everything that was found… The photo was read fine"**
+       rather than blaming the photo.
+     - Zero console errors and zero server errors across the whole run, so the strict CSP holds.
+     ⚠️ **The fuzzy-tick rule was NOT exercised live** — the model suggested a product every time, which is
+     the trusted path, so `ProductMatcher`'s substring fallback never drove a pre-fill. It is unit-pinned
+     and mutation-checked; a live case needs a shelf item absent from the catalog whose name is a substring
+     of one that is present.
+     Side effect on the throwaway household, stated so it isn't mistaken for seed data later: `Cat Litter`
+     is no longer dormant — it is counted 4 as of 2026-08-02.
+
+39. **The `/pre-push` gate over the finished branch (2026-08-02) — seven more, five of them regressions
+   introduced by item 38's own fix commit.** Security review CLEAN and said what it checked (both new DB
+   call sites through `IHouseholdDbFactory`; a tampered `ProductId` refused rather than resolved, and the
+   refusal doesn't leak existence — "belongs to household B" and "never existed" are the same branch, the
+   same sentence, and the name echoed back is the caller's own string; `CensusRow.CreateNew` is
+   server-authoritative; the photo verified never to touch disk). The code half is the lesson:
+   - ⚠️ **A fix pass needs its own review, and this is the evidence.** Item 38 fixed 15 findings and
+     introduced 5 — including two that the first gate's class of bug would have called serious. Reviewing
+     the branch as a whole would have missed them all: the older code came back clean, and every new
+     defect was in the 988 lines that had never been read by anyone but their author.
+   - ⚠️ **A guard must not be narrower than the thing it guards.** The content-type ALLOWLIST added for
+     the 30-second-hang fix refused real photos: Blazor's `toImageFile` never inspects MIME — it paints
+     into an `<img>` and re-encodes through a canvas — so it decodes whatever the BROWSER can, including
+     HEIC on WebKit, AVIF, BMP, TIFF. iOS transcodes HEIC→JPEG only when the accept list asks for it, so
+     the Photos path was safe and the **Files-app path was broken**. Now a `image/` prefix test, with an
+     empty content type let through (the OS supplies none for an extensionless file) and `accept="image/*"`.
+     ⚠️ **Never name `image/heic` in accept** — Safari 17+ then stops transcoding and converts JPEG and PNG
+     INTO HEIC, making the rare case universal.
+   - ⚠️ **`CancellationTokenSource.Token` THROWS after `Dispose()`** (unlike `IsCancellationRequested`,
+     which stays safe), and `ObjectDisposedException` derives from `InvalidOperationException`, so it
+     cleared every specific catch clause and logged an ERROR on an ordinary navigate-away — the exact
+     teardown noise the neighbouring `JSDisconnectedException` clause exists to prevent. Capture the token
+     ONCE before the first await; a captured token survives its source's disposal.
+   - ⚠️ **A read may be cancelled when the visitor leaves; a WRITE may not.** Threading the page token
+     into the confirm discarded a census the household had already pressed Confirm on — no row, no
+     message (the component is gone), no log line — and a census keeps no audit copy and has no Retry, so
+     recovery meant re-photographing and paying for the vision call again. The read keeps the token; the
+     confirm takes `CancellationToken.None`. **Pinned on the TOKEN (`CanBeCanceled`), not by racing a
+     detached write** — the first version of that test polled the DB after disposing the component and was
+     flaky 1 run in 5, which is the honest cost of testing a timing-dependent thing by its timing.
+   - ⚠️ **Don't re-derive from strings what a collaborator already computed.** The page decided "exact vs
+     fuzzy" by comparing raw names while `ProductMatcher` had matched on the NORMALIZED form (punctuation
+     folded to spaces), so a rule-1 identity was rendered as a guess: the seeded `Home-Canned Tomato Sauce`
+     read as "Home Canned Tomato Sauce" arrived unticked saying "not read off the package" one cell from a
+     chip reading "read the label". `ProductMatcher.ResolveWithKind` reports which rule fired now.
+   - **The zero rule, third time.** See DESIGN.md §13.8 — the decision moved off the row, and only a zero
+     that would CREATE a product is still refused. (This round also added a `ZeroedWithoutSignal` outcome
+     for a withheld signal; both it and the rule behind it were reverted in item 40 — the premise was
+     false. Don't go looking for the member.)
+   - ⚠️ **"Both halves pinned" was itself unpinned.** Item 38's commit message claimed every new rule had
+     both directions covered; deleting `!product.TrackQuantity` from the resumed-counting rule left the
+     whole suite green, so every ordinary recount would have announced "Started counting 1 item you'd
+     stopped counting". The existing complement test was satisfied by the OTHER conjunct alone (a
+     never-counted product has no stored number). **A complement that shares a conjunct with the case it
+     complements pins nothing.** Both places now have an already-counted test.
+   - **`CLAUDE.md`'s build-state header said 1285 while item 38 said 1316** — the header was edited from
+     1210 and never re-read off the final run, contradicting itself 1,365 lines later. Item 21's rule,
+     broken in the file that states it. And it happened again in this very pass: 1327 was written into the
+     header before the last test was added, and corrected to **1328** only by counting the final run.
+   - **1328 tests green, 0 warnings** on a non-incremental Release build (1316 before; +12). Nine
+     mutations, each killing exactly its tests. ⚠️ Not re-verified in a browser since these changes — the
+     HEIC path in particular can only be settled on a real iOS device, and the fix is reasoned from
+     Blazor's `InputFile.ts` plus WebKit's documented transcode behaviour, not observed.
+
+40. **The re-gate, and the end of the patch cycle (2026-08-02).** The gate over item 39's own fix commit
+   found seven more — five of them regressions that commit had introduced. Three rounds in a row had now
+   done that (8 fixes → 15 found → 7 found → 7 found), so the pattern itself became the finding: **a fix
+   pass needs its own review, and patching a rule at one call site keeps producing the next round's
+   defects.** Jordan's call was to stop patching and fix the altitude. What that meant:
+   - ⚠️ **The zero rule moved into `StockLedger` — and was then REVERTED WHOLESALE, because the rule
+     itself was wrong.** ✗ **Do not rebuild it.** The premise for withholding an `OutNow` on a
+     rhythm-less product was *"nothing can ever clear it, so the item pins Overdue forever"*. That is
+     false, and one `grep` of `lastStockBack` would have shown it: it is the max of purchase dates **and
+     restock dates**, so a one-tap **Restocked clears the pin** — on the very dashboard card the pin
+     creates. Probed: `zero + OutNow → Overdue/Pinned=True`; `+ Restocked → Unknown/Pinned=False`.
+     <br>The original gate finding said only *"a later census counting it at 3 does not lift it"*, which
+     is true and still is. I generalised that to "unclearable" without checking, and three rounds of
+     design followed from it.
+     <br>⚠️ **And withholding actively broke something**: the `OutNow` was the only thing holding a zero
+     once the count went stale. Probed — `zero, no purchases, counted 200d ago`: with the signal
+     `InStock=0`; without it `InStock=1`, so recipes offered food the household had counted as none.
+     That is item 24's bug with a 90-day fuse, and the change spread it from the census to the product
+     page and the chat tool.
+     <br>What survives the revert: the census's order-independence fix, the `ZeroOnNewProduct` refusal,
+     the dead-clause and stale-comment cleanups. What went: `CountOutcome`, `hasPurchaseHistory`,
+     `ZeroedWithoutSignal`, and `ProductDetail`'s third copy branch (unreachable again once a zero
+     always pins).
+     <br>**The transferable lesson is the cheap check I skipped**: before designing around "X can never
+     happen", probe X. The whole arc cost three rounds and was refuted by four lines of probe output.
+   - ⚠️ **A row-level decision that depends on other rows must be settled after all of them.** The
+     `ZeroOnNewProduct` refusal was decided where the row sat, so `[Sardines 0, Sardines 2]` refused a row
+     and said "nothing was created" about a product the next row created, while `[Sardines 2, Sardines 0]`
+     refused nothing. Zero rows are deferred and settled once the census has been read. Pinned by a
+     `[Theory]` running both orderings against one assertion set.
+   - ⚠️ **"bUnit stops pumping continuations once a component is disposed" was MY false claim, corrected
+     here.** It doesn't. The observation behind it was real — the reader recorded zero calls — but
+     mis-attributed: disposal cancels `pageCts`, so `LoadCatalogAsync`'s own query throws
+     `OperationCanceledException`, the `when` clause rethrows, and control never reaches the reader. The
+     continuation ran fine. Classic failure to isolate one variable.
+     <br>The captured-token fix **is** testable at the page level, and now is:
+     `Leaving_the_page_mid_read_tears_down_quietly_instead_of_logging_an_error`. ⚠️ Two things make it
+     work — upload **TWO** photos and gate the **FIRST** load, so the second loop iteration re-reads the
+     token before any other token-aware work and nothing else can throw first. Gating the catalog load
+     instead is what produced the vacuous version. Mutation-checked: the pre-fix `pageCts.Token` shape
+     fails it.
+   - **`RecordingLoggerProvider` (Web.UI.Tests)** exists because teardown behaviour is invisible in
+     markup: once a component is disposed there is nothing left to render, so "this navigate-away wrote an
+     ERROR into a real deployment's log" can only be observed through the log. Errors only — the level is
+     the point.
+   - Also fixed: `ConfirmAll`'s two cancellation clauses were dead by construction once the confirm took
+     `CancellationToken.None`, and their message claimed a timeout that cannot occur; two comments still
+     named the deleted `OutageWithoutHistory` (one in a test helper's docstring that asserted the OPPOSITE
+     of the rule the same commit shipped); and a page test hard-coded loader copy the product no longer
+     produces — the wording is pinned on both sides now.
+   - **1339 tests green, 0 warnings** on a non-incremental Release build. ⚠️ Still not browser-verified
+     since item 39: the HEIC path needs a real iOS device.
+   - **The gate over the revert found no behaviour regressions — the first round of five that didn't.**
+     What it did find was the revert's blind spot: deleting the withholding also deleted its tests, and
+     the replacements went onto the census path only. Mutation-proven twice by independent reviewers —
+     re-adding the withholding to `EfPantryStore.SetQuantityAsync` left **all 1333 green**, on the exact
+     surface (product page + `set_quantity`) this arc says the rule had drifted to. ⚠️ **When a rule is
+     deleted, its tests must be replaced with inverted ones on every surface that held it, not just the
+     one the change was about.** Same for `ProductDetailCountPanelTests`: both zero-copy tests were
+     deleted, but only one described the removed branch — mutating `@if (prediction.Pinned …)` to
+     `@if (true)` then passed the whole 292-test UI suite.
+   - ⚠️ **A third zero-copy state exists and had no branch: an outage asserted, then superseded.**
+     That is the app's own recovery path — the one this arc cites as proof the pin is safe — and the
+     panel told the household "nothing here has said so out loud", blamed cooking and receipts, and
+     invited them to re-file the outage they had just cleared. `Restocked` is status-only, so the number
+     stays at zero while the pin goes.
+     <br>⚠️ **The first version of that branch's copy was itself wrong, twice over, and the gate caught
+     both.** It named a **Restocked** while the predicate is "an `OutNow` exists" — equally true when a
+     **purchase** cleared it (tap Out → buy it → cook back to zero), so it told people they had marked
+     something restocked when they never had. And it claimed **"it isn't on the list"** from `!Pinned`,
+     but the grocery list takes `Overdue` OR `DueSoon` — probed at `Status=Overdue Pinned=False`, the
+     list showed it 23 days overdue while the panel denied it. That second one is item 21's bug
+     reintroduced from the opposite direction. The copy now says only what `Pinned` licenses.
+     <br>Fell out of it: `InventorySignal` rows are never pruned, so once a household has ever tapped
+     Out on a product, the derived-zero branch is unreachable for it forever.
+   - **My own numbers, corrected:** the revert commit said "16 tests across three suites"; it is **17
+     cases / 16 methods across FOUR** — the UI suite simply wasn't run. Understating coverage is the safe
+     direction, but it is a false number in the commit whose subject is correcting false numbers.
+   - ⚠️ **Gate agents must isolate.** Reviewers running mutations concurrently in the shared working tree
+     corrupted one reviewer's measurements (results came back inverted until it re-ran in a
+     `git worktree`), and stray `Zz*Probe.cs` files from an earlier session compiled into the test
+     projects and inflated a suite 532→535. A gate reviewer's numbers are only trustworthy if it isolated.
+   - **The shape of this whole arc, for whoever reads it next.** Item 38 found 15, its fix introduced 5 of
+     item 39's 7, whose fix introduced 5 of item 40's 7 — and item 40's "real" fix turned out to be built
+     on a premise that four lines of probe output refute. **Every round after the first was spent on a
+     problem that did not exist.** The gate caught it each time, which is the argument for the gate; the
+     cheaper argument is the one skipped at the start — *before designing around "X can never happen",
+     spend the grep.*
+
+41. **The merge triage over the finished branch (2026-08-03, same branch) — ten findings probed, five
+   phase commits of fixes, two deliberate stands.** Jordan's report listed ten open findings from the six
+   review rounds with the standing instruction to probe before accepting any claim. Every claim was
+   verified against b50a217 first: the baseline reproduced exactly (1339 green, 0 warnings), finding 1's
+   data loss reproduced end to end through the real services (census counts 12 → remove the introducing
+   receipt → product and count gone; the same product with one stray RunningLow survived), and finding
+   8's mutation claim measured true — all 1339 stayed green with the three `IsDefined` guards deleted.
+   All ten were real in substance; three sub-claims were corrected by probing; twenty-seven mutation
+   rounds across the fixes and the two gate rounds below, each failing exactly its tests.
+   - **The fixes, one commit per phase:**
+     (1) *Removal counts an attested count as history* — `ReceiptRemovalService`'s delete half now agrees
+     with its own subtract guard that an attestation is investment, keyed on `QuantityCountedAt`, NOT
+     `TrackQuantity`: a dormant count is kept history (item 28) and must keep its product. Both
+     directions pinned; the kept count asserts exactly 12 so the subtract stand-down rides in the same
+     test. Pre-existing, but the census made "receipt-introduced product carrying a fresh count" the
+     bulk state.
+     (2) *Census grid honesty* — Tick all overrides the CONFIDENCE default only (§13.8's words), skipping
+     Unidentified rows and STILL-SELECTED similarity matches via a shared `FuzzyStillSelected` so the
+     row's warning and the bulk action can't drift; a similarity row the human resolved ticks normally.
+     Variety/Brand/Size ride `ReviewRow` into a subtitle and `DescribeRow` — two same-named variety rows
+     were identical to a screen reader while the page's own "counted twice" warning invited ✕ing one,
+     silently shorting the summed total. The Category cell renders the matched product's REAL category
+     as text and stays a select only where the value is actually written (create-new); the fixture for
+     that test makes reader and store disagree, per item 38's cannot-tell-branches-apart lesson.
+     (3) *Twins* — §13.8 gained the rule: never pre-filled (suggestion and matcher paths both), arrival-
+     and bulk-tick stand down, dropdown options carry counts, the service refuses `AmbiguousName` rather
+     than `First()`, and an explicit create-new on a twin name keeps its `DuplicateName` answer.
+     `ProductMatcher.ExactMatches` (Core) answers the plural question so no page re-derives the
+     matcher's normalization (item 39's rule). A human's pick by id is ordinary and pinned end to end.
+     (4) *The zero-panel's advice* — `PredictionResult.SignalTodayWouldBeInert` (born
+     `OutNowTodayWouldBeInert`; renamed in the re-gate below), computed in the engine
+     beside §6.6's tie rule; both zero-copy branches split their advice on it, so "set it to 0 again"
+     is no longer offered on a day it cannot work. The engine comment's "ignored until tomorrow" now
+     says the truth (that signal is ignored forever; a fresh one tomorrow works). The 2c comment names
+     the RunningLow road, the dead `!prediction.Expired` conjunct is gone (the chain's expiry arm above
+     already takes every Expired state), and the RunningLow road's mechanism-free copy is pinned.
+     (5) *Test hardening* — the zero-panel's negative guards are case-insensitive and phrase-loose now
+     ("you Restocked it" and "it's not on the list" both previously passed all 296 UI tests — proven by
+     planting them); the three `IsDefined` sites each have a numeric-smuggling test (`record_signal`'s
+     pins that nothing is WRITTEN); the >8-photo refusal is pinned with its recovery; the teardown test
+     awaits the click handler's own completed task instead of `Task.Delay(50)` before a negative
+     assertion (item 34's class — under load the old wait could pass before the continuation ran).
+   - ⚠️ **Corrections to the report, each probed:** (a) 2a is DAY-scoped, not permanent — each signal
+     filed that day is permanently inert (strict `>` on dates that never change), but a fresh one works
+     from tomorrow; `BurnCycles`' strict `o > start` keeps the dead rows out of the burn rhythm, so the
+     residue is inert rows and nothing else. The sharpest road in is a mis-tapped Restocked and a
+     same-day undo attempt. (b) 2b was already recorded (item 40) and STAYS accepted — Jordan's call:
+     the rendered copy is true in every road, and every principled predicate collapses back to `Pinned`,
+     so a day-window would be the judgment-call-around-an-edge pattern that produced rounds 2-5.
+     (c) 2c's harm was the branch COMMENT, not the copy — the sentence survives the RunningLow road
+     precisely because it names no mechanism.
+   - **Finding 10 stays as §13.8 records it, with Jordan's rationale now part of the record:** a stale
+     positive count keeps reading as in-stock — "if they said it's in stock we shouldn't consider it out
+     unless they say so; marking out of stock or zero is one tap, and a recipe suggesting it lets them
+     go 'oh snap, I'm out.'" The floated "show me my stale counts" view went to the backlog as its own
+     idea, not a census-branch feature.
+   - **Known residuals, stated rather than silent:** a census ZERO on a product whose stock-back is
+     today writes an OutNow that is permanently inert (the same §6.6 tie — the summary's "recorded as
+     running out" is true of the row and void of effect); twins with identical counts remain
+     indistinguishable in the dropdown, said on `OptionLabel` itself.
+   - ⚠️ **The gate over this pass found five more, all fixed — item 39's lesson held: a fix pass needs
+     eyes that didn't write it.** Two review agents ran in ISOLATED worktrees; both worktrees arrived
+     STALE at master — the exact failure the brief warned about — and both caught it through the
+     verify-your-commit-first instruction and reset to the right SHA before reviewing. Security came
+     back clean with probes (a cross-household plant wearing this household's receipt breadcrumb is
+     invisible to removal — mutation-validated). Code review, each CONFIRMED with a probe:
+     (a) the removal fix KEPT a null-`ConfirmedAt` introduced product but still SUBTRACTED — attested
+     12 read back as 11, silently, on exactly the population the fix was for. The introduced-arm
+     closes it: a product this receipt introduced did not exist before its own confirm, so every
+     attestation provably postdates it even with the timestamp missing; the pre-existing-product
+     sibling keeps the documented subtract-as-always arm.
+     (b) `OutNowTodayWouldBeInert` was `==` where the filter is strictly-after — a FUTURE stock-back
+     (chat's `add_purchase` has no future clamp; the TZ gotcha) discarded the signal while the member
+     said otherwise, reviving the silent no-op one state over. `>=` now, future case pinned.
+     (c) the twins guards held TWO definitions of "ambiguous" — `Match()` judged by the matcher while
+     the warning, Tick all and the service judged by raw names — so the punctuation pair arrived
+     unticked with NO reason shown and Tick all walked through the gap onto a real count: the exact
+     drift `FuzzyStillSelected` exists to prevent, rebuilt one guard over. ONE definition now
+     (`ProductMatcher.ExactMatches`) at every layer, pinned at all three guards and the service.
+     (d) the member had no consumer beyond the count panel while two louder surfaces still promised
+     the act: `record_signal` — which TALKS, item 27's class — now appends the tie caveat (the signal
+     is still written; the caveat is honesty, not refusal), and the products grid's Out button says
+     when a tap can't take effect, read off the same predictions dictionary its rows render from.
+     Both directions pinned on both surfaces.
+     (e) the SetAll comment counted "two" non-confidence guards; there are three.
+   - ⚠️ **The re-gate over the gate's own fix commit found three more.**
+     (f) The tie caveat covered ONE of the two signal kinds the engine's filter discards identically —
+     "I'm running low on milk" the day milk arrived was the same spoken no-op one enum value over. The
+     member's OutNow-specific NAME is what invited the OutNow-specific consumer, so it is
+     **`SignalTodayWouldBeInert`** now (the doc says why) and `record_signal` caveats both kinds;
+     Restocked is exempt because it IS a stock-back, not a subject of the filter.
+     (g) The census refused ambiguity by the matcher's identity rule but RESOLVED by raw equality — so
+     one census could MINT the punctuation pair (a row per variety, transcribed with and without a
+     hyphen, both "new"), after which every later census of that shelf was refused `AmbiguousName`
+     forever, the refusal's advice costing another vision call. One identity set for refusal AND
+     resolution now: a same-visit variant row folds into the first row's product and the counts sum,
+     and a lone variant resolves onto the existing product instead of minting its twin (rule 1 is
+     identity, not similarity, so this is exactly as safe as the raw resolve).
+     (h) `MarkOut` gained the dashboard-pattern double-tap guard — raced honestly in its test via the
+     harness's HoldNext — and its note clears when a delete changes the shelf under it.
+     Three more mutation rounds, each killing exactly its tests. The residual the re-gate signed off:
+     an explicit CreateNew with a raw-unique, normalized-colliding name still creates (unreachable
+     from the grid — an ambiguous row never gets `ChoseCreateNew`); and the introduced-product
+     premise in (a) depends on every `Attest` caller passing "now", which all production callers do.
+   - ⚠️ **The THIRD review round found eight more, all in the ~90 lines the previous fix touched —
+     and the pattern itself became the finding.** Rounds went 5 → 3 → 8: each fix converted one more
+     site of a shared rule and left its neighbours, so every round shipped a fresh half-state. The
+     three worst were all one defect wearing different hats — **"which product does this name mean?"
+     was answered in nine places** (`Match`, `AmbiguousClash`, `NameClash`, `NearMatch`, `twinNames`,
+     the service's resolve, its DuplicateName guard, `createdByName`, the deferred-zeros key) and I
+     had been converting them one at a time:
+     (a) broadening the RESOLVE to the identity set while `NameClash` stayed raw made the grid's own
+     copy a lie — a typed "Half-and-Half" fell past it to `NearMatch`, which offers *"or leave this to
+     create a separate item"*, over a write that REPLACED the existing product's count of 9 with 1,
+     with no "Was N" note (it keys on the dropdown) and no refusal. Probed end to end by the reviewer.
+     (b) the create-new guard judged "taken" RAW, so an explicit create-new whose name was raw-unique
+     but identity-colliding **minted** the punctuation pair — after which every later census naming
+     either twin was refused `AmbiguousName` forever. That is the residual the previous round had
+     signed off as "unreachable from the grid"; it is two clicks.
+     (c) the deferred-zeros settle-up keyed RAW, rebuilding item 40's row-ORDER dependence for exactly
+     the pair the identity rule exists for — invisible to its own `[Theory]`, which uses two
+     *identical* raw names.
+     **The altitude fix, per item 40's lesson: `ProductMatcher.IdentityKey` is now THE answer**, used
+     by every guard, dictionary and warning on both sides of the census. A new site uses it or
+     `ExactMatches` — never `string.Equals` on names.
+   - Also from that round: the page-wide `markingOut` flag had no `disabled` binding, so a tap on a
+     DIFFERENT product mid-write was accepted and **silently dropped** — the "tap that looks ignored"
+     failure `markOutNote` exists to fix, reintroduced by the guard added beside it (the dashboard
+     pattern is flag AND disabled; only half had been copied). `MarkOut` also gained the catch its
+     `try` had been sitting there without. And the tie copy claimed "stock was recorded today" and
+     "try tomorrow" — both false for a FUTURE stock-back, which `>=` deliberately covers; all four
+     surfaces now say "as of today or later … once that date has passed".
+   - ⚠️ **A fake that hands back its own live objects cannot model staleness — and hid both a bug and
+     its fix.** `record_signal` asked the engine about the START-OF-TURN snapshot, so *"I bought coffee
+     today but I'm still running low on it"* — one turn, two tool calls — answered a bare "Recorded",
+     **aloud**, about a signal the engine had already discarded. The handler re-reads now; and
+     `FakePantryStore.GetProductsAsync` returns a fresh snapshot per call (writes since an earlier read
+     appear; objects from that earlier read do not change under them), which is what makes the fix
+     observable. My first attempt at this instead taught `AddPurchaseAsync` to mutate the shared
+     product — which made the mutation test pass with the fix reverted, i.e. it masked the very defect
+     under repair. **Item 20's rule, in the other direction: a fake must not be more CONVENIENT than
+     the real store either.**
+   - ✅ **The FOURTH round is where the cascade broke: zero behaviour regressions introduced by the
+     altitude fix** — the first fix pass of four that created no new defect. The reviewer pushed hard
+     on the census write path and could not make it destroy or invent a count. What it did find was
+     the same class **one level up**, which is the lesson: the rule was raised into `ProductMatcher`
+     and then applied only to the nine census sites, leaving the app's other three product-identity
+     guards on `string.Equals` — the Products add form (`duplicateIsExact`), chat's `create_product`,
+     and `ProductRenameService`. Two of them MINT the very pair the census refuses: probed, typing
+     "Half and Half" beside a catalog's "Half-and-Half" reached the FUZZY branch and offered
+     "Add anyway", and one click then jammed every later census of that item on `AmbiguousName` —
+     escapable only by picking from the dropdown, i.e. another vision call. All three now ask the
+     matcher (`ResolveWithKind`/`ExactMatches`), each pinned by a punctuation-pair test.
+     ⚠️ **"Convert the sites you were looking at, leave the neighbours" survived the very commit that
+     named it** — which is why the directive at the top of this file says a partial conversion IS the
+     bug, and why the scope of "every caller" has to be the app, not the file you have open.
+   - Also from that round: the fourth surface's copy fix (`markOutNote`) was a **mutation survivor** —
+     its only test asserted a phrase both wordings contained, so reverting it left 315/315 green,
+     while the commit message claimed "two tests forbid the old claims" across four surfaces (item
+     21's false-number class, in a claim about tests). And ProductDetail's negative guards pinned two
+     literal phrasings rather than the rule: an evasive re-wording ("stock was **logged for it**
+     today") restored the false claim and passed them. Both now assert the positive
+     "as of today or later" as well. Smaller: `NearMatch`'s new `|| AmbiguousClash` was dead by
+     construction (`NameClash` returns first for >1 too), `NameClash` is memoized like its two
+     neighbours now that it normalizes the catalog, `record_signal`'s re-read moved inside the
+     kind check (every `Restocked` was paying for a value it never used) and a product deleted
+     mid-turn now gets the plain reply instead of a caveat computed from data those lines just called
+     stale, and `Normalize` collapses ANY run of separators — a single `Replace("  ", " ")` left
+     `"Yogurt - Strawberry"` as `"yogurt  strawberry"`, so the documented dictionary KEY was neither
+     equal to its own spaced form nor idempotent (it failed safe — rule 1 missed, rule 3 caught it as
+     similarity — but a near-key is not a key).
+   - ⚠️ **An ambiguous SUGGESTION now says so — recorded as "leave it" and then FIXED, because the
+     browser pass reproduced it on ordinary model output.** A can read as "Canned Tomato Sauce" whose
+     `existing_product` was "Home Canned Tomato Sauce" — a name two products answer to — arrived
+     unticked (right) with nothing able to explain it (wrong), because every live guard judges
+     `row.Name` and the ambiguous string is the SUGGESTION. Worse, `NearMatch` filled the silence with
+     *"or leave this to create a separate item"*, which answers a different question. Jordan's call:
+     if the app knows why it withheld the tick, the row must say so. The read-time fact rides on
+     `ReviewRow.AmbiguousSuggestion` now (the same shape as `FuzzyMatch`), gets its own sentence
+     naming what the reader thought it was, stands `NearMatch` down, and is honored by Tick all;
+     picking anything in the dropdown resolves it, exactly like `FuzzyStillSelected`.
+     ⚠️ **The name rides along only when it is one the live guards cannot see.** When the ambiguous
+     suggestion IS the row's own name, `AmbiguousClash` already says it and keeps saying it as the
+     human edits — carrying it too put two sentences about one problem on one row (caught by an
+     existing test, not by review).
+     ⚠️ **And the flag is separate from the name for a reason found the hard way**: `Include` is
+     computed once, at read time, before any live guard can run — so returning only the name (on the
+     theory that `AmbiguousClash` would cover the tick) let a punctuation-twin row arrive **ticked**.
+     The existing twin test caught it immediately, which is what a both-halves-pinned test is for.
+   - **Live-verified after the conversions** (2026-08-04, dev server on the alt port, the throwaway
+     household from the census walkthrough): the add form blocks "Slow Cooked Beans" against a catalog
+     "Slow-Cooked Beans" outright — *"You already have Slow-Cooked Beans"*, no "Add anyway", no twin —
+     where pre-fix it offered the fuzzy branch and one click minted the pair; renaming a DIFFERENT
+     product to a punctuation variant is refused while renaming a product to its OWN de-punctuated
+     form still works (the check excludes itself, so a household can still fix its own punctuation);
+     and typing "Slow-Cooked Beans" into a census row renders *"This will go to the existing 'Slow
+     Cooked Beans'"* instead of offering a separate item, with the confirm then reporting "Counted 2
+     items" and no new product — screen and write agreeing, which is the whole of finding 1. Zero
+     server errors. (The console's SignalR reconnect errors were ~87 minutes stale, from stopping the
+     PREVIOUS dev server with the tab open — check timestamps before believing that class of error.)
+   - **1384 tests green, 0 warnings** on a non-incremental Release build (1339 at the start of the
+     pass; +45). Read off the final run before being written here, per item 21's rule.
+
+42. **The census cascade RESOLVED — Group A + the `CensusPlan` redesign (2026-08-05, same branch).**
+   Picked up `docs/census-branch-handoff.md` cold: item 41's `/code-review` had left 15 confirmed findings,
+   partitioned into 8 stable-code bugs (Group A), 6 grid/service guard bugs the handoff wanted **deleted by a
+   redesign, not patched** (Group B — patching this exact cluster had produced a fresh defect six passes
+   running), and a `Normalize` nit. All addressed; **1438 green / 0 warnings**, live-verified, both halves
+   independently reviewed clean, unpushed. This session added 7 commits (`b2142f6..a37a946`), 29 ahead of master.
+   - **The redesign is the "one accessible definition" directive made structural, at the whole-FEATURE level.**
+     The census grid answered FIVE questions — arrive ticked? tick-all eligible? what will confirm do? why
+     isn't it ticked? what does confirm actually write? — each in a different place from a different subset of
+     inputs, with the markup's if/else ORDER load-bearing. `CensusPlan` (Core, pure) is now the ONE function
+     both the grid and the write path ask: `Prefill` (the read-time dropdown pre-fill, the old grid `Match`) +
+     `Plan` (classifies every row in one whole-census pass into `Action` land/create/refuse, `LandsOn`, a
+     single `Reason`, and `NeedsAHumanLook`). The grid message is a `switch` on `Reason` — one per row by
+     construction, so no ordering bug is expressible. This DELETES the six Group-B findings rather than
+     patching them (525 lines of guard soup out, 292 in): `Match`/`NameClash`/`NearMatch`/`AmbiguousClash`,
+     their caches, the derived `FuzzyStillSelected`/`SuggestionUnresolved`, the whole if/else chain — gone.
+     Precedent: `ReportSpecRules` (§16), one rules class the builder UI and the engine both consult.
+   - ⚠️ **One function, two callers, because the WRITE decision depends only on name/count/dropdown — never on
+     how the reader saw it.** The grid supplies the real read-time facts (evidence, confidence, a still-selected
+     similarity guess, an ambiguous suggestion) and reads all four plan fields; the service supplies NEUTRAL
+     facts and reads only `Action`/`LandsOn`/`Reason`. The neutral facts can only ever move `NeedsAHumanLook`
+     (the tick), which a write path never renders — independently verified: the service reads `Reason` only in
+     the `Refuse` branch, and every refuse reason is a function of name/count/dropdown/catalog alone. So the
+     screen and the write CANNOT disagree about which product a row lands on — the "one prediction, one story"
+     fault this arc broke through six rounds is now unexpressible.
+   - `CatalogIndex` (identityKey→products, built once) replaces the O(N²) twin scan and the three per-render
+     `ExactMatches` memos. ⚠️ **Deferred-zero settlement is whole-census** (a count-0 novel row joins a sibling
+     that CREATES the same identity key, else `ZeroOnNewProduct`) — order-independent by construction, the exact
+     row-order dependence items 40/41 kept re-introducing, now structural. The service keeps its public contract
+     (46 tests untouched) and the grid its ~65 page tests: behaviour preserved, verified by keeping every one green.
+   - **38-case pure `CensusPlanTests`** (Core, no EF/bUnit): evidence × suggestion × name × dropdown × count,
+     plus the whole-census interactions. Every branch mutation-checked. Two deliberate deviations from the
+     handoff's sketch: `CensusReason` isn't its exact 11 (the four match-provenance values collapse — only
+     *similarity* is behaviourally distinct — and `ResemblesExisting`/`WillLandOnExisting`/`NoName` are added);
+     and `ResemblesExisting` is a soft warning, NOT a tick-blocker — a page test
+     (`Tick_all_ticks_a_similarity_row_the_human_already_resolved`) rejected the "improvement" of blocking it,
+     so it was reverted, matching the app's standing NearMatch behaviour.
+   - **Group A — six stable-code bugs the census cascade never touched, each tested + mutation-checked:**
+     ⚠️ #1/#14 are item 41's "which product does this name mean, EVERYWHERE" reaching two more guards —
+     `ReceiptConfirmationService`'s within-receipt `createdByName` keyed on the RAW name (two lines of one new
+     item transcribed with/without a hyphen minted a twin, on the app's highest-volume creation path), and
+     `ProductRenameService` re-pointing recipe links by `ToLower()` while the collision check one line above
+     already used `ExactMatches` (a partial conversion INSIDE one method). Both on `ProductMatcher.IdentityKey`/
+     `ExactMatches` now. #5: a model suggestion or matcher hit that names TWINS is a coin flip a machine confirm
+     must not make — `ReceiptAutoConfirmer` + the Upload pre-fill route it to review (the break-Auto contract
+     `ReceiptDuplicateDetector` holds for exact dupes). #3/#6: two chat tools re-read before speaking —
+     `query_status` spoke a stale "Stocked, due <future>" about a product reported out earlier in the SAME turn,
+     and `set_quantity`'s zero got the `SignalTodayWouldBeInert` caveat (the third talking OutNow-writer to
+     reach it). #11: `Products.SetCategory` guards a browser-supplied `Category` with `Enum.IsDefined`.
+     #15: **`Normalize` KEPT, not reverted** — the handoff recommended reverting its split/join body to a single
+     `Replace`; that reintroduces a known near-key defect (`IdentityKey("Yogurt - Strawberry")` must equal
+     `"Yogurt Strawberry"` and be idempotent), so it was kept and pinned instead.
+   - Census-page findings folded into the grid rewrite: **#12** the whole grid (row inputs + the ✕) disables
+     during a confirm (the confirm snapshots the ticked rows, so a mid-save edit would look like it un-counted
+     a row it didn't); **#13** the empty `catch (JSDisconnectedException)` left a permanent spinner if it fired
+     while the page was still ALIVE (a transient circuit drop mid-read) — split like the
+     `OperationCanceledException` clause beside it (swallow on real teardown = `pageCts` cancelled, surface an
+     error otherwise). Both mutation-checked.
+   - **The gate. Live-verified on real model output** (throwaway household, alt port 5180): a synthetic 4-item
+     shelf read produced a clean suggestion match (ticked, "Was N" note, read-only category), a novel create
+     (editable category), a matched fast-mover (the nudge, keyed on the resolved product), and an unidentified
+     parcel (unticked, "couldn't tell", "name it"); the flagship identity fix — typing `home canned tomato sauce`
+     said **"This will go to the existing 'Home-Canned Tomato Sauce'"**, NOT "create a separate item", flipped
+     the category read-only and showed "Was 9" keyed on the resolved target; confirm wrote counts with **no
+     PurchaseEvent** (★) and attest REPLACED the old count (3→1), purchase history untouched. No console/CSP/
+     server errors. ⚠️ Blocked from an interactive walkthrough by the auth wall until Jordan signed in (creating
+     an account / entering a password is a prohibited action).
+   - ⚠️ **`/code-review` (local) is model-invocation-disabled — user-trigger only.** The independent security
+     and code reviews ran as one `general-purpose` helper agent each (NOT the billed cloud `ultra`). Security:
+     CLEAN — no new DbContext outside `IHouseholdDbFactory`, no new `IgnoreQueryFilters`, no write path carrying
+     a foreign household id, no new endpoint/settings-key/per-household disk write; a tampered circuit
+     `ProductId` fails the household-filtered `ById` → `ProductGone`, never reaches across. Code: core sound
+     (the read-facts/write-decision separation above was traced and confirmed), four LOW findings.
+   - **The four LOW findings — three fixed, one documented (each fix mutation-checked, and the fix pass then got
+     its OWN independent review, clean — item 39):**
+     - **A** (a regression THIS branch introduced): #5's twin fix over-generalised "however it resolved" — an
+       ALIAS resolves by `ProductId`, so it names one product outright even when that product's name is a twin,
+       and bouncing that taught pairing to review was a false alarm. Gated on `alias is null` now (only a
+       name-based resolution can be a coin flip; the review confirmed the gate rests on `ProductAlias.ProductId`
+       being a non-nullable required FK, so an alias never falls through to the matcher).
+     - **B** (parity with #11): the census and receipt create-product sites bound `Category` from a circuit
+       `<select>` without `Enum.IsDefined`; a tampered message could persist `(Category)9999`. Both default to
+       `Other` now. Self-scoped (own household, no tenancy crossing — graded LOW/not-a-vuln), same class as #11.
+     - **D** (polish): a negative count showed no inline grid message though an empty count did — added.
+     - ⚠️ **C — documented, NOT fixed.** The grid previews `Plan` over ALL rows while the confirm runs it over
+       the TICKED ones, so a count-0 novel row with an UNTICKED positive sibling previews as "will create" but
+       confirms as `ZeroOnNewProduct`. Safe-direction only (a ticked subset can never GAIN a positive sibling,
+       so the dangerous preview-refuse→confirm-creates-a-phantom is impossible), REPORTED in the Done panel, and
+       needs a contrived sequence. A "fix" would couple `CensusPlan`'s settlement to tick-state (`Include` isn't
+       in `CensusRowState`) — the exact new-defect trap this arc hit six times. Comment at `ConfirmAll`.
+   - **1438 tests green, 0 warnings** on a non-incremental Release build (1384 at the start; +54: 38 pure
+     `CensusPlan` + 10 Group A + 2 census-page + 4 follow-ups). Read off the final run (item 21). ⚠️ **`/pre-push`
+     was run with INLINE/agent reviews, not the independent cloud gate** — the two agent reviews are the closest
+     available substitute and are author-adjacent by construction; a fresh independent pass is still the ideal
+     before merge. Pushing is Jordan's call; unpushed.
+
+43. **The max-effort `/code-review` over the whole branch + its same-session fix pass (2026-08-08,
+   Jordan-triggered).** Ten finder angles, one-vote verification, a gap sweep — nine of the ten finder
+   agents died on the session limit, so those angles ran INLINE per Jordan's instruction (the efficiency
+   agent completed first and its candidates were re-verified inline). Nine findings, **zero serious
+   correctness defects** — the first full-branch pass of this arc to come back without one; two PLAUSIBLE
+   edges and seven cleanup/efficiency items, all nine fixed on Jordan's "fix all 9". What the fixes carry:
+   - ⚠️ **Tool calls within ONE model round shared the round's product snapshot.** Parallel tool use ships
+     several calls per assistant turn, and `products` refreshed only BETWEEN rounds — so a duplicated
+     create_product ("Half and Half" beside "Half-and-Half", or the same name twice) walked past the twin
+     guard and minted the identity pair item 41 closed everywhere else, and a create-then-use pair in one
+     round answered "call create_product first" to the model that just did. The snapshot refreshes after
+     each create_product WITHIN the round now (keyed on the one tool that adds products; the between-round
+     refresh stays for counts/signals). Both directions pinned.
+   - ⚠️ **A name with no letters or digits folds to an EMPTY `IdentityKey`, which the identity system
+     cannot see** — `CatalogIndex` skips empty keys and `ExactMatches` refuses them, so a punctuation-only
+     name ("!!") could only ever create a sight-unseen twin per census, and DISTINCT junk names in one
+     census/receipt shared the "" key and silently merged into one product. Fixed at two altitudes,
+     matching the architecture: `CensusPlan` refuses it as `NoName` (to product identity it IS no name;
+     the dropdown-pick path deliberately untouched — the id names the product, complement pinned), and
+     the receipt confirm's roll-up key falls back to the RAW text (the key kinds can't cross: an identity
+     key is alnum+spaces only, and a name whose key is empty leads with a character no key contains).
+   - **`ProductOptionLabel` (Core/Shopping) is THE twin-dropdown phrasing** — "N on hand / had N, counting
+     stopped / not counted" existed twice (census grid + Upload), the top directive's two-definition
+     shape on a rule this branch itself introduced. Both grids call the one helper; wording pinned in Core.
+   - **`IPantryStore.GetProductAsync`** — the same-day-tie caveat's re-read loaded the ENTIRE catalog
+     (purchases+signals includes) on every relative "used one" and discarded it whenever the landed count
+     wasn't zero; it reads one product now. New store surface, so it walks the tenancy drill: a foreign
+     household's id answers null exactly like a nonexistent one, pinned.
+   - **`CatalogIndex.ResolveWithKind` memoizes per query** — the census grid re-ran a full catalog
+     re-normalization + IDF rebuild per create-candidate row on EVERY render, and `MatchMessage` asked
+     the identical question again per resembles-row; the catalog is immutable for the index's lifetime,
+     so a resolve is pure (⚠️ the doc now says so — build a fresh index after any catalog change). The
+     index also serves `ReceiptAutoConfirmer` and Upload's pre-fill now (one per receipt), replacing two
+     full-catalog `ExactMatches` scans per line.
+   - Smaller: census `Read()` starts the catalog load BEFORE the photo-transfer loop (independent work on
+     one spinner) — ⚠️ the finally OBSERVES the still-in-flight task when a photo fails, and that observe
+     block is review-verified, not test-pinned (an unobserved-task exception is invisible to bUnit;
+     stated per item 27's precedent); `ShelfPhotoLoader` pre-sizes its buffer to the browser-reported
+     size and skips `ToArray`'s second copy when that size was exact; the rename collision check reads
+     `AsNoTracking` (the list only feeds `ExactMatches`, and tracked entities rode into SaveChanges'
+     diff scan for nothing).
+   - ⚠️ **The header's test count was stale AGAIN** — it read 1438 while the suite at HEAD stood at 1451:
+     the three post-item-42 commits added 13 tests without re-reading the number off a run. Item 21's
+     rule, third occurrence, in the file that states it.
+   - **1463 tests green, 0 warnings** on a non-incremental Release build (1451 at the start of the pass;
+     +12), read off the final run. Every new test mutation-checked — SEVEN mutations across five runs, each
+     killing exactly the tests it should and nothing else (including the guard-placed-too-early mutation
+     the dropdown-pick complement exists for). ⚠️ This line first read "six mutations in four batches",
+     and the fix commit's message still does (uncorrectable) — item 21's false-number class, written from
+     memory instead of recounted from the transcript, caught by the re-review below.
+   - **The re-review of the fix commit itself (2026-08-09 — item 39's discipline, applied to this pass
+     too) found two, both fixed:** the mutation-count error above, and the new junk-name `NoName` refusal
+     rendering NO pre-confirm message — a visibly-named "!!" row was first told about its refusal in the
+     Done panel, the say-it-before-the-confirm rule item 42's finding D applied to negative counts. The
+     `MatchMessage` arm added covers BOTH `NoName` shapes, so the blank-name case gained the inline
+     message it always lacked rather than the junk case inheriting its silence. Both mutation-checked
+     (case disabled + branches swapped, each killing exactly the two new page tests). **1465 tests green,
+     0 warnings** on a non-incremental Release build (+2), read off the final run.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

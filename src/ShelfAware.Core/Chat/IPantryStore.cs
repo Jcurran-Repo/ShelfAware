@@ -13,6 +13,12 @@ public interface IPantryStore
     /// matching and for running the prediction engine on a status query).</summary>
     Task<IReadOnlyList<Product>> GetProductsAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>ONE product by id, purchases and signals loaded, or null when no such product exists in
+    /// this household. For a handler that must re-read a single product's CURRENT state — the same-day-tie
+    /// caveat re-reads after a write earlier in the same turn — where re-loading the whole catalog was the
+    /// price that made the re-read tempting to skip.</summary>
+    Task<Product?> GetProductAsync(int productId, CancellationToken cancellationToken = default);
+
     /// <summary>Create a product with optional descriptive tags (canonicalized against the global
     /// vocabulary, same dedup as receipt confirmation). Pass an empty list for no tags.</summary>
     Task<int> CreateProductAsync(string name, Category category, IReadOnlyList<string> tags, CancellationToken cancellationToken = default);

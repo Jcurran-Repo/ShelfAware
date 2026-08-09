@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Tagging;
 
@@ -70,8 +71,11 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
             : null;
         var unmatchedLines = receipt.Lines.ToList();
         // One trip can list a single NEW item on two lines — map both to one new product, keyed by
-        // item name; each line still records its own purchase.
-        var createdByName = new Dictionary<string, Product>(StringComparer.OrdinalIgnoreCase);
+        // ProductMatcher's IDENTITY, not the raw name: the reader transcribes label text, so the two
+        // lines are "Home-Canned Sauce" and "Home Canned Sauce" as often as they are character-identical,
+        // and a raw key let that pair mint two products the matcher then calls one — on the app's
+        // highest-volume creation path. Each line still records its own purchase.
+        var createdByName = new Dictionary<string, Product>();
         var retracked = new HashSet<Product>(); // distinct — two lines of one item re-track it once
         int purchases = 0, created = 0;
 
@@ -83,24 +87,34 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
             var size = string.IsNullOrWhiteSpace(line.Size) ? null : line.Size!.Trim();
             var variety = string.IsNullOrWhiteSpace(line.Variety) ? null : line.Variety!.Trim();
             var quantity = line.Quantity > 0 ? line.Quantity : 1m;
+            // The roll-up key: the matcher's identity — or, for a name with no identity content at all
+            // ("!!" folds to an EMPTY key), the raw text itself, so two DIFFERENT junk names in one
+            // receipt can't collide on "" and silently merge into one product. The two key kinds can't
+            // cross: an identity key is letters/digits/spaces only, and a name whose key is empty
+            // necessarily leads with a character no identity key contains.
+            var identityKey = ProductMatcher.IdentityKey(name);
+            var rollUpKey = identityKey.Length > 0 ? identityKey : name;
 
             Product product;
             if (line.ProductId > 0 && products.FirstOrDefault(p => p.Id == line.ProductId) is { } resolved)
             {
                 product = resolved;
             }
-            else if (createdByName.TryGetValue(name, out var existingNew))
+            else if (createdByName.TryGetValue(rollUpKey, out var existingNew))
             {
                 product = existingNew;
             }
             else
             {
                 // CreatedByReceiptId is the provenance "remove this receipt" needs to know which
-                // products the receipt introduced (vs merely bought again).
-                product = new Product { Name = name, Category = line.Category, CreatedByReceiptId = receipt.Id };
+                // products the receipt introduced (vs merely bought again). Category comes from a circuit
+                // <select> on the review grid, so IsDefined-guard it — a tampered message must not persist an
+                // undefined enum (same guard SetCategory and create_product carry; default to Other).
+                var category = Enum.IsDefined(line.Category) ? line.Category : Category.Other;
+                product = new Product { Name = name, Category = category, CreatedByReceiptId = receipt.Id };
                 db.Products.Add(product);
                 products.Add(product); // later lines in this receipt can resolve to it
-                createdByName[name] = product;
+                createdByName[rollUpKey] = product;
                 created++;
             }
 

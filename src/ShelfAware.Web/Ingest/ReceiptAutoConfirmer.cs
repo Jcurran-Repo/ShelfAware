@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using ShelfAware.Core.Census;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Ingest;
@@ -87,6 +88,9 @@ public sealed class ReceiptAutoConfirmer(
 
         var merchant = receipt.Merchant ?? "";
         var products = await db.Products.AsNoTracking().OrderBy(p => p.Name).ToListAsync(cancellationToken);
+        // Identity questions below (suggestion resolve, twin check) go through one index built per
+        // receipt, not a full-catalog ExactMatches scan per line — same move the census grid made.
+        var catalog = new CatalogIndex(products);
         var aliases = await db.ProductAliases.AsNoTracking()
             .Where(a => a.Merchant == merchant).ToListAsync(cancellationToken);
 
@@ -94,6 +98,8 @@ public sealed class ReceiptAutoConfirmer(
         // learned alias → model suggestion → deterministic matcher → create new.
         var confirmLines = new List<ReceiptConfirmationService.ConfirmLine>();
         var allTrusted = true;
+        // ⚠️ An ambiguous-twin line is not auto-confirmable in ANY mode — see below.
+        var autoBlocked = false;
         foreach (var line in receipt.Lines)
         {
             var name = line.NormalizedName.Trim();
@@ -107,23 +113,44 @@ public sealed class ReceiptAutoConfirmer(
 
             var alias = aliases.FirstOrDefault(a => a.RawText == line.RawText);
             var resolved = alias is not null ? products.FirstOrDefault(p => p.Id == alias.ProductId) : null;
+            // ⚠️ The model's suggestion names a NAME, and no unique index exists on product names — so a
+            // FirstOrDefault(string.Equals) over TWINS silently picked one and committed a purchase to its
+            // history. Resolve the suggestion by the matcher's rule-1 identity set instead (which also folds
+            // a punctuation variant onto the one product it names): exactly one match uses it; twins fall
+            // through unresolved and are caught by the ambiguity check below.
             resolved ??= line.SuggestedProduct is { Length: > 0 }
-                ? products.FirstOrDefault(p => string.Equals(p.Name, line.SuggestedProduct, StringComparison.OrdinalIgnoreCase))
+                    && catalog.ExactMatches(line.SuggestedProduct) is { Count: 1 } one
+                ? one[0]
                 : null;
             resolved ??= ProductMatcher.Resolve(name, products);
 
+            // A NAME-based resolution that lands on a name TWO products share is a coin flip about which one
+            // this line means — the matcher's own First()-over-twins. Attaching a purchase to an arbitrary
+            // twin's history is exactly the machine judgement this router must not make unreviewed, so such a
+            // line is NOT auto-confirmable in any mode — the same "break Auto for the one case it can't
+            // decide" contract ReceiptDuplicateDetector holds for exact duplicates. It routes to review,
+            // where a human picks the right twin.
+            // ⚠️ Only when `alias is null`. A learned alias resolves by ProductId, so it names ONE product
+            // outright even when that product's name is a twin — the human already taught which one, and
+            // bouncing that certain pairing to review is a false alarm. (A suggestion resolves only at
+            // ExactMatches.Count == 1, so the matcher fallback is the sole path that can land on a twin by
+            // name.) The census refuses to guess between twins for the same reason: an attest, like a
+            // purchase, lands on ONE product.
+            var ambiguous = alias is null && resolved is not null && catalog.ExactMatches(resolved.Name).Count > 1;
+            if (ambiguous) autoBlocked = true;
+
             // Trusted = a human-taught alias vouches for it, or it's a confident match to a product
-            // that already exists. A brand-new product or a shaky line should get human eyes first.
-            allTrusted &= alias is not null || (resolved is not null && line.Confidence >= SmartConfidenceFloor);
+            // that already exists. A brand-new product, a shaky line, or an ambiguous twin gets human eyes.
+            allTrusted &= !ambiguous && (alias is not null || (resolved is not null && line.Confidence >= SmartConfidenceFloor));
 
             confirmLines.Add(new ReceiptConfirmationService.ConfirmLine(
                 line.RawText, name, line.Brand, line.Size, line.Variety, line.Quantity, line.Category,
-                ReceiptConfirmationService.DeserializeTags(line.TagsJson), resolved?.Id ?? 0));
+                ReceiptConfirmationService.DeserializeTags(line.TagsJson), ambiguous ? 0 : resolved?.Id ?? 0));
         }
 
         var confirm = confirmLines.Count > 0 && mode switch
         {
-            ImportMode.Auto => true,
+            ImportMode.Auto => !autoBlocked,
             ImportMode.Smart => allTrusted,
             _ => false,
         };

@@ -90,6 +90,10 @@ body {
     color: var(--ink-soft);
     text-decoration: none;
     font-weight: 500;
+    /* The row wraps, and without this a two-word label wraps INSIDE itself — "Count Stock" split across
+       two lines reads as two separate links, both highlighted when active. Latent for "Grocery List" too;
+       it just never happened to land on the break. Wrap between links, never through one. */
+    white-space: nowrap;
 }
 
 .site-header nav a:hover {

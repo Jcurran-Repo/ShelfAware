@@ -1,0 +1,846 @@
+@page "/pantry-photo"
+@implements IDisposable
+@using ShelfAware.Core.Census
+@using ShelfAware.Core.Chat
+@using ShelfAware.Core.Prediction
+@using ShelfAware.Core.Shopping
+@inject IHouseholdDbFactory DbFactory
+@inject IShelfCensusReader Reader
+@inject IShelfPhotoLoader PhotoLoader
+@inject CensusConfirmationService Confirmer
+@inject ILogger<PantryPhoto> Logger
+
+<PageTitle>Count from a photo — Shelf Aware</PageTitle>
+
+<h1>Count from a photo</h1>
+
+@if (phase is Phase.Idle or Phase.Error or Phase.Reading)
+{
+    @* The InputFile must stay mounted while the photos are read — IBrowserFile streams through the DOM
+       element, and unmounting it breaks them mid-read. Same rule as the receipt upload. *@
+    <section class="panel">
+        <p>
+            Photograph a shelf, a freezer, or a cupboard and Shelf Aware will list what it can see, with
+            how many of each. Correct the list and it becomes your count — so it can stop asking you to
+            buy things you already have a pile of.
+        </p>
+        <p class="muted">
+            This is for stock a receipt can't know about: bought before you started, bought elsewhere,
+            gifted, or in one big run. <strong>It records what you have, never a purchase</strong> — your
+            buying rhythms are left exactly as they were.
+        </p>
+        <p class="muted">
+            Take several photos of <strong>different</strong> parts of the same space rather than the same
+            shelf from two angles, or things get counted twice. It can only see the front row — the cans
+            behind the front can are yours to add.
+        </p>
+        <div hidden="@(phase == Phase.Reading)">
+            @* ⚠️ image/* and NOT a format list. iOS transcodes a HEIC photo to JPEG only when the accept
+               list asks for JPEG and nothing it can satisfy more cheaply, so a narrow list is what makes
+               the common iPhone path work — but it also hides HEIC-capable sources rather than converting
+               them. image/* keeps every picker showing photos while letting the loader decide.
+               ⚠️ Never name image/heic here: Safari 17+ then stops transcoding and converts JPEG and PNG
+               INTO HEIC, which makes the rare case universal. *@
+            <InputFile OnChange="OnFilesSelected" multiple accept="image/*"
+                       aria-label="Photos of a shelf, freezer, or cupboard" />
+            @if (selectedFiles.Count > 0)
+            {
+                <p>@selectedFiles.Count photo@(selectedFiles.Count == 1 ? "" : "s") selected.</p>
+                <button @onclick="Read">See what's there</button>
+            }
+        </div>
+        @if (phase == Phase.Reading)
+        {
+            <p class="spinner">Looking at @(selectedFiles.Count == 1 ? "your photo" : $"your {selectedFiles.Count} photos")… this usually takes a few seconds.</p>
+        }
+        @if (phase == Phase.Error)
+        {
+            <p class="error" role="alert">@errorMessage</p>
+        }
+    </section>
+}
+else if (phase == Phase.Review)
+{
+    <section class="panel">
+        @if (rows.Count == 0)
+        {
+            @* Two ways to end up with an empty grid, and they must not be told the same story: blaming a
+               photo that read perfectly well is the app stating something the engine never did, and it
+               sends someone off to re-shoot — and re-spend a vision call — over a non-problem. *@
+            @if (readItemCount == 0)
+            {
+                <p class="error">
+                    Nothing recognisable turned up in @(photoCount == 1 ? "that photo" : "those photos") — if it
+                    wasn't a shelf of food, that's the right answer. Try again with the labels facing the camera.
+                </p>
+            }
+            else
+            {
+                <p class="muted">
+                    You've removed everything that was found, so there's nothing left to count. The
+                    @(photoCount == 1 ? "photo was read fine" : "photos were read fine") — start over whenever
+                    you're ready.
+                </p>
+            }
+            <div class="review-actions">
+                <button @onclick="Reset">Try another photo</button>
+            </div>
+        }
+        else
+        {
+            @* One whole-census plan per render: the grid and the confirm both ask CensusPlan, so a row's
+               tick, its "why" message, and where its count lands all come from the same answer. *@
+            var plans = PlanRows();
+            <p>
+                <strong>@rows.Count item@(rows.Count == 1 ? "" : "s")</strong> found in
+                @(photoCount == 1 ? "1 photo" : $"{photoCount} photos"). Tick what's really there and fix the
+                numbers — <strong>@ticked of @rows.Count</strong> ticked.
+            </p>
+            <p class="muted">
+                Counts are <strong>packages</strong>, not amounts: four milk means four jugs. Anything Shelf
+                Aware wasn't sure about is left unticked with its reason showing — it would rather ask than
+                put a guess in your pantry.
+            </p>
+            <div class="review-actions">
+                <button type="button" class="secondary" @onclick="() => SetAll(true)" disabled="@confirming">Tick all</button>
+                <button type="button" class="secondary" @onclick="() => SetAll(false)" disabled="@confirming">Untick all</button>
+            </div>
+            <div class="table-scroll table-scroll--capped">
+            <table>
+                <caption class="visually-hidden">Items found in your photos, to review before counting</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">Count it</th>
+                        <th scope="col">What it saw</th>
+                        <th scope="col">Item</th>
+                        <th scope="col">How many</th>
+                        <th scope="col">Category</th>
+                        <th scope="col">Product match</th>
+                        <th scope="col"><span class="visually-hidden">Actions</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @for (var i = 0; i < rows.Count; i++)
+                    {
+                        var row = rows[i];
+                        var plan = plans[i];
+                        var noteTarget = plan.LandsOn ?? row.ProductId;
+                        <tr class="@(row.Confidence < ConfidentEnough ? "low-confidence" : "")">
+                            <td>
+                                <input type="checkbox" @bind="row.Include" disabled="@confirming"
+                                       aria-label="Count @DescribeRow(row)" />
+                            </td>
+                            <td class="raw">
+                                @if (row.LabelText is { } label)
+                                {
+                                    <span>“@label”</span>
+                                }
+                                <div>
+                                    <span class="chip chip-@(row.Confidence < ConfidentEnough ? "duesoon" : "stocked")"
+                                          title="@EvidenceTitle(row.Evidence)">@EvidenceChip(row.Evidence)</span>
+                                    <span class="muted small">@row.Confidence.ToString("P0") sure</span>
+                                </div>
+                            </td>
+                            <td>
+                                <input @bind="row.Name" disabled="@confirming" aria-label="Item name for @DescribeRow(row)" />
+                                @if (Distinguishers(row) is { } detail)
+                                {
+                                    @* What tells two same-named rows apart. The reader emits a row per
+                                       variety and matches across varieties, so two rows of one product are
+                                       its ORDINARY output — rendered bare they read as a double-count, and
+                                       the page's own "counted twice" warning invites deleting one, which
+                                       silently shorts the summed total. *@
+                                    <div class="muted small">@detail</div>
+                                }
+                                @if (row.Evidence == CensusEvidence.Unidentified)
+                                {
+                                    <div class="muted small">Name it if you know what it is.</div>
+                                }
+                            </td>
+                            <td>
+                                <input type="number" step="0.01" min="0" @bind="row.Count" size="5" disabled="@confirming"
+                                       aria-label="How many @DescribeRow(row)" />
+                                @if (row.Count is null)
+                                {
+                                    @* An empty box is not a zero — the confirm refuses it rather than
+                                       reading it as "we're out" (which would file a real outage). Said
+                                       here so it's fixed before the confirm, not discovered after. *@
+                                    <div class="error small" role="status">Enter how many.</div>
+                                }
+                                else if (row.Count < 0)
+                                {
+                                    @* A negative count is refused at confirm (Unusable) — min="0" is only a
+                                       browser hint, @bind still binds -3. Say so inline beside the empty-count
+                                       message rather than only in the Done panel after the click. *@
+                                    <div class="error small" role="status">Use zero or more.</div>
+                                }
+                                @if (Note(noteTarget) is { } note && note.HasNumber)
+                                {
+                                    <div class="muted small">
+                                        Was @QuantityFormat.Describe(note.OnHand, note.Unit)@(note.CountedAt is { } at
+                                            ? $", counted {SignalDate.Of(at):MMM d}" : "").@(note.Dormant
+                                            ? " You'd stopped counting it — this starts again from your new number." : "")
+                                    </div>
+                                }
+                            </td>
+                            <td>
+                                @if (Note(noteTarget) is { } matchedNote)
+                                {
+                                    @* A matched row's category is the PRODUCT's, read from the store — the
+                                       reader's guess is consumed only when a row creates a product, so an
+                                       editable select here showed a category the engine never held and
+                                       dropped every edit silently. Switching the row to "create new"
+                                       brings the select back, guess intact as the default. *@
+                                    <span>@matchedNote.Category</span>
+                                }
+                                else
+                                {
+                                    <select @bind="row.Category" disabled="@confirming" aria-label="Category for @DescribeRow(row)">
+                                        @foreach (var c in Enum.GetValues<Category>())
+                                        {
+                                            <option value="@c">@c</option>
+                                        }
+                                    </select>
+                                }
+                            </td>
+                            <td>
+                                <select @bind="row.ProductId" disabled="@confirming" aria-label="Product match for @DescribeRow(row)">
+                                    <option value="0">➕ create new product</option>
+                                    @foreach (var p in products)
+                                    {
+                                        <option value="@p.Id">@OptionLabel(p)</option>
+                                    }
+                                </select>
+                                @* ⚠️ The one place the grid's "why" is decided: a switch on the plan's reason,
+                                   so exactly one message shows and no if/else ORDER is load-bearing. The plan
+                                   is whole-census, so this row already knows what its siblings did. *@
+                                @if (MatchMessage(row, plan) is { } m)
+                                {
+                                    <div class="@(m.IsError ? "error" : "muted") small" role="status">@m.Text</div>
+                                }
+                                @if (Note(noteTarget) is { IsTracked: false })
+                                {
+                                    @* Same notice, same words, as the receipt review grid gives for the
+                                       same situation — counting an item ends its "ignore this for a while". *@
+                                    <div class="muted small" role="status">Currently ignored — counting it starts tracking it again.</div>
+                                }
+                                @if (Note(noteTarget) is { FastMoverDays: { } days })
+                                {
+                                    @* Steering, never a gate (CountingAdvice): a fast mover's count is wrong
+                                       within days and the drift check then keeps asking, which reads as the
+                                       feature being broken. A whole-fridge census is exactly where someone
+                                       counts the milk, so the warning belongs on the row, not just on the
+                                       product page they may never open. Advice about signing UP, so it is
+                                       gated on the product not already being counted — nagging someone out
+                                       of a count they keep, on the act that refreshes it, is just noise. *@
+                                    <div class="muted small">Bought about every @days day@(days == 1 ? "" : "s") —
+                                        a count here would be hard to keep true.</div>
+                                }
+                            </td>
+                            <td>
+                                <button class="secondary" @onclick="() => rows.Remove(row)" disabled="@confirming"
+                                        aria-label="Remove @DescribeRow(row) from the list"><span aria-hidden="true">✕</span></button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            </div>
+            <div class="review-actions">
+                <button @onclick="ConfirmAll" disabled="@(ticked == 0 || confirming)">
+                    @(confirming ? "Saving…" : $"Count {ticked} item{(ticked == 1 ? "" : "s")}")
+                </button>
+                <button class="secondary" @onclick="Reset" disabled="@confirming">Start over</button>
+            </div>
+            @if (ticked == 0)
+            {
+                <p class="muted small">Nothing ticked yet — tick what's on the shelf.</p>
+            }
+            <p class="muted small">
+                Counting an item starts keeping a number for it: receipts add to it, cooking takes from it,
+                and when it drifts Shelf Aware asks rather than guessing. Stop any of them any time from the
+                product's page.
+            </p>
+            @if (confirmError is not null)
+            {
+                <p class="error" role="alert">@confirmError</p>
+            }
+        }
+    </section>
+}
+else if (phase == Phase.Done)
+{
+    <section class="panel">
+        @* No ✅ when nothing was written. Every ticked row can be refused (a name clash, an empty box),
+           and "✅ Counted 0 items" over an empty write is the screen claiming an act that didn't happen. *@
+        <p>@(countedAnything ? "✅ " : "")@confirmSummary</p>
+        @if (refusals.Count > 0)
+        {
+            @* Named, not tallied. A row the household ticked and then didn't get is the one thing they
+               can't discover for themselves — every other outcome is visible on the product's own page. *@
+            <div class="error" role="alert">
+                <p>@refusals.Count row@(refusals.Count == 1 ? " wasn't" : "s weren't") counted:</p>
+                <ul>
+                    @foreach (var row in refusals)
+                    {
+                        <li>@RefusalNote(row)</li>
+                    }
+                </ul>
+            </div>
+        }
+        <p class="muted">
+            No purchases were recorded — a count says what you have, not what you bought, so your refill
+            rhythms are untouched.
+        </p>
+        <div class="review-actions">
+            <button @onclick="Reset">Count another shelf</button>
+        </div>
+        <p class="muted small">The numbers live on each item's page — see them on <a href="/products">Products</a>.</p>
+    </section>
+}
+
+@code {
+    private enum Phase { Idle, Reading, Review, Done, Error }
+
+    /// <summary>At or above this the reader wasn't guessing, so the row is ticked for you. The SAME 0.6 the
+    /// receipt review grid highlights a low-confidence line at — the one number in the app for "the model was
+    /// guessing" — and the same constant <see cref="CensusPlan.ConfidentEnough"/> the plan is written against.</summary>
+    private const decimal ConfidentEnough = CensusPlan.ConfidentEnough;
+
+    private const int MaxPhotos = 8;
+
+    private Phase phase = Phase.Idle;
+    private string? errorMessage;
+    private List<IBrowserFile> selectedFiles = [];
+    private int photoCount;
+    /// <summary>How many items the READ produced, so an empty grid can tell "the photo showed nothing"
+    /// apart from "you removed every row" — two states that need opposite messages.</summary>
+    private int readItemCount;
+    private List<ReviewRow> rows = [];
+    private List<Product> products = [];
+    /// <summary>The catalog indexed for identity questions — the ONE thing the plan is asked, so the grid and
+    /// the confirm can't answer "which product does this name mean?" differently.</summary>
+    private CatalogIndex catalog = new([]);
+    private Dictionary<int, ProductNote> notes = [];
+    private bool reading;
+    private bool confirming;
+    private bool countedAnything;
+    private string? confirmError;
+    private string confirmSummary = "";
+    private IReadOnlyList<CensusConfirmationService.RefusedRow> refusals = [];
+    /// <summary>Cancels the in-flight read/confirm when the page goes away. It exists so the difference
+    /// between "the visitor navigated off" and "the model call timed out" is knowable: without it every
+    /// cancellation looked like teardown and was rethrown — and ComponentBase SWALLOWS a canceled task,
+    /// so a timed-out vision call left the spinner up forever with no error and no log line.</summary>
+    private readonly CancellationTokenSource pageCts = new();
+
+    private int ticked => rows.Count(r => r.Include);
+
+    private sealed class ReviewRow
+    {
+        public bool Include { get; set; }
+        public string? LabelText { get; init; }
+        public CensusEvidence Evidence { get; init; }
+        public string Name { get; set; } = "";
+        /// <summary>Per-purchase-style metadata the reader saw (v3.5's rule) — display only, since a
+        /// census attests a count and stores none of it. Carried because it is what tells two
+        /// same-named rows apart on the grid and in their accessible names.</summary>
+        public string? Brand { get; init; }
+        public string? Size { get; init; }
+        public string? Variety { get; init; }
+        /// <summary>⚠️ Nullable, and that is the whole point: <c>@bind</c> on a non-nullable decimal turns
+        /// an emptied box into 0, and a ticked 0 is an ASSERTED outage that files a real OutNow. Null
+        /// means "nobody has said", which the confirm refuses rather than guesses.</summary>
+        public decimal? Count { get; set; } = 1;
+        public Category Category { get; set; }
+        public decimal Confidence { get; init; }
+        public int ProductId { get; set; } // 0 = create new
+        /// <summary>What the grid pre-filled (<see cref="CensusPlan.Prefill"/>), so "the human chose
+        /// create-new" can be told apart from "we never matched it" — both leave <see cref="ProductId"/> 0.</summary>
+        public int PrefilledProductId { get; init; }
+        /// <summary>The pre-fill came from name similarity rather than a label/suggestion/identity match — an
+        /// unscored guess at WHICH product, which the plan flags and keeps off the auto-tick list.</summary>
+        public bool FuzzyMatch { get; init; }
+        /// <summary>The name the reader said this was, when more than one product answers to it — carried
+        /// because it is a read-time fact about a DIFFERENT string than <see cref="Name"/>, which the live
+        /// guards judge and cannot recover. Null when the suggestion was usable, absent, or the row's own name.</summary>
+        public string? AmbiguousSuggestion { get; init; }
+
+        /// <summary>The item name as READ, before any human edit. A stale <see cref="AmbiguousSuggestion"/>
+        /// is about what the reader saw, so once the human RENAMES the row (its identity no longer matches
+        /// what was read) they've taken over — see <see cref="EffectiveAmbiguousSuggestion"/>.</summary>
+        public string ReadName { get; init; } = "";
+
+        /// <summary>The human deliberately turned a matched row into a new product — the one derivation the
+        /// grid still needs, to build the plan's <c>ChoseCreateNew</c> and the confirm's <c>CreateNew</c>.</summary>
+        public bool ChoseCreateNew => ProductId == 0 && PrefilledProductId > 0;
+    }
+
+    /// <summary>What the app already knows about a product the grid might land on: the count it holds now
+    /// (live or dormant), whether it is being ignored, and whether its rhythm makes counting a chore.
+    /// Computed once per load and looked up by the row's CURRENT target, so changing the dropdown updates
+    /// all of them without another query.</summary>
+    private sealed record ProductNote(
+        bool HasNumber, bool Dormant, decimal OnHand, string? Unit, DateTimeOffset? CountedAt,
+        bool IsTracked, int? FastMoverDays, Category Category);
+
+    private ProductNote? Note(int productId) => productId > 0 && notes.TryGetValue(productId, out var n) ? n : null;
+
+    /// <summary>The pure state the plan reasons over, built from the row's live edits plus the two read-time
+    /// derivations the grid owns: whether a similarity pre-fill is still selected, and whether the human turned
+    /// a matched row into a create-new. Everything else the plan needs rides on the row directly.</summary>
+    private CensusPlan.CensusRowState StateOf(ReviewRow row) => new(
+        row.Name, row.Count, row.ProductId,
+        ChoseCreateNew: row.ChoseCreateNew,
+        SimilaritySelected: row.FuzzyMatch && row.ProductId == row.PrefilledProductId && row.ProductId > 0,
+        AmbiguousSuggestion: EffectiveAmbiguousSuggestion(row),
+        Evidence: row.Evidence,
+        Confidence: row.Confidence);
+
+    /// <summary>The reader's ambiguous suggestion applies to the row AS READ. Once the human RENAMES it
+    /// (its identity no longer matches what the reader saw), they've taken over the row's identity and the
+    /// suggestion is moot — so it stops driving the tick and the message, exactly as picking a product in
+    /// the dropdown resolves it. Threaded through BOTH the plan (StateOf) and the message (MatchMessage) so
+    /// the two can't disagree: a renamed row must not sit unticked explained by a name it no longer bears.
+    /// Compared case-insensitively (a case fix is not a rename); a punctuation edit counts as a rename,
+    /// which only ever DROPS a low-value warning, so erring eager is safe.</summary>
+    private static string? EffectiveAmbiguousSuggestion(ReviewRow row) =>
+        row.AmbiguousSuggestion is { } s
+            && string.Equals(row.Name.Trim(), row.ReadName.Trim(), StringComparison.OrdinalIgnoreCase)
+            ? s : null;
+
+    private IReadOnlyList<CensusPlan.CensusRowPlan> PlanRows() =>
+        CensusPlan.Plan([.. rows.Select(StateOf)], catalog);
+
+    /// <summary>The row's one "why" message, chosen by the plan's reason — future tense, since this is the
+    /// review grid (the Done panel speaks past tense from the same reasons). A clean landing or creation, and
+    /// the refuse reasons the Done panel owns, return null: the evidence chip, the dropdown, and the count
+    /// cell's own "enter how many" carry those. The related product NAME is a display fetch for a decision the
+    /// plan already made — the same catalog function the plan used, so it can't disagree with it.</summary>
+    private (string Text, bool IsError)? MatchMessage(ReviewRow row, CensusPlan.CensusRowPlan plan)
+    {
+        var name = row.Name.Trim();
+        switch (plan.Reason)
+        {
+            case CensusPlan.CensusReason.MatchedBySimilarity:
+                return ("Matched by name similarity, not read off the package — check this is the right item before counting it.", false);
+            case CensusPlan.CensusReason.ResemblesExisting:
+                return catalog.ResolveWithKind(name).Product is { } near
+                    ? ($"Looks like your existing “{near.Name}” — pick it above if it's the same thing, or leave this to create a separate item.", false)
+                    : null;
+            case CensusPlan.CensusReason.AmbiguousSuggestion:
+                return ($"Shelf Aware read this as “{EffectiveAmbiguousSuggestion(row)}”, but more than one of your products answers to that name — pick which one you counted above, or leave it to add this as a new item.", true);
+            case CensusPlan.CensusReason.AmbiguousName:
+                return ($"More than one of your products answers to “{name}” — pick which one you counted above. Twins that keep a count show it beside their name.", true);
+            case CensusPlan.CensusReason.WillLandOnExisting:
+                if (catalog.ById(plan.LandsOn!.Value) is not { } existing) return null;
+                // ⚠️ When the reader ALSO handed us an ambiguous suggestion (a twin name), the name-match and
+                // the read conflict — surface both so the household resolves it, rather than let the row land
+                // on the name-matched product unremarked (finding A: the plan withholds the tick for exactly
+                // this case). Otherwise the plain "goes to X" is the whole story.
+                return EffectiveAmbiguousSuggestion(row) is { } read
+                    ? ($"The name matches your “{existing.Name}”, but the photo was read as “{read}”, which more than one of your products answers to — pick the one you counted above, or leave it to use “{existing.Name}”.", true)
+                    : ($"This will go to the existing “{existing.Name}”.", true);
+            case CensusPlan.CensusReason.NameTaken:
+                return catalog.ExactMatches(name).FirstOrDefault() is { } taken
+                    ? ($"“{taken.Name}” already exists, so this row will be skipped — pick it above to set its count, or rename this row.", true)
+                    : null;
+            case CensusPlan.CensusReason.ZeroOnNewProduct:
+                // ⚠️ Finding D: a ticked count-0 row on a NEW item is refused at confirm, but the count cell
+                // only messages null/negative and Note() is empty for a create row — so without this the row
+                // sat ticked with nothing on screen saying it won't be recorded. Said before the confirm,
+                // like the empty-count and negative-count cases beside it.
+                return ("Counted as none, and this isn't a product yet — there's nothing to record. Give it a real number if it's on the shelf, or untick it.", true);
+            case CensusPlan.CensusReason.NoName:
+                // Said before the confirm, like every other refusal message here — and covering BOTH NoName
+                // shapes, so the blank-name case gains the message it always lacked rather than the junk-name
+                // case inheriting its silence. A name with no letters or digits folds to an empty IdentityKey,
+                // which product identity cannot see, so the confirm refuses it; the row says so while it is
+                // still fixable instead of first explaining itself in the Done panel.
+                return (name.Length == 0
+                    ? "Give this row a name, or it'll be skipped."
+                    : "That name has no letters or numbers, so it can't name a product — rename it, or it'll be skipped.", true);
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>Twins are told apart by their counts — the ambiguity picker's precedent. The phrasing itself
+    /// is <see cref="ProductOptionLabel"/> — ONE definition shared with the receipt grid's dropdown, so the
+    /// two can't drift apart the first time one wording is edited.</summary>
+    private string OptionLabel(Product p)
+    {
+        if (!twinNames.Contains(p.Name)) return p.Name;
+        return Note(p.Id) is { HasNumber: true } n
+            ? ProductOptionLabel.ForTwin(p.Name, n.OnHand, counting: !n.Dormant, n.Unit)
+            : ProductOptionLabel.ForTwin(p.Name, null, counting: false, null);
+    }
+
+    private HashSet<string> twinNames = new(StringComparer.OrdinalIgnoreCase);
+
+    private static string EvidenceChip(CensusEvidence evidence) => evidence switch
+    {
+        CensusEvidence.Label => "read the label",
+        CensusEvidence.Appearance => "by sight",
+        _ => "couldn't tell",
+    };
+
+    private static string EvidenceTitle(CensusEvidence evidence) => evidence switch
+    {
+        CensusEvidence.Label => "Identified from text printed on the package",
+        CensusEvidence.Appearance => "No label was readable — identified by how it looks",
+        _ => "A package is there, but it couldn't be identified — name it yourself",
+    };
+
+    // Rows are edited live, so a stable description for screen readers: the name if there is one, else what
+    // little is known about the row — plus what tells same-named rows apart, or two varieties of one item
+    // are identical to a screen reader while sighted users see two subtitles.
+    private static string DescribeRow(ReviewRow row)
+    {
+        var name = row.Name is { Length: > 0 } n ? n : row.LabelText ?? "this unidentified item";
+        return Distinguishers(row) is { } detail ? $"{name} ({detail})" : name;
+    }
+
+    /// <summary>Variety · brand · size, when the reader saw any — null otherwise.</summary>
+    private static string? Distinguishers(ReviewRow row)
+    {
+        var parts = new[] { row.Variety, row.Brand, row.Size }
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .ToList();
+        return parts.Count > 0 ? string.Join(" · ", parts) : null;
+    }
+
+    private void SetAll(bool include)
+    {
+        // Tick all overrides the CONFIDENCE default only — <c>!NeedsAHumanLook</c>, the exact value the arrival
+        // tick pairs with the confidence floor. The plan already withholds a look for an unidentified package,
+        // a still-selected similarity guess, an ambiguous name or suggestion, and anything it would refuse — so
+        // one click can't opt into thirty of them, and each still ticks individually with its reason showing.
+        // Unticking clears everything: it asserts nothing, so it needs no guard.
+        var plans = PlanRows();
+        for (var i = 0; i < rows.Count; i++)
+            rows[i].Include = include && !plans[i].NeedsAHumanLook;
+    }
+
+    private void OnFilesSelected(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            selectedFiles = e.GetMultipleFiles(MaxPhotos).ToList();
+        }
+        catch (InvalidOperationException)
+        {
+            selectedFiles = [];
+            errorMessage = $"Please select up to {MaxPhotos} photos at a time.";
+            phase = Phase.Error;
+            return;
+        }
+        errorMessage = null;
+        if (phase == Phase.Error) phase = Phase.Idle;
+    }
+
+    private async Task Read()
+    {
+        // ⚠️ `reading` and not just the phase check: setting phase hides the button via `hidden`, but a
+        // second click can already be queued before that render lands, and BOTH would then run — two vision
+        // calls billed to the visitor's own key for one press, with the second overwriting the first's rows.
+        // Same double-tap guard the dashboard's quick buttons carry.
+        if (selectedFiles.Count == 0 || reading) return;
+        reading = true;
+        phase = Phase.Reading;
+        errorMessage = null;
+        StateHasChanged();
+
+        // ⚠️ Captured ONCE, before the first await. `CancellationTokenSource.Token` THROWS
+        // ObjectDisposedException after Dispose (unlike IsCancellationRequested, which stays safe), so
+        // reading it again after a continuation resumes on a torn-down page threw — and
+        // ObjectDisposedException derives from InvalidOperationException, so it cleared every specific
+        // clause below and logged "Reading a shelf census failed" on an ordinary navigate-away, which is
+        // exactly the teardown noise the JSDisconnectedException clause exists to keep out of the log.
+        // A captured token stays usable after its source is disposed.
+        var ct = pageCts.Token;
+        // Started BEFORE the photo loop so the DB load overlaps the multi-second browser transfers —
+        // independent work, and both sit on the visitor's spinner. Awaited on the happy path below, and
+        // OBSERVED in the finally when a photo failure exits early, so a late fault can't become an
+        // unobserved-task exception nobody logged.
+        var catalogTask = LoadCatalogAsync(ct);
+        try
+        {
+            var photos = new List<ShelfPhoto>();
+            foreach (var file in selectedFiles)
+            {
+                photos.Add(await PhotoLoader.LoadAsync(file, ct));
+            }
+            photoCount = photos.Count;
+
+            await catalogTask;
+            var result = await Reader.ReadAsync(
+                photos, products.Select(p => p.Name).Distinct().ToList(), ct);
+
+            // Nothing is persisted either way: the photo of someone's freezer goes to the model and stops
+            // there. That's the whole reason there's no Retry here as there is for a receipt — there is no
+            // saved copy to retry FROM, and re-photographing a shelf you are standing at is cheap.
+            if (!result.Success)
+            {
+                errorMessage = $"Sorry — that couldn't be read. Try again, or take the photo a bit closer. ({result.Error})";
+                phase = Phase.Error;
+                return;
+            }
+
+            rows = result.Items.Select(item =>
+            {
+                // Trust order, one step shorter than a receipt's: there are no merchant aliases to learn from
+                // (an alias keys on a merchant and a printed line, and a shelf has neither), so the model's own
+                // match leads and ProductMatcher backs it up — all of it in CensusPlan.Prefill now.
+                var prefill = CensusPlan.Prefill(item, catalog);
+                return new ReviewRow
+                {
+                    LabelText = item.LabelText,
+                    Evidence = item.Evidence,
+                    Name = item.NormalizedName,
+                    ReadName = item.NormalizedName,
+                    Brand = item.Brand,
+                    Size = item.Size,
+                    Variety = item.Variety,
+                    Count = item.VisibleCount,
+                    Category = item.Category,
+                    Confidence = item.Confidence,
+                    ProductId = prefill.ProductId,
+                    PrefilledProductId = prefill.ProductId,
+                    FuzzyMatch = prefill.BySimilarity,
+                    AmbiguousSuggestion = prefill.AmbiguousSuggestion,
+                    // Include is set below, once the whole census can be planned together.
+                };
+            }).ToList();
+            readItemCount = rows.Count;
+
+            // The arrival tick: a legible label is ready to confirm, a guess has to be opted into. Exactly the
+            // plan's rule — !NeedsAHumanLook (evidence, a similarity guess, an ambiguity) AND confident enough.
+            // Planned as a whole census so a row can already see what a sibling did.
+            var arrival = PlanRows();
+            for (var j = 0; j < rows.Count; j++)
+                rows[j].Include = !arrival[j].NeedsAHumanLook && rows[j].Confidence >= ConfidentEnough;
+
+            confirmError = null;
+            phase = Phase.Review;
+        }
+        // ⚠️ Only OUR cancellation is teardown. Nothing else here cancels on purpose, so an
+        // OperationCanceledException that arrives while the page is alive is a failure — an HttpClient
+        // timeout on the vision call is a TaskCanceledException, and the reader rethrows it by design.
+        // Rethrowing it here too looked safe and wasn't: ComponentBase ignores a canceled task, so there
+        // was no error, no log line, and no final render — just the spinner, forever.
+        catch (OperationCanceledException) when (pageCts.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException ex)
+        {
+            Logger.LogError(ex, "Reading a shelf census was cancelled from outside the page (a timeout).");
+            errorMessage = "Sorry — that took too long and was stopped. Please try again.";
+            phase = Phase.Error;
+        }
+        // ⚠️ A JS-interop failure while the page is STILL ALIVE (a transient circuit drop during the photo
+        // downscale, then a reconnect) must escape the spinner — the empty catch left phase == Reading forever,
+        // recoverable only by reload. Real teardown (Dispose has cancelled pageCts) is still swallowed, the same
+        // split the OperationCanceledException clause above uses; JSDisconnectedException does NOT derive from
+        // JSException, so it needs its own clause and can't ride along with one.
+        catch (JSDisconnectedException) when (pageCts.IsCancellationRequested) { }
+        catch (JSDisconnectedException ex)
+        {
+            Logger.LogError(ex, "Reading a shelf census lost the browser connection mid-read.");
+            errorMessage = "Sorry — the connection dropped while reading those photos. Please try again.";
+            phase = Phase.Error;
+        }
+        catch (NotSupportedException ex)
+        {
+            // The loader refused the file by type. Its message names the file and what to use instead,
+            // which is the whole reason it checks rather than letting an undecodable file time out.
+            Logger.LogInformation("A shelf photo was refused: {Reason}", ex.Message);
+            errorMessage = ex.Message;
+            phase = Phase.Error;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Reading a shelf census failed.");
+            errorMessage = "Sorry — something went wrong reading those photos. Please try again.";
+            phase = Phase.Error;
+        }
+        finally
+        {
+            selectedFiles = [];
+            reading = false;
+            // A photo failure above leaves the catalog task in flight — observe it. Its real failures
+            // either already rethrew from the happy-path await, or belong to a page that is showing the
+            // photo's error; cancellation here is the expected teardown/stop shape, not news.
+            if (!catalogTask.IsCompleted)
+            {
+                try { await catalogTask; }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+                catch (Exception ex) { Logger.LogError(ex, "Loading the catalog for a shelf census failed after the photos did."); }
+            }
+        }
+    }
+
+    private async Task LoadCatalogAsync(CancellationToken ct)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync(ct);
+        products = await db.Products
+            .AsNoTracking()
+            .Include(p => p.Purchases)
+            .Include(p => p.Signals)
+            .OrderBy(p => p.Name)
+            .ToListAsync(ct);
+        catalog = new CatalogIndex(products);
+        // The matcher's identity sets, not raw grouping: punctuation twins ("Home-Canned" beside "Home
+        // Canned") need their counts on the options too — they are the pair the ambiguity warning tells the
+        // household to tell apart here. One O(1) ExactMatches per product now, not an O(N) re-normalization.
+        twinNames = products
+            .Where(p => catalog.ExactMatches(p.Name).Count > 1)
+            .Select(p => p.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        notes = products.ToDictionary(p => p.Id, p =>
+        {
+            var median = ReplenishmentPredictor.Predict(p, today).MedianIntervalDays;
+            return new ProductNote(
+                // A DORMANT count still has a number, and it is exactly the number about to be overwritten —
+                // so it shows, with what stopping means said plainly. Gating this on TrackQuantity made a
+                // stopped count indistinguishable from a never-counted one, the one state the grid most owes
+                // the household a sentence.
+                HasNumber: p.QuantityOnHand is not null,
+                Dormant: !p.TrackQuantity && p.QuantityOnHand is not null,
+                OnHand: p.QuantityOnHand ?? 0m,
+                Unit: p.DefaultUnit,
+                CountedAt: p.QuantityCountedAt,
+                IsTracked: p.IsTracked,
+                // Advice about signing UP — so not shown for a product already being counted, the same gate
+                // the product page's version carries.
+                FastMoverDays: !p.TrackQuantity && CountingAdvice.IsHardToKeepTrue(median)
+                    ? (int)Math.Round(median!.Value)
+                    : null,
+                Category: p.Category);
+        });
+    }
+
+    private async Task ConfirmAll()
+    {
+        if (confirming) return;
+        confirming = true;
+        confirmError = null;
+        try
+        {
+            // ⚠️ Accepted safe-direction edge. The grid previews the plan over ALL rows (PlanRows); the
+            // confirm runs it over just the TICKED ones. The only cross-row rule in CensusPlan is
+            // deferred-zero settlement (a count-0 novel row joins a sibling that CREATES the same identity
+            // key), so a ticked count-0 novel row whose positive sibling is UNTICKED previews as "will
+            // create" but confirms as ZeroOnNewProduct. This is NOT fixed on purpose: it is safe-direction
+            // only (a ticked subset can never GAIN a positive sibling, so the dangerous
+            // preview-refuse-then-confirm-creates-a-phantom is impossible), it is REPORTED in the Done
+            // panel, and it needs a contrived sequence (two same-identity novel rows, a 0 typed AFTER
+            // arrival since the reader floors VisibleCount at 1, and the positive sibling unticked). A
+            // "fix" would couple CensusPlan's settlement to tick-state (Include isn't in CensusRowState) —
+            // the exact new-defect trap this arc hit six times.
+            var confirmed = rows
+                .Where(r => r.Include)
+                .Select(r => new CensusConfirmationService.CensusRow(
+                    r.Name, r.Category, r.Count, r.ProductId, r.ChoseCreateNew))
+                .ToList();
+            // ⚠️ Deliberately NOT pageCts.Token. A read is re-runnable and cancelling it on navigate-away
+            // saves the visitor a vision call; a confirm is a one-shot write over input that exists nowhere
+            // else — a census persists no audit copy and has no Retry, so an aborted write means
+            // re-photographing the shelf and paying for the read again. Threading the page token here
+            // discarded a census the household had already pressed Confirm on, with no row written, no
+            // message (the component is gone) and no log line. Even the worst case without the token — the
+            // write lands and the panel never renders — is strictly better: the counts are on the product
+            // pages, which this page already says.
+            var outcome = await Confirmer.ConfirmAsync(confirmed, CancellationToken.None);
+
+            confirmSummary = Summary(outcome);
+            countedAnything = outcome.Counted > 0;
+            refusals = outcome.Refused;
+            phase = Phase.Done;
+        }
+        // No OperationCanceledException clause, deliberately: the confirm is passed CancellationToken.None
+        // above, so nothing on this path can raise one. The clauses that were here claimed a timeout that
+        // cannot occur and read as though the write were time-bounded, which is the opposite of the
+        // guarantee the None is there to give.
+        catch (Exception ex)
+        {
+            // One SaveChanges in a single transaction, so a failure persists nothing. Pressing it again is
+            // genuinely safe here in a way a receipt confirm isn't: a count is a total rather than an
+            // increment, and an unmatched row whose name already exists resolves to that product instead of
+            // creating a twin — so a retry after an ambiguous failure can't double anything.
+            Logger.LogError(ex, "Confirming a shelf census failed.");
+            confirmError = "Couldn't save these counts — nothing was recorded. Try again; re-counting the same numbers is safe.";
+        }
+        finally
+        {
+            confirming = false;
+        }
+    }
+
+    private static string Summary(CensusConfirmationService.CensusOutcome outcome) =>
+        // "Counted 0 items" is not a result, it's a contradiction — every ticked row can be refused, and
+        // saying it with a tick beside it claims a write that never happened. The refusal list below
+        // carries the detail; this sentence just has to stop asserting the opposite.
+        (outcome.Counted == 0
+            ? "Nothing was counted"
+            : $"Counted {outcome.Counted} item{(outcome.Counted == 1 ? "" : "s")}"
+              + (outcome.NewProducts > 0 ? $" ({outcome.NewProducts} new product{(outcome.NewProducts == 1 ? "" : "s")})" : "")) +
+        "." +
+        // The button counts ROWS and this counts PRODUCTS, and the reader's own contract makes them differ
+        // routinely — it emits a row per variety (rule 7) but matches across varieties (rule 11). Pressing
+        // "Count 3 items" and reading "Counted 2 items" with nothing explaining it reads as a dropped row,
+        // especially sitting beside a skipped-rows sentence that DOES explain itself.
+        (outcome.Rows > outcome.Counted
+            ? $" ({outcome.Rows} rows — some were the same product, and their counts were added together.)"
+            : "") +
+        (outcome.AssertedOut > 0
+            ? $" {outcome.AssertedOut} counted at zero — recorded as running out."
+            : "") +
+        (outcome.Retracked > 0
+            ? $" Started tracking {outcome.Retracked} previously ignored item{(outcome.Retracked == 1 ? "" : "s")} again."
+            : "") +
+        // A different act from Retracked, and the one most owed a sentence: stopping counting is
+        // deliberate, and this turned it back on and replaced the number it had kept.
+        (outcome.ResumedCounting > 0
+            ? $" Started counting {outcome.ResumedCounting} item{(outcome.ResumedCounting == 1 ? "" : "s")} you'd stopped counting."
+            : "");
+
+    /// <summary>One sentence per refused row, because the reasons need genuinely different words — and a row
+    /// the household ticked and then didn't get has to be named, not tallied.</summary>
+    private static string RefusalNote(CensusConfirmationService.RefusedRow row) => row.Reason switch
+    {
+        CensusConfirmationService.CensusRefusal.DuplicateName =>
+            $"“{row.Name}” — a product with that name already exists, so nothing was created. Count it from its own page, or run this again and pick it in the Product match column.",
+        CensusConfirmationService.CensusRefusal.ZeroOnNewProduct =>
+            $"“{row.Name}” — counted as none, and it isn't something Shelf Aware knows about yet. There's nothing to add and nothing to count, so nothing was created. Give it a real number if it's on the shelf.",
+        CensusConfirmationService.CensusRefusal.ProductGone =>
+            $"“{row.Name}” — the item this row pointed at isn't there any more (removed or merged while you were reviewing). Nothing was guessed in its place; run this again and pick from the up-to-date list.",
+        CensusConfirmationService.CensusRefusal.MissingCount =>
+            $"“{row.Name}” — the “how many” box was empty. An empty box isn't a zero, and Shelf Aware won't guess a number for you.",
+        CensusConfirmationService.CensusRefusal.AmbiguousName =>
+            $"“{row.Name}” — more than one of your products answers to that name, so Shelf Aware won't guess which one you counted. Run this again and pick it in the Product match column.",
+        _ => $"“{row.Name}” — needs a name and a count of zero or more.",
+    };
+
+    private void Reset()
+    {
+        phase = Phase.Idle;
+        rows = [];
+        refusals = [];
+        selectedFiles = [];
+        photoCount = 0;
+        readItemCount = 0;
+        countedAnything = false;
+        confirmSummary = "";
+        errorMessage = null;
+        confirmError = null;
+    }
+
+    public void Dispose()
+    {
+        // Cancels an in-flight read or confirm, and — because only THIS token means teardown — is what
+        // lets the catch clauses above tell a departed visitor from a timed-out call.
+        if (!pageCts.IsCancellationRequested) pageCts.Cancel();
+        pageCts.Dispose();
+    }
+}

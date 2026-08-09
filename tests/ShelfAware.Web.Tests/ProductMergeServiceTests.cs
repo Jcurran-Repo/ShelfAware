@@ -151,6 +151,38 @@ public class ProductMergeServiceTests : IDisposable
         Assert.Equal(2, await db.PurchaseEvents.CountAsync(p => p.ProductId == sourceId));
     }
 
+    [Fact]
+    public async Task Relinks_a_recipe_ingredient_whose_MatchedProduct_differs_only_in_PUNCTUATION()
+    {
+        // ⚠️ The recipe re-point keys on the product NAME, and a MatchedProduct stored as "Home Canned
+        // Sauce" for a source named "Home-Canned Sauce" is the same product to every other guard — so a
+        // raw ToLower() compare left that link stale and the source delete below then ORPHANED it. Same
+        // fix and reason as ProductRenameService's punctuation relink; the merge path was its un-converted
+        // sibling (its own comment already claims "Same rule as ProductRenameService").
+        int sourceId, targetId;
+        await using (var db = _db.CreateDbContext())
+        {
+            var source = new Product { Name = "Home-Canned Sauce" };
+            var target = new Product { Name = "Sauce" };
+            db.Products.AddRange(source, target);
+            db.Recipes.Add(new Recipe
+            {
+                Name = "Pasta",
+                Ingredients = [new RecipeIngredient { Name = "Sauce", IsMain = true, MatchedProduct = "Home Canned Sauce" }],
+            });
+            await db.SaveChangesAsync();
+            (sourceId, targetId) = (source.Id, target.Id);
+        }
+
+        var result = await _service.MergeAsync(sourceId, targetId);
+
+        Assert.True(result.Ok);
+        Assert.Equal(1, result.RelinkedIngredients);
+        await using var read = _db.CreateDbContext();
+        // Re-pointed to the target's name, not left stranded on the deleted source's punctuation variant.
+        Assert.Equal("Sauce", (await read.RecipeIngredients.SingleAsync()).MatchedProduct);
+    }
+
     [Theory]
     [InlineData("Strawberry Drink Mix", "Drink Mix", "Strawberry")]
     [InlineData("Gala Apples", "Apple", "Gala")] // plural fold: Apples ≈ Apple

@@ -144,6 +144,17 @@ public class IngredientMatcherTests
     }
 
     [Fact]
+    public void A_grounded_match_covers_a_product_whose_name_differs_only_in_PUNCTUATION()
+    {
+        // ⚠️ Finding P. MatchedProduct is a NAME captured at save time; a punctuation variant of the current
+        // product name ("Half and Half" for "Half-and-Half") is the same product to every write-side guard,
+        // so the grounded leg matches by IDENTITY, not raw equality. Chosen so the core-token fallback CANNOT
+        // rescue it — "creamer" shares no word with "Half-and-Half" — so ONLY the identity match covers it;
+        // a raw string.Equals returned nothing, leaving the ✓ tick and makeability blind on that product.
+        Assert.True(IngredientMatcher.IsSatisfied("creamer", matchedProduct: "Half and Half", [P("Half-and-Half")]));
+    }
+
+    [Fact]
     public void A_matched_product_not_on_hand_and_no_cover_is_not_satisfied()
     {
         Assert.False(IngredientMatcher.IsSatisfied("Quinoa", matchedProduct: "Quinoa", Pantry));

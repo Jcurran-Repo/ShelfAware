@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Speech;
@@ -23,8 +24,15 @@ internal sealed class FlakyDbFactory(TestDb inner) : IHouseholdDbFactory
     /// One-shot: consumed by the create it gates.</summary>
     public TaskCompletionSource? HoldNext { get; set; }
 
+    /// <summary>The token the most recent create was handed. A page decides per operation whether its
+    /// work may be cancelled when the visitor leaves, and that decision is otherwise invisible to a
+    /// test: a re-runnable READ should carry the page's token, while a one-shot WRITE over input that
+    /// exists nowhere else must not. <c>CanBeCanceled</c> tells the two apart without any timing.</summary>
+    public CancellationToken LastToken { get; private set; }
+
     public async Task<ShelfAwareDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
     {
+        LastToken = cancellationToken;
         if (HoldNext is { } gate)
         {
             HoldNext = null;
@@ -36,6 +44,34 @@ internal sealed class FlakyDbFactory(TestDb inner) : IHouseholdDbFactory
             FailAfter = remaining - 1;
         }
         return inner.CreateDbContext();
+    }
+}
+
+/// <summary>Captures what a page LOGGED. Most page behaviour is observable in the markup, but teardown
+/// behaviour is not — once a component is disposed there is nothing left to render, so "this navigate-away
+/// wrote an ERROR into a real deployment's log" can only be seen here. Errors only: the level is the whole
+/// point, and recording Information would bury it.</summary>
+internal sealed class RecordingLoggerProvider : ILoggerProvider
+{
+    public List<(string Category, Exception? Error, string Message)> Errors { get; } = [];
+
+    public ILogger CreateLogger(string categoryName) => new Recorder(this, categoryName);
+
+    public void Dispose() { }
+
+    private sealed class Recorder(RecordingLoggerProvider owner, string category) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Error;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel < LogLevel.Error) return;
+            lock (owner.Errors) owner.Errors.Add((category, exception, formatter(state, exception)));
+        }
     }
 }
 
