@@ -10,10 +10,11 @@ there's no coffee.
 &nbsp; [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE)
 &nbsp;·&nbsp; .NET 10 · Blazor · EF Core/SQLite · Anthropic Claude · ElevenLabs voice
 
-> **Live demo:** _coming soon_ (Azure App Service). Until then, [run it locally](#run-it-locally) — it
+> **Live demo:** _coming soon_ (a DigitalOcean droplet — the deploy kit is in
+> [`docs/deploy-droplet.md`](docs/deploy-droplet.md)). Until then, [run it locally](#run-it-locally) — it
 > boots and works without any API key.
 
-<!-- LIVE_DEMO_URL — replace the blockquote above with the deployed link once Azure is live. -->
+<!-- LIVE_DEMO_URL — replace the blockquote above with the deployed link once the droplet is live. -->
 
 ![30-second tour: a receipt confirms itself, the dashboard says what's low, "we're out of dog food" updates it, and the grocery list is ready by aisle](docs/demo.gif)
 

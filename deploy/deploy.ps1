@@ -26,6 +26,9 @@ $publishDir = Join-Path $project 'bin\publish\linux-x64'
 $tarball    = Join-Path $env:TEMP 'shelfaware.tar.gz'
 
 Write-Host 'Publishing (self-contained linux-x64)...'
+# dotnet publish -o overlays -- it never deletes what the project stopped producing, so
+# without this a removed package's DLL or a deleted asset would ship in every tarball forever.
+if (Test-Path $publishDir) { Remove-Item -Recurse -Force $publishDir }
 dotnet publish $project -c Release -r linux-x64 --self-contained -o $publishDir
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE). If it's a file lock (MSB3027), stop the dev server first." }
 if (-not (Test-Path (Join-Path $publishDir 'ShelfAware.Web'))) {

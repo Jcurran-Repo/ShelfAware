@@ -4,9 +4,10 @@
 #
 # Caddy handles everything the app expects from its proxy: Let's Encrypt issuance and
 # renewal, WebSocket upgrade for the Blazor circuit, and the X-Forwarded-For/-Proto
-# headers Program.cs honors from a loopback proxy (the HTTPS redirect, HSTS, and the
-# per-IP rate limits all key on them). Swapping in a proxy that omits any of that
-# breaks the corresponding feature -- see the Nginx note in docs/deploy-droplet.md.
+# headers Program.cs honors from a loopback proxy (HSTS, the per-IP rate limits, and
+# the URLs the app generates for OAuth all key on them). Swapping in a proxy that
+# omits any of that breaks the corresponding feature -- see the Nginx note in
+# docs/deploy-droplet.md.
 shelfaware.example.com {
 	reverse_proxy 127.0.0.1:5000
 }

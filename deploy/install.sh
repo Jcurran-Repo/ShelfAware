@@ -25,8 +25,13 @@ fi
 rm -rf "$STAGING"
 mkdir -p "$STAGING"
 tar -xzf "$TARBALL" -C "$STAGING"
-chmod +x "$STAGING/ShelfAware.Web"   # a tar written on Windows carries no exec bit
-chown -R shelfaware:shelfaware "$STAGING"
+# Root-owned, world-readable, exec bit restored (a tar written on Windows carries neither
+# useful ownership nor an exec bit). The service account gets READ access only: it must
+# not be able to rewrite its own binary -- Restart=always would happily relaunch a
+# tampered one. The app writes only under its DataDir, never here.
+chown -R root:root "$STAGING"
+chmod -R u+rwX,go+rX "$STAGING"
+chmod +x "$STAGING/ShelfAware.Web"
 
 if systemctl is-active --quiet "$SERVICE"; then
     systemctl stop "$SERVICE"
@@ -49,12 +54,20 @@ if ! systemctl cat "$SERVICE" >/dev/null 2>&1; then
 fi
 
 systemctl start "$SERVICE"
-sleep 2   # long enough to catch a crash-on-boot (bad env file) before declaring victory
+# Two spaced checks: the first catches an instant crash (bad env file), the second a slow
+# one (first-boot schema work on a small box). A pathological crash loop could still
+# thread the needle between them -- the journalctl line is the real confirmation.
+sleep 3
+if systemctl is-active --quiet "$SERVICE"; then
+    sleep 7
+fi
 if systemctl is-active --quiet "$SERVICE"; then
     echo "Deployed and running. Logs: journalctl -u $SERVICE -f"
 else
     echo "error: $SERVICE failed to start. See: journalctl -u $SERVICE -n 50 --no-pager" >&2
-    echo "Previous build is at $PREV -- mv it back to $APP_DIR and 'systemctl start $SERVICE' to roll back." >&2
+    if [ -d "$PREV" ]; then
+        echo "Previous build is at $PREV -- mv it back to $APP_DIR and 'systemctl start $SERVICE' to roll back." >&2
+    fi
     exit 1
 fi
 

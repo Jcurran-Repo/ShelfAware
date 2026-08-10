@@ -104,7 +104,7 @@ builder.Services.ConfigureApplicationCookie(options =>
     options.AccessDeniedPath = "/Account/Login";
     options.ExpireTimeSpan = TimeSpan.FromDays(30);
     options.SlidingExpiration = true;
-    // HttpOnly + SameSite=Lax are the defaults; Secure is enforced in production (the tailnet/Azure
+    // HttpOnly + SameSite=Lax are the defaults; Secure is enforced in production (the tailnet/droplet
     // deploys are HTTPS), relaxed only for the plain-HTTP localhost dev server.
     options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
         ? CookieSecurePolicy.SameAsRequest

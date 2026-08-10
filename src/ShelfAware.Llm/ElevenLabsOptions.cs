@@ -2,8 +2,8 @@ namespace ShelfAware.Llm;
 
 /// <summary>
 /// ElevenLabs configuration for both speech directions (Scribe STT + TTS). Bound from the
-/// "ElevenLabs" configuration section; the API key comes from user-secrets locally, App Service
-/// settings on Azure — never committed (mirrors <see cref="LlmOptions"/>).
+/// "ElevenLabs" configuration section; the API key comes from user-secrets locally, the service's
+/// env file on a deployed box — never committed (mirrors <see cref="LlmOptions"/>).
 /// </summary>
 public class ElevenLabsOptions
 {

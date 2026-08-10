@@ -13,10 +13,11 @@ Three constraints shape all of it:
   secure context — plain HTTP silently kills them. Caddy gets a Let's Encrypt
   certificate automatically, which is why it's the proxy here.
 - **The app already expects a loopback proxy.** `Program.cs` honors
-  `X-Forwarded-For`/`-Proto` from loopback (`UseForwardedHeaders`), so the HTTPS
-  redirect, HSTS, and the per-IP rate limits see the real visitor rather than
-  `127.0.0.1`. Nothing to configure — but a proxy that *doesn't* send those headers
-  breaks exactly those things (see the Nginx note at the bottom).
+  `X-Forwarded-For`/`-Proto` from loopback (`UseForwardedHeaders`), so HSTS, the
+  per-IP rate limits, and the URLs the app generates (OAuth callbacks) see the real
+  visitor and scheme rather than the proxy's localhost hop. Nothing to configure —
+  but a proxy that *doesn't* send those headers breaks exactly those things (see the
+  Nginx note at the bottom).
 - **SQLite means one box.** No horizontal scaling, no external database — the whole
   state is files under one directory, which makes backup a copy and restore a copy.
 
@@ -71,7 +72,7 @@ systemctl daemon-reload && systemctl enable shelfaware
 
 **6. First deploy — from your own machine, at the repo root:**
 
-```bash
+```powershell
 powershell -ExecutionPolicy Bypass -File deploy\deploy.ps1 -TargetHost root@<droplet-ip>
 ```
 
@@ -101,7 +102,7 @@ allowed regardless of the registration setting, and it creates your household.
 
 ## Every deploy after that
 
-```bash
+```powershell
 powershell -ExecutionPolicy Bypass -File deploy\deploy.ps1 -TargetHost root@<droplet-ip>
 ```
 
@@ -118,10 +119,11 @@ lives in `/var/lib/shelfaware`, not the app directory. (The publish output lands
   infer from the missing key. The Settings key panel, the strict CSP, and the
   key-custody story in the README's "Whose keys?" section were built for exactly this
   deployment.
-- **Keyless visitors still get a real demo.** The sample pantry, the review grid,
-  prediction/backtest/reports over the seeded catalog, and the cached recipe narration
-  all work with no key at all — a visitor's own key switches on extraction, chat, and
-  live voice.
+- **Keyless visitors still get a real demo.** The sample pantry, the review grid, and
+  prediction/backtest/reports over the seeded catalog all work with no key at all — a
+  visitor's own key switches on extraction, chat, and voice. (Recipe narration replays
+  keyless *after* a household has synthesized it once — a cache hit needs no key — but
+  the cache is per household and starts empty, so narration isn't keyless on day one.)
 - **Registration stays open** (the default). If the open door ever attracts abuse, set
   `Auth__AllowRegistration=false` — invite-code joins and existing accounts keep
   working. The per-IP rate limits on the `/Account` POSTs and the signed-url endpoint
@@ -156,10 +158,17 @@ Everything that matters is under `/var/lib/shelfaware`. A nightly cron as root
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
+src=/var/lib/shelfaware
 d=/root/backups/$(date +%F); mkdir -p "$d"
-sqlite3 /var/lib/shelfaware/shelfaware.db ".backup '$d/shelfaware.db'"
-sqlite3 /var/lib/shelfaware/auth.db ".backup '$d/auth.db'"
-tar -czf "$d/files.tar.gz" -C /var/lib/shelfaware receipts tts-cache keys
+sqlite3 "$src/shelfaware.db" ".backup '$d/shelfaware.db'"
+sqlite3 "$src/auth.db" ".backup '$d/auth.db'"
+# tts-cache appears only once someone actually uses voice — archive what exists, and
+# don't pre-create it as root or the app can't write it later.
+dirs=()
+for f in receipts tts-cache keys; do
+    if [ -d "$src/$f" ]; then dirs+=("$f"); fi
+done
+tar -czf "$d/files.tar.gz" -C "$src" "${dirs[@]}"
 ```
 
 `sqlite3 .backup` is WAL-safe while the app runs; the folders are plain files. DO's
@@ -178,12 +187,16 @@ proxy_set_header Upgrade $http_upgrade;            # the Blazor circuit is a Web
 proxy_set_header Connection $connection_upgrade;
 proxy_set_header Host $host;
 proxy_set_header X-Forwarded-For $remote_addr;     # per-IP rate limits
-proxy_set_header X-Forwarded-Proto $scheme;        # HTTPS redirect + HSTS + cookies
-proxy_read_timeout 120s;                           # idle circuits die at the 60s default
+proxy_set_header X-Forwarded-Proto $scheme;        # HSTS + OAuth redirect URIs
+proxy_read_timeout 120s;                           # headroom for stalled transports
 ```
 
-…plus certbot for the certificate. `X-Forwarded-Proto` matters most: without it the
-app sees `http` and `UseHttpsRedirection` loops.
+…plus certbot for the certificate. (SignalR's 15-second keep-alives normally outrun
+the 60-second `proxy_read_timeout` default — raising it is cheap headroom, not a fix
+for a known failure.) `X-Forwarded-Proto` still matters most: without it the app
+believes every request is plain `http`, so HSTS never engages and Google sign-in
+generates an `http://` redirect URI that Google refuses. (Auth cookies stay `Secure`
+either way — production pins that.)
 
 ## What's verified and what isn't
 
