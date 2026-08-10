@@ -1,0 +1,23 @@
+# ShelfAware unit -- install as /etc/systemd/system/shelfaware.service, then:
+#   systemctl daemon-reload; systemctl enable shelfaware
+# (deploy/install.sh starts it once the first build lands in /opt/shelfaware.)
+# Box-specific config and any keys live in /etc/shelfaware/env (root-owned, chmod 600),
+# never in this file: unit files are world-readable.
+[Unit]
+Description=ShelfAware pantry tracker
+After=network.target
+
+[Service]
+User=shelfaware
+Group=shelfaware
+WorkingDirectory=/opt/shelfaware
+ExecStart=/opt/shelfaware/ShelfAware.Web
+EnvironmentFile=/etc/shelfaware/env
+Restart=always
+RestartSec=5
+# Light hardening; the app needs no privileges and writes only under its DataDir.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

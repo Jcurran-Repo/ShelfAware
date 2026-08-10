@@ -1,0 +1,11 @@
+# install.sh runs under bash on the droplet: a CRLF checkout breaks it with errors that
+# don't name the cause ("\r: command not found"). deploy.ps1 also re-normalizes at upload
+# time as a second line of defense; this keeps the working tree honest in the first place.
+*.sh text eol=lf
+
+# These are copied verbatim onto the droplet. A CRLF env file is the worst of them:
+# systemd's EnvironmentFile can hand the app values with a trailing \r — an invisible
+# character in DataDir or ASPNETCORE_URLS that nothing ever names.
+deploy/env.example text eol=lf
+deploy/shelfaware.service text eol=lf
+deploy/Caddyfile text eol=lf

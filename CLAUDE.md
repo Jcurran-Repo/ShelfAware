@@ -80,7 +80,7 @@ as overkill "because it's single-user."
 | 2 — Extraction pipeline | ✅ Done, 3 acceptance criteria verified with live calls |
 | 3 — Prediction engine + dashboard | ✅ Done, engine tests green + dashboard verified |
 | 4 — Chat tools (IPantryChat) | ✅ Done, acceptance verified with a live tool-call |
-| 5 — Azure deploy + README | ◑ README ✅ done + pushed (`4757839`); **Azure still deferred** (pending Jordan's account) |
+| 5 — Cloud deploy + README | ◑ README ✅ done + pushed (`4757839`); **target is a DigitalOcean droplet now, not Azure** (Jordan's call 2026-08-09 — it's the demo box, BYOK); runbook + deploy kit committed (`docs/deploy-droplet.md`, `deploy/`); the deploy itself hasn't run yet |
 
 Everything below is built, verified live, committed, and **pushed** (master, through the 2026-07-05
 v2.3 full-site-audit + BYOK arc — see item 8 below and timeline.md).
@@ -1995,11 +1995,15 @@ on the list; weight items stay fractional); **out-now shows "due today"** — an
 OutNow sets the effective due date to the outage date so the card no longer says
 "Overdue" next to "due in 21 days".
 
-Deferred / backlog: **Azure App Service deploy** (Phase 5 — then swap the README live-demo
-URL + add `docs/demo.gif` + `docs/accuracy.png`). **Deploy gotcha — timezone:** every "today"
-in the app (purchases, signals, predictions) is server-local `DateTime.Today`/`DateTimeOffset.Now`,
-deliberately consistent; on Azure (UTC) an evening "Bought today" would land on tomorrow's date, so
-set the App Service `WEBSITE_TIME_ZONE` (Linux: `TZ`) app setting to Jordan's timezone at deploy.
+Deferred / backlog: **the Phase-5 cloud deploy — a DigitalOcean droplet now, not Azure** (Jordan's
+call, 2026-08-09: the droplet is the demo box, BYOK). The runbook + deploy kit are committed —
+`docs/deploy-droplet.md` + `deploy/` (systemd unit, Caddyfile, env template, droplet-side
+`install.sh`, and `deploy.ps1` to publish/ship from Windows) — but the deploy itself hasn't run;
+once live, swap the README live-demo URL + add `docs/demo.gif` + `docs/accuracy.png`. **Deploy
+gotcha — timezone:** every "today" in the app (purchases, signals, predictions) is server-local
+`DateTime.Today`/`DateTimeOffset.Now`, deliberately consistent; on a UTC box an evening "Bought
+today" would land on tomorrow's date, so set the droplet's timezone first (`timedatectl
+set-timezone`, or `TZ` in the service env — runbook step 2).
 Also backlog: **CSV history importer — PARKED** (Walmart won't export to Jordan's state; needs another
 itemized source); a tiny "dapper blob" mascot for the header; a per-size Trends price chart.
 (Shipped since this note: the double-scroll fix; the **two-stream cadence model** — rebuy rhythm +
@@ -2170,7 +2174,8 @@ the same item bought across brands/sizes rolls up into one product.
 - **`ShelfAware.slnx`** not `.sln` — the .NET 10 CLI default.
 - **Data dir is `app-data/`** (not `data/` — collides with the `Data/` source folder on
   case-insensitive FS). Resolves to `src/ShelfAware.Web/app-data/` locally (ContentRootPath);
-  Azure uses `/home/data` via the `DataDir` config key.
+  a cloud box points the `DataDir` config key somewhere real (the droplet runbook uses
+  `/var/lib/shelfaware`).
 - **Global InteractiveServer render mode (v2.2).** `App.razor` sets `@rendermode="InteractiveServer"` on
   `<Routes>` and `<HeadOutlet>`; pages **must not** re-declare a render mode (a page can't set one an
   ancestor already set — it throws). This replaced per-page `@rendermode` directives so the layout, and

@@ -326,9 +326,11 @@ ShelfAware.slnx
 
 ## What's next
 
-Up next is the **cloud deploy** (SQLite on a small VM) — the live-demo link at the top is a
-one-line swap once it's live. After that: more eval fixtures beyond one merchant, and
-password-reset emails (there's no mail server behind it yet — Settings admits as much).
+Up next is the **cloud deploy** — SQLite on a small VM, a DigitalOcean droplet; the runbook and
+deploy kit are in [`docs/deploy-droplet.md`](docs/deploy-droplet.md) and [`deploy/`](deploy/) —
+and the live-demo link at the top is a one-line swap once it's live. After that: more eval
+fixtures beyond one merchant, and password-reset emails (there's no mail server behind it yet —
+Settings admits as much).
 
 ## License
 
