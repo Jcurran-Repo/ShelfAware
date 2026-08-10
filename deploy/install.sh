@@ -26,12 +26,14 @@ rm -rf "$STAGING"
 mkdir -p "$STAGING"
 tar -xzf "$TARBALL" -C "$STAGING"
 # Root-owned, world-readable, exec bit restored (a tar written on Windows carries neither
-# useful ownership nor an exec bit). The service account gets READ access only: it must
-# not be able to rewrite its own binary -- Restart=always would happily relaunch a
-# tampered one. The app writes only under its DataDir, never here.
+# useful ownership nor an exec bit; a+x rather than a bare +x because +x defers to the
+# root umask, and a hardened umask would silently strip the service account's execute).
+# The service account gets READ access only: it must not be able to rewrite its own
+# binary -- Restart=always would happily relaunch a tampered one. The app writes only
+# under its DataDir, never here.
 chown -R root:root "$STAGING"
 chmod -R u+rwX,go+rX "$STAGING"
-chmod +x "$STAGING/ShelfAware.Web"
+chmod a+x "$STAGING/ShelfAware.Web"
 
 if systemctl is-active --quiet "$SERVICE"; then
     systemctl stop "$SERVICE"

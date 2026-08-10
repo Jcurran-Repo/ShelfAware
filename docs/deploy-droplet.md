@@ -163,12 +163,15 @@ d=/root/backups/$(date +%F); mkdir -p "$d"
 sqlite3 "$src/shelfaware.db" ".backup '$d/shelfaware.db'"
 sqlite3 "$src/auth.db" ".backup '$d/auth.db'"
 # tts-cache appears only once someone actually uses voice — archive what exists, and
-# don't pre-create it as root or the app can't write it later.
+# don't pre-create it as root or the app can't write it later. (receipts/ exists from
+# the app's first boot, so on a live box the list is never empty.)
 dirs=()
 for f in receipts tts-cache keys; do
     if [ -d "$src/$f" ]; then dirs+=("$f"); fi
 done
-tar -czf "$d/files.tar.gz" -C "$src" "${dirs[@]}"
+if [ ${#dirs[@]} -gt 0 ]; then
+    tar -czf "$d/files.tar.gz" -C "$src" "${dirs[@]}"
+fi
 ```
 
 `sqlite3 .backup` is WAL-safe while the app runs; the folders are plain files. DO's
