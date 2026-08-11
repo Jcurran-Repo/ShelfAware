@@ -8,6 +8,6 @@
 # the URLs the app generates for OAuth all key on them). Swapping in a proxy that
 # omits any of that breaks the corresponding feature -- see the Nginx note in
 # docs/deploy-droplet.md.
-shelfaware.example.com {
+demo.shelfaware.net {
 	reverse_proxy 127.0.0.1:5000
 }
