@@ -80,7 +80,7 @@ as overkill "because it's single-user."
 | 2 — Extraction pipeline | ✅ Done, 3 acceptance criteria verified with live calls |
 | 3 — Prediction engine + dashboard | ✅ Done, engine tests green + dashboard verified |
 | 4 — Chat tools (IPantryChat) | ✅ Done, acceptance verified with a live tool-call |
-| 5 — Cloud deploy + README | ◑ README ✅ done + pushed (`4757839`); **LIVE on the DigitalOcean droplet since 2026-08-11** (demo box, BYOK; deployed end to end via `deploy/deploy.ps1` per the runbook — publish → install.sh → systemd → Caddy cert → registration). First live deploy surfaced the systemd-no-locale gotcha (invariant-culture `¤` prices) — fixed in the kit (`LANG` in `deploy/env.example`). Remaining: README live-demo URL swap + `docs/demo.gif` + `docs/accuracy.png` |
+| 5 — Cloud deploy + README | ◑ README ✅ done + pushed (`4757839`); **LIVE on the DigitalOcean droplet since 2026-08-11** (demo box, BYOK; deployed end to end via `deploy/deploy.ps1` per the runbook — publish → install.sh → systemd → Caddy cert → registration). First live deploy surfaced the systemd-no-locale gotcha (invariant-culture `¤` prices) — fixed in the kit (`LANG` in `deploy/env.example`). Remaining: `docs/demo.gif` + `docs/accuracy.png` (README URL swapped to https://demo.shelfaware.net) |
 
 Everything below is built, verified live, committed, and **pushed** (master, through the 2026-07-05
 v2.3 full-site-audit + BYOK arc — see item 8 below and timeline.md).
@@ -1998,8 +1998,8 @@ OutNow sets the effective due date to the outage date so the card no longer says
 Deferred / backlog: **the Phase-5 cloud deploy is LIVE — a DigitalOcean droplet, not Azure**
 (Jordan's calls: target 2026-08-09, deployed end to end 2026-08-11) via the committed kit —
 `docs/deploy-droplet.md` + `deploy/` (systemd unit, Caddyfile, env template, droplet-side
-`install.sh`, and `deploy.ps1` to publish/ship from Windows). Still pending: swap the README
-live-demo URL + add `docs/demo.gif` + `docs/accuracy.png`. **Deploy gotchas — timezone and
+`install.sh`, and `deploy.ps1` to publish/ship from Windows). Still pending: `docs/demo.gif` +
+`docs/accuracy.png` (the README live-demo link points at https://demo.shelfaware.net now). **Deploy gotchas — timezone and
 locale, same root:** every "today" in the app (purchases, signals, predictions) is server-local
 `DateTime.Today`/`DateTimeOffset.Now`, deliberately consistent, and every price formats on the
 server's culture — so a box with no timezone/locale set files evening purchases on tomorrow's
