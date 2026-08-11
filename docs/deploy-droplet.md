@@ -49,6 +49,11 @@ tomorrow's date. Set the household's real timezone:
 timedatectl set-timezone America/New_York
 ```
 
+Locale is the same gotcha wearing a different hat: a systemd service starts with no
+`LANG` at all, and with none set .NET falls back to the invariant culture — every
+price renders as `¤3.99` instead of `$3.99`. The env template ships
+`LANG=en_US.UTF-8`; edit it if the household's real locale is something else.
+
 **3. Firewall:**
 
 ```bash
@@ -206,7 +211,9 @@ either way — production pins that.)
 The publish path is verified from this repo on Windows: `dotnet publish -r linux-x64
 --self-contained` succeeds and the output carries the Linux native SQLite library
 (`libe_sqlite3.so`) and the `ShelfAware.Web` apphost the unit file execs. The
-droplet-side steps are written to this app's actual behavior (`DataDir`, the
-forwarded-headers middleware, the Windows-only DPAPI branch) but have not yet been run
-against a live droplet — on the first real deploy, watch `journalctl -u shelfaware -f`
-through first boot before calling it done.
+droplet-side path has now run for real (first live deploy 2026-08-11, Ubuntu 24.04:
+publish → ship → `install.sh` → systemd → Caddy certificate → registration). It
+surfaced exactly one gap, since folded back into this kit: a systemd service starts
+with no locale, so prices rendered with the invariant culture's `¤` until `LANG`
+landed in the env file — the template now ships it. On any future first boot, still
+watch `journalctl -u shelfaware -f` before calling it done.

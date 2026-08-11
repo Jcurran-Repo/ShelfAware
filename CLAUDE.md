@@ -80,7 +80,7 @@ as overkill "because it's single-user."
 | 2 — Extraction pipeline | ✅ Done, 3 acceptance criteria verified with live calls |
 | 3 — Prediction engine + dashboard | ✅ Done, engine tests green + dashboard verified |
 | 4 — Chat tools (IPantryChat) | ✅ Done, acceptance verified with a live tool-call |
-| 5 — Cloud deploy + README | ◑ README ✅ done + pushed (`4757839`); **target is a DigitalOcean droplet now, not Azure** (Jordan's call 2026-08-09 — it's the demo box, BYOK); runbook + deploy kit committed (`docs/deploy-droplet.md`, `deploy/`); the deploy itself hasn't run yet |
+| 5 — Cloud deploy + README | ◑ README ✅ done + pushed (`4757839`); **LIVE on the DigitalOcean droplet since 2026-08-11** (demo box, BYOK; deployed end to end via `deploy/deploy.ps1` per the runbook — publish → install.sh → systemd → Caddy cert → registration). First live deploy surfaced the systemd-no-locale gotcha (invariant-culture `¤` prices) — fixed in the kit (`LANG` in `deploy/env.example`). Remaining: README live-demo URL swap + `docs/demo.gif` + `docs/accuracy.png` |
 
 Everything below is built, verified live, committed, and **pushed** (master, through the 2026-07-05
 v2.3 full-site-audit + BYOK arc — see item 8 below and timeline.md).
@@ -1995,15 +1995,17 @@ on the list; weight items stay fractional); **out-now shows "due today"** — an
 OutNow sets the effective due date to the outage date so the card no longer says
 "Overdue" next to "due in 21 days".
 
-Deferred / backlog: **the Phase-5 cloud deploy — a DigitalOcean droplet now, not Azure** (Jordan's
-call, 2026-08-09: the droplet is the demo box, BYOK). The runbook + deploy kit are committed —
+Deferred / backlog: **the Phase-5 cloud deploy is LIVE — a DigitalOcean droplet, not Azure**
+(Jordan's calls: target 2026-08-09, deployed end to end 2026-08-11) via the committed kit —
 `docs/deploy-droplet.md` + `deploy/` (systemd unit, Caddyfile, env template, droplet-side
-`install.sh`, and `deploy.ps1` to publish/ship from Windows) — but the deploy itself hasn't run;
-once live, swap the README live-demo URL + add `docs/demo.gif` + `docs/accuracy.png`. **Deploy
-gotcha — timezone:** every "today" in the app (purchases, signals, predictions) is server-local
-`DateTime.Today`/`DateTimeOffset.Now`, deliberately consistent; on a UTC box an evening "Bought
-today" would land on tomorrow's date, so set the droplet's timezone first (`timedatectl
-set-timezone`, or `TZ` in the service env — runbook step 2).
+`install.sh`, and `deploy.ps1` to publish/ship from Windows). Still pending: swap the README
+live-demo URL + add `docs/demo.gif` + `docs/accuracy.png`. **Deploy gotchas — timezone and
+locale, same root:** every "today" in the app (purchases, signals, predictions) is server-local
+`DateTime.Today`/`DateTimeOffset.Now`, deliberately consistent, and every price formats on the
+server's culture — so a box with no timezone/locale set files evening purchases on tomorrow's
+date and renders `¤3.99` (invariant culture; a systemd service starts with NO `LANG` — found on
+the first live deploy). Set the droplet's timezone (`timedatectl set-timezone`, or `TZ` in the
+service env) and keep `LANG` in the env file — runbook step 2 covers both.
 Also backlog: **CSV history importer — PARKED** (Walmart won't export to Jordan's state; needs another
 itemized source); a tiny "dapper blob" mascot for the header; a per-size Trends price chart.
 (Shipped since this note: the double-scroll fix; the **two-stream cadence model** — rebuy rhythm +
