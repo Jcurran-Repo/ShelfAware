@@ -53,7 +53,7 @@ public class ByokTests
     [Fact]
     public void Auto_mode_is_managed_only_when_the_server_configured_a_key()
     {
-        // Managed deploy (tailnet/Azure): a server key is set → the host's key is used, panel hidden.
+        // Managed deploy (tailnet/managed droplet): a server key is set → the host's key is used, panel hidden.
         Assert.True(new CircuitAiSettings(Options.Create(new LlmOptions { ApiKey = "host-key" })).Managed);
         // Public demo / self-host BYOK: no server key → the visitor brings their own.
         Assert.False(new CircuitAiSettings(Options.Create(new LlmOptions { ApiKey = "" })).Managed);

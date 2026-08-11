@@ -32,7 +32,7 @@ public sealed class CircuitAiSettings
     }
 
     /// <summary>Managed-key deployment: the host's server config is authoritative, the browser can't
-    /// override it, and the Settings key panel is hidden (tailnet / Azure). See <see cref="LlmOptions.KeyMode"/>.</summary>
+    /// override it, and the Settings key panel is hidden (tailnet / a managed droplet). See <see cref="LlmOptions.KeyMode"/>.</summary>
     public bool Managed { get; }
 
     public AiProvider Provider { get; private set; }

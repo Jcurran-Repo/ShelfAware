@@ -29,7 +29,7 @@ public class ReceiptStorageTests : IDisposable
     public async Task A_new_folder_is_stored_with_a_portable_separator()
     {
         // This string goes in the database. Path.Combine would bake in a backslash on Windows, and a
-        // backslash is an ordinary filename character on Linux — so the Azure target would read the whole
+        // backslash is an ordinary filename character on Linux — so a Linux deploy would read the whole
         // thing as one literal filename and report every receipt's copy as missing.
         var imagePath = await Storage().NewFolderAsync();
 

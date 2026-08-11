@@ -33,7 +33,8 @@ builder.Services.AddRazorComponents()
     // default is too small for even a few seconds of audio. 4 MB comfortably covers a push-to-talk bark.
     .AddHubOptions(o => o.MaximumReceiveMessageSize = 4 * 1024 * 1024);
 
-// SQLite lives in a configurable data directory: ./app-data locally, /home/data on Azure.
+// SQLite lives in a configurable data directory: ./app-data locally; a cloud box sets DataDir
+// (the droplet runbook uses /var/lib/shelfaware — see docs/deploy-droplet.md).
 // (Not "data": on case-insensitive filesystems that collides with the Data/ source folder.)
 var dataDir = builder.Configuration["DataDir"] ?? Path.Combine(builder.Environment.ContentRootPath, "app-data");
 var receiptsDir = Path.Combine(dataDir, "receipts");
@@ -103,7 +104,7 @@ builder.Services.ConfigureApplicationCookie(options =>
     options.AccessDeniedPath = "/Account/Login";
     options.ExpireTimeSpan = TimeSpan.FromDays(30);
     options.SlidingExpiration = true;
-    // HttpOnly + SameSite=Lax are the defaults; Secure is enforced in production (the tailnet/Azure
+    // HttpOnly + SameSite=Lax are the defaults; Secure is enforced in production (the tailnet/droplet
     // deploys are HTTPS), relaxed only for the plain-HTTP localhost dev server.
     options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
         ? CookieSecurePolicy.SameAsRequest
@@ -187,8 +188,8 @@ if (OperatingSystem.IsWindows())
     // have before anyone logs on — and worse, an S4U logon re-encrypting the user's master keys is
     // exactly what corrupted them on 2026-07-17 and 500'd every auth page after the next reboot.
     // Machine scope decrypts in any logon session. Trade-off: any local process can read the key
-    // ring — the same trust boundary as the SQLite DBs sitting next to it. On Linux (Azure) the
-    // keys stay plain files under app-data, so this was never a stronger guarantee than that.
+    // ring — the same trust boundary as the SQLite DBs sitting next to it. On Linux (the droplet)
+    // the keys stay plain files under the data dir, so this was never a stronger guarantee than that.
     dataProtection.ProtectKeysWithDpapi(protectToLocalMachine: true);
 }
 
@@ -332,7 +333,8 @@ using (var scope = app.Services.CreateScope())
     AdditiveSchema.Apply(db);
 }
 
-// Behind a TLS-terminating reverse proxy (Tailscale Serve for the private self-host, Azure later), honor
+// Behind a TLS-terminating reverse proxy (Tailscale Serve for the private self-host, Caddy on the
+// droplet — see deploy/Caddyfile), honor
 // X-Forwarded-Proto/-For from the loopback proxy so HTTPS redirect, HSTS, and per-IP rate limiting see the
 // real scheme and client rather than the proxy's localhost hop. Defaults trust only loopback proxies.
 app.UseForwardedHeaders(new ForwardedHeadersOptions

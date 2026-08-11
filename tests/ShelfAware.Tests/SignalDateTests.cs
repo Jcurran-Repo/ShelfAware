@@ -10,7 +10,7 @@ public class SignalDateTests
         // The bug this closes is a day-shift, not a crash. 11pm on the 28th at UTC-5 IS the 28th — that's
         // the day the human marked the item out. `.LocalDateTime.Date` would re-read the same instant in
         // whatever zone the machine is in now and call it the 29th on any UTC deployment (the documented
-        // Linux/Azure TZ gotcha), silently moving historical rows by a day.
+        // UTC-cloud-box TZ gotcha), silently moving historical rows by a day.
         var lateEvening = new DateTimeOffset(2026, 7, 28, 23, 0, 0, TimeSpan.FromHours(-5));
 
         Assert.Equal(new DateOnly(2026, 7, 28), SignalDate.Of(lateEvening));

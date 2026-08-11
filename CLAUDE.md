@@ -80,7 +80,7 @@ as overkill "because it's single-user."
 | 2 — Extraction pipeline | ✅ Done, 3 acceptance criteria verified with live calls |
 | 3 — Prediction engine + dashboard | ✅ Done, engine tests green + dashboard verified |
 | 4 — Chat tools (IPantryChat) | ✅ Done, acceptance verified with a live tool-call |
-| 5 — Azure deploy + README | ◑ README ✅ done + pushed (`4757839`); **Azure still deferred** (pending Jordan's account) |
+| 5 — Cloud deploy + README | ◑ README ✅ done + pushed (`4757839`); **LIVE on the DigitalOcean droplet since 2026-08-11** (demo box, BYOK; deployed end to end via `deploy/deploy.ps1` per the runbook — publish → install.sh → systemd → Caddy cert → registration). First live deploy surfaced the systemd-no-locale gotcha (invariant-culture `¤` prices) — fixed in the kit (`LANG` in `deploy/env.example`). Remaining: `docs/demo.gif` + `docs/accuracy.png` (README URL swapped to https://demo.shelfaware.net) |
 
 Everything below is built, verified live, committed, and **pushed** (master, through the 2026-07-05
 v2.3 full-site-audit + BYOK arc — see item 8 below and timeline.md).
@@ -1995,11 +1995,17 @@ on the list; weight items stay fractional); **out-now shows "due today"** — an
 OutNow sets the effective due date to the outage date so the card no longer says
 "Overdue" next to "due in 21 days".
 
-Deferred / backlog: **Azure App Service deploy** (Phase 5 — then swap the README live-demo
-URL + add `docs/demo.gif` + `docs/accuracy.png`). **Deploy gotcha — timezone:** every "today"
-in the app (purchases, signals, predictions) is server-local `DateTime.Today`/`DateTimeOffset.Now`,
-deliberately consistent; on Azure (UTC) an evening "Bought today" would land on tomorrow's date, so
-set the App Service `WEBSITE_TIME_ZONE` (Linux: `TZ`) app setting to Jordan's timezone at deploy.
+Deferred / backlog: **the Phase-5 cloud deploy is LIVE — a DigitalOcean droplet, not Azure**
+(Jordan's calls: target 2026-08-09, deployed end to end 2026-08-11) via the committed kit —
+`docs/deploy-droplet.md` + `deploy/` (systemd unit, Caddyfile, env template, droplet-side
+`install.sh`, and `deploy.ps1` to publish/ship from Windows). Still pending: `docs/demo.gif` +
+`docs/accuracy.png` (the README live-demo link points at https://demo.shelfaware.net now). **Deploy gotchas — timezone and
+locale, same root:** every "today" in the app (purchases, signals, predictions) is server-local
+`DateTime.Today`/`DateTimeOffset.Now`, deliberately consistent, and every price formats on the
+server's culture — so a box with no timezone/locale set files evening purchases on tomorrow's
+date and renders `¤3.99` (invariant culture; a systemd service starts with NO `LANG` — found on
+the first live deploy). Set the droplet's timezone (`timedatectl set-timezone`, or `TZ` in the
+service env) and keep `LANG` in the env file — runbook step 2 covers both.
 Also backlog: **CSV history importer — PARKED** (Walmart won't export to Jordan's state; needs another
 itemized source); a tiny "dapper blob" mascot for the header; a per-size Trends price chart.
 (Shipped since this note: the double-scroll fix; the **two-stream cadence model** — rebuy rhythm +
@@ -2170,7 +2176,8 @@ the same item bought across brands/sizes rolls up into one product.
 - **`ShelfAware.slnx`** not `.sln` — the .NET 10 CLI default.
 - **Data dir is `app-data/`** (not `data/` — collides with the `Data/` source folder on
   case-insensitive FS). Resolves to `src/ShelfAware.Web/app-data/` locally (ContentRootPath);
-  Azure uses `/home/data` via the `DataDir` config key.
+  a cloud box points the `DataDir` config key somewhere real (the droplet runbook uses
+  `/var/lib/shelfaware`).
 - **Global InteractiveServer render mode (v2.2).** `App.razor` sets `@rendermode="InteractiveServer"` on
   `<Routes>` and `<HeadOutlet>`; pages **must not** re-declare a render mode (a page can't set one an
   ancestor already set — it throws). This replaced per-page `@rendermode` directives so the layout, and

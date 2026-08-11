@@ -29,8 +29,8 @@ public class LlmOptions
     public long? DailyTokenLimit { get; set; }
 
     /// <summary>Deployment key policy: "Managed" / "Byok", or "Auto" (default when unset). Managed = the
-    /// host provides ALL keys (LLM + voice) and visitors use them without editing (a tailnet / Azure
-    /// deploy); BYOK = visitors bring their own in the browser (the source-available self-host / public demo).
+    /// host provides ALL keys (LLM + voice) and visitors use them without editing (a tailnet / private
+    /// droplet deploy); BYOK = visitors bring their own in the browser (the source-available self-host / public demo).
     /// Auto infers it — managed when a server key is configured, BYOK otherwise — so just dropping keys in
     /// secrets/appsettings flips a deployment to managed.</summary>
     public string? KeyMode { get; set; }

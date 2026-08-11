@@ -242,7 +242,7 @@ public class GuidedTourTests : PageTestContext
 }
 
 /// <summary>
-/// The same walkthrough on a MANAGED-key deployment (tailnet / Azure), where the host supplies the AI
+/// The same walkthrough on a MANAGED-key deployment (tailnet / a managed droplet), where the host supplies the AI
 /// keys, the browser cannot override them and the Settings key panel is hidden. The tour must not send
 /// a visitor to bring a key they have nowhere to put.
 /// </summary>

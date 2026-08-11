@@ -10,10 +10,11 @@ there's no coffee.
 &nbsp; [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE)
 &nbsp;·&nbsp; .NET 10 · Blazor · EF Core/SQLite · Anthropic Claude · ElevenLabs voice
 
-> **Live demo:** _coming soon_ (Azure App Service). Until then, [run it locally](#run-it-locally) — it
-> boots and works without any API key.
-
-<!-- LIVE_DEMO_URL — replace the blockquote above with the deployed link once Azure is live. -->
+> **Live demo: [demo.shelfaware.net](https://demo.shelfaware.net)** — create an account, load the
+> sample pantry, and poke around. Everything data-side works with no API key; bring your own
+> (Settings → AI provider & keys) to light up receipt reading, chat, and voice — the
+> ["Whose keys?"](#whose-keys-running-it-for-other-people) section explains. Prefer your own
+> machine? [Run it locally](#run-it-locally).
 
 ![30-second tour: a receipt confirms itself, the dashboard says what's low, "we're out of dog food" updates it, and the grocery list is ready by aisle](docs/demo.gif)
 
@@ -286,7 +287,7 @@ do the work:
 (Ollama, LM Studio, llama.cpp — self-hosted runs only), pastes a key, and can tweak which model
 does which job (receipt-reading needs vision; the assistant needs tool calling). An ElevenLabs key
 switches on voice the same way — the agent id is only for the realtime-agent option, which is the
-one thing here billed per minute. This is how the live demo will run — I'm not paying for the
+one thing here billed per minute. This is how the live demo runs — I'm not paying for the
 internet's tokens, and nobody has to trust me with theirs.
 
 **`managed` — the host's keys, on a meter.** The server's keys are authoritative, the key panel
@@ -326,9 +327,11 @@ ShelfAware.slnx
 
 ## What's next
 
-Up next is the **cloud deploy** (SQLite on a small VM) — the live-demo link at the top is a
-one-line swap once it's live. After that: more eval fixtures beyond one merchant, and
-password-reset emails (there's no mail server behind it yet — Settings admits as much).
+The **cloud deploy is live** — [demo.shelfaware.net](https://demo.shelfaware.net) runs on a small
+DigitalOcean droplet (SQLite and all); the runbook and deploy kit are in
+[`docs/deploy-droplet.md`](docs/deploy-droplet.md) and [`deploy/`](deploy/). Next: more eval
+fixtures beyond one merchant, and password-reset emails (there's no mail server behind it yet —
+Settings admits as much).
 
 ## License
 
