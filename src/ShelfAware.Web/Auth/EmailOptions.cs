@@ -17,7 +17,9 @@ public class EmailOptions
     public int SmtpPort { get; set; } = 587;
 
     /// <summary>Optional as a PAIR with <see cref="SmtpPassword"/>: an authenticated relay sets both,
-    /// a localhost relay sets neither. One without the other fails startup validation.</summary>
+    /// a localhost relay sets neither. One without the other fails startup validation. Note the
+    /// connection still REQUIRES TLS either way (STARTTLS on any port but 465, failing closed) — a
+    /// plaintext-only relay won't work, deliberately.</summary>
     public string? SmtpUser { get; set; }
 
     public string? SmtpPassword { get; set; }
