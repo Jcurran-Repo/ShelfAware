@@ -19,6 +19,11 @@
 # botched publish can never destroy the real database. Both halves of that defense
 # (data-first ordering + the refusal) came out of this script's independent review.
 #
+# Failure posture, also from the review: a failure BEFORE the swap re-enables the task
+# and leaves the intact install runnable (an aborted publish, not an outage); a failure
+# MID-swap deliberately leaves the task disabled (down beats booting onto a half-swapped
+# folder or auto-creating an empty database) and prints state-aware recovery advice.
+#
 # Site config (managed keys, quotas, locked registration, the Email section) lives in
 # the server's appsettings.json and is carried across every publish, per the runbook's
 # rule. Rollback: stop the task, move app-data back into -prev, swap the folder names,
@@ -78,83 +83,102 @@ Write-Host "Disabling + stopping '$TaskName'..."
 # mid-swap (boot is not guaranteed to stay the only one), landing the app on a
 # half-swapped folder. Disabled, nothing relaunches it until we say so.
 Disable-ScheduledTask -TaskName $TaskName | Out-Null
-Stop-ScheduledTask -TaskName $TaskName
-$deadline = (Get-Date).AddSeconds(30)
-while ((Get-Date) -lt $deadline) {
-    # Match on Path, not name: the DEV server is also ShelfAware.Web (the documented gotcha).
-    if ($null -eq (Get-Process ShelfAware.Web -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $serverExe })) { break }
-    Start-Sleep -Seconds 1
-}
-if (Get-Process ShelfAware.Web -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $serverExe }) {
-    Enable-ScheduledTask -TaskName $TaskName | Out-Null
-    throw 'The server process did not exit within 30s - not proceeding while its files are in use. (Task re-enabled.)'
-}
 
-# Pre-publish DB backup, taken with the app STOPPED so the -wal files are consistent.
-# The next boot runs schema migrations (AdditiveSchema); this is migration insurance,
-# not the nightly backup - receipts and the speech cache are untouched by a publish.
-# It lives inside app-data, so it moves to the new folder with everything else.
-# Get-ChildItem|Copy-Item rather than a bare wildcard so an empty match is a no-op,
-# not a throw (a first-ever publish has no DBs yet).
-$stamp = Get-Date -Format 'yyyy-MM-dd-HHmmss'
-$backup = Join-Path $appData "backup-$stamp-pre-publish"
-New-Item -ItemType Directory -Path $backup -Force | Out-Null
-Get-ChildItem $appData -Filter 'shelfaware.db*' | Copy-Item -Destination $backup
-Get-ChildItem $appData -Filter 'auth.db*' | Copy-Item -Destination $backup
-if (Test-Path (Join-Path $appData 'keys')) { Copy-Item (Join-Path $appData 'keys') $backup -Recurse }
-Write-Host "DBs + keys backed up to $backup"
-
-# Sweep keepsakes to the attic BEFORE the swap: any top-level item the new publish
-# doesn't account for (and that isn't app-data or appsettings*.json) is moved - never
-# deleted - to the attic. This is what keeps -prev pure publish output, which is what
-# makes deleting it below safe. The rare misfile (a DLL the new build stopped
-# shipping gets attic'd instead of riding into -prev) is recoverable from the attic
-# by hand, which is the safe direction.
-$publishNames = (Get-ChildItem $publishDir).Name
-foreach ($item in Get-ChildItem $ServerDir) {
-    if ($item.Name -eq 'app-data') { continue }
-    if ($item.Name -like 'appsettings*.json') { continue }
-    # 'runtimes' is publish output of the older portable style (the new self-contained
-    # publish flattens it away). It belongs with the old build in -prev so a rollback
-    # still has its native libraries - it is not a keepsake.
-    if ($item.Name -eq 'runtimes') { continue }
-    if ($publishNames -contains $item.Name) { continue }
-    if (-not (Test-Path $atticDir)) { New-Item -ItemType Directory -Path $atticDir | Out-Null }
-    $dest = Join-Path $atticDir $item.Name
-    if (Test-Path $dest) { $dest = Join-Path $atticDir "$($item.Name)-$stamp" }
-    Move-Item $item.FullName $dest
-    Write-Host "attic: $($item.Name)"
-}
-
-# The swap. Data moves FIRST: every operation between the rename and the app-data move
-# is an instant same-volume op, so there is no meaningful window in which the live
-# folder exists without the household's data - the compound loss chain this script's
-# review found (fail mid-copy -> reboot -> the app auto-creates an EMPTY app-data ->
-# a re-run deletes -prev with the real data inside) needs that window to start.
-if (Test-Path $prevDir) { Remove-Item -Recurse -Force $prevDir }
+# Everything from here to the end of the swap runs under one rule: a throw BEFORE the
+# swap begins re-enables the task (the intact install stays runnable - an aborted
+# publish, not an outage); a throw AFTER the swap begins leaves it disabled on purpose.
+$swapStarted = $false
 try {
-    Rename-Item $ServerDir $prevDir
-    New-Item -ItemType Directory -Path $ServerDir | Out-Null
-    Move-Item (Join-Path $prevDir 'app-data') $appData
-    robocopy $publishDir $ServerDir /E /NFL /NDL /NJH /NJS | Out-Null
-    if ($LASTEXITCODE -ge 8) { throw "robocopy (install) failed with code $LASTEXITCODE" }
-    # Site config over the repo defaults FIRST, then strip dev config - this order so a
-    # stray Development file in -prev can't be re-introduced after the strip.
-    Copy-Item (Join-Path $prevDir 'appsettings*.json') $ServerDir -Force
-    if (Test-Path (Join-Path $ServerDir 'appsettings.Development.json')) {
-        Remove-Item (Join-Path $ServerDir 'appsettings.Development.json')
+    Stop-ScheduledTask -TaskName $TaskName
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        # Match on Path, not name: the DEV server is also ShelfAware.Web (the documented gotcha).
+        if ($null -eq (Get-Process ShelfAware.Web -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $serverExe })) { break }
+        Start-Sleep -Seconds 1
+    }
+    if (Get-Process ShelfAware.Web -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $serverExe }) {
+        throw 'The server process did not exit within 30s - not proceeding while its files are in use.'
+    }
+
+    # Pre-publish DB backup, taken with the app STOPPED so the -wal files are consistent.
+    # The next boot runs schema migrations (AdditiveSchema); this is migration insurance,
+    # not the nightly backup - receipts and the speech cache are untouched by a publish.
+    # It lives inside app-data, so it moves to the new folder with everything else.
+    # Get-ChildItem|Copy-Item rather than a bare wildcard so an empty match is a no-op,
+    # not a throw (a first-ever publish has no DBs yet).
+    $stamp = Get-Date -Format 'yyyy-MM-dd-HHmmss'
+    $backup = Join-Path $appData "backup-$stamp-pre-publish"
+    New-Item -ItemType Directory -Path $backup -Force | Out-Null
+    Get-ChildItem $appData -Filter 'shelfaware.db*' | Copy-Item -Destination $backup
+    Get-ChildItem $appData -Filter 'auth.db*' | Copy-Item -Destination $backup
+    if (Test-Path (Join-Path $appData 'keys')) { Copy-Item (Join-Path $appData 'keys') $backup -Recurse }
+    Write-Host "DBs + keys backed up to $backup"
+
+    # Sweep keepsakes to the attic BEFORE the swap: any top-level item the new publish
+    # doesn't account for (and that isn't app-data or appsettings*.json) is moved -
+    # never deleted - to the attic. This is what keeps -prev pure publish output, which
+    # is what makes deleting it below safe. The rare misfile (a DLL the new build
+    # stopped shipping gets attic'd instead of riding into -prev) is recoverable from
+    # the attic by hand, which is the safe direction.
+    $publishNames = (Get-ChildItem $publishDir).Name
+    foreach ($item in Get-ChildItem $ServerDir) {
+        if ($item.Name -eq 'app-data') { continue }
+        if ($item.Name -like 'appsettings*.json') { continue }
+        # 'runtimes' is publish output of the older portable style (the new
+        # self-contained publish flattens it away). It belongs with the old build in
+        # -prev so a rollback still has its native libraries - it is not a keepsake.
+        if ($item.Name -eq 'runtimes') { continue }
+        if ($publishNames -contains $item.Name) { continue }
+        if (-not (Test-Path $atticDir)) { New-Item -ItemType Directory -Path $atticDir | Out-Null }
+        $dest = Join-Path $atticDir $item.Name
+        if (Test-Path $dest) { $dest = Join-Path $atticDir "$($item.Name)-$stamp" }
+        Move-Item $item.FullName $dest
+        Write-Host "attic: $($item.Name)"
+    }
+
+    # Still pre-swap: the -prev refusal at the top guarantees this holds no app-data.
+    if (Test-Path $prevDir) { Remove-Item -Recurse -Force $prevDir }
+
+    # The swap. Data moves FIRST: every operation between the rename and the app-data
+    # move is an instant same-volume op, so there is no meaningful window in which the
+    # live folder exists without the household's data - the compound loss chain this
+    # script's review found (fail mid-copy -> reboot -> the app auto-creates an EMPTY
+    # app-data -> a re-run deletes -prev with the real data inside) needs that window
+    # to start.
+    $swapStarted = $true
+    try {
+        Rename-Item $ServerDir $prevDir
+        New-Item -ItemType Directory -Path $ServerDir | Out-Null
+        Move-Item (Join-Path $prevDir 'app-data') $appData
+        robocopy $publishDir $ServerDir /E /NFL /NDL /NJH /NJS | Out-Null
+        if ($LASTEXITCODE -ge 8) { throw "robocopy (install) failed with code $LASTEXITCODE" }
+        # Site config over the repo defaults FIRST, then strip dev config - this order
+        # so a stray Development file in -prev can't be re-introduced after the strip.
+        Copy-Item (Join-Path $prevDir 'appsettings*.json') $ServerDir -Force
+        if (Test-Path (Join-Path $ServerDir 'appsettings.Development.json')) {
+            Remove-Item (Join-Path $ServerDir 'appsettings.Development.json')
+        }
+    }
+    catch {
+        Write-Host 'error: the swap failed partway. CURRENT STATE:' -ForegroundColor Red
+        if (Test-Path $appData) {
+            Write-Host "  - app-data (the household's data) IS in $ServerDir - it is safe."
+        } elseif (Test-Path (Join-Path $prevDir 'app-data')) {
+            Write-Host "  - app-data (the household's data) is still in $prevDir - safe there; do NOT delete that folder. (A re-run will refuse until it's recovered - deliberate.)"
+        }
+        Write-Host "  - old binaries: $prevDir / new (possibly partial) binaries: $ServerDir"
+        Write-Host "  - recover: pick the binaries to keep, make sure app-data is inside $ServerDir, then re-enable and start the task."
+        Write-Host "  - the task is currently DISABLED (deliberate): nothing will boot onto a half-swapped folder, and the site stays down until you recover."
+        throw
     }
 }
 catch {
-    Write-Host 'error: the swap failed partway. CURRENT STATE:' -ForegroundColor Red
-    if (Test-Path $appData) {
-        Write-Host "  - app-data (the household's data) IS in $ServerDir - it is safe."
-    } elseif (Test-Path (Join-Path $prevDir 'app-data')) {
-        Write-Host "  - app-data (the household's data) is still in $prevDir - safe there; do NOT delete that folder. (A re-run will refuse until it's recovered - deliberate.)"
+    if (-not $swapStarted) {
+        # Nothing was swapped - the live install is intact, so put the task back the
+        # way we found it. An aborted publish must not double as a family-site outage.
+        Enable-ScheduledTask -TaskName $TaskName | Out-Null
+        Write-Host 'Publish aborted before the swap - the existing install is intact and the task is re-enabled.' -ForegroundColor Yellow
     }
-    Write-Host "  - old binaries: $prevDir / new (possibly partial) binaries: $ServerDir"
-    Write-Host "  - recover: pick the binaries to keep, make sure app-data is inside $ServerDir, then re-enable and start the task."
-    Write-Host "  - the task is currently DISABLED (deliberate): nothing will boot onto a half-swapped folder, and the site stays down until you recover."
     throw
 }
 
