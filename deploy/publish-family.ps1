@@ -12,10 +12,12 @@
 #
 # Nothing is ever deleted from a live folder (an early dry run of a /MIR-based version
 # of this script would have eaten an old ad-hoc backup sitting at the server root -
-# that is why this is a swap, not a mirror). The one deletion is the PREVIOUS run's
-# -prev folder, so: anything loose in the server folder that isn't app-data or
-# appsettings*.json survives exactly one more publish inside -prev, then dies with it.
-# Keep keepsakes in app-data\ (always carried forward) or outside the server folder.
+# that is why this is a swap, not a mirror). Loose keepsakes at the server root (old
+# zips, ad-hoc backups - anything the new publish doesn't account for) are swept into
+# ShelfAware-server-attic before the swap: moved, never deleted, so the one deletion
+# in this script - the PREVIOUS run's -prev folder - only ever destroys binaries the
+# publish before last laid down. A file dropped into the attic by mistake (say, a DLL
+# the new build stopped shipping) is recoverable from there by hand.
 #
 # Site config (managed keys, quotas, locked registration) lives in the server's
 # appsettings.json and is carried across every publish, per the runbook's rule.
@@ -46,7 +48,7 @@ if ($null -eq (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContin
 
 if (-not $Yes) {
     Write-Host "This will stop '$TaskName', swap the new build into $ServerDir (app-data and appsettings*.json carried across), and start it again."
-    Write-Host "Anything else loose in $ServerDir rides into $prevDir and is deleted on the NEXT publish - move keepsakes into app-data\ first."
+    Write-Host "Anything else loose in $ServerDir is moved to $ServerDir-attic - never deleted."
     $answer = Read-Host 'Type yes to continue'
     if ($answer -ne 'yes') { Write-Host 'Aborted.'; exit 1 }
 }
@@ -83,6 +85,29 @@ Copy-Item (Join-Path $appData 'shelfaware.db*') $backup
 Copy-Item (Join-Path $appData 'auth.db*') $backup
 if (Test-Path (Join-Path $appData 'keys')) { Copy-Item (Join-Path $appData 'keys') $backup -Recurse }
 Write-Host "DBs + keys backed up to $backup"
+
+# Sweep keepsakes to the attic BEFORE the swap: any top-level item the new publish
+# doesn't account for (and that isn't app-data or appsettings*.json) is moved - never
+# deleted - to ShelfAware-server-attic. This is what lets the -prev deletion below be
+# safe: after this sweep, -prev only ever holds publish output. The rare misfile (a
+# DLL the new build stopped shipping gets attic'd instead of riding into -prev) is
+# recoverable from the attic by hand, which is the safe direction.
+$atticDir = "$ServerDir-attic"
+$publishNames = (Get-ChildItem $publishDir).Name
+foreach ($item in Get-ChildItem $ServerDir) {
+    if ($item.Name -eq 'app-data') { continue }
+    if ($item.Name -like 'appsettings*.json') { continue }
+    # 'runtimes' is publish output of the older portable style (the new self-contained
+    # publish flattens it away). It belongs with the old build in -prev so a rollback
+    # still has its native libraries - it is not a keepsake.
+    if ($item.Name -eq 'runtimes') { continue }
+    if ($publishNames -contains $item.Name) { continue }
+    if (-not (Test-Path $atticDir)) { New-Item -ItemType Directory -Path $atticDir | Out-Null }
+    $dest = Join-Path $atticDir $item.Name
+    if (Test-Path $dest) { $dest = Join-Path $atticDir "$($item.Name)-$stamp" }
+    Move-Item $item.FullName $dest
+    Write-Host "attic: $($item.Name)"
+}
 
 # The swap. Renames and the app-data move are instant same-volume operations, so the
 # stopped window is dominated by the file copy of the new build, not the data.
