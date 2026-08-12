@@ -122,6 +122,19 @@ public sealed class PasswordResetFlowTests : IDisposable
     }
 
     [Fact]
+    public void A_null_code_throws_ArgumentNull_not_Format()
+    {
+        // The premise behind ResetPassword's explicit code guard. The page catches
+        // FormatException around the decode, but a NULL code throws ArgumentNullException —
+        // which sailed past that catch and, because it fired only after the user lookup
+        // branched, answered 500 for existing accounts and 302 for unknown ones: the
+        // account-enumeration oracle the feature's review found. If this assertion ever
+        // starts failing (the framework unifying the exception types), the guard has become
+        // belt-and-braces rather than load-bearing — it should stay either way.
+        Assert.Throws<ArgumentNullException>(() => WebEncoders.Base64UrlDecode(null!));
+    }
+
+    [Fact]
     public async Task A_used_token_stops_working()
     {
         // The email says "stops working once used" — true because a successful reset rotates the

@@ -25,8 +25,12 @@ public sealed class SmtpAccountMailer(IOptions<EmailOptions> options) : IAccount
         // The IsConfigured guard above guarantees SmtpHost (and From, used in BuildReset), and
         // startup validation pairs SmtpUser with SmtpPassword — the compiler just can't see
         // through the properties, hence the !s.
-        // Auto: implicit TLS on 465, STARTTLS on 587 — whichever the configured port implies.
-        await client.ConnectAsync(o.SmtpHost!, o.SmtpPort, SecureSocketOptions.Auto, ct);
+        // 465 = implicit TLS; anything else = STARTTLS, MANDATORY — not SecureSocketOptions.Auto,
+        // whose 587 behavior is StartTls*WhenAvailable*: against a server (or an active attacker
+        // stripping the EHLO) that offers none, Auto continues in cleartext, credentials and
+        // reset link included. StartTls fails closed instead.
+        var tls = o.SmtpPort == 465 ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTls;
+        await client.ConnectAsync(o.SmtpHost!, o.SmtpPort, tls, ct);
         if (!string.IsNullOrWhiteSpace(o.SmtpUser))
         {
             await client.AuthenticateAsync(o.SmtpUser, o.SmtpPassword!, ct);
