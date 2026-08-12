@@ -1,8 +1,10 @@
 @page "/Account/Login"
 @attribute [AllowAnonymous]
+@using Microsoft.Extensions.Options
 @inject SignInManager<AppUser> SignInManager
 @inject IdentityRedirectManager RedirectManager
 @inject ILogger<Login> Logger
+@inject IOptions<EmailOptions> Email
 
 <PageTitle>Sign in — Shelf Aware</PageTitle>
 
@@ -26,6 +28,12 @@
     </label>
     <button type="submit" class="auth-submit">Sign in</button>
 </EditForm>
+
+@if (Email.Value.IsConfigured)
+{
+    @* Config-gated like the external providers below: no email infrastructure, no dead link. *@
+    <p class="muted auth-alt"><a href="Account/ForgotPassword">Forgot your password?</a></p>
+}
 
 @if (externalSchemes.Length > 0)
 {
