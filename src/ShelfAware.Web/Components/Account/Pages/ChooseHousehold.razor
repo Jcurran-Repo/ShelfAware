@@ -85,6 +85,7 @@
         {
             await SignInManager.RefreshSignInAsync(user);
             RedirectManager.RedirectTo("");
+            return;
         }
 
         // The same gate registration uses: a deployment that isn't accepting new households doesn't start
@@ -98,6 +99,19 @@
         if (user is null)
         {
             RedirectManager.RedirectTo("Account/Login");
+            return;
+        }
+
+        // Already in a household — nothing to choose, and choosing AGAIN would REPLACE it. This is
+        // reachable without malice: a double-click or a second onboarding tab posts here after the
+        // first choice landed, the OnInitialized redirect does not stop a form handler running
+        // (BlazorDisableThrowNavigationException — NavigateTo returns without unwinding), and
+        // CreateForAsync/JoinAsync set HouseholdId unconditionally, silently orphaning the first
+        // household and everything in it. Found by the forgot-password review's sibling hunt.
+        if (!string.IsNullOrEmpty(user.HouseholdId))
+        {
+            await SignInManager.RefreshSignInAsync(user);
+            RedirectManager.RedirectTo("");
             return;
         }
 

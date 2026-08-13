@@ -93,9 +93,9 @@ Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptT
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1465 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1481 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
-bUnit pages/components — see items 31, 42 and 43).
+bUnit pages/components — see items 31, 42, 43 and 45).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -2018,6 +2018,79 @@ bUnit pages/components — see items 31, 42 and 43).
    real-world tester on the family box, which also needs its first publish since mid-July
    (`publish-family.ps1` to script it — AdditiveSchema handles the in-place DB migration, backup set
    first).
+
+45. **Forgot password + the family publish script (2026-08-12, branch `feature/forgot-password`).**
+   Born from Jordan's wife forgetting hers; she is the planned first real-world tester once the family
+   box gets its first publish since mid-July. Seven commits, four independent review rounds (every
+   round found something until the last — the house pattern held to the end), **1481 tests green, 0
+   warnings**, the whole flow live-proven: a real Gmail SMTP send driven through the form's own
+   protocol (antiforgery + `_handler` via curl), the email in Jordan's inbox, the link clicked, the
+   password reset, the new one signing in.
+   - **The feature:** `EmailOptions` ("Email" section; all-or-nothing `ValidateOnStart` — a partial
+     section refuses to boot, live-verified) + `IAccountMailer`/`SmtpAccountMailer` (MailKit) + two
+     static-SSR pages. **`EmailOptions.IsConfigured` is THE one definition of "this deployment can
+     send email"** — the sign-in link, `/Account/ForgotPassword`'s explainer, and Settings' wording
+     all gate on it, so the surfaces can't drift. Unconfigured deployments (droplet demo, keyless
+     self-hosts) are untouched: the feature simply doesn't exist anywhere it shows.
+   - ⚠️ **An `OnInitialized` redirect does NOT stop a form handler, and every static-SSR handler must
+     self-guard.** With `BlazorDisableThrowNavigationException`, `NavigateTo` records the redirect
+     and RETURNS — the framework still invokes the form handler in the same request.
+     `IdentityRedirectManager`'s docstring warns "callers must return", but returning from
+     `OnInitialized` is not enough. The review proved it with probes: a code-less POST to
+     ResetPassword reached the handler, `Base64UrlDecode(null)` threw `ArgumentNullException` (NOT
+     the `FormatException` the catch expected) AFTER the user lookup branched — **302 for unknown
+     emails, 500 for existing ones: an account-enumeration oracle on the page built to prevent one.**
+     Fixed by guarding `Code` FIRST (re-probed live: 302/302); a flow test pins the framework premise.
+     The sibling hunt then found the same shape twice, pre-existing: **ChooseHousehold's handler could
+     silently REPLACE a household** (double-click / second onboarding tab → `CreateForAsync` runs
+     again → the first household orphaned with its pantry) and ChangePassword could 500 on a
+     deleted-account cookie. Both guarded now.
+   - **Enumeration discipline:** ForgotPassword gives ONE redirect-with-status response for every
+     outcome — unknown email, sent, and **send failure** (which can only occur on the account-exists
+     branch, so surfacing it would answer exactly the question the form refuses to). Timing residual
+     documented-accepted; both new POSTs sit under the existing `/Account` per-IP limit. Mandatory
+     STARTTLS (review finding: `SecureSocketOptions.Auto` on 587 is StartTls*WhenAvailable* — an
+     active attacker stripping the EHLO got credentials + reset link in CLEARTEXT; now 465→SslOnConnect
+     else StartTls, fails closed — a plaintext-only localhost relay won't work, deliberately). Host
+     pinning documented (`AllowedHosts` in env.example + the runbook's Nginx note): every current
+     front door pins the hostname, but the reset link is built from the request Host, so the Nginx
+     path now says pin it or set `AllowedHosts`.
+   - ⚠️ **The Account pages still have NO test harness** (none ever did — bUnit can't drive their form
+     posts), so the oracle guard and both sibling guards are review- and live-probe-verified only;
+     the flow tests pin the Identity-layer premises (token round-trip through the pages' exact
+     Base64Url transport, tamper→InvalidToken, policy-vs-token error separation, stamp rotation =
+     other-session eviction, single-use). Three logic mutations each killed exactly their tests.
+   - **Secrets:** the Gmail app password (2FA'd for this) went file → user-secrets → the family
+     server's `appsettings.json` through shell variables only, never echoed. ⚠️ The drop file landed
+     at `src\app-data\` — a NOT-ignored sibling of the real gitignored path — caught untracked and
+     destroyed after transfer; `git log --all` confirms it never entered history. The family config
+     edit was a blind text insert after the opening brace (comments make ConvertFrom-Json a trap),
+     with a timestamped `.bak` kept.
+   - **`deploy/publish-family.ps1` — the family box's stage-and-swap publish**, reviewed twice before
+     ever touching the live server, which is the only reason it's trustworthy:
+     ⚠️ a `/MIR`-mirror draft's **list-only dry run** showed it would have DELETED the July pre-v3
+     backup at the server root (`/XD app-data` protects only the literal name) — rehearse any
+     destructive filesystem tool with `/L` first. It swaps instead: keepsakes sweep to
+     `ShelfAware-server-attic` (Jordan's call: relocate, never delete; `runtimes` deliberately
+     excepted — it's OLD portable-layout publish output a rollback needs). ⚠️ The review then found a
+     **compound data-loss chain**: fail mid-copy → reboot → the boot task auto-creates an EMPTY
+     app-data → a re-run's precondition passes → `-prev` deleted with the REAL database inside.
+     Killed with three independent defenses: **data moves FIRST** (instant same-volume `Move-Item`
+     before the slow binary copy), **deleting `-prev` refuses when it still holds an app-data** (the
+     failed-swap fingerprint), and the task is **disabled during the swap** (a reboot can't
+     interleave). Failure posture, from the final round (which caught the disable fix's own
+     regression): pre-swap throw → task re-enabled, aborted publish ≠ outage; mid-swap throw →
+     deliberately down with state-aware advice. Port 5179 is a param, verified against the live task.
+     ⚠️ **MUST run from an ELEVATED PowerShell** — controlling the scheduled task
+     (Disable/Stop/Enable/Start) is access-denied otherwise (HRESULT 0x80070005, found on the first
+     real run attempt); the script checks `IsInRole(Administrator)` FIRST, before the ~1-min build, so
+     a non-elevated run fails in a second with a clear message and never touches the live box. Claude's
+     own tool shell is non-elevated and cannot run this — the publish is Jordan's to run.
+   - **Publish-ready state:** the family server's `appsettings.json` already carries the Email
+     section; the runbook trio (backup set, AdditiveSchema in-place migration, click-around after)
+     applies; the publish brings v3.5→today (variety, expiration, Reports, counting, census, tour)
+     along with the reset link. (Merge note: item 44 lives on `feature/family-cloudflare` — whichever
+     branch merges second resolves CLAUDE.md by ordering 44 before 45.)
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

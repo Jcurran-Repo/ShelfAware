@@ -138,7 +138,8 @@ builder.Services.ConfigureApplicationCookie(options =>
 
 builder.Services.AddIdentityCore<AppUser>(options =>
 {
-    // No email infrastructure yet (deliberate — see CLAUDE.md), so nothing to confirm.
+    // Sign-in never requires a confirmed address: the only mail the app can send — and only when
+    // Email: is configured at all — is the password reset (EmailOptions; config-gated).
     options.SignIn.RequireConfirmedAccount = false;
     options.User.RequireUniqueEmail = true;
     // Length beats composition rules (NIST 800-63B): 10+ characters, no forced symbol soup.
@@ -173,6 +174,21 @@ builder.Services.AddOptions<AuthOptions>()
         "Auth:InviteCodeLifetimeDays must be at least 1, or absent for codes that never expire. " +
         "0 or negative would silently mean 'never', which is not what anyone types 0 to get.")
     .ValidateOnStart();
+// Password-reset email (the app's only outbound mail). All-or-nothing, validated at startup: a
+// wholly absent Email: section means the feature is off everywhere it shows (the sign-in link,
+// /Account/ForgotPassword, Settings' wording — all gated on the ONE EmailOptions.IsConfigured);
+// a partially present one is almost certainly a typo'd deploy, so the app won't boot rather than
+// half-work.
+builder.Services.AddOptions<EmailOptions>()
+    .Bind(builder.Configuration.GetSection(EmailOptions.SectionName))
+    .Validate(o => o.IsConfigured || o.IsWhollyAbsent,
+        "Email: is partially configured. Set BOTH Email:SmtpHost and Email:From (plus " +
+        "Email:SmtpUser/Email:SmtpPassword if your relay needs them), or remove the whole section.")
+    .Validate(o => o.CredentialsPaired,
+        "Email:SmtpUser and Email:SmtpPassword go together — set both or neither.")
+    .Validate(o => o.SmtpPort > 0, "Email:SmtpPort must be a positive port number.")
+    .ValidateOnStart();
+builder.Services.AddSingleton<IAccountMailer, SmtpAccountMailer>();
 builder.Services.AddScoped<HouseholdService>();
 
 // Auth cookies + antiforgery tokens are encrypted with DataProtection keys. Persist them next to the

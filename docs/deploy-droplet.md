@@ -206,6 +206,14 @@ believes every request is plain `http`, so HSTS never engages and Google sign-in
 generates an `http://` redirect URI that Google refuses. (Auth cookies stay `Secure`
 either way — production pins that.)
 
+One more on this path: **pin the Host.** Caddy only proxies its exact site hostname,
+but `proxy_set_header Host $host` forwards whatever the client sent — and the
+password-reset email builds its link from that header, so a permissive/default Nginx
+server block turns a forged Host into a link-poisoning vector. Either make the Nginx
+`server_name` exact (no default catch-all reaching this app), or set
+`AllowedHosts=<your-domain>` in `/etc/shelfaware/env` so the app itself refuses
+foreign hosts — ideally both.
+
 ## What's verified and what isn't
 
 The publish path is verified from this repo on Windows: `dotnet publish -r linux-x64

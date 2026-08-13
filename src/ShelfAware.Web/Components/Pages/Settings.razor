@@ -14,6 +14,7 @@
 @inject CircuitAiSettings AiSettings
 @inject AiUsageMeter UsageMeter
 @inject IOptions<LlmOptions> LlmConfig
+@inject IOptions<EmailOptions> EmailConfig
 @inject ILogger<Settings> Logger
 @inject UserDataService UserData
 @inject TourCoordinator Tour
@@ -118,8 +119,18 @@
             keep their account, they're just not in a household until they join or start one.
         </p>
         <p class="muted small">
-            Forgot a password? There's no email reset yet — whoever runs this server can recreate the
-            account. The pantry is untouched either way: it belongs to the household, not the account.
+            @if (EmailConfig.Value.IsConfigured)
+            {
+                @:Forgot a password? Use the "Forgot your password?" link on the sign-in page — a
+                @:reset link goes to the account's email. The pantry is untouched either way: it
+                @:belongs to the household, not the account.
+            }
+            else
+            {
+                @:Forgot a password? There's no email reset on this deployment — whoever runs this
+                @:server can recreate the account. The pantry is untouched either way: it belongs
+                @:to the household, not the account.
+            }
         </p>
     }
 </section>
