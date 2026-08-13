@@ -576,4 +576,9 @@ app.MapRazorComponents<App>()
 // The logout POST (auth cookies can't be cleared over a circuit).
 app.MapAdditionalIdentityEndpoints();
 
+// GET /dev/login — a Development-only sign-in past the auth wall. Self-gating: maps nothing unless
+// DevAuth.IsEnabled (Development + the Dev:QuickLogin flag), so this line is inert on every real
+// deployment. See ShelfAware.Web.Auth.DevAuth.
+app.MapDevQuickLogin();
+
 app.Run();
