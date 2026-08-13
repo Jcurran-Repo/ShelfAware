@@ -100,14 +100,27 @@ Disable-ScheduledTask -TaskName $TaskName | Out-Null
 $swapStarted = $false
 try {
     Stop-ScheduledTask -TaskName $TaskName
-    $deadline = (Get-Date).AddSeconds(30)
+    # A short grace for a responsive stop to finish on its own.
+    $deadline = (Get-Date).AddSeconds(10)
     while ((Get-Date) -lt $deadline) {
         # Match on Path, not name: the DEV server is also ShelfAware.Web (the documented gotcha).
         if ($null -eq (Get-Process ShelfAware.Web -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $serverExe })) { break }
         Start-Sleep -Seconds 1
     }
-    if (Get-Process ShelfAware.Web -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $serverExe }) {
-        throw 'The server process did not exit within 30s - not proceeding while its files are in use.'
+    # Stop-ScheduledTask does NOT reliably terminate this app: the boot-launched process outlives the
+    # task engine's control of it, so the task "stops" while the exe runs on and keeps the files
+    # locked (found on the first live run - the process was untouched, same PID, after the stop).
+    # Force-kill the specific exe by PATH - that is what actually releases the locks the swap needs.
+    # The task is already DISABLED so nothing relaunches it; safe because SQLite's WAL recovers on
+    # next open and the pre-publish backup below captures it.
+    $lingering = @(Get-Process ShelfAware.Web -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $serverExe })
+    if ($lingering.Count -gt 0) {
+        Write-Host "Task stop left the server running - force-stopping PID(s) $($lingering.Id -join ', ')..."
+        $lingering | Stop-Process -Force
+        Start-Sleep -Seconds 3
+    }
+    if (@(Get-Process ShelfAware.Web -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $serverExe }).Count -gt 0) {
+        throw 'The server process could not be stopped even by force - not proceeding while its files are in use.'
     }
 
     # Pre-publish DB backup, taken with the app STOPPED so the -wal files are consistent.
@@ -184,10 +197,13 @@ try {
 }
 catch {
     if (-not $swapStarted) {
-        # Nothing was swapped - the live install is intact, so put the task back the
-        # way we found it. An aborted publish must not double as a family-site outage.
+        # Nothing was swapped - the live install (old build) is fully intact. Re-enable AND start
+        # the task: the stop step may have force-killed the old process, so the site could be down
+        # right now, and starting relaunches the intact old build - an aborted publish is never an
+        # outage. Start on a still-running instance is a no-op (MultipleInstances=IgnoreNew).
         Enable-ScheduledTask -TaskName $TaskName | Out-Null
-        Write-Host 'Publish aborted before the swap - the existing install is intact and the task is re-enabled.' -ForegroundColor Yellow
+        Start-ScheduledTask -TaskName $TaskName
+        Write-Host 'Publish aborted before the swap - the existing install is intact and running again.' -ForegroundColor Yellow
     }
     throw
 }
