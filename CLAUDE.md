@@ -80,7 +80,7 @@ as overkill "because it's single-user."
 | 2 — Extraction pipeline | ✅ Done, 3 acceptance criteria verified with live calls |
 | 3 — Prediction engine + dashboard | ✅ Done, engine tests green + dashboard verified |
 | 4 — Chat tools (IPantryChat) | ✅ Done, acceptance verified with a live tool-call |
-| 5 — Cloud deploy + README | ◑ README ✅ done + pushed (`4757839`); **LIVE on the DigitalOcean droplet since 2026-08-11** (demo box, BYOK; deployed end to end via `deploy/deploy.ps1` per the runbook — publish → install.sh → systemd → Caddy cert → registration). First live deploy surfaced the systemd-no-locale gotcha (invariant-culture `¤` prices) — fixed in the kit (`LANG` in `deploy/env.example`). Remaining: `docs/demo.gif` + `docs/accuracy.png` (README URL swapped to https://demo.shelfaware.net) |
+| 5 — Cloud deploy + README | ◑ README ✅ done + pushed (`4757839`); **LIVE on the DigitalOcean droplet since 2026-08-11** (demo box, BYOK; deployed end to end via `deploy/deploy.ps1` per the runbook — publish → install.sh → systemd → Caddy cert → registration). First live deploy surfaced the systemd-no-locale gotcha (invariant-culture `¤` prices) — fixed in the kit (`LANG` in `deploy/env.example`). Remaining: `docs/accuracy.png` only (README line-190 TODO) — `docs/demo.gif` has existed since 2026-07-12 (`5f34b24`), though it pre-dates every feature from v3.5 on, so re-recording it is optional polish, not a gap |
 
 Everything below is built, verified live, committed, and **pushed** (master, through the 2026-07-05
 v2.3 full-site-audit + BYOK arc — see item 8 below and timeline.md).
@@ -116,7 +116,9 @@ bUnit pages/components — see items 31, 42 and 43).
    usage-focused" feedback — now covers the v2 arc (voice, graduated auto-import, two-stream
    cadence) and the both-halves accuracy story (extraction eval + prediction backtest).
    **Placeholders Jordan must still fill:** live-demo URL (`<!-- LIVE_DEMO_URL -->`),
-   `docs/demo.gif`, `docs/accuracy.png`.
+   `docs/demo.gif`, `docs/accuracy.png`. **[As of 2026-08-11 only `accuracy.png` remains:
+   demo.gif landed 2026-07-12 (`5f34b24`); the URL swapped to demo.shelfaware.net when the
+   droplet went live.]**
 6. **Small UI adds:** always-available **"Out" button** on the Products grid (`9c78a14`) — the
    dashboard only lists running-low items, so the grid is the home for marking any product out;
    grocery-list item names link to `/product/{id}` (`b6afb35`).
@@ -190,6 +192,8 @@ bUnit pages/components — see items 31, 42 and 43).
      - **README/BYOK docs DONE (2026-07-09):** "Whose keys?" section in the README (byok/managed/`Llm:KeyMode`,
        quota keys, the honest key-custody story). The remaining README placeholders are the two captures —
        capture plan in `docs/demo-gif-storyboard.md` (delete that file when `docs/demo.gif` lands).
+       **[demo.gif landed + storyboard deleted 2026-07-12 (`5f34b24`); this note was never updated — which
+       cost a wrong "remaining work" claim on 2026-08-11. Only `accuracy.png` is still open.]**
    - **Fixes** — (a) short-cadence items never left Running Low after a restock: the flat 3-day DueSoon floor
      could span the whole cadence, so a fresh stock-back re-anchored straight back into the window; now capped
      at `interval - 1`, regression-tested (`6b2c32b`). (b) `/recipes?uses=` only matched top-level recipes, so an
@@ -1989,6 +1993,32 @@ bUnit pages/components — see items 31, 42 and 43).
      (case disabled + branches swapped, each killing exactly the two new page tests). **1465 tests green,
      0 warnings** on a non-incremental Release build (+2), read off the final run.
 
+44. **The family instance went public — Cloudflare Tunnel + Access (2026-08-12, branch
+   `feature/family-cloudflare`).** The `ShelfAware-server` publish on Jordan's PC (port 5179, boot
+   scheduled task) is now reachable at **https://family.shelfaware.net**: `cloudflared` as a Windows
+   service dials out to Cloudflare, a published application route maps the hostname to
+   `localhost:5179`, and **Cloudflare Access** (One-time PIN to two allow-listed emails, 1-month
+   sessions) gates it at the edge. The tailnet door stays; the demo droplet is unaffected.
+   **Zero app changes** — probed first: loopback-only binding, `AllowRegistration: false`, managed
+   keys + quotas, and the loopback-proxy forwarded-headers trust all already fit this shape.
+   `docs/family-cloudflare.md` is the full as-built runbook, including the SIX dashboard traps the
+   2026 "Tunnels & Mesh" UI sprang in one evening. The two lessons that generalize:
+   - ⚠️ **Judge Access state by the newest real log row, never by the config screens or the policy
+     tester.** A policy showed as attached while the edge evaluated ZERO policies (real denial log);
+     the fix was rebuilding the policy inline on the app. And the tester is unusable in a virgin org
+     (`invalid_user_id` — it simulates an EXISTING user; there were none until the first successful
+     login), reporting "0 policies evaluated" as its own failure debris. Verified working =
+     `"connection": "onetimepin", "allowed": true` in the Access log, then data on screen.
+   - ⚠️ **A negative DNS answer cached during setup outlives the fix** — SOA minimum here is 1800s,
+     per resolver (router, each carrier). The tells and the don't-re-edit-healthy-config rule are in
+     the runbook; `Resolve-DnsName … -Server 1.1.1.1` is the truth during the countdown.
+   Queued next (Jordan's call, 2026-08-12): **forgot-password** — an `IEmailSender`/SMTP seam
+   (config-gated like Google OAuth), Identity's existing reset-token flow, two static-SSR Account
+   pages + tests + the gate; his wife (currently locked out, in no hurry) is the planned first
+   real-world tester on the family box, which also needs its first publish since mid-July
+   (`publish-family.ps1` to script it — AdditiveSchema handles the in-place DB migration, backup set
+   first).
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active
@@ -1998,8 +2028,13 @@ OutNow sets the effective due date to the outage date so the card no longer says
 Deferred / backlog: **the Phase-5 cloud deploy is LIVE — a DigitalOcean droplet, not Azure**
 (Jordan's calls: target 2026-08-09, deployed end to end 2026-08-11) via the committed kit —
 `docs/deploy-droplet.md` + `deploy/` (systemd unit, Caddyfile, env template, droplet-side
-`install.sh`, and `deploy.ps1` to publish/ship from Windows). Still pending: `docs/demo.gif` +
-`docs/accuracy.png` (the README live-demo link points at https://demo.shelfaware.net now). **Deploy gotchas — timezone and
+`install.sh`, and `deploy.ps1` to publish/ship from Windows). Still pending: `docs/accuracy.png`
+(the README's one remaining TODO, line ~190). NOT pending despite what this note long claimed:
+`docs/demo.gif` has existed since 2026-07-12 (`5f34b24`, which also deleted its storyboard per that
+file's own lifecycle note) — but it was captured before v3.5+, so it shows none of variety /
+expiration / Reports / the counting arc / the census / the tour; re-recording is optional polish
+and needs a NEW capture plan first (the old storyboard is gone). The README live-demo link points
+at https://demo.shelfaware.net. **Deploy gotchas — timezone and
 locale, same root:** every "today" in the app (purchases, signals, predictions) is server-local
 `DateTime.Today`/`DateTimeOffset.Now`, deliberately consistent, and every price formats on the
 server's culture — so a box with no timezone/locale set files evening purchases on tomorrow's
