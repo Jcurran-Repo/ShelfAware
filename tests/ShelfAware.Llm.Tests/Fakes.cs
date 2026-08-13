@@ -222,6 +222,11 @@ internal sealed class FakePantryStore : IPantryStore
     public Task<bool> SetPurchaseQuantityAsync(int purchaseId, decimal quantity, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    // No chat tool edits a specific past purchase's brand (it's a click-this-row UI action, like the
+    // quantity correction), so the chat layer never calls this — unsupported, same as above.
+    public Task<bool> SetPurchaseBrandAsync(int purchaseId, string? brand, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
     public List<(int ProductId, decimal Quantity, bool Relative, bool StopCounting)> Quantities { get; } = [];
 
     /// <summary>Mirrors the real store's REFUSALS, not just its happy path — a fake that accepts more
@@ -313,6 +318,8 @@ internal sealed class ThrowingPantryStore(params Product[] products) : IPantrySt
         CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("simulated DB write failure");
     public Task<bool> SetPurchaseQuantityAsync(int purchaseId, decimal quantity, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("simulated DB write failure");
+    public Task<bool> SetPurchaseBrandAsync(int purchaseId, string? brand, CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("simulated DB write failure");
     public Task<bool> SetDefaultUnitAsync(int productId, string? unit, CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("simulated DB write failure");

@@ -145,6 +145,25 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory) : IPantryStore
         return true;
     }
 
+    public async Task<bool> SetPurchaseBrandAsync(
+        int purchaseId, string? brand, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        // The filtered lookup is the in-household existence rule — a raw id can't reach another
+        // household's purchase. No Include(Product): brand moves no count, so nothing else is touched.
+        var purchase = await db.PurchaseEvents
+            .FirstOrDefaultAsync(p => p.Id == purchaseId, cancellationToken);
+        if (purchase is null) return false;
+
+        // Blank folds to null — the same "unbranded" the Brands-bought grouping treats whitespace as,
+        // so clearing a brand and never having one land in one state, not two.
+        purchase.Brand = string.IsNullOrWhiteSpace(brand) ? null : brand.Trim();
+        // The receipt line is left alone, same as SetPurchaseQuantityAsync: the receipt is the record
+        // of what was read, this page is the record of the pantry.
+        await db.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
     public async Task<bool> SetQuantityAsync(
         int productId, decimal quantity, bool relative = false, bool stopCounting = false,
         CancellationToken cancellationToken = default)

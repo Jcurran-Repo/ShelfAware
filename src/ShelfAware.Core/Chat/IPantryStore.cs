@@ -51,6 +51,15 @@ public interface IPantryStore
     Task<bool> SetPurchaseQuantityAsync(
         int purchaseId, decimal quantity, CancellationToken cancellationToken = default);
 
+    /// <summary>Correct a recorded purchase's brand — a misread or missing receipt brand. Unlike the
+    /// quantity correction this moves NO count and fires nothing: a product is brand-agnostic and the
+    /// cadence pools across every brand, so the brand is cosmetic — it only feeds the "usual brand"
+    /// hint and the Brands-bought breakdown. A null or blank value clears it back to unbranded. The
+    /// receipt's own line is left alone (the audit copy of what was read), same as the quantity
+    /// correction. Returns false only when the purchase isn't found (in this household).</summary>
+    Task<bool> SetPurchaseBrandAsync(
+        int purchaseId, string? brand, CancellationToken cancellationToken = default);
+
     /// <summary>THE write path for a human's count (§13.3). Shared by the product page, the one-tap
     /// adjusters and the <c>set_quantity</c> tool, because §13.4's asserted-zero rule has to hold on
     /// every road in: a person saying "none left" writes a real OutNow, and only a person's does.
