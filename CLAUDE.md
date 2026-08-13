@@ -2055,6 +2055,11 @@ bUnit pages/components — see items 31, 42, 43 and 45).
      interleave). Failure posture, from the final round (which caught the disable fix's own
      regression): pre-swap throw → task re-enabled, aborted publish ≠ outage; mid-swap throw →
      deliberately down with state-aware advice. Port 5179 is a param, verified against the live task.
+     ⚠️ **MUST run from an ELEVATED PowerShell** — controlling the scheduled task
+     (Disable/Stop/Enable/Start) is access-denied otherwise (HRESULT 0x80070005, found on the first
+     real run attempt); the script checks `IsInRole(Administrator)` FIRST, before the ~1-min build, so
+     a non-elevated run fails in a second with a clear message and never touches the live box. Claude's
+     own tool shell is non-elevated and cannot run this — the publish is Jordan's to run.
    - **Publish-ready state:** the family server's `appsettings.json` already carries the Email
      section; the runbook trio (backup set, AdditiveSchema in-place migration, click-around after)
      applies; the publish brings v3.5→today (variety, expiration, Reports, counting, census, tour)

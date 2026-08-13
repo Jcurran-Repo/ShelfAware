@@ -1,7 +1,9 @@
 # Publishes ShelfAware to the family box - THIS machine's ShelfAware-server folder, the
 # one the "ShelfAware Server" scheduled task runs at boot and the tailnet + the
 # family.shelfaware.net tunnel both front. Companion to deploy.ps1 (the droplet); no ssh
-# here, just local folders, and the same stage-and-swap shape as install.sh:
+# here, just local folders, and the same stage-and-swap shape as install.sh. MUST run from
+# an ELEVATED (Run as Administrator) PowerShell: controlling the scheduled task
+# (Disable/Stop/Enable/Start) is access-denied otherwise. The script checks this first.
 #
 #   publish (self-contained win-x64) -> disable + stop the task -> back up the DBs +
 #   keys -> sweep loose keepsakes to the attic -> rename the live folder aside as
@@ -40,6 +42,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Controlling the scheduled task needs elevation. Check FIRST, before the ~1-minute publish, so a
+# non-elevated run fails in a second with a clear reason instead of dying at Disable-ScheduledTask
+# (HRESULT 0x80070005) after the build - the exact confusing failure that motivated this guard.
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    throw "This script controls the '$TaskName' scheduled task and must run from an ELEVATED PowerShell. Right-click PowerShell -> Run as administrator, then re-run."
+}
 
 $repoRoot   = Split-Path -Parent $PSScriptRoot
 $project    = Join-Path $repoRoot 'src\ShelfAware.Web'
