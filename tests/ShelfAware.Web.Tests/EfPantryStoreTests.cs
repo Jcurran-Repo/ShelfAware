@@ -213,15 +213,18 @@ public class EfPantryStoreTests : IDisposable
     {
         // The filtered lookup is the tenancy boundary: another household's id answers like one that
         // never existed (false), and the purchase is left untouched — the drill every write path walks.
+        // The owner sets a real brand first, so the assertion proves the foreign write can't OVERWRITE
+        // it (the actual risk), not merely that it can't create one.
         var owner = _db.HouseholdId;
         var (_, purchaseId) = await CountedWithPurchase(onHand: 3, bought: 1);
+        Assert.True(await _store.SetPurchaseBrandAsync(purchaseId, "Original"));
         _db.HouseholdId = "someone-else";
 
         Assert.False(await _store.SetPurchaseBrandAsync(purchaseId, "Sneaky"));
 
         _db.HouseholdId = owner;
         await using var db = _db.CreateDbContext();
-        Assert.Null((await db.PurchaseEvents.AsNoTracking().SingleAsync(p => p.Id == purchaseId)).Brand);
+        Assert.Equal("Original", (await db.PurchaseEvents.AsNoTracking().SingleAsync(p => p.Id == purchaseId)).Brand);
     }
 
     [Fact]
