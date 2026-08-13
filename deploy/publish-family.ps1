@@ -116,7 +116,10 @@ try {
     $lingering = @(Get-Process ShelfAware.Web -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $serverExe })
     if ($lingering.Count -gt 0) {
         Write-Host "Task stop left the server running - force-stopping PID(s) $($lingering.Id -join ', ')..."
-        $lingering | Stop-Process -Force
+        # SilentlyContinue so a process that exits on its own between the enumeration above and this
+        # kill doesn't false-abort the publish (ErrorActionPreference is Stop). The re-check below is
+        # the real gate on whether it's actually gone.
+        $lingering | Stop-Process -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 3
     }
     if (@(Get-Process ShelfAware.Web -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $serverExe }).Count -gt 0) {
@@ -162,15 +165,20 @@ try {
     # Still pre-swap: the -prev refusal at the top guarantees this holds no app-data.
     if (Test-Path $prevDir) { Remove-Item -Recurse -Force $prevDir }
 
-    # The swap. Data moves FIRST: every operation between the rename and the app-data
-    # move is an instant same-volume op, so there is no meaningful window in which the
-    # live folder exists without the household's data - the compound loss chain this
-    # script's review found (fail mid-copy -> reboot -> the app auto-creates an EMPTY
-    # app-data -> a re-run deletes -prev with the real data inside) needs that window
-    # to start.
+    # The swap opens with an atomic same-volume folder rename, kept in the PRE-swap section
+    # deliberately: if it throws (a file handle lingering just after the force-kill), $ServerDir is
+    # untouched, so the outer catch's Enable+Start recovers the intact old build automatically. The
+    # flag flips to mid-swap on the very next statement - nothing can throw in between - so every op
+    # that actually disturbs the rebuilt folder stays classified disabled-on-failure.
+    Rename-Item $ServerDir $prevDir
+
+    # Now the live folder is gone and being rebuilt. Data moves FIRST: every op here is an instant
+    # same-volume operation, so there is no meaningful window in which the live folder exists without
+    # the household's data - the compound loss chain this script's review found (fail mid-copy ->
+    # reboot -> the app auto-creates an EMPTY app-data -> a re-run deletes -prev with the real data
+    # inside) needs that window to start.
     $swapStarted = $true
     try {
-        Rename-Item $ServerDir $prevDir
         New-Item -ItemType Directory -Path $ServerDir | Out-Null
         Move-Item (Join-Path $prevDir 'app-data') $appData
         robocopy $publishDir $ServerDir /E /NFL /NDL /NJH /NJS | Out-Null
