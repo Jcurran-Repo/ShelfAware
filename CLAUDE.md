@@ -1993,6 +1993,32 @@ bUnit pages/components — see items 31, 42, 43 and 45).
      (case disabled + branches swapped, each killing exactly the two new page tests). **1465 tests green,
      0 warnings** on a non-incremental Release build (+2), read off the final run.
 
+44. **The family instance went public — Cloudflare Tunnel + Access (2026-08-12, branch
+   `feature/family-cloudflare`).** The `ShelfAware-server` publish on Jordan's PC (port 5179, boot
+   scheduled task) is now reachable at **https://family.shelfaware.net**: `cloudflared` as a Windows
+   service dials out to Cloudflare, a published application route maps the hostname to
+   `localhost:5179`, and **Cloudflare Access** (One-time PIN to two allow-listed emails, 1-month
+   sessions) gates it at the edge. The tailnet door stays; the demo droplet is unaffected.
+   **Zero app changes** — probed first: loopback-only binding, `AllowRegistration: false`, managed
+   keys + quotas, and the loopback-proxy forwarded-headers trust all already fit this shape.
+   `docs/family-cloudflare.md` is the full as-built runbook, including the SIX dashboard traps the
+   2026 "Tunnels & Mesh" UI sprang in one evening. The two lessons that generalize:
+   - ⚠️ **Judge Access state by the newest real log row, never by the config screens or the policy
+     tester.** A policy showed as attached while the edge evaluated ZERO policies (real denial log);
+     the fix was rebuilding the policy inline on the app. And the tester is unusable in a virgin org
+     (`invalid_user_id` — it simulates an EXISTING user; there were none until the first successful
+     login), reporting "0 policies evaluated" as its own failure debris. Verified working =
+     `"connection": "onetimepin", "allowed": true` in the Access log, then data on screen.
+   - ⚠️ **A negative DNS answer cached during setup outlives the fix** — SOA minimum here is 1800s,
+     per resolver (router, each carrier). The tells and the don't-re-edit-healthy-config rule are in
+     the runbook; `Resolve-DnsName … -Server 1.1.1.1` is the truth during the countdown.
+   Queued next (Jordan's call, 2026-08-12): **forgot-password** — an `IEmailSender`/SMTP seam
+   (config-gated like Google OAuth), Identity's existing reset-token flow, two static-SSR Account
+   pages + tests + the gate; his wife (currently locked out, in no hurry) is the planned first
+   real-world tester on the family box, which also needs its first publish since mid-July
+   (`publish-family.ps1` to script it — AdditiveSchema handles the in-place DB migration, backup set
+   first).
+
 45. **Forgot password + the family publish script (2026-08-12, branch `feature/forgot-password`).**
    Born from Jordan's wife forgetting hers; she is the planned first real-world tester once the family
    box gets its first publish since mid-July. Seven commits, four independent review rounds (every
