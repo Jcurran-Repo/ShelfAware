@@ -33,6 +33,26 @@ public sealed class ErrorLogSink
     /// <summary>Events lost since startup — to a full queue or a capture/persist failure.</summary>
     public long Dropped => Interlocked.Read(ref _dropped);
 
+    // The category exclusion alone is NOT a complete recursion break: a FAILING persist makes EF
+    // itself log at Error under Microsoft.EntityFrameworkCore.Database.Command — a category the
+    // capture must otherwise keep watching, because the app's own EF failures are exactly what an
+    // error log is for — and capturing that echo turns a persistently failing auth.db into a
+    // self-feeding busy loop (probed: one failed persist regenerated exactly one event). The
+    // writer opens this scope around each persist; AsyncLocal flows into EF's logging on that
+    // call's own async context and nowhere else. Suppressed events are skipped WITHOUT counting:
+    // they are the pipeline's own exhaust — the writer already counts and logs the failure once.
+    private static readonly AsyncLocal<bool> _persisting = new();
+
+    public static bool CaptureSuppressed => _persisting.Value;
+
+    public static PersistScope BeginPersist() => new();
+
+    public readonly struct PersistScope : IDisposable
+    {
+        public PersistScope() => _persisting.Value = true;
+        public void Dispose() => _persisting.Value = false;
+    }
+
     /// <summary>Non-blocking post. A full channel refuses the write; the event becomes a counted
     /// drop instead of a blocked log call.</summary>
     public bool TryPost(CapturedError e)

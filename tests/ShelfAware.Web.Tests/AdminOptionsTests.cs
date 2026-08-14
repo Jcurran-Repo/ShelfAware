@@ -39,6 +39,17 @@ public class AdminOptionsTests
     }
 
     [Fact]
+    public void A_null_entry_from_a_sloppy_config_never_throws()
+    {
+        // A literal null in the JSON array binds a null entry despite the array type — and this
+        // predicate runs inside the footer's AuthorizeView on every page, where a throw would
+        // take the whole layout down.
+        var options = new AdminOptions { Emails = [null!, "jordan@example.com"] };
+        Assert.True(options.IsAdmin(SignedIn("jordan@example.com")));
+        Assert.False(options.IsAdmin(SignedIn("wife@example.com")));
+    }
+
+    [Fact]
     public void An_empty_section_means_no_admin_exists_anywhere()
     {
         var options = new AdminOptions();

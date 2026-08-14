@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -175,6 +176,59 @@ public class ErrorLogTests : IDisposable
         Assert.Equal(1, sink.Dropped);
     }
 
+    [Fact]
+    public void Capture_is_suppressed_inside_a_persist_scope_and_resumes_after()
+    {
+        var sink = new ErrorLogSink();
+        using var factory = LoggerFactory.Create(b => b.AddProvider(new ErrorLogCaptureProvider(sink)));
+        var logger = factory.CreateLogger("Microsoft.EntityFrameworkCore.Database.Command");
+
+        using (ErrorLogSink.BeginPersist())
+        {
+            logger.LogError("Failed executing DbCommand");
+        }
+        Assert.False(sink.Channel.Reader.TryRead(out _));
+
+        logger.LogError("Failed executing DbCommand");
+        Assert.True(sink.Channel.Reader.TryRead(out _)); // the scope ended with its using
+    }
+
+    [Fact]
+    public async Task A_failing_persist_does_not_feed_efs_own_error_back_into_the_sink()
+    {
+        // The SECOND recursion road (the category exclusion covers only the first): a failing
+        // persist makes EF itself log at Error under a category the capture watches. Real broken
+        // table, real EF logging wired into the capture — without the writer's persist scope the
+        // echo would re-post, landing on the completed channel as a second counted drop; Dropped
+        // must stay exactly the writer's own 1.
+        var sink = new ErrorLogSink();
+        using var captureFactory = LoggerFactory.Create(b => b.AddProvider(new ErrorLogCaptureProvider(sink)));
+        using var conn = new SqliteConnection("DataSource=:memory:");
+        conn.Open();
+        var options = new DbContextOptionsBuilder<AuthDbContext>()
+            .UseSqlite(conn).UseLoggerFactory(captureFactory).Options;
+        await using (var db = new AuthDbContext(options))
+        {
+            await db.Database.EnsureCreatedAsync();
+            await db.Database.ExecuteSqlRawAsync("DROP TABLE ErrorLog;");
+        }
+        var writer = new ErrorLogWriter(sink, new ErrorLogStore(new FixedOptionsAuthDb(options)),
+            NullLogger<ErrorLogWriter>.Instance);
+        sink.TryPost(Event());
+        sink.Channel.Writer.Complete();
+
+        await writer.StartAsync(CancellationToken.None);
+        await writer.ExecuteTask!;
+
+        Assert.Equal(1, sink.Dropped);
+        Assert.False(sink.Channel.Reader.TryRead(out _));
+    }
+
+    private sealed class FixedOptionsAuthDb(DbContextOptions<AuthDbContext> options) : IDbContextFactory<AuthDbContext>
+    {
+        public AuthDbContext CreateDbContext() => new(options);
+    }
+
     // ---------------------------------------------------------------------------------- writer
 
     [Fact]
@@ -208,6 +262,48 @@ public class ErrorLogTests : IDisposable
         Assert.Equal(1, sink.Dropped);
         var row = Assert.Single(await Store().ListAsync());
         Assert.Equal("Survivor", row.LastMessage);
+    }
+
+    [Fact]
+    public async Task Shutdown_drains_queued_events_instead_of_abandoning_them()
+    {
+        var sink = new ErrorLogSink();
+        var writer = new ErrorLogWriter(sink, Store(), NullLogger<ErrorLogWriter>.Instance);
+        await writer.StartAsync(CancellationToken.None);
+
+        // Prove the loop is genuinely RUNNING before stopping: the runtime may start ExecuteAsync
+        // through a cancellable hop, and under a saturated pool a stop can cancel the loop before
+        // it ever ran — the first event landing is the aliveness signal that closes that race.
+        sink.TryPost(Event());
+        for (var waited = 0; (await Store().ListAsync()).Count == 0; waited += 50)
+        {
+            Assert.True(waited < 10_000, "the writer never started processing");
+            await Task.Delay(50);
+        }
+        sink.TryPost(Event(template: "Another site failed", message: "Another site failed"));
+
+        // If StopAsync ever stops completing the channel, the drain never ends and this hangs
+        // rather than fails — the timeout converts that into a clean failure.
+        await writer.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(2, (await Store().ListAsync()).Count);
+        Assert.Equal(0, sink.Dropped);
+    }
+
+    [Fact]
+    public async Task A_stop_that_beat_the_loop_counts_what_it_could_not_drain()
+    {
+        // The never-ran edge itself (here forced by never starting): whatever a stop cannot drain
+        // must land in the drop count — the one loss path that would otherwise be silent.
+        var sink = new ErrorLogSink();
+        var writer = new ErrorLogWriter(sink, Store(), NullLogger<ErrorLogWriter>.Instance);
+        sink.TryPost(Event());
+        sink.TryPost(Event(template: "Another site failed", message: "Another site failed"));
+
+        await writer.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(2, sink.Dropped);
+        Assert.False(sink.Channel.Reader.TryRead(out _)); // swept, not stranded
     }
 
     /// <summary>Fails the first CreateDbContext, then delegates — the shape of a transient DB

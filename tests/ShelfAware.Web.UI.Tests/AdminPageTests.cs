@@ -104,6 +104,27 @@ public class AdminPageTests : PageTestContext
     }
 
     [Fact]
+    public void The_report_cap_is_disclosed_when_hit()
+    {
+        // No silent caps: when the reader returns exactly its bound, the page says so.
+        Db.HouseholdId = "hh-a";
+        using (var db = Db.CreateDbContext())
+        {
+            for (var i = 0; i < AdminReportReader.MaxReports; i++)
+            {
+                db.BugReports.Add(new BugReport { Body = $"r{i}", CreatedAt = DateTimeOffset.Now });
+            }
+            db.SaveChanges();
+        }
+        Db.HouseholdId = "hh-test";
+
+        var cut = Render<Components.Pages.Admin>();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains($"Showing the newest {AdminReportReader.MaxReports} reports.", cut.Markup));
+    }
+
+    [Fact]
     public void Quiet_states_say_so_instead_of_rendering_nothing()
     {
         var cut = Render<Components.Pages.Admin>();

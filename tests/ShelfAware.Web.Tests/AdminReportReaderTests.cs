@@ -80,6 +80,27 @@ public class AdminReportReaderTests : IDisposable
     }
 
     [Fact]
+    public async Task The_report_list_is_bounded_at_the_newest_MaxReports()
+    {
+        // The same bounded posture as the error log's MaxRows: one prolific account must not be
+        // able to degrade the admin surface. The page discloses the cap; the reader enforces it.
+        _db.HouseholdId = "hh-a";
+        using (var db = _db.CreateDbContext())
+        {
+            for (var i = 0; i < AdminReportReader.MaxReports + 5; i++)
+            {
+                db.BugReports.Add(new BugReport { Body = $"report {i}", CreatedAt = DateTimeOffset.Now });
+            }
+            db.SaveChanges();
+        }
+
+        var reports = await Reader().ListBugReportsAsync();
+
+        Assert.Equal(AdminReportReader.MaxReports, reports.Count);
+        Assert.Equal($"report {AdminReportReader.MaxReports + 4}", reports[0].Report.Body); // newest survived the cap
+    }
+
+    [Fact]
     public async Task The_admin_reads_the_error_log_through_the_same_gate()
     {
         var store = new ErrorLogStore(_authDb);

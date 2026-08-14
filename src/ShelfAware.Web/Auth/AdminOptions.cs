@@ -31,6 +31,10 @@ public class AdminOptions
     public bool IsAdmin(ClaimsPrincipal user)
     {
         if (user.Identity is not { IsAuthenticated: true, Name: { Length: > 0 } email }) return false;
-        return Emails.Any(e => string.Equals(e.Trim(), email.Trim(), StringComparison.OrdinalIgnoreCase));
+        // The entry null-check is real, not paranoia: the array type says non-null, but a literal
+        // null in the JSON section binds one anyway — and this predicate runs inside the footer's
+        // AuthorizeView on every page, where a throw would take the whole layout down.
+        return Emails.Any(e => e is not null &&
+            string.Equals(e.Trim(), email.Trim(), StringComparison.OrdinalIgnoreCase));
     }
 }

@@ -4,7 +4,9 @@ namespace ShelfAware.Web.Diagnostics;
 /// of in-app problem reporting. Lives in auth.db, NOT the pantry DB, because errors are OPERATOR
 /// data: no household owns one, none appears in a data export or falls to "delete all my data",
 /// and the admin viewer needs no tenancy bypass to read them. Rows carry no household attribution
-/// by design, matching the app's logging discipline (what users said stays out of the log).</summary>
+/// by design, matching the app's logging discipline (what users said stays out of the log) —
+/// though exception TEXT can incidentally carry household-derived strings (a receipt path inside
+/// an IO error, say), which is acceptable for an admin-only table that never reaches an export.</summary>
 public class ErrorLogEntry
 {
     public int Id { get; set; }

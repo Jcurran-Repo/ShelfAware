@@ -52,7 +52,11 @@ else
 
 <section class="panel">
     <h2>Your household's reports</h2>
-    @if (reports is null)
+    @if (loadError is not null)
+    {
+        <p class="error" role="alert">@loadError</p>
+    }
+    else if (reports is null)
     {
         <p>Loading…</p>
     }
@@ -94,22 +98,39 @@ else
     private string where = "";
     private string? note;
     private string? error;
+    private string? loadError;
     private bool busy;
 
     protected override async Task OnInitializedAsync()
     {
         // Only a relative app path is accepted as a pre-fill — anything else in the query string
-        // (a full URL, junk) is ignored rather than rendered into the field.
-        if (From is ['/', ..]) where = From;
+        // (a full URL, junk) is ignored rather than rendered into the field. "//host" is a
+        // protocol-relative URL and "/\" its backslash twin, so neither counts as app-relative.
+        if (From is ['/', ..] && From is not ['/', '/', ..] && From is not ['/', '\\', ..]) where = From;
         await LoadAsync();
     }
 
-    private async Task LoadAsync()
+    /// <summary>Self-catching (returns whether it worked), so a transient DB failure lands as a
+    /// friendly message beside the list — on the page people visit precisely when something is
+    /// broken — and never as a circuit teardown or as false "couldn't save" advice from a caller.</summary>
+    private async Task<bool> LoadAsync()
     {
-        await using var db = await DbFactory.CreateDbContextAsync();
-        reports = await db.BugReports.AsNoTracking()
-            .OrderByDescending(r => r.Id) // insert order IS chronological; SQLite can't ORDER BY DateTimeOffset
-            .ToListAsync();
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            reports = await db.BugReports.AsNoTracking()
+                .OrderByDescending(r => r.Id) // insert order IS chronological; SQLite can't ORDER BY DateTimeOffset
+                .ToListAsync();
+            loadError = null;
+            return true;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Loading the household's bug reports failed.");
+            loadError = "Couldn't load your reports just now — reload the page to try again.";
+            return false;
+        }
     }
 
     private async Task SubmitAsync()
@@ -127,18 +148,26 @@ else
         try
         {
             var user = AuthState is null ? null : (await AuthState).User;
-            await using var db = await DbFactory.CreateDbContextAsync();
-            db.BugReports.Add(new BugReport
+            await using (var db = await DbFactory.CreateDbContextAsync())
             {
-                Body = body.Trim(),
-                PageUrl = string.IsNullOrWhiteSpace(where) ? null : where.Trim(),
-                ReportedBy = user?.Identity?.Name,
-                CreatedAt = DateTimeOffset.Now,
-            });
-            await db.SaveChangesAsync();
+                db.BugReports.Add(new BugReport
+                {
+                    // Server-side truncation mirroring the form's maxlength: the attribute is
+                    // browser-enforced only, and a stripped attribute must not become an
+                    // unbounded row (the machine half truncates too — 2000/6000).
+                    Body = Clamp(body.Trim(), 4000),
+                    PageUrl = string.IsNullOrWhiteSpace(where) ? null : Clamp(where.Trim(), 300),
+                    ReportedBy = user?.Identity?.Name,
+                    CreatedAt = DateTimeOffset.Now,
+                });
+                await db.SaveChangesAsync();
+            }
             body = "";
-            note = "Sent — thank you. Your report is listed below.";
-            await LoadAsync();
+            // The save is DONE — a reload failure past this point must not read as one (the
+            // opposite-advice rule: inviting a retry of a recorded report files it twice).
+            note = await LoadAsync()
+                ? "Sent — thank you. Your report is listed below."
+                : "Sent — thank you. (The list below couldn't refresh just now.)";
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -151,4 +180,6 @@ else
             busy = false;
         }
     }
+
+    private static string Clamp(string s, int max) => s.Length > max ? s[..max] : s;
 }

@@ -79,6 +79,10 @@ else
 
     <section class="panel">
         <h2>Bug reports from households</h2>
+        @if (bugReports is { Count: AdminReportReader.MaxReports })
+        {
+            <p class="muted">Showing the newest @AdminReportReader.MaxReports reports.</p>
+        }
         @if (bugReports is null)
         {
             <p>Loading…</p>

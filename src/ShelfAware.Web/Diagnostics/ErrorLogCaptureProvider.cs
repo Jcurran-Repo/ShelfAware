@@ -29,6 +29,7 @@ public sealed class ErrorLogCaptureProvider(ErrorLogSink sink) : ILoggerProvider
             Func<TState, Exception?, string> formatter)
         {
             if (!IsEnabled(logLevel)) return;
+            if (ErrorLogSink.CaptureSuppressed) return; // the pipeline's own persist — see ErrorLogSink.BeginPersist
             try
             {
                 // Structured log states carry the message template under {OriginalFormat} — the

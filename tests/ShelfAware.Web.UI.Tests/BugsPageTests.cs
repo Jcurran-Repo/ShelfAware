@@ -113,6 +113,72 @@ public class BugsPageTests : PageTestContext
     }
 
     [Fact]
+    public async Task Overlong_input_is_clamped_server_side_not_just_by_the_attribute()
+    {
+        var cut = RenderBugs();
+
+        cut.Find("textarea").Input(new string('x', 5000)); // bUnit bypasses maxlength, like devtools would
+        cut.Find("input[aria-label='Where it happened']").Change("/" + new string('y', 400));
+        cut.Find("form").Submit();
+
+        cut.WaitForAssertion(() => Assert.Contains("Sent — thank you", cut.Markup));
+        await using var raw = Db.CreateUnscopedContext();
+        var report = Assert.Single(await raw.BugReports.IgnoreQueryFilters().ToListAsync());
+        Assert.Equal(4000, report.Body.Length);
+        Assert.Equal(300, report.PageUrl!.Length);
+    }
+
+    [Fact]
+    public void A_protocol_relative_from_is_refused_like_any_other_non_app_path()
+    {
+        // "//host" is protocol-relative (a real URL to another origin), "/\" its backslash twin —
+        // neither is the app-relative path the comment promises.
+        Services.GetRequiredService<NavigationManager>().NavigateTo(
+            "/bugs?from=" + Uri.EscapeDataString("//evil.example/phish"));
+        var cut = RenderBugs();
+        Assert.Equal("", cut.Find("input[aria-label='Where it happened']").GetAttribute("value") ?? "");
+    }
+
+    [Fact]
+    public void A_backslash_relative_from_is_refused_too()
+    {
+        Services.GetRequiredService<NavigationManager>().NavigateTo(
+            "/bugs?from=" + Uri.EscapeDataString(@"/\evil.example"));
+        var cut = RenderBugs();
+        Assert.Equal("", cut.Find("input[aria-label='Where it happened']").GetAttribute("value") ?? "");
+    }
+
+    [Fact]
+    public async Task A_reload_failure_after_a_successful_save_never_says_couldnt_save()
+    {
+        // Two failure points, opposite advice (the item-27 rule): the save landed, so the message
+        // must not invite re-sending a report that was recorded.
+        var cut = RenderBugs();
+        cut.Find("textarea").Input("The chart is upside down");
+
+        Factory.FailAfter = 1; // the save's context succeeds; the reload's fails
+        cut.Find("form").Submit();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("Sent — thank you", cut.Markup);
+            Assert.Contains("couldn't refresh", cut.Markup);
+            Assert.DoesNotContain("Couldn't save", cut.Markup);
+        });
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Single(await raw.BugReports.IgnoreQueryFilters().ToListAsync()); // it WAS saved
+    }
+
+    [Fact]
+    public void A_failing_initial_load_reports_it_instead_of_crashing_the_page()
+    {
+        Factory.FailAfter = 0;
+        var cut = RenderBugs();
+        cut.WaitForAssertion(() =>
+            Assert.Contains("Couldn't load your reports just now", cut.Markup));
+    }
+
+    [Fact]
     public void Without_a_configured_admin_the_form_stands_down_and_says_why()
     {
         adminOptions.Emails = [];

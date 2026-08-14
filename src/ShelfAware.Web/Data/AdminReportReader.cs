@@ -24,6 +24,11 @@ public sealed class AdminReportReader(
     IOptions<AdminOptions> admin,
     ErrorLogStore errors)
 {
+    /// <summary>The admin page loads at most this many reports (newest first) — the same bounded
+    /// posture as the error log's MaxRows, so one prolific account can't degrade the surface. The
+    /// page discloses when the cap is hit rather than truncating silently.</summary>
+    public const int MaxReports = 500;
+
     public async Task<IReadOnlyList<AdminBugReport>> ListBugReportsAsync(CancellationToken ct = default)
     {
         await RequireAdminAsync();
@@ -35,6 +40,7 @@ public sealed class AdminReportReader(
         // wanting cross-household data must make its own case at review — not reuse this.
         var reports = await db.BugReports.IgnoreQueryFilters().AsNoTracking()
             .OrderByDescending(r => r.Id) // insert order IS chronological; SQLite can't ORDER BY DateTimeOffset
+            .Take(MaxReports)
             .ToListAsync(ct);
 
         await using var authContext = await authDb.CreateDbContextAsync(ct);
