@@ -1,0 +1,154 @@
+@page "/bugs"
+@using Microsoft.Extensions.Options
+@using ShelfAware.Web.Auth
+@inject IHouseholdDbFactory DbFactory
+@inject IOptions<AdminOptions> Admin
+@inject ILogger<Bugs> Logger
+
+<PageTitle>Report a bug — Shelf Aware</PageTitle>
+
+<div class="page-head">
+    <h1>Report a bug</h1>
+</div>
+
+@if (!Admin.Value.Configured)
+{
+    @* No admin configured = nobody reads reports, so inviting one would be dishonest. The past
+       list still renders below — history the household already filed stays theirs to see. *@
+    <p class="muted">This deployment doesn't have an admin set up to read bug reports, so there's
+        nowhere for a new one to go. (If you run this server: set <code>Admin:Emails</code> in
+        configuration to turn this on.)</p>
+}
+else
+{
+    <section class="panel">
+        <h2>Something looks wrong?</h2>
+        <p class="muted">Your report goes to this deployment's admin, along with your household
+            name and sign-in email so they can follow up. Nothing else is attached.</p>
+        <form @onsubmit="SubmitAsync" @formname="bug-report">
+            <label class="field">
+                <span>What happened</span>
+                <textarea @bind="body" @bind:event="oninput" maxlength="4000" rows="5"
+                          aria-label="Describe what looked wrong" disabled="@busy"></textarea>
+            </label>
+            <label class="field">
+                <span>Where (which page or screen)</span>
+                <input @bind="where" maxlength="300" aria-label="Where it happened" disabled="@busy" />
+            </label>
+            <button type="submit" disabled="@busy">@(busy ? "Sending…" : "Send report")</button>
+        </form>
+        <div role="status" aria-live="polite">
+            @if (note is not null)
+            {
+                <p class="chat-reply">@note</p>
+            }
+        </div>
+        @if (error is not null)
+        {
+            <p class="error" role="alert">@error</p>
+        }
+    </section>
+}
+
+<section class="panel">
+    <h2>Your household's reports</h2>
+    @if (reports is null)
+    {
+        <p>Loading…</p>
+    }
+    else if (reports.Count == 0)
+    {
+        <p class="muted">None yet.</p>
+    }
+    else
+    {
+        <table>
+            <caption class="visually-hidden">Bug reports this household has filed</caption>
+            <thead>
+                <tr><th>When</th><th>Who</th><th>Where</th><th>What</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var r in reports)
+                {
+                    <tr>
+                        <td>@r.CreatedAt.ToString("MMM d, yyyy")</td>
+                        <td>@(r.ReportedBy ?? "—")</td>
+                        <td class="muted">@(r.PageUrl ?? "—")</td>
+                        <td>@r.Body</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    /// <summary>Where the reporter came from — the footer link carries the current page so the
+    /// form can pre-fill it. Visible and editable; never captured silently.</summary>
+    [SupplyParameterFromQuery(Name = "from")] public string? From { get; set; }
+
+    private List<BugReport>? reports;
+    private string body = "";
+    private string where = "";
+    private string? note;
+    private string? error;
+    private bool busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Only a relative app path is accepted as a pre-fill — anything else in the query string
+        // (a full URL, junk) is ignored rather than rendered into the field.
+        if (From is ['/', ..]) where = From;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        reports = await db.BugReports.AsNoTracking()
+            .OrderByDescending(r => r.Id) // insert order IS chronological; SQLite can't ORDER BY DateTimeOffset
+            .ToListAsync();
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (busy) return;
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            error = "Say what looked wrong first — even one sentence helps.";
+            note = null;
+            return;
+        }
+        busy = true;
+        error = null;
+        note = null;
+        try
+        {
+            var user = AuthState is null ? null : (await AuthState).User;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            db.BugReports.Add(new BugReport
+            {
+                Body = body.Trim(),
+                PageUrl = string.IsNullOrWhiteSpace(where) ? null : where.Trim(),
+                ReportedBy = user?.Identity?.Name,
+                CreatedAt = DateTimeOffset.Now,
+            });
+            await db.SaveChangesAsync();
+            body = "";
+            note = "Sent — thank you. Your report is listed below.";
+            await LoadAsync();
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Filing a bug report failed.");
+            error = "Couldn't save the report just now — please try again.";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

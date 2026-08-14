@@ -1,0 +1,159 @@
+@page "/admin"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.Extensions.Options
+@using ShelfAware.Web.Auth
+@using ShelfAware.Web.Diagnostics
+@attribute [Authorize(Policy = AdminOptions.PolicyName)]
+@inject AdminReportReader Reader
+@inject IOptions<AdminOptions> AdminConfig
+@inject ErrorLogSink Sink
+@inject ILogger<Admin> Logger
+
+<PageTitle>Admin — Shelf Aware</PageTitle>
+
+<div class="page-head">
+    <h1>Admin</h1>
+</div>
+
+@if (refused)
+{
+    @* The routed-page policy already turns strangers away; this is the same predicate asked again
+       inside the component (defense in depth, and the layer a component test can pin). *@
+    <p class="error">This page is only for the configured admin.</p>
+}
+else
+{
+    <section class="panel">
+        <h2>Errors the app has logged</h2>
+        <p class="muted">Every Error-level event, handled ones included, deduplicated by where it
+            came from — one row per distinct error, counting repeats. Bounded at
+            @ErrorLogStore.MaxRows rows (the quietest rows are trimmed first).</p>
+        @if (Sink.Dropped > 0)
+        {
+            <p class="muted">⚠ @Sink.Dropped event@(Sink.Dropped == 1 ? "" : "s") dropped under load since the app started.</p>
+        }
+        <button class="secondary" @onclick="RefreshAsync" disabled="@busy">@(busy ? "Refreshing…" : "Refresh")</button>
+        @if (loadError is not null)
+        {
+            <p class="error" role="alert">@loadError</p>
+        }
+        @if (errors is null)
+        {
+            <p>Loading…</p>
+        }
+        else if (errors.Count == 0)
+        {
+            <p class="muted">Nothing logged — quiet so far.</p>
+        }
+        else
+        {
+            <table>
+                <caption class="visually-hidden">Distinct errors the app has logged</caption>
+                <thead>
+                    <tr><th>Last seen</th><th>Count</th><th>Level</th><th>What</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var e in errors)
+                    {
+                        <tr>
+                            <td>@e.LastSeenAt.ToString("MMM d, HH:mm")</td>
+                            <td>@e.Count×</td>
+                            <td>@e.Level</td>
+                            <td>
+                                <div>@e.LastMessage</div>
+                                <div class="muted small">@e.Category@(e.ExceptionType is null ? "" : $" · {e.ExceptionType}") · first seen @e.FirstSeenAt.ToString("MMM d")</div>
+                                @if (e.ExceptionDetail is not null)
+                                {
+                                    <details>
+                                        <summary>Detail</summary>
+                                        <pre class="error-detail">@e.ExceptionDetail</pre>
+                                    </details>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    <section class="panel">
+        <h2>Bug reports from households</h2>
+        @if (bugReports is null)
+        {
+            <p>Loading…</p>
+        }
+        else if (bugReports.Count == 0)
+        {
+            <p class="muted">No reports yet.</p>
+        }
+        else
+        {
+            <table>
+                <caption class="visually-hidden">Bug reports filed by every household</caption>
+                <thead>
+                    <tr><th>When</th><th>Household</th><th>Who</th><th>Where</th><th>What</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in bugReports)
+                    {
+                        <tr>
+                            <td>@r.Report.CreatedAt.ToString("MMM d, yyyy")</td>
+                            <td>@r.HouseholdName</td>
+                            <td>@(r.Report.ReportedBy ?? "—")</td>
+                            <td class="muted">@(r.Report.PageUrl ?? "—")</td>
+                            <td>@r.Report.Body</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    private IReadOnlyList<ErrorLogEntry>? errors;
+    private IReadOnlyList<AdminBugReport>? bugReports;
+    private bool refused;
+    private bool busy;
+    private string? loadError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = AuthState is null ? null : (await AuthState).User;
+        if (user is null || !AdminConfig.Value.IsAdmin(user))
+        {
+            refused = true;
+            return;
+        }
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (busy) return;
+        busy = true;
+        loadError = null;
+        try
+        {
+            errors = await Reader.ListErrorsAsync();
+            bugReports = await Reader.ListBugReportsAsync();
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (UnauthorizedAccessException)
+        {
+            refused = true; // the reader asks the same predicate — belt and braces
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Loading the admin view failed.");
+            loadError = "Couldn't load just now — please try again.";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

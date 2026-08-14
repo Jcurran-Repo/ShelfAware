@@ -22,6 +22,7 @@ using ShelfAware.Web.Auth;
 using ShelfAware.Web.Components;
 using ShelfAware.Web.Components.Account;
 using ShelfAware.Web.Data;
+using ShelfAware.Web.Diagnostics;
 using ShelfAware.Web.Ingest;
 using ShelfAware.Web.Services;
 
@@ -164,7 +165,16 @@ builder.Services.AddIdentityCore<AppUser>(options =>
 builder.Services.Configure<SecurityStampValidatorOptions>(options =>
     options.ValidationInterval = TimeSpan.FromMinutes(5));
 
-builder.Services.AddAuthorization();
+// The Admin policy guards /admin (routed pages go through AuthorizeRouteView, which enforces it).
+// The policy binds its own snapshot of the Admin: section at startup; pages read the same section
+// via IOptions<AdminOptions>. One SECTION and one PREDICATE (AdminOptions.IsAdmin) — a config
+// change needs the restart every other option here already needs. Unset = the policy refuses
+// everyone, so an unconfigured deployment has zero admin surface (the Google-OAuth posture).
+var adminOptions = builder.Configuration.GetSection(AdminOptions.SectionName).Get<AdminOptions>() ?? new();
+builder.Services.AddAuthorization(options => options.AddPolicy(AdminOptions.PolicyName,
+    policy => policy.RequireAssertion(ctx => adminOptions.IsAdmin(ctx.User))));
+builder.Services.AddOptions<AdminOptions>()
+    .Bind(builder.Configuration.GetSection(AdminOptions.SectionName));
 // Validated at STARTUP, not trusted. A lifetime of 0 or negative used to be read as "never expires" —
 // the least safe reading of what is almost certainly a typo, and one that silently switches invite expiry
 // off. Absent still means never; a number now has to be a real number of days, or the app won't boot.
@@ -190,6 +200,20 @@ builder.Services.AddOptions<EmailOptions>()
     .ValidateOnStart();
 builder.Services.AddSingleton<IAccountMailer, SmtpAccountMailer>();
 builder.Services.AddScoped<HouseholdService>();
+
+// ---- In-app problem reporting ----
+// The error log: a logging provider captures every Error/Critical event (handled ones included —
+// the house catch-log-and-say-so convention is exactly what feeds it) into a bounded channel; a
+// background writer persists them deduped-by-fingerprint into auth.db, trimmed at
+// ErrorLogStore.MaxRows. Always on: it is bounded, admin-only to read, and the family box
+// otherwise logs to a console nobody watches. AdminReportReader is the one page-facing surface
+// for BOTH halves (errors + cross-household bug reports) and carries the admin gate.
+var errorSink = new ErrorLogSink();
+builder.Logging.AddProvider(new ErrorLogCaptureProvider(errorSink));
+builder.Services.AddSingleton(errorSink);
+builder.Services.AddSingleton<ErrorLogStore>();
+builder.Services.AddHostedService<ErrorLogWriter>();
+builder.Services.AddScoped<AdminReportReader>();
 
 // Auth cookies + antiforgery tokens are encrypted with DataProtection keys. Persist them next to the
 // DBs (app-data is gitignored and survives republish) — otherwise every restart/redeploy would sign

@@ -61,6 +61,7 @@ public sealed class UserDataService(
             ExcludedFoods = await db.ExcludedFoods.AsNoTracking().ToListAsync(ct),
             GroceryExtras = await db.GroceryExtras.AsNoTracking().ToListAsync(ct),
             SavedReports = await db.SavedReports.AsNoTracking().ToListAsync(ct),
+            BugReports = await db.BugReports.AsNoTracking().ToListAsync(ct),
         };
     }
 
@@ -245,6 +246,7 @@ public sealed class UserDataService(
             + await db.SavedReports.CountAsync(ct)
             + await db.ExcludedFoods.CountAsync(ct)
             + await db.GroceryExtras.CountAsync(ct)
+            + await db.BugReports.CountAsync(ct)
             + await db.AppSettings.CountAsync(ct);
     }
 
@@ -277,6 +279,7 @@ public sealed class UserDataService(
         await db.ExcludedFoods.ExecuteDeleteAsync(ct);
         await db.GroceryExtras.ExecuteDeleteAsync(ct);
         await db.SavedReports.ExecuteDeleteAsync(ct); // no FKs — but a report config is user content
+        await db.BugReports.ExecuteDeleteAsync(ct); // no FKs — the household's own words, so they go too
 
         // Settings go with everything else, and wholesale rather than by a list of keys. Some of this
         // table is pantry-derived content outright (the last recipe ideas; the self-eval's per-receipt
@@ -360,4 +363,5 @@ public sealed class DataExport
     public IReadOnlyList<SavedReport> SavedReports { get; init; } = [];
     public IReadOnlyList<ExcludedFood> ExcludedFoods { get; init; } = [];
     public IReadOnlyList<GroceryExtra> GroceryExtras { get; init; } = [];
+    public IReadOnlyList<BugReport> BugReports { get; init; } = [];
 }

@@ -1,0 +1,31 @@
+@using Microsoft.Extensions.Options
+@using ShelfAware.Web.Auth
+@implements IDisposable
+@inject IOptions<AdminOptions> Admin
+@inject NavigationManager Nav
+
+@if (Admin.Value.Configured)
+{
+    @* Gated on "an admin exists" — a report form on a deployment where nobody reads reports would
+       be an invitation to shout into a void, so the whole entry point stands down (the same
+       posture as the sign-in page's forgot-password link under EmailOptions.IsConfigured). *@
+    <footer class="site-footer">
+        <a href="@BugsHref">🐞 Report a bug</a>
+        <AuthorizeView Policy="@AdminOptions.PolicyName">
+            <a href="/admin">Admin</a>
+        </AuthorizeView>
+    </footer>
+}
+
+@code {
+    // The link carries where the visitor currently IS, so the form can pre-fill "where it
+    // happened" — into a visible, editable field, never as silent capture.
+    private string BugsHref => $"/bugs?from={Uri.EscapeDataString("/" + Nav.ToBaseRelativePath(Nav.Uri))}";
+
+    // A parameterless component in a layout is skipped when the parent re-renders (nothing
+    // changed, as far as Blazor can tell), so the href would go stale — re-render on navigation.
+    protected override void OnInitialized() => Nav.LocationChanged += OnMoved;
+    private void OnMoved(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+        => _ = InvokeAsync(StateHasChanged);
+    public void Dispose() => Nav.LocationChanged -= OnMoved;
+}

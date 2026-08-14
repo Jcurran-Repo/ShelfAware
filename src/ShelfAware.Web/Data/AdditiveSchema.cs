@@ -59,6 +59,10 @@ public static class AdditiveSchema
         // count. NULL on every pre-existing confirmed receipt, which removal reads as "no timestamp to
         // compare" and subtracts exactly as it always did.
         EnsureColumn(db, table: "Receipts", column: "ConfirmedAt", definition: "TEXT NULL");
+
+        // 2026-08-13: household-filed bug reports (the human half of in-app problem reporting).
+        // A brand-new table is invisible to existing rows.
+        EnsureTable(db, table: "BugReports");
     }
 
     public static void Apply(AuthDbContext db)
@@ -69,6 +73,10 @@ public static class AdditiveSchema
         EnsureColumn(db, table: "Households", column: "InviteExpiresAt", definition: "TEXT NULL");
         EnsureColumn(db, table: "Households", column: "InviteMaxUses", definition: "INTEGER NULL");
         EnsureColumn(db, table: "Households", column: "InviteUseCount", definition: "INTEGER NOT NULL DEFAULT 0");
+
+        // 2026-08-13: the in-app error log (deduped Error/Critical events; operator data, so it
+        // lives here rather than in any household's pantry). A new table — existing rows unaffected.
+        EnsureTable(db, table: "ErrorLog");
     }
 
     /// <summary>Create <paramref name="table"/> (and its indexes) on a DB built before it existed. The
