@@ -93,9 +93,9 @@ Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptT
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1481 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1495 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
-bUnit pages/components — see items 31, 42, 43 and 45).
+bUnit pages/components — see items 31, 42, 43, 45 and 46).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -2091,6 +2091,52 @@ bUnit pages/components — see items 31, 42, 43 and 45).
      applies; the publish brings v3.5→today (variety, expiration, Reports, counting, census, tour)
      along with the reset link. (Merge note: item 44 lives on `feature/family-cloudflare` — whichever
      branch merges second resolves CLAUDE.md by ordering 44 before 45.)
+
+46. **Correct-a-brand + the dev quick-login that drive-tested it (2026-08-13; both ✅ MERGED to master,
+   PRs #9 and #8, CI green).** Two small features from one thread — Jordan hit a real gap on the live
+   family box (a misread receipt brand was uncorrectable after confirmation), and fixing it re-exposed
+   the friction that the v3 auth wall broke automatic UI drive-testing, so the second feature exists to
+   fix the first's testing.
+   - **Brand correction on Product Detail** (`feature/edit-purchase-brand`): Recent purchases gained a
+     **Brand column** with an inline ✏️ pencil parallel to the quantity one, backed by
+     `IPantryStore.SetPurchaseBrandAsync`. Brand is per-purchase and **cosmetic** — the product is
+     brand-agnostic and the cadence pools across every brand (the "usual brand" hint + Brands-bought
+     breakdown are all it feeds), so unlike the quantity correction it moves NO count, fires no signal,
+     and doesn't touch the attestation clock. Blank folds to null (the same "unbranded" the grouping
+     already treats whitespace as); the receipt line is left alone (audit copy), same as the quantity
+     edit. The brand and quantity editors are **mutually exclusive** (each clears the other's row id).
+     No chat tool — deliberately matching the quantity pencil, which has none (correcting a specific
+     past purchase is a click-this-row act). 8 tests (5 persistence incl. the household-scoped
+     non-overwrite check + 3 bUnit page), all mutation-checked; live-verified in a browser (typed a
+     brand, saved, persisted across a fresh nav).
+   - ⚠️ **`DevAuth` — a Development-only quick sign-in, `GET /dev/login`** (`feature/dev-quick-login`).
+     Signs in a **passwordless** dev account in a sample-seeded "Dev Sandbox" household and redirects
+     home, so a dev server is one navigation past the auth wall (which is what makes automatic
+     drive-testing of authenticated pages work again). **THE safety property: it can never activate on
+     any real deployment.** `DevAuth.IsEnabled(env, config)` = `env.IsDevelopment() &&
+     config.GetValue<bool>("Dev:QuickLogin")` — a Production box (family / droplet / tailnet all run
+     `ASPNETCORE_ENVIRONMENT=Production`) fails the first conjunct unconditionally, so
+     `MapDevQuickLogin` maps nothing there no matter where the flag comes from. The flag lives in
+     `appsettings.Development.json` (only loaded under Development anyway), the handler re-checks
+     `IsEnabled`, and the account is passwordless so it has NO sign-in path outside `/dev/login` even
+     if a dev `auth.db` ever reached a real box. The code ships everywhere ("supports it") but only a
+     dev machine "uses it" — Jordan's exact spec. `DevAuthTests` pins the gate truth table (incl. the
+     load-bearing `Production + flag = true → false` row); mutation-checked (`&&`→`||` fails exactly 4
+     rows). The endpoint itself is live-verified, not unit-pinned (no WebApplicationFactory harness
+     here). Reuses the tested paths: `CreateAsync` (passwordless) + `HouseholdService.CreateForAsync`
+     in one transaction like registration, `SignInAsync` after the household exists (cookie carries
+     the household claim), `DemoDataSeeder.SeedAsync` (best-effort, guarded to empty) via
+     `ICurrentHousehold.UseFixed`.
+   - Both independently reviewed clean (each fix's one nit taken: the brand tenancy test proving
+     non-overwrite; the dev-seed catch letting `OperationCanceledException` propagate). **1495 green,
+     0 warnings** on a non-incremental Release build of merged master (both features compose cleanly;
+     read off that run, not the per-branch numbers — item 21).
+   - **Family box operational note (2026-08-13):** `Auth:AllowRegistration` is now **true** on the
+     family server (Jordan's call — he wanted new sign-ups). Flipped in the live `appsettings.json`
+     (backup kept), took effect on a manual elevated restart, verified open. ⚠️ It's carried across
+     publishes by `publish-family.ps1`, so it stays true until changed back. A fresh self-registration
+     there creates a NEW empty household (not the shared pantry) — rejoining the family pantry is an
+     invite code, which works regardless.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
