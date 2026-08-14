@@ -33,6 +33,18 @@ public class SiteFooterTests : PageTestContext
     }
 
     [Fact]
+    public void The_report_link_carries_the_path_only_never_the_pages_query_string()
+    {
+        // Found live: on /bugs itself the full URI compounded the from= into itself on every
+        // visit ("/bugs?from=%2Fbugs%3Ffrom%3D…"). The pre-fill wants the PAGE, not its state.
+        Services.GetRequiredService<NavigationManager>().NavigateTo("/products?tag=Dairy");
+        var cut = Render<SiteFooter>();
+
+        var link = cut.FindAll("a").Single(a => a.TextContent.Contains("Report a bug"));
+        Assert.Equal("/bugs?from=%2Fproducts", link.GetAttribute("href"));
+    }
+
+    [Fact]
     public void The_admin_link_shows_only_to_the_configured_admin()
     {
         var cut = Render<SiteFooter>();

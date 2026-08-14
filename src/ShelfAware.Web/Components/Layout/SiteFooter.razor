@@ -19,8 +19,19 @@
 
 @code {
     // The link carries where the visitor currently IS, so the form can pre-fill "where it
-    // happened" — into a visible, editable field, never as silent capture.
-    private string BugsHref => $"/bugs?from={Uri.EscapeDataString("/" + Nav.ToBaseRelativePath(Nav.Uri))}";
+    // happened" — into a visible, editable field, never as silent capture. PATH only: the current
+    // page's own query string is noise in that pre-fill, and on /bugs itself it would compound the
+    // from= into itself on every visit.
+    private string BugsHref
+    {
+        get
+        {
+            var relative = "/" + Nav.ToBaseRelativePath(Nav.Uri);
+            var query = relative.IndexOf('?');
+            if (query >= 0) relative = relative[..query];
+            return $"/bugs?from={Uri.EscapeDataString(relative)}";
+        }
+    }
 
     // A parameterless component in a layout is skipped when the parent re-renders (nothing
     // changed, as far as Blazor can tell), so the href would go stale — re-render on navigation.
