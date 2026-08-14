@@ -93,9 +93,9 @@ Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptT
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1495 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1550 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
-bUnit pages/components — see items 31, 42, 43, 45 and 46).
+bUnit pages/components — see items 31, 42, 43, 45, 46 and 47).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -2138,8 +2138,9 @@ bUnit pages/components — see items 31, 42, 43, 45 and 46).
      there creates a NEW empty household (not the shared pantry) — rejoining the family pantry is an
      invite code, which works regardless.
 
-47. **v4.7 — In-app problem reporting (2026-08-13, branch `feature/bug-reports`, UNMERGED pending
-   review + Jordan's call; plus the dashboard copy-name button on `feature/dashboard-copy-name`).**
+47. **v4.7 — In-app problem reporting (2026-08-13/14; ✅ MERGED via PR #11, with the dashboard
+   copy-name button via PR #10 — both CI green; merged master reads 1550 green / 0 warnings on a
+   non-incremental Release build, read off that run per item 21).**
    Jordan's ask ("bug reporting in app… easily maintainable"), sharpened in discussion to two signal
    sources feeding one admin surface: **machines report ERRORS, humans report WRONGNESS.**
    - **The error log lives in auth.db because errors are OPERATOR data** — no household owns one,
@@ -2229,7 +2230,8 @@ bUnit pages/components — see items 31, 42, 43, 45 and 46).
      extraction timeout, the fail log line was followed in the server log by the fingerprint
      UPDATE + INSERT into auth.db's ErrorLog, the row rendered on /admin, and a second junk upload
      made it **2× on one row** (dedupe, live). Zero console errors — the strict CSP holds.
-   - **The dashboard copy-name branch** (`feature/dashboard-copy-name`, 2 commits, 1500 green): a
+   - **The dashboard copy-name branch** (`feature/dashboard-copy-name`, 3 commits, 1503 green on
+     the branch): a
      📋 icon-btn per Running Low card copies the BARE item name (what pastes into a store search).
      Its independent review found the two PRE-EXISTING copy sites (grocery list, invite code) had
      no catch at all — a refused clipboard tore down their circuits — so
