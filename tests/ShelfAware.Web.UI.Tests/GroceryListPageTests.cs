@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.JSInterop;
 using ShelfAware.Core.Domain;
 using ShelfAware.Web.Components.Pages;
 
@@ -162,6 +163,70 @@ public class GroceryListPageTests : PageTestContext
         Assert.Contains("- Whole Milk (Great Value, gal) ×1", text);
         Assert.Contains("Extras:", text);
         Assert.Contains("- Batteries", text);
+    }
+
+    [Fact]
+    public void Changing_the_list_clears_the_copied_claim_while_the_actions_row_survives()
+    {
+        // The five "copied list is now stale" reset sites were previously unpinned: the one test
+        // near them seeded a single row, so restocking it unmounted the whole actions row and the
+        // assertion was satisfied by the unmount, never by the reset. These two pin the reset
+        // itself, in both mount-survival shapes (an extras change, and a row action that leaves
+        // rows behind). The remaining three sites are the identical one-line pattern.
+        SeedOverdue("Whole Milk");
+        var cut = RenderList();
+        cut.WaitForState(() => cut.FindAll("tbody tr").Count > 0);
+        // The announcer is mounted EMPTY before any copy — the same persistence pin the dashboard
+        // has: a live region announces changes inside an EXISTING region.
+        Assert.Equal("", cut.Find(".copy-announcer").TextContent.Trim());
+
+        cut.FindAll(".list-actions button").Single(b => b.TextContent.Trim() == "Copy list").Click();
+        cut.WaitForState(() => cut.FindAll(".copy-note").Count == 1);
+
+        AddExtra(cut, "Batteries"); // the clipboard no longer holds the list that now exists
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Empty(cut.FindAll(".copy-note"));
+            // The row is still mounted, so the note went because it was CLEARED, not unmounted.
+            Assert.Contains(cut.FindAll(".list-actions button"), b => b.TextContent.Trim() == "Copy list");
+        });
+    }
+
+    [Fact]
+    public void Restocking_one_of_two_rows_clears_the_copied_claim_while_the_list_survives()
+    {
+        SeedOverdue("Whole Milk");
+        SeedOverdue("Large Eggs");
+        var cut = RenderList();
+        cut.WaitForState(() => cut.FindAll(".restock-btn").Count == 2);
+        cut.FindAll(".list-actions button").Single(b => b.TextContent.Trim() == "Copy list").Click();
+        cut.WaitForState(() => cut.FindAll(".copy-note").Count == 1);
+
+        cut.FindAll(".restock-btn").First().Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Empty(cut.FindAll(".copy-note"));
+            Assert.Contains(cut.FindAll(".list-actions button"), b => b.TextContent.Trim() == "Copy list");
+        });
+    }
+
+    [Fact]
+    public void A_refused_clipboard_reports_couldnt_copy_instead_of_tearing_down_the_page()
+    {
+        // Pre-fix, an unhandled JSException here tore down the whole circuit — on the page whose
+        // Copy button is a headline feature.
+        JSInterop.SetupVoid("navigator.clipboard.writeText", _ => true)
+            .SetException(new JSException("Write permission denied."));
+        SeedOverdue("Whole Milk");
+        var cut = RenderList();
+        cut.WaitForState(() => cut.FindAll("tbody tr").Count > 0);
+
+        cut.FindAll(".list-actions button").Single(b => b.TextContent.Trim() == "Copy list").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal("Couldn't copy", cut.Find(".copy-note").TextContent.Trim()));
+        Assert.NotEmpty(cut.FindAll("tbody tr")); // the page survived the refusal
     }
 
     [Fact]

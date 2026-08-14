@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.JSInterop;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Settings;
 using ShelfAware.Web.Components.Pages;
@@ -210,6 +211,122 @@ public class HomeCardsTests : PageTestContext
             Assert.Contains("Coffee Beans", panel.TextContent);
             Assert.Contains("lasts ~10 days but you rebuy ~every 20", panel.TextContent);
             Assert.Contains("out ~10 days each cycle", panel.TextContent);
+        });
+    }
+
+    [Fact]
+    public void Copy_name_puts_the_bare_item_name_on_the_clipboard_and_says_so()
+    {
+        // Brand and size render on the card as hints — the copy is the BARE item name, the form
+        // that pastes usefully into a store search.
+        Seed("Whole Milk", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-40), Quantity = 1m, Brand = "Great Value", Size = "1 gal" },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-25), Quantity = 1m, Brand = "Great Value", Size = "1 gal" },
+        ]);
+        var cut = RenderHome();
+        cut.WaitForState(() => cut.FindAll(".cards li").Count == 1);
+
+        var button = cut.Find(".copy-name");
+        Assert.Equal("Copy Whole Milk to the clipboard", button.GetAttribute("aria-label"));
+        // The announcer must exist BEFORE any copy: a live region reliably announces text
+        // CHANGING inside an existing region, not a region inserted already holding its text.
+        Assert.Equal("", cut.Find(".copy-announcer").TextContent.Trim());
+        Assert.Equal("status", cut.Find(".copy-announcer").GetAttribute("role"));
+        button.Click();
+
+        var copy = JSInterop.Invocations.Single(i => i.Identifier == "navigator.clipboard.writeText");
+        Assert.Equal("Whole Milk", copy.Arguments[0]);
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("Copied", cut.Find(".copy-note").TextContent.Trim());
+            // The announcement carries the name — a screen reader hears WHICH card copied.
+            Assert.Equal("Copied Whole Milk", cut.Find(".copy-announcer").TextContent.Trim());
+        });
+    }
+
+    [Fact]
+    public void The_copied_note_sits_on_the_card_that_was_copied_and_moves_with_the_next_copy()
+    {
+        Seed("Rhythm Overdue", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-40), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-25), Quantity = 1m },
+        ]);
+        Seed("Due Soonish", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-28), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-13), Quantity = 1m },
+        ]);
+        var cut = RenderHome();
+        cut.WaitForState(() => cut.FindAll(".cards li").Count == 2);
+
+        cut.FindAll(".cards li").Single(li => li.TextContent.Contains("Due Soonish"))
+            .QuerySelector(".copy-name")!.Click();
+        cut.WaitForAssertion(() =>
+        {
+            var withNote = Assert.Single(cut.FindAll(".cards li"), li => li.QuerySelector(".copy-note") is not null);
+            Assert.Contains("Due Soonish", withNote.TextContent);
+        });
+
+        // Copying another card MOVES the one note — "Copied" must never linger on a card it
+        // no longer describes.
+        cut.FindAll(".cards li").Single(li => li.TextContent.Contains("Rhythm Overdue"))
+            .QuerySelector(".copy-name")!.Click();
+        cut.WaitForAssertion(() =>
+        {
+            var withNote = Assert.Single(cut.FindAll(".cards li"), li => li.QuerySelector(".copy-note") is not null);
+            Assert.Contains("Rhythm Overdue", withNote.TextContent);
+        });
+    }
+
+    [Fact]
+    public async Task A_reload_resets_copy_feedback_so_the_announcer_never_remounts_pre_filled()
+    {
+        // The cards can empty and later repopulate within one circuit (a voice change pings the
+        // coordinator). An announcer remounting WITH old text is the inserted-with-its-text shape
+        // it exists to avoid — and a stale claim besides.
+        Seed("Whole Milk", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-40), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-25), Quantity = 1m },
+        ]);
+        var cut = RenderHome();
+        cut.WaitForState(() => cut.FindAll(".cards li").Count == 1);
+        cut.Find(".copy-name").Click();
+        cut.WaitForAssertion(() =>
+            Assert.Equal("Copied Whole Milk", cut.Find(".copy-announcer").TextContent.Trim()));
+
+        await Coordinator.NotifyPantryChangedAsync();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("", cut.Find(".copy-announcer").TextContent.Trim());
+            Assert.Empty(cut.FindAll(".copy-note"));
+        });
+    }
+
+    [Fact]
+    public void A_refused_clipboard_says_so_on_the_card_instead_of_claiming_a_copy()
+    {
+        // Clipboard access can be denied (permissions, insecure context) — the card must report
+        // the failure, not claim "Copied", and the click must not tear down the circuit.
+        JSInterop.SetupVoid("navigator.clipboard.writeText", _ => true)
+            .SetException(new JSException("Write permission denied."));
+        Seed("Whole Milk", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-40), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-25), Quantity = 1m },
+        ]);
+        var cut = RenderHome();
+        cut.WaitForState(() => cut.FindAll(".cards li").Count == 1);
+
+        cut.Find(".copy-name").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("Couldn't copy", cut.Find(".copy-note").TextContent.Trim());
+            Assert.Equal("Couldn't copy Whole Milk", cut.Find(".copy-announcer").TextContent.Trim());
         });
     }
 

@@ -1046,8 +1046,9 @@
     private async Task CopyInvite()
     {
         if (household?.InviteCode is null) return;
-        await JS.InvokeVoidAsync("navigator.clipboard.writeText", household.InviteCode);
-        inviteNote = "Invite code copied to the clipboard.";
+        inviteNote = await ClipboardCopy.TryWriteAsync(JS, Logger, household.InviteCode)
+            ? "Invite code copied to the clipboard."
+            : "Couldn't copy — select the code and copy it by hand.";
     }
 
     private async Task GenerateInvite()
