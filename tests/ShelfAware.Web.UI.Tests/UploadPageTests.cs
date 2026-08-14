@@ -31,17 +31,22 @@ public class UploadPageTests : PageTestContext
     internal ReceiptStorage Storage = null!;
     internal QueueExtractor Extractor = null!;
     internal FakeTagAdvisor TagAdvisor = null!;
+    internal StubPhotoLoader PhotoLoader = null!;
 
     internal sealed class QueueExtractor : IReceiptExtractor
     {
         public Queue<ExtractionResult> Results { get; } = new();
         public List<int> PageCounts { get; } = [];
+        /// <summary>Media type of every page ever handed over — how a test proves a photo reached
+        /// extraction as the loader's JPEG rather than as its raw picked bytes.</summary>
+        public List<string> MediaTypes { get; } = [];
 
         public Task<ExtractionResult> ExtractAsync(
             IReadOnlyList<ReceiptAttachment> pages, IReadOnlyList<string>? knownProductNames = null,
             IReadOnlyList<string>? knownTags = null, CancellationToken cancellationToken = default)
         {
             PageCounts.Add(pages.Count);
+            MediaTypes.AddRange(pages.Select(p => p.MediaType));
             return Task.FromResult(Results.Count > 0
                 ? Results.Dequeue()
                 : new ExtractionResult { Success = false, Error = "no result queued", RawModelJson = "{}" });
@@ -62,12 +67,13 @@ public class UploadPageTests : PageTestContext
             new AppPaths(dataDir, Path.Combine(dataDir, "receipts")), household, NullLogger<ReceiptStorage>.Instance);
         Extractor = new QueueExtractor();
         TagAdvisor = new FakeTagAdvisor();
+        PhotoLoader = new StubPhotoLoader();
         var confirmer = new ReceiptConfirmationService(Factory);
         var duplicates = new ReceiptDuplicateDetector(Factory);
         Services.AddSingleton<IReceiptExtractor>(Extractor);
         Services.AddSingleton<ITagAdvisor>(TagAdvisor);
+        Services.AddSingleton<Web.Services.IShelfPhotoLoader>(PhotoLoader);
         Services.AddSingleton(Storage);
-        Services.AddSingleton(Options.Create(new LlmOptions()));
         Services.AddSingleton(confirmer);
         Services.AddSingleton(duplicates);
         Services.AddSingleton(new ReceiptAutoConfirmer(Factory, AppSettings, confirmer, duplicates,
@@ -639,5 +645,156 @@ public class UploadPageTests : PageTestContext
         // One extraction call carrying BOTH pages — the one-long-receipt case, not two receipts.
         cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".review-actions")));
         Assert.Equal([2], Extractor.PageCounts);
+    }
+
+    // ------------------------------------------------------- the snap button and the staged list
+
+    [Fact]
+    public void The_picker_takes_any_image_and_the_snap_input_opens_the_camera()
+    {
+        // ⚠️ image/* and not an image-format list — a format list grays HEIC photos out of the iOS
+        // Files browser instead of converting them (the census picker learned this first); PDF is
+        // named because it genuinely is accepted here. The snap input opens the camera directly
+        // (capture), arrives as JPEG on iOS, and takes one photo per activation, appended.
+        var cut = RenderUpload();
+
+        var inputs = cut.FindAll("input[type=file]");
+        Assert.Equal("image/*,application/pdf", inputs[0].GetAttribute("accept"));
+        Assert.Equal("environment", inputs[1].GetAttribute("capture"));
+        Assert.Equal("image/*", inputs[1].GetAttribute("accept"));
+        Assert.Null(inputs[1].GetAttribute("multiple"));
+        // The label IS the visible button, so it must point at the input it proxies.
+        Assert.Equal(inputs[1].GetAttribute("id"), cut.Find("label.file-button").GetAttribute("for"));
+    }
+
+    [Fact]
+    public void A_pdf_is_staged_without_touching_the_photo_loader()
+    {
+        // PDFs pass through raw — the loader is for photos, and handing it a PDF would time out
+        // against a canvas that can't decode one.
+        var cut = RenderUpload();
+
+        cut.FindComponent<InputFile>().UploadFiles(Pdf("order.pdf"));
+
+        Assert.Contains("1 file(s) selected", cut.Markup);
+        Assert.Empty(PhotoLoader.Loaded);
+    }
+
+    [Fact]
+    public void A_photo_is_staged_through_the_shared_loader_and_extracted_as_jpeg()
+    {
+        // The receipt IMAGE path was untestable before the loader seam (PDFs skip the resize, so
+        // bUnit could only ever drive PDFs through extraction). Now the stub stands in for the
+        // browser downscale exactly as on the census page — and what reaches the extractor must be
+        // the loader's JPEG, not the raw picked bytes.
+        Extractor.Results.Enqueue(ExtractionResult.Ok(new ExtractedReceipt
+        {
+            Merchant = "Walmart", PurchaseDate = Today.AddDays(-1), Lines = [Line("GV MILK", "Whole Milk")],
+        }, "{}"));
+        var cut = RenderUpload();
+
+        cut.FindComponent<InputFile>().UploadFiles(
+            InputFileContent.CreateFromBinary([9, 9, 9], "IMG_0001.jpg", contentType: "image/jpeg"));
+        Assert.Equal(["IMG_0001.jpg"], PhotoLoader.Loaded);
+
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Extract").Click();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".review-actions")));
+        Assert.Equal(["image/jpeg"], Extractor.MediaTypes);
+    }
+
+    [Fact]
+    public void Picks_append_across_change_events_and_a_staged_file_can_be_removed()
+    {
+        // Each change event ADDS to the staged list (a camera snap is one file per event, and a
+        // second pick must not throw away the first); the ✕ on a staged row is the way back out.
+        var cut = RenderUpload();
+
+        cut.FindComponent<InputFile>().UploadFiles(Pdf("a.pdf"));
+        cut.FindComponent<InputFile>().UploadFiles(Pdf("b.pdf"));
+        Assert.Contains("2 file(s) selected", cut.Markup);
+
+        cut.FindAll(".staged-files button")
+            .Single(b => b.GetAttribute("aria-label") == "Remove a.pdf").Click();
+
+        Assert.Contains("1 file(s) selected", cut.Markup);
+        Assert.Contains("b.pdf", cut.Markup);
+        Assert.DoesNotContain("a.pdf", cut.Markup);
+    }
+
+    [Fact]
+    public async Task A_snap_lands_beside_picked_files_and_extracts_as_a_batch()
+    {
+        // The snap input feeds the same staged list as the picker — two sources, one model.
+        Extractor.Results.Enqueue(ExtractionResult.Ok(new ExtractedReceipt
+        {
+            Merchant = "Walmart", PurchaseDate = Today.AddDays(-1), Lines = [Line("GV MILK", "Whole Milk")],
+        }, "{}"));
+        Extractor.Results.Enqueue(ExtractionResult.Ok(new ExtractedReceipt
+        {
+            Merchant = "Target", PurchaseDate = Today.AddDays(-1), Lines = [Line("EGGS", "Eggs")],
+        }, "{}"));
+        var cut = RenderUpload();
+
+        cut.FindComponent<InputFile>().UploadFiles(Pdf("a.pdf"));
+        await FileEvents.ChangeAsync(cut, 1, "image.jpg");  // a camera snap
+
+        Assert.Contains("2 file(s) selected", cut.Markup);
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Extract").Click();
+
+        // Two files, combine unticked → two receipts, extracted one at a time.
+        cut.WaitForAssertion(() => Assert.Equal([1, 1], Extractor.PageCounts));
+    }
+
+    [Fact]
+    public void Appending_past_the_file_cap_is_refused_and_keeps_what_is_staged()
+    {
+        var cut = RenderUpload();
+        cut.FindComponent<InputFile>().UploadFiles(
+            [.. Enumerable.Range(0, 20).Select(i => Pdf($"r{i}.pdf"))]);
+
+        cut.FindComponent<InputFile>().UploadFiles(Pdf("one-too-many.pdf"));
+
+        Assert.Contains("please keep it to 20 per upload", cut.Markup);
+        Assert.Contains("20 file(s) selected", cut.Markup);  // nothing was dropped
+    }
+
+    [Fact]
+    public void A_bad_file_is_named_and_does_not_unstage_its_neighbours()
+    {
+        PhotoLoader.ThrowsOnce = new InvalidOperationException("the browser could not decode this image");
+        var cut = RenderUpload();
+
+        cut.FindComponent<InputFile>().UploadFiles(
+            InputFileContent.CreateFromBinary([1], "broken.jpg", contentType: "image/jpeg"),
+            InputFileContent.CreateFromBinary([2], "fine.jpg", contentType: "image/jpeg"));
+
+        Assert.Contains("“broken.jpg” couldn't be read", Collapsed(cut.Markup));
+        Assert.Contains("1 file(s) selected", cut.Markup);
+        Assert.Contains("fine.jpg", cut.Markup);
+    }
+
+    [Fact]
+    public async Task Extract_stands_down_while_a_file_is_still_being_read_in()
+    {
+        // An extract must not snapshot a staged list an ingest is still appending to — and a queued
+        // second Extract click must not run a second extraction (each run persists a receipt, so two
+        // runs would record the same staged list twice).
+        Extractor.Results.Enqueue(ExtractionResult.Ok(new ExtractedReceipt
+        {
+            Merchant = "Walmart", PurchaseDate = Today.AddDays(-1), Lines = [Line("GV MILK", "Whole Milk")],
+        }, "{}"));
+        var cut = RenderUpload();
+        cut.FindComponent<InputFile>().UploadFiles(Pdf("a.pdf"));
+
+        var gate = new TaskCompletionSource();
+        PhotoLoader.Hold = gate;
+        var ingest = FileEvents.ChangeAsync(cut, 1, "image.jpg");  // parks mid-ingest
+
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Extract").Click();  // must NO-OP
+        Assert.Empty(Extractor.PageCounts);
+
+        gate.SetResult();
+        await ingest;
+        Assert.Contains("2 file(s) selected", cut.Markup);
     }
 }

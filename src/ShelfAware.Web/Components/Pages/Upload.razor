@@ -1,4 +1,5 @@
 @page "/receipt"
+@implements IDisposable
 @using ShelfAware.Core.Census
 @using ShelfAware.Core.Chat
 @using ShelfAware.Core.Extraction
@@ -6,13 +7,12 @@
 @using ShelfAware.Core.Settings
 @using ShelfAware.Core.Tagging
 @using ShelfAware.Core.Shopping
-@using Microsoft.Extensions.Options
 @using ShelfAware.Web.Ingest
 @inject IHouseholdDbFactory DbFactory
 @inject IReceiptExtractor Extractor
 @inject ITagAdvisor Advisor
 @inject ReceiptStorage Storage
-@inject IOptions<ShelfAware.Llm.LlmOptions> LlmOptions
+@inject IShelfPhotoLoader PhotoLoader
 @inject ReceiptConfirmationService Confirmer
 @inject ReceiptAutoConfirmer AutoConfirmer
 @inject ReceiptDuplicateDetector Duplicates
@@ -26,8 +26,9 @@
 
 @if (phase is Phase.Idle or Phase.Error or Phase.Extracting)
 {
-    @* The InputFile must stay mounted while extracting — IBrowserFile reads stream
-       through the DOM element, and unmounting it breaks them mid-read. *@
+    @* Every picked file is read into MEMORY inside its own change event (see OnFilesSelected) —
+       extraction never touches a browser file handle, so a circuit blip mid-extract can't break a
+       read, and camera snaps can append across change events at all. *@
     <section class="panel">
         <p>
             Photograph paper receipts — several at once is fine, each image is read as its own receipt.
@@ -50,18 +51,53 @@
             </p>
         }
         <div hidden="@(phase == Phase.Extracting)">
-            <InputFile OnChange="OnFilesSelected" multiple accept="image/jpeg,image/png,image/gif,image/webp,application/pdf" aria-label="Upload receipt images or PDF" />
-            @if (selectedFiles.Count > 0)
+            @* ⚠️ image/* and NOT an image-format list — the census picker's rule (PantryPhoto.razor):
+               iOS transcodes HEIC only when the accept list invites JPEG, and a format list GRAYS
+               HEIC photos out of the Files browser instead of converting them. The loader decides
+               what's an image, not the picker; PDF is named because it genuinely is accepted here.
+               ⚠️ Never name image/heic: Safari 17+ then stops transcoding and converts JPEG and PNG
+               INTO HEIC, making the rare case universal.
+               ⚠️ @key: a file input keeps its last value and fires NO change event when the "same"
+               file is picked again — and every iOS camera capture shares one name (image.jpg). A
+               fresh element per finished ingest is what makes snap → snap → snap work; the counter
+               bumps only after the reads complete, so no element is torn down under a live stream. *@
+            <InputFile @key="@($"pick-{pickerGeneration}")" OnChange="OnFilesSelected" multiple
+                       accept="image/*,application/pdf" disabled="@ingesting"
+                       aria-label="Upload receipt images or PDF" />
+            @* The camera path: `capture` opens the camera directly — nothing to find in any picker,
+               which is the whole feature. Its own input because capture makes an input camera-ONLY,
+               with no PDF in its accept because a camera takes photos. Direct captures arrive as
+               JPEG on iOS, so this path never meets HEIC at all. The input is visually hidden; the
+               label is the button (focus ring rides the input's :focus-visible — see .file-button). *@
+            <InputFile @key="@($"snap-{pickerGeneration}")" id="receipt-snap" OnChange="OnFilesSelected"
+                       accept="image/*" capture="environment" disabled="@ingesting"
+                       class="visually-hidden" aria-label="Take a photo of a receipt with your camera" />
+            <label class="file-button" for="receipt-snap">📷 Snap the receipt</label>
+            @if (ingesting)
             {
-                <p>@selectedFiles.Count file(s) selected@(selectedFiles.Count > 1 && !combineAsOne ? $" — {selectedFiles.Count} receipts" : "").</p>
-                @if (selectedFiles.Count > 1)
+                <p class="muted" role="status">Reading…</p>
+            }
+            @if (stagedFiles.Count > 0)
+            {
+                <ul class="staged-files">
+                    @foreach (var f in stagedFiles)
+                    {
+                        <li>
+                            <span>@f.Name</span>
+                            <button type="button" class="icon-btn" @onclick="() => stagedFiles.Remove(f)"
+                                    disabled="@ingesting" aria-label="Remove @f.Name"><span aria-hidden="true">✕</span></button>
+                        </li>
+                    }
+                </ul>
+                <p>@stagedFiles.Count file(s) selected@(stagedFiles.Count > 1 && !combineAsOne ? $" — {stagedFiles.Count} receipts" : "").</p>
+                @if (stagedFiles.Count > 1)
                 {
                     <label class="combine-check">
                         <input type="checkbox" @bind="combineAsOne" />
                         These are all <strong>one receipt</strong> (multiple photos/pages of a single long receipt)
                     </label>
                 }
-                <button @onclick="Extract">Extract</button>
+                <button @onclick="Extract" disabled="@ingesting">Extract</button>
             }
         </div>
         @if (batch.Count > 0)
@@ -349,8 +385,23 @@ else if (phase == Phase.Done)
 
     private Phase phase = Phase.Idle;
     private string? errorMessage;
-    private List<IBrowserFile> selectedFiles = [];
+    private List<StagedFile> stagedFiles = [];
+    private bool ingesting;
+    // ⚠️ The @key seed for both file inputs — bumped after every finished ingest so the next pick
+    // gets a FRESH <input>. A file input keeps its last value and fires no change event for the
+    // "same" file, and every iOS camera capture shares one name (image.jpg): without this, the
+    // second snap of a multi-page receipt is silently ignored. Review-verified — bUnit's fake
+    // upload can't reproduce the browser's same-file suppression.
+    private int pickerGeneration;
+    // Cancels in-flight selection-time reads when the page goes away (the census page's pattern),
+    // so a navigate-away mid-read is distinguishable from a failed read. Extraction deliberately
+    // takes no token — see Dispose.
+    private readonly CancellationTokenSource pageCts = new();
     private Receipt? receipt;
+
+    /// <summary>A picked file already read into memory — bytes rather than an IBrowserFile, because
+    /// staged files outlive their browser handles (see <see cref="PickedFileReader"/>).</summary>
+    private sealed record StagedFile(string Name, byte[] Data, string MediaType);
     private DateOnly reviewDate = DateOnly.FromDateTime(DateTime.Today);
     private List<ReviewLine> reviewLines = [];
     private List<Product> products = [];
@@ -670,28 +721,94 @@ else if (phase == Phase.Done)
             : "something went wrong reading this file — try selecting it again",
     };
 
-    private void OnFilesSelected(InputFileChangeEventArgs e)
+    // Every picked file is read into MEMORY here, inside its own change event, while its browser
+    // handle is still alive — see PickedFileReader for why appending across camera snaps forces
+    // this. New files APPEND to what's already staged (each snap is its own change event); the ✕
+    // on a staged row is the way back out.
+    private async Task OnFilesSelected(InputFileChangeEventArgs e)
     {
+        // Same double-fire guard as the census Read(): the inputs disable while ingesting, but a
+        // second change event can already be queued before that render lands.
+        if (ingesting || phase == Phase.Extracting) return;
+        IReadOnlyList<IBrowserFile> files;
         try
         {
-            selectedFiles = e.GetMultipleFiles(MaxFiles).ToList();
+            files = e.GetMultipleFiles(MaxFiles);
         }
         catch (InvalidOperationException)
         {
-            selectedFiles = [];
             errorMessage = $"Please select up to {MaxFiles} files at a time.";
             phase = Phase.Error;
             return;
         }
-        batch = []; // a fresh selection supersedes the last batch's progress readout
-        combineAsOne = false;
+        if (stagedFiles.Count + files.Count > MaxFiles)
+        {
+            errorMessage = $"That would be {stagedFiles.Count + files.Count} files — please keep it to {MaxFiles} per upload. Extract these first, or remove one.";
+            phase = Phase.Error;
+            return;
+        }
+
+        ingesting = true;
         errorMessage = null;
         if (phase == Phase.Error) phase = Phase.Idle;
+        batch = []; // a fresh selection supersedes the last batch's progress readout
+        var problems = new List<string>();
+        // ⚠️ Captured ONCE, before the first await — CancellationTokenSource.Token throws after
+        // Dispose, and a continuation can resume on a torn-down page (the census Read's rule).
+        var ct = pageCts.Token;
+        try
+        {
+            foreach (var file in files)
+            {
+                var result = file.ContentType == "application/pdf"
+                    ? await PickedFileReader.ReadRawAsync(file, MaxUploadBytes, "application/pdf", ct, Logger)
+                    : await PickedFileReader.ReadPhotoAsync(PhotoLoader, file, ct, Logger);
+                if (result.Kind == PickedFileReader.Kind.TornDown) return; // the visitor left — nobody to tell
+                if (result.Kind == PickedFileReader.Kind.Loaded)
+                {
+                    stagedFiles.Add(new StagedFile(file.Name, result.Bytes!, result.MediaType!));
+                    continue;
+                }
+                problems.Add(result.Message!);
+                // The remaining handles ride the same dead connection — stop rather than collect
+                // one identical error per file.
+                if (result.Kind == PickedFileReader.Kind.ConnectionLost) break;
+            }
+        }
+        catch (Exception) when (ct.IsCancellationRequested)
+        {
+            return; // teardown-time surprise — same silence as TornDown, there is nobody to tell
+        }
+        catch (Exception ex)
+        {
+            // PickedFileReader classifies everything it can — this is the handler's own belt, so a
+            // surprise degrades to this page's normal error instead of tearing down the circuit.
+            Logger.LogError(ex, "Staging picked receipt files failed.");
+            problems.Add("Sorry — something went wrong reading those files. Please try again.");
+        }
+        finally
+        {
+            ingesting = false;
+            pickerGeneration++; // fresh inputs, so re-picking the same file name fires again
+        }
+        if (problems.Count > 0)
+        {
+            // A bad file doesn't unstage its good neighbours — they stay listed above; it's named here.
+            errorMessage = string.Join(" ", problems);
+            phase = Phase.Error;
+        }
     }
 
     // Several files are several receipts (the stack-of-paper-receipts case) unless the user said
     // they're pages of ONE long receipt. A single file keeps today's flow: straight into review.
-    private Task Extract() => selectedFiles.Count > 1 && !combineAsOne ? ExtractBatchAsync() : ExtractCombinedAsync();
+    // ⚠️ Guarded like the census Read(): Extracting hides this button via `hidden`, but a second
+    // click can already be queued before that render lands — and two runs would persist the same
+    // staged list as two receipts. The ingest guard keeps a mid-append list from being extracted.
+    private Task Extract()
+    {
+        if (ingesting || phase == Phase.Extracting || stagedFiles.Count == 0) return Task.CompletedTask;
+        return stagedFiles.Count > 1 && !combineAsOne ? ExtractBatchAsync() : ExtractCombinedAsync();
+    }
 
     private async Task ExtractCombinedAsync()
     {
@@ -703,11 +820,12 @@ else if (phase == Phase.Done)
 
         try
         {
+            var files = stagedFiles.ToList(); // a queued ✕ click must not mutate what we're writing
             var attachments = new List<ReceiptAttachment>();
             var index = 0;
-            foreach (var file in selectedFiles)
+            foreach (var f in files)
             {
-                var attachment = await ReadForExtractionAsync(file);
+                var attachment = new ReceiptAttachment(f.Data, f.MediaType);
                 attachments.Add(attachment);
                 await Storage.WritePageAsync(imagePath, index++, attachment.Data, attachment.MediaType);
             }
@@ -763,7 +881,7 @@ else if (phase == Phase.Done)
         }
         finally
         {
-            selectedFiles = [];
+            stagedFiles = [];
             combineAsOne = false;
         }
     }
@@ -776,7 +894,8 @@ else if (phase == Phase.Done)
     {
         phase = Phase.Extracting;
         errorMessage = null;
-        batch = selectedFiles.Select(f => new BatchItem { FileName = f.Name }).ToList();
+        var files = stagedFiles.ToList(); // snapshot — a queued ✕ click must not shift indexes mid-run
+        batch = files.Select(f => new BatchItem { FileName = f.Name }).ToList();
         StateHasChanged();
 
         try
@@ -784,7 +903,7 @@ else if (phase == Phase.Done)
             await LoadCatalogAsync();
             var productNames = products.Select(p => p.Name).Distinct().ToList();
 
-            for (var i = 0; i < selectedFiles.Count; i++)
+            for (var i = 0; i < files.Count; i++)
             {
                 var item = batch[i];
                 item.Status = BatchStatus.Reading;
@@ -792,7 +911,7 @@ else if (phase == Phase.Done)
                 try
                 {
                     var imagePath = await Storage.NewFolderAsync();
-                    var attachment = await ReadForExtractionAsync(selectedFiles[i]);
+                    var attachment = new ReceiptAttachment(files[i].Data, files[i].MediaType);
                     await Storage.WritePageAsync(imagePath, 0, attachment.Data, attachment.MediaType);
 
                     var result = await Extractor.ExtractAsync([attachment], productNames, allKnownTags);
@@ -838,7 +957,7 @@ else if (phase == Phase.Done)
         }
         finally
         {
-            selectedFiles = [];
+            stagedFiles = [];
             await LoadPendingAsync(); // the batch just filled the review queue
             phase = Phase.Idle;
         }
@@ -899,22 +1018,6 @@ else if (phase == Phase.Done)
             .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t).ToList();
     }
 
-
-    // Browser-side resize for images (longest edge capped per Llm:MaxImageEdgePx, DESIGN.md §5);
-    // PDFs pass through as-is.
-    private async Task<ReceiptAttachment> ReadForExtractionAsync(IBrowserFile file)
-    {
-        if (file.ContentType == "application/pdf")
-            return new ReceiptAttachment(await ReadAllAsync(file.OpenReadStream(MaxUploadBytes)), "application/pdf");
-        var maxEdge = LlmOptions.Value.MaxImageEdgePx;
-        // The resize runs in the browser, and Blazor's JS never settles the interop promise when the
-        // image fails to load there (seen live: a CSP without img-src blob: blocked it and the upload
-        // hung forever on the spinner). Bound it so a browser-side failure becomes this file's normal
-        // "couldn't be read" handling instead of a hang.
-        var resized = await file.RequestImageFileAsync("image/jpeg", maxEdge, maxEdge)
-            .AsTask().WaitAsync(TimeSpan.FromSeconds(30));
-        return new ReceiptAttachment(await ReadAllAsync(resized.OpenReadStream(MaxUploadBytes)), "image/jpeg");
-    }
 
     // Persistence lives in ReceiptConfirmationService — the ONE confirm path shared with the
     // auto-importer. The service is idempotent (an already-confirmed receipt is a no-op) and the
@@ -1075,7 +1178,7 @@ else if (phase == Phase.Done)
         phase = Phase.Idle;
         receipt = null;
         reviewLines = [];
-        selectedFiles = [];
+        stagedFiles = [];
         batch = [];
         combineAsOne = false;
         errorMessage = null;
@@ -1086,10 +1189,15 @@ else if (phase == Phase.Done)
         duplicateOf = null;
     }
 
-    private static async Task<byte[]> ReadAllAsync(Stream stream)
+    public void Dispose()
     {
-        using var ms = new MemoryStream();
-        await stream.CopyToAsync(ms);
-        return ms.ToArray();
+        // Cancels an in-flight selection-time read — and because only THIS token means teardown,
+        // it's what lets PickedFileReader tell a departed visitor from a failed read. Extraction
+        // deliberately runs on untokened: by then the receipt is being persisted, and an
+        // interrupted extraction should still land in the review queue rather than vanish with
+        // the visitor (the queue's Retry is the recovery path; a census has no such queue, which
+        // is why PantryPhoto cancels its read and this page doesn't).
+        if (!pageCts.IsCancellationRequested) pageCts.Cancel();
+        pageCts.Dispose();
     }
 }

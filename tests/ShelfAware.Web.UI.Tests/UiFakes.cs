@@ -1,11 +1,82 @@
+using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.Extensions.Logging;
+using ShelfAware.Core.Census;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Speech;
 using ShelfAware.Web.Data;
+using ShelfAware.Web.Services;
 using ShelfAware.Web.Tests;
 
 namespace ShelfAware.Web.UI.Tests;
+
+/// <summary>Raises a file input's change event by hand, WITHOUT bUnit's UploadFiles, and hands back
+/// the HANDLER's task. Needed wherever a test parks the ingest (staging is eager, so UploadFiles'
+/// own dispatch would sit inside the parked handler with no task to await) — and it's also how the
+/// snap input is driven with the same file name per event, exactly what an iPhone camera produces.</summary>
+internal static class FileEvents
+{
+    internal sealed class FakeBrowserFile(string name, string contentType = "image/jpeg") : IBrowserFile
+    {
+        public string Name => name;
+        public DateTimeOffset LastModified => DateTimeOffset.Now;
+        public long Size => 3;
+        public string ContentType => contentType;
+        public Stream OpenReadStream(long maxAllowedSize = 512000, CancellationToken cancellationToken = default) =>
+            new MemoryStream([1, 2, 3]);
+    }
+
+    /// <summary>Dispatch a change on the Nth file input of the page (0 = the picker, 1 = the snap
+    /// input on both photo-taking pages).</summary>
+    public static Task ChangeAsync<T>(IRenderedComponent<T> cut, int inputIndex, params string[] names)
+        where T : class, IComponent =>
+        cut.InvokeAsync(() => cut.FindComponents<InputFile>()[inputIndex].Instance.OnChange.InvokeAsync(
+            new InputFileChangeEventArgs([.. names.Select(n => (IBrowserFile)new FakeBrowserFile(n))])));
+}
+
+/// <summary>Stands in for the browser-side downscale on BOTH photo-taking pages (the census and the
+/// receipt upload stage photos through the same loader). <c>RequestImageFileAsync</c> reaches into JS
+/// and throws outright under bUnit, so this is what makes the flow beneath it reachable at all.</summary>
+internal sealed class StubPhotoLoader : IShelfPhotoLoader
+{
+    /// <summary>Thrown on EVERY load — the "all photos are bad" shape.</summary>
+    public Exception? Throws { get; set; }
+
+    /// <summary>Thrown on the NEXT load only — so a selection can mix one bad file with good
+    /// neighbours and a test can watch the good ones survive it.</summary>
+    public Exception? ThrowsOnce { get; set; }
+
+    /// <summary>When set, the next load parks here — so a test can interleave something (a
+    /// navigate-away, a second event) with a read that is genuinely mid-flight. One-shot, same
+    /// shape as QueueReader.Hold.</summary>
+    public TaskCompletionSource? Hold { get; set; }
+
+    /// <summary>Every file name this loader was asked to read, in order — how a test proves a PDF
+    /// never touched the photo path, or that an ingest read exactly the files it was handed.</summary>
+    public List<string> Loaded { get; } = [];
+
+    public async Task<ShelfPhoto> LoadAsync(IBrowserFile file, CancellationToken cancellationToken = default)
+    {
+        if (Hold is { } gate)
+        {
+            Hold = null;
+            await gate.Task;
+        }
+        // The real loader's WaitAsync(…, ct) throws the moment the token fires, gate or no gate —
+        // without this the teardown tests pass vacuously (a stub that ignores cancellation can
+        // never exercise the teardown-vs-alive split the pages are built around).
+        cancellationToken.ThrowIfCancellationRequested();
+        if (ThrowsOnce is { } once)
+        {
+            ThrowsOnce = null;
+            throw once;
+        }
+        if (Throws is not null) throw Throws;
+        Loaded.Add(file.Name);
+        return new ShelfPhoto([1, 2, 3], "image/jpeg");
+    }
+}
 
 /// <summary>Wraps <see cref="TestDb"/> so a test can model the boundary production pages actually
 /// have: every load and every save runs on its own short-lived context, and any one of them can
