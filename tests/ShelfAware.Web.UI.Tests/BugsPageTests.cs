@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Domain;
 using ShelfAware.Web.Auth;
+using ShelfAware.Web.Components.Layout;
 using ShelfAware.Web.Components.Pages;
 
 namespace ShelfAware.Web.UI.Tests;
@@ -93,23 +94,78 @@ public class BugsPageTests : PageTestContext
         Assert.Empty(await raw.BugReports.IgnoreQueryFilters().ToListAsync());
     }
 
-    [Fact]
-    public void The_from_query_pre_fills_where_but_only_for_a_relative_path()
+    /// <summary>The select's value, and the way into the escape hatch — found by its visible text
+    /// rather than the sentinel value, so a sentinel rename can't quietly turn these vacuous.</summary>
+    private static AngleSharp.Dom.IElement WhereSelect(IRenderedComponent<Bugs> cut) =>
+        cut.Find("select[aria-label='Which page it happened on']");
+
+    private static void PickSomewhereElse(IRenderedComponent<Bugs> cut)
     {
-        Services.GetRequiredService<NavigationManager>().NavigateTo("/bugs?from=%2Fproducts");
-        var cut = RenderBugs();
-        Assert.Equal("/products", cut.Find("input[aria-label='Where it happened']").GetAttribute("value"));
+        var select = WhereSelect(cut);
+        var value = select.QuerySelectorAll("option")
+            .Single(o => o.TextContent.Contains("Somewhere else")).GetAttribute("value");
+        select.Change(value);
     }
 
     [Fact]
-    public void An_absolute_from_url_is_ignored_not_rendered_into_the_field()
+    public void The_where_choices_are_the_site_nav_plus_an_escape_hatch()
+    {
+        // ONE list (SiteNav): the header renders it and this dropdown renders it, so a new page
+        // shows up in both or neither — the choices can never drift from the app's real pages.
+        var cut = RenderBugs();
+
+        var options = WhereSelect(cut).QuerySelectorAll("option")
+            .Select(o => o.TextContent.Trim()).ToList();
+
+        Assert.Equal(
+            new[] { "—" }.Concat(SiteNav.Pages.Select(p => p.Label)).Append("Somewhere else…").ToList(),
+            options);
+    }
+
+    [Fact]
+    public void A_from_path_the_menu_knows_preselects_its_page()
+    {
+        Services.GetRequiredService<NavigationManager>().NavigateTo("/bugs?from=%2Fproducts");
+        var cut = RenderBugs();
+
+        Assert.Equal("/products", WhereSelect(cut).GetAttribute("value"));
+        Assert.Empty(cut.FindAll("input[aria-label='Where it happened']")); // no escape hatch needed
+    }
+
+    [Fact]
+    public void A_from_path_off_the_menu_keeps_its_exact_path_in_the_escape_hatch()
+    {
+        // The admin wants /product/12, not "Products" — the footer link's specificity must
+        // survive the dropdown.
+        Services.GetRequiredService<NavigationManager>().NavigateTo("/bugs?from=%2Fproduct%2F12");
+        var cut = RenderBugs();
+
+        Assert.Equal("/product/12", cut.Find("input[aria-label='Where it happened']").GetAttribute("value"));
+    }
+
+    [Fact]
+    public async Task Picking_a_menu_page_stores_its_path()
+    {
+        var cut = RenderBugs();
+        cut.Find("textarea").Input("The list printed sideways");
+        WhereSelect(cut).Change("/list");
+        cut.Find("form").Submit();
+
+        cut.WaitForAssertion(() => Assert.Contains("Sent — thank you", cut.Markup));
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Equal("/list", (await raw.BugReports.IgnoreQueryFilters().SingleAsync()).PageUrl);
+    }
+
+    [Fact]
+    public void An_absolute_from_url_is_ignored_not_rendered_into_the_form()
     {
         // The query string is attacker-writable (a pasted link); only an app-relative path may
-        // pre-fill the visible field.
+        // pre-fill anything.
         Services.GetRequiredService<NavigationManager>().NavigateTo(
             "/bugs?from=" + Uri.EscapeDataString("https://evil.example/phish"));
         var cut = RenderBugs();
-        Assert.Equal("", cut.Find("input[aria-label='Where it happened']").GetAttribute("value") ?? "");
+        Assert.Equal("", WhereSelect(cut).GetAttribute("value") ?? "");
+        Assert.Empty(cut.FindAll("input[aria-label='Where it happened']"));
     }
 
     [Fact]
@@ -118,6 +174,7 @@ public class BugsPageTests : PageTestContext
         var cut = RenderBugs();
 
         cut.Find("textarea").Input(new string('x', 5000)); // bUnit bypasses maxlength, like devtools would
+        PickSomewhereElse(cut);
         cut.Find("input[aria-label='Where it happened']").Change("/" + new string('y', 400));
         cut.Find("form").Submit();
 
@@ -136,7 +193,8 @@ public class BugsPageTests : PageTestContext
         Services.GetRequiredService<NavigationManager>().NavigateTo(
             "/bugs?from=" + Uri.EscapeDataString("//evil.example/phish"));
         var cut = RenderBugs();
-        Assert.Equal("", cut.Find("input[aria-label='Where it happened']").GetAttribute("value") ?? "");
+        Assert.Equal("", WhereSelect(cut).GetAttribute("value") ?? "");
+        Assert.Empty(cut.FindAll("input[aria-label='Where it happened']"));
     }
 
     [Fact]
@@ -145,7 +203,8 @@ public class BugsPageTests : PageTestContext
         Services.GetRequiredService<NavigationManager>().NavigateTo(
             "/bugs?from=" + Uri.EscapeDataString(@"/\evil.example"));
         var cut = RenderBugs();
-        Assert.Equal("", cut.Find("input[aria-label='Where it happened']").GetAttribute("value") ?? "");
+        Assert.Equal("", WhereSelect(cut).GetAttribute("value") ?? "");
+        Assert.Empty(cut.FindAll("input[aria-label='Where it happened']"));
     }
 
     [Fact]

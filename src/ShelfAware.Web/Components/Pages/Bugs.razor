@@ -1,6 +1,7 @@
 @page "/bugs"
 @using Microsoft.Extensions.Options
 @using ShelfAware.Web.Auth
+@using ShelfAware.Web.Components.Layout
 @inject IHouseholdDbFactory DbFactory
 @inject IOptions<AdminOptions> Admin
 @inject ILogger<Bugs> Logger
@@ -32,9 +33,27 @@ else
                           aria-label="Describe what looked wrong" disabled="@busy"></textarea>
             </label>
             <label class="field">
-                <span>Where (which page or screen)</span>
-                <input @bind="where" maxlength="300" aria-label="Where it happened" disabled="@busy" />
+                <span>Where (which page)</span>
+                @* Built from SiteNav — the SAME list the header nav renders, so the choices can't
+                   drift from the app's real pages and nobody has to type "/list" by hand. The
+                   escape hatch keeps the old free text for anywhere more specific. *@
+                <select @bind="wherePage" disabled="@busy" aria-label="Which page it happened on">
+                    <option value="">—</option>
+                    @* `entry`, not `page`: Razor reads inline `@page.` as the @page directive. *@
+                    @foreach (var entry in SiteNav.Pages)
+                    {
+                        <option value="@entry.Href">@entry.Label</option>
+                    }
+                    <option value="@Elsewhere">Somewhere else…</option>
+                </select>
             </label>
+            @if (wherePage == Elsewhere)
+            {
+                <label class="field">
+                    <span>Where exactly</span>
+                    <input @bind="where" maxlength="300" aria-label="Where it happened" disabled="@busy" />
+                </label>
+            }
             <button type="submit" disabled="@busy">@(busy ? "Sending…" : "Send report")</button>
         </form>
         <div role="status" aria-live="polite">
@@ -106,8 +125,13 @@ else
     /// form can pre-fill it. Visible and editable; never captured silently.</summary>
     [SupplyParameterFromQuery(Name = "from")] public string? From { get; set; }
 
+    /// <summary>The "Somewhere else…" sentinel — leads with a character no app path can, so it can
+    /// never collide with a SiteNav href.</summary>
+    private const string Elsewhere = "~elsewhere";
+
     private List<BugReport>? reports;
     private string body = "";
+    private string wherePage = "";
     private string where = "";
     private string? note;
     private string? error;
@@ -117,9 +141,23 @@ else
     protected override async Task OnInitializedAsync()
     {
         // Only a relative app path is accepted as a pre-fill — anything else in the query string
-        // (a full URL, junk) is ignored rather than rendered into the field. "//host" is a
+        // (a full URL, junk) is ignored rather than rendered into the form. "//host" is a
         // protocol-relative URL and "/\" its backslash twin, so neither counts as app-relative.
-        if (From is ['/', ..] && From is not ['/', '/', ..] && From is not ['/', '\\', ..]) where = From;
+        if (From is ['/', ..] && From is not ['/', '/', ..] && From is not ['/', '\\', ..])
+        {
+            // A page the menu knows preselects itself; anything more specific (a product page,
+            // say) keeps its EXACT path in the free-text box — the admin wants /product/12, not
+            // "Products", and the footer link's specificity must survive the dropdown.
+            if (SiteNav.Pages.FirstOrDefault(p => p.Href == From) is { } known)
+            {
+                wherePage = known.Href;
+            }
+            else
+            {
+                wherePage = Elsewhere;
+                where = From;
+            }
+        }
         await LoadAsync();
     }
 
@@ -169,7 +207,14 @@ else
                     // browser-enforced only, and a stripped attribute must not become an
                     // unbounded row (the machine half truncates too — 2000/6000).
                     Body = Clamp(body.Trim(), 4000),
-                    PageUrl = string.IsNullOrWhiteSpace(where) ? null : Clamp(where.Trim(), 300),
+                    // A picked page stores its path (the same string the footer's from= carries);
+                    // only the escape hatch consults the free-text box.
+                    PageUrl = wherePage switch
+                    {
+                        "" => null,
+                        Elsewhere => string.IsNullOrWhiteSpace(where) ? null : Clamp(where.Trim(), 300),
+                        _ => wherePage,
+                    },
                     ReportedBy = user?.Identity?.Name,
                     CreatedAt = DateTimeOffset.Now,
                 });

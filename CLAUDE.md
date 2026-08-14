@@ -2274,12 +2274,26 @@ bUnit pages/components — see items 31, 42, 43, 45, 46 and 47).
      successful write speaks through loadError's own sentence, so the two can never share advice. A
      row deleted or trimmed between render and click answers false — "isn't there any more" — rather
      than throwing.
-   - **1563 tests green (+13), 0 warnings** on a non-incremental Release build, read off the final
-     run. Four mutations, each killing exactly its tests. Live-verified on the dev sandbox: both real
-     rows resolved (each section flips to "Nothing open" with a Resolved (1) drawer), the sandbox's
-     own /bugs row wearing "✔ resolved Aug 14", and the error reopened back into the open table.
-     (Branch note: independent of `feature/snap-photo-upload` — whichever merges second resolves
-     CLAUDE.md by ordering item 48 before 49.)
+   - **The /bugs form got its polish pass in the same arc** (Jordan's live feedback): `class="field"`
+     had styling only under `.ai-settings .field`, so the bug form's labels sat BESIDE their boxes —
+     the `.linkish` undefined-class shape again; the rule is unscoped `.field` now (label stacked
+     above, 34rem cap), serving Settings and Bugs from one definition. And "Where" is a DROPDOWN
+     built from **`SiteNav` (Components/Layout) — THE page list, rendered by the header nav and the
+     dropdown both**, so a new page appears in both or neither. A "Somewhere else…" escape hatch
+     keeps the free-text path: a footer-link `from=` matching a nav page preselects it, while a
+     more specific path (/product/12) lands VERBATIM in the escape box — the admin wants the exact
+     page, and the footer's specificity must survive the dropdown. ⚠️ Razor reads an inline
+     `@page.` as the @page DIRECTIVE (the lowercase-`<text>` reserved-word class) — loop variables
+     over SiteNav must not be named `page`.
+   - **1566 tests green (+16 total on the branch), 0 warnings** on a non-incremental Release build,
+     read off the final run. Seven mutations across the arc, each killing exactly its tests.
+     Live-verified on the dev sandbox: both real rows resolved (each section flips to "Nothing open"
+     with a Resolved (1) drawer), the sandbox's own /bugs row wearing "✔ resolved Aug 14", the error
+     reopened back into the open table; then the form pass — labels measured ABOVE their boxes, all
+     eleven nav pages in the dropdown, `from=/receipt` preselecting "Upload", and `from=/product/12`
+     preserved exactly in the escape hatch. (Branch note: independent of
+     `feature/snap-photo-upload` — whichever merges second resolves CLAUDE.md by ordering item 48
+     before 49.)
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

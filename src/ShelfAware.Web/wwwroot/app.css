@@ -2488,13 +2488,17 @@ tfoot td {
     max-width: 34rem;
 }
 
-.ai-settings .field {
+/* A labelled form control, label stacked ABOVE the box. Unscoped on purpose: it was
+   `.ai-settings .field`, which left every OTHER `class="field"` (the bug-report form) completely
+   unstyled — label and box side by side, the `.linkish` failure shape again. */
+.field {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
+    max-width: 34rem;
 }
 
-.ai-settings .field > span {
+.field > span {
     font-weight: 600;
     font-size: 0.9rem;
 }
