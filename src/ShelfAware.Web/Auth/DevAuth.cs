@@ -75,8 +75,10 @@ public static class DevAuth
                     current.UseFixed(householdId);
                     await seeder.SeedAsync();
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    // Cancellation propagates (house rule); everything else is non-essential here — the
+                    // sign-in already happened and the onboarding banner can seed too.
                     log.LogWarning(ex, "dev quick-login: sample seed skipped.");
                 }
             }
