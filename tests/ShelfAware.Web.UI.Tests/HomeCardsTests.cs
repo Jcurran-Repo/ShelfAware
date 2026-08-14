@@ -229,15 +229,19 @@ public class HomeCardsTests : PageTestContext
 
         var button = cut.Find(".copy-name");
         Assert.Equal("Copy Whole Milk to the clipboard", button.GetAttribute("aria-label"));
+        // The announcer must exist BEFORE any copy: a live region reliably announces text
+        // CHANGING inside an existing region, not a region inserted already holding its text.
+        Assert.Equal("", cut.Find(".copy-announcer").TextContent.Trim());
+        Assert.Equal("status", cut.Find(".copy-announcer").GetAttribute("role"));
         button.Click();
 
         var copy = JSInterop.Invocations.Single(i => i.Identifier == "navigator.clipboard.writeText");
         Assert.Equal("Whole Milk", copy.Arguments[0]);
         cut.WaitForAssertion(() =>
         {
-            var note = cut.Find(".copy-note");
-            Assert.Equal("Copied", note.TextContent.Trim());
-            Assert.Equal("status", note.GetAttribute("role")); // screen readers hear the confirmation too
+            Assert.Equal("Copied", cut.Find(".copy-note").TextContent.Trim());
+            // The announcement carries the name — a screen reader hears WHICH card copied.
+            Assert.Equal("Copied Whole Milk", cut.Find(".copy-announcer").TextContent.Trim());
         });
     }
 
@@ -293,7 +297,11 @@ public class HomeCardsTests : PageTestContext
 
         cut.Find(".copy-name").Click();
 
-        cut.WaitForAssertion(() => Assert.Equal("Couldn't copy", cut.Find(".copy-note").TextContent.Trim()));
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("Couldn't copy", cut.Find(".copy-note").TextContent.Trim());
+            Assert.Equal("Couldn't copy Whole Milk", cut.Find(".copy-announcer").TextContent.Trim());
+        });
     }
 
     [Fact]

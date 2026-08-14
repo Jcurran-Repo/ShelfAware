@@ -8,6 +8,7 @@
 @inject IAppSettings SettingsStore
 @inject IPantryStore Store
 @inject IJSRuntime JS
+@inject ILogger<GroceryList> Logger
 
 <PageTitle>Grocery List — Shelf Aware</PageTitle>
 
@@ -50,9 +51,12 @@
         <button class="secondary" @onclick="PrintList">Print</button>
         <button class="secondary" @onclick="DownloadList">Download</button>
         <span class="muted kbd-hint">press <kbd>D</kbd> to download</span>
-        @if (copied)
+        @* Persistent live region (mounted before any copy) — see the same pattern on the dashboard
+           cards: an inserted-with-its-text region is not reliably announced. *@
+        <span class="visually-hidden copy-announcer" role="status" aria-live="polite">@copyStatus</span>
+        @if (copyStatus is not null)
         {
-            <span class="muted" role="status">Copied to clipboard</span>
+            <span class="muted copy-note">@copyStatus</span>
         }
     </div>
 }
@@ -277,7 +281,7 @@ else
         actionBusy = true;
         try
         {
-            copied = false; // the copied list is now stale
+            copyStatus = null; // the copied list is now stale
             await Store.RecordSignalAsync(e.ProductId, SignalKind.Restocked);
             await LoadAsync();
         }
@@ -290,7 +294,7 @@ else
         actionBusy = true;
         try
         {
-            copied = false; // the copied list is now stale
+            copyStatus = null; // the copied list is now stale
             await using var db = await DbFactory.CreateDbContextAsync();
             if (await db.Products.FindAsync(e.ProductId) is { } product)
             {
@@ -315,7 +319,7 @@ else
         actionBusy = true;
         try
         {
-            copied = false; // the copied list is now stale
+            copyStatus = null; // the copied list is now stale
             await Store.SetQuantityAsync(e.ProductId, -e.OnePackage, relative: true);
             await LoadAsync();
         }
@@ -326,7 +330,7 @@ else
     {
         var name = newExtra.Trim();
         if (name.Length == 0) return;
-        copied = false; // the copied list is now stale
+        copyStatus = null; // the copied list is now stale
         await using var db = await DbFactory.CreateDbContextAsync();
         var have = await db.GroceryExtras.Select(e => e.Name).ToListAsync();
         if (!have.Any(h => string.Equals(h, name, StringComparison.OrdinalIgnoreCase)))
@@ -340,7 +344,7 @@ else
 
     private async Task RemoveExtra(GroceryExtra e)
     {
-        copied = false; // the copied list is now stale
+        copyStatus = null; // the copied list is now stale
         await using var db = await DbFactory.CreateDbContextAsync();
         // No fallback to the detached `e`: the lookup is household-filtered, so a miss means the row is
         // gone (a double tap) or isn't ours — and removing `e` anyway would delete it keyed on the id
@@ -353,7 +357,7 @@ else
         extras = await db.GroceryExtras.OrderBy(x => x.Name).ToListAsync();
     }
 
-    private bool copied;
+    private string? copyStatus;
 
     private IJSObjectReference? downloadModule;
     private DotNetObjectReference<GroceryList>? selfRef;
@@ -377,8 +381,9 @@ else
 
     private async Task CopyList()
     {
-        await JS.InvokeVoidAsync("navigator.clipboard.writeText", BuildListText());
-        copied = true;
+        copyStatus = await ClipboardCopy.TryWriteAsync(JS, Logger, BuildListText())
+            ? "Copied to clipboard"
+            : "Couldn't copy";
     }
 
     private async Task PrintList() => await JS.InvokeVoidAsync("window.print");

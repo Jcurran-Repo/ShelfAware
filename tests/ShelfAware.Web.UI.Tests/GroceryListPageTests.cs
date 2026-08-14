@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.JSInterop;
 using ShelfAware.Core.Domain;
 using ShelfAware.Web.Components.Pages;
 
@@ -162,6 +163,23 @@ public class GroceryListPageTests : PageTestContext
         Assert.Contains("- Whole Milk (Great Value, gal) ×1", text);
         Assert.Contains("Extras:", text);
         Assert.Contains("- Batteries", text);
+    }
+
+    [Fact]
+    public void A_refused_clipboard_reports_couldnt_copy_instead_of_tearing_down_the_page()
+    {
+        // Pre-fix, an unhandled JSException here tore down the whole circuit — on the page whose
+        // Copy button is a headline feature.
+        JSInterop.SetupVoid("navigator.clipboard.writeText", _ => true)
+            .SetException(new JSException("Write permission denied."));
+        SeedOverdue("Whole Milk");
+        var cut = RenderList();
+        cut.WaitForState(() => cut.FindAll("tbody tr").Count > 0);
+
+        cut.FindAll(".list-actions button").Single(b => b.TextContent.Trim() == "Copy list").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal("Couldn't copy", cut.Find(".copy-note").TextContent.Trim()));
+        Assert.NotEmpty(cut.FindAll("tbody tr")); // the page survived the refusal
     }
 
     [Fact]

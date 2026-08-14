@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Bunit.TestDoubles;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.JSInterop;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -316,6 +317,23 @@ public class SettingsPageTests : SettingsTestBase
         cut.FindAll("button").Single(b => b.TextContent.Trim() == "Clear code").Click();
         cut.WaitForAssertion(() => Assert.Equal("—", cut.Find(".invite-code").TextContent.Trim()));
         Assert.Null((await AuthContext.Households.AsNoTracking().SingleAsync(h => h.Id == AuthHousehold)).InviteCode);
+    }
+
+    [Fact]
+    public void A_refused_clipboard_on_the_invite_copy_says_so_instead_of_tearing_down()
+    {
+        // The code stays visible on screen, so the honest fallback is the manual one.
+        JSInterop.SetupVoid("navigator.clipboard.writeText", _ => true)
+            .SetException(new JSException("Write permission denied."));
+        var cut = RenderSettings();
+        cut.WaitForState(() => Section(cut, "Household").TextContent.Contains("Invite code"));
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Generate invite code")).Click();
+        cut.WaitForState(() => cut.Find(".invite-code").TextContent.Trim() != "—");
+
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Copy").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("Couldn't copy — select the code and copy it by hand.",
+            Section(cut, "Household").TextContent));
     }
 
     [Fact]

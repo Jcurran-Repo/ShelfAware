@@ -53,6 +53,10 @@ else
     }
     else
     {
+        @* A PERSISTENT live region: screen readers announce text CHANGING inside an existing
+           region, not a region inserted already holding its text — so this stays mounted and
+           the visible per-card note is presentation only. *@
+        <div class="visually-hidden copy-announcer" role="status" aria-live="polite">@copyAnnouncement</div>
         <ul class="cards">
             @foreach (var p in runningLow)
             {
@@ -65,7 +69,7 @@ else
                                     title="Copy name" aria-label="Copy @p.Name to the clipboard">📋</button>
                             @if (copyNote is { } cn && cn.ProductId == p.Id)
                             {
-                                <span class="muted copy-note" role="status">@cn.Text</span>
+                                <span class="muted copy-note">@cn.Text</span>
                             }
                             <span class="chip chip-@ChipClass(r.Status)">@StatusLabel(r.Status)</span>
                         </div>
@@ -328,24 +332,15 @@ else
     }
 
     private (int ProductId, string Text)? copyNote; // one note at a time, tied to the card it is about
+    private string? copyAnnouncement; // feeds the persistent live region beside the cards
 
     // Copies the bare item name — what pastes usefully into a store search; the brand/size hints
     // stay on the card.
     private async Task CopyName(Product p)
     {
-        try
-        {
-            await JS.InvokeVoidAsync("navigator.clipboard.writeText", p.Name);
-            copyNote = (p.Id, "Copied");
-        }
-        catch (JSDisconnectedException) { /* circuit teardown raced the click — no page left to notify */ }
-        catch (JSException ex)
-        {
-            // Clipboard access can be refused (insecure context, permissions) — say so on the card
-            // rather than letting a copy click tear down the circuit.
-            Logger.LogWarning(ex, "Copying a product name to the clipboard failed.");
-            copyNote = (p.Id, "Couldn't copy");
-        }
+        var ok = await ClipboardCopy.TryWriteAsync(JS, Logger, p.Name);
+        copyNote = (p.Id, ok ? "Copied" : "Couldn't copy");
+        copyAnnouncement = $"{copyNote.Value.Text} {p.Name}";
     }
 
     private static string Days(double? d) => d is { } v ? ((int)Math.Round(v)).ToString() : "?";
