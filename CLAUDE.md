@@ -2242,6 +2242,45 @@ bUnit pages/components — see items 31, 42, 43, 45, 46 and 47).
      page-wide pattern deliberately: converting one action's announcements piecemeal is the
      partial-conversion trap from the other direction).
 
+49. **v4.9 — Resolve for bugs and errors: the app's first cross-household write (2026-08-14, branch
+   `feature/resolve-reports`).** Item 47 shipped the admin viewer read-only, deferring "mark resolved"
+   as its own focused change; Jordan called for it, for both halves. The halves are deliberately
+   different problems:
+   - **Errors aren't a tenancy matter at all** (ErrorLog is operator data in auth.db), and their
+     resolution is **DERIVED, not stored**: `ErrorLogEntry.Resolved` = ResolvedAt is set AND
+     LastSeenAt ≤ ResolvedAt. A resolved error that recurs re-enters the open list purely because
+     `RecordAsync` bumped LastSeenAt — the capture pipeline (the recursion-guarded machinery item 47
+     hardened) never learns the field exists, so a recurring error can never sit hidden behind a
+     stale resolve. The open row wears "⚠ seen again after being resolved <date>" — recurrence is
+     the news, and a plain "open" would undersell a row the admin already dealt with once.
+   - **`ReportResolutionService` is the ONE cross-household write**, the mirror of the reader's one
+     IgnoreQueryFilters read — and the tenancy guard is what FORCED the safe shape: EnforceHousehold
+     (item 12) refuses tracked cross-household writes outright, so load-flip-SaveChanges was
+     impossible by construction. The write is `IgnoreQueryFilters().Where(Id).ExecuteUpdateAsync`
+     setting exactly ResolvedAt — no tracked entity, no SaveChanges, structurally unable to touch any
+     other column — admin-gated inside the service (the same RequireAdmin shape and the same ONE
+     `AdminOptions.IsAdmin` predicate the reader carries; the reader's "read-only by design" claim
+     stays true because this class exists). Mutation-proven both ways: dropping IgnoreQueryFilters
+     fails the foreign-write test (the filter silently scopes the WHERE to the admin's own household
+     and the row reads "gone"), dropping the gate fails the refusal test.
+   - **The reporter sees the resolve** — /bugs shows "✔ resolved <date>" on their own row (an
+     ordinary scoped read), so filing a report stops being a one-way letterbox. /admin splits both
+     tables into an open table (the to-do list) plus a collapsed "Resolved (N)" drawer with Reopen.
+   - **`ResolvedAt` rides AdditiveSchema on BOTH files, each placed AFTER its table's EnsureTable**:
+     a table the EnsureTable just created already carries the column (current model), and the
+     EnsureColumn reaches deployments whose table predates it. The schema-parity tests cover both.
+   - The action handler's advice splits by failure point (item 27's rule): a failed WRITE says
+     "nothing changed — try again" (safe, the write is idempotent); a refresh failure after a
+     successful write speaks through loadError's own sentence, so the two can never share advice. A
+     row deleted or trimmed between render and click answers false — "isn't there any more" — rather
+     than throwing.
+   - **1563 tests green (+13), 0 warnings** on a non-incremental Release build, read off the final
+     run. Four mutations, each killing exactly its tests. Live-verified on the dev sandbox: both real
+     rows resolved (each section flips to "Nothing open" with a Resolved (1) drawer), the sandbox's
+     own /bugs row wearing "✔ resolved Aug 14", and the error reopened back into the open table.
+     (Branch note: independent of `feature/snap-photo-upload` — whichever merges second resolves
+     CLAUDE.md by ordering item 48 before 49.)
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active
