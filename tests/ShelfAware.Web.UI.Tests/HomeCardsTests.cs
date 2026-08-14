@@ -281,6 +281,32 @@ public class HomeCardsTests : PageTestContext
     }
 
     [Fact]
+    public async Task A_reload_resets_copy_feedback_so_the_announcer_never_remounts_pre_filled()
+    {
+        // The cards can empty and later repopulate within one circuit (a voice change pings the
+        // coordinator). An announcer remounting WITH old text is the inserted-with-its-text shape
+        // it exists to avoid — and a stale claim besides.
+        Seed("Whole Milk", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-40), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-25), Quantity = 1m },
+        ]);
+        var cut = RenderHome();
+        cut.WaitForState(() => cut.FindAll(".cards li").Count == 1);
+        cut.Find(".copy-name").Click();
+        cut.WaitForAssertion(() =>
+            Assert.Equal("Copied Whole Milk", cut.Find(".copy-announcer").TextContent.Trim()));
+
+        await Coordinator.NotifyPantryChangedAsync();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal("", cut.Find(".copy-announcer").TextContent.Trim());
+            Assert.Empty(cut.FindAll(".copy-note"));
+        });
+    }
+
+    [Fact]
     public void A_refused_clipboard_says_so_on_the_card_instead_of_claiming_a_copy()
     {
         // Clipboard access can be denied (permissions, insecure context) — the card must report

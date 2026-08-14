@@ -226,6 +226,13 @@ else
 
     private async Task LoadAsync()
     {
+        // A reload can empty the cards and a later one repopulate them; feedback from before the
+        // reload must not survive that — above all the announcer, which would otherwise REMOUNT
+        // already holding old text (the inserted-with-its-text shape it exists to avoid, and a
+        // stale claim spoken minutes after the fact).
+        copyNote = null;
+        copyAnnouncement = null;
+
         await using var db = await DbFactory.CreateDbContextAsync();
         products = await db.Products
             .AsNoTracking() // read-only view; Bought-today/Restocked write through their own contexts
