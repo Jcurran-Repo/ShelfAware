@@ -2211,9 +2211,18 @@ bUnit pages/components — see items 31, 42, 43, 45 and 46).
        even the never-ran edge loses nothing silently; the drain test waits for the loop's
        aliveness (first event landing) before stopping. ⚠️ Don't "simplify" that wait away — the
        race is the runtime's scheduling, not the test's imagination.
+   - **The fix commit's own re-review (same reviewer, fresh skepticism, item 39's rule): NO
+     regressions — the first fix pass of this arc's series it could not fault**, crediting the
+     fixes being structural (a flow-local scope, drain-then-sweep, a shared clamp) rather than
+     patched guards. Its cross-flow probe confirmed the AsyncLocal scope suppresses only the
+     pipeline's own flow; the sweep cannot double-count (both consumers dequeue, an event reaches
+     exactly one). Two PLAUSIBLE residuals, both confined to forced-timeout teardown (the process
+     being killed mid-drain), are DOCUMENTED on StopAsync rather than fixed: the sweep's TryRead
+     beside a still-live loop leans on the BCL bounded channel tolerating a second reader despite
+     SingleReader, and the loop's one in-flight event dies uncounted.
    - **1542 tests green, 0 warnings** on a non-incremental Release build (master 1495; +47).
-     Eighteen mutations across six batches over the arc — every one failing exactly the tests it
-     should and nothing else.
+     Eighteen author mutations across six batches over the arc, plus seven reviewer mutations
+     across the two gate rounds — every one failing exactly the tests it should and nothing else.
      **Live-verified end to end** (dev server on the alt port, sandbox household): the footer's
      from= follows navigation; a report filed on /bugs lands on /admin with reporter + household
      name; and the error pipeline proved itself on a REAL failure — a junk PNG upload hit Upload's

@@ -42,6 +42,14 @@ public sealed class ErrorLogWriter(ErrorLogSink sink, ErrorLogStore store, ILogg
         // just-started service can find the loop CANCELLED WITHOUT EVER RUNNING (observed under a
         // saturated thread pool). Whatever is still queued then is lost to the process exit —
         // sweep it into the drop count so even this loss isn't silent.
+        //
+        // Known residuals, both confined to a FORCED-timeout teardown (the host's shutdown token
+        // firing while a store call hangs mid-drain — the process is being killed): this TryRead
+        // then runs beside the still-live loop, leaning on the current BCL bounded channel being
+        // safe for a second reader despite SingleReader = true; and the one event the loop holds
+        // in flight at that moment dies with the process uncounted. Reviewer-verified unreachable
+        // outside that teardown; documented rather than fixed, because a fix would orchestrate a
+        // path whose trigger is the process already being killed.
         while (sink.Channel.Reader.TryRead(out _)) sink.CountDrop();
     }
 }
