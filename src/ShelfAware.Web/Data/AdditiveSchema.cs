@@ -63,6 +63,11 @@ public static class AdditiveSchema
         // 2026-08-13: household-filed bug reports (the human half of in-app problem reporting).
         // A brand-new table is invisible to existing rows.
         EnsureTable(db, table: "BugReports");
+
+        // 2026-08-14: the admin can mark a report handled. A table the EnsureTable above just
+        // created already carries the column (current model); this reaches the deployments whose
+        // BugReports table predates it.
+        EnsureColumn(db, table: "BugReports", column: "ResolvedAt", definition: "TEXT NULL");
     }
 
     public static void Apply(AuthDbContext db)
@@ -77,6 +82,9 @@ public static class AdditiveSchema
         // 2026-08-13: the in-app error log (deduped Error/Critical events; operator data, so it
         // lives here rather than in any household's pantry). A new table — existing rows unaffected.
         EnsureTable(db, table: "ErrorLog");
+
+        // 2026-08-14: resolved errors leave the admin's open list until they recur.
+        EnsureColumn(db, table: "ErrorLog", column: "ResolvedAt", definition: "TEXT NULL");
     }
 
     /// <summary>Create <paramref name="table"/> (and its indexes) on a DB built before it existed. The

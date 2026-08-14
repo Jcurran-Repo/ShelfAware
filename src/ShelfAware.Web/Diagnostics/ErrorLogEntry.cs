@@ -30,4 +30,15 @@ public class ErrorLogEntry
     public int Count { get; set; }
     public DateTimeOffset FirstSeenAt { get; set; }
     public DateTimeOffset LastSeenAt { get; set; }
+
+    /// <summary>When the admin last marked this handled; null = never. Whether the row COUNTS as
+    /// resolved is <see cref="Resolved"/>, never this field alone.</summary>
+    public DateTimeOffset? ResolvedAt { get; set; }
+
+    /// <summary>THE one reading of "is this error dealt with": resolved means nothing has been
+    /// seen since the admin said so. A recurrence bumps <see cref="LastSeenAt"/> past the stamp
+    /// and the row is active again by DERIVATION — the capture pipeline never learns resolution
+    /// exists, so a recurring error can never sit hidden behind a stale resolve. Get-only, so EF
+    /// maps nothing.</summary>
+    public bool Resolved => ResolvedAt is { } at && LastSeenAt <= at;
 }

@@ -69,7 +69,7 @@ else
         <table>
             <caption class="visually-hidden">Bug reports this household has filed</caption>
             <thead>
-                <tr><th>When</th><th>Who</th><th>Where</th><th>What</th></tr>
+                <tr><th>When</th><th>Who</th><th>Where</th><th>What</th><th>Status</th></tr>
             </thead>
             <tbody>
                 @foreach (var r in reports)
@@ -79,6 +79,19 @@ else
                         <td>@(r.ReportedBy ?? "—")</td>
                         <td class="muted">@(r.PageUrl ?? "—")</td>
                         <td>@r.Body</td>
+                        <td>
+                            @* The loop closed: the admin's resolve is visible to the household that
+                               filed it, so a report isn't a one-way letterbox. Their own row — an
+                               ordinary scoped read. *@
+                            @if (r.ResolvedAt is { } done)
+                            {
+                                <span class="chip chip-stocked" title="This deployment's admin marked it handled">✔ resolved @done.ToString("MMM d")</span>
+                            }
+                            else
+                            {
+                                <span class="muted">open</span>
+                            }
+                        </td>
                     </tr>
                 }
             </tbody>

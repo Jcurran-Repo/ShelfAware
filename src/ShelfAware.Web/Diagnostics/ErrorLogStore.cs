@@ -75,4 +75,15 @@ public sealed class ErrorLogStore(IDbContextFactory<AuthDbContext> dbFactory)
         var rows = await db.ErrorLog.AsNoTracking().ToListAsync(ct);
         return [.. rows.OrderByDescending(r => r.LastSeenAt).ThenByDescending(r => r.Id)];
     }
+
+    /// <summary>Stamp (or, with null, clear) the admin's "handled" mark on one row. Column-scoped
+    /// ExecuteUpdate like every write here; whether a stamped row COUNTS as resolved stays derived
+    /// (<see cref="ErrorLogEntry.Resolved"/>), so <see cref="RecordAsync"/> never learns the field
+    /// exists. Returns whether the row still exists — the trim can beat the admin to it.</summary>
+    public async Task<bool> SetResolvedAsync(int id, DateTimeOffset? resolvedAt, CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        return await db.ErrorLog.Where(r => r.Id == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.ResolvedAt, resolvedAt), ct) > 0;
+    }
 }

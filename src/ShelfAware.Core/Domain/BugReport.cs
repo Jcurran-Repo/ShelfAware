@@ -24,4 +24,10 @@ public class BugReport : IHouseholdOwned
     public string? ReportedBy { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>When the admin marked this handled; null = still open. The app's ONE admin-written
+    /// field on household data — set and cleared only by <c>ReportResolutionService</c>'s
+    /// column-scoped update, and shown back to the reporting household on /bugs so filing a report
+    /// isn't a one-way letterbox.</summary>
+    public DateTimeOffset? ResolvedAt { get; set; }
 }

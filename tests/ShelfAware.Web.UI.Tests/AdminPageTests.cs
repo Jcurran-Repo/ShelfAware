@@ -33,6 +33,7 @@ public class AdminPageTests : PageTestContext
         Services.AddSingleton<IDbContextFactory<AuthDbContext>>(authDb);
         Services.AddSingleton(new ErrorLogStore(authDb));
         Services.AddScoped<AdminReportReader>();
+        Services.AddScoped<ReportResolutionService>();
     }
 
     protected override void Dispose(bool disposing)
@@ -133,6 +134,78 @@ public class AdminPageTests : PageTestContext
         {
             Assert.Contains("Nothing logged — quiet so far.", cut.Markup);
             Assert.Contains("No reports yet.", cut.Markup);
+        });
+    }
+
+    // ------------------------------------------------------------------- resolve / reopen
+
+    [Fact]
+    public async Task Resolving_a_report_moves_it_to_the_resolved_list_and_reopening_brings_it_back()
+    {
+        using (var db = authDb.CreateDbContext())
+        {
+            db.Households.Add(new Household { Id = "hh-a", Name = "The Currans" });
+            db.SaveChanges();
+        }
+        SeedReport("hh-a", "The chart looks wrong");
+        var cut = Render<Components.Pages.Admin>();
+        cut.WaitForAssertion(() => Assert.Contains("The chart looks wrong", cut.Markup));
+
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Resolve").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("Nothing open — every report is marked resolved.", cut.Markup);
+            Assert.Contains("Resolved (1)", cut.Markup);
+        });
+        // The write really landed on the foreign household's row (the admin's own scope is hh-test).
+        await cut.WaitForAssertionAsync(async () =>
+        {
+            await using var raw = Db.CreateUnscopedContext();
+            var report = await raw.BugReports.IgnoreQueryFilters().SingleAsync();
+            Assert.NotNull(report.ResolvedAt);
+            Assert.Equal("hh-a", report.HouseholdId);
+        });
+
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Reopen").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.DoesNotContain("Resolved (1)", cut.Markup);
+            Assert.Contains("The chart looks wrong", cut.Markup);
+        });
+    }
+
+    [Fact]
+    public async Task A_resolved_error_leaves_the_open_list_and_returns_when_it_recurs()
+    {
+        var store = new ErrorLogStore(authDb);
+        await store.RecordAsync(new CapturedError(
+            DateTimeOffset.Now.AddHours(-1), "Error", "ShelfAware.Web.Components.Pages.Home",
+            "System.InvalidOperationException", "Loading failed", "Loading failed", "detail"));
+        var cut = Render<Components.Pages.Admin>();
+        cut.WaitForAssertion(() => Assert.Contains("Loading failed", cut.Markup));
+
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Resolve").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("Nothing open — every logged error is marked handled.", cut.Markup);
+            Assert.Contains("Resolved (1)", cut.Markup);
+        });
+
+        // The same fingerprint fires again. The capture pipeline knows nothing about resolution —
+        // the row must be back in the open list on the next look purely by derivation, wearing the
+        // recurred-after-resolve note rather than looking like something new.
+        await store.RecordAsync(new CapturedError(
+            DateTimeOffset.Now, "Error", "ShelfAware.Web.Components.Pages.Home",
+            "System.InvalidOperationException", "Loading failed", "Loading failed", "detail"));
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Refresh").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("seen again after being resolved", cut.Markup);
+            Assert.DoesNotContain("Resolved (1)", cut.Markup);
         });
     }
 }

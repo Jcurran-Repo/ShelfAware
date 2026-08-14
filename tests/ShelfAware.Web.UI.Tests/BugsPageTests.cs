@@ -189,4 +189,33 @@ public class BugsPageTests : PageTestContext
         // The household's own history still renders — past reports stay theirs to see.
         Assert.Contains("Your household's reports", cut.Markup);
     }
+
+    [Fact]
+    public void A_resolved_report_shows_its_chip_to_the_household_that_filed_it()
+    {
+        // The loop closed: the admin's resolve is visible to the reporter, so filing a report
+        // isn't a one-way letterbox. Their own rows — an ordinary scoped read.
+        using (var raw = Db.CreateUnscopedContext())
+        {
+            raw.BugReports.Add(new BugReport
+            {
+                HouseholdId = "hh-test", Body = "The fixed one", CreatedAt = DateTimeOffset.Now.AddDays(-2),
+                ResolvedAt = DateTimeOffset.Now.AddDays(-1),
+            });
+            raw.BugReports.Add(new BugReport
+            {
+                HouseholdId = "hh-test", Body = "The open one", CreatedAt = DateTimeOffset.Now,
+            });
+            raw.SaveChanges();
+        }
+
+        var cut = RenderBugs();
+
+        cut.WaitForAssertion(() =>
+        {
+            var rows = cut.FindAll("tbody tr");
+            Assert.Contains("✔ resolved", rows.Single(r => r.TextContent.Contains("The fixed one")).TextContent);
+            Assert.Contains("open", rows.Single(r => r.TextContent.Contains("The open one")).TextContent);
+        });
+    }
 }
