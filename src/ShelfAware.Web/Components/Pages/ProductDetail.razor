@@ -550,6 +550,7 @@ else
                         <th scope="col">Qty</th>
                         <th scope="col">Size</th>
                         <th scope="col">Variety</th>
+                        <th scope="col">Brand</th>
                         <th scope="col">Unit price</th>
                     </tr>
                 </thead>
@@ -580,14 +581,34 @@ else
                             </td>
                             <td>@(SizeFormat.Normalize(h.Size) is { Length: > 0 } s ? s : "—")</td>
                             <td>@(h.Variety is { Length: > 0 } v ? v : "—")</td>
+                            <td>
+                                @if (editingBrandId == h.Id)
+                                {
+                                    <input type="text" @bind="editPurchaseBrand" maxlength="80"
+                                           aria-label="Corrected brand for the @h.Date.ToString("MMM d") purchase" size="12" />
+                                    <button type="button" @onclick="SavePurchaseBrand" disabled="@purchaseBusy">Save</button>
+                                    <button type="button" class="secondary" @onclick="() => editingBrandId = null"
+                                            disabled="@purchaseBusy">Cancel</button>
+                                }
+                                else
+                                {
+                                    @(string.IsNullOrWhiteSpace(h.Brand) ? "—" : h.Brand)
+                                    <button type="button" class="icon-btn" @onclick="() => EditBrand(h)"
+                                            title="Correct the brand recorded for this purchase"
+                                            aria-label="Correct the brand for the @h.Date.ToString("MMM d") purchase">
+                                        <span aria-hidden="true">✏️</span>
+                                    </button>
+                                }
+                            </td>
                             <td>@(h.UnitPrice is { } up ? up.ToString("C") : "—")</td>
                         </tr>
                     }
                 </tbody>
             </table>
-            <p class="muted small">Tap a quantity to correct a misread line. The receipt itself keeps what
-                was read — this is the pantry's record, not the receipt's — and correcting a quantity also
-                moves what's on hand by the difference.</p>
+            <p class="muted small">Tap a quantity or brand to correct a misread line. The receipt itself
+                keeps what was read — this is the pantry's record, not the receipt's. Correcting a quantity
+                also moves what's on hand by the difference; a brand is cosmetic (the item is tracked
+                brand-agnostically, so its rhythm pools across brands).</p>
             @if (purchaseError is not null)
             {
                 <p class="error" role="alert">@purchaseError</p>
@@ -621,7 +642,7 @@ else
     /// nothing: a small swing in a meat pack's size moves a two-week rhythm by a day.</summary>
     private const double NoteworthyStockUp = 1.25;
 
-    private record PurchaseRow(int Id, DateOnly Date, int? GapDays, decimal Quantity, string? Size, string? Variety, decimal? UnitPrice);
+    private record PurchaseRow(int Id, DateOnly Date, int? GapDays, decimal Quantity, string? Size, string? Variety, string? Brand, decimal? UnitPrice);
 
     // Correcting a recorded quantity (§13.6) — a misread receipt line is otherwise uncorrectable short
     // of removing the whole receipt, and since the ceiling came off StockUpFactor a wrong quantity
@@ -632,10 +653,26 @@ else
     private bool purchaseBusy;
     private string? purchaseError;
 
+    // Correcting a recorded brand — cosmetic (the item is brand-agnostic; the cadence pools across
+    // brands), so unlike the quantity edit this moves no count. Mutually exclusive with the quantity
+    // edit (each editor clears the other's row id, so a row is never in both modes), and it shares
+    // purchaseBusy/purchaseError since only one purchase edit is ever in flight.
+    private int? editingBrandId;
+    private string editPurchaseBrand = "";
+
     private void EditPurchase(PurchaseRow row)
     {
         editingPurchaseId = row.Id;
         editPurchaseQuantity = row.Quantity;
+        editingBrandId = null; // brand and quantity edits are mutually exclusive
+        purchaseError = null;
+    }
+
+    private void EditBrand(PurchaseRow row)
+    {
+        editingBrandId = row.Id;
+        editPurchaseBrand = row.Brand ?? "";
+        editingPurchaseId = null; // mutually exclusive with the quantity edit
         purchaseError = null;
     }
 
@@ -671,6 +708,41 @@ else
         }
         finally { purchaseBusy = false; }
     }
+
+    private async Task SavePurchaseBrand()
+    {
+        if (editingBrandId is not { } id || purchaseBusy) return;
+        purchaseBusy = true;
+        purchaseError = null;
+        // Same write-vs-reload split as SavePurchaseQuantity. Re-applying the same brand is harmless,
+        // but a completed save must never be reported as a failure.
+        var saved = false;
+        try
+        {
+            // A blank value clears the brand (SetPurchaseBrandAsync folds it to null); the call fails
+            // only when the purchase can't be found, so the else branch is a stale row, not bad input.
+            if (await Store.SetPurchaseBrandAsync(id, editPurchaseBrand))
+            {
+                saved = true;
+                editingBrandId = null;
+                loadedId = null; // reload: the Brands-bought panel and the usual-brand hint recompute
+                await OnParametersSetAsync();
+            }
+            else
+            {
+                purchaseError = "That purchase couldn't be found — reload the page and try again.";
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogError(ex, "Correcting purchase {PurchaseId} brand failed (saved: {Saved}).", id, saved);
+            purchaseError = saved
+                ? "Saved — but the page couldn't refresh. Reload to see the updated history."
+                : "That didn't save. Reload the page and try again.";
+        }
+        finally { purchaseBusy = false; }
+    }
+
     private record BrandRow(string Brand, int Count, decimal? AvgPrice);
     private record VarietyRow(string Variety, int Count, DateOnly LastBought, decimal? AvgPrice);
     private record RecipeLink(int Id, string Name);
@@ -785,7 +857,7 @@ else
             int? gap = i > 0 ? pe.PurchasedAt.DayNumber - ordered[i - 1].PurchasedAt.DayNumber : null;
             decimal? price = pe.ReceiptId is { } rid && priceLookup.TryGetValue(rid, out var pr) ? pr : null;
             if (price is { } pv) pricePoints.Add(new PricePoint(pe.Size, pe.PurchasedAt, pv));
-            history.Add(new PurchaseRow(pe.Id, pe.PurchasedAt, gap, pe.Quantity, pe.Size, pe.Variety, price));
+            history.Add(new PurchaseRow(pe.Id, pe.PurchasedAt, gap, pe.Quantity, pe.Size, pe.Variety, pe.Brand, price));
         }
         history.Reverse(); // most recent first
 

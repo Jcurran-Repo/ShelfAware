@@ -330,6 +330,57 @@ public class ProductDetailEditFlowsTests : PageTestContext
         Assert.Equal(2m, (await LoadAsync(id)).Purchases.Single().Quantity);
     }
 
+    // ---------------------------------------------------------------------------- purchase brand
+
+    [Fact]
+    public async Task Correcting_a_brand_saves_and_shows()
+    {
+        var id = Seed("Ground Coffee", p =>
+            p.Purchases = [new PurchaseEvent { PurchasedAt = Today.AddDays(-15), Quantity = 1m, Brand = "Genneric" }]);
+        var cut = RenderDetail(id);
+
+        cut.Find("button[aria-label^='Correct the brand for the " + $"{Today.AddDays(-15):MMM d}" + "']").Click();
+        cut.Find("input[aria-label^='Corrected brand']").Change("Folgers");
+        cut.FindAll("table button").Single(b => b.TextContent.Trim() == "Save").Click();
+
+        // Brand is the 6th column: Date · Since previous · Qty · Size · Variety · Brand · Unit price.
+        cut.WaitForAssertion(() => Assert.Contains("Folgers", cut.Find("tbody tr td:nth-child(6)").TextContent));
+        Assert.Equal("Folgers", (await LoadAsync(id)).Purchases.Single().Brand);
+    }
+
+    [Fact]
+    public async Task Clearing_a_brand_folds_it_to_unbranded()
+    {
+        var id = Seed("Ground Coffee", p =>
+            p.Purchases = [new PurchaseEvent { PurchasedAt = Today.AddDays(-15), Quantity = 1m, Brand = "Folgers" }]);
+        var cut = RenderDetail(id);
+
+        cut.Find("button[aria-label^='Correct the brand']").Click();
+        cut.Find("input[aria-label^='Corrected brand']").Change("");
+        cut.FindAll("table button").Single(b => b.TextContent.Trim() == "Save").Click();
+
+        // Editor closes on a successful save; the stored brand is null, not an empty string.
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll("input[aria-label^='Corrected brand']")));
+        Assert.Null((await LoadAsync(id)).Purchases.Single().Brand);
+    }
+
+    [Fact]
+    public void The_brand_and_quantity_editors_are_mutually_exclusive()
+    {
+        var id = Seed("Ground Coffee", p =>
+            p.Purchases = [new PurchaseEvent { PurchasedAt = Today.AddDays(-15), Quantity = 1m, Brand = "Folgers" }]);
+        var cut = RenderDetail(id);
+
+        // Open the quantity editor, then the brand editor: a row must never be in both edit modes, so
+        // EditBrand clearing editingPurchaseId (and vice versa) is load-bearing, not cosmetic.
+        cut.Find("button[aria-label^='Correct the quantity']").Click();
+        Assert.Single(cut.FindAll("input[aria-label^='Corrected quantity']"));
+
+        cut.Find("button[aria-label^='Correct the brand']").Click();
+        Assert.Single(cut.FindAll("input[aria-label^='Corrected brand']"));
+        Assert.Empty(cut.FindAll("input[aria-label^='Corrected quantity']")); // the quantity editor closed
+    }
+
     // ------------------------------------------------------------------------------ substitutes
 
     [Fact]

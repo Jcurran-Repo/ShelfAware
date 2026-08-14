@@ -160,6 +160,73 @@ public class EfPantryStoreTests : IDisposable
         Assert.Equal(3m, (await read.PurchaseEvents.AsNoTracking().SingleAsync(p => p.Id == purchaseId)).Quantity);
     }
 
+    // --- SetPurchaseBrandAsync: correcting a recorded brand (cosmetic, no count movement) ----------
+
+    [Fact]
+    public async Task Correcting_a_purchase_sets_and_trims_its_brand()
+    {
+        var (_, purchaseId) = await CountedWithPurchase(onHand: 3, bought: 1);
+
+        Assert.True(await _store.SetPurchaseBrandAsync(purchaseId, "  Great Value  "));
+
+        await using var db = _db.CreateDbContext();
+        Assert.Equal("Great Value", (await db.PurchaseEvents.AsNoTracking().SingleAsync(p => p.Id == purchaseId)).Brand);
+    }
+
+    [Fact]
+    public async Task A_blank_brand_clears_it_to_unbranded()
+    {
+        var (_, purchaseId) = await CountedWithPurchase(onHand: 3, bought: 1);
+        Assert.True(await _store.SetPurchaseBrandAsync(purchaseId, "Folgers"));
+
+        // Blank/whitespace folds to null, so clearing a brand and never having had one are one state.
+        Assert.True(await _store.SetPurchaseBrandAsync(purchaseId, "   "));
+
+        await using var db = _db.CreateDbContext();
+        Assert.Null((await db.PurchaseEvents.AsNoTracking().SingleAsync(p => p.Id == purchaseId)).Brand);
+    }
+
+    [Fact]
+    public async Task Correcting_a_brand_moves_no_count_and_fires_nothing()
+    {
+        // Brand is cosmetic (the item is brand-agnostic), so unlike a quantity correction this touches
+        // neither the on-hand count nor the attestation clock, and it writes no signal.
+        var (productId, purchaseId) = await CountedWithPurchase(onHand: 5, bought: 2);
+
+        Assert.True(await _store.SetPurchaseBrandAsync(purchaseId, "Great Value"));
+
+        var product = await Reload(productId);
+        Assert.Equal(5m, product.QuantityOnHand); // untouched
+        Assert.Equal(new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero), product.QuantityCountedAt);
+        await using var db = _db.CreateDbContext();
+        Assert.Empty(await db.InventorySignals.Where(s => s.ProductId == productId).ToListAsync());
+    }
+
+    [Fact]
+    public async Task A_brand_correction_for_a_missing_purchase_returns_false()
+    {
+        Assert.False(await _store.SetPurchaseBrandAsync(999_999, "Great Value"));
+    }
+
+    [Fact]
+    public async Task A_brand_correction_is_household_scoped()
+    {
+        // The filtered lookup is the tenancy boundary: another household's id answers like one that
+        // never existed (false), and the purchase is left untouched — the drill every write path walks.
+        // The owner sets a real brand first, so the assertion proves the foreign write can't OVERWRITE
+        // it (the actual risk), not merely that it can't create one.
+        var owner = _db.HouseholdId;
+        var (_, purchaseId) = await CountedWithPurchase(onHand: 3, bought: 1);
+        Assert.True(await _store.SetPurchaseBrandAsync(purchaseId, "Original"));
+        _db.HouseholdId = "someone-else";
+
+        Assert.False(await _store.SetPurchaseBrandAsync(purchaseId, "Sneaky"));
+
+        _db.HouseholdId = owner;
+        await using var db = _db.CreateDbContext();
+        Assert.Equal("Original", (await db.PurchaseEvents.AsNoTracking().SingleAsync(p => p.Id == purchaseId)).Brand);
+    }
+
     [Fact]
     public async Task A_human_setting_the_count_to_zero_records_running_out()
     {
