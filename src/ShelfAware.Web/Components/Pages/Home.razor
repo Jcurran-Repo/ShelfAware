@@ -10,6 +10,8 @@
 @inject IPantryStore Store
 @inject NavigationManager Nav
 @inject VoiceCoordinator Coordinator
+@inject IJSRuntime JS
+@inject ILogger<Home> Logger
 
 <PageTitle>Shelf Aware</PageTitle>
 
@@ -59,6 +61,12 @@ else
                     <div class="card-body">
                         <div class="card-top">
                             <a class="card-name" href="/product/@p.Id">@p.Name</a>
+                            <button type="button" class="icon-btn copy-name" @onclick="() => CopyName(p)"
+                                    title="Copy name" aria-label="Copy @p.Name to the clipboard">📋</button>
+                            @if (copyNote is { } cn && cn.ProductId == p.Id)
+                            {
+                                <span class="muted copy-note" role="status">@cn.Text</span>
+                            }
                             <span class="chip chip-@ChipClass(r.Status)">@StatusLabel(r.Status)</span>
                         </div>
                         @{
@@ -316,6 +324,27 @@ else
         finally
         {
             chatBusy = false;
+        }
+    }
+
+    private (int ProductId, string Text)? copyNote; // one note at a time, tied to the card it is about
+
+    // Copies the bare item name — what pastes usefully into a store search; the brand/size hints
+    // stay on the card.
+    private async Task CopyName(Product p)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", p.Name);
+            copyNote = (p.Id, "Copied");
+        }
+        catch (JSDisconnectedException) { /* circuit teardown raced the click — no page left to notify */ }
+        catch (JSException ex)
+        {
+            // Clipboard access can be refused (insecure context, permissions) — say so on the card
+            // rather than letting a copy click tear down the circuit.
+            Logger.LogWarning(ex, "Copying a product name to the clipboard failed.");
+            copyNote = (p.Id, "Couldn't copy");
         }
     }
 
