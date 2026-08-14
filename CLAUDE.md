@@ -2184,10 +2184,36 @@ bUnit pages/components — see items 31, 42, 43, 45 and 46).
      operator's real inbox.
    - Dev quick-login's sandbox account doubles as the admin in `appsettings.Development.json`, so
      every surface is drive-testable one navigation past `/dev/login`.
-   - **1530 tests green, 0 warnings** on a non-incremental Release build (master 1495; +35). Nine
-     mutations in three batches — gate always-true, from-guard loosened, fingerprint on rendered
-     message, IgnoreQueryFilters removed, recursion exclusion removed, trim disabled, both
-     Configured gates removed, from-query strip reverted — each failing exactly its tests.
+   - **The independent gate (code + security) came back: security PASS** — the tenancy boundary,
+     all three admin-gate layers, the username==email invariant (no path ever changes either
+     post-registration), and every claimed number verified; the reviewer's own mutations (incl.
+     one per gate METHOD, which the author's list hadn't covered) each killed exactly one test.
+     Eight findings, all fixed the same session:
+     - ⚠️ **F1, probed 1:1 — the category exclusion alone is NOT a complete recursion break.** A
+       FAILING persist makes EF itself log at Error under `Microsoft.EntityFrameworkCore.
+       Database.Command` — a category the capture must keep watching — so a persistently failing
+       auth.db became a self-feeding busy loop. `ErrorLogSink.BeginPersist` (static AsyncLocal
+       scope, checked in the provider's Log) now suppresses the pipeline's OWN persist flow only;
+       the echo is skipped UNCOUNTED, deliberately — the writer already counts and logs that
+       failure once. Pinned by a scope unit test and a real-broken-table integration test.
+     - **F2 — bounds are server-side now**: /bugs clamps Body/PageUrl to the form's own 4000/300
+       (maxlength is browser-enforced only), and `AdminReportReader.MaxReports` (500) caps the
+       admin list, DISCLOSED on the page when hit. F3/F4: the Bugs page's two failure points give
+       opposite advice (item 27's rule) and the initial load is self-catching. F6: the from= guard
+       refuses `//host` and `/\` shapes. F7: a null entry in `Admin:Emails` can't throw inside the
+       footer's AuthorizeView. F8: ErrorLogEntry's docstring owns that exception TEXT can carry
+       household-derived strings (admin-only, never exported — acceptable, now stated).
+     - ⚠️ **F5 became a real find: this runtime starts `ExecuteAsync` through a CANCELLABLE hop.**
+       The new shutdown-drain test flaked 4/4 under the full parallel suite and 0/anything alone;
+       diagnosis proved the loop task ended **Canceled without its body ever running** — a stop
+       racing a just-started BackgroundService cancels work the pool hasn't dequeued yet. StopAsync
+       completes the channel (drain), then SWEEPS anything still unread into the drop count, so
+       even the never-ran edge loses nothing silently; the drain test waits for the loop's
+       aliveness (first event landing) before stopping. ⚠️ Don't "simplify" that wait away — the
+       race is the runtime's scheduling, not the test's imagination.
+   - **1542 tests green, 0 warnings** on a non-incremental Release build (master 1495; +47).
+     Eighteen mutations across six batches over the arc — every one failing exactly the tests it
+     should and nothing else.
      **Live-verified end to end** (dev server on the alt port, sandbox household): the footer's
      from= follows navigation; a report filed on /bugs lands on /admin with reporter + household
      name; and the error pipeline proved itself on a REAL failure — a junk PNG upload hit Upload's
