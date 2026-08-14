@@ -27,6 +27,7 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
     public DbSet<GroceryExtra> GroceryExtras => Set<GroceryExtra>();
     public DbSet<MealEvent> MealEvents => Set<MealEvent>();
     public DbSet<SavedReport> SavedReports => Set<SavedReport>();
+    public DbSet<BugReport> BugReports => Set<BugReport>();
     public DbSet<AppSetting> AppSettings => Set<AppSetting>();
     public DbSet<AiUsage> AiUsages => Set<AiUsage>();
 
@@ -57,6 +58,7 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
         ApplyHousehold<GroceryExtra>(modelBuilder);
         ApplyHousehold<MealEvent>(modelBuilder);
         ApplyHousehold<SavedReport>(modelBuilder);
+        ApplyHousehold<BugReport>(modelBuilder);
         ApplyHousehold<AiUsage>(modelBuilder);
 
         // One usage row per household per day (the upsert's race-safety anchor).

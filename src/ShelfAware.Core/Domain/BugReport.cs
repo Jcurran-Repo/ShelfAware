@@ -1,0 +1,27 @@
+namespace ShelfAware.Core.Domain;
+
+/// <summary>A household member's "this looks wrong" — the human half of in-app problem reporting
+/// (the machine half is the error log, which lives outside the pantry DB because errors are
+/// operator data, not household data). Household-owned like any pantry row: the household files
+/// it, sees it, exports it, and "delete all my data" takes it; only the config-designated admin
+/// reads across households, through the one gated reader.</summary>
+public class BugReport : IHouseholdOwned
+{
+    public int Id { get; set; }
+    public string? HouseholdId { get; set; }
+
+    /// <summary>What the reporter typed. The form refuses a blank — a report with nothing in it
+    /// gives the admin nothing to act on.</summary>
+    public required string Body { get; set; }
+
+    /// <summary>Where it happened — pre-filled from the page the reporter came from and editable.
+    /// Shown on the form, never captured silently.</summary>
+    public string? PageUrl { get; set; }
+
+    /// <summary>The reporter's sign-in email at filing time, denormalized: accounts live in
+    /// auth.db, so there is no FK to point at — and the admin needs a "who" even if the account
+    /// is later removed.</summary>
+    public string? ReportedBy { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; }
+}

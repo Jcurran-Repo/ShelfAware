@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using ShelfAware.Web.Diagnostics;
 
 namespace ShelfAware.Web.Auth;
 
@@ -7,10 +8,14 @@ namespace ShelfAware.Web.Auth;
 /// pantry DB. Deliberate: the pantry context stays free of Identity noise, and a brand-new file means
 /// <c>EnsureCreated</c> builds the full auth schema on every deployment — no migrations, matching the
 /// project-wide rule. Accounts hold only credentials (password HASHES via Identity's hasher) and the
-/// household link; nothing here is ever exported or rendered beyond member emails.</summary>
+/// household link; nothing here is ever exported or rendered beyond member emails. This file is also
+/// where app-level OPERATOR data lives (the error log): rows no household owns, outside the pantry
+/// context's tenancy machinery on purpose — putting them there would either fake a household owner
+/// or punch a hole in the query filter, and both are worse than a second table here.</summary>
 public class AuthDbContext(DbContextOptions<AuthDbContext> options) : IdentityDbContext<AppUser>(options)
 {
     public DbSet<Household> Households => Set<Household>();
+    public DbSet<ErrorLogEntry> ErrorLog => Set<ErrorLogEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -27,5 +32,10 @@ public class AuthDbContext(DbContextOptions<AuthDbContext> options) : IdentityDb
         // computed properties as columns by convention unless told otherwise (the same trap Recipe's
         // IsVariant hit), and a phantom column here would break EnsureCreated against a live auth.db.
         modelBuilder.Entity<Household>().Ignore(h => h.InviteUsesRemaining);
+
+        // One row per distinct error (the dedupe upsert's anchor). No index on LastSeenAt: SQLite
+        // can't ORDER BY a DateTimeOffset in SQL, so ordering/trimming happen client-side over the
+        // bounded table and an index there would serve nothing.
+        modelBuilder.Entity<ErrorLogEntry>().HasIndex(e => e.Fingerprint).IsUnique();
     }
 }

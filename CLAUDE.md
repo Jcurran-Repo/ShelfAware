@@ -2138,6 +2138,108 @@ bUnit pages/components — see items 31, 42, 43, 45 and 46).
      there creates a NEW empty household (not the shared pantry) — rejoining the family pantry is an
      invite code, which works regardless.
 
+47. **v4.7 — In-app problem reporting (2026-08-13, branch `feature/bug-reports`, UNMERGED pending
+   review + Jordan's call; plus the dashboard copy-name button on `feature/dashboard-copy-name`).**
+   Jordan's ask ("bug reporting in app… easily maintainable"), sharpened in discussion to two signal
+   sources feeding one admin surface: **machines report ERRORS, humans report WRONGNESS.**
+   - **The error log lives in auth.db because errors are OPERATOR data** — no household owns one,
+     none reaches export or "delete my data", no tenancy machinery to punch through, no household
+     attribution in rows (matching the logging discipline: what users said stays out of the log).
+     An `ILoggerProvider` captures every Error/Critical event — handled ones included; the house
+     catch-log-and-say-so convention is exactly what feeds it — into a bounded channel
+     (`ErrorLogSink`); `ErrorLogWriter` (BackgroundService) persists deduped by fingerprint
+     (category + exception type + message TEMPLATE, so "product 12" and "product 99" are one row
+     counted twice); `ErrorLogStore.MaxRows` (500) bounds the table, quietest rows trimmed first.
+   - ⚠️ **Capture-path rules:** the provider never throws (a failure becomes a COUNTED drop,
+     disclosed on the admin page — no silent caps), and never captures its own
+     `ShelfAware.Web.Diagnostics` categories — the recursion break the writer logs through. The
+     sink is **Wait-mode + TryWrite deliberately**: the one bounded-channel shape where a drop is
+     observable to count (DropOldest/DropWrite discard inside the channel, invisibly).
+   - ⚠️ **SQLite refuses `DateTimeOffset` in a SQL ORDER BY** — found here because every previously
+     date-ordered query used `DateOnly`. Bug reports order by Id (insert order IS chronological);
+     the bounded error table orders and trims client-side (and carries NO LastSeenAt index — it
+     could serve nothing).
+   - **`BugReport` is an ordinary household-owned pantry table**, walked through the full drill:
+     filter + stamping, isolation, export, delete-my-data, CountAll, `AdditiveSchema.EnsureTable` +
+     schema-parity on BOTH DB files (the auth-side EnsureTable is the first; `TableSchemaAsync`
+     widened to `DbContext` for it). Households file and see their own on `/bugs`; the footer link
+     carries the current page as a VISIBLE, editable `?from=` pre-fill — path only (the live
+     walkthrough caught the full-URI shape compounding from= into itself on /bugs), and only an
+     app-relative path is accepted, since a query string is attacker-writable.
+   - **The admin is config-designated** (`Admin:Emails`; unset = the feature does not exist
+     anywhere — no footer, no form, /admin refuses everyone: the Google-OAuth posture).
+     ⚠️ **`AdminOptions.IsAdmin` is THE one predicate behind every gate** — the app's first
+     authorization policy, its first policy-based `AuthorizeView`, the reader's check, and the
+     component's own check. It reads `Identity.Name` because in this app the username IS the email
+     (Register/ExternalLogin/DevAuth all pair them; `RequireUniqueEmail` pins it) and Identity puts
+     no separate email claim in the cookie.
+   - ⚠️ **`AdminReportReader` is the app's FIRST production `IgnoreQueryFilters`** — the pre-push
+     gate's standing question, answered in advance: admin-gated INSIDE the service (defense in
+     depth, and the layer a directly-rendered bUnit component can pin, since routing authorization
+     doesn't apply there), AsNoTracking, read-only, and the sole reader of cross-household reports.
+     Anything else wanting cross-household data makes its own case at review — don't reuse this.
+   - **The viewer is read-only v1 deliberately** — "mark resolved" would be the app's first admin
+     WRITE into foreign household data, a separate focused change if ever wanted. And the demo
+     seeder deliberately seeds NO bug report: a seeded report would file fake noise into the
+     operator's real inbox.
+   - Dev quick-login's sandbox account doubles as the admin in `appsettings.Development.json`, so
+     every surface is drive-testable one navigation past `/dev/login`.
+   - **The independent gate (code + security) came back: security PASS** — the tenancy boundary,
+     all three admin-gate layers, the username==email invariant (no path ever changes either
+     post-registration), and every claimed number verified; the reviewer's own mutations (incl.
+     one per gate METHOD, which the author's list hadn't covered) each killed exactly one test.
+     Eight findings, all fixed the same session:
+     - ⚠️ **F1, probed 1:1 — the category exclusion alone is NOT a complete recursion break.** A
+       FAILING persist makes EF itself log at Error under `Microsoft.EntityFrameworkCore.
+       Database.Command` — a category the capture must keep watching — so a persistently failing
+       auth.db became a self-feeding busy loop. `ErrorLogSink.BeginPersist` (static AsyncLocal
+       scope, checked in the provider's Log) now suppresses the pipeline's OWN persist flow only;
+       the echo is skipped UNCOUNTED, deliberately — the writer already counts and logs that
+       failure once. Pinned by a scope unit test and a real-broken-table integration test.
+     - **F2 — bounds are server-side now**: /bugs clamps Body/PageUrl to the form's own 4000/300
+       (maxlength is browser-enforced only), and `AdminReportReader.MaxReports` (500) caps the
+       admin list, DISCLOSED on the page when hit. F3/F4: the Bugs page's two failure points give
+       opposite advice (item 27's rule) and the initial load is self-catching. F6: the from= guard
+       refuses `//host` and `/\` shapes. F7: a null entry in `Admin:Emails` can't throw inside the
+       footer's AuthorizeView. F8: ErrorLogEntry's docstring owns that exception TEXT can carry
+       household-derived strings (admin-only, never exported — acceptable, now stated).
+     - ⚠️ **F5 became a real find: this runtime starts `ExecuteAsync` through a CANCELLABLE hop.**
+       The new shutdown-drain test flaked 4/4 under the full parallel suite and 0/anything alone;
+       diagnosis proved the loop task ended **Canceled without its body ever running** — a stop
+       racing a just-started BackgroundService cancels work the pool hasn't dequeued yet. StopAsync
+       completes the channel (drain), then SWEEPS anything still unread into the drop count, so
+       even the never-ran edge loses nothing silently; the drain test waits for the loop's
+       aliveness (first event landing) before stopping. ⚠️ Don't "simplify" that wait away — the
+       race is the runtime's scheduling, not the test's imagination.
+   - **The fix commit's own re-review (same reviewer, fresh skepticism, item 39's rule): NO
+     regressions — the first fix pass of this arc's series it could not fault**, crediting the
+     fixes being structural (a flow-local scope, drain-then-sweep, a shared clamp) rather than
+     patched guards. Its cross-flow probe confirmed the AsyncLocal scope suppresses only the
+     pipeline's own flow; the sweep cannot double-count (both consumers dequeue, an event reaches
+     exactly one). Two PLAUSIBLE residuals, both confined to forced-timeout teardown (the process
+     being killed mid-drain), are DOCUMENTED on StopAsync rather than fixed: the sweep's TryRead
+     beside a still-live loop leans on the BCL bounded channel tolerating a second reader despite
+     SingleReader, and the loop's one in-flight event dies uncounted.
+   - **1542 tests green, 0 warnings** on a non-incremental Release build (master 1495; +47).
+     Eighteen author mutations across six batches over the arc, plus seven reviewer mutations
+     across the two gate rounds — every one failing exactly the tests it should and nothing else.
+     **Live-verified end to end** (dev server on the alt port, sandbox household): the footer's
+     from= follows navigation; a report filed on /bugs lands on /admin with reporter + household
+     name; and the error pipeline proved itself on a REAL failure — a junk PNG upload hit Upload's
+     extraction timeout, the fail log line was followed in the server log by the fingerprint
+     UPDATE + INSERT into auth.db's ErrorLog, the row rendered on /admin, and a second junk upload
+     made it **2× on one row** (dedupe, live). Zero console errors — the strict CSP holds.
+   - **The dashboard copy-name branch** (`feature/dashboard-copy-name`, 2 commits, 1500 green): a
+     📋 icon-btn per Running Low card copies the BARE item name (what pastes into a store search).
+     Its independent review found the two PRE-EXISTING copy sites (grocery list, invite code) had
+     no catch at all — a refused clipboard tore down their circuits — so
+     **`ClipboardCopy.TryWriteAsync` (Web/Services) is THE clipboard posture**, all three sites
+     converted in the same change per the top directive. ⚠️ And a `role="status"` region inserted
+     WITH its text is not reliably announced — the dashboard and grocery list keep a PERSISTENT
+     visually-hidden announcer mounted before any copy (Settings' multi-action note slot kept its
+     page-wide pattern deliberately: converting one action's announcements piecemeal is the
+     partial-conversion trap from the other direction).
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active

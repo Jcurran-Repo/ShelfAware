@@ -81,6 +81,7 @@ public class UserDataServiceTests : IDisposable
         db.ExcludedFoods.Add(new ExcludedFood { Value = "olives" });
         db.GroceryExtras.Add(new GroceryExtra { Name = "napkins" });
         db.SavedReports.Add(new SavedReport { Name = "Snack spend", Query = "from=2026-06-01&to=2026-07-01", SavedAt = DateTimeOffset.Now });
+        db.BugReports.Add(new BugReport { Body = "The chart looked off", ReportedBy = "a@test.local", CreatedAt = DateTimeOffset.Now });
         await db.SaveChangesAsync();
     }
 
@@ -104,6 +105,7 @@ public class UserDataServiceTests : IDisposable
         Assert.Equal(0, await db.Receipts.CountAsync());
         Assert.Equal(0, await db.ReceiptLines.CountAsync());
         Assert.Equal(0, await db.GroceryExtras.CountAsync());
+        Assert.Equal(0, await db.BugReports.CountAsync());
     }
 
     [Fact]
@@ -219,6 +221,8 @@ public class UserDataServiceTests : IDisposable
         Assert.Single(export.SavedReports);
         Assert.Single(export.Receipts);
         Assert.Single(export.GroceryExtras);
+        Assert.Single(export.BugReports);
+        Assert.Equal("The chart looked off", export.BugReports[0].Body);
     }
 
     [Fact]

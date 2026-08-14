@@ -2364,6 +2364,40 @@ tfoot td {
     background: var(--overdue-bg);
 }
 
+/* ---- Site footer (problem reporting entry points) ---- */
+.site-footer {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    padding: 1rem;
+    margin-top: 1.5rem;
+    border-top: 1px solid var(--line);
+    font-size: 0.9rem;
+}
+
+.site-footer a {
+    color: var(--ink-soft);
+    text-decoration: none;
+}
+
+.site-footer a:hover {
+    color: var(--accent-ink);
+    text-decoration: underline;
+}
+
+/* The admin page's expandable exception text — long, monospace, and must scroll inside its own
+   box rather than widen the page (the no-horizontal-page-scroll rule). */
+.error-detail {
+    max-height: 20rem;
+    overflow: auto;
+    font-size: 0.78rem;
+    background: var(--surface-alt);
+    border: 1px solid var(--line);
+    padding: 0.5rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 /* The printed page introduces itself; on screen the app chrome already does. */
 .report-print-header { display: none; }
 
@@ -2378,12 +2412,15 @@ tfoot td {
     .report-print-btn,
     .report-builder,
     .voice-agent,
-    .tour-panel {
+    .tour-panel,
+    .site-footer {
         /* .voice-agent: the assistant is a floating control on every page — screen furniture,
            never document content. Global, not report-only: no printout wants it.
            .tour-panel: same class of thing, and the walkthrough deliberately VISITS the two pages
            built to be printed — Reports and the grocery list — so it would otherwise land in the
-           printout of a page it just invited you to print. */
+           printout of a page it just invited you to print.
+           .site-footer: app chrome on every page — "Report a bug" doesn't belong in a printed
+           grocery list. */
         display: none !important;
     }
 

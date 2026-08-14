@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Domain;
 using ShelfAware.Web.Data;
+using ShelfAware.Web.Diagnostics;
 
 namespace ShelfAware.Web.Tests;
 
@@ -87,6 +88,49 @@ public class AdditiveSchemaTests : IDisposable
         db.SavedReports.Add(new SavedReport { Name = "Snacks", Query = "from=2026-06-01&to=2026-07-18", SavedAt = DateTimeOffset.Now });
         await db.SaveChangesAsync();
         Assert.Single(await db.SavedReports.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Creates_the_BugReports_table_on_an_older_db_with_the_fresh_schema()
+    {
+        await using var db = _db.CreateDbContext();
+        var fresh = await TableSchemaAsync(db, "BugReports");
+        Assert.NotEmpty(fresh);
+
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE BugReports;");
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db);
+
+        Assert.Equal(fresh, await TableSchemaAsync(db, "BugReports"));
+
+        db.BugReports.Add(new BugReport { Body = "It looked wrong", CreatedAt = DateTimeOffset.Now });
+        await db.SaveChangesAsync();
+        Assert.Single(await db.BugReports.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Creates_the_ErrorLog_table_on_an_older_auth_db_with_the_fresh_schema()
+    {
+        // The auth-side twin of the pantry table tests: the error log lives in auth.db (operator
+        // data), and a live deployment's auth file predates it.
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await TableSchemaAsync(db, "ErrorLog");
+        Assert.NotEmpty(fresh);
+
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE ErrorLog;");
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db);
+
+        Assert.Equal(fresh, await TableSchemaAsync(db, "ErrorLog"));
+
+        db.ErrorLog.Add(new ErrorLogEntry
+        {
+            Fingerprint = "F1", Level = "Error", Category = "Test", LastMessage = "boom",
+            Count = 1, FirstSeenAt = DateTimeOffset.Now, LastSeenAt = DateTimeOffset.Now,
+        });
+        await db.SaveChangesAsync();
+        Assert.Single(await db.ErrorLog.ToListAsync());
     }
 
     [Fact]
@@ -177,7 +221,7 @@ public class AdditiveSchemaTests : IDisposable
 
     /// <summary>Every sqlite_master row about the table (itself and each index), name-ordered,
     /// whitespace-normalized — a comparable fingerprint of the physical schema.</summary>
-    private static async Task<List<string>> TableSchemaAsync(ShelfAwareDbContext db, string table)
+    private static async Task<List<string>> TableSchemaAsync(DbContext db, string table)
     {
         var conn = db.Database.GetDbConnection();
         if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync();
