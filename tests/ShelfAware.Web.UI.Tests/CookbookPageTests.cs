@@ -377,6 +377,20 @@ public class CookbookPageTests : PageTestContext
         Assert.Equal(2, db.RecipeTags.Count(t => t.Value == "Dinner"));
     }
 
+    [Fact]
+    public void A_failed_tag_write_shows_a_message_instead_of_tearing_down_the_circuit()
+    {
+        SeedRecipe("Plain Dish", [("Thing", true, null, null)], "Do it.");
+        var cut = RenderCookbook();
+
+        Factory.FailAfter = 0; // the AddAsync write's context dies (the render's loads already spent theirs)
+        cut.Find(".cookbook-tag-add input").Input("Dinner");
+        cut.FindAll(".cookbook-tag-add button").Single(b => b.TextContent.Trim() == "Add").Click();
+
+        // Caught and surfaced as a message — the page stays alive rather than tearing down the circuit.
+        cut.WaitForAssertion(() => Assert.Contains("Couldn't add that tag", cut.Markup));
+    }
+
     // ------------------------------------------------------------------ photos
 
     private void SetImagePathInDb(int recipeId, string path)

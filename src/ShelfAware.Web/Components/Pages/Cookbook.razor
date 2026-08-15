@@ -465,6 +465,8 @@ else
     {
         newTag = "";
         tagNote = null;
+        // Paging away closes the reader — it must not keep reading one recipe while the card shows another.
+        readingRecipe = null;
     }
 
     private void OnProductFilterChanged(ChangeEventArgs e)
@@ -506,6 +508,11 @@ else
             newTag = "";
             await LoadAsync();
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogError(ex, "Adding a tag to recipe {RecipeId} failed.", r.Id);
+            tagNote = "Couldn't add that tag — please try again.";
+        }
         finally { taggingBusy = false; }
     }
 
@@ -524,6 +531,11 @@ else
             await TagService.RemoveAsync(r.Id, tag);
             await LoadAsync();
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogError(ex, "Removing a tag from recipe {RecipeId} failed.", r.Id);
+            tagNote = "Couldn't remove that tag — please try again.";
+        }
         finally { taggingBusy = false; }
     }
 
@@ -540,6 +552,11 @@ else
                 ? $"Added: {string.Join(", ", added)}."
                 : "No new tags suggested for this one.";
             await LoadAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogError(ex, "Suggesting tags for recipe {RecipeId} failed.", r.Id);
+            tagNote = "Couldn't suggest tags just now — please try again.";
         }
         finally { suggesting = false; taggingBusy = false; }
     }
@@ -569,6 +586,11 @@ else
             }
             tagNote = $"Tagged {tagged} of {untagged.Count} recipe{(untagged.Count == 1 ? "" : "s")}.";
             await LoadAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogError(ex, "Bulk-tagging untagged recipes failed after {Done}.", bulkDone);
+            tagNote = $"Tagged {tagged} before a hitch — reload and try the rest.";
         }
         finally { bulkTagging = false; taggingBusy = false; }
     }
@@ -600,6 +622,13 @@ else
                 // TornDown / ConnectionLost: the page is going or the circuit dropped — say nothing.
             }
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The READ never throws (PickedFileReader is fully guarded); a failure here is the WRITE
+            // (SavePhotoAsync — disk/DB). Show a message and keep the page rather than tear down the circuit.
+            Logger.LogError(ex, "Saving a photo for recipe {RecipeId} failed.", r.Id);
+            tagNote = "Couldn't save that photo — please try again.";
+        }
         finally
         {
             photoBusy = false;
@@ -626,6 +655,7 @@ else
     {
         if (Current is not { } r || photoBusy || r.ImagePath is null) return;
         photoBusy = true;
+        tagNote = null;
         try
         {
             await using var db = await DbFactory.CreateDbContextAsync();
@@ -637,6 +667,11 @@ else
                 Images.Delete(path); // AFTER the row stops pointing at it
             }
             await LoadAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogError(ex, "Removing the photo for recipe {RecipeId} failed.", r.Id);
+            tagNote = "Couldn't remove that photo — please try again.";
         }
         finally { photoBusy = false; }
     }

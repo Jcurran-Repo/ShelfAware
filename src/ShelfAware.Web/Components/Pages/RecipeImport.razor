@@ -292,55 +292,54 @@ else if (phase == Phase.Done)
         if (draft is not { } d || saving || string.IsNullOrWhiteSpace(d.Name)) return;
         saving = true;
         error = null;
+
+        // The photo (if any) is written FIRST, so the recipe row is created already pointing at it in ONE
+        // insert. There's no window where the row is committed but the "couldn't save" message shows — a
+        // window whose retry would create a DUPLICATE recipe. If the insert then fails, the just-written
+        // photo is the only thing to undo, and no recipe exists, so a retry is clean. A WRITE, so
+        // CancellationToken.None (nothing here is cancellable — the read happened back on the Choose step).
+        string? imagePath = null;
         try
         {
-            int recipeId;
-            await using (var db = await DbFactory.CreateDbContextAsync())
-            {
-                var recipe = new Recipe
-                {
-                    Name = d.Name.Trim(),
-                    Blurb = string.IsNullOrWhiteSpace(d.Blurb) ? null : d.Blurb!.Trim(),
-                    SavedAt = DateTimeOffset.Now,
-                    EstimatedCaloriesPerServing = d.Calories,
-                    Ingredients = d.Ingredients
-                        .Where(i => !string.IsNullOrWhiteSpace(i.Name))
-                        .Select(i => new RecipeIngredient
-                        {
-                            Name = i.Name.Trim(),
-                            Quantity = string.IsNullOrWhiteSpace(i.Quantity) ? null : i.Quantity!.Trim(),
-                            IsMain = i.IsMain,
-                        }).ToList(),
-                    Steps = d.Steps
-                        .Where(s => !string.IsNullOrWhiteSpace(s.Text))
-                        .Select((s, idx) => new RecipeStep { Order = idx + 1, Text = s.Text.Trim() }).ToList(),
-                };
-                // Tags canonicalize through the shared vocabulary — the same apply path the cookbook uses.
-                var vocabulary = await RecipeTagService.VocabularyAsync(db);
-                RecipeTagVocabulary.ApplyTags(recipe, d.Tags, vocabulary);
-                db.Recipes.Add(recipe);
-                await db.SaveChangesAsync();
-                recipeId = recipe.Id;
-            }
-
-            // A recipe imported from a photo keeps that photo as its picture (a WRITE, so uncancellable).
             if (photoBytes is not null)
+                imagePath = await Images.SaveAsync(photoBytes, photoMediaType!, CancellationToken.None);
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var recipe = new Recipe
             {
-                var path = await Images.SaveAsync(photoBytes, photoMediaType!, CancellationToken.None);
-                await using var db = await DbFactory.CreateDbContextAsync();
-                var recipe = await db.Recipes.FirstOrDefaultAsync(r => r.Id == recipeId);
-                if (recipe is not null) { recipe.ImagePath = path; await db.SaveChangesAsync(); }
-                else Images.Delete(path); // recipe vanished — don't orphan the file
-            }
+                Name = d.Name.Trim(),
+                Blurb = string.IsNullOrWhiteSpace(d.Blurb) ? null : d.Blurb!.Trim(),
+                SavedAt = DateTimeOffset.Now,
+                EstimatedCaloriesPerServing = d.Calories,
+                ImagePath = imagePath,
+                Ingredients = d.Ingredients
+                    .Where(i => !string.IsNullOrWhiteSpace(i.Name))
+                    .Select(i => new RecipeIngredient
+                    {
+                        Name = i.Name.Trim(),
+                        Quantity = string.IsNullOrWhiteSpace(i.Quantity) ? null : i.Quantity!.Trim(),
+                        IsMain = i.IsMain,
+                    }).ToList(),
+                Steps = d.Steps
+                    .Where(s => !string.IsNullOrWhiteSpace(s.Text))
+                    .Select((s, idx) => new RecipeStep { Order = idx + 1, Text = s.Text.Trim() }).ToList(),
+            };
+            // Tags canonicalize through the shared vocabulary — the same apply path the cookbook uses.
+            var vocabulary = await RecipeTagService.VocabularyAsync(db);
+            RecipeTagVocabulary.ApplyTags(recipe, d.Tags, vocabulary);
+            db.Recipes.Add(recipe);
+            await db.SaveChangesAsync();
 
             savedName = d.Name.Trim();
             phase = Phase.Done;
         }
-        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
+            // The recipe row didn't commit, so nothing partial exists and a retry is clean — undo only the
+            // orphaned photo we wrote ahead of the failed insert. Stay on Review so the draft isn't lost.
+            if (imagePath is not null) Images.Delete(imagePath);
             Logger.LogError(ex, "Saving an imported recipe failed.");
-            error = "Couldn't save the recipe — please try again."; // stay on Review so the draft isn't lost
+            error = "Couldn't save the recipe — please try again.";
         }
         finally { saving = false; }
     }

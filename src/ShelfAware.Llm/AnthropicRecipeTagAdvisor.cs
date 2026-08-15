@@ -57,7 +57,10 @@ public class AnthropicRecipeTagAdvisor : IRecipeTagAdvisor
             var response = await _chat.GetResponseAsync(prompt, options, cancellationToken);
 
             var reply = response.Text.Trim();
-            if (reply.Length == 0 || reply.Equals("NONE", StringComparison.OrdinalIgnoreCase)) return [];
+            // Match the sentinel the way Parse normalizes each token — the model routinely appends a period,
+            // and "NONE." must read as the no-tags signal, not a literal "NONE" tag polluting the cloud.
+            var sentinel = reply.TrimEnd('.', ' ');
+            if (sentinel.Length == 0 || sentinel.Equals("NONE", StringComparison.OrdinalIgnoreCase)) return [];
             return Parse(reply);
         }
         catch (OperationCanceledException) { throw; }

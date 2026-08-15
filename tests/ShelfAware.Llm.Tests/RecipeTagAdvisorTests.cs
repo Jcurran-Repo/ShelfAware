@@ -29,6 +29,14 @@ public class RecipeTagAdvisorTests
     }
 
     [Fact]
+    public async Task NONE_with_a_trailing_period_still_reads_as_no_tags()
+    {
+        // The model routinely ends a reply with a period; "NONE." must be the sentinel, not a literal tag.
+        var advisor = Advisor(FakeChatClient.Returning(Responses.Text("NONE.")));
+        Assert.Empty(await advisor.SuggestAsync("Mystery Dish", NoIngredients, NoKnown));
+    }
+
+    [Fact]
     public async Task A_blank_recipe_name_makes_no_model_call()
     {
         var chat = new FakeChatClient(() => Responses.Text("Dinner"));
