@@ -6,8 +6,10 @@ using ShelfAware.Llm;
 namespace ShelfAware.Web.Services;
 
 /// <summary>
-/// Turns a photo the visitor picked into one the census reader can look at: downscaled in the BROWSER
-/// before it ever crosses the circuit, exactly as receipt images are (DESIGN.md §5, <c>Llm:MaxImageEdgePx</c>).
+/// Turns a photo the visitor picked into one a model can look at: downscaled in the BROWSER before it
+/// ever crosses the circuit (DESIGN.md §5, <c>Llm:MaxImageEdgePx</c>). THE picked-photo-to-bytes path —
+/// the census page and the receipt upload both read through it (via <see cref="PickedFileReader"/>), so
+/// there is exactly one definition of which files count as photos and how they are shrunk.
 /// <para>An interface because this is a browser seam, and the page-test harness fakes browser seams by
 /// policy — <c>IBrowserFile.RequestImageFileAsync</c> reaches into JS and cannot run under bUnit at all, so
 /// without a seam here the entire review grid, its tick defaults, its product pre-fill and its confirm
@@ -53,9 +55,11 @@ public sealed class BrowserShelfPhotoLoader(IOptions<LlmOptions> options) : IShe
     {
         if (!LooksLikeAnImage(file.ContentType))
         {
+            // Page-neutral wording, because both upload surfaces show this sentence verbatim — "of
+            // the shelf" would be wrong on the receipt page and naming both would date fast.
             throw new NotSupportedException(
                 $"“{file.Name}” is {file.ContentType}, which isn't a photo. "
-                + "Take or pick a picture of the shelf instead.");
+                + "Take or pick a picture instead.");
         }
 
         var maxEdge = options.Value.MaxImageEdgePx;

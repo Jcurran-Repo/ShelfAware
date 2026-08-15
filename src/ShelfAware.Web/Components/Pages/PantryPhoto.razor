@@ -16,8 +16,9 @@
 
 @if (phase is Phase.Idle or Phase.Error or Phase.Reading)
 {
-    @* The InputFile must stay mounted while the photos are read — IBrowserFile streams through the DOM
-       element, and unmounting it breaks them mid-read. Same rule as the receipt upload. *@
+    @* Every picked photo is downscaled and read into MEMORY inside its own change event (see
+       OnFilesSelected) — the census read never touches a browser file handle, which is what lets
+       camera snaps append across change events. Same model as the receipt upload. *@
     <section class="panel">
         <p>
             Photograph a shelf, a freezer, or a cupboard and Shelf Aware will list what it can see, with
@@ -40,18 +41,44 @@
                the common iPhone path work — but it also hides HEIC-capable sources rather than converting
                them. image/* keeps every picker showing photos while letting the loader decide.
                ⚠️ Never name image/heic here: Safari 17+ then stops transcoding and converts JPEG and PNG
-               INTO HEIC, which makes the rare case universal. *@
-            <InputFile OnChange="OnFilesSelected" multiple accept="image/*"
-                       aria-label="Photos of a shelf, freezer, or cupboard" />
-            @if (selectedFiles.Count > 0)
+               INTO HEIC, which makes the rare case universal.
+               ⚠️ @key: a file input keeps its last value and fires NO change event for the "same" file —
+               and every iOS camera capture shares one name (image.jpg). A fresh element per finished
+               ingest is what lets a shelf be snapped corner by corner; the counter bumps only after the
+               reads complete, so no element is torn down under a live stream. *@
+            <InputFile @key="@($"pick-{pickerGeneration}")" OnChange="OnFilesSelected" multiple accept="image/*"
+                       disabled="@ingesting" aria-label="Photos of a shelf, freezer, or cupboard" />
+            @* The camera path: `capture` opens the camera directly — snap the shelf where you stand,
+               nothing to find in any picker. Its own input because capture makes an input camera-ONLY.
+               Direct captures arrive as JPEG on iOS, so this path never meets HEIC at all. The input is
+               visually hidden; the label is the button (focus ring rides :focus-visible — .file-button). *@
+            <InputFile @key="@($"snap-{pickerGeneration}")" id="shelf-snap" OnChange="OnFilesSelected"
+                       accept="image/*" capture="environment" disabled="@ingesting"
+                       class="visually-hidden" aria-label="Take a photo of the shelf with your camera" />
+            <label class="file-button" for="shelf-snap">📷 Snap the shelf</label>
+            @if (ingesting)
             {
-                <p>@selectedFiles.Count photo@(selectedFiles.Count == 1 ? "" : "s") selected.</p>
-                <button @onclick="Read">See what's there</button>
+                <p class="muted" role="status">Reading…</p>
+            }
+            @if (stagedPhotos.Count > 0)
+            {
+                <ul class="staged-files">
+                    @foreach (var p in stagedPhotos)
+                    {
+                        <li>
+                            <span>@p.Name</span>
+                            <button type="button" class="icon-btn" @onclick="() => stagedPhotos.Remove(p)"
+                                    disabled="@ingesting" aria-label="Remove @p.Name"><span aria-hidden="true">✕</span></button>
+                        </li>
+                    }
+                </ul>
+                <p>@stagedPhotos.Count photo@(stagedPhotos.Count == 1 ? "" : "s") selected.</p>
+                <button @onclick="Read" disabled="@ingesting">See what's there</button>
             }
         </div>
         @if (phase == Phase.Reading)
         {
-            <p class="spinner">Looking at @(selectedFiles.Count == 1 ? "your photo" : $"your {selectedFiles.Count} photos")… this usually takes a few seconds.</p>
+            <p class="spinner">Looking at @(stagedPhotos.Count == 1 ? "your photo" : $"your {stagedPhotos.Count} photos")… this usually takes a few seconds.</p>
         }
         @if (phase == Phase.Error)
         {
@@ -311,8 +338,19 @@ else if (phase == Phase.Done)
 
     private Phase phase = Phase.Idle;
     private string? errorMessage;
-    private List<IBrowserFile> selectedFiles = [];
+    private List<StagedPhoto> stagedPhotos = [];
+    private bool ingesting;
+    // ⚠️ The @key seed for both file inputs — bumped after every finished ingest so the next pick
+    // gets a FRESH <input>. A file input keeps its last value and fires no change event for the
+    // "same" file, and every iOS camera capture shares one name (image.jpg): without this, the
+    // second snap of a shelf is silently ignored. Review-verified — bUnit's fake upload can't
+    // reproduce the browser's same-file suppression.
+    private int pickerGeneration;
     private int photoCount;
+
+    /// <summary>A photo already downscaled and read into memory — bytes rather than an IBrowserFile,
+    /// because staged photos outlive their browser handles (see <see cref="PickedFileReader"/>).</summary>
+    private sealed record StagedPhoto(string Name, ShelfPhoto Photo);
     /// <summary>How many items the READ produced, so an empty grid can tell "the photo showed nothing"
     /// apart from "you removed every row" — two states that need opposite messages.</summary>
     private int readItemCount;
@@ -522,21 +560,103 @@ else if (phase == Phase.Done)
             rows[i].Include = include && !plans[i].NeedsAHumanLook;
     }
 
-    private void OnFilesSelected(InputFileChangeEventArgs e)
+    // Every picked photo is downscaled and read into MEMORY here, inside its own change event,
+    // while its browser handle is still alive — see PickedFileReader for why appending across
+    // camera snaps forces this. New photos APPEND (each snap is its own change event); the ✕ on
+    // a staged row is the way back out.
+    private async Task OnFilesSelected(InputFileChangeEventArgs e)
     {
+        // Same double-fire guard as Read(): the inputs disable while ingesting, but a second
+        // change event can already be queued before that render lands. Said out loud rather than
+        // silently dropped (item 41's tap-that-looks-ignored class) — and dropping IS right, not
+        // queueing: a queued event's handles reference the input the finished ingest replaced.
+        // (No generation bump on this road — the in-flight ingest owns the elements and bumps
+        // when it lands; replacing them here would tear a live stream down.)
+        if (ingesting || reading)
+        {
+            if (ingesting)
+            {
+                errorMessage = "Still reading your last pick — give it a moment, then try again.";
+                phase = Phase.Error;
+            }
+            return;
+        }
+        IReadOnlyList<IBrowserFile> files;
         try
         {
-            selectedFiles = e.GetMultipleFiles(MaxPhotos).ToList();
+            files = e.GetMultipleFiles(MaxPhotos);
         }
         catch (InvalidOperationException)
         {
-            selectedFiles = [];
             errorMessage = $"Please select up to {MaxPhotos} photos at a time.";
             phase = Phase.Error;
+            // Fresh inputs even on a refusal: the refused pick is still the element's value, and
+            // re-picking the same names (every camera snap is image.jpg) would otherwise fire no
+            // change event at all. Safe here — no ingest is in flight to tear down.
+            pickerGeneration++;
             return;
         }
+        if (stagedPhotos.Count + files.Count > MaxPhotos)
+        {
+            errorMessage = $"That would be {stagedPhotos.Count + files.Count} photos — the reader looks at up to {MaxPhotos} per go. Remove one with its ✕ first.";
+            phase = Phase.Error;
+            pickerGeneration++; // same fresh-input rule as above — "✕ one, then re-snap" must fire
+            return;
+        }
+
+        ingesting = true;
         errorMessage = null;
         if (phase == Phase.Error) phase = Phase.Idle;
+        var problems = new List<string>();
+        // ⚠️ Captured ONCE, before the first await (Read's rule — the token outlives its source).
+        var ct = pageCts.Token;
+        try
+        {
+            foreach (var file in files)
+            {
+                var result = await PickedFileReader.ReadPhotoAsync(PhotoLoader, file, ct, Logger);
+                if (result.Kind == PickedFileReader.Kind.TornDown) return; // the visitor left — nobody to tell
+                if (result.Kind == PickedFileReader.Kind.Loaded)
+                {
+                    stagedPhotos.Add(new StagedPhoto(file.Name, new ShelfPhoto(result.Bytes!, result.MediaType!)));
+                    continue;
+                }
+                problems.Add(result.Message!);
+                // The remaining handles ride the same dead connection — stop rather than collect
+                // one identical error per file.
+                if (result.Kind == PickedFileReader.Kind.ConnectionLost) break;
+            }
+        }
+        catch (Exception) when (ct.IsCancellationRequested)
+        {
+            return; // teardown-time surprise — same silence as TornDown
+        }
+        catch (Exception ex)
+        {
+            // PickedFileReader classifies everything it can — this is the handler's own belt, so a
+            // surprise degrades to this page's normal error instead of tearing down the circuit.
+            Logger.LogError(ex, "Staging shelf photos failed.");
+            problems.Add("Sorry — something went wrong reading those photos. Please try again.");
+        }
+        finally
+        {
+            ingesting = false;
+            pickerGeneration++; // fresh inputs, so re-snapping (same file name) fires again
+        }
+        if (problems.Count > 0)
+        {
+            // A bad photo doesn't unstage its good neighbours — they stay listed; it's named here.
+            errorMessage = string.Join(" ", problems);
+            phase = Phase.Error;
+        }
+        else if (errorMessage is not null && phase == Phase.Error)
+        {
+            // Only an error raised DURING this ingest can be on screen here (the start cleared any
+            // earlier one) — i.e. the busy note a concurrent pick was told. It leaves with the
+            // work it described.
+            errorMessage = null;
+            phase = Phase.Idle;
+        }
     }
 
     private async Task Read()
@@ -544,8 +664,9 @@ else if (phase == Phase.Done)
         // ⚠️ `reading` and not just the phase check: setting phase hides the button via `hidden`, but a
         // second click can already be queued before that render lands, and BOTH would then run — two vision
         // calls billed to the visitor's own key for one press, with the second overwriting the first's rows.
-        // Same double-tap guard the dashboard's quick buttons carry.
-        if (selectedFiles.Count == 0 || reading) return;
+        // Same double-tap guard the dashboard's quick buttons carry. `ingesting` too: a read must not
+        // snapshot a staged list a snap is still appending to.
+        if (stagedPhotos.Count == 0 || reading || ingesting) return;
         reading = true;
         phase = Phase.Reading;
         errorMessage = null;
@@ -559,21 +680,16 @@ else if (phase == Phase.Done)
         // exactly the teardown noise the JSDisconnectedException clause exists to keep out of the log.
         // A captured token stays usable after its source is disposed.
         var ct = pageCts.Token;
-        // Started BEFORE the photo loop so the DB load overlaps the multi-second browser transfers —
-        // independent work, and both sit on the visitor's spinner. Awaited on the happy path below, and
-        // OBSERVED in the finally when a photo failure exits early, so a late fault can't become an
-        // unobserved-task exception nobody logged.
-        var catalogTask = LoadCatalogAsync(ct);
         try
         {
-            var photos = new List<ShelfPhoto>();
-            foreach (var file in selectedFiles)
-            {
-                photos.Add(await PhotoLoader.LoadAsync(file, ct));
-            }
+            // Already read into memory at selection time — no browser handle is touched from here on.
+            var photos = stagedPhotos.Select(p => p.Photo).ToList();
             photoCount = photos.Count;
 
-            await catalogTask;
+            // Awaited plainly: the reader needs the product names as its input, and the photo
+            // transfers this load used to overlap now happen at selection time — there is nothing
+            // left to run it under.
+            await LoadCatalogAsync(ct);
             var result = await Reader.ReadAsync(
                 photos, products.Select(p => p.Name).Distinct().ToList(), ct);
 
@@ -622,6 +738,12 @@ else if (phase == Phase.Done)
                 rows[j].Include = !arrival[j].NeedsAHumanLook && rows[j].Confidence >= ConfidentEnough;
 
             confirmError = null;
+            // Consumed — megabytes of staged JPEG released the moment they've done their job. Every
+            // road back to the picker also runs Reset(), which clears them for correctness, so this
+            // line is memory hygiene during the review rather than a load-bearing guard (and is why
+            // no page test pins it — there is nothing left on screen to observe). A failed read
+            // above deliberately KEEPS them, so "try again" is one tap rather than a re-shoot.
+            stagedPhotos = [];
             phase = Phase.Review;
         }
         // ⚠️ Only OUR cancellation is teardown. Nothing else here cancels on purpose, so an
@@ -636,26 +758,10 @@ else if (phase == Phase.Done)
             errorMessage = "Sorry — that took too long and was stopped. Please try again.";
             phase = Phase.Error;
         }
-        // ⚠️ A JS-interop failure while the page is STILL ALIVE (a transient circuit drop during the photo
-        // downscale, then a reconnect) must escape the spinner — the empty catch left phase == Reading forever,
-        // recoverable only by reload. Real teardown (Dispose has cancelled pageCts) is still swallowed, the same
-        // split the OperationCanceledException clause above uses; JSDisconnectedException does NOT derive from
-        // JSException, so it needs its own clause and can't ride along with one.
-        catch (JSDisconnectedException) when (pageCts.IsCancellationRequested) { }
-        catch (JSDisconnectedException ex)
-        {
-            Logger.LogError(ex, "Reading a shelf census lost the browser connection mid-read.");
-            errorMessage = "Sorry — the connection dropped while reading those photos. Please try again.";
-            phase = Phase.Error;
-        }
-        catch (NotSupportedException ex)
-        {
-            // The loader refused the file by type. Its message names the file and what to use instead,
-            // which is the whole reason it checks rather than letting an undecodable file time out.
-            Logger.LogInformation("A shelf photo was refused: {Reason}", ex.Message);
-            errorMessage = ex.Message;
-            phase = Phase.Error;
-        }
+        // No JSDisconnectedException or NotSupportedException clauses here any more, deliberately:
+        // the photo downscale moved to selection time (PickedFileReader owns both there), and
+        // nothing left in this method touches JS or the loader — a dead clause would read as if it
+        // still could.
         catch (Exception ex)
         {
             Logger.LogError(ex, "Reading a shelf census failed.");
@@ -664,17 +770,7 @@ else if (phase == Phase.Done)
         }
         finally
         {
-            selectedFiles = [];
             reading = false;
-            // A photo failure above leaves the catalog task in flight — observe it. Its real failures
-            // either already rethrew from the happy-path await, or belong to a page that is showing the
-            // photo's error; cancellation here is the expected teardown/stop shape, not news.
-            if (!catalogTask.IsCompleted)
-            {
-                try { await catalogTask; }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
-                catch (Exception ex) { Logger.LogError(ex, "Loading the catalog for a shelf census failed after the photos did."); }
-            }
         }
     }
 
@@ -827,7 +923,7 @@ else if (phase == Phase.Done)
         phase = Phase.Idle;
         rows = [];
         refusals = [];
-        selectedFiles = [];
+        stagedPhotos = [];
         photoCount = 0;
         readItemCount = 0;
         countedAnything = false;

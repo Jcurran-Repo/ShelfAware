@@ -49,6 +49,9 @@ public class ShelfPhotoLoaderTests
         Assert.Contains("shelf.dat", ex.Message);
         Assert.Contains(contentType, ex.Message);
         Assert.Contains("isn't a photo", ex.Message);
+        // The advice tail too — the page fixtures carry this sentence verbatim, so the loader-side
+        // pin must cover the WHOLE sentence or a rewording drifts past both suites unnoticed.
+        Assert.Contains("Take or pick a picture instead", ex.Message);
     }
 
     [Theory]

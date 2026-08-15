@@ -2245,6 +2245,96 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47 and 49).
      page-wide pattern deliberately: converting one action's announcements piecemeal is the
      partial-conversion trap from the other direction).
 
+48. **v4.8 — Snap a photo: camera capture + staged uploads (2026-08-14, branch `feature/snap-photo-upload`).**
+   Born from Jordan's wife being unable to FIND her photos in the iOS picker — Files doesn't show the
+   camera roll, and the receipt accept list grayed HEIC out of Files on top of it. (Her earlier
+   "photos never upload" was almost certainly the pre-`e3fe589` blob:-CSP infinite spinner: the family
+   box ran mid-July code from 7/15 until the 8/13 publish, so photo uploads hung its whole life while
+   Jordan's PDFs worked. Diagnosed from the deployed binaries' dates, not the code.) The fix deletes
+   the finding step: a 📷 Snap button on `/receipt` and `/pantry-photo` opens the camera itself —
+   `capture="environment"` on a second InputFile behind a label-button, NOT getUserMedia, so
+   `Permissions-Policy: camera=()` stands. Direct captures arrive as JPEG on iOS: the snap path never
+   meets HEIC.
+   - ⚠️ **Appending across snaps forces eager reads, and that is the whole design.** Re-activating a
+     file input replaces the element's JS-side file map (`_blazorFilesById`), so an `IBrowserFile`
+     held from the previous change event is DEAD by the second snap. Every picked file is read into
+     memory inside its own change event; extraction and the census read touch no browser handle, so
+     the old "InputFile must stay mounted while extracting" constraint died with it (a circuit blip
+     mid-extract can no longer break a file read either).
+   - **`PickedFileReader` (Web/Services) is the one classification of a picked file's read** —
+     Loaded / Refused / Failed / TornDown / ConnectionLost — carrying the census teardown-vs-alive
+     discipline (captured token, only the page's own token means teardown, never throws). Both
+     pages' handlers are a loop over it plus page wording; each keeps a teardown-silent belt catch.
+   - **Upload's image path goes through `IShelfPhotoLoader` now** — item 37's gap closed: one
+     picked-photo→bytes definition, and the receipt IMAGE path is bUnit-testable for the first time
+     (`StubPhotoLoader` moved to UiFakes and serves both test classes; it honors cancellation like
+     the real loader, or the teardown tests pin nothing). The loader's refusal sentence went
+     page-neutral ("Take or pick a picture instead"); Upload's accept widened to
+     `image/*,application/pdf` (the census rule — never name image/heic); PDFs branch before the
+     loader into a raw read under the same classification.
+   - ⚠️ **`@key`-per-ingest on both file inputs is load-bearing, and untestable.** A browser fires no
+     change event when the "same" file is re-picked, and every iOS camera capture is named image.jpg
+     — without a fresh element per finished ingest, the second snap of a multi-page receipt is
+     silently ignored. bUnit's fake upload can't reproduce the suppression, so this is
+     review-verified only. The counter bumps in the ingest's finally, AFTER the reads, so no element
+     is torn down under a live stream.
+   - **Retention asymmetry, deliberate:** a failed census read KEEPS the staged photos ("try again"
+     is one tap on the same bytes — a census has no audit copy to retry from), cleared only on
+     success or Start over; the receipt page still clears on extraction either way, because its
+     pending queue owns recovery and a second staged road to the same receipt would double-record.
+     **Memory profile, accepted:** staging holds every picked file's bytes from selection to
+     extract — the BATCH path's peak moved from one-file-at-a-time to all-at-once (typically
+     ~1 MB/resized photo; adversarially MaxFiles × 25 MB with PDFs, the same ceiling the combined
+     path always had).
+     Read()'s catalog-overlap + finally-observe machinery came out with the photo loop it overlapped,
+     as did its now-dead JSDisconnected/NotSupported clauses — PickedFileReader owns those cases at
+     selection time.
+   - **Upload gained the Extract double-run guard it never had** — a queued second click behind the
+     `hidden` render could persist the same staged list twice (the exact class item 37's census
+     Read guard closed) — plus ingest↔extract mutual exclusion and pageCts + Dispose. Per-file
+     failures NAME the file; a bad file doesn't unstage its neighbours (the batch rule, applied at
+     staging).
+   - ⚠️ **A mutation exposed a vacuous test, resolved honestly:** the success-path `stagedPhotos = []`
+     is shadowed by Reset() on every road back to the picker, so no markup can observe it — it stays
+     as memory hygiene with a comment saying exactly that, and the surviving test pins the PAIR
+     (deleting both clears fails it). Eight mutations total across both pages and the reader, each
+     killing exactly its tests.
+   - **The gate's fix pass (same day, 7 findings):** `RemoveStaged` clears the one-long-receipt
+     tick when the staged list EMPTIES (appending keeps it — adding pages is the flagship flow; an
+     empty list is the only fresh-start boundary left, and without the clear a stale tick silently
+     merged the next unrelated pick into one receipt); the pending review queue renders in
+     Phase.Error too (reads-at-selection made Error one wrong file away, and hiding the queue
+     behind it read as lost receipts); a pick during a stuck ingest gets a busy note instead of a
+     silent drop (item 41's class — and the note leaves with the ingest that made it true; dropping
+     rather than queueing stays right, since a queued event's handles reference the replaced
+     input); the batch failed-save advice stopped saying "try selecting it again" for a failure
+     selection can't fix; the census cap message names the ✕ instead of a Start-over button that
+     phase doesn't have; the Environment-gotchas stay-mounted bullet was rewritten (it contradicted
+     this item 300 lines apart — the doc-drift class).
+   - **1570 tests green (+20 total), 0 warnings** on a non-incremental Release build, read off the
+     final run. Three fix-pass mutations, each killing exactly its tests. Live-verified on the dev
+     server via `/dev/login`: real canvas photos through the real browser resize (blob: CSP
+     included) on both pages, append + ✕ removal, a text file refused instantly by name beside a
+     surviving good photo, dark mode, zero console errors. ⚠️ NOT yet verified on a real iPhone —
+     the capture attribute and the same-name re-snap are exactly what only her device can prove;
+     first thing to check after the next family publish.
+   - **The pre-merge max-effort `/code-review` (2026-08-15): two findings, both fixed.** The two
+     refusal paths in each page's OnFilesSelected (the >Max single-selection catch and the
+     append-cap check) returned before the finally, so the refused pick stayed as the input
+     element's VALUE — and by this item's own suppression premise, the cap refusal's documented
+     recovery ("remove one with its ✕, snap again") re-produced image.jpg into the same element
+     and fired nothing. Both paths bump pickerGeneration now (the busy-drop deliberately does
+     NOT — the in-flight ingest owns the elements, and its comment says so); pinned per page and
+     per path by component-instance identity (`Assert.NotSame` across the refusal — the observable
+     half of a suppression bUnit can't reproduce), four mutations killing exactly one test each.
+     And the loader-side wording pin covered only "isn't a photo" while its comment claimed the
+     sentence couldn't drift — the advice tail the page fixtures carry verbatim is asserted too
+     now (mutating the tail fails all four theory rows; before, it sailed through green). Security
+     half of the gate: CLEAN — the branch adds no IgnoreQueryFilters, no endpoint, no settings
+     key, no per-household disk write; staged bytes are memory-only and `capture` is not
+     getUserMedia, so `Permissions-Policy: camera=()` stands. **1574 tests green (+4), 0
+     warnings** on a non-incremental Release build, read off the final run.
+
 49. **v4.9 — Resolve for bugs and errors: the app's first cross-household write (2026-08-14, branch
    `feature/resolve-reports`).** Item 47 shipped the admin viewer read-only, deferring "mark resolved"
    as its own focused change; Jordan called for it, for both halves. The halves are deliberately
@@ -2652,9 +2742,12 @@ the same item bought across brands/sizes rolls up into one product.
   the curated data without re-extraction, `ALTER TABLE … ADD COLUMN` + backfill against the SQLite
   file (a throwaway `dotnet run` console referencing `Microsoft.Data.Sqlite.Core` works; PowerShell
   5.1 can't load the .NET 10 assemblies). Real receipts: `C:\Users\Jorcu\Documents\Walmart Receipts`.
-- **Blazor `<InputFile>` must stay mounted while `IBrowserFile` streams read** — unmounting (e.g.
-  switching to a spinner) breaks reads with `_blazorFilesById` null. Upload.razor hides it with
-  `hidden`. Don't "simplify" this.
+- **Blazor `IBrowserFile` handles die when their `<InputFile>` unmounts OR re-activates** —
+  `_blazorFilesById` is per-element and replaced per change event. ⚠️ Since v4.8 (item 48) neither
+  photo page holds a handle past its own change event: every picked file is read into memory AT
+  SELECTION, so the old "keep the input mounted while extracting" rule is RETIRED there. The fact
+  itself still governs any new `InputFile` use: read the bytes inside the change event, or your
+  handles are one re-render/re-pick away from dead.
 - **Browser-testing uploads without real files:** draw a receipt on a JS canvas in `preview_eval`,
   wrap in `File`/`DataTransfer`, assign to the input, dispatch `change`. `test-fixtures/` also has
   committed synthetic PNGs.

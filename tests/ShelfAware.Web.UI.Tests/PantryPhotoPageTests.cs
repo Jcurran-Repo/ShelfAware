@@ -42,6 +42,11 @@ public class PantryPhotoPageTests : PageTestContext
         /// fake would make the in-flight branch untestable. One-shot: consumed by the read it holds.</summary>
         public TaskCompletionSource? Hold { get; set; }
 
+        /// <summary>Thrown by the next read — how a test models the vision call itself dying (an
+        /// HttpClient timeout arrives as a TaskCanceledException from INSIDE the reader). One-shot,
+        /// so a retry after the failure can succeed.</summary>
+        public Exception? Throws { get; set; }
+
         public async Task<ShelfCensusResult> ReadAsync(
             IReadOnlyList<ShelfPhoto> photos, IReadOnlyList<string>? knownProductNames = null,
             CancellationToken cancellationToken = default)
@@ -53,30 +58,12 @@ public class PantryPhotoPageTests : PageTestContext
                 Hold = null;
                 await gate.Task;
             }
-            return Results.Count > 0 ? Results.Dequeue() : ShelfCensusResult.Fail("no result queued");
-        }
-    }
-
-    /// <summary>Stands in for the browser-side downscale. <c>RequestImageFileAsync</c> reaches into JS and
-    /// throws outright under bUnit, so this is what makes the flow beneath it reachable at all.</summary>
-    internal sealed class StubPhotoLoader : IShelfPhotoLoader
-    {
-        public Exception? Throws { get; set; }
-
-        /// <summary>When set, the next load parks here — so a test can interleave something (a
-        /// navigate-away, a second click) with a read that is genuinely mid-flight. One-shot, same
-        /// shape as QueueReader.Hold.</summary>
-        public TaskCompletionSource? Hold { get; set; }
-
-        public async Task<ShelfPhoto> LoadAsync(IBrowserFile file, CancellationToken cancellationToken = default)
-        {
-            if (Hold is { } gate)
+            if (Throws is { } ex)
             {
-                Hold = null;
-                await gate.Task;
+                Throws = null;
+                throw ex;
             }
-            if (Throws is not null) throw Throws;
-            return new ShelfPhoto([1, 2, 3], "image/jpeg");
+            return Results.Count > 0 ? Results.Dequeue() : ShelfCensusResult.Fail("no result queued");
         }
     }
 
@@ -140,14 +127,27 @@ public class PantryPhotoPageTests : PageTestContext
         Reader.Results.Enqueue(ShelfCensusResult.Ok(items, "{}"));
         var cut = Render<PantryPhoto>();
         Upload(cut, 1);
-        cut.Find("button").Click();
+        See(cut);
         return cut;
     }
 
+    /// <summary>Feeds photos through the PICKER input (the first of the two — the snap input is
+    /// second; see <see cref="Snap"/>). Staging is eager, so the loader runs inside this call.</summary>
     private static void Upload(IRenderedComponent<PantryPhoto> cut, int photos) =>
         cut.FindComponent<InputFile>().UploadFiles(
             [.. Enumerable.Range(0, photos).Select(i =>
                 InputFileContent.CreateFromBinary([1, 2, 3], $"shelf-{i}.jpg", contentType: "image/jpeg"))]);
+
+    /// <summary>One camera snap through the SNAP input — same file name every time by default,
+    /// exactly what an iPhone camera hands over. Returns the ingest handler's task so a parked
+    /// ingest can be awaited.</summary>
+    private static Task Snap(IRenderedComponent<PantryPhoto> cut, string name = "image.jpg") =>
+        FileEvents.ChangeAsync(cut, 1, name);
+
+    /// <summary>Clicks "See what's there" by TEXT — the staged rows' ✕ buttons sit before it in the
+    /// DOM, so a bare Find("button") would remove a photo instead of reading.</summary>
+    private static void See(IRenderedComponent<PantryPhoto> cut) =>
+        cut.FindAll("button").Single(b => b.TextContent.Contains("See what's there")).Click();
 
     private static IElement RowFor(IRenderedComponent<PantryPhoto> cut, string name) =>
         cut.FindAll("tbody tr").Single(r => r.QuerySelectorAll("input")
@@ -965,17 +965,19 @@ public class PantryPhotoPageTests : PageTestContext
     public void A_photo_the_browser_cannot_decode_is_named_rather_than_timing_out()
     {
         // The loader refuses by content type instead of handing an undecodable file to a JS promise that
-        // never settles — 30 seconds of spinner followed by a message that never mentions the file.
+        // never settles — 30 seconds of spinner followed by a message that never mentions the file. The
+        // refusal now surfaces AT SELECTION (staging is eager), before any button exists to press.
         // The exact sentence the real loader produces for this file, so a reworded refusal fails here
         // rather than passing against a string this fixture invented. Pinned the other side too:
         // ShelfPhotoLoaderTests asserts the loader really says this.
         PhotoLoader.Throws = new NotSupportedException(
-            "“shelf.pdf” is application/pdf, which isn't a photo. Take or pick a picture of the shelf instead.");
+            "“shelf.pdf” is application/pdf, which isn't a photo. Take or pick a picture instead.");
         var cut = Render<PantryPhoto>();
         Upload(cut, 1);
-        cut.Find("button").Click();
 
         cut.WaitForAssertion(() => Assert.Contains("isn't a photo", Collapsed(cut.Markup)));
+        // Nothing was staged, so there is nothing to read — the button never appears.
+        Assert.DoesNotContain(cut.FindAll("button"), b => b.TextContent.Contains("See what's there"));
     }
 
     [Fact]
@@ -1020,42 +1022,33 @@ public class PantryPhotoPageTests : PageTestContext
     }
 
     [Fact]
-    public async Task Leaving_the_page_mid_read_tears_down_quietly_instead_of_logging_an_error()
+    public async Task Leaving_the_page_mid_ingest_tears_down_quietly_instead_of_logging_an_error()
     {
-        // ⚠️ CancellationTokenSource.Token THROWS once its source is disposed (IsCancellationRequested
-        // does not), and ObjectDisposedException derives from InvalidOperationException — so it cleared
-        // every specific clause the read has and landed in the generic one, writing
-        // LogError("Reading a shelf census failed") on an ordinary navigate-away. That is exactly the
-        // teardown noise the JSDisconnectedException clause beside it exists to keep out of a real
-        // deployment's log. The page captures the token once before the first await; a captured token
-        // outlives its source.
+        // The teardown seam moved with the photo reads: staging is eager, so "the visitor left
+        // mid-read" now happens inside OnFilesSelected, and the quiet-teardown discipline lives in
+        // PickedFileReader (only the page's own token means teardown; the same exception while the
+        // page is alive is a failure the visitor hears about). The gate parks the FIRST photo's
+        // load; disposal cancels the page token; the released loader then throws the cancellation
+        // the real loader's WaitAsync(…, ct) would — and nothing may reach the error log.
         //
-        // ⚠️ TWO photos, and the gate on the FIRST, is what makes this observable. The second loop
-        // iteration re-reads the token before any other token-aware work, so nothing else can throw
-        // first. Parking at the catalog load instead makes the test vacuous: disposal cancels the token,
-        // LoadCatalogAsync's own query then throws OperationCanceledException, the `when` clause
-        // rethrows, and control never reaches a second token read — an earlier version of this test did
-        // exactly that and passed identically with the fix reverted.
+        // ⚠️ The awaitable trigger, not UploadFiles: the handler's task completes only when the
+        // ingest has fully unwound — catches, logging and all — so waiting on it replaces any
+        // Task.Delay, which under load could elapse before the continuation ran and pass this
+        // NEGATIVE assertion without exercising anything (a wait that cannot fail, item 34's
+        // class). The 5s WhenAny is a failsafe against a hang, not a race window.
         var gate = new TaskCompletionSource();
-        Reader.Results.Enqueue(ShelfCensusResult.Ok([Item("Black Beans")], "{}"));
         var cut = Render<PantryPhoto>();
-        Upload(cut, 2);
         PhotoLoader.Hold = gate;
-        // ⚠️ The awaitable trigger, not Click(): the handler's task completes only when Read()
-        // has fully unwound — catches, logging and all — so waiting on it replaces the old
-        // Task.Delay(50), which under load could elapse before the continuation ran and pass
-        // this NEGATIVE assertion without exercising anything (a wait that cannot fail, item
-        // 34's class). The 5s WhenAny is a failsafe against a hang, not a race window: a slow
-        // run completes late and still passes; only a genuine hang fails, loudly.
-        var handler = cut.Find("button").ClickAsync(new MouseEventArgs());
+        var handler = FileEvents.ChangeAsync(cut, 0, "shelf-0.jpg", "shelf-1.jpg");
 
-        await DisposeComponentsAsync();  // the visitor navigates away mid-read
+        await DisposeComponentsAsync();  // the visitor navigates away mid-ingest
         gate.SetResult();
         var settled = await Task.WhenAny(handler, Task.Delay(TimeSpan.FromSeconds(5)));
         Assert.Same(handler, settled);   // the continuation ran to completion — nothing left pending
         try { await handler; } catch (OperationCanceledException) { /* the quiet path itself */ }
 
-        Assert.DoesNotContain(Logs.Errors, e => e.Message.Contains("Reading a shelf census failed"));
+        Assert.Empty(Logs.Errors);                 // a navigate-away is not an error
+        Assert.Empty(PhotoLoader.Loaded);          // and the loop stopped at the torn-down photo
     }
 
     [Fact]
@@ -1095,14 +1088,28 @@ public class PantryPhotoPageTests : PageTestContext
         // ⚠️ Cancellation from OUTSIDE the page is a failure, not teardown: an HttpClient timeout on the
         // vision call arrives as a TaskCanceledException, and rethrowing it looked safe but wasn't —
         // ComponentBase ignores a canceled task, so there was no error, no log line and no final render.
-        // Just the spinner, and only a page reload out of it.
-        PhotoLoader.Throws = new TaskCanceledException("the call timed out");
+        // Just the spinner, and only a page reload out of it. Thrown from the READER: the photo loads
+        // moved to selection time, so the vision call is the only cancellable thing left in Read().
+        Reader.Throws = new TaskCanceledException("the call timed out");
         var cut = Render<PantryPhoto>();
         Upload(cut, 1);
-        cut.Find("button").Click();
+        See(cut);
 
         cut.WaitForAssertion(() => Assert.Contains("took too long", Collapsed(cut.Markup)));
         Assert.DoesNotContain("Looking at your photo", Collapsed(cut.Markup));
+    }
+
+    [Fact]
+    public void A_photo_that_never_finishes_decoding_is_named_at_selection()
+    {
+        // The loader's 30-second bound raises TimeoutException — the selection-time shape of the
+        // same "never settles" hang. The failure names the FILE, because by the time it fires the
+        // visitor may have picked several and "something went wrong" points at none of them.
+        PhotoLoader.Throws = new TimeoutException("the resize promise never settled");
+        var cut = Render<PantryPhoto>();
+        Upload(cut, 1);
+
+        cut.WaitForAssertion(() => Assert.Contains("“shelf-0.jpg” couldn't be read", Collapsed(cut.Markup)));
     }
 
     [Fact]
@@ -1146,19 +1153,19 @@ public class PantryPhotoPageTests : PageTestContext
     }
 
     [Fact]
-    public void A_transient_JS_disconnect_mid_read_shows_an_error_not_a_permanent_spinner()
+    public void A_transient_JS_disconnect_mid_ingest_shows_an_error_not_a_silent_nothing()
     {
         // ⚠️ A JSDisconnectedException while the page is still ALIVE (a circuit blip during the photo
-        // downscale, then a reconnect) must escape the spinner — the empty catch left phase == Reading
-        // forever, recoverable only by reload. Real teardown (pageCts cancelled by Dispose) is still
-        // swallowed, the same split the OperationCanceledException clause beside it uses.
-        PhotoLoader.Throws = new JSDisconnectedException("interop lost mid-read");
+        // downscale, then a reconnect) must be told to the visitor — PickedFileReader classifies it
+        // as ConnectionLost and the page shows it. Real teardown (pageCts cancelled by Dispose) is
+        // still swallowed; the split lives in PickedFileReader now that the downscale runs at
+        // selection time, where Read() can never meet it.
+        PhotoLoader.Throws = new JSDisconnectedException("interop lost mid-ingest");
         var cut = Render<PantryPhoto>();
         Upload(cut, 1);
-        cut.Find("button").Click();
 
         cut.WaitForAssertion(() => Assert.Contains("connection dropped", Collapsed(cut.Markup)));
-        Assert.DoesNotContain("Looking at your photo", Collapsed(cut.Markup)); // not stuck on the spinner
+        Assert.DoesNotContain("Looking at your photo", Collapsed(cut.Markup)); // no phantom spinner
     }
 
     [Fact]
@@ -1273,7 +1280,7 @@ public class PantryPhotoPageTests : PageTestContext
         Reader.Results.Enqueue(ShelfCensusResult.Ok([Item("Tilapia Fillets")], "{}"));
         var cut = Render<PantryPhoto>();
         Upload(cut, 3);
-        cut.Find("button").Click();
+        See(cut);
 
         Assert.Equal([3], Reader.PhotoCounts);
     }
@@ -1302,8 +1309,8 @@ public class PantryPhotoPageTests : PageTestContext
         var cut = Render<PantryPhoto>();
         Upload(cut, 1);
 
-        cut.Find("button").Click();  // parks inside the reader
-        cut.Find("button").Click();  // must NO-OP
+        See(cut);  // parks inside the reader
+        See(cut);  // must NO-OP
         gate.SetResult();
 
         cut.WaitForAssertion(() => Assert.Single(cut.FindAll("tbody tr")));
@@ -1320,16 +1327,25 @@ public class PantryPhotoPageTests : PageTestContext
     }
 
     [Fact]
-    public void A_failed_read_offers_another_go()
+    public void A_failed_read_keeps_the_photos_staged_so_retry_is_one_tap()
     {
+        // A census has no audit copy and no Retry-from-disk — but the staged BYTES are still here,
+        // so a transient model failure must not cost a re-shoot of the whole shelf. Cleared only on
+        // success; Start over is the deliberate way out.
         Reader.Results.Enqueue(ShelfCensusResult.Fail("the model was unreachable"));
+        Reader.Results.Enqueue(ShelfCensusResult.Ok([Item("Tilapia Fillets")], "{}"));
         var cut = Render<PantryPhoto>();
-        Upload(cut, 1);
+        Upload(cut, 2);
 
-        cut.Find("button").Click();
+        See(cut);
 
         cut.WaitForAssertion(() => Assert.Contains("couldn't be read", Collapsed(cut.Find("p.error"))));
-        Assert.NotEmpty(cut.FindComponents<InputFile>()); // still able to pick another photo
+        Assert.Contains("2 photos selected", cut.Markup);  // still staged — no re-shoot
+        Assert.NotEmpty(cut.FindComponents<InputFile>());  // and still able to pick another photo
+
+        See(cut);                                          // same bytes, second try
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("tbody tr")));
+        Assert.Equal([2, 2], Reader.PhotoCounts);
     }
 
     [Fact]
@@ -1339,10 +1355,8 @@ public class PantryPhotoPageTests : PageTestContext
         var cut = Render<PantryPhoto>();
         Upload(cut, 1);
 
-        cut.Find("button").Click();
-
         cut.WaitForAssertion(() =>
-            Assert.Contains("something went wrong reading those photos", Collapsed(cut.Find("p.error"))));
+            Assert.Contains("“shelf-0.jpg” couldn't be read", Collapsed(cut.Find("p.error"))));
     }
 
     [Fact]
@@ -1354,5 +1368,171 @@ public class PantryPhotoPageTests : PageTestContext
 
         Assert.Empty(cut.FindAll("tbody tr"));
         Assert.NotEmpty(cut.FindComponents<InputFile>());
+    }
+
+    // --- the snap button and the staged list ---------------------------------
+
+    [Fact]
+    public void The_snap_input_opens_the_camera_directly()
+    {
+        // ⚠️ capture is the feature: it opens the camera app itself, so there is no photo to FIND —
+        // and a direct capture arrives as JPEG on iOS, so this path never meets HEIC. Its own input
+        // because capture makes an input camera-ONLY; no `multiple` because each snap is one photo,
+        // appended to what's already staged.
+        var cut = Render<PantryPhoto>();
+
+        var snap = cut.FindAll("input[type=file]")[1];
+        Assert.Equal("environment", snap.GetAttribute("capture"));
+        Assert.Equal("image/*", snap.GetAttribute("accept"));
+        Assert.Null(snap.GetAttribute("multiple"));
+        // The label IS the visible button, so it must point at the input it proxies.
+        Assert.Equal(snap.GetAttribute("id"), cut.Find("label.file-button").GetAttribute("for"));
+    }
+
+    [Fact]
+    public async Task Camera_snaps_append_instead_of_replacing()
+    {
+        // Each snap is its own change event, and every iPhone capture shares one file name — so
+        // appending (not replacing) is what makes photographing a pantry corner by corner work.
+        Reader.Results.Enqueue(ShelfCensusResult.Ok([Item("Tilapia Fillets")], "{}"));
+        var cut = Render<PantryPhoto>();
+
+        Upload(cut, 1);                 // the picker…
+        await Snap(cut);                // …then two snaps, both "image.jpg"
+        await Snap(cut);
+
+        Assert.Contains("3 photos selected", cut.Markup);
+        See(cut);
+        cut.WaitForAssertion(() => Assert.Equal([3], Reader.PhotoCounts));
+    }
+
+    [Fact]
+    public void A_staged_photo_can_be_removed_before_reading()
+    {
+        Reader.Results.Enqueue(ShelfCensusResult.Ok([Item("Tilapia Fillets")], "{}"));
+        var cut = Render<PantryPhoto>();
+        Upload(cut, 2);
+
+        cut.FindAll(".staged-files button")
+            .Single(b => b.GetAttribute("aria-label") == "Remove shelf-1.jpg").Click();
+
+        Assert.Contains("1 photo selected", cut.Markup);
+        See(cut);
+        cut.WaitForAssertion(() => Assert.Equal([1], Reader.PhotoCounts));
+    }
+
+    [Fact]
+    public async Task Appending_past_the_photo_cap_is_refused_and_keeps_what_is_staged()
+    {
+        // The single-selection cap (GetMultipleFiles throws past 8) can't see an APPEND overflow —
+        // eight staged plus one snap is nine photos the reader would refuse, so the page refuses
+        // first, names the limit, and drops nothing.
+        var cut = Render<PantryPhoto>();
+        Upload(cut, 8);
+
+        await Snap(cut);
+
+        Assert.Contains("would be 9 photos", cut.Markup);
+        Assert.Contains("8 photos selected", cut.Markup);  // the staged eight survived
+    }
+
+    [Fact]
+    public void A_bad_photo_is_named_and_does_not_unstage_its_neighbours()
+    {
+        // One undecodable file in a multi-select must fail alone — the batch-extraction rule,
+        // applied at staging time.
+        PhotoLoader.ThrowsOnce = new InvalidOperationException("the browser could not decode this image");
+        var cut = Render<PantryPhoto>();
+
+        Upload(cut, 2);  // shelf-0 fails, shelf-1 loads
+
+        Assert.Contains("“shelf-0.jpg” couldn't be read", Collapsed(cut.Markup));
+        Assert.Contains("1 photo selected", cut.Markup);
+    }
+
+    [Fact]
+    public async Task The_read_stands_down_while_a_snap_is_still_being_read_in()
+    {
+        // A read must not snapshot a staged list an ingest is still appending to — the same
+        // double-fire discipline Read() itself carries.
+        Reader.Results.Enqueue(ShelfCensusResult.Ok([Item("Tilapia Fillets")], "{}"));
+        var cut = Render<PantryPhoto>();
+        Upload(cut, 1);
+
+        var gate = new TaskCompletionSource();
+        PhotoLoader.Hold = gate;
+        var ingest = Snap(cut);         // parks mid-ingest
+        See(cut);                       // must NO-OP while ingesting
+        Assert.Empty(Reader.PhotoCounts);
+
+        gate.SetResult();
+        await ingest;
+        See(cut);
+        cut.WaitForAssertion(() => Assert.Equal([2], Reader.PhotoCounts));
+    }
+
+    [Fact]
+    public async Task A_pick_during_a_stuck_ingest_is_told_to_wait_not_silently_dropped()
+    {
+        // Same rule as the receipt page: the guard drops the event (dead handles otherwise), but
+        // says so — and the note leaves with the ingest that made it true.
+        var cut = Render<PantryPhoto>();
+        var gate = new TaskCompletionSource();
+        PhotoLoader.Hold = gate;
+        var ingest = FileEvents.ChangeAsync(cut, 0, "slow.jpg");
+
+        await FileEvents.ChangeAsync(cut, 0, "eager.jpg");
+
+        cut.WaitForAssertion(() => Assert.Contains("Still reading your last pick", cut.Markup));
+        gate.SetResult();
+        await ingest;
+        cut.WaitForAssertion(() => Assert.DoesNotContain("Still reading your last pick", cut.Markup));
+        Assert.Contains("1 photo selected", cut.Markup);
+    }
+
+    [Fact]
+    public async Task A_refused_append_still_hands_back_fresh_inputs()
+    {
+        // The cap refusal's own recovery is "✕ one, snap again" — and a re-snap shares the refused
+        // capture's name (image.jpg), which fires no change event unless the element is FRESH (the
+        // @key rule). Element identity is the observable half; the browser's same-name suppression
+        // itself can't run under bUnit.
+        var cut = Render<PantryPhoto>();
+        Upload(cut, 8);
+        var before = cut.FindComponents<InputFile>()[1].Instance;
+
+        await Snap(cut); // would be 9 — refused
+
+        Assert.Contains("would be 9 photos", cut.Markup);
+        Assert.NotSame(before, cut.FindComponents<InputFile>()[1].Instance);
+    }
+
+    [Fact]
+    public void An_overlarge_selection_still_hands_back_fresh_inputs()
+    {
+        // Same rule on the >MaxPhotos-in-one-go refusal: the overlarge pick is the element's value
+        // now, and a corrected re-pick overlapping the same names must fire.
+        var cut = Render<PantryPhoto>();
+        var before = cut.FindComponents<InputFile>()[0].Instance;
+
+        Upload(cut, 9); // GetMultipleFiles(8) refuses the whole selection
+
+        cut.WaitForAssertion(() => Assert.Contains("up to 8 photos", cut.Markup));
+        Assert.NotSame(before, cut.FindComponents<InputFile>()[0].Instance);
+    }
+
+    [Fact]
+    public void Start_over_lands_on_an_empty_picker()
+    {
+        // Reset() clears the staged photos along with everything else — Start over means fresh.
+        // (The success path ALSO clears them at consumption, but that is memory hygiene invisible
+        // to markup: a test asserting this after Start over passed with the success-path clear
+        // deleted, so pinning it here would be pinning Reset and calling it the other thing.)
+        var cut = Review(Item("Tilapia Fillets"));
+
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Start over")).Click();
+
+        Assert.DoesNotContain("photo selected", cut.Markup);
+        Assert.DoesNotContain("photos selected", cut.Markup);
     }
 }
