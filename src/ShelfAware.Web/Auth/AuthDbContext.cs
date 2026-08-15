@@ -37,5 +37,8 @@ public class AuthDbContext(DbContextOptions<AuthDbContext> options) : IdentityDb
         // can't ORDER BY a DateTimeOffset in SQL, so ordering/trimming happen client-side over the
         // bounded table and an index there would serve nothing.
         modelBuilder.Entity<ErrorLogEntry>().HasIndex(e => e.Fingerprint).IsUnique();
+        // Derived from ResolvedAt/LastSeenAt for display — same trap and same fix as
+        // InviteUsesRemaining above: a phantom column would break EnsureCreated against a live auth.db.
+        modelBuilder.Entity<ErrorLogEntry>().Ignore(e => e.Resolved);
     }
 }

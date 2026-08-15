@@ -1,6 +1,7 @@
 @page "/bugs"
 @using Microsoft.Extensions.Options
 @using ShelfAware.Web.Auth
+@using ShelfAware.Web.Components.Layout
 @inject IHouseholdDbFactory DbFactory
 @inject IOptions<AdminOptions> Admin
 @inject ILogger<Bugs> Logger
@@ -25,16 +26,34 @@ else
         <h2>Something looks wrong?</h2>
         <p class="muted">Your report goes to this deployment's admin, along with your household
             name and sign-in email so they can follow up. Nothing else is attached.</p>
-        <form @onsubmit="SubmitAsync" @formname="bug-report">
+        <form class="stacked" @onsubmit="SubmitAsync" @formname="bug-report">
             <label class="field">
                 <span>What happened</span>
                 <textarea @bind="body" @bind:event="oninput" maxlength="4000" rows="5"
                           aria-label="Describe what looked wrong" disabled="@busy"></textarea>
             </label>
             <label class="field">
-                <span>Where (which page or screen)</span>
-                <input @bind="where" maxlength="300" aria-label="Where it happened" disabled="@busy" />
+                <span>Where (which page)</span>
+                @* Built from SiteNav — the SAME list the header nav renders, so the choices can't
+                   drift from the app's real pages and nobody has to type "/list" by hand. The
+                   escape hatch keeps the old free text for anywhere more specific. *@
+                <select @bind="wherePage" disabled="@busy" aria-label="Which page it happened on">
+                    <option value="">—</option>
+                    @* `entry`, not `page`: Razor reads inline `@page.` as the @page directive. *@
+                    @foreach (var entry in SiteNav.Pages)
+                    {
+                        <option value="@entry.Href">@entry.Label</option>
+                    }
+                    <option value="@Elsewhere">Somewhere else…</option>
+                </select>
             </label>
+            @if (wherePage == Elsewhere)
+            {
+                <label class="field">
+                    <span>Where exactly</span>
+                    <input @bind="where" maxlength="300" aria-label="Where it happened" disabled="@busy" />
+                </label>
+            }
             <button type="submit" disabled="@busy">@(busy ? "Sending…" : "Send report")</button>
         </form>
         <div role="status" aria-live="polite">
@@ -69,7 +88,7 @@ else
         <table>
             <caption class="visually-hidden">Bug reports this household has filed</caption>
             <thead>
-                <tr><th>When</th><th>Who</th><th>Where</th><th>What</th></tr>
+                <tr><th>When</th><th>Who</th><th>Where</th><th>What</th><th>Status</th></tr>
             </thead>
             <tbody>
                 @foreach (var r in reports)
@@ -79,6 +98,21 @@ else
                         <td>@(r.ReportedBy ?? "—")</td>
                         <td class="muted">@(r.PageUrl ?? "—")</td>
                         <td>@r.Body</td>
+                        <td>
+                            @* The loop closed: the admin's resolve is visible to the household that
+                               filed it, so a report isn't a one-way letterbox. Their own row — an
+                               ordinary scoped read. *@
+                            @if (r.Resolved)
+                            {
+                                @* ✓, the app's one affirmative glyph (Receipts/Recipes use it) —
+                                   and the year, because the When cell beside it carries one. *@
+                                <span class="chip chip-stocked" title="This deployment's admin marked it handled">✓ resolved @r.ResolvedAt?.ToString("MMM d, yyyy")</span>
+                            }
+                            else
+                            {
+                                <span class="muted">open</span>
+                            }
+                        </td>
                     </tr>
                 }
             </tbody>
@@ -93,8 +127,13 @@ else
     /// form can pre-fill it. Visible and editable; never captured silently.</summary>
     [SupplyParameterFromQuery(Name = "from")] public string? From { get; set; }
 
+    /// <summary>The "Somewhere else…" sentinel — leads with a character no app path can, so it can
+    /// never collide with a SiteNav href.</summary>
+    private const string Elsewhere = "~elsewhere";
+
     private List<BugReport>? reports;
     private string body = "";
+    private string wherePage = "";
     private string where = "";
     private string? note;
     private string? error;
@@ -104,9 +143,23 @@ else
     protected override async Task OnInitializedAsync()
     {
         // Only a relative app path is accepted as a pre-fill — anything else in the query string
-        // (a full URL, junk) is ignored rather than rendered into the field. "//host" is a
+        // (a full URL, junk) is ignored rather than rendered into the form. "//host" is a
         // protocol-relative URL and "/\" its backslash twin, so neither counts as app-relative.
-        if (From is ['/', ..] && From is not ['/', '/', ..] && From is not ['/', '\\', ..]) where = From;
+        if (From is ['/', ..] && From is not ['/', '/', ..] && From is not ['/', '\\', ..])
+        {
+            // A page the menu knows preselects itself; anything more specific (a product page,
+            // say) keeps its EXACT path in the free-text box — the admin wants /product/12, not
+            // "Products", and the footer link's specificity must survive the dropdown.
+            if (SiteNav.Pages.FirstOrDefault(p => p.Href == From) is { } known)
+            {
+                wherePage = known.Href;
+            }
+            else
+            {
+                wherePage = Elsewhere;
+                where = From;
+            }
+        }
         await LoadAsync();
     }
 
@@ -156,13 +209,29 @@ else
                     // browser-enforced only, and a stripped attribute must not become an
                     // unbounded row (the machine half truncates too — 2000/6000).
                     Body = Clamp(body.Trim(), 4000),
-                    PageUrl = string.IsNullOrWhiteSpace(where) ? null : Clamp(where.Trim(), 300),
+                    // A picked page stores its path (the same string the footer's from= carries);
+                    // only the escape hatch consults the free-text box.
+                    PageUrl = wherePage switch
+                    {
+                        "" => null,
+                        Elsewhere => string.IsNullOrWhiteSpace(where) ? null : Clamp(where.Trim(), 300),
+                        // Allowlisted against the SAME list that rendered the options: a select's
+                        // @bind takes whatever string arrives over the circuit — it does NOT
+                        // re-validate against the option set — so a tampered value could otherwise
+                        // skip the clamp above and land verbatim on the admin's screen.
+                        _ => SiteNav.Pages.Any(p => p.Href == wherePage) ? wherePage : null,
+                    },
                     ReportedBy = user?.Identity?.Name,
                     CreatedAt = DateTimeOffset.Now,
                 });
                 await db.SaveChangesAsync();
             }
             body = "";
+            // The where selection resets WITH the body: a retained dropdown pick reads as a
+            // deliberate default, and a second, unrelated report typed into the fresh-looking
+            // form was silently filed against the previous report's page.
+            wherePage = "";
+            where = "";
             // The save is DONE — a reload failure past this point must not read as one (the
             // opposite-advice rule: inviting a retry of a recorded report files it twice).
             note = await LoadAsync()

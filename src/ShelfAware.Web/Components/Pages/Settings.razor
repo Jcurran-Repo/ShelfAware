@@ -40,7 +40,7 @@
             used — so there's never a spare key lying around.
         </p>
 
-        <label class="field"><span>Household name</span></label>
+        <label><span>Household name</span></label>
         <div class="tag-add">
             <input @bind="householdName" @bind:event="oninput" aria-label="Household name" size="30" />
             <button @onclick="RenameHousehold" disabled="@(renaming || !HouseholdNameChanged)">
@@ -48,7 +48,7 @@
             </button>
         </div>
 
-        <label class="field"><span>Invite code</span></label>
+        <label><span>Invite code</span></label>
         @if (household.InviteCode is null)
         {
             <div class="review-actions invite-row">
@@ -71,7 +71,9 @@
             </div>
             <p class="@(InviteUsable ? "muted small" : "error small")">@InviteStatus</p>
         }
-        <label class="field">
+        @* checkbox-field, not field: the stacked-label rule would put the box on its own line
+           above its caption (found the hard way when .field was unscoped). *@
+        <label class="checkbox-field">
             <input type="checkbox" @bind="inviteSingleUse" />
             <span>Single use — the next code works for one person only</span>
         </label>
@@ -422,7 +424,8 @@
         milk expires Friday" too), and once a date passes the item marks itself out — you never have to
         remember to check. Only the dates you choose to enter count; skipping the column costs nothing.
     </p>
-    <label class="field">
+    @* checkbox-field, not field: the stacked-label rule would put the box above its caption. *@
+    <label class="checkbox-field">
         <input type="checkbox" checked="@trackExpirations" @onchange="ToggleTrackExpirations" />
         <span>Track expiration dates</span>
     </label>

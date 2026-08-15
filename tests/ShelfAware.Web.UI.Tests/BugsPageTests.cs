@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Domain;
 using ShelfAware.Web.Auth;
+using ShelfAware.Web.Components.Layout;
 using ShelfAware.Web.Components.Pages;
 
 namespace ShelfAware.Web.UI.Tests;
@@ -93,23 +94,78 @@ public class BugsPageTests : PageTestContext
         Assert.Empty(await raw.BugReports.IgnoreQueryFilters().ToListAsync());
     }
 
-    [Fact]
-    public void The_from_query_pre_fills_where_but_only_for_a_relative_path()
+    /// <summary>The select's value, and the way into the escape hatch — found by its visible text
+    /// rather than the sentinel value, so a sentinel rename can't quietly turn these vacuous.</summary>
+    private static AngleSharp.Dom.IElement WhereSelect(IRenderedComponent<Bugs> cut) =>
+        cut.Find("select[aria-label='Which page it happened on']");
+
+    private static void PickSomewhereElse(IRenderedComponent<Bugs> cut)
     {
-        Services.GetRequiredService<NavigationManager>().NavigateTo("/bugs?from=%2Fproducts");
-        var cut = RenderBugs();
-        Assert.Equal("/products", cut.Find("input[aria-label='Where it happened']").GetAttribute("value"));
+        var select = WhereSelect(cut);
+        var value = select.QuerySelectorAll("option")
+            .Single(o => o.TextContent.Contains("Somewhere else")).GetAttribute("value");
+        select.Change(value);
     }
 
     [Fact]
-    public void An_absolute_from_url_is_ignored_not_rendered_into_the_field()
+    public void The_where_choices_are_the_site_nav_plus_an_escape_hatch()
+    {
+        // ONE list (SiteNav): the header renders it and this dropdown renders it, so a new page
+        // shows up in both or neither — the choices can never drift from the app's real pages.
+        var cut = RenderBugs();
+
+        var options = WhereSelect(cut).QuerySelectorAll("option")
+            .Select(o => o.TextContent.Trim()).ToList();
+
+        Assert.Equal(
+            new[] { "—" }.Concat(SiteNav.Pages.Select(p => p.Label)).Append("Somewhere else…").ToList(),
+            options);
+    }
+
+    [Fact]
+    public void A_from_path_the_menu_knows_preselects_its_page()
+    {
+        Services.GetRequiredService<NavigationManager>().NavigateTo("/bugs?from=%2Fproducts");
+        var cut = RenderBugs();
+
+        Assert.Equal("/products", WhereSelect(cut).GetAttribute("value"));
+        Assert.Empty(cut.FindAll("input[aria-label='Where it happened']")); // no escape hatch needed
+    }
+
+    [Fact]
+    public void A_from_path_off_the_menu_keeps_its_exact_path_in_the_escape_hatch()
+    {
+        // The admin wants /product/12, not "Products" — the footer link's specificity must
+        // survive the dropdown.
+        Services.GetRequiredService<NavigationManager>().NavigateTo("/bugs?from=%2Fproduct%2F12");
+        var cut = RenderBugs();
+
+        Assert.Equal("/product/12", cut.Find("input[aria-label='Where it happened']").GetAttribute("value"));
+    }
+
+    [Fact]
+    public async Task Picking_a_menu_page_stores_its_path()
+    {
+        var cut = RenderBugs();
+        cut.Find("textarea").Input("The list printed sideways");
+        WhereSelect(cut).Change("/list");
+        cut.Find("form").Submit();
+
+        cut.WaitForAssertion(() => Assert.Contains("Sent — thank you", cut.Markup));
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Equal("/list", (await raw.BugReports.IgnoreQueryFilters().SingleAsync()).PageUrl);
+    }
+
+    [Fact]
+    public void An_absolute_from_url_is_ignored_not_rendered_into_the_form()
     {
         // The query string is attacker-writable (a pasted link); only an app-relative path may
-        // pre-fill the visible field.
+        // pre-fill anything.
         Services.GetRequiredService<NavigationManager>().NavigateTo(
             "/bugs?from=" + Uri.EscapeDataString("https://evil.example/phish"));
         var cut = RenderBugs();
-        Assert.Equal("", cut.Find("input[aria-label='Where it happened']").GetAttribute("value") ?? "");
+        Assert.Equal("", WhereSelect(cut).GetAttribute("value") ?? "");
+        Assert.Empty(cut.FindAll("input[aria-label='Where it happened']"));
     }
 
     [Fact]
@@ -118,6 +174,7 @@ public class BugsPageTests : PageTestContext
         var cut = RenderBugs();
 
         cut.Find("textarea").Input(new string('x', 5000)); // bUnit bypasses maxlength, like devtools would
+        PickSomewhereElse(cut);
         cut.Find("input[aria-label='Where it happened']").Change("/" + new string('y', 400));
         cut.Find("form").Submit();
 
@@ -136,7 +193,8 @@ public class BugsPageTests : PageTestContext
         Services.GetRequiredService<NavigationManager>().NavigateTo(
             "/bugs?from=" + Uri.EscapeDataString("//evil.example/phish"));
         var cut = RenderBugs();
-        Assert.Equal("", cut.Find("input[aria-label='Where it happened']").GetAttribute("value") ?? "");
+        Assert.Equal("", WhereSelect(cut).GetAttribute("value") ?? "");
+        Assert.Empty(cut.FindAll("input[aria-label='Where it happened']"));
     }
 
     [Fact]
@@ -145,7 +203,8 @@ public class BugsPageTests : PageTestContext
         Services.GetRequiredService<NavigationManager>().NavigateTo(
             "/bugs?from=" + Uri.EscapeDataString(@"/\evil.example"));
         var cut = RenderBugs();
-        Assert.Equal("", cut.Find("input[aria-label='Where it happened']").GetAttribute("value") ?? "");
+        Assert.Equal("", WhereSelect(cut).GetAttribute("value") ?? "");
+        Assert.Empty(cut.FindAll("input[aria-label='Where it happened']"));
     }
 
     [Fact]
@@ -188,5 +247,77 @@ public class BugsPageTests : PageTestContext
         Assert.Contains("doesn't have an admin set up to read bug reports", cut.Markup);
         // The household's own history still renders — past reports stay theirs to see.
         Assert.Contains("Your household's reports", cut.Markup);
+    }
+
+    [Fact]
+    public void A_resolved_report_shows_its_chip_to_the_household_that_filed_it()
+    {
+        // The loop closed: the admin's resolve is visible to the reporter, so filing a report
+        // isn't a one-way letterbox. Their own rows — an ordinary scoped read.
+        // ⚠️ The seeded bodies must not CONTAIN the words the status cell renders — an earlier
+        // fixture named a row "The open one", so its "open" assert passed with the whole status
+        // branch deleted (item 38's cannot-tell-branches-apart class).
+        using (var raw = Db.CreateUnscopedContext())
+        {
+            raw.BugReports.Add(new BugReport
+            {
+                HouseholdId = "hh-test", Body = "The fixed one", CreatedAt = DateTimeOffset.Now.AddDays(-2),
+                ResolvedAt = DateTimeOffset.Now.AddDays(-1),
+            });
+            raw.BugReports.Add(new BugReport
+            {
+                HouseholdId = "hh-test", Body = "Still broken here", CreatedAt = DateTimeOffset.Now,
+            });
+            raw.SaveChanges();
+        }
+
+        var cut = RenderBugs();
+
+        cut.WaitForAssertion(() =>
+        {
+            var rows = cut.FindAll("tbody tr");
+            Assert.Contains("✓ resolved", rows.Single(r => r.TextContent.Contains("The fixed one")).TextContent);
+            Assert.Contains("open", rows.Single(r => r.TextContent.Contains("Still broken here")).TextContent);
+        });
+    }
+
+    [Fact]
+    public async Task A_tampered_dropdown_value_is_not_stored()
+    {
+        // A select's @bind takes whatever string arrives over the circuit — it does NOT re-validate
+        // against the rendered options — so the picked-page arm allowlists against SiteNav, the
+        // same list that rendered them. A junk value stores null, never itself.
+        var cut = RenderBugs();
+        cut.Find("textarea").Input("Legit words");
+        WhereSelect(cut).Change("https://evil.example/" + new string('x', 400));
+        cut.Find("form").Submit();
+
+        cut.WaitForAssertion(() => Assert.Contains("Sent — thank you", cut.Markup));
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Null((await raw.BugReports.IgnoreQueryFilters().SingleAsync()).PageUrl);
+    }
+
+    [Fact]
+    public async Task A_sent_report_resets_the_where_selection_too()
+    {
+        // A retained dropdown pick reads as a deliberate default — a second, unrelated report typed
+        // into the fresh-looking form was silently filed against the previous report's page.
+        var cut = RenderBugs();
+        cut.Find("textarea").Input("The list printed sideways");
+        WhereSelect(cut).Change("/list");
+        cut.Find("form").Submit();
+        cut.WaitForAssertion(() => Assert.Contains("Sent — thank you", cut.Markup));
+
+        cut.Find("textarea").Input("An unrelated thing about trends");
+        cut.Find("form").Submit();
+
+        await cut.WaitForAssertionAsync(async () =>
+        {
+            await using var raw = Db.CreateUnscopedContext();
+            var reports = await raw.BugReports.IgnoreQueryFilters().OrderBy(r => r.Id).ToListAsync();
+            Assert.Equal(2, reports.Count);
+            Assert.Equal("/list", reports[0].PageUrl);
+            Assert.Null(reports[1].PageUrl); // not inherited from the first report
+        });
     }
 }

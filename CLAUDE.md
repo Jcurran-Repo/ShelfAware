@@ -272,7 +272,9 @@ bUnit pages/components — see items 31, 42, 43, 45, 46 and 47).
    LIVE on the tailnet; 17 commits, 609 tests green):**
    An adversarial review hunted for a path where household A reads/writes B's data and **found none** — the
    boundary held (raw `IDbContextFactory` really is bootstrap-only; the one `IgnoreQueryFilters` really does
-   only enumerate which households exist; both API endpoints scope to the caller's claim; every tenant table
+   only enumerate which households exist **[true when written — items 47/49 later added the admin reader's
+   cross-household read and the resolve's column-scoped write, each gated and documented in place]**; both
+   API endpoints scope to the caller's claim; every tenant table
    is filtered). Two suspicions were tested rather than assumed and came back clean: **EF's `FindAsync` DOES
    apply global query filters** (so `EfPantryStore`'s "the filtered lookup enforces it" comment is correct),
    and **`AddDbContextFactory` registers the context type as Scoped** (so `HouseholdService`/`Register.razor`
@@ -2180,7 +2182,8 @@ bUnit pages/components — see items 31, 42, 43, 45, 46 and 47).
      doesn't apply there), AsNoTracking, read-only, and the sole reader of cross-household reports.
      Anything else wanting cross-household data makes its own case at review — don't reuse this.
    - **The viewer is read-only v1 deliberately** — "mark resolved" would be the app's first admin
-     WRITE into foreign household data, a separate focused change if ever wanted. And the demo
+     WRITE into foreign household data, a separate focused change if ever wanted. **[It was wanted:
+     item 49 built exactly that change — the reader itself is still read-only.]** And the demo
      seeder deliberately seeds NO bug report: a seeded report would file fake noise into the
      operator's real inbox.
    - Dev quick-login's sandbox account doubles as the admin in `appsettings.Development.json`, so
@@ -2241,6 +2244,120 @@ bUnit pages/components — see items 31, 42, 43, 45, 46 and 47).
      visually-hidden announcer mounted before any copy (Settings' multi-action note slot kept its
      page-wide pattern deliberately: converting one action's announcements piecemeal is the
      partial-conversion trap from the other direction).
+
+49. **v4.9 — Resolve for bugs and errors: the app's first cross-household write (2026-08-14, branch
+   `feature/resolve-reports`).** Item 47 shipped the admin viewer read-only, deferring "mark resolved"
+   as its own focused change; Jordan called for it, for both halves. The halves are deliberately
+   different problems:
+   - **Errors aren't a tenancy matter at all** (ErrorLog is operator data in auth.db), and their
+     resolution is **DERIVED, not stored**: `ErrorLogEntry.Resolved` = ResolvedAt is set AND
+     LastSeenAt ≤ ResolvedAt. A resolved error that recurs re-enters the open list purely because
+     `RecordAsync` bumped LastSeenAt — the capture pipeline (the recursion-guarded machinery item 47
+     hardened) never learns the field exists, so a recurring error can never sit hidden behind a
+     stale resolve. The open row wears "⚠ seen again after being resolved <date>" — recurrence is
+     the news, and a plain "open" would undersell a row the admin already dealt with once.
+     ⚠️ **The resolve stamps the LastSeenAt the admin was LOOKING AT, never the click's clock**
+     (the gate's sharpest find): resolution means "handled through what I saw", so an occurrence
+     from the render-to-click window — or one captured earlier but persisted later by the
+     background writer — lands past the mark and keeps the row open. A now-stamp silently
+     swallowed exactly those, which falsified the paragraph above; ResolvedAt's doc carries the
+     rule, and both a service test and a page test pin the window.
+   - **`ReportResolutionService` is the ONE cross-household write**, the mirror of the reader's one
+     IgnoreQueryFilters read — and the tenancy guard is what FORCED the safe shape: EnforceHousehold
+     (item 12) refuses tracked cross-household writes outright, so load-flip-SaveChanges was
+     impossible by construction. The write is `IgnoreQueryFilters().Where(Id).ExecuteUpdateAsync`
+     setting exactly ResolvedAt — no tracked entity, no SaveChanges, structurally unable to touch any
+     other column — admin-gated inside the service (the same RequireAdmin shape and the same ONE
+     `AdminOptions.IsAdmin` predicate the reader carries; the reader's "read-only by design" claim
+     stays true because this class exists). Mutation-proven both ways: dropping IgnoreQueryFilters
+     fails the foreign-write test (the filter silently scopes the WHERE to the admin's own household
+     and the row reads "gone"), dropping the gate fails the refusal test.
+   - **The reporter sees the resolve** — /bugs shows "✔ resolved <date>" on their own row (an
+     ordinary scoped read), so filing a report stops being a one-way letterbox. /admin splits both
+     tables into an open table (the to-do list) plus a collapsed "Resolved (N)" drawer with Reopen.
+   - **`ResolvedAt` rides AdditiveSchema on BOTH files, each placed AFTER its table's EnsureTable**:
+     a table the EnsureTable just created already carries the column (current model), and the
+     EnsureColumn reaches deployments whose table predates it. ⚠️ This bullet originally claimed
+     "the schema-parity tests cover both" — FALSE (item 21's class, caught by the gate): those
+     tests DROP TABLE, so EnsureTable rebuilds with the column present and the ALTER branch — the
+     path every live deployment takes — never ran. Two drop-COLUMN tests
+     (`Adds_the_resolved_at_column_to_…`) now pin it against EF's own DDL, the
+     quantity-columns shape; `ColumnTypesAsync` was widened to `DbContext` for the auth-side twin.
+   - The action handler's advice splits by failure point (item 27's rule): a failed WRITE says
+     "nothing changed — try again" (safe, the write is idempotent); a refresh failure after a
+     successful write speaks through loadError's own sentence, so the two can never share advice. A
+     row deleted or trimmed between render and click answers false — "isn't there any more" — rather
+     than throwing.
+   - **The gate's fix pass (same day; 15 findings, all addressed):** the `.field` unscoping had broken
+     the SETTINGS page (checkbox rows stacked box-above-caption; two heading-labels bolded — the pages
+     wear `.checkbox-field`, now unscoped itself, and plain labels; found by SIX independent review
+     angles because the live check had only looked at /bugs) and the bug form's real layout problem
+     was a level higher anyway: `.panel form` is a flex ROW by design, so the fields sat side by side
+     shrink-wrapped — `form.stacked` is the column opt-in (the `.auth-card form` precedent), and
+     `.field` controls got the `width:100%` half that never transferred. The dropdown's picked-page
+     arm now ALLOWLISTS against SiteNav (a select's @bind takes whatever the circuit sends — the raw
+     arm skipped the clamp entirely); the where selection resets on submit (a retained pick silently
+     mis-filed the next report); the reader takes the cap OPEN-FIRST (resolved rows starved the to-do
+     list and "Nothing open" could be a lie) with the disclosure reworded; ActAsync states a
+     successful write independently of the refresh (RefreshAsync returns bool, clears the action
+     slots so a manual Refresh retires stale alerts, and gate refusals are logged); the resolved
+     drawers keep Who/Where and the full error detail; `@key` + per-row aria-labels + a persistent
+     status announcer went onto the churning tables; `BugReport.Resolved` exists (three inline
+     spellings collapsed) and both derived properties carry the house `.Ignore()`; ✔ became ✓ and
+     resolve stamps carry the year. **Residuals, accepted and stated:** focus is not restored after a
+     row's action (the announcer covers the silence; restoring focus needs per-section FocusAsync
+     plumbing); `ErrorLogStore.SetResolvedAsync` stays gate-by-convention-with-tripwire (a store-level
+     gate would put a circuit-scoped AuthenticationStateProvider inside a singleton — a captive
+     dependency); and the SiteNav "both or neither" claim's nav half is still untestable (no harness
+     renders MainLayout) — `SiteNavTests` pins the href↔route half instead.
+   - **The /bugs form got its polish pass in the same arc** (Jordan's live feedback): `class="field"`
+     had styling only under `.ai-settings .field`, so the bug form's labels sat BESIDE their boxes —
+     the `.linkish` undefined-class shape again; the rule is unscoped `.field` now (label stacked
+     above, 34rem cap), serving Settings and Bugs from one definition. And "Where" is a DROPDOWN
+     built from **`SiteNav` (Components/Layout) — THE page list, rendered by the header nav and the
+     dropdown both**, so a new page appears in both or neither. A "Somewhere else…" escape hatch
+     keeps the free-text path: a footer-link `from=` matching a nav page preselects it, while a
+     more specific path (/product/12) lands VERBATIM in the escape box — the admin wants the exact
+     page, and the footer's specificity must survive the dropdown. ⚠️ Razor reads an inline
+     `@page.` as the @page DIRECTIVE (the lowercase-`<text>` reserved-word class) — loop variables
+     over SiteNav must not be named `page`.
+   - **1575 tests green (+25 total on the branch), 0 warnings** on a non-incremental Release build,
+     read off the final run. Twelve mutations across the arc and its fix pass (the fix pass's five:
+     the now-stamp, the cap ordering, the allowlist, the where-reset, and a second SetProperty that
+     the REFLECTION pin — not a named-field list — caught widening the cross-household write), each
+     killing exactly its tests. Live-verified on the dev sandbox across both passes: resolve/reopen
+     round trips, the /bugs chip, the recurrence flow — and after the fix pass, /settings measured
+     restored (checkboxes inline beside their captions at weight 400) and the bug form measured as a
+     genuinely stacked column, both fields at the full 34rem. ⚠️ The first live check verified only
+     labels-above-boxes on /bugs and missed both the Settings breakage and the flex-row fields —
+     per-element measurements are not a layout check; measure the CONTAINER's axis too. (Branch
+     note: independent of `feature/snap-photo-upload` — whichever merges second resolves CLAUDE.md
+     by ordering item 48 before 49.)
+   - **A further max-effort `/code-review` over the finished branch (2026-08-15): eight findings,
+     none serious — five fixed, three skipped with reasons.** Fixed: the recurred note's
+     `class="error small"` was the THIRD undefined-class instance (`.linkish`, `.field`, now
+     `.small`) — and the fix-time grep found the same latent bug at FIVE pre-existing sites
+     (Upload ×2, PantryPhoto ×2, and the cook-along reply's bare `class="small"`), so the fix is
+     one unscoped `.small` rule replacing `.muted.small`, serving every consumer. ⚠️ It has equal
+     specificity with `.muted` and must stay AFTER it in the sheet — the old two-class rule won on
+     specificity, this one wins on order (live-probed: `small`, `error small` and `muted small`
+     all compute 0.8rem; bare `.muted`/`.error` keep 0.9rem/1rem — that pair staying put IS the
+     regression check). The cap disclosure says only "more may exist beyond this
+     cap" now — "older resolved reports" went false the moment OPEN reports alone exceed the cap
+     (opens starve opens with the copy blaming resolved; naming WHICH rows are missing can't be
+     made true in every case, so the copy says less — item 40's copy lesson). `MaxReports`' doc no
+     longer claims "(newest first)" (item 21's class, seventeen lines above the OrderBy that
+     contradicted it). `ErrorLogStore.SetResolvedAsync` dropped its CancellationToken — the
+     uncancellable-write posture is pinned by SIGNATURE at both layers now, not just the
+     service's. And error Reopen — the one unpinned half — got its test (resolve → reopen(null) →
+     open again), mutation-checked to a clean kill: `resolvedAt ?? Now` failed exactly the new
+     test and nothing else, which also proves the gap was real. **Skipped, deliberately:** the
+     duplicated RequireAdmin ceremony (the predicate itself already has its one definition), the
+     open-vs-drawer row markup (refactoring live-verified markup buys drift protection an
+     admin-only page doesn't need yet), and the top-of-page failure message (adjacent to the
+     accepted focus residual; the cheap fix — render the same slot per section — is known if it
+     bites). **1576 tests green, 0 warnings** on a non-incremental Release build, read off the
+     final run.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
