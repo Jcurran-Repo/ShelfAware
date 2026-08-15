@@ -80,7 +80,9 @@ public class AnthropicRecipeTagAdvisor : IRecipeTagAdvisor
         foreach (var raw in reply.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var value = raw.Trim().TrimEnd('.').Trim();
-            if (value.Length == 0) continue;
+            // Drop blanks AND a stray "NONE" token — a malformed "NONE, Dinner" reply must not store a
+            // literal NONE tag beside the real ones (the whole-reply sentinel only catches a lone "NONE").
+            if (value.Length == 0 || value.Equals("NONE", StringComparison.OrdinalIgnoreCase)) continue;
             if (seen.Add(value)) result.Add(value);
             if (result.Count >= MaxItems) break;
         }

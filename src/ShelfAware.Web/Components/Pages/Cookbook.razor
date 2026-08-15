@@ -642,13 +642,24 @@ else
     private async Task SavePhotoAsync(int recipeId, byte[] bytes, string mediaType)
     {
         var path = await Images.SaveAsync(bytes, mediaType, CancellationToken.None);
-        await using var db = await DbFactory.CreateDbContextAsync();
-        var recipe = await db.Recipes.FirstOrDefaultAsync(x => x.Id == recipeId);
-        if (recipe is null) { Images.Delete(path); return; } // recipe vanished — don't orphan the new file
-        var old = recipe.ImagePath;
-        recipe.ImagePath = path;
-        await db.SaveChangesAsync();
-        if (old is not null) Images.Delete(old);
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var recipe = await db.Recipes.FirstOrDefaultAsync(x => x.Id == recipeId);
+            if (recipe is null) { Images.Delete(path); return; } // recipe vanished — don't orphan the new file
+            var old = recipe.ImagePath;
+            recipe.ImagePath = path;
+            await db.SaveChangesAsync();
+            if (old is not null) Images.Delete(old); // remove the replaced photo AFTER the row points at the new one
+        }
+        catch
+        {
+            // The DB write failed, so no row ever pointed at the file we just wrote — delete it rather than
+            // strand it on disk (the same orphan-cleanup RecipeImport.Save does), then rethrow so
+            // OnPhotoSelected's handler logs and shows a message.
+            Images.Delete(path);
+            throw;
+        }
     }
 
     private async Task RemovePhoto()

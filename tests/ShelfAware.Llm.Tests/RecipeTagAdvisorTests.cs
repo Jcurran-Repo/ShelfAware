@@ -37,6 +37,14 @@ public class RecipeTagAdvisorTests
     }
 
     [Fact]
+    public async Task A_stray_NONE_token_among_real_tags_is_dropped()
+    {
+        // A malformed "NONE, Dinner" reply (the sentinel only catches a lone NONE) must not store NONE.
+        var advisor = Advisor(FakeChatClient.Returning(Responses.Text("NONE, Dinner")));
+        Assert.Equal(["Dinner"], await advisor.SuggestAsync("Some Dish", NoIngredients, NoKnown));
+    }
+
+    [Fact]
     public async Task A_blank_recipe_name_makes_no_model_call()
     {
         var chat = new FakeChatClient(() => Responses.Text("Dinner"));

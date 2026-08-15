@@ -51,6 +51,22 @@ public sealed class RecipeImageStorageTests : IDisposable
         Assert.NotEqual(await storage.SaveAsync([1], "image/jpeg"), await storage.SaveAsync([2], "image/jpeg"));
     }
 
+    [Theory]
+    [InlineData("recipe-images/../secret.txt")]      // shallow traversal
+    [InlineData("recipe-images/../../secret.txt")]   // deep traversal
+    [InlineData("recipe-images/sub/../../secret.txt")] // mid-path traversal
+    [InlineData("recipe-images\\..\\secret.txt")]    // backslash separators (ForThisPlatform folds them)
+    [InlineData("../secret.txt")]
+    [InlineData("recipe-images-evil/x.jpg")]         // sibling prefix must NOT read as "inside" the store
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task Read_and_delete_refuse_every_escaping_shape(string escaping)
+    {
+        var storage = Storage();
+        Assert.Null(await storage.ReadAsync(escaping)); // the guard refuses it before any file access
+        storage.Delete(escaping);                       // a guarded no-op — must not throw or reach outside
+    }
+
     [Fact]
     public async Task Read_refuses_a_path_that_escapes_the_store()
     {

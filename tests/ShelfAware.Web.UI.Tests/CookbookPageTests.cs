@@ -449,6 +449,24 @@ public class CookbookPageTests : PageTestContext
         using var db = Db.CreateDbContext();
         Assert.Null(db.Recipes.First(r => r.Id == id).ImagePath);
     }
+
+    [Fact]
+    public void A_failed_photo_save_shows_a_message_and_leaves_no_orphaned_file()
+    {
+        SeedRecipe("Photo Dish", [("Thing", true, null, null)], "Do.");
+        var cut = RenderCookbook();
+
+        Factory.FailAfter = 0; // SavePhotoAsync's DB context dies AFTER the image file is written
+        cut.FindComponent<InputFile>().UploadFiles(
+            InputFileContent.CreateFromBinary([1, 2, 3], "photo.jpg", contentType: "image/jpeg"));
+
+        cut.WaitForAssertion(() => Assert.Contains("Couldn't save that photo", cut.Markup));
+        // The just-written file was cleaned up on the DB failure — no stray image under the store tree.
+        var strays = Directory.Exists(_imageDir)
+            ? Directory.GetFiles(_imageDir, "*.jpg", SearchOption.AllDirectories)
+            : [];
+        Assert.Empty(strays);
+    }
 }
 
 /// <summary>A scriptable recipe-tag advisor for the cookbook tests — returns whatever <see cref="Next"/>
