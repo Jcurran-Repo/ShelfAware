@@ -259,6 +259,7 @@ builder.Services.AddScoped<TourCoordinator>(); // lets a page start the layout-h
 // through IHouseholdDbFactory, which needs the scope's signed-in user to know whose pantry it is.
 builder.Services.AddScoped<IReceiptExtractor, AnthropicReceiptExtractor>();
 builder.Services.AddScoped<IShelfCensusReader, AnthropicShelfCensusReader>(); // §13.8: proposes what's on a shelf
+builder.Services.AddScoped<IRecipeImporter, AnthropicRecipeImporter>(); // photo/text → a reviewable recipe
 // The browser half of the same flow: downscales a picked photo before it crosses the circuit. Stateless,
 // so singleton; separate from the reader because it's a browser seam rather than an AI one.
 builder.Services.AddSingleton<IShelfPhotoLoader, BrowserShelfPhotoLoader>();

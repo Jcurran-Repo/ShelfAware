@@ -2092,6 +2092,69 @@ button.tag-chip {
     object-fit: cover;
 }
 
+.cookbook-head-actions {
+    display: inline-flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+}
+
+/* Recipe import (the /cookbook/import review flow) */
+.import-paste {
+    width: 100%;
+    max-width: 40rem;
+    font: inherit;
+}
+
+.import-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+    align-items: center;
+}
+
+.import-ingredient-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+    margin-bottom: 0.35rem;
+}
+
+.import-qty {
+    width: 7rem;
+}
+
+.import-name {
+    flex: 1 1 12rem;
+    min-width: 10rem;
+}
+
+.import-main {
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.import-step-row {
+    display: flex;
+    gap: 0.4rem;
+    align-items: flex-start;
+    margin-bottom: 0.35rem;
+}
+
+.import-step-row textarea {
+    flex: 1 1 auto;
+    font: inherit;
+}
+
+.import-step-no {
+    padding-top: 0.4rem;
+    color: var(--ink-soft);
+    min-width: 1.5rem;
+}
+
 /* The print-only surfaces never show on screen; @media print reveals the chosen one. */
 .cookbook-print {
     display: none;
