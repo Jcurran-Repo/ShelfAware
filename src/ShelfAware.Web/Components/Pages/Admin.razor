@@ -163,7 +163,7 @@ else
         <h2>Bug reports from households</h2>
         @if (bugReports is { Count: AdminReportReader.MaxReports })
         {
-            <p class="muted">Showing @AdminReportReader.MaxReports reports, open ones first — older resolved reports may be beyond this cap.</p>
+            <p class="muted">Showing @AdminReportReader.MaxReports reports, open ones first — more may exist beyond this cap.</p>
         }
         @if (bugReports is null)
         {

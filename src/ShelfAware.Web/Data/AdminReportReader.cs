@@ -24,9 +24,10 @@ public sealed class AdminReportReader(
     IOptions<AdminOptions> admin,
     ErrorLogStore errors)
 {
-    /// <summary>The admin page loads at most this many reports (newest first) — the same bounded
-    /// posture as the error log's MaxRows, so one prolific account can't degrade the surface. The
-    /// page discloses when the cap is hit rather than truncating silently.</summary>
+    /// <summary>The admin page loads at most this many reports (open ones first, newest within
+    /// each half — ListBugReportsAsync's ordering) — the same bounded posture as the error log's
+    /// MaxRows, so one prolific account can't degrade the surface. The page discloses when the
+    /// cap is hit rather than truncating silently.</summary>
     public const int MaxReports = 500;
 
     public async Task<IReadOnlyList<AdminBugReport>> ListBugReportsAsync(CancellationToken ct = default)

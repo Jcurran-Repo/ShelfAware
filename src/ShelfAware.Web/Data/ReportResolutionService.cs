@@ -52,7 +52,7 @@ public sealed class ReportResolutionService(
     public async Task<bool> SetErrorResolvedAsync(int id, DateTimeOffset? resolvedAt)
     {
         await RequireAdminAsync();
-        return await errors.SetResolvedAsync(id, resolvedAt, CancellationToken.None);
+        return await errors.SetResolvedAsync(id, resolvedAt);
     }
 
     private async Task RequireAdminAsync()

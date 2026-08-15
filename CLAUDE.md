@@ -2333,6 +2333,30 @@ bUnit pages/components — see items 31, 42, 43, 45, 46 and 47).
      per-element measurements are not a layout check; measure the CONTAINER's axis too. (Branch
      note: independent of `feature/snap-photo-upload` — whichever merges second resolves CLAUDE.md
      by ordering item 48 before 49.)
+   - **A further max-effort `/code-review` over the finished branch (2026-08-15): eight findings,
+     none serious — five fixed, three skipped with reasons.** Fixed: the recurred note's
+     `class="error small"` was the THIRD undefined-class instance (`.linkish`, `.field`, now
+     `.small`) — and the fix-time grep found the same latent bug at FIVE pre-existing sites
+     (Upload ×2, PantryPhoto ×2, and the cook-along reply's bare `class="small"`), so the fix is
+     one unscoped `.small` rule replacing `.muted.small`, serving every consumer. ⚠️ It has equal
+     specificity with `.muted` and must stay AFTER it in the sheet — the old two-class rule won on
+     specificity, this one wins on order (live-probed: all five combos compute 0.8rem, real
+     `.muted.small` sites unchanged). The cap disclosure says only "more may exist beyond this
+     cap" now — "older resolved reports" went false the moment OPEN reports alone exceed the cap
+     (opens starve opens with the copy blaming resolved; naming WHICH rows are missing can't be
+     made true in every case, so the copy says less — item 40's copy lesson). `MaxReports`' doc no
+     longer claims "(newest first)" (item 21's class, seventeen lines above the OrderBy that
+     contradicted it). `ErrorLogStore.SetResolvedAsync` dropped its CancellationToken — the
+     uncancellable-write posture is pinned by SIGNATURE at both layers now, not just the
+     service's. And error Reopen — the one unpinned half — got its test (resolve → reopen(null) →
+     open again), mutation-checked to a clean kill: `resolvedAt ?? Now` failed exactly the new
+     test and nothing else, which also proves the gap was real. **Skipped, deliberately:** the
+     duplicated RequireAdmin ceremony (the predicate itself already has its one definition), the
+     open-vs-drawer row markup (refactoring live-verified markup buys drift protection an
+     admin-only page doesn't need yet), and the top-of-page failure message (adjacent to the
+     accepted focus residual; the cheap fix — render the same slot per section — is known if it
+     bites). **1576 tests green, 0 warnings** on a non-incremental Release build, read off the
+     final run.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

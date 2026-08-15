@@ -84,11 +84,13 @@ public sealed class ErrorLogStore(IDbContextFactory<AuthDbContext> dbFactory)
     /// ExecuteUpdate (RecordAsync's insert path is this store's one tracked write). Whether a
     /// stamped row COUNTS as resolved stays derived (<see cref="ErrorLogEntry.Resolved"/>), so
     /// <see cref="RecordAsync"/> never learns the field exists. Returns whether the row still
-    /// exists — the trim can beat the admin to it.</summary>
-    public async Task<bool> SetResolvedAsync(int id, DateTimeOffset? resolvedAt, CancellationToken ct = default)
+    /// exists — the trim can beat the admin to it. ⚠️ No CancellationToken, on purpose — the same
+    /// signature pin ReportResolutionService carries: a resolve is a one-shot write, and a caller
+    /// threading a page token would let a navigate-away tear the stamp down mid-flight.</summary>
+    public async Task<bool> SetResolvedAsync(int id, DateTimeOffset? resolvedAt)
     {
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        await using var db = await dbFactory.CreateDbContextAsync();
         return await db.ErrorLog.Where(r => r.Id == id)
-            .ExecuteUpdateAsync(s => s.SetProperty(r => r.ResolvedAt, resolvedAt), ct) > 0;
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.ResolvedAt, resolvedAt)) > 0;
     }
 }

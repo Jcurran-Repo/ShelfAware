@@ -175,6 +175,25 @@ public class ReportResolutionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Reopening_an_error_clears_the_stamp()
+    {
+        // The admin's Reopen (a null stamp), not the derived recurrence reopen: the stamp itself
+        // is cleared, so the row reads open with no recurred-after-resolve note — Reopen means
+        // "not actually handled", not "handled and back".
+        var store = new ErrorLogStore(_authDb);
+        await store.RecordAsync(Error(DateTimeOffset.Now.AddHours(-2)));
+        var id = Assert.Single(await store.ListAsync()).Id;
+        await Service().SetErrorResolvedAsync(id, DateTimeOffset.Now.AddHours(-1));
+        Assert.True(Assert.Single(await store.ListAsync()).Resolved); // really resolved first
+
+        Assert.True(await Service().SetErrorResolvedAsync(id, null));
+
+        var row = Assert.Single(await store.ListAsync());
+        Assert.False(row.Resolved);
+        Assert.Null(row.ResolvedAt);
+    }
+
+    [Fact]
     public async Task An_error_row_the_trim_already_took_answers_false()
     {
         Assert.False(await Service().SetErrorResolvedAsync(9999, DateTimeOffset.Now));

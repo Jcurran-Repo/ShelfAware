@@ -1131,6 +1131,13 @@ button.mic-speaking {
     color: var(--overdue-ink);
 }
 
+/* Small-text modifier for the helpers above — pairs with .muted and .error, and stands alone
+   (the cook-along reply). Equal specificity with .muted, so it must stay AFTER it in this
+   sheet or .muted's own font-size wins the cascade. */
+.small {
+    font-size: 0.8rem;
+}
+
 /* Header above the kept "Get ideas" batch: what it was for, when, and the clear action. */
 .suggestions-head {
     display: flex;
@@ -1969,10 +1976,6 @@ button.tag-chip {
     display: flex;
     justify-content: space-between;
     align-items: center;
-}
-
-.muted.small {
-    font-size: 0.8rem;
 }
 
 .saved-top {
