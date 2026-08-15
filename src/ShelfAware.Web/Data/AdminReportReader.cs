@@ -34,12 +34,18 @@ public sealed class AdminReportReader(
         await RequireAdminAsync();
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
-        // ⚠️ The app's one production IgnoreQueryFilters. Deliberate and narrow: bug reports are
-        // addressed TO the admin, this service is their only reader, the read is AsNoTracking so
-        // no write can ride on it, and RequireAdminAsync just refused everyone else. Anything else
-        // wanting cross-household data must make its own case at review — not reuse this.
+        // ⚠️ One of exactly TWO production IgnoreQueryFilters — the write mirror is
+        // ReportResolutionService (its doc carries the shape and the same warning). Deliberate and
+        // narrow: bug reports are addressed TO the admin, this service is their only reader, the
+        // read is AsNoTracking so no write can ride on it, and RequireAdminAsync just refused
+        // everyone else. Anything else wanting cross-household data must make its own case at
+        // review — not reuse either of these.
         var reports = await db.BugReports.IgnoreQueryFilters().AsNoTracking()
-            .OrderByDescending(r => r.Id) // insert order IS chronological; SQLite can't ORDER BY DateTimeOffset
+            // Open FIRST, then newest: the cap must never be spent on resolved rows while open
+            // ones — the to-do list this surface exists for — fall off the far end. A null check
+            // translates fine; it's ORDER BY a DateTimeOffset that SQLite refuses.
+            .OrderBy(r => r.ResolvedAt != null)
+            .ThenByDescending(r => r.Id) // insert order IS chronological within each half
             .Take(MaxReports)
             .ToListAsync(ct);
 

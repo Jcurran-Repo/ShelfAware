@@ -10,10 +10,14 @@ namespace ShelfAware.Web.Diagnostics;
 /// occurrences. Retention: the table is bounded at <see cref="MaxRows"/>, trimming the
 /// longest-quiet rows first, so the log can never grow without limit on a small box.
 ///
-/// Writes assume a SINGLE writer (the sink's channel is SingleReader and ErrorLogWriter is its
-/// only consumer) — that is what makes check-then-insert safe against the unique fingerprint
-/// index. Reads are served to pages only through AdminReportReader, which carries the admin gate;
-/// nothing else should surface this data.</summary>
+/// RecordAsync assumes a single RECORDING writer (the sink's channel is SingleReader and
+/// ErrorLogWriter is its only consumer) — that is what makes its check-then-insert safe against
+/// the unique fingerprint index. <see cref="SetResolvedAsync"/> is the ONE other write: a
+/// column-scoped update on existing rows, so it cannot race that insert's uniqueness check — and
+/// its sanctioned caller is ReportResolutionService, which carries the admin gate. Reads are
+/// served to pages only through AdminReportReader (same gate). ⚠️ Anything else wanting to read
+/// or write here makes its own case at review; a new write that INSERTS would break the
+/// single-recorder assumption above.</summary>
 public sealed class ErrorLogStore(IDbContextFactory<AuthDbContext> dbFactory)
 {
     public const int MaxRows = 500;
@@ -76,10 +80,11 @@ public sealed class ErrorLogStore(IDbContextFactory<AuthDbContext> dbFactory)
         return [.. rows.OrderByDescending(r => r.LastSeenAt).ThenByDescending(r => r.Id)];
     }
 
-    /// <summary>Stamp (or, with null, clear) the admin's "handled" mark on one row. Column-scoped
-    /// ExecuteUpdate like every write here; whether a stamped row COUNTS as resolved stays derived
-    /// (<see cref="ErrorLogEntry.Resolved"/>), so <see cref="RecordAsync"/> never learns the field
-    /// exists. Returns whether the row still exists — the trim can beat the admin to it.</summary>
+    /// <summary>Stamp (or, with null, clear) the admin's "handled" mark on one row — a column-scoped
+    /// ExecuteUpdate (RecordAsync's insert path is this store's one tracked write). Whether a
+    /// stamped row COUNTS as resolved stays derived (<see cref="ErrorLogEntry.Resolved"/>), so
+    /// <see cref="RecordAsync"/> never learns the field exists. Returns whether the row still
+    /// exists — the trim can beat the admin to it.</summary>
     public async Task<bool> SetResolvedAsync(int id, DateTimeOffset? resolvedAt, CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);

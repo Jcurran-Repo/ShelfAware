@@ -39,6 +39,8 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
         modelBuilder.Entity<Recipe>().Ignore(r => r.IsVariant);
         modelBuilder.Entity<Recipe>().Ignore(r => r.MainIngredients);
         modelBuilder.Entity<Recipe>().Ignore(r => r.Seasonings);
+        // Same rule for the bug report's derived "is it dealt with" — behaviour, not stored state.
+        modelBuilder.Entity<BugReport>().Ignore(b => b.Resolved);
 
         // Multi-tenancy (v3): every tenant table filters on the context's HouseholdId. The filter lambda
         // captures THIS context instance, so EF parameterizes it per instance — the standard tenant

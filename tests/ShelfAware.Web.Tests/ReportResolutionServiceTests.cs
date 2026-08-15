@@ -67,6 +67,11 @@ public class ReportResolutionServiceTests : IDisposable
     public async Task Resolving_stamps_a_foreign_households_report_and_changes_nothing_else()
     {
         var id = SeedReport("hh-a", "The chart looks wrong");
+        BugReport before;
+        await using (var pre = _db.CreateUnscopedContext())
+        {
+            before = await pre.BugReports.IgnoreQueryFilters().AsNoTracking().SingleAsync();
+        }
         // ⚠️ The admin acts from their OWN household's scope — the whole point of the
         // IgnoreQueryFilters is that the filter would otherwise pin the WHERE to this id and
         // silently miss hh-a's row. Dropping it must fail this test, not merely narrow it.
@@ -75,13 +80,16 @@ public class ReportResolutionServiceTests : IDisposable
         Assert.True(await Service().SetBugResolvedAsync(id, DateTimeOffset.Now));
 
         await using var raw = _db.CreateUnscopedContext();
-        var report = Assert.Single(await raw.BugReports.IgnoreQueryFilters().ToListAsync());
+        var report = Assert.Single(await raw.BugReports.IgnoreQueryFilters().AsNoTracking().ToListAsync());
         Assert.NotNull(report.ResolvedAt);
-        // The reach's limit: the stamp is the ONLY thing an admin can change on household data.
-        Assert.Equal("hh-a", report.HouseholdId);
-        Assert.Equal("The chart looks wrong", report.Body);
-        Assert.Equal("/list", report.PageUrl);
-        Assert.Equal("wife@example.com", report.ReportedBy);
+        // The reach's limit, pinned by REFLECTION rather than a named-field list: a property added
+        // to BugReport later is automatically covered, because the claim is "the stamp is the ONLY
+        // thing an admin can change on household data" — not "these four fields survived".
+        foreach (var p in typeof(BugReport).GetProperties()
+                     .Where(p => p.Name is not nameof(BugReport.ResolvedAt) and not nameof(BugReport.Resolved)))
+        {
+            Assert.Equal(p.GetValue(before), p.GetValue(report));
+        }
     }
 
     [Fact]
@@ -110,17 +118,39 @@ public class ReportResolutionServiceTests : IDisposable
         var id = SeedReport("hh-a", "Private to hh-a");
         var store = new ErrorLogStore(_authDb);
         await store.RecordAsync(Error(DateTimeOffset.Now));
+        // The RECORDED row's id, not a literal: a hard-coded 1 kept passing whether the gate
+        // refused the call or the call simply matched no row, so the data half of this test
+        // proved nothing about the error store.
+        var errorId = Assert.Single(await store.ListAsync()).Id;
         var intruder = Service(signedInAs: "wife@example.com");
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             intruder.SetBugResolvedAsync(id, DateTimeOffset.Now));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            intruder.SetErrorResolvedAsync(1, DateTimeOffset.Now));
+            intruder.SetErrorResolvedAsync(errorId, DateTimeOffset.Now));
 
         // Refused BEFORE any data was touched, not after.
         await using var raw = _db.CreateUnscopedContext();
         Assert.Null((await raw.BugReports.IgnoreQueryFilters().SingleAsync()).ResolvedAt);
         Assert.Null(Assert.Single(await store.ListAsync()).ResolvedAt);
+    }
+
+    [Fact]
+    public async Task An_occurrence_after_the_seen_stamp_reopens_even_when_it_predates_the_click()
+    {
+        // The resolve stamps what the admin SAW (the rendered row's LastSeenAt), never the click's
+        // clock — so a recurrence from the render-to-click window, or one captured earlier but
+        // persisted later by the background writer, lands past the mark and the row comes back.
+        // A now-stamp would swallow both silently.
+        var store = new ErrorLogStore(_authDb);
+        var seen = DateTimeOffset.Now.AddHours(-2);
+        await store.RecordAsync(Error(seen));
+        var id = Assert.Single(await store.ListAsync()).Id;
+        await store.RecordAsync(Error(seen.AddMinutes(30))); // fires after the admin's render…
+
+        Assert.True(await Service().SetErrorResolvedAsync(id, seen)); // …who resolves what they SAW
+
+        Assert.False(Assert.Single(await store.ListAsync()).Resolved); // the unseen recurrence survives
     }
 
     [Fact]

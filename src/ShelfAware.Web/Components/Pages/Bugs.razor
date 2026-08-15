@@ -26,7 +26,7 @@ else
         <h2>Something looks wrong?</h2>
         <p class="muted">Your report goes to this deployment's admin, along with your household
             name and sign-in email so they can follow up. Nothing else is attached.</p>
-        <form @onsubmit="SubmitAsync" @formname="bug-report">
+        <form class="stacked" @onsubmit="SubmitAsync" @formname="bug-report">
             <label class="field">
                 <span>What happened</span>
                 <textarea @bind="body" @bind:event="oninput" maxlength="4000" rows="5"
@@ -102,9 +102,11 @@ else
                             @* The loop closed: the admin's resolve is visible to the household that
                                filed it, so a report isn't a one-way letterbox. Their own row — an
                                ordinary scoped read. *@
-                            @if (r.ResolvedAt is { } done)
+                            @if (r.Resolved)
                             {
-                                <span class="chip chip-stocked" title="This deployment's admin marked it handled">✔ resolved @done.ToString("MMM d")</span>
+                                @* ✓, the app's one affirmative glyph (Receipts/Recipes use it) —
+                                   and the year, because the When cell beside it carries one. *@
+                                <span class="chip chip-stocked" title="This deployment's admin marked it handled">✓ resolved @r.ResolvedAt?.ToString("MMM d, yyyy")</span>
                             }
                             else
                             {
@@ -213,7 +215,11 @@ else
                     {
                         "" => null,
                         Elsewhere => string.IsNullOrWhiteSpace(where) ? null : Clamp(where.Trim(), 300),
-                        _ => wherePage,
+                        // Allowlisted against the SAME list that rendered the options: a select's
+                        // @bind takes whatever string arrives over the circuit — it does NOT
+                        // re-validate against the option set — so a tampered value could otherwise
+                        // skip the clamp above and land verbatim on the admin's screen.
+                        _ => SiteNav.Pages.Any(p => p.Href == wherePage) ? wherePage : null,
                     },
                     ReportedBy = user?.Identity?.Name,
                     CreatedAt = DateTimeOffset.Now,
@@ -221,6 +227,11 @@ else
                 await db.SaveChangesAsync();
             }
             body = "";
+            // The where selection resets WITH the body: a retained dropdown pick reads as a
+            // deliberate default, and a second, unrelated report typed into the fresh-looking
+            // form was silently filed against the previous report's page.
+            wherePage = "";
+            where = "";
             // The save is DONE — a reload failure past this point must not read as one (the
             // opposite-advice rule: inviting a retry of a recorded report files it twice).
             note = await LoadAsync()

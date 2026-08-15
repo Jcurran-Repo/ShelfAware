@@ -25,11 +25,14 @@ public sealed class ReportResolutionService(
     ErrorLogStore errors)
 {
     /// <summary>Stamp (or, with null, reopen) a bug report, whichever household filed it. Returns
-    /// false when no such report exists any more (deleted with its household's data, say).</summary>
-    public async Task<bool> SetBugResolvedAsync(int id, DateTimeOffset? resolvedAt, CancellationToken ct = default)
+    /// false when no such report exists any more (deleted with its household's data, say).
+    /// ⚠️ No CancellationToken parameter, on purpose — item 38's write rule: a resolve is a
+    /// one-shot write, and a caller threading a page token would let a navigate-away tear the
+    /// stamp down mid-flight with no message and no retry surface. The signature is the pin.</summary>
+    public async Task<bool> SetBugResolvedAsync(int id, DateTimeOffset? resolvedAt)
     {
         await RequireAdminAsync();
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        await using var db = await dbFactory.CreateDbContextAsync(CancellationToken.None);
         // ⚠️ The app's one production cross-household WRITE, the mirror of the reader's one
         // IgnoreQueryFilters read: without it the query filter would scope the WHERE to the
         // admin's own household and every other household's report would answer "gone". The
@@ -38,15 +41,18 @@ public sealed class ReportResolutionService(
         // case at review; don't widen this.
         return await db.BugReports.IgnoreQueryFilters()
             .Where(b => b.Id == id)
-            .ExecuteUpdateAsync(s => s.SetProperty(b => b.ResolvedAt, resolvedAt), ct) > 0;
+            .ExecuteUpdateAsync(s => s.SetProperty(b => b.ResolvedAt, resolvedAt), CancellationToken.None) > 0;
     }
 
     /// <summary>Stamp (or, with null, reopen) an error-log row. Operator data — the gate here is
-    /// about WHO may act, not whose data it is.</summary>
-    public async Task<bool> SetErrorResolvedAsync(int id, DateTimeOffset? resolvedAt, CancellationToken ct = default)
+    /// about WHO may act, not whose data it is. ⚠️ For a RESOLVE, pass the LastSeenAt the admin
+    /// was looking at, never the clock: resolution means "handled through what I saw", and a
+    /// now-stamp silently swallows occurrences from the render-to-click window (see
+    /// <see cref="ErrorLogEntry.ResolvedAt"/>). Uncancellable for the same reason as the bug half.</summary>
+    public async Task<bool> SetErrorResolvedAsync(int id, DateTimeOffset? resolvedAt)
     {
         await RequireAdminAsync();
-        return await errors.SetResolvedAsync(id, resolvedAt, ct);
+        return await errors.SetResolvedAsync(id, resolvedAt, CancellationToken.None);
     }
 
     private async Task RequireAdminAsync()

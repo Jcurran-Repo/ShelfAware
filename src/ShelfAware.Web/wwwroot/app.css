@@ -402,6 +402,15 @@ input:focus, select:focus {
     flex-wrap: wrap;
 }
 
+/* A panel form that is a stacked DOCUMENT rather than a one-line action row (the bug report).
+   Without this, the row default above laid its .field blocks side by side, shrink-wrapped — the
+   half of "the form looks bad" that stacking labels inside each field couldn't fix. */
+.panel form.stacked {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.6rem;
+}
+
 .panel.temp {
     border-style: dashed;
     box-shadow: none;
@@ -2503,6 +2512,15 @@ tfoot td {
     font-size: 0.9rem;
 }
 
+/* The stacked label needs its control to fill the line, or the 34rem cap above constrains
+   nothing: a bare <select> sizes to its widest option and a textarea to its default cols. */
+.field input,
+.field select,
+.field textarea {
+    width: 100%;
+    box-sizing: border-box;
+}
+
 .ai-settings input,
 .ai-settings select {
     width: 100%;
@@ -2519,7 +2537,10 @@ tfoot td {
     margin: 0.4rem 0 0;
 }
 
-.ai-settings .checkbox-field {
+/* Unscoped like .field above, and for the same reason: checkbox rows exist outside the BYOK
+   panel too (the invite single-use and expiration toggles), and a box-above-its-caption layout
+   is what class="field" would give them. */
+.checkbox-field {
     display: grid;
     grid-template-columns: auto 1fr;
     gap: 0.5rem;
@@ -2528,7 +2549,7 @@ tfoot td {
     font-size: 0.92rem;
 }
 
-.ai-settings .checkbox-field input {
+.checkbox-field input {
     width: auto;
     margin-top: 0.2rem;
 }

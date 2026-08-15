@@ -254,6 +254,9 @@ public class BugsPageTests : PageTestContext
     {
         // The loop closed: the admin's resolve is visible to the reporter, so filing a report
         // isn't a one-way letterbox. Their own rows — an ordinary scoped read.
+        // ⚠️ The seeded bodies must not CONTAIN the words the status cell renders — an earlier
+        // fixture named a row "The open one", so its "open" assert passed with the whole status
+        // branch deleted (item 38's cannot-tell-branches-apart class).
         using (var raw = Db.CreateUnscopedContext())
         {
             raw.BugReports.Add(new BugReport
@@ -263,7 +266,7 @@ public class BugsPageTests : PageTestContext
             });
             raw.BugReports.Add(new BugReport
             {
-                HouseholdId = "hh-test", Body = "The open one", CreatedAt = DateTimeOffset.Now,
+                HouseholdId = "hh-test", Body = "Still broken here", CreatedAt = DateTimeOffset.Now,
             });
             raw.SaveChanges();
         }
@@ -273,8 +276,48 @@ public class BugsPageTests : PageTestContext
         cut.WaitForAssertion(() =>
         {
             var rows = cut.FindAll("tbody tr");
-            Assert.Contains("✔ resolved", rows.Single(r => r.TextContent.Contains("The fixed one")).TextContent);
-            Assert.Contains("open", rows.Single(r => r.TextContent.Contains("The open one")).TextContent);
+            Assert.Contains("✓ resolved", rows.Single(r => r.TextContent.Contains("The fixed one")).TextContent);
+            Assert.Contains("open", rows.Single(r => r.TextContent.Contains("Still broken here")).TextContent);
+        });
+    }
+
+    [Fact]
+    public async Task A_tampered_dropdown_value_is_not_stored()
+    {
+        // A select's @bind takes whatever string arrives over the circuit — it does NOT re-validate
+        // against the rendered options — so the picked-page arm allowlists against SiteNav, the
+        // same list that rendered them. A junk value stores null, never itself.
+        var cut = RenderBugs();
+        cut.Find("textarea").Input("Legit words");
+        WhereSelect(cut).Change("https://evil.example/" + new string('x', 400));
+        cut.Find("form").Submit();
+
+        cut.WaitForAssertion(() => Assert.Contains("Sent — thank you", cut.Markup));
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Null((await raw.BugReports.IgnoreQueryFilters().SingleAsync()).PageUrl);
+    }
+
+    [Fact]
+    public async Task A_sent_report_resets_the_where_selection_too()
+    {
+        // A retained dropdown pick reads as a deliberate default — a second, unrelated report typed
+        // into the fresh-looking form was silently filed against the previous report's page.
+        var cut = RenderBugs();
+        cut.Find("textarea").Input("The list printed sideways");
+        WhereSelect(cut).Change("/list");
+        cut.Find("form").Submit();
+        cut.WaitForAssertion(() => Assert.Contains("Sent — thank you", cut.Markup));
+
+        cut.Find("textarea").Input("An unrelated thing about trends");
+        cut.Find("form").Submit();
+
+        await cut.WaitForAssertionAsync(async () =>
+        {
+            await using var raw = Db.CreateUnscopedContext();
+            var reports = await raw.BugReports.IgnoreQueryFilters().OrderBy(r => r.Id).ToListAsync();
+            Assert.Equal(2, reports.Count);
+            Assert.Equal("/list", reports[0].PageUrl);
+            Assert.Null(reports[1].PageUrl); // not inherited from the first report
         });
     }
 }
