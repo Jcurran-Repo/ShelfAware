@@ -2340,8 +2340,9 @@ bUnit pages/components — see items 31, 42, 43, 45, 46 and 47).
      (Upload ×2, PantryPhoto ×2, and the cook-along reply's bare `class="small"`), so the fix is
      one unscoped `.small` rule replacing `.muted.small`, serving every consumer. ⚠️ It has equal
      specificity with `.muted` and must stay AFTER it in the sheet — the old two-class rule won on
-     specificity, this one wins on order (live-probed: all five combos compute 0.8rem, real
-     `.muted.small` sites unchanged). The cap disclosure says only "more may exist beyond this
+     specificity, this one wins on order (live-probed: `small`, `error small` and `muted small`
+     all compute 0.8rem; bare `.muted`/`.error` keep 0.9rem/1rem — that pair staying put IS the
+     regression check). The cap disclosure says only "more may exist beyond this
      cap" now — "older resolved reports" went false the moment OPEN reports alone exceed the cap
      (opens starve opens with the copy blaming resolved; naming WHICH rows are missing can't be
      made true in every case, so the copy says less — item 40's copy lesson). `MaxReports`' doc no
