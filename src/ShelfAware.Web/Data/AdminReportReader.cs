@@ -24,9 +24,10 @@ public sealed class AdminReportReader(
     IOptions<AdminOptions> admin,
     ErrorLogStore errors)
 {
-    /// <summary>The admin page loads at most this many reports (newest first) — the same bounded
-    /// posture as the error log's MaxRows, so one prolific account can't degrade the surface. The
-    /// page discloses when the cap is hit rather than truncating silently.</summary>
+    /// <summary>The admin page loads at most this many reports (open ones first, newest within
+    /// each half — ListBugReportsAsync's ordering) — the same bounded posture as the error log's
+    /// MaxRows, so one prolific account can't degrade the surface. The page discloses when the
+    /// cap is hit rather than truncating silently.</summary>
     public const int MaxReports = 500;
 
     public async Task<IReadOnlyList<AdminBugReport>> ListBugReportsAsync(CancellationToken ct = default)
@@ -34,12 +35,18 @@ public sealed class AdminReportReader(
         await RequireAdminAsync();
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
-        // ⚠️ The app's one production IgnoreQueryFilters. Deliberate and narrow: bug reports are
-        // addressed TO the admin, this service is their only reader, the read is AsNoTracking so
-        // no write can ride on it, and RequireAdminAsync just refused everyone else. Anything else
-        // wanting cross-household data must make its own case at review — not reuse this.
+        // ⚠️ One of exactly TWO production IgnoreQueryFilters — the write mirror is
+        // ReportResolutionService (its doc carries the shape and the same warning). Deliberate and
+        // narrow: bug reports are addressed TO the admin, this service is their only reader, the
+        // read is AsNoTracking so no write can ride on it, and RequireAdminAsync just refused
+        // everyone else. Anything else wanting cross-household data must make its own case at
+        // review — not reuse either of these.
         var reports = await db.BugReports.IgnoreQueryFilters().AsNoTracking()
-            .OrderByDescending(r => r.Id) // insert order IS chronological; SQLite can't ORDER BY DateTimeOffset
+            // Open FIRST, then newest: the cap must never be spent on resolved rows while open
+            // ones — the to-do list this surface exists for — fall off the far end. A null check
+            // translates fine; it's ORDER BY a DateTimeOffset that SQLite refuses.
+            .OrderBy(r => r.ResolvedAt != null)
+            .ThenByDescending(r => r.Id) // insert order IS chronological within each half
             .Take(MaxReports)
             .ToListAsync(ct);
 

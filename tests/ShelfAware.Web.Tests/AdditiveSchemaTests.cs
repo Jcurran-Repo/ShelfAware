@@ -134,6 +134,49 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Adds_the_resolved_at_column_to_a_pre_resolve_bug_reports_table()
+    {
+        // ⚠️ The path a LIVE deployment actually takes: its BugReports table was created 2026-08-13,
+        // BEFORE ResolvedAt existed. The drop-TABLE test above never runs this ALTER (EnsureTable
+        // rebuilds from the current model with the column already present), which is exactly how a
+        // typo'd EnsureColumn could ship green through the whole suite and fail only on the family
+        // box's first boot.
+        await using var db = _db.CreateDbContext();
+        var fresh = await ColumnTypesAsync(db, "BugReports");
+
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE BugReports DROP COLUMN ResolvedAt;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "BugReports"));
+
+        // And the stamp round-trips through the migrated column.
+        var report = new BugReport { Body = "It looked wrong", CreatedAt = DateTimeOffset.Now };
+        db.BugReports.Add(report);
+        await db.SaveChangesAsync();
+        report.ResolvedAt = new DateTimeOffset(2026, 8, 14, 12, 0, 0, TimeSpan.FromHours(-5));
+        await db.SaveChangesAsync();
+        Assert.Equal(report.ResolvedAt, (await db.BugReports.AsNoTracking().SingleAsync()).ResolvedAt);
+    }
+
+    [Fact]
+    public async Task Adds_the_resolved_at_column_to_a_pre_resolve_error_log()
+    {
+        // The auth-side twin — same reasoning, same live-deployment path.
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await ColumnTypesAsync(db, "ErrorLog");
+
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE ErrorLog DROP COLUMN ResolvedAt;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db);
+
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "ErrorLog"));
+    }
+
+    [Fact]
     public async Task Adds_the_quantity_columns_to_a_pre_counting_db()
     {
         await using var db = _db.CreateDbContext();
@@ -200,7 +243,9 @@ public class AdditiveSchemaTests : IDisposable
 
     /// <summary>Each column's declared type, keyed by name — order-independent, so it survives the fact
     /// that ADD COLUMN appends while EnsureCreated writes the model's order.</summary>
-    private static async Task<Dictionary<string, string>> ColumnTypesAsync(ShelfAwareDbContext db, string table)
+    // DbContext, not ShelfAwareDbContext: the resolve columns live on BOTH files, so the auth-side
+    // twin needs the same probe (the same widening TableSchemaAsync got in item 47).
+    private static async Task<Dictionary<string, string>> ColumnTypesAsync(DbContext db, string table)
     {
         var conn = db.Database.GetDbConnection();
         if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync();

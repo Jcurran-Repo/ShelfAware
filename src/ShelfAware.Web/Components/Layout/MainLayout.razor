@@ -11,17 +11,16 @@
     </button>
     @* A tap on any link both navigates and (via bubbling) folds the mobile menu. *@
     <nav id="primary-nav" aria-label="Primary" @onclick="() => navOpen = false">
-        <NavLink href="/" Match="NavLinkMatch.All">Dashboard</NavLink>
-        <NavLink href="/list">Grocery List</NavLink>
-        <NavLink href="/recipes">Recipes</NavLink>
-        <NavLink href="/trends">Trends</NavLink>
-        <NavLink href="/reports">Reports</NavLink>
-        <NavLink href="/receipt">Upload</NavLink>
-        <NavLink href="/receipts">Receipts</NavLink>
-        <NavLink href="/pantry-photo">Count Stock</NavLink>
-        <NavLink href="/products">Products</NavLink>
-        <NavLink href="/accuracy">Accuracy</NavLink>
-        <NavLink href="/settings">Settings</NavLink>
+        @* The page list is SiteNav's — the bug form's "where" dropdown renders the same one, so a
+           new page appears in both or neither. Only "/" needs Match=All (Prefix would light it on
+           every page); NavLink's Prefix match is segment-aware, so /receipt does NOT light on
+           /receipts. *@
+        @* ⚠️ Loop variable must not be named `page` — Razor reads inline `@page.` as the @page
+           DIRECTIVE (the same reserved-word class as lowercase <text>). *@
+        @foreach (var entry in SiteNav.Pages)
+        {
+            <NavLink href="@entry.Href" Match="@MatchFor(entry)">@entry.Label</NavLink>
+        }
     </nav>
     <AuthorizeView>
         <div class="account-box">
@@ -67,4 +66,7 @@
 
 @code {
     private bool navOpen;
+
+    private static NavLinkMatch MatchFor(SiteNav.Page page) =>
+        page.Href == "/" ? NavLinkMatch.All : NavLinkMatch.Prefix;
 }

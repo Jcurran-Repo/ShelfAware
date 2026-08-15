@@ -30,4 +30,18 @@ public class ErrorLogEntry
     public int Count { get; set; }
     public DateTimeOffset FirstSeenAt { get; set; }
     public DateTimeOffset LastSeenAt { get; set; }
+
+    /// <summary>The resolved-THROUGH mark; null = never resolved. ⚠️ The admin's resolve stamps the
+    /// <see cref="LastSeenAt"/> they were LOOKING AT, not the click's wall clock — so an occurrence
+    /// that arrived between their render and their click, or one captured earlier but persisted
+    /// later by the background writer, lands AFTER the mark and reopens the row. Stamping "now"
+    /// here is how unseen recurrences get silently swallowed; don't.</summary>
+    public DateTimeOffset? ResolvedAt { get; set; }
+
+    /// <summary>THE one reading of "is this error dealt with": resolved means nothing has been
+    /// seen past what the admin resolved through. A recurrence bumps <see cref="LastSeenAt"/> past
+    /// the mark and the row is active again by DERIVATION — the capture pipeline never learns
+    /// resolution exists, so a recurring error can never sit hidden behind a stale resolve.
+    /// Get-only and ignored in the model, so EF maps nothing.</summary>
+    public bool Resolved => ResolvedAt is { } at && LastSeenAt <= at;
 }

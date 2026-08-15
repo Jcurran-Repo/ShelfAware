@@ -5,6 +5,7 @@
 @using ShelfAware.Web.Diagnostics
 @attribute [Authorize(Policy = AdminOptions.PolicyName)]
 @inject AdminReportReader Reader
+@inject ReportResolutionService Actions
 @inject IOptions<AdminOptions> AdminConfig
 @inject ErrorLogSink Sink
 @inject ILogger<Admin> Logger
@@ -23,6 +24,16 @@
 }
 else
 {
+    @* Persistent announcer (the copy-name precedent, item 47): a live region inserted WITH its
+       text isn't reliably announced, so the slot exists before any action fills it. Success is
+       otherwise silent — the row just moves lists. *@
+    <div class="visually-hidden" role="status" aria-live="polite">@actionAnnouncement</div>
+    @* One slot for action outcomes, above both sections — role=alert announces from anywhere,
+       and both sections' buttons feed the same ActAsync. *@
+    @if (actionError is not null)
+    {
+        <p class="error" role="alert">@actionError</p>
+    }
     <section class="panel">
         <h2>Errors the app has logged</h2>
         <p class="muted">Every Error-level event, handled ones included, deduplicated by where it
@@ -32,7 +43,7 @@ else
         {
             <p class="muted">⚠ @Sink.Dropped event@(Sink.Dropped == 1 ? "" : "s") dropped under load since the app started.</p>
         }
-        <button class="secondary" @onclick="RefreshAsync" disabled="@busy">@(busy ? "Refreshing…" : "Refresh")</button>
+        <button class="secondary" @onclick="() => RefreshAsync()" disabled="@(busy || actionBusy)">@(busy ? "Refreshing…" : "Refresh")</button>
         @if (loadError is not null)
         {
             <p class="error" role="alert">@loadError</p>
@@ -47,33 +58,104 @@ else
         }
         else
         {
-            <table>
-                <caption class="visually-hidden">Distinct errors the app has logged</caption>
-                <thead>
-                    <tr><th>Last seen</th><th>Count</th><th>Level</th><th>What</th></tr>
-                </thead>
-                <tbody>
-                    @foreach (var e in errors)
-                    {
-                        <tr>
-                            <td>@e.LastSeenAt.ToString("MMM d, HH:mm")</td>
-                            <td>@e.Count×</td>
-                            <td>@e.Level</td>
-                            <td>
-                                <div>@e.LastMessage</div>
-                                <div class="muted small">@e.Category@(e.ExceptionType is null ? "" : $" · {e.ExceptionType}") · first seen @e.FirstSeenAt.ToString("MMM d")</div>
-                                @if (e.ExceptionDetail is not null)
-                                {
-                                    <details>
-                                        <summary>Detail</summary>
-                                        <pre class="error-detail">@e.ExceptionDetail</pre>
-                                    </details>
-                                }
-                            </td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
+            @* Open above, resolved collapsed below: the open table IS the to-do list, and 500 rows
+               of handled noise in it would defeat the surface. "Open" is DERIVED (ErrorLogEntry
+               .Resolved) — a resolved error that recurs is back up here on the next load, with its
+               history saying so, and the capture pipeline never had to know. *@
+            var open = errors.Where(e => !e.Resolved).ToList();
+            var resolvedErrors = errors.Where(e => e.Resolved).ToList();
+            @if (open.Count == 0)
+            {
+                <p class="muted">Nothing open — every logged error is marked handled.</p>
+            }
+            else
+            {
+                <table>
+                    <caption class="visually-hidden">Distinct errors the app has logged, still open</caption>
+                    <thead>
+                        <tr><th>Last seen</th><th>Count</th><th>Level</th><th>What</th><th><span class="visually-hidden">Actions</span></th></tr>
+                    </thead>
+                    <tbody>
+                        @* @key: these lists lose and gain members per CLICK now, and without it
+                           Blazor matches rows positionally — browser-held <details> state stuck to
+                           a list POSITION, so resolving a row above an expanded stack trace showed
+                           a different error's trace as expanded. *@
+                        @foreach (var e in open)
+                        {
+                            <tr @key="e.Id">
+                                <td>@e.LastSeenAt.ToString("MMM d, HH:mm")</td>
+                                <td>@e.Count×</td>
+                                <td>@e.Level</td>
+                                <td>
+                                    <div>@e.LastMessage</div>
+                                    <div class="muted small">@e.Category@(e.ExceptionType is null ? "" : $" · {e.ExceptionType}") · first seen @e.FirstSeenAt.ToString("MMM d")</div>
+                                    @if (e.ExceptionDetail is not null)
+                                    {
+                                        <details>
+                                            <summary>Detail</summary>
+                                            <pre class="error-detail">@e.ExceptionDetail</pre>
+                                        </details>
+                                    }
+                                    @if (e.ResolvedAt is { } was)
+                                    {
+                                        @* Resolved once and BACK — "open" would undersell a row the
+                                           admin already dealt with; recurrence is the news. *@
+                                        <div class="error small">⚠ seen again after being resolved @was.ToString("MMM d")</div>
+                                    }
+                                </td>
+                                @* Resolve carries the LastSeenAt the admin is LOOKING AT: resolution
+                                   means "handled through what I saw", so an occurrence from the
+                                   render-to-click window (or one captured earlier but persisted
+                                   later) lands past the mark and keeps the row open. Stamping "now"
+                                   here silently swallowed exactly those. *@
+                                <td><button class="secondary" @onclick="() => ResolveErrorAsync(e.Id, e.LastSeenAt)"
+                                            disabled="@(busy || actionBusy)"
+                                            aria-label="Resolve error: @e.LastMessage">Resolve</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            @if (resolvedErrors.Count > 0)
+            {
+                <details>
+                    <summary>Resolved (@resolvedErrors.Count)</summary>
+                    @* Same columns as the open table — resolving must not cost the admin the level,
+                       the category, or the stack trace (reopening a row just to read its detail is
+                       a state mutation, and a resolved Critical is still a Critical). *@
+                    <table>
+                        <caption class="visually-hidden">Errors marked handled and quiet since</caption>
+                        <thead>
+                            <tr><th>Resolved</th><th>Last seen</th><th>Count</th><th>Level</th><th>What</th><th><span class="visually-hidden">Actions</span></th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var e in resolvedErrors)
+                            {
+                                <tr class="muted" @key="e.Id">
+                                    <td>@e.ResolvedAt?.ToString("MMM d, yyyy")</td>
+                                    <td>@e.LastSeenAt.ToString("MMM d, HH:mm")</td>
+                                    <td>@e.Count×</td>
+                                    <td>@e.Level</td>
+                                    <td>
+                                        <div>@e.LastMessage</div>
+                                        <div class="muted small">@e.Category@(e.ExceptionType is null ? "" : $" · {e.ExceptionType}") · first seen @e.FirstSeenAt.ToString("MMM d")</div>
+                                        @if (e.ExceptionDetail is not null)
+                                        {
+                                            <details>
+                                                <summary>Detail</summary>
+                                                <pre class="error-detail">@e.ExceptionDetail</pre>
+                                            </details>
+                                        }
+                                    </td>
+                                    <td><button class="secondary" @onclick="() => ReopenErrorAsync(e.Id)"
+                                                disabled="@(busy || actionBusy)"
+                                                aria-label="Reopen error: @e.LastMessage">Reopen</button></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </details>
+            }
         }
     </section>
 
@@ -81,7 +163,7 @@ else
         <h2>Bug reports from households</h2>
         @if (bugReports is { Count: AdminReportReader.MaxReports })
         {
-            <p class="muted">Showing the newest @AdminReportReader.MaxReports reports.</p>
+            <p class="muted">Showing @AdminReportReader.MaxReports reports, open ones first — more may exist beyond this cap.</p>
         }
         @if (bugReports is null)
         {
@@ -93,24 +175,67 @@ else
         }
         else
         {
-            <table>
-                <caption class="visually-hidden">Bug reports filed by every household</caption>
-                <thead>
-                    <tr><th>When</th><th>Household</th><th>Who</th><th>Where</th><th>What</th></tr>
-                </thead>
-                <tbody>
-                    @foreach (var r in bugReports)
-                    {
-                        <tr>
-                            <td>@r.Report.CreatedAt.ToString("MMM d, yyyy")</td>
-                            <td>@r.HouseholdName</td>
-                            <td>@(r.Report.ReportedBy ?? "—")</td>
-                            <td class="muted">@(r.Report.PageUrl ?? "—")</td>
-                            <td>@r.Report.Body</td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
+            var openBugs = bugReports.Where(r => !r.Report.Resolved).ToList();
+            var resolvedBugs = bugReports.Where(r => r.Report.Resolved).ToList();
+            @if (openBugs.Count == 0)
+            {
+                <p class="muted">Nothing open — every report is marked resolved.</p>
+            }
+            else
+            {
+                <table>
+                    <caption class="visually-hidden">Bug reports filed by every household, still open</caption>
+                    <thead>
+                        <tr><th>When</th><th>Household</th><th>Who</th><th>Where</th><th>What</th><th><span class="visually-hidden">Actions</span></th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in openBugs)
+                        {
+                            <tr @key="r.Report.Id">
+                                <td>@r.Report.CreatedAt.ToString("MMM d, yyyy")</td>
+                                <td>@r.HouseholdName</td>
+                                <td>@(r.Report.ReportedBy ?? "—")</td>
+                                <td class="muted">@(r.Report.PageUrl ?? "—")</td>
+                                <td>@r.Report.Body</td>
+                                <td><button class="secondary" @onclick="() => ResolveBugAsync(r.Report.Id)"
+                                            disabled="@(busy || actionBusy)"
+                                            aria-label="Resolve the report from @r.HouseholdName: @r.Report.Body">Resolve</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            @if (resolvedBugs.Count > 0)
+            {
+                <details>
+                    <summary>Resolved (@resolvedBugs.Count)</summary>
+                    @* Who and Where stay — /bugs promises the reporter's email is attached "so they
+                       can follow up", and resolving must not hide the address the follow-up needs
+                       (reopening just to read it flips the reporter's chip back to open). *@
+                    <table>
+                        <caption class="visually-hidden">Bug reports marked resolved</caption>
+                        <thead>
+                            <tr><th>Resolved</th><th>When</th><th>Household</th><th>Who</th><th>Where</th><th>What</th><th><span class="visually-hidden">Actions</span></th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var r in resolvedBugs)
+                            {
+                                <tr class="muted" @key="r.Report.Id">
+                                    <td>@r.Report.ResolvedAt?.ToString("MMM d, yyyy")</td>
+                                    <td>@r.Report.CreatedAt.ToString("MMM d, yyyy")</td>
+                                    <td>@r.HouseholdName</td>
+                                    <td>@(r.Report.ReportedBy ?? "—")</td>
+                                    <td class="muted">@(r.Report.PageUrl ?? "—")</td>
+                                    <td>@r.Report.Body</td>
+                                    <td><button class="secondary" @onclick="() => ReopenBugAsync(r.Report.Id)"
+                                                disabled="@(busy || actionBusy)"
+                                                aria-label="Reopen the report from @r.HouseholdName: @r.Report.Body">Reopen</button></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </details>
+            }
         }
     </section>
 }
@@ -122,7 +247,10 @@ else
     private IReadOnlyList<AdminBugReport>? bugReports;
     private bool refused;
     private bool busy;
+    private bool actionBusy;
     private string? loadError;
+    private string? actionError;
+    private string? actionAnnouncement;
 
     protected override async Task OnInitializedAsync()
     {
@@ -135,29 +263,87 @@ else
         await RefreshAsync();
     }
 
-    private async Task RefreshAsync()
+    /// <summary>Self-reporting (returns whether it worked) so callers can split their advice by
+    /// failure point — and it clears the action slots, so a manual Refresh also retires a stale
+    /// action message instead of leaving an alert describing rows that are no longer there.</summary>
+    private async Task<bool> RefreshAsync()
     {
-        if (busy) return;
+        if (busy) return false;
         busy = true;
         loadError = null;
+        actionError = null;
+        actionAnnouncement = null;
         try
         {
             errors = await Reader.ListErrorsAsync();
             bugReports = await Reader.ListBugReportsAsync();
+            return true;
         }
         catch (OperationCanceledException) { throw; }
-        catch (UnauthorizedAccessException)
+        catch (UnauthorizedAccessException ex)
         {
-            refused = true; // the reader asks the same predicate — belt and braces
+            // The reader asks the same predicate — belt and braces. Logged: a refusal against a
+            // caller the routed policy already admitted is the most diagnostic event this page has.
+            Logger.LogError(ex, "The admin reader refused a caller the routed policy admitted.");
+            refused = true;
+            return false;
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Loading the admin view failed.");
             loadError = "Couldn't load just now — please try again.";
+            return false;
         }
         finally
         {
             busy = false;
+        }
+    }
+
+    // The error resolve carries the LastSeenAt the admin was LOOKING AT — see the button's comment
+    // and ErrorLogEntry.ResolvedAt. The bug resolve stamps the clock: reports don't recur.
+    private Task ResolveErrorAsync(int id, DateTimeOffset seenLastSeen) =>
+        ActAsync(() => Actions.SetErrorResolvedAsync(id, seenLastSeen), "Resolved.");
+    private Task ReopenErrorAsync(int id) => ActAsync(() => Actions.SetErrorResolvedAsync(id, null), "Reopened.");
+    private Task ResolveBugAsync(int id) => ActAsync(() => Actions.SetBugResolvedAsync(id, DateTimeOffset.Now), "Resolved.");
+    private Task ReopenBugAsync(int id) => ActAsync(() => Actions.SetBugResolvedAsync(id, null), "Reopened.");
+
+    /// <summary>One shape for all four actions, with the advice split by failure point (item 27):
+    /// a failed WRITE says "nothing changed — try again" (safe: the write is idempotent), while a
+    /// failed REFRESH after a successful write leads with "Saved" — the screen must never show a
+    /// resolved row as open beside advice inviting a second resolve. Outcomes are set AFTER the
+    /// refresh, which clears the action slots itself.</summary>
+    private async Task ActAsync(Func<Task<bool>> action, string announcement)
+    {
+        if (actionBusy || busy) return;
+        actionBusy = true;
+        actionError = null;
+        actionAnnouncement = null;
+        try
+        {
+            var found = await action();
+            var refreshed = await RefreshAsync();
+            if (!found)
+                actionError = "That row isn't there any more."; // trimmed, or deleted with its household's data
+            else if (!refreshed)
+                actionError = "Saved — but the lists couldn't refresh just now. Use Refresh to see it.";
+            else
+                actionAnnouncement = announcement;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (UnauthorizedAccessException ex)
+        {
+            Logger.LogError(ex, "The resolve service refused a caller the routed policy admitted.");
+            refused = true; // the service asks the same predicate — belt and braces
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Resolving or reopening a report failed.");
+            actionError = "Couldn't save that — nothing changed. Try again.";
+        }
+        finally
+        {
+            actionBusy = false;
         }
     }
 }

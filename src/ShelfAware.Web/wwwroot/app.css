@@ -402,6 +402,15 @@ input:focus, select:focus {
     flex-wrap: wrap;
 }
 
+/* A panel form that is a stacked DOCUMENT rather than a one-line action row (the bug report).
+   Without this, the row default above laid its .field blocks side by side, shrink-wrapped — the
+   half of "the form looks bad" that stacking labels inside each field couldn't fix. */
+.panel form.stacked {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.6rem;
+}
+
 .panel.temp {
     border-style: dashed;
     box-shadow: none;
@@ -1120,6 +1129,13 @@ button.mic-speaking {
 
 .error {
     color: var(--overdue-ink);
+}
+
+/* Small-text modifier for the helpers above — pairs with .muted and .error, and stands alone
+   (the cook-along reply). Equal specificity with .muted, so it must stay AFTER it in this
+   sheet or .muted's own font-size wins the cascade. */
+.small {
+    font-size: 0.8rem;
 }
 
 /* Header above the kept "Get ideas" batch: what it was for, when, and the clear action. */
@@ -1962,10 +1978,6 @@ button.tag-chip {
     align-items: center;
 }
 
-.muted.small {
-    font-size: 0.8rem;
-}
-
 .saved-top {
     gap: 0.5rem;
     flex-wrap: wrap;
@@ -2543,15 +2555,28 @@ tfoot td {
     max-width: 34rem;
 }
 
-.ai-settings .field {
+/* A labelled form control, label stacked ABOVE the box. Unscoped on purpose: it was
+   `.ai-settings .field`, which left every OTHER `class="field"` (the bug-report form) completely
+   unstyled — label and box side by side, the `.linkish` failure shape again. */
+.field {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
+    max-width: 34rem;
 }
 
-.ai-settings .field > span {
+.field > span {
     font-weight: 600;
     font-size: 0.9rem;
+}
+
+/* The stacked label needs its control to fill the line, or the 34rem cap above constrains
+   nothing: a bare <select> sizes to its widest option and a textarea to its default cols. */
+.field input,
+.field select,
+.field textarea {
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .ai-settings input,
@@ -2570,7 +2595,10 @@ tfoot td {
     margin: 0.4rem 0 0;
 }
 
-.ai-settings .checkbox-field {
+/* Unscoped like .field above, and for the same reason: checkbox rows exist outside the BYOK
+   panel too (the invite single-use and expiration toggles), and a box-above-its-caption layout
+   is what class="field" would give them. */
+.checkbox-field {
     display: grid;
     grid-template-columns: auto 1fr;
     gap: 0.5rem;
@@ -2579,7 +2607,7 @@ tfoot td {
     font-size: 0.92rem;
 }
 
-.ai-settings .checkbox-field input {
+.checkbox-field input {
     width: auto;
     margin-top: 0.2rem;
 }

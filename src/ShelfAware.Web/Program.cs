@@ -214,6 +214,8 @@ builder.Services.AddSingleton(errorSink);
 builder.Services.AddSingleton<ErrorLogStore>();
 builder.Services.AddHostedService<ErrorLogWriter>();
 builder.Services.AddScoped<AdminReportReader>();
+// Its write sibling: resolve/reopen, the app's one cross-household write — see the class doc.
+builder.Services.AddScoped<ReportResolutionService>();
 
 // Auth cookies + antiforgery tokens are encrypted with DataProtection keys. Persist them next to the
 // DBs (app-data is gitignored and survives republish) — otherwise every restart/redeploy would sign
