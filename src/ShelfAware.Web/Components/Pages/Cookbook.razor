@@ -1,0 +1,372 @@
+@page "/cookbook"
+@using ShelfAware.Core.Recipes
+@using ShelfAware.Core.Settings
+@inject IHouseholdDbFactory DbFactory
+@inject IAppSettings Settings
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject ILogger<Cookbook> Logger
+
+<PageTitle>Cookbook — Shelf Aware</PageTitle>
+
+@* Wrapped so the print rules can hide this page's chrome (page-head, disclaimer, the interactive
+   carousel) without touching the page-head of other printable pages — @media print is global CSS. *@
+<div class="cookbook-root">
+
+<div class="page-head">
+    <h1>Cookbook</h1>
+    <a class="tag-chip" href="/recipes">＋ Get recipe ideas</a>
+</div>
+
+<p class="recipe-disclaimer" role="note">
+    ⚠️ Ideas only — <strong>always check ingredient labels yourself</strong>. This is not allergy-safe or
+    medical advice.
+</p>
+
+@* ─────────────────────────────────────── Filters ─────────────────────────────────────── *@
+@if (allRecipes.Count > 0)
+{
+    <section class="panel cookbook-interactive">
+        <div class="cookbook-filters">
+            @if (productOptions.Count > 0)
+            {
+                <label class="field cookbook-product-filter">
+                    <span>Recipes that use…</span>
+                    <select value="@(filterProductId?.ToString() ?? "")" @onchange="OnProductFilterChanged"
+                            aria-label="Filter recipes by a product they use">
+                        <option value="">Any product</option>
+                        @foreach (var (id, name) in productOptions)
+                        {
+                            <option value="@id">@name</option>
+                        }
+                    </select>
+                </label>
+            }
+        </div>
+
+        @if (filterProductName is { } fn)
+        {
+            <p class="filter-banner" role="status">
+                Showing recipes that use <strong>@fn</strong> —
+                <a href="@ClearFilterUri()">show all</a>
+            </p>
+        }
+
+        @if (filtered.Count == 0)
+        {
+            <p class="muted">
+                @(filterProductName is null
+                    ? "No saved recipes yet — head to Recipes, get some ideas, and Save the ones you like."
+                    : $"No saved recipes use {filterProductName} yet.")
+            </p>
+        }
+        else if (Current is { } r)
+        {
+            @* An accessible "book" you page through: explicit Prev/Next, arrow-key support on the region,
+               a live "which page of how many" announcement, and each recipe a real <article>. No
+               auto-advance; the flip animation is opt-in via prefers-reduced-motion (see app.css). *@
+            <div class="cookbook-carousel" role="group" aria-roledescription="carousel"
+                 aria-label="Recipe book" tabindex="0" @onkeydown="OnKey">
+                <div class="cookbook-nav">
+                    <button class="secondary" @onclick="Prev" disabled="@(index == 0)"
+                            aria-label="Previous recipe">⏮ Prev</button>
+                    <p class="cookbook-position" role="status" aria-live="polite">
+                        <strong>@r.Name</strong> — @(index + 1) of @filtered.Count
+                    </p>
+                    <button class="secondary" @onclick="Next" disabled="@(index == filtered.Count - 1)"
+                            aria-label="Next recipe">Next ⏭</button>
+                </div>
+
+                @* Keyed on the recipe id so paging replaces the element — which both resets any open
+                   <details> and replays the gentle page-in animation (motion-safe only). *@
+                <article class="recipe-card cookbook-page" aria-label="@r.Name" @key="r.Id">
+                    <div class="recipe-card-top">
+                        <h2>@r.Name</h2>
+                        <span class="cookbook-badges">
+                            <span class="chip chip-@(Makeable(r) ? "stocked" : "unknown")">
+                                @(Makeable(r) ? "Ready to make" : "Missing items")
+                            </span>
+                            @if (r.IsVariant)
+                            {
+                                <span class="chip variant-chip" title="Adapted to use what you have">🔀 adapted</span>
+                            }
+                        </span>
+                    </div>
+
+                    @if (r.Blurb is { Length: > 0 } blurb)
+                    {
+                        <p class="muted">@blurb</p>
+                    }
+                    @if (r.EstimatedCaloriesPerServing is { } cal)
+                    {
+                        <p class="recipe-cal">~@cal cal / serving <span class="muted">(est.)</span></p>
+                    }
+
+                    <h3 class="cookbook-subhead">Ingredients</h3>
+                    <ul class="ingredient-list">
+                        @foreach (var i in r.MainIngredients)
+                        {
+                            var have = i.IsSatisfiedBy(onHand);
+                            <li class="@(have ? "have" : "grab")">
+                                <span class="ingredient-name">@(have ? "✓" : "🛒") @RecipeFormat.Line(i.Quantity, i.Name)</span>
+                            </li>
+                        }
+                        @{ var extras = r.Seasonings.Select(i => RecipeFormat.Line(i.Quantity, i.Name)).ToList(); }
+                        @if (extras.Count > 0)
+                        {
+                            <li class="muted">+ @string.Join(", ", extras)</li>
+                        }
+                    </ul>
+
+                    @if (r.Steps.Count > 0)
+                    {
+                        <details class="recipe-steps" open>
+                            <summary>Method (@r.Steps.Count @(r.Steps.Count == 1 ? "step" : "steps"))</summary>
+                            <ol>
+                                @foreach (var step in r.Steps.OrderBy(s => s.Order))
+                                {
+                                    <li>@step.Text</li>
+                                }
+                            </ol>
+                        </details>
+                    }
+
+                    <div class="cookbook-actions">
+                        @if (r.Steps.Count > 0)
+                        {
+                            <button class="secondary" @onclick="() => StartReading(r)"
+                                    aria-label="Read @r.Name aloud"
+                                    title="Read it to me — synthesized once, then free to re-read.">🔊 Read it to me</button>
+                        }
+                        <button class="secondary" @onclick="PrintRecipe" aria-label="Print @r.Name">🖨 Print recipe</button>
+                        <button class="secondary" @onclick="PrintProducts"
+                                aria-label="Print the products needed for @r.Name">🛒 Print products</button>
+                    </div>
+                </article>
+            </div>
+
+            @if (readingRecipe is not null)
+            {
+                @* Button-only read (no microphone). Keyed on the recipe so switching pages rebuilds it. *@
+                <RecipeReadAloud Recipe="readingRecipe" HandsFree="false"
+                                 @key="readingRecipe.Id" OnClosed="StopReading" />
+            }
+        }
+    </section>
+}
+else
+{
+    <section class="panel">
+        <p class="muted">
+            Your cookbook is empty. Head to <a href="/recipes">Recipes</a>, ask "what can I make?", and
+            Save the ideas you like — they'll appear here to browse, read aloud, and print.
+        </p>
+    </section>
+}
+
+@* ───────────────────────── Print-only surfaces (hidden on screen) ─────────────────────────
+   Two layouts for the CURRENT recipe: the full recipe card, and a shopping list of its products.
+   Which one prints is chosen just before window.print() (OnAfterRenderAsync), by the show-* class. *@
+@if (Current is { } printMe)
+{
+    <div class="cookbook-print @(printTarget == PrintTarget.Products ? "show-products" : "show-recipe")">
+        <section class="print-recipe">
+            <h1>@printMe.Name</h1>
+            @if (printMe.Blurb is { Length: > 0 } pblurb)
+            {
+                <p>@pblurb</p>
+            }
+            @if (printMe.EstimatedCaloriesPerServing is { } pcal)
+            {
+                <p>~@pcal cal / serving (est.)</p>
+            }
+            <h2>Ingredients</h2>
+            <ul>
+                @foreach (var i in printMe.Ingredients)
+                {
+                    <li>@RecipeFormat.Line(i.Quantity, i.Name)</li>
+                }
+            </ul>
+            @if (printMe.Steps.Count > 0)
+            {
+                <h2>Method</h2>
+                <ol>
+                    @foreach (var step in printMe.Steps.OrderBy(s => s.Order))
+                    {
+                        <li>@step.Text</li>
+                    }
+                </ol>
+            }
+        </section>
+
+        <section class="print-products">
+            <h1>Shopping list</h1>
+            <p>Products for <strong>@printMe.Name</strong>. Ticked items you already have on hand.</p>
+            <h2>Main ingredients</h2>
+            <ul class="print-products-list">
+                @foreach (var i in printMe.MainIngredients)
+                {
+                    <li>@(i.IsSatisfiedBy(onHand) ? "☑" : "☐") @RecipeFormat.Line(i.Quantity, i.Name)</li>
+                }
+            </ul>
+            @{ var pantry = printMe.Seasonings.ToList(); }
+            @if (pantry.Count > 0)
+            {
+                <h2>Also needs (seasonings &amp; staples)</h2>
+                <ul class="print-products-list">
+                    @foreach (var i in pantry)
+                    {
+                        <li>@RecipeFormat.Line(i.Quantity, i.Name)</li>
+                    }
+                </ul>
+            }
+        </section>
+    </div>
+}
+
+</div>
+
+@code {
+    private List<Recipe> allRecipes = [];
+    private List<PantryProduct> onHand = [];
+    private Dictionary<int, string> productNamesById = [];
+    private List<(int Id, string Name)> productOptions = [];
+
+    // The recipes that pass the current filters, in book (alphabetical) order — the deck we page through.
+    private List<Recipe> filtered = [];
+    private int index;                 // position within `filtered` (0-based)
+    private string? filterProductName; // resolved from ?uses, shown in the banner
+    private Recipe? readingRecipe;     // the recipe whose read-aloud panel is open (null = none)
+
+    private enum PrintTarget { Recipe, Products }
+    private PrintTarget printTarget = PrintTarget.Recipe;
+    private bool printPending;
+
+    /// <summary>Deep link / in-page product filter (/cookbook?uses={id}) — same shape and meaning as the
+    /// Recipes page's ?uses, so a link works on either surface. Scopes the deck to recipes grounded to
+    /// that product (Recipe.Uses — the one shared definition).</summary>
+    [SupplyParameterFromQuery(Name = "uses")] public int? UsesProductId { get; set; }
+
+    private Recipe? Current => filtered.Count > 0 ? filtered[Math.Clamp(index, 0, filtered.Count - 1)] : null;
+
+    // Makeable when every MAIN ingredient is covered by something on hand — food-family match via
+    // IngredientMatcher, exactly as the Recipes page decides it. Seasonings/staples don't count.
+    private bool Makeable(Recipe r) => r.IsMakeableWith(onHand);
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    // Runs on first render and every query-string change (the ?uses filter) — never on an internal
+    // StateHasChanged, so paging with Prev/Next keeps its place while a filter change starts at page one.
+    protected override void OnParametersSet()
+    {
+        index = 0;
+        ApplyFilters();
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        // SQLite can't ORDER BY a DateTimeOffset column; order is applied in ApplyFilters anyway.
+        allRecipes = await db.Recipes.AsNoTracking()
+            .Include(r => r.Ingredients).Include(r => r.Steps).ToListAsync();
+        productNamesById = await db.Products.Select(p => new { p.Id, p.Name })
+            .ToDictionaryAsync(x => x.Id, x => x.Name);
+
+        // On-hand for the have/grab marks and the "Ready to make" chip — the same edible, tracked,
+        // not-run-out set the Recipes page uses (PantryOnHand), so the two agree.
+        var products = await db.Products.AsNoTracking()
+            .Include(p => p.Purchases).Include(p => p.Signals).Include(p => p.Substitutes).ToListAsync();
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var trackExpirations = await Settings.GetTrackExpirationDatesAsync();
+        onHand = PantryOnHand.EdibleInStock(products, today, trackExpirations)
+            .Select(p => new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList()))
+            .OrderBy(x => x.Name)
+            .ToList();
+
+        // Products the dropdown offers = those some recipe is actually grounded to (else the filter would
+        // just show "none"). Keyed by id so the filter deep-links like the Recipes page's ?uses.
+        var used = new HashSet<string>(
+            allRecipes.SelectMany(r => r.Ingredients)
+                .Select(i => i.MatchedProduct)
+                .Where(n => !string.IsNullOrWhiteSpace(n))!,
+            StringComparer.OrdinalIgnoreCase);
+        productOptions = productNamesById
+            .Where(kv => used.Contains(kv.Value))
+            .Select(kv => (kv.Key, kv.Value))
+            .OrderBy(x => x.Value, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+
+        ApplyFilters();
+    }
+
+    private void ApplyFilters()
+    {
+        filterProductName = UsesProductId is { } pid && productNamesById.TryGetValue(pid, out var name) ? name : null;
+
+        IEnumerable<Recipe> q = allRecipes;
+        if (filterProductName is { } productName)
+        {
+            q = q.Where(r => r.Uses(productName));
+        }
+
+        filtered = q.OrderBy(r => r.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+        if (index >= filtered.Count) index = Math.Max(0, filtered.Count - 1);
+    }
+
+    private int? filterProductId => UsesProductId;
+
+    private void Prev()
+    {
+        if (index > 0) index--;
+    }
+
+    private void Next()
+    {
+        if (index < filtered.Count - 1) index++;
+    }
+
+    private void OnKey(KeyboardEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case "ArrowLeft": Prev(); break;
+            case "ArrowRight": Next(); break;
+            case "Home": index = 0; break;
+            case "End": index = Math.Max(0, filtered.Count - 1); break;
+        }
+    }
+
+    private void OnProductFilterChanged(ChangeEventArgs e)
+    {
+        var picked = int.TryParse(e.Value?.ToString(), out var id) ? id : (int?)null;
+        Nav.NavigateTo(FilterUri(picked));
+    }
+
+    // Build the /cookbook URL for a given product filter (null = clear it). Kept as one helper so the
+    // dropdown, the banner's "show all" link, and any future tag filter agree on the query shape.
+    private string FilterUri(int? uses) => uses is { } id ? $"/cookbook?uses={id}" : "/cookbook";
+
+    private string ClearFilterUri() => FilterUri(null);
+
+    private void StartReading(Recipe r) => readingRecipe = r;
+    private void StopReading() => readingRecipe = null;
+
+    private void PrintRecipe() { printTarget = PrintTarget.Recipe; printPending = true; }
+    private void PrintProducts() { printTarget = PrintTarget.Products; printPending = true; }
+
+    // Print AFTER the render that reflects printTarget, so the right print-only block is showing when the
+    // browser dialog opens. The click handler flips printTarget + printPending; that render lands here.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!printPending) return;
+        printPending = false;
+        try
+        {
+            await JS.InvokeVoidAsync("window.print");
+        }
+        catch (JSDisconnectedException)
+        {
+            // Circuit gone (tab closed / navigated away) before the dialog opened — nothing to print.
+        }
+    }
+}

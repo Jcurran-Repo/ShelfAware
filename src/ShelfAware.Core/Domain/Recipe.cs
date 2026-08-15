@@ -51,4 +51,13 @@ public class Recipe : IHouseholdOwned
     /// <summary>The MAIN ingredients not currently covered by anything on hand — what you'd need to buy.</summary>
     public IEnumerable<RecipeIngredient> MissingMains(IReadOnlyCollection<PantryProduct> onHand) =>
         MainIngredients.Where(i => !i.IsSatisfiedBy(onHand));
+
+    /// <summary>True when an ingredient of this recipe is grounded to the named catalog product — its
+    /// save-time <see cref="RecipeIngredient.MatchedProduct"/>. This is the single definition of "recipes
+    /// that use X" that both the Recipes page's <c>?uses=</c> filter and the cookbook's product filter ask,
+    /// so the two surfaces can't drift on what "uses" means. It matches the grounded product NAME only —
+    /// deliberately narrower than the food-family makeability rule: it answers "which product did this
+    /// recipe map this ingredient to", not "what could stand in for it".</summary>
+    public bool Uses(string productName) =>
+        Ingredients.Any(i => string.Equals(i.MatchedProduct, productName, StringComparison.OrdinalIgnoreCase));
 }

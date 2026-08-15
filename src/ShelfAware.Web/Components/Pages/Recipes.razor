@@ -642,9 +642,9 @@
         finally { restockBusy = false; }
     }
 
-    // "2 lbs chicken breast" when the recipe gives a quantity, else just the name.
-    private static string Qty(string? quantity, string name) =>
-        string.IsNullOrWhiteSpace(quantity) ? name : $"{quantity} {name}";
+    // "2 lbs chicken breast" when the recipe gives a quantity, else just the name. The rule lives once in
+    // RecipeFormat.Line so this page, the cookbook, and the printed products list can't phrase it three ways.
+    private static string Qty(string? quantity, string name) => RecipeFormat.Line(quantity, name);
 
     // "Pick for me" pool: saved recipes you've eaten before AND can make right now — the reliable
     // "I can definitely eat this, just tell me" set.
@@ -736,7 +736,7 @@
         // product its original never did. Only recipes that actually use the product are results; a
         // non-matching original rides along solely as a muted reference so its matching variant isn't
         // orphaned.
-        bool Uses(Recipe r) => r.Ingredients.Any(i => string.Equals(i.MatchedProduct, name, StringComparison.OrdinalIgnoreCase));
+        bool Uses(Recipe r) => r.Uses(name); // one definition of "recipe uses X", shared with the cookbook
 
         var rows = new List<(Recipe Recipe, RowKind Kind)>();
         var results = new List<Recipe>();

@@ -1999,6 +1999,94 @@ button.tag-chip {
     padding: 0.5rem 0.8rem;
 }
 
+/* ─────────────────────────────── Cookbook (recipe carousel) ─────────────────────────────── */
+.cookbook-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: flex-end;
+    margin-bottom: 0.8rem;
+}
+
+.cookbook-product-filter {
+    margin: 0;
+}
+
+/* The "book" you page through. Focusable so the arrow keys work, and the ring shows it's focused. */
+.cookbook-carousel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+}
+
+.cookbook-carousel:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 4px;
+    border-radius: var(--radius);
+}
+
+.cookbook-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+}
+
+.cookbook-position {
+    margin: 0;
+    text-align: center;
+    flex: 1 1 auto;
+    color: var(--ink-soft);
+}
+
+.cookbook-position strong {
+    color: var(--ink);
+}
+
+.cookbook-badges {
+    display: inline-flex;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.cookbook-subhead {
+    margin: 0.6rem 0 0.2rem;
+    font-size: 1rem;
+}
+
+.cookbook-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.8rem;
+}
+
+/* The print-only surfaces never show on screen; @media print reveals the chosen one. */
+.cookbook-print {
+    display: none;
+}
+
+/* A gentle page-turn as each recipe mounts (the article is @key'd per recipe, so Prev/Next remounts it
+   and replays this). Motion-safe only — reduced-motion gets an instant cut, no animation. */
+@media (prefers-reduced-motion: no-preference) {
+    .cookbook-page {
+        animation: cookbook-page-in 0.25s ease-out;
+    }
+}
+
+@keyframes cookbook-page-in {
+    from {
+        opacity: 0;
+        transform: translateX(1.5rem);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
 /* Keep the "Next buy" date + relative on one line (the popover keeps normal wrapping). */
 .nextbuy {
     white-space: nowrap;
@@ -2518,6 +2606,50 @@ tfoot td {
     }
 
     .report-chart { max-width: 100%; }
+
+    /* ── Cookbook: print ONLY the chosen print-only block (the recipe card, or its products list).
+       Scoped to .cookbook-root so hiding the page-head/disclaimer here can't hide another printable
+       page's (these @media print rules are global CSS, applied on whatever page prints). ── */
+    .cookbook-root .page-head,
+    .cookbook-root .recipe-disclaimer,
+    .cookbook-root .panel {
+        display: none !important;
+    }
+
+    .cookbook-print {
+        display: block !important;
+    }
+
+    .cookbook-print.show-recipe .print-products,
+    .cookbook-print.show-products .print-recipe {
+        display: none !important;
+    }
+
+    .cookbook-print h1 {
+        font-size: 1.6rem;
+        margin: 0 0 0.4rem;
+    }
+
+    .cookbook-print h2 {
+        font-size: 1.1rem;
+        margin: 1rem 0 0.3rem;
+        border-bottom: 1px solid #000;
+        padding-bottom: 0.15rem;
+    }
+
+    .cookbook-print ul,
+    .cookbook-print ol {
+        margin: 0.3rem 0 0.6rem 1.4rem;
+    }
+
+    .cookbook-print li {
+        margin: 0.15rem 0;
+    }
+
+    .cookbook-print .print-products-list {
+        list-style: none;
+        margin-left: 0;
+    }
 }
 
 /* ---- Blazor form validation + error boundary defaults ---- */
