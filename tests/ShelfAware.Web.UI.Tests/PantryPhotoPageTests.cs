@@ -1472,6 +1472,25 @@ public class PantryPhotoPageTests : PageTestContext
     }
 
     [Fact]
+    public async Task A_pick_during_a_stuck_ingest_is_told_to_wait_not_silently_dropped()
+    {
+        // Same rule as the receipt page: the guard drops the event (dead handles otherwise), but
+        // says so — and the note leaves with the ingest that made it true.
+        var cut = Render<PantryPhoto>();
+        var gate = new TaskCompletionSource();
+        PhotoLoader.Hold = gate;
+        var ingest = FileEvents.ChangeAsync(cut, 0, "slow.jpg");
+
+        await FileEvents.ChangeAsync(cut, 0, "eager.jpg");
+
+        cut.WaitForAssertion(() => Assert.Contains("Still reading your last pick", cut.Markup));
+        gate.SetResult();
+        await ingest;
+        cut.WaitForAssertion(() => Assert.DoesNotContain("Still reading your last pick", cut.Markup));
+        Assert.Contains("1 photo selected", cut.Markup);
+    }
+
+    [Fact]
     public void Start_over_lands_on_an_empty_picker()
     {
         // Reset() clears the staged photos along with everything else — Start over means fresh.

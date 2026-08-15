@@ -774,6 +774,75 @@ public class UploadPageTests : PageTestContext
     }
 
     [Fact]
+    public void Emptying_the_staged_list_clears_the_one_receipt_tick()
+    {
+        // Appending keeps the tick on purpose (adding pages to one long receipt is the flagship
+        // flow), so an empty list is the one fresh-start boundary left — without the clear, a tick
+        // made for files that were all ✕'d away silently merged the NEXT, unrelated pick into one
+        // receipt.
+        Extractor.Results.Enqueue(ExtractionResult.Ok(new ExtractedReceipt
+        {
+            Merchant = "Walmart", PurchaseDate = Today.AddDays(-1), Lines = [Line("GV MILK", "Whole Milk")],
+        }, "{}"));
+        Extractor.Results.Enqueue(ExtractionResult.Ok(new ExtractedReceipt
+        {
+            Merchant = "Target", PurchaseDate = Today.AddDays(-1), Lines = [Line("EGGS", "Eggs")],
+        }, "{}"));
+        var cut = RenderUpload();
+        cut.FindComponent<InputFile>().UploadFiles(Pdf("a.pdf"), Pdf("b.pdf"));
+        cut.Find(".combine-check input").Change(true);
+
+        cut.FindAll(".staged-files button").First().Click();
+        cut.FindAll(".staged-files button").First().Click();
+        Assert.DoesNotContain("file(s) selected", cut.Markup);
+
+        cut.FindComponent<InputFile>().UploadFiles(Pdf("c.pdf"), Pdf("d.pdf"));
+        Assert.False(cut.Find(".combine-check input").HasAttribute("checked")); // fresh batch, fresh tick
+
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Extract").Click();
+        cut.WaitForAssertion(() => Assert.Equal([1, 1], Extractor.PageCounts)); // two receipts, not one merged
+    }
+
+    [Fact]
+    public void An_ingest_error_does_not_hide_the_review_queue()
+    {
+        // Reads happen at selection now, so Phase.Error is one wrong file away — and hiding the
+        // queued receipts behind it read as them being lost.
+        SeedPending("Walmart", Today.AddDays(-2), DbLine("GV MILK", "Whole Milk"));
+        PhotoLoader.Throws = new NotSupportedException(
+            "“notes.txt” is text/plain, which isn't a photo. Take or pick a picture instead.");
+        var cut = RenderUpload();
+        cut.WaitForAssertion(() => Assert.Contains("Waiting for review (1)", cut.Markup));
+
+        cut.FindComponent<InputFile>().UploadFiles(
+            InputFileContent.CreateFromBinary([1], "notes.txt", contentType: "text/plain"));
+
+        cut.WaitForAssertion(() => Assert.Contains("isn't a photo", cut.Markup));
+        Assert.Contains("Waiting for review (1)", cut.Markup); // the queue survived the error
+    }
+
+    [Fact]
+    public async Task A_pick_during_a_stuck_ingest_is_told_to_wait_not_silently_dropped()
+    {
+        // The guard is right to DROP the second event (its handles reference the input the
+        // finished ingest replaces) — but dropping without a word is the tap-that-looks-ignored
+        // class. The note also leaves with the ingest that made it true.
+        var cut = RenderUpload();
+        var gate = new TaskCompletionSource();
+        PhotoLoader.Hold = gate;
+        var ingest = FileEvents.ChangeAsync(cut, 0, "slow.jpg");
+
+        await FileEvents.ChangeAsync(cut, 0, "eager.jpg"); // arrives mid-ingest
+
+        cut.WaitForAssertion(() => Assert.Contains("Still reading your last pick", cut.Markup));
+        gate.SetResult();
+        await ingest;
+        cut.WaitForAssertion(() => Assert.DoesNotContain("Still reading your last pick", cut.Markup));
+        Assert.Contains("slow.jpg", cut.Markup);        // the first pick landed
+        Assert.DoesNotContain("eager.jpg", cut.Markup); // the second was refused, and said so
+    }
+
+    [Fact]
     public async Task Extract_stands_down_while_a_file_is_still_being_read_in()
     {
         // An extract must not snapshot a staged list an ingest is still appending to — and a queued

@@ -84,7 +84,7 @@
                     {
                         <li>
                             <span>@f.Name</span>
-                            <button type="button" class="icon-btn" @onclick="() => stagedFiles.Remove(f)"
+                            <button type="button" class="icon-btn" @onclick="() => RemoveStaged(f)"
                                     disabled="@ingesting" aria-label="Remove @f.Name"><span aria-hidden="true">✕</span></button>
                         </li>
                     }
@@ -127,7 +127,11 @@
         }
     </section>
 
-    @if (phase == Phase.Idle && pendingReceipts.Count > 0)
+    @* Error included: with reads at selection time, a single refused file reaches Phase.Error —
+       far more often than the old >MaxFiles case — and hiding the review queue behind it read as
+       the queued receipts being LOST. Only Extracting (whose progress list owns the screen) and
+       the review/done phases still stand the queue down. *@
+    @if (phase is Phase.Idle or Phase.Error && pendingReceipts.Count > 0)
     {
         <section class="panel">
             <h2>Waiting for review (@pendingReceipts.Count)</h2>
@@ -402,6 +406,16 @@ else if (phase == Phase.Done)
     /// <summary>A picked file already read into memory — bytes rather than an IBrowserFile, because
     /// staged files outlive their browser handles (see <see cref="PickedFileReader"/>).</summary>
     private sealed record StagedFile(string Name, byte[] Data, string MediaType);
+
+    /// <summary>The ✕ on a staged row. Emptying the list also clears the one-long-receipt tick:
+    /// appending KEEPS the tick on purpose (adding pages to one receipt is the flagship flow), so
+    /// an empty list is the only remaining "fresh start" boundary — without this, a tick made for
+    /// files that were all ✕'d away silently merged the NEXT, unrelated pick into one receipt.</summary>
+    private void RemoveStaged(StagedFile f)
+    {
+        stagedFiles.Remove(f);
+        if (stagedFiles.Count == 0) combineAsOne = false;
+    }
     private DateOnly reviewDate = DateOnly.FromDateTime(DateTime.Today);
     private List<ReviewLine> reviewLines = [];
     private List<Product> products = [];
@@ -718,7 +732,10 @@ else if (phase == Phase.Done)
                 : " — in the review queue below"),
         _ => b.InQueue
             ? "couldn't be read — retry it from the queue below"
-            : "something went wrong reading this file — try selecting it again",
+            // With reads at selection time, this arm means the SAVE failed (folder/audit-copy/
+            // persist), never the read — the file itself was staged fine. Don't send the user
+            // back to the picker for a failure the picker can't fix.
+            : "something went wrong saving this receipt — pick it and extract again",
     };
 
     // Every picked file is read into MEMORY here, inside its own change event, while its browser
@@ -728,8 +745,19 @@ else if (phase == Phase.Done)
     private async Task OnFilesSelected(InputFileChangeEventArgs e)
     {
         // Same double-fire guard as the census Read(): the inputs disable while ingesting, but a
-        // second change event can already be queued before that render lands.
-        if (ingesting || phase == Phase.Extracting) return;
+        // second change event can already be queued before that render lands. Said out loud rather
+        // than silently dropped (the tap-that-looks-ignored class, item 41) — and dropping IS the
+        // right call, not queueing: a queued event's IBrowserFile handles reference the input
+        // element the finished ingest just replaced, so honoring it would fail on dead handles.
+        if (ingesting || phase == Phase.Extracting)
+        {
+            if (ingesting)
+            {
+                errorMessage = "Still reading your last pick — give it a moment, then try again.";
+                phase = Phase.Error;
+            }
+            return;
+        }
         IReadOnlyList<IBrowserFile> files;
         try
         {
@@ -796,6 +824,14 @@ else if (phase == Phase.Done)
             // A bad file doesn't unstage its good neighbours — they stay listed above; it's named here.
             errorMessage = string.Join(" ", problems);
             phase = Phase.Error;
+        }
+        else if (errorMessage is not null && phase == Phase.Error)
+        {
+            // Only an error raised DURING this ingest can be on screen here (the start cleared any
+            // earlier one) — i.e. the busy note a concurrent pick was told. This ingest finishing
+            // is exactly what makes that note stale, so it leaves with the work it described.
+            errorMessage = null;
+            phase = Phase.Idle;
         }
     }
 

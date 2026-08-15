@@ -567,8 +567,18 @@ else if (phase == Phase.Done)
     private async Task OnFilesSelected(InputFileChangeEventArgs e)
     {
         // Same double-fire guard as Read(): the inputs disable while ingesting, but a second
-        // change event can already be queued before that render lands.
-        if (ingesting || reading) return;
+        // change event can already be queued before that render lands. Said out loud rather than
+        // silently dropped (item 41's tap-that-looks-ignored class) — and dropping IS right, not
+        // queueing: a queued event's handles reference the input the finished ingest replaced.
+        if (ingesting || reading)
+        {
+            if (ingesting)
+            {
+                errorMessage = "Still reading your last pick — give it a moment, then try again.";
+                phase = Phase.Error;
+            }
+            return;
+        }
         IReadOnlyList<IBrowserFile> files;
         try
         {
@@ -582,7 +592,7 @@ else if (phase == Phase.Done)
         }
         if (stagedPhotos.Count + files.Count > MaxPhotos)
         {
-            errorMessage = $"That would be {stagedPhotos.Count + files.Count} photos — the reader looks at up to {MaxPhotos} per go. Remove one first, or start over.";
+            errorMessage = $"That would be {stagedPhotos.Count + files.Count} photos — the reader looks at up to {MaxPhotos} per go. Remove one with its ✕ first.";
             phase = Phase.Error;
             return;
         }
@@ -631,6 +641,14 @@ else if (phase == Phase.Done)
             // A bad photo doesn't unstage its good neighbours — they stay listed; it's named here.
             errorMessage = string.Join(" ", problems);
             phase = Phase.Error;
+        }
+        else if (errorMessage is not null && phase == Phase.Error)
+        {
+            // Only an error raised DURING this ingest can be on screen here (the start cleared any
+            // earlier one) — i.e. the busy note a concurrent pick was told. It leaves with the
+            // work it described.
+            errorMessage = null;
+            phase = Phase.Idle;
         }
     }
 
