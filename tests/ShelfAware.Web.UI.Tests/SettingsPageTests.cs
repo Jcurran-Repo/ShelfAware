@@ -64,12 +64,14 @@ public abstract class SettingsTestBase : PageTestContext
         var household = new FakeCurrentHousehold("hh-test");
         var storage = new ReceiptStorage(
             new AppPaths(dataDir, Path.Combine(dataDir, "receipts")), household, NullLogger<ReceiptStorage>.Instance);
+        var recipeImages = new RecipeImageStorage(
+            new AppPaths(dataDir, Path.Combine(dataDir, "receipts")), household, NullLogger<RecipeImageStorage>.Instance);
         Services.AddSingleton(Households);
         Services.AddSingleton(new CircuitAiSettings(Options.Create(ServerLlm)));
         Services.AddSingleton(Options.Create(ServerLlm));
         Services.AddSingleton(new AiUsageMeter(Factory, Options.Create(ServerLlm),
             Options.Create(new ElevenLabsOptions()), NullLogger<AiUsageMeter>.Instance));
-        Services.AddSingleton(new UserDataService(Factory, household, storage, null,
+        Services.AddSingleton(new UserDataService(Factory, household, storage, recipeImages, null,
             NullLogger<UserDataService>.Instance));
     }
 

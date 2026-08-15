@@ -26,8 +26,48 @@ public class UserDataServiceTests : IDisposable
         _household,
         NullLogger<ReceiptStorage>.Instance);
 
+    private RecipeImageStorage RecipeImages() => new(
+        new AppPaths(_dataDir, Path.Combine(_dataDir, "receipts")),
+        _household,
+        NullLogger<RecipeImageStorage>.Instance);
+
     private UserDataService Service(ISpeechCache? speech = null) =>
-        new(_db, _household, Storage(), speech, NullLogger<UserDataService>.Instance);
+        new(_db, _household, Storage(), RecipeImages(), speech, NullLogger<UserDataService>.Instance);
+
+    [Fact]
+    public async Task Export_includes_a_recipes_saved_photo()
+    {
+        var images = RecipeImages();
+        var path = await images.SaveAsync([9, 9, 9], "image/jpeg");
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Recipes.Add(new Recipe { Name = "Photo Recipe", ImagePath = path });
+            await db.SaveChangesAsync();
+        }
+
+        using var buffer = new MemoryStream();
+        await Service().WriteArchiveAsync(buffer);
+        using var zip = new ZipArchive(buffer, ZipArchiveMode.Read);
+        // Filed under its own relative path, so the Recipe in data.json points straight at it.
+        Assert.Contains(zip.Entries, e => e.FullName == path);
+    }
+
+    [Fact]
+    public async Task DeleteAll_removes_a_recipes_saved_photo_from_disk()
+    {
+        var images = RecipeImages();
+        var path = await images.SaveAsync([9, 9, 9], "image/jpeg");
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Recipes.Add(new Recipe { Name = "Photo Recipe", ImagePath = path });
+            await db.SaveChangesAsync();
+        }
+        Assert.NotNull(await images.ReadAsync(path)); // on disk before
+
+        await Service().DeleteAllAsync();
+
+        Assert.Null(await images.ReadAsync(path)); // gone after
+    }
 
     /// <summary>Stands in for the disk cache: answers only for text it was told about, so a test can say
     /// "this step has audio and that one doesn't" without synthesizing anything.</summary>

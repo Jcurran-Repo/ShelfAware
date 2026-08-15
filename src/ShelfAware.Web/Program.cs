@@ -289,6 +289,7 @@ builder.Services.AddScoped<ReceiptSelfEval>(); // grades verified receipts on th
 // Owns where receipt images live on disk (per household), so "delete my data" can reach them and no
 // call site does its own path math. Scoped: it files by the current household.
 builder.Services.AddScoped<ReceiptStorage>();
+builder.Services.AddScoped<RecipeImageStorage>(); // where recipe photos live (per household); mirrors ReceiptStorage
 
 builder.Services.AddScoped<ProductRenameService>(); // rename + re-point the name-keyed recipe links
 builder.Services.AddScoped<ProductMergeService>();  // fold a variety-split product into its item
@@ -300,6 +301,7 @@ builder.Services.AddScoped(sp => new UserDataService(
     sp.GetRequiredService<IHouseholdDbFactory>(),
     sp.GetRequiredService<ICurrentHousehold>(),
     sp.GetRequiredService<ReceiptStorage>(),
+    sp.GetRequiredService<RecipeImageStorage>(),
     sp.GetService<ISpeechCache>(), // null when Speech:CacheMegabytes = 0: no cache, nothing to find or forget
     sp.GetRequiredService<ILogger<UserDataService>>()));
 
@@ -571,6 +573,25 @@ app.MapGet("/api/data/export", async (UserDataService data, HttpContext ctx, Can
     ctx.Response.Headers.ContentDisposition =
         $"attachment; filename=\"shelfaware-data-{DateTime.Now:yyyy-MM-dd}.zip\"";
     await data.WriteArchiveAsync(ctx.Response.Body, ct);
+}).RequireAuthorization();
+
+// A recipe's photo, served household-scoped. The recipe is looked up through the caller's household
+// filter (IHouseholdDbFactory pre-sets the household from the auth claim), so an id belonging to another
+// household simply isn't found — a 404, never a cross-household read. The stored path is read from that
+// filtered row, NEVER from the request, and RecipeImageStorage's own guard keeps it inside the store.
+// Under /api so the no-household middleware answers 401/403 rather than an HTML redirect.
+app.MapGet("/api/recipe-image/{id:int}", async (
+    int id, IHouseholdDbFactory dbFactory, RecipeImageStorage images, HttpContext ctx, CancellationToken ct) =>
+{
+    await using var db = await dbFactory.CreateDbContextAsync(ct);
+    var path = await db.Recipes.AsNoTracking().Where(r => r.Id == id).Select(r => r.ImagePath).FirstOrDefaultAsync(ct);
+    if (string.IsNullOrEmpty(path)) return Results.NotFound();
+    var image = await images.ReadAsync(path, ct);
+    if (image is null) return Results.NotFound();
+    // Private (a per-household photo — never a shared cache) and short-lived; the ?v the cookbook appends
+    // changes on every replace (a fresh GUID filename), so a new photo is fetched fresh regardless.
+    ctx.Response.Headers.CacheControl = "private, max-age=3600";
+    return Results.File(image.Value.Bytes, image.Value.MediaType);
 }).RequireAuthorization();
 
 // PWA manifest — makes the app installable ("Add to home screen"). Served explicitly so the content type

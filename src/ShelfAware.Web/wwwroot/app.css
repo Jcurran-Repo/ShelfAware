@@ -2082,6 +2082,16 @@ button.tag-chip {
     width: 9rem;
 }
 
+.cookbook-photo {
+    display: block;
+    max-width: 100%;
+    max-height: 22rem;
+    width: auto;
+    border-radius: var(--radius);
+    margin: 0.2rem 0 0.6rem;
+    object-fit: cover;
+}
+
 /* The print-only surfaces never show on screen; @media print reveals the chosen one. */
 .cookbook-print {
     display: none;

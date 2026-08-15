@@ -1,9 +1,12 @@
 @page "/cookbook"
+@implements IDisposable
 @using ShelfAware.Core.Recipes
 @using ShelfAware.Core.Settings
 @inject IHouseholdDbFactory DbFactory
 @inject IAppSettings Settings
 @inject RecipeTagService TagService
+@inject IShelfPhotoLoader PhotoLoader
+@inject RecipeImageStorage Images
 @inject NavigationManager Nav
 @inject IJSRuntime JS
 @inject ILogger<Cookbook> Logger
@@ -109,6 +112,11 @@
                         </span>
                     </div>
 
+                    @if (r.ImagePath is not null)
+                    {
+                        <img class="cookbook-photo" src="@PhotoUrl(r)" alt="Photo of @r.Name" loading="lazy" />
+                    }
+
                     <div class="cookbook-tags">
                         @foreach (var tag in r.Tags.Select(t => t.Value).OrderBy(v => v, StringComparer.CurrentCultureIgnoreCase))
                         {
@@ -179,6 +187,19 @@
                         <button class="secondary" @onclick="PrintRecipe" aria-label="Print @r.Name">🖨 Print recipe</button>
                         <button class="secondary" @onclick="PrintProducts"
                                 aria-label="Print the products needed for @r.Name">🛒 Print products</button>
+                        @* Photo add/replace: the input is visually hidden and PRECEDES its label (the
+                           .file-button pattern, sibling selector); @key gives a fresh input per pick so
+                           re-picking the same file still fires a change. *@
+                        <InputFile @key="@($"photo-{r.Id}-{photoGeneration}")" id="cookbook-photo"
+                                   OnChange="OnPhotoSelected" accept="image/*" disabled="@photoBusy"
+                                   class="visually-hidden"
+                                   aria-label="@(r.ImagePath is null ? $"Add a photo to {r.Name}" : $"Replace the photo for {r.Name}")" />
+                        <label class="file-button" for="cookbook-photo">📷 @(r.ImagePath is null ? "Add photo" : "Replace photo")</label>
+                        @if (r.ImagePath is not null)
+                        {
+                            <button class="secondary" @onclick="RemovePhoto" disabled="@photoBusy"
+                                    aria-label="Remove the photo for @r.Name">Remove photo</button>
+                        }
                     </div>
                 </article>
             </div>
@@ -295,6 +316,11 @@ else
     private bool bulkTagging;  // the "Tag N untagged" sweep is in flight
     private int bulkDone;      // recipes processed so far in the sweep (for progress)
     private string? tagNote;   // result of the last tag action
+
+    // Photos (RecipeImageStorage; served household-scoped via /api/recipe-image/{id})
+    private readonly CancellationTokenSource pageCts = new();
+    private bool photoBusy;
+    private int photoGeneration; // bump to give the file input a fresh element after each pick
 
     private enum PrintTarget { Recipe, Products }
     private PrintTarget printTarget = PrintTarget.Recipe;
@@ -544,6 +570,74 @@ else
         finally { bulkTagging = false; taggingBusy = false; }
     }
 
+    // ── Photos — read (cancellable) then write (uncancellable), the census teardown discipline ──
+
+    private static string PhotoUrl(Recipe r) =>
+        $"/api/recipe-image/{r.Id}?v={Uri.EscapeDataString(r.ImagePath!.Split('/').Last())}";
+
+    private async Task OnPhotoSelected(InputFileChangeEventArgs e)
+    {
+        if (Current is not { } r || photoBusy) return;
+        photoBusy = true;
+        tagNote = null;
+        var ct = pageCts.Token; // captured once, before the first await (teardown discipline)
+        try
+        {
+            var result = await PickedFileReader.ReadPhotoAsync(PhotoLoader, e.File, ct, Logger);
+            switch (result.Kind)
+            {
+                case PickedFileReader.Kind.Loaded:
+                    await SavePhotoAsync(r.Id, result.Bytes!, result.MediaType!);
+                    await LoadAsync();
+                    break;
+                case PickedFileReader.Kind.Refused:
+                case PickedFileReader.Kind.Failed:
+                    tagNote = result.Message ?? "Couldn't read that image.";
+                    break;
+                // TornDown / ConnectionLost: the page is going or the circuit dropped — say nothing.
+            }
+        }
+        finally
+        {
+            photoBusy = false;
+            photoGeneration++; // fresh input so re-picking the same file fires a change
+        }
+    }
+
+    // Save the picked photo to the store and point the recipe at it. A WRITE, so CancellationToken.None
+    // (a navigate-away must not half-apply it); the read above was cancellable. The old image is deleted
+    // only AFTER the row points at the new one, so a failed save never strands the recipe imageless.
+    private async Task SavePhotoAsync(int recipeId, byte[] bytes, string mediaType)
+    {
+        var path = await Images.SaveAsync(bytes, mediaType, CancellationToken.None);
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var recipe = await db.Recipes.FirstOrDefaultAsync(x => x.Id == recipeId);
+        if (recipe is null) { Images.Delete(path); return; } // recipe vanished — don't orphan the new file
+        var old = recipe.ImagePath;
+        recipe.ImagePath = path;
+        await db.SaveChangesAsync();
+        if (old is not null) Images.Delete(old);
+    }
+
+    private async Task RemovePhoto()
+    {
+        if (Current is not { } r || photoBusy || r.ImagePath is null) return;
+        photoBusy = true;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var recipe = await db.Recipes.FirstOrDefaultAsync(x => x.Id == r.Id);
+            if (recipe?.ImagePath is { } path)
+            {
+                recipe.ImagePath = null;
+                await db.SaveChangesAsync();
+                Images.Delete(path); // AFTER the row stops pointing at it
+            }
+            await LoadAsync();
+        }
+        finally { photoBusy = false; }
+    }
+
     private void PrintRecipe() { printTarget = PrintTarget.Recipe; printPending = true; }
     private void PrintProducts() { printTarget = PrintTarget.Products; printPending = true; }
 
@@ -561,5 +655,11 @@ else
         {
             // Circuit gone (tab closed / navigated away) before the dialog opened — nothing to print.
         }
+    }
+
+    public void Dispose()
+    {
+        pageCts.Cancel();
+        pageCts.Dispose();
     }
 }

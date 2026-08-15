@@ -20,6 +20,10 @@ public class Recipe : IHouseholdOwned
     /// filter — the recipe-side analogue of <see cref="Product.Tags"/>. AI-seeded at save/import,
     /// user-editable. Deleted with the recipe (EF cascade, like Ingredients/Steps).</summary>
     public List<RecipeTag> Tags { get; set; } = [];
+    /// <summary>Relative path (forward-slash, under the data dir) to this recipe's photo, or null. Owned by
+    /// <c>RecipeImageStorage</c> and served household-scoped via <c>/api/recipe-image/{id}</c>. The GUID
+    /// filename changes on every replace, so the served URL busts the browser cache.</summary>
+    public string? ImagePath { get; set; }
     /// <summary>LLM's rough estimated calories per serving (ballpark, not precise nutrition); null if unknown.</summary>
     public int? EstimatedCaloriesPerServing { get; set; }
     /// <summary>Set when this recipe is an "Adapt"-generated variant of another saved recipe (rewritten to

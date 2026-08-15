@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -6,7 +7,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Web.Components.Pages;
+using ShelfAware.Web.Data;
 using ShelfAware.Web.Services;
+using ShelfAware.Web.Tests;
 
 namespace ShelfAware.Web.UI.Tests;
 
@@ -22,13 +25,30 @@ namespace ShelfAware.Web.UI.Tests;
 public class CookbookPageTests : PageTestContext
 {
     private readonly FakeRecipeTagAdvisor _tagAdvisor = new();
+    private readonly StubPhotoLoader _photoLoader = new();
+    private readonly string _imageDir =
+        Path.Combine(Path.GetTempPath(), "shelfaware-cookbook-test", Guid.NewGuid().ToString("N"));
 
     protected override void RegisterAdditionalServices()
     {
-        // The cookbook injects RecipeTagService; register it over the real test store with a scriptable
-        // fake advisor (the AI seam). Base members only here — this runs before the derived ctor body.
+        // The cookbook injects RecipeTagService + the photo seam. Register them over the real test store
+        // with scriptable fakes (the AI + browser seams) and a throwaway on-disk image store. Base members
+        // only here — this runs before the derived ctor body.
         Services.AddSingleton<IRecipeTagAdvisor>(_tagAdvisor);
         Services.AddSingleton(new RecipeTagService(Factory, _tagAdvisor, NullLogger<RecipeTagService>.Instance));
+        Services.AddSingleton<IShelfPhotoLoader>(_photoLoader);
+        Services.AddSingleton(new RecipeImageStorage(
+            new AppPaths(_imageDir, Path.Combine(_imageDir, "receipts")),
+            new FakeCurrentHousehold("hh-test"),
+            NullLogger<RecipeImageStorage>.Instance));
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+        if (!disposing) return;
+        try { Directory.Delete(_imageDir, recursive: true); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or DirectoryNotFoundException) { }
     }
 
     // A product the household has on hand (one recent purchase → not overdue → in stock).
@@ -355,6 +375,65 @@ public class CookbookPageTests : PageTestContext
         cut.WaitForAssertion(() => Assert.Contains("Tagged 2 of 2", cut.Markup));
         using var db = Db.CreateDbContext();
         Assert.Equal(2, db.RecipeTags.Count(t => t.Value == "Dinner"));
+    }
+
+    // ------------------------------------------------------------------ photos
+
+    private void SetImagePathInDb(int recipeId, string path)
+    {
+        using var db = Db.CreateDbContext();
+        var recipe = db.Recipes.First(r => r.Id == recipeId);
+        recipe.ImagePath = path;
+        db.SaveChanges();
+    }
+
+    [Fact]
+    public void A_recipe_with_a_photo_renders_the_image_with_a_cache_buster()
+    {
+        var id = SeedRecipe("Photo Dish", [("Thing", true, null, null)], "Do.");
+        SetImagePathInDb(id, "recipe-images/hh/abc123.jpg");
+
+        var cut = RenderCookbook();
+
+        var src = cut.Find("img.cookbook-photo").GetAttribute("src")!;
+        Assert.Contains($"/api/recipe-image/{id}", src);
+        Assert.Contains("abc123.jpg", src); // ?v cache-buster from the filename, so a replace refetches
+    }
+
+    [Fact]
+    public void A_recipe_without_a_photo_renders_no_image()
+    {
+        SeedRecipe("Plain Dish", [("Thing", true, null, null)], "Do.");
+        var cut = RenderCookbook();
+        Assert.Empty(cut.FindAll("img.cookbook-photo"));
+    }
+
+    [Fact]
+    public void Adding_a_photo_stores_it_and_shows_it()
+    {
+        var id = SeedRecipe("Snap Dish", [("Thing", true, null, null)], "Do.");
+
+        var cut = RenderCookbook();
+        cut.FindComponent<InputFile>().UploadFiles(
+            InputFileContent.CreateFromBinary([1, 2, 3], "photo.jpg", contentType: "image/jpeg"));
+
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("img.cookbook-photo")));
+        using var db = Db.CreateDbContext();
+        Assert.NotNull(db.Recipes.First(r => r.Id == id).ImagePath);
+    }
+
+    [Fact]
+    public void Removing_a_photo_clears_it()
+    {
+        var id = SeedRecipe("Photo Dish", [("Thing", true, null, null)], "Do.");
+        SetImagePathInDb(id, "recipe-images/hh/abc123.jpg");
+
+        var cut = RenderCookbook();
+        cut.Find("button[aria-label='Remove the photo for Photo Dish']").Click();
+
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll("img.cookbook-photo")));
+        using var db = Db.CreateDbContext();
+        Assert.Null(db.Recipes.First(r => r.Id == id).ImagePath);
     }
 }
 

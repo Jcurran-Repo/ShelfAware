@@ -32,6 +32,7 @@ public sealed class UserDataService(
     IHouseholdDbFactory dbFactory,
     ICurrentHousehold currentHousehold,
     ReceiptStorage receiptStorage,
+    RecipeImageStorage recipeImageStorage,
     ISpeechCache? speechCache,
     ILogger<UserDataService> logger)
 {
@@ -93,7 +94,29 @@ public sealed class UserDataService(
         }
 
         await AddReceiptImagesAsync(zip, snapshot.Receipts, ct);
+        await AddRecipeImagesAsync(zip, snapshot.Recipes, ct);
         await AddRecipeAudioAsync(zip, snapshot.Recipes, snapshot.RecipeSteps, ct);
+    }
+
+    /// <summary>Every saved recipe photo, filed under the same relative path its Recipe row carries — so a
+    /// Recipe in data.json points at its own image in the archive. Read through the storage (household-
+    /// guarded, fully fail-soft), and already-compressed, so NoCompression. A missing/unreadable image is
+    /// skipped, not fatal.</summary>
+    private async Task AddRecipeImagesAsync(ZipArchive zip, IReadOnlyList<Recipe> recipes, CancellationToken ct)
+    {
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var recipe in recipes)
+        {
+            if (recipe.ImagePath is not { Length: > 0 } path) continue;
+            ct.ThrowIfCancellationRequested();
+            var image = await recipeImageStorage.ReadAsync(path, ct);
+            if (image is null) continue;
+            var name = ZipFolderFor(path);
+            if (!used.Add(name)) continue;
+            var entry = zip.CreateEntry(name, CompressionLevel.NoCompression);
+            await using var writing = entry.Open();
+            await writing.WriteAsync(image.Value.Bytes, ct);
+        }
     }
 
     /// <summary>Every saved receipt page, filed under the same relative path the row already carries — so
@@ -299,6 +322,9 @@ public sealed class UserDataService(
         // intact but silent.
         await DeleteSavedReceiptImagesAsync(imagePaths, ct);
         await DeleteCachedSpeechAsync(ct);
+        // Recipe photos are always filed under the household folder (no pre-scoping legacy rows exist),
+        // so the whole-tree delete reaches every one — no per-row path list needed.
+        await recipeImageStorage.DeleteHouseholdAsync(ct);
     }
 
     /// <summary>

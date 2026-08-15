@@ -229,6 +229,10 @@ public class HouseholdIsolationTests : IDisposable
                 new AppPaths(dataDir, Path.Combine(dataDir, "receipts")),
                 household,
                 NullLogger<ReceiptStorage>.Instance),
+            new RecipeImageStorage(
+                new AppPaths(dataDir, Path.Combine(dataDir, "receipts")),
+                household,
+                NullLogger<RecipeImageStorage>.Instance),
             null,
             NullLogger<UserDataService>.Instance);
 

@@ -72,6 +72,9 @@ public static class AdditiveSchema
         // 2026-08-15: recipe tags — the cookbook's browsable second axis (like ProductTags for
         // products). A brand-new table is invisible to existing rows.
         EnsureTable(db, table: "RecipeTags");
+
+        // 2026-08-15: an optional photo per recipe (the cookbook). Pre-existing rows get NULL (no photo).
+        EnsureColumn(db, table: "Recipes", column: "ImagePath", definition: "TEXT NULL");
     }
 
     public static void Apply(AuthDbContext db)
