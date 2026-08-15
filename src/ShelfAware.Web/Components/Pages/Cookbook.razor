@@ -3,6 +3,7 @@
 @using ShelfAware.Core.Settings
 @inject IHouseholdDbFactory DbFactory
 @inject IAppSettings Settings
+@inject RecipeTagService TagService
 @inject NavigationManager Nav
 @inject IJSRuntime JS
 @inject ILogger<Cookbook> Logger
@@ -42,23 +43,38 @@
                     </select>
                 </label>
             }
+            @{ var untaggedCount = allRecipes.Count(r => r.Tags.Count == 0); }
+            @if (untaggedCount > 0)
+            {
+                <button type="button" class="secondary cookbook-bulk-tag" @onclick="TagUntagged" disabled="@taggingBusy"
+                        title="Let AI suggest tags for every recipe that has none yet (one short call each).">
+                    @(bulkTagging ? $"Tagging… {bulkDone}/{untaggedCount}" : $"✨ Tag {untaggedCount} untagged")
+                </button>
+            }
         </div>
 
-        @if (filterProductName is { } fn)
+        @if (tagCounts.Count > 0)
         {
-            <p class="filter-banner" role="status">
-                Showing recipes that use <strong>@fn</strong> —
-                <a href="@ClearFilterUri()">show all</a>
-            </p>
+            <div class="tag-cloud" role="group" aria-label="Filter recipes by tag">
+                @foreach (var (value, count) in tagCounts)
+                {
+                    var active = IsActiveTag(value);
+                    <button type="button" class="tag-chip tag-cloud-chip @(active ? "active" : null)"
+                            aria-pressed="@(active ? "true" : "false")" @onclick="() => ToggleTag(value)">
+                        @value <span class="tag-count">@count</span>
+                    </button>
+                }
+            </div>
+        }
+
+        @if (filterProductName is not null || activeTag is not null)
+        {
+            <p class="filter-banner" role="status">@FilterBannerText() — <a href="/cookbook">show all</a></p>
         }
 
         @if (filtered.Count == 0)
         {
-            <p class="muted">
-                @(filterProductName is null
-                    ? "No saved recipes yet — head to Recipes, get some ideas, and Save the ones you like."
-                    : $"No saved recipes use {filterProductName} yet.")
-            </p>
+            <p class="muted">@EmptyMessage()</p>
         }
         else if (Current is { } r)
         {
@@ -92,6 +108,28 @@
                             }
                         </span>
                     </div>
+
+                    <div class="cookbook-tags">
+                        @foreach (var tag in r.Tags.Select(t => t.Value).OrderBy(v => v, StringComparer.CurrentCultureIgnoreCase))
+                        {
+                            <span class="tag-chip">@tag<button type="button" class="tag-x" @onclick="() => RemoveTag(tag)"
+                                    disabled="@taggingBusy" aria-label="Remove tag @tag from @r.Name">×</button></span>
+                        }
+                        <span class="cookbook-tag-add">
+                            <input list="recipe-tag-vocab" placeholder="add a tag" @bind="newTag" @bind:event="oninput"
+                                   @onkeydown="AddTagOnEnter" disabled="@taggingBusy" aria-label="Add a tag to @r.Name" />
+                            <button type="button" class="secondary" @onclick="AddTag"
+                                    disabled="@(taggingBusy || string.IsNullOrWhiteSpace(newTag))">Add</button>
+                            <button type="button" class="secondary" @onclick="SuggestTags" disabled="@taggingBusy"
+                                    title="Let AI suggest tags for this recipe from its name and ingredients">
+                                @(suggesting ? "Suggesting…" : "✨ Suggest tags")
+                            </button>
+                        </span>
+                    </div>
+                    @if (tagNote is not null)
+                    {
+                        <p class="muted small cookbook-tag-note" role="status">@tagNote</p>
+                    }
 
                     @if (r.Blurb is { Length: > 0 } blurb)
                     {
@@ -144,6 +182,13 @@
                     </div>
                 </article>
             </div>
+
+            <datalist id="recipe-tag-vocab">
+                @foreach (var v in tagVocabulary)
+                {
+                    <option value="@v"></option>
+                }
+            </datalist>
 
             @if (readingRecipe is not null)
             {
@@ -232,11 +277,24 @@ else
     private Dictionary<int, string> productNamesById = [];
     private List<(int Id, string Name)> productOptions = [];
 
+    // The recipe tags, counted for the cloud (most-used first), plus the vocabulary for the add datalist.
+    private List<(string Value, int Count)> tagCounts = [];
+    private List<string> tagVocabulary = [];
+
     // The recipes that pass the current filters, in book (alphabetical) order — the deck we page through.
     private List<Recipe> filtered = [];
     private int index;                 // position within `filtered` (0-based)
     private string? filterProductName; // resolved from ?uses, shown in the banner
+    private string? activeTag;         // resolved from ?tag
     private Recipe? readingRecipe;     // the recipe whose read-aloud panel is open (null = none)
+
+    // Tag editing (all through RecipeTagService — the one write path)
+    private string newTag = "";
+    private bool taggingBusy;
+    private bool suggesting;   // the single-recipe "Suggest tags" call is in flight
+    private bool bulkTagging;  // the "Tag N untagged" sweep is in flight
+    private int bulkDone;      // recipes processed so far in the sweep (for progress)
+    private string? tagNote;   // result of the last tag action
 
     private enum PrintTarget { Recipe, Products }
     private PrintTarget printTarget = PrintTarget.Recipe;
@@ -247,15 +305,21 @@ else
     /// that product (Recipe.Uses — the one shared definition).</summary>
     [SupplyParameterFromQuery(Name = "uses")] public int? UsesProductId { get; set; }
 
+    /// <summary>Deep link / tag-cloud filter (/cookbook?tag=Dinner) — scopes the deck to recipes carrying
+    /// that tag. Combines with ?uses (both must match).</summary>
+    [SupplyParameterFromQuery(Name = "tag")] public string? Tag { get; set; }
+
     private Recipe? Current => filtered.Count > 0 ? filtered[Math.Clamp(index, 0, filtered.Count - 1)] : null;
 
     // Makeable when every MAIN ingredient is covered by something on hand — food-family match via
     // IngredientMatcher, exactly as the Recipes page decides it. Seasonings/staples don't count.
     private bool Makeable(Recipe r) => r.IsMakeableWith(onHand);
 
+    private bool IsActiveTag(string value) => string.Equals(activeTag, value, StringComparison.OrdinalIgnoreCase);
+
     protected override async Task OnInitializedAsync() => await LoadAsync();
 
-    // Runs on first render and every query-string change (the ?uses filter) — never on an internal
+    // Runs on first render and every query-string change (the filters) — never on an internal
     // StateHasChanged, so paging with Prev/Next keeps its place while a filter change starts at page one.
     protected override void OnParametersSet()
     {
@@ -268,7 +332,7 @@ else
         await using var db = await DbFactory.CreateDbContextAsync();
         // SQLite can't ORDER BY a DateTimeOffset column; order is applied in ApplyFilters anyway.
         allRecipes = await db.Recipes.AsNoTracking()
-            .Include(r => r.Ingredients).Include(r => r.Steps).ToListAsync();
+            .Include(r => r.Ingredients).Include(r => r.Steps).Include(r => r.Tags).ToListAsync();
         productNamesById = await db.Products.Select(p => new { p.Id, p.Name })
             .ToDictionaryAsync(x => x.Id, x => x.Name);
 
@@ -296,33 +360,64 @@ else
             .OrderBy(x => x.Value, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
 
+        // The tag cloud, counted over ALL recipes (most-used first), and the vocabulary for the add box.
+        tagCounts = allRecipes.SelectMany(r => r.Tags.Select(t => t.Value))
+            .GroupBy(v => v, StringComparer.OrdinalIgnoreCase)
+            .Select(g => (Value: g.Key, Count: g.Count()))
+            .OrderByDescending(x => x.Count).ThenBy(x => x.Value, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+        tagVocabulary = await RecipeTagService.VocabularyAsync(db);
+
         ApplyFilters();
     }
 
     private void ApplyFilters()
     {
         filterProductName = UsesProductId is { } pid && productNamesById.TryGetValue(pid, out var name) ? name : null;
+        activeTag = Tag is { Length: > 0 } ? Tag : null;
 
         IEnumerable<Recipe> q = allRecipes;
         if (filterProductName is { } productName)
         {
             q = q.Where(r => r.Uses(productName));
         }
+        if (activeTag is { } tag)
+        {
+            q = q.Where(r => r.Tags.Any(t => string.Equals(t.Value, tag, StringComparison.OrdinalIgnoreCase)));
+        }
 
         filtered = q.OrderBy(r => r.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
         if (index >= filtered.Count) index = Math.Max(0, filtered.Count - 1);
     }
+
+    private string FilterBannerText() => (filterProductName, activeTag) switch
+    {
+        ({ } p, null) => $"Showing recipes that use {p}",
+        (null, { } t) => $"Showing recipes tagged “{t}”",
+        ({ } p, { } t) => $"Showing recipes tagged “{t}” that use {p}",
+        _ => "Showing all recipes",
+    };
+
+    private string EmptyMessage() => (filterProductName, activeTag) switch
+    {
+        (null, null) => "No saved recipes yet — head to Recipes, get some ideas, and Save the ones you like.",
+        ({ } p, null) => $"No saved recipes use {p} yet.",
+        (null, { } t) => $"No recipes tagged “{t}” yet.",
+        ({ } p, { } t) => $"No recipes tagged “{t}” that use {p}.",
+    };
 
     private int? filterProductId => UsesProductId;
 
     private void Prev()
     {
         if (index > 0) index--;
+        ResetTransient();
     }
 
     private void Next()
     {
         if (index < filtered.Count - 1) index++;
+        ResetTransient();
     }
 
     private void OnKey(KeyboardEventArgs e)
@@ -331,25 +426,123 @@ else
         {
             case "ArrowLeft": Prev(); break;
             case "ArrowRight": Next(); break;
-            case "Home": index = 0; break;
-            case "End": index = Math.Max(0, filtered.Count - 1); break;
+            case "Home": index = 0; ResetTransient(); break;
+            case "End": index = Math.Max(0, filtered.Count - 1); ResetTransient(); break;
         }
+    }
+
+    // The add box and the last tag note belong to the recipe on screen — clear them when it changes.
+    private void ResetTransient()
+    {
+        newTag = "";
+        tagNote = null;
     }
 
     private void OnProductFilterChanged(ChangeEventArgs e)
     {
         var picked = int.TryParse(e.Value?.ToString(), out var id) ? id : (int?)null;
-        Nav.NavigateTo(FilterUri(picked));
+        Nav.NavigateTo(FilterUri(picked, activeTag));
     }
 
-    // Build the /cookbook URL for a given product filter (null = clear it). Kept as one helper so the
-    // dropdown, the banner's "show all" link, and any future tag filter agree on the query shape.
-    private string FilterUri(int? uses) => uses is { } id ? $"/cookbook?uses={id}" : "/cookbook";
+    private void ToggleTag(string tag)
+    {
+        var next = IsActiveTag(tag) ? null : tag; // clicking the active tag clears it
+        Nav.NavigateTo(FilterUri(UsesProductId, next));
+    }
 
-    private string ClearFilterUri() => FilterUri(null);
+    // Build the /cookbook URL for the given filters. One helper so the dropdown, the tag chips, and the
+    // "show all" link agree on the query shape (uses + tag combine).
+    private static string FilterUri(int? uses, string? tag)
+    {
+        var query = new List<string>();
+        if (uses is { } id) query.Add($"uses={id}");
+        if (!string.IsNullOrEmpty(tag)) query.Add($"tag={Uri.EscapeDataString(tag)}");
+        return query.Count == 0 ? "/cookbook" : "/cookbook?" + string.Join("&", query);
+    }
 
     private void StartReading(Recipe r) => readingRecipe = r;
     private void StopReading() => readingRecipe = null;
+
+    // ── Tag editing — every write goes through RecipeTagService, then a reload reflects it ──
+
+    private async Task AddTag()
+    {
+        if (Current is not { } r || taggingBusy || string.IsNullOrWhiteSpace(newTag)) return;
+        taggingBusy = true;
+        tagNote = null;
+        try
+        {
+            var added = await TagService.AddAsync(r.Id, newTag);
+            tagNote = added is null ? "That tag is already there (or blank)." : null;
+            newTag = "";
+            await LoadAsync();
+        }
+        finally { taggingBusy = false; }
+    }
+
+    private async Task AddTagOnEnter(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await AddTag();
+    }
+
+    private async Task RemoveTag(string tag)
+    {
+        if (Current is not { } r || taggingBusy) return;
+        taggingBusy = true;
+        tagNote = null;
+        try
+        {
+            await TagService.RemoveAsync(r.Id, tag);
+            await LoadAsync();
+        }
+        finally { taggingBusy = false; }
+    }
+
+    private async Task SuggestTags()
+    {
+        if (Current is not { } r || taggingBusy) return;
+        taggingBusy = true;
+        suggesting = true;
+        tagNote = null;
+        try
+        {
+            var added = await TagService.SuggestAndApplyAsync(r.Id);
+            tagNote = added.Count > 0
+                ? $"Added: {string.Join(", ", added)}."
+                : "No new tags suggested for this one.";
+            await LoadAsync();
+        }
+        finally { suggesting = false; taggingBusy = false; }
+    }
+
+    // Tag every recipe that has none yet — one short AI call each. The user opts in (it can be many
+    // calls on their key), sees progress, and the result is idempotent-ish: a recipe that gains tags
+    // drops out of "untagged" and won't be re-asked.
+    private async Task TagUntagged()
+    {
+        if (taggingBusy) return;
+        var untagged = allRecipes.Where(r => r.Tags.Count == 0).Select(r => r.Id).ToList();
+        if (untagged.Count == 0) return;
+
+        taggingBusy = true;
+        bulkTagging = true;
+        bulkDone = 0;
+        tagNote = null;
+        var tagged = 0;
+        try
+        {
+            foreach (var id in untagged)
+            {
+                var added = await TagService.SuggestAndApplyAsync(id);
+                if (added.Count > 0) tagged++;
+                bulkDone++;
+                StateHasChanged();
+            }
+            tagNote = $"Tagged {tagged} of {untagged.Count} recipe{(untagged.Count == 1 ? "" : "s")}.";
+            await LoadAsync();
+        }
+        finally { bulkTagging = false; taggingBusy = false; }
+    }
 
     private void PrintRecipe() { printTarget = PrintTarget.Recipe; printPending = true; }
     private void PrintProducts() { printTarget = PrintTarget.Products; printPending = true; }

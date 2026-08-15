@@ -68,6 +68,10 @@ public static class AdditiveSchema
         // created already carries the column (current model); this reaches the deployments whose
         // BugReports table predates it.
         EnsureColumn(db, table: "BugReports", column: "ResolvedAt", definition: "TEXT NULL");
+
+        // 2026-08-15: recipe tags — the cookbook's browsable second axis (like ProductTags for
+        // products). A brand-new table is invisible to existing rows.
+        EnsureTable(db, table: "RecipeTags");
     }
 
     public static void Apply(AuthDbContext db)

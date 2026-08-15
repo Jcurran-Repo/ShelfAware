@@ -2062,6 +2062,26 @@ button.tag-chip {
     margin-top: 0.8rem;
 }
 
+/* Per-recipe tag chips + the add/suggest controls. */
+.cookbook-tags {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0.4rem 0;
+}
+
+.cookbook-tag-add {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    align-items: center;
+}
+
+.cookbook-tag-add input {
+    width: 9rem;
+}
+
 /* The print-only surfaces never show on screen; @media print reveals the chosen one. */
 .cookbook-print {
     display: none;

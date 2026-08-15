@@ -806,6 +806,7 @@ public sealed class DemoDataSeeder(
     private static RecipeIngredient Season(string name, string? quantity = null) =>
         new() { Name = name, IsMain = false, Quantity = quantity };
     private static RecipeStep Step(int order, string text) => new() { Order = order, Text = text };
+    private static RecipeTag Tag(string value) => new() { Value = value };
 
     private static List<Recipe> BuildOriginalRecipes() =>
     [
@@ -816,6 +817,7 @@ public sealed class DemoDataSeeder(
             SavedAt = DateTimeOffset.Now.AddDays(-20),
             TimesEaten = 4,
             EstimatedCaloriesPerServing = 540,
+            Tags = [Tag("Dinner"), Tag("Asian"), Tag("Quick"), Tag("One-Pot")],
             Ingredients =
             [
                 MainIngredient("Chicken breast", "Chicken Breast", "1 lb",
@@ -841,6 +843,7 @@ public sealed class DemoDataSeeder(
             SavedAt = DateTimeOffset.Now.AddDays(-12),
             TimesEaten = 2,
             EstimatedCaloriesPerServing = 610,
+            Tags = [Tag("Dinner"), Tag("Mexican"), Tag("Quick")],
             Ingredients =
             [
                 MainIngredient("Ground beef", "Ground Beef", "1 lb",
@@ -868,6 +871,7 @@ public sealed class DemoDataSeeder(
             SavedAt = DateTimeOffset.Now.AddDays(-6),
             TimesEaten = 1,
             EstimatedCaloriesPerServing = 480,
+            Tags = [Tag("Dinner"), Tag("Italian"), Tag("Pasta"), Tag("Vegetarian")],
             Ingredients =
             [
                 MainIngredient("Spaghetti", "Spaghetti", "12 oz",
@@ -894,6 +898,7 @@ public sealed class DemoDataSeeder(
         SavedAt = DateTimeOffset.Now.AddDays(-3),
         ParentRecipeId = parentId,
         EstimatedCaloriesPerServing = 600,
+        Tags = [Tag("Dinner"), Tag("Asian"), Tag("One-Pot")],
         Ingredients =
         [
             MainIngredient("Chicken thighs", "Chicken Thighs", "1.25 lb"),

@@ -265,10 +265,12 @@ builder.Services.AddSingleton<IShelfPhotoLoader, BrowserShelfPhotoLoader>();
 builder.Services.AddScoped<IPantryStore, EfPantryStore>();
 builder.Services.AddScoped<IPantryChat, AnthropicPantryChat>();
 builder.Services.AddScoped<ITagAdvisor, AnthropicTagAdvisor>();
+builder.Services.AddScoped<IRecipeTagAdvisor, AnthropicRecipeTagAdvisor>();
 builder.Services.AddScoped<IRecipeAdvisor, AnthropicRecipeAdvisor>();
 builder.Services.AddScoped<IProductSubstituteAdvisor, AnthropicProductSubstituteAdvisor>();
 builder.Services.AddScoped<IIngredientAlternativesAdvisor, AnthropicIngredientAlternativesAdvisor>();
 builder.Services.AddScoped<IRecipeAdapter, RecipeAdapter>();
+builder.Services.AddScoped<RecipeTagService>(); // the one recipe-tag write path (cookbook + import)
 
 // Receipts arrive by upload only (the folder inbox was retired 2026-07-22 — an arbitrary-path read the
 // box shouldn't carry once it's shared, and uploads had superseded it). The settings store backs the

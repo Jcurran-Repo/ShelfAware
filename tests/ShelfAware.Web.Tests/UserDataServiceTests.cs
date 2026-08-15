@@ -70,6 +70,7 @@ public class UserDataServiceTests : IDisposable
             Name = "Cereal",
             Ingredients = { new RecipeIngredient { Name = "milk", IsMain = true } },
             Steps = { new RecipeStep { Order = 1, Text = "Pour the milk" } },
+            Tags = { new RecipeTag { Value = "Breakfast" } },
         };
         db.Recipes.Add(cereal);
         db.MealEvents.Add(new MealEvent { Recipe = cereal, AteAt = new DateOnly(2026, 7, 10) });
@@ -100,6 +101,7 @@ public class UserDataServiceTests : IDisposable
         Assert.Equal(0, await db.PurchaseEvents.CountAsync());
         Assert.Equal(0, await db.Recipes.CountAsync());
         Assert.Equal(0, await db.RecipeIngredients.CountAsync());
+        Assert.Equal(0, await db.RecipeTags.CountAsync());
         Assert.Equal(0, await db.MealEvents.CountAsync());
         Assert.Equal(0, await db.SavedReports.CountAsync());
         Assert.Equal(0, await db.Receipts.CountAsync());
@@ -217,6 +219,7 @@ public class UserDataServiceTests : IDisposable
         Assert.Single(export.Products);
         Assert.Equal("Whole Milk", export.Products[0].Name);
         Assert.Single(export.Recipes);
+        Assert.Single(export.RecipeTags);
         Assert.Single(export.MealEvents);
         Assert.Single(export.SavedReports);
         Assert.Single(export.Receipts);

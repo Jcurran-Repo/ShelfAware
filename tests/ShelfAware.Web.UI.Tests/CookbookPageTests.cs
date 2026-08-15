@@ -1,8 +1,12 @@
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using ShelfAware.Core.Domain;
+using ShelfAware.Core.Recipes;
 using ShelfAware.Web.Components.Pages;
+using ShelfAware.Web.Services;
 
 namespace ShelfAware.Web.UI.Tests;
 
@@ -17,6 +21,16 @@ namespace ShelfAware.Web.UI.Tests;
 /// </summary>
 public class CookbookPageTests : PageTestContext
 {
+    private readonly FakeRecipeTagAdvisor _tagAdvisor = new();
+
+    protected override void RegisterAdditionalServices()
+    {
+        // The cookbook injects RecipeTagService; register it over the real test store with a scriptable
+        // fake advisor (the AI seam). Base members only here — this runs before the derived ctor body.
+        Services.AddSingleton<IRecipeTagAdvisor>(_tagAdvisor);
+        Services.AddSingleton(new RecipeTagService(Factory, _tagAdvisor, NullLogger<RecipeTagService>.Instance));
+    }
+
     // A product the household has on hand (one recent purchase → not overdue → in stock).
     private int SeedProduct(string name, Category category = Category.Meat)
     {
@@ -232,5 +246,130 @@ public class CookbookPageTests : PageTestContext
 
         Assert.Empty(cut.FindAll("button[aria-label='Read No Steps aloud']"));
         Assert.Single(cut.FindAll("button[aria-label='Print No Steps']")); // print still offered
+    }
+
+    // ------------------------------------------------------------------ tags
+
+    private void AddTagInDb(int recipeId, params string[] tags)
+    {
+        using var db = Db.CreateDbContext();
+        var recipe = db.Recipes.Include(r => r.Tags).First(r => r.Id == recipeId);
+        foreach (var t in tags) recipe.Tags.Add(new RecipeTag { Value = t });
+        db.SaveChanges();
+    }
+
+    [Fact]
+    public void The_tag_cloud_lists_each_tag_with_its_count()
+    {
+        AddTagInDb(SeedRecipe("Pasta Night", [("Pasta", true, null, null)], "Boil."), "Dinner", "Italian");
+        AddTagInDb(SeedRecipe("Taco Tuesday", [("Beef", true, null, null)], "Cook."), "Dinner", "Mexican");
+
+        var cut = RenderCookbook();
+
+        var cloud = Collapsed(cut.Find(".tag-cloud"));
+        Assert.Contains("Dinner 2", cloud); // shared by both recipes
+        Assert.Contains("Italian 1", cloud);
+        Assert.Contains("Mexican 1", cloud);
+    }
+
+    [Fact]
+    public void Clicking_a_tag_navigates_to_that_tag_filter()
+    {
+        AddTagInDb(SeedRecipe("Pasta Night", [("Pasta", true, null, null)], "Boil."), "Italian");
+
+        var cut = RenderCookbook();
+        cut.FindAll(".tag-cloud button").Single(b => b.TextContent.Contains("Italian")).Click();
+
+        Assert.EndsWith("/cookbook?tag=Italian", Nav.Uri);
+    }
+
+    [Fact]
+    public void Filtering_by_tag_scopes_the_deck()
+    {
+        AddTagInDb(SeedRecipe("Pasta Night", [("Pasta", true, null, null)], "Boil."), "Italian");
+        AddTagInDb(SeedRecipe("Taco Tuesday", [("Beef", true, null, null)], "Cook."), "Mexican");
+
+        Nav.NavigateTo("/cookbook?tag=Italian");
+        var cut = RenderCookbook();
+
+        Assert.Contains("Showing recipes tagged", cut.Find(".filter-banner").TextContent);
+        Assert.Equal("Pasta Night", cut.Find(".cookbook-page h2").TextContent);
+        Assert.DoesNotContain("Taco Tuesday", cut.Markup);
+    }
+
+    [Fact]
+    public void Adding_a_tag_shows_the_chip_and_persists_it()
+    {
+        SeedRecipe("Plain Dish", [("Thing", true, null, null)], "Do it.");
+
+        var cut = RenderCookbook();
+        cut.Find(".cookbook-tag-add input").Input("Dinner"); // @bind:event=oninput
+        cut.FindAll(".cookbook-tag-add button").Single(b => b.TextContent.Trim() == "Add").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("Dinner", Collapsed(cut.Find(".cookbook-tags"))));
+        using var db = Db.CreateDbContext();
+        Assert.Contains("Dinner", db.RecipeTags.Select(t => t.Value).ToList());
+    }
+
+    [Fact]
+    public void Removing_a_tag_deletes_it()
+    {
+        AddTagInDb(SeedRecipe("Plain Dish", [("Thing", true, null, null)], "Do it."), "Dinner");
+
+        var cut = RenderCookbook();
+        cut.Find("button[aria-label='Remove tag Dinner from Plain Dish']").Click();
+
+        cut.WaitForAssertion(() => Assert.DoesNotContain("Dinner", Collapsed(cut.Find(".cookbook-tags"))));
+        using var db = Db.CreateDbContext();
+        Assert.Empty(db.RecipeTags.ToList());
+    }
+
+    [Fact]
+    public void Suggest_tags_applies_the_advisors_suggestions()
+    {
+        _tagAdvisor.Next = ["Dinner", "Italian"];
+        SeedRecipe("Mystery Dish", [("Thing", true, null, null)], "Do it.");
+
+        var cut = RenderCookbook();
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Suggest tags")).Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            var tags = Collapsed(cut.Find(".cookbook-tags"));
+            Assert.Contains("Dinner", tags);
+            Assert.Contains("Italian", tags);
+            Assert.Contains("Added: Dinner, Italian", cut.Markup);
+        });
+    }
+
+    [Fact]
+    public void Tag_untagged_sweeps_every_recipe_without_tags()
+    {
+        _tagAdvisor.Next = ["Dinner"];
+        SeedRecipe("Alpha", [("A", true, null, null)], "Do.");
+        SeedRecipe("Beta", [("B", true, null, null)], "Do.");
+
+        var cut = RenderCookbook();
+        cut.Find(".cookbook-bulk-tag").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("Tagged 2 of 2", cut.Markup));
+        using var db = Db.CreateDbContext();
+        Assert.Equal(2, db.RecipeTags.Count(t => t.Value == "Dinner"));
+    }
+}
+
+/// <summary>A scriptable recipe-tag advisor for the cookbook tests — returns whatever <see cref="Next"/>
+/// is set to (empty by default, so it's inert for tests that don't touch tags), and counts its calls.</summary>
+internal sealed class FakeRecipeTagAdvisor : IRecipeTagAdvisor
+{
+    public IReadOnlyList<string> Next { get; set; } = [];
+    public int Calls { get; private set; }
+
+    public Task<IReadOnlyList<string>> SuggestAsync(
+        string recipeName, IReadOnlyList<string> ingredientNames, IReadOnlyList<string> knownTags,
+        CancellationToken cancellationToken = default)
+    {
+        Calls++;
+        return Task.FromResult(Next);
     }
 }

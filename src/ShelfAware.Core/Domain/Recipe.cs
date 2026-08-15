@@ -16,6 +16,10 @@ public class Recipe : IHouseholdOwned
     public List<RecipeIngredient> Ingredients { get; set; } = [];
     /// <summary>Ordered cooking method (v2) — the content read-aloud steps through.</summary>
     public List<RecipeStep> Steps { get; set; } = [];
+    /// <summary>Descriptive tags (meal, cuisine, diet, dish type) powering the cookbook's tag cloud and
+    /// filter — the recipe-side analogue of <see cref="Product.Tags"/>. AI-seeded at save/import,
+    /// user-editable. Deleted with the recipe (EF cascade, like Ingredients/Steps).</summary>
+    public List<RecipeTag> Tags { get; set; } = [];
     /// <summary>LLM's rough estimated calories per serving (ballpark, not precise nutrition); null if unknown.</summary>
     public int? EstimatedCaloriesPerServing { get; set; }
     /// <summary>Set when this recipe is an "Adapt"-generated variant of another saved recipe (rewritten to

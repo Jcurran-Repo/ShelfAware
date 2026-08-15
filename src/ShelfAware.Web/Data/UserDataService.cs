@@ -57,6 +57,7 @@ public sealed class UserDataService(
             Recipes = await db.Recipes.AsNoTracking().ToListAsync(ct),
             RecipeIngredients = await db.RecipeIngredients.AsNoTracking().ToListAsync(ct),
             RecipeSteps = await db.RecipeSteps.AsNoTracking().ToListAsync(ct),
+            RecipeTags = await db.RecipeTags.AsNoTracking().ToListAsync(ct),
             MealEvents = await db.MealEvents.AsNoTracking().ToListAsync(ct),
             ExcludedFoods = await db.ExcludedFoods.AsNoTracking().ToListAsync(ct),
             GroceryExtras = await db.GroceryExtras.AsNoTracking().ToListAsync(ct),
@@ -242,6 +243,7 @@ public sealed class UserDataService(
             + await db.Recipes.CountAsync(ct)
             + await db.RecipeIngredients.CountAsync(ct)
             + await db.RecipeSteps.CountAsync(ct)
+            + await db.RecipeTags.CountAsync(ct)
             + await db.MealEvents.CountAsync(ct)
             + await db.SavedReports.CountAsync(ct)
             + await db.ExcludedFoods.CountAsync(ct)
@@ -266,6 +268,7 @@ public sealed class UserDataService(
 
         await db.RecipeSteps.ExecuteDeleteAsync(ct);
         await db.RecipeIngredients.ExecuteDeleteAsync(ct);
+        await db.RecipeTags.ExecuteDeleteAsync(ct);  // references Recipe — before its parent, like the two above
         await db.MealEvents.ExecuteDeleteAsync(ct); // references Recipe — before its parent, like the two above
         await db.Recipes.ExecuteDeleteAsync(ct);
         await db.ReceiptLines.ExecuteDeleteAsync(ct);
@@ -359,6 +362,7 @@ public sealed class DataExport
     public IReadOnlyList<Recipe> Recipes { get; init; } = [];
     public IReadOnlyList<RecipeIngredient> RecipeIngredients { get; init; } = [];
     public IReadOnlyList<RecipeStep> RecipeSteps { get; init; } = [];
+    public IReadOnlyList<RecipeTag> RecipeTags { get; init; } = [];
     public IReadOnlyList<MealEvent> MealEvents { get; init; } = [];
     public IReadOnlyList<SavedReport> SavedReports { get; init; } = [];
     public IReadOnlyList<ExcludedFood> ExcludedFoods { get; init; } = [];
