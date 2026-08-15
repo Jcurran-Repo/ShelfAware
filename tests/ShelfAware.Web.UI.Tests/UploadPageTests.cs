@@ -866,4 +866,37 @@ public class UploadPageTests : PageTestContext
         await ingest;
         Assert.Contains("2 file(s) selected", cut.Markup);
     }
+
+    [Fact]
+    public async Task A_refused_append_still_hands_back_fresh_inputs()
+    {
+        // The cap refusal's recovery ("Extract these first, or remove one") ends in another pick —
+        // often a re-snap sharing the refused capture's name (image.jpg), which fires no change
+        // event unless the element is FRESH (the @key rule). Element identity is the observable
+        // half; the browser's same-name suppression itself can't run under bUnit.
+        var cut = RenderUpload();
+        cut.FindComponent<InputFile>().UploadFiles(
+            [.. Enumerable.Range(0, 20).Select(i => Pdf($"r{i}.pdf"))]);
+        var before = cut.FindComponents<InputFile>()[1].Instance;
+
+        await FileEvents.ChangeAsync(cut, 1, "image.jpg"); // would be 21 — refused
+
+        Assert.Contains("please keep it to 20 per upload", cut.Markup);
+        Assert.NotSame(before, cut.FindComponents<InputFile>()[1].Instance);
+    }
+
+    [Fact]
+    public void An_overlarge_selection_still_hands_back_fresh_inputs()
+    {
+        // Same rule on the >MaxFiles-in-one-go refusal: the overlarge pick is the element's value
+        // now, and a corrected re-pick overlapping the same names must fire.
+        var cut = RenderUpload();
+        var before = cut.FindComponents<InputFile>()[0].Instance;
+
+        cut.FindComponent<InputFile>().UploadFiles(
+            [.. Enumerable.Range(0, 21).Select(i => Pdf($"r{i}.pdf"))]);
+
+        cut.WaitForAssertion(() => Assert.Contains("up to 20 files", cut.Markup));
+        Assert.NotSame(before, cut.FindComponents<InputFile>()[0].Instance);
+    }
 }

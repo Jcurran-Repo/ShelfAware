@@ -570,6 +570,8 @@ else if (phase == Phase.Done)
         // change event can already be queued before that render lands. Said out loud rather than
         // silently dropped (item 41's tap-that-looks-ignored class) — and dropping IS right, not
         // queueing: a queued event's handles reference the input the finished ingest replaced.
+        // (No generation bump on this road — the in-flight ingest owns the elements and bumps
+        // when it lands; replacing them here would tear a live stream down.)
         if (ingesting || reading)
         {
             if (ingesting)
@@ -588,12 +590,17 @@ else if (phase == Phase.Done)
         {
             errorMessage = $"Please select up to {MaxPhotos} photos at a time.";
             phase = Phase.Error;
+            // Fresh inputs even on a refusal: the refused pick is still the element's value, and
+            // re-picking the same names (every camera snap is image.jpg) would otherwise fire no
+            // change event at all. Safe here — no ingest is in flight to tear down.
+            pickerGeneration++;
             return;
         }
         if (stagedPhotos.Count + files.Count > MaxPhotos)
         {
             errorMessage = $"That would be {stagedPhotos.Count + files.Count} photos — the reader looks at up to {MaxPhotos} per go. Remove one with its ✕ first.";
             phase = Phase.Error;
+            pickerGeneration++; // same fresh-input rule as above — "✕ one, then re-snap" must fire
             return;
         }
 

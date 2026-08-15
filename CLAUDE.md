@@ -2315,6 +2315,22 @@ bUnit pages/components — see items 31, 42, 43, 45, 46 and 47).
      surviving good photo, dark mode, zero console errors. ⚠️ NOT yet verified on a real iPhone —
      the capture attribute and the same-name re-snap are exactly what only her device can prove;
      first thing to check after the next family publish.
+   - **The pre-merge max-effort `/code-review` (2026-08-15): two findings, both fixed.** The two
+     refusal paths in each page's OnFilesSelected (the >Max single-selection catch and the
+     append-cap check) returned before the finally, so the refused pick stayed as the input
+     element's VALUE — and by this item's own suppression premise, the cap refusal's documented
+     recovery ("remove one with its ✕, snap again") re-produced image.jpg into the same element
+     and fired nothing. Both paths bump pickerGeneration now (the busy-drop deliberately does
+     NOT — the in-flight ingest owns the elements, and its comment says so); pinned per page and
+     per path by component-instance identity (`Assert.NotSame` across the refusal — the observable
+     half of a suppression bUnit can't reproduce), four mutations killing exactly one test each.
+     And the loader-side wording pin covered only "isn't a photo" while its comment claimed the
+     sentence couldn't drift — the advice tail the page fixtures carry verbatim is asserted too
+     now (mutating the tail fails all four theory rows; before, it sailed through green). Security
+     half of the gate: CLEAN — the branch adds no IgnoreQueryFilters, no endpoint, no settings
+     key, no per-household disk write; staged bytes are memory-only and `capture` is not
+     getUserMedia, so `Permissions-Policy: camera=()` stands. **1574 tests green (+4), 0
+     warnings** on a non-incremental Release build, read off the final run.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

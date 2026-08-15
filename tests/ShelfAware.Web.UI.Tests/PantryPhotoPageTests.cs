@@ -1491,6 +1491,37 @@ public class PantryPhotoPageTests : PageTestContext
     }
 
     [Fact]
+    public async Task A_refused_append_still_hands_back_fresh_inputs()
+    {
+        // The cap refusal's own recovery is "✕ one, snap again" — and a re-snap shares the refused
+        // capture's name (image.jpg), which fires no change event unless the element is FRESH (the
+        // @key rule). Element identity is the observable half; the browser's same-name suppression
+        // itself can't run under bUnit.
+        var cut = Render<PantryPhoto>();
+        Upload(cut, 8);
+        var before = cut.FindComponents<InputFile>()[1].Instance;
+
+        await Snap(cut); // would be 9 — refused
+
+        Assert.Contains("would be 9 photos", cut.Markup);
+        Assert.NotSame(before, cut.FindComponents<InputFile>()[1].Instance);
+    }
+
+    [Fact]
+    public void An_overlarge_selection_still_hands_back_fresh_inputs()
+    {
+        // Same rule on the >MaxPhotos-in-one-go refusal: the overlarge pick is the element's value
+        // now, and a corrected re-pick overlapping the same names must fire.
+        var cut = Render<PantryPhoto>();
+        var before = cut.FindComponents<InputFile>()[0].Instance;
+
+        Upload(cut, 9); // GetMultipleFiles(8) refuses the whole selection
+
+        cut.WaitForAssertion(() => Assert.Contains("up to 8 photos", cut.Markup));
+        Assert.NotSame(before, cut.FindComponents<InputFile>()[0].Instance);
+    }
+
+    [Fact]
     public void Start_over_lands_on_an_empty_picker()
     {
         // Reset() clears the staged photos along with everything else — Start over means fresh.

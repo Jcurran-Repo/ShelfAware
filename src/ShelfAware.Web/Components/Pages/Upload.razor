@@ -749,6 +749,8 @@ else if (phase == Phase.Done)
         // than silently dropped (the tap-that-looks-ignored class, item 41) — and dropping IS the
         // right call, not queueing: a queued event's IBrowserFile handles reference the input
         // element the finished ingest just replaced, so honoring it would fail on dead handles.
+        // (No generation bump on this road — the in-flight ingest owns the elements and bumps
+        // when it lands; replacing them here would tear a live stream down.)
         if (ingesting || phase == Phase.Extracting)
         {
             if (ingesting)
@@ -767,12 +769,17 @@ else if (phase == Phase.Done)
         {
             errorMessage = $"Please select up to {MaxFiles} files at a time.";
             phase = Phase.Error;
+            // Fresh inputs even on a refusal: the refused pick is still the element's value, and
+            // re-picking the same names (every camera snap is image.jpg) would otherwise fire no
+            // change event at all. Safe here — no ingest is in flight to tear down.
+            pickerGeneration++;
             return;
         }
         if (stagedFiles.Count + files.Count > MaxFiles)
         {
             errorMessage = $"That would be {stagedFiles.Count + files.Count} files — please keep it to {MaxFiles} per upload. Extract these first, or remove one.";
             phase = Phase.Error;
+            pickerGeneration++; // same fresh-input rule as above — "remove one, then re-snap" must fire
             return;
         }
 
