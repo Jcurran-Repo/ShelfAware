@@ -67,6 +67,7 @@ public class HouseholdIsolationTests : IDisposable
                 SavedAt = DateTimeOffset.Now,
                 Ingredients = [new RecipeIngredient { Name = "milk", IsMain = true }],
                 Steps = [new RecipeStep { Order = 1, Text = "Combine." }],
+                Tags = [new RecipeTag { Value = "Breakfast" }],
             };
             db.Recipes.Add(toast);
             db.MealEvents.Add(new MealEvent { Recipe = toast, AteAt = new DateOnly(2026, 7, 10) });
@@ -85,6 +86,7 @@ public class HouseholdIsolationTests : IDisposable
             Assert.Empty(await db.Recipes.ToListAsync());
             Assert.Empty(await db.RecipeIngredients.ToListAsync());
             Assert.Empty(await db.RecipeSteps.ToListAsync());
+            Assert.Empty(await db.RecipeTags.ToListAsync());
             Assert.Empty(await db.MealEvents.ToListAsync());
             Assert.Empty(await db.SavedReports.ToListAsync());
             Assert.Empty(await db.BugReports.ToListAsync());
@@ -94,6 +96,7 @@ public class HouseholdIsolationTests : IDisposable
         {
             Assert.Single(await db.Products.Include(p => p.Purchases).ToListAsync());
             Assert.Single(await db.Recipes.Include(r => r.Ingredients).Include(r => r.Steps).ToListAsync());
+            Assert.Single(await db.RecipeTags.ToListAsync());
         }
     }
 
@@ -226,6 +229,10 @@ public class HouseholdIsolationTests : IDisposable
                 new AppPaths(dataDir, Path.Combine(dataDir, "receipts")),
                 household,
                 NullLogger<ReceiptStorage>.Instance),
+            new RecipeImageStorage(
+                new AppPaths(dataDir, Path.Combine(dataDir, "receipts")),
+                household,
+                NullLogger<RecipeImageStorage>.Instance),
             null,
             NullLogger<UserDataService>.Instance);
 

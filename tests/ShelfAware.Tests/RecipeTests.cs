@@ -75,4 +75,39 @@ public class RecipeTests
         var missing = r.MissingMains([P("Chicken Breast Tenderloins")]).Select(i => i.Name).ToList();
         Assert.Equal(["potatoes"], missing);
     }
+
+    // Uses(productName) is the one definition of "recipes that use X" — shared by the Recipes page's
+    // ?uses filter and the Cookbook's product filter, so the two surfaces can't disagree.
+
+    [Fact]
+    public void Uses_matches_the_grounded_product_name_case_insensitively()
+    {
+        var r = new Recipe
+        {
+            Name = "Chicken Dinner",
+            Ingredients =
+            [
+                new RecipeIngredient { Name = "chicken breast", IsMain = true, MatchedProduct = "Chicken Breast" },
+                new RecipeIngredient { Name = "salt", IsMain = false },
+            ],
+        };
+
+        Assert.True(r.Uses("Chicken Breast"));
+        Assert.True(r.Uses("chicken breast"));
+        Assert.False(r.Uses("Broccoli"));
+    }
+
+    [Fact]
+    public void Uses_is_about_the_grounded_product_not_the_ingredient_name()
+    {
+        // The ingredient is literally named "salt", but it's grounded to no product — so a product filter
+        // for "salt" must NOT surface this recipe. Pins that Uses reads MatchedProduct, not Name.
+        var r = new Recipe
+        {
+            Name = "Soup",
+            Ingredients = [new RecipeIngredient { Name = "salt", IsMain = false, MatchedProduct = null }],
+        };
+
+        Assert.False(r.Uses("salt"));
+    }
 }

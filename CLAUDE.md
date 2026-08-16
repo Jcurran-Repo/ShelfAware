@@ -2449,6 +2449,104 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48 and 49).
      bites). **1576 tests green, 0 warnings** on a non-incremental Release build, read off the
      final run.
 
+50. **v5.0 — The Cookbook (2026-08-15, branch `feature/recipe-book` — built + reviewed, ✅ NOT pushed;
+   1660 green / 0 warnings on a non-incremental Release build).** Jordan's ask: a recipe-book carousel with
+   print + upload, automatic loading of in-app recipes, audio playback, and tag/category cloud filtering —
+   plus his mid-flight add, filtering by specific products. Four phases, one commit each; the whole branch
+   then went through the `/pre-push` gate. As-built decisions the code can't say:
+   - **`/cookbook` is the browse/read/print surface; `/recipes` stays the "what can I make / manage"
+     workflow.** Deliberately NOT merged into /recipes (feature-rich, well-tested — reworking it was the
+     high-risk path). An accessible carousel: explicit Prev/Next + Arrow-key paging on the focusable region,
+     a live "<name> — N of M" announcement, each recipe a real `<article>`, a motion-safe page-in animation,
+     no auto-advance, alphabetical order. Audio reuses `RecipeReadAloud` (button-only "Read it to me").
+   - ⚠️ **One definition, shared with /recipes (the top directive):** `Recipe.Uses(productName)` is THE
+     "recipes that use X" predicate (both surfaces' product filters call it; /recipes' local predicate
+     delegates); `RecipeFormat.Line` is THE ingredient-line wording (/recipes' `Qty` delegates; the cookbook
+     and printed products list call it); makeability/on-hand is `PantryOnHand.EdibleInStock` +
+     `IngredientMatcher` on both pages with identical Includes, so the chip and ✓/🛒 marks can't drift.
+   - **Print = two hidden print-only surfaces** (the recipe card, and a products shopping list with amounts +
+     on-hand ticks) chosen just before `window.print()` via a render-then-print pass (printPending →
+     OnAfterRenderAsync); scoped under `.cookbook-root` so the GLOBAL `@media print` rules hide this page's
+     chrome without touching other printable pages.
+   - **Tags: a new `RecipeTag` table through the full tenancy drill** (filter + stamping,
+     `AdditiveSchema.EnsureTable`, export + DTO, delete-my-data, CountAll, isolation). The dedup POLICY moved
+     into `TagVocabulary.Canonicalize` — ONE definition shared by product tags and recipe tags
+     (`RecipeTagVocabulary`), a behaviour-preserving extract. `RecipeTagService` (Web) is THE recipe-tag
+     write path (AI suggest, manual add/remove). **Tags are managed entirely on the cookbook** (cloud filter
+     + `?tag=` combining with `?uses=`, per-recipe add/remove/✨-suggest, a "tag untagged" sweep) — /recipes'
+     save path is UNTOUCHED (lower risk than threading AI into it). Demo recipes seeded with tags.
+     `IRecipeTagAdvisor`/`AnthropicRecipeTagAdvisor` (lightweight Haiku, fail-open).
+   - **Photos: the security-sensitive phase.** `RecipeImageStorage` (per-household disk tree mirroring
+     `ReceiptStorage`; `Within` path-escape guard, delete + export reach) + `Recipe.ImagePath` (AdditiveSchema
+     column) + the app's first DYNAMIC image endpoint **`GET /api/recipe-image/{id:int}`**. ⚠️ **It scopes to
+     the CALLER's household**: the recipe is looked up through `IHouseholdDbFactory` (household-filtered),
+     `ImagePath` read from that row (NEVER the request), and a foreign/nonexistent id returns an identical
+     404 — no cross-household read, no existence oracle. `.RequireAuthorization()`, under `/api` (401/403 not
+     a redirect), `Cache-Control: private`, the GUID filename doubles as the `?v=` cache-buster. Add/replace/
+     remove uses the census teardown discipline (cancellable read, uncancellable write; old file deleted only
+     after the row repoints).
+   - **Import: photo→vision and text→parse** (`IRecipeImporter`/`AnthropicRecipeImporter`, the receipt-
+     extractor machinery — strict schema, validate-retry-once, defensive parse). ⚠️ The schema's **`found`
+     flag is the anti-hallucination floor** (a photo/paste with no recipe fails, authoritative even if a name
+     slips through). Always an editable REVIEW before save (`/cookbook/import`). A photo import keeps that
+     photo as the recipe's picture. ⚠️ **Save is atomic-ish: photo written FIRST, then the recipe created
+     with `ImagePath` in ONE insert** — a review fix; the first version committed the row then wrote the
+     photo, so a second-write failure reported a false "couldn't save" and a retry duplicated the recipe.
+   - **The `/pre-push` gate.** Security review **CLEAN** — probe-verified (11 traversal vectors refused incl.
+     a rooted absolute path; endpoint household-scoping traced; no new `IgnoreQueryFilters`, no raw
+     `IDbContextFactory`, no new settings key). Code review found **no High defect** (shared-definition
+     discipline + tenancy mutation-checked) and three fixes, all applied: ⚠️ [Med] the cookbook's tag/photo
+     write handlers had no `catch` (a transient DB/IO error tore down the circuit — item 27's class; fixed to
+     the catch-and-say-so pattern its siblings use); [Low-Med] the non-atomic import save above; [Low] the
+     `AnthropicRecipeTagAdvisor` "NONE" sentinel was exact-match so a "NONE." reply stored a literal "NONE"
+     tag (normalized). The same bug in the pre-existing `AnthropicProductSubstituteAdvisor` is flagged for its
+     own change.
+   - **Live-verified end to end** (dev sandbox, real AI, alt port 5180): tag add→cloud→`?tag=` filter, print
+     blocks hidden on screen + populated, the photo flow through the REAL endpoint (200, image/jpeg, `private`
+     cache, resized bytes) with a **foreign recipe id → 404**, and a REAL text import ("Garlic Butter Pasta" —
+     5 ingredients with amounts + main flags, 3 steps, 3 AI tags) saved and landed in the cookbook. Zero
+     console/server errors.
+   - **1660 tests green, 0 warnings** (1600 on master; +60). Every new test mutation-checked; five mutation
+     rounds across the arc + the review fixes. ⚠️ **Unpushed — six commits on `feature/recipe-book`, Jordan's
+     call to push/merge.** The merged-master build-state, the "Beyond the spec's 3 pages" list, and the "1600
+     green" figure above are deliberately UNCHANGED here (they are the merged-master truth — finalize at merge,
+     adding `/cookbook` + `/cookbook/import` to the pages list and the new green count then).
+   - **Carousel → subtle-peek drag/swipe shelf (2026-08-15, same branch — the sixth commit).** The Prev/Next
+     button carousel became a CSS scroll-snap **preview shelf** (one read-only preview per recipe; the centred
+     one at full emphasis, neighbours peeking at scale .92 / opacity .5) over a **stable detail panel** that
+     renders the centred recipe with EVERY interactive control. ⚠️ **The detail panel is the ONE home of the
+     fixed-id photo `<InputFile id="cookbook-photo">` + tag `<datalist id="recipe-tag-vocab">`** — that split IS
+     the design (N full cards in the track would duplicate those ids and pit three tag boxes/readers against
+     each other for focus). `index` (position in `filtered`) stays .NET's single source of truth → drives
+     `Current` → the detail panel + print blocks.
+     - **`wwwroot/js/cookbook-carousel.js`** (same-origin ES module, strict-CSP clean): mouse click-drag via
+       pointer events; a scroll-settle nearest-centre report to .NET (`OnCentered(i)`, `Math.Clamp`'d);
+       `scrollToIndex(i, smooth)` for keyboard/click/filter-reset. Touch + trackpad swipe come FREE from
+       scroll-snap — the module only adds what they don't.
+     - ⚠️ **Bidirectional sync loop guard:** a report NEVER scrolls (`OnCentered` never requests one), and a
+       programmatic `scrollToIndex` pre-sets `lastReported` so the scroll IT causes is short-circuited in
+       `report()`. Don't add a scroll to `OnCentered` or the two ping-pong. `_pendingScroll` is applied in
+       `OnAfterRenderAsync` (so it survives the first render before the module loads); `_shelfWired` rebinds the
+       module when the deck empties→refills (the shelf element is recreated then).
+     - Accessibility kept: arrow keys + Home/End on the focusable shelf (the module `preventDefault`s those keys
+       so the container doesn't ALSO scroll natively — ⚠️ **Tab is deliberately NOT in that list**, so focus can
+       still leave the shelf), the "N of M" `role=status` live region, `aria-current` on the centre; previews are
+       `tabindex=-1` options (one tab stop, not one per recipe). `prefers-reduced-motion` gates the transition +
+       the detail fade AND the JS smooth-scroll.
+     - Shared-definition directive: `MakeableChipClass`/`MakeableChipLabel`/`SortedTagValues` centralize what the
+       preview + detail both show (the chip class+label, the tag sort), so the two surfaces can't drift.
+     - **`/pre-push` gate (two independent review agents):** security **CLEAN** — UI/JS/CSS only, no new
+       DbContext / `IgnoreQueryFilters` / endpoint / settings-key / per-household disk-write; the one
+       `[JSInvokable]` is a clamped int, no XSS/`MarkupString`. Code review clean (no high/med); its 4 LOW + 2
+       nits all folded in: `_shelfWired`-before-await (re-entrant double-init), `JSException` on module load
+       degrades gracefully (keyboard still pages), the off-window `buttons===0` drag guard, `OnCentered` tests
+       (move/dedup/clamp, mutation-checked), and the shared helpers above.
+     - **1676 green, 0 warnings** on a non-incremental Release build (+6 cookbook tests: 24→30). bUnit runs no
+       real JS, so the drag/scroll/keydown are **live-verified only** (fresh Release server, `/dev/login`): peek
+       styling, mouse drag + click-suppression + the off-window guard, arrow/Home/End + boundary, click-a-preview,
+       filter scope+reset, dark mode via tokens, mobile 375 px with no horizontal page scroll, no console/CSP
+       errors. ⚠️ Still UNPUSHED — Jordan's call.
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active

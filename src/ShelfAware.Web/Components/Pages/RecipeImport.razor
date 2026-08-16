@@ -1,0 +1,364 @@
+@page "/cookbook/import"
+@implements IDisposable
+@using ShelfAware.Core.Recipes
+@inject IRecipeImporter Importer
+@inject IShelfPhotoLoader PhotoLoader
+@inject RecipeImageStorage Images
+@inject IHouseholdDbFactory DbFactory
+@inject NavigationManager Nav
+@inject ILogger<RecipeImport> Logger
+
+<PageTitle>Add a recipe — Shelf Aware</PageTitle>
+
+<div class="page-head">
+    <h1>Add a recipe</h1>
+    <a class="tag-chip" href="/cookbook">← Back to the cookbook</a>
+</div>
+
+<p class="recipe-disclaimer" role="note">
+    ⚠️ The AI reads what you give it — <strong>always check the result</strong> before saving, especially
+    amounts and ingredient labels. Nothing is saved until you review it below.
+</p>
+
+@if (phase == Phase.Choose || phase == Phase.Error)
+{
+    <section class="panel">
+        <h2>From a photo</h2>
+        <p class="muted">A recipe card, a cookbook page, a handwritten note, or a screenshot.</p>
+        @* Input precedes its label (the .file-button sibling pattern); @key gives a fresh input per pick. *@
+        <InputFile @key="@($"import-photo-{photoGeneration}")" id="import-photo" OnChange="OnPhotoSelected"
+                   accept="image/*" disabled="@importing" class="visually-hidden"
+                   aria-label="Choose a photo of a recipe" />
+        <label class="file-button" for="import-photo">📷 @(photoBytes is null ? "Choose a photo" : "Change photo")</label>
+        @if (photoBytes is not null)
+        {
+            <p class="muted" role="status">Photo ready@(photoName is { Length: > 0 } n ? $": {n}" : "") — it'll become the recipe's picture.</p>
+        }
+
+        <h2>…or paste the text</h2>
+        <p class="muted">Copied from a website, a note, or a message.</p>
+        <textarea class="import-paste" @bind="pastedText" @bind:event="oninput" rows="6" disabled="@importing"
+                  placeholder="Paste a recipe here…" aria-label="Paste recipe text"></textarea>
+
+        @if (error is not null)
+        {
+            <p class="error" role="alert">@error</p>
+        }
+
+        <div class="import-actions">
+            <button @onclick="Import" disabled="@(importing || !CanImport)">
+                @(importing ? "Reading…" : "Import recipe")
+            </button>
+        </div>
+    </section>
+}
+else if (phase == Phase.Reading)
+{
+    <section class="panel">
+        <p class="spinner" role="status">Reading the recipe… this usually takes a few seconds.</p>
+    </section>
+}
+else if (phase == Phase.Review && draft is not null)
+{
+    <section class="panel">
+        <h2>Check it over</h2>
+        <p class="muted">Fix anything the AI got wrong, then save. Amounts especially.</p>
+
+        <label class="field">
+            <span>Name</span>
+            <input @bind="draft.Name" aria-label="Recipe name" />
+        </label>
+        <label class="field">
+            <span>Blurb (optional)</span>
+            <input @bind="draft.Blurb" aria-label="Blurb" />
+        </label>
+        <label class="field">
+            <span>Calories per serving (optional)</span>
+            <input type="number" min="0" @bind="draft.Calories" aria-label="Calories per serving" />
+        </label>
+
+        <h3 class="cookbook-subhead">Ingredients</h3>
+        @foreach (var ing in draft.Ingredients)
+        {
+            <div class="import-ingredient-row">
+                <input class="import-qty" placeholder="amount" @bind="ing.Quantity" aria-label="Amount" />
+                <input class="import-name" placeholder="ingredient" @bind="ing.Name" aria-label="Ingredient" />
+                <label class="import-main"><input type="checkbox" @bind="ing.IsMain" /> main</label>
+                <button type="button" class="icon-btn" @onclick="() => draft.Ingredients.Remove(ing)"
+                        aria-label="Remove @(string.IsNullOrWhiteSpace(ing.Name) ? "ingredient" : ing.Name)">
+                    <span aria-hidden="true">🗑</span>
+                </button>
+            </div>
+        }
+        <button type="button" class="secondary" @onclick="AddIngredient">+ Add ingredient</button>
+
+        <h3 class="cookbook-subhead">Method</h3>
+        @for (var i = 0; i < draft.Steps.Count; i++)
+        {
+            var step = draft.Steps[i];
+            var n = i + 1;
+            <div class="import-step-row">
+                <span class="import-step-no">@n.</span>
+                <textarea rows="2" @bind="step.Text" aria-label="Step @n"></textarea>
+                <button type="button" class="icon-btn" @onclick="() => draft!.Steps.Remove(step)"
+                        aria-label="Remove step @n"><span aria-hidden="true">🗑</span></button>
+            </div>
+        }
+        <button type="button" class="secondary" @onclick="AddStep">+ Add step</button>
+
+        <h3 class="cookbook-subhead">Tags</h3>
+        <div class="cookbook-tags">
+            @foreach (var tag in draft.Tags.ToList())
+            {
+                <span class="tag-chip">@tag<button type="button" class="tag-x" @onclick="() => draft!.Tags.Remove(tag)"
+                        aria-label="Remove tag @tag">×</button></span>
+            }
+            <span class="cookbook-tag-add">
+                <input @bind="newTag" @bind:event="oninput" @onkeydown="AddTagOnEnter"
+                       placeholder="add a tag" aria-label="Add a tag" />
+                <button type="button" class="secondary" @onclick="AddDraftTag"
+                        disabled="@string.IsNullOrWhiteSpace(newTag)">Add</button>
+            </span>
+        </div>
+
+        @if (error is not null)
+        {
+            <p class="error" role="alert">@error</p>
+        }
+
+        <div class="import-actions">
+            <button @onclick="Save" disabled="@(saving || string.IsNullOrWhiteSpace(draft.Name))">
+                @(saving ? "Saving…" : "Save recipe")
+            </button>
+            <button type="button" class="secondary" @onclick="StartOver" disabled="@saving">Start over</button>
+        </div>
+    </section>
+}
+else if (phase == Phase.Done)
+{
+    <section class="panel">
+        <p class="picked-banner" role="status">✅ Saved <strong>@savedName</strong> to your cookbook.</p>
+        <div class="import-actions">
+            <a class="tag-chip" href="/cookbook">Go to the cookbook</a>
+            <button type="button" class="secondary" @onclick="StartOver">Add another</button>
+        </div>
+    </section>
+}
+
+@code {
+    private enum Phase { Choose, Reading, Review, Done, Error }
+    private Phase phase = Phase.Choose;
+
+    private readonly CancellationTokenSource pageCts = new();
+
+    // Choose-phase inputs
+    private byte[]? photoBytes;
+    private string? photoMediaType;
+    private string? photoName;
+    private int photoGeneration;
+    private string pastedText = "";
+    private bool importing;
+
+    // Review-phase draft
+    private Draft? draft;
+    private string newTag = "";
+    private bool saving;
+    private string? savedName;
+
+    private string? error;
+
+    private bool CanImport => photoBytes is not null || !string.IsNullOrWhiteSpace(pastedText);
+
+    private sealed class Draft
+    {
+        public string Name = "";
+        public string? Blurb;
+        public int? Calories;
+        public List<DraftIngredient> Ingredients = [];
+        public List<DraftStep> Steps = [];
+        public List<string> Tags = [];
+    }
+
+    private sealed class DraftIngredient
+    {
+        public string Name = "";
+        public string? Quantity;
+        public bool IsMain = true;
+    }
+
+    private sealed class DraftStep
+    {
+        public string Text = "";
+    }
+
+    // ── Choose: stage a photo, or import (photo takes precedence over pasted text) ──
+
+    private async Task OnPhotoSelected(InputFileChangeEventArgs e)
+    {
+        if (importing) return;
+        error = null;
+        var ct = pageCts.Token; // captured once, before the first await
+        try
+        {
+            var result = await PickedFileReader.ReadPhotoAsync(PhotoLoader, e.File, ct, Logger);
+            switch (result.Kind)
+            {
+                case PickedFileReader.Kind.Loaded:
+                    photoBytes = result.Bytes;
+                    photoMediaType = result.MediaType;
+                    photoName = e.File.Name;
+                    break;
+                case PickedFileReader.Kind.Refused:
+                case PickedFileReader.Kind.Failed:
+                    error = result.Message ?? "Couldn't read that image.";
+                    break;
+                // TornDown / ConnectionLost: the page is going or the circuit dropped — say nothing.
+            }
+        }
+        finally
+        {
+            photoGeneration++; // fresh input so re-picking the same file fires a change
+        }
+    }
+
+    private async Task Import()
+    {
+        if (importing || !CanImport) return;
+        importing = true;
+        error = null;
+        phase = Phase.Reading;
+        try
+        {
+            // A staged photo wins — it's the richer source, and it becomes the recipe's picture on save.
+            var result = photoBytes is not null
+                ? await Importer.ImportFromImageAsync(new RecipePhoto(photoBytes, photoMediaType!), pageCts.Token)
+                : await Importer.ImportFromTextAsync(pastedText, pageCts.Token);
+
+            if (result.Success && result.Recipe is { } r)
+            {
+                draft = ToDraft(r);
+                phase = Phase.Review;
+            }
+            else
+            {
+                error = result.Error ?? "Couldn't read a recipe from that.";
+                phase = Phase.Error;
+            }
+        }
+        catch (OperationCanceledException) { /* navigated away mid-read */ }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Recipe import failed.");
+            error = "Something went wrong reading that — please try again.";
+            phase = Phase.Error;
+        }
+        finally { importing = false; }
+    }
+
+    private static Draft ToDraft(ImportedRecipe r) => new()
+    {
+        Name = r.Name,
+        Blurb = r.Blurb,
+        Calories = r.CaloriesPerServing,
+        Ingredients = r.Ingredients
+            .Select(i => new DraftIngredient { Name = i.Name, Quantity = i.Quantity, IsMain = i.IsMain }).ToList(),
+        Steps = r.Steps.Select(s => new DraftStep { Text = s }).ToList(),
+        Tags = r.Tags.ToList(),
+    };
+
+    // ── Review: edit the draft ──
+
+    private void AddIngredient() => draft?.Ingredients.Add(new DraftIngredient());
+    private void AddStep() => draft?.Steps.Add(new DraftStep());
+
+    private void AddDraftTag()
+    {
+        var tag = newTag.Trim();
+        newTag = "";
+        if (draft is null || tag.Length == 0) return;
+        if (!draft.Tags.Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase)))
+            draft.Tags.Add(tag);
+    }
+
+    private void AddTagOnEnter(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") AddDraftTag();
+    }
+
+    // ── Save: build the recipe, canonicalize its tags, and (for a photo import) keep the photo ──
+
+    private async Task Save()
+    {
+        if (draft is not { } d || saving || string.IsNullOrWhiteSpace(d.Name)) return;
+        saving = true;
+        error = null;
+
+        // The photo (if any) is written FIRST, so the recipe row is created already pointing at it in ONE
+        // insert. There's no window where the row is committed but the "couldn't save" message shows — a
+        // window whose retry would create a DUPLICATE recipe. If the insert then fails, the just-written
+        // photo is the only thing to undo, and no recipe exists, so a retry is clean. A WRITE, so
+        // CancellationToken.None (nothing here is cancellable — the read happened back on the Choose step).
+        string? imagePath = null;
+        try
+        {
+            if (photoBytes is not null)
+                imagePath = await Images.SaveAsync(photoBytes, photoMediaType!, CancellationToken.None);
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var recipe = new Recipe
+            {
+                Name = d.Name.Trim(),
+                Blurb = string.IsNullOrWhiteSpace(d.Blurb) ? null : d.Blurb!.Trim(),
+                SavedAt = DateTimeOffset.Now,
+                EstimatedCaloriesPerServing = d.Calories,
+                ImagePath = imagePath,
+                Ingredients = d.Ingredients
+                    .Where(i => !string.IsNullOrWhiteSpace(i.Name))
+                    .Select(i => new RecipeIngredient
+                    {
+                        Name = i.Name.Trim(),
+                        Quantity = string.IsNullOrWhiteSpace(i.Quantity) ? null : i.Quantity!.Trim(),
+                        IsMain = i.IsMain,
+                    }).ToList(),
+                Steps = d.Steps
+                    .Where(s => !string.IsNullOrWhiteSpace(s.Text))
+                    .Select((s, idx) => new RecipeStep { Order = idx + 1, Text = s.Text.Trim() }).ToList(),
+            };
+            // Tags canonicalize through the shared vocabulary — the same apply path the cookbook uses.
+            var vocabulary = await RecipeTagService.VocabularyAsync(db);
+            RecipeTagVocabulary.ApplyTags(recipe, d.Tags, vocabulary);
+            db.Recipes.Add(recipe);
+            await db.SaveChangesAsync();
+
+            savedName = d.Name.Trim();
+            phase = Phase.Done;
+        }
+        catch (Exception ex)
+        {
+            // The recipe row didn't commit, so nothing partial exists and a retry is clean — undo only the
+            // orphaned photo we wrote ahead of the failed insert. Stay on Review so the draft isn't lost.
+            if (imagePath is not null) Images.Delete(imagePath);
+            Logger.LogError(ex, "Saving an imported recipe failed.");
+            error = "Couldn't save the recipe — please try again.";
+        }
+        finally { saving = false; }
+    }
+
+    private void StartOver()
+    {
+        phase = Phase.Choose;
+        photoBytes = null;
+        photoMediaType = null;
+        photoName = null;
+        pastedText = "";
+        draft = null;
+        newTag = "";
+        error = null;
+    }
+
+    public void Dispose()
+    {
+        pageCts.Cancel();
+        pageCts.Dispose();
+    }
+}

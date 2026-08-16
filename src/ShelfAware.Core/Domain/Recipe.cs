@@ -16,6 +16,14 @@ public class Recipe : IHouseholdOwned
     public List<RecipeIngredient> Ingredients { get; set; } = [];
     /// <summary>Ordered cooking method (v2) — the content read-aloud steps through.</summary>
     public List<RecipeStep> Steps { get; set; } = [];
+    /// <summary>Descriptive tags (meal, cuisine, diet, dish type) powering the cookbook's tag cloud and
+    /// filter — the recipe-side analogue of <see cref="Product.Tags"/>. AI-seeded at save/import,
+    /// user-editable. Deleted with the recipe (EF cascade, like Ingredients/Steps).</summary>
+    public List<RecipeTag> Tags { get; set; } = [];
+    /// <summary>Relative path (forward-slash, under the data dir) to this recipe's photo, or null. Owned by
+    /// <c>RecipeImageStorage</c> and served household-scoped via <c>/api/recipe-image/{id}</c>. The GUID
+    /// filename changes on every replace, so the served URL busts the browser cache.</summary>
+    public string? ImagePath { get; set; }
     /// <summary>LLM's rough estimated calories per serving (ballpark, not precise nutrition); null if unknown.</summary>
     public int? EstimatedCaloriesPerServing { get; set; }
     /// <summary>Set when this recipe is an "Adapt"-generated variant of another saved recipe (rewritten to
@@ -51,4 +59,13 @@ public class Recipe : IHouseholdOwned
     /// <summary>The MAIN ingredients not currently covered by anything on hand — what you'd need to buy.</summary>
     public IEnumerable<RecipeIngredient> MissingMains(IReadOnlyCollection<PantryProduct> onHand) =>
         MainIngredients.Where(i => !i.IsSatisfiedBy(onHand));
+
+    /// <summary>True when an ingredient of this recipe is grounded to the named catalog product — its
+    /// save-time <see cref="RecipeIngredient.MatchedProduct"/>. This is the single definition of "recipes
+    /// that use X" that both the Recipes page's <c>?uses=</c> filter and the cookbook's product filter ask,
+    /// so the two surfaces can't drift on what "uses" means. It matches the grounded product NAME only —
+    /// deliberately narrower than the food-family makeability rule: it answers "which product did this
+    /// recipe map this ingredient to", not "what could stand in for it".</summary>
+    public bool Uses(string productName) =>
+        Ingredients.Any(i => string.Equals(i.MatchedProduct, productName, StringComparison.OrdinalIgnoreCase));
 }

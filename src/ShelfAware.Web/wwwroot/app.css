@@ -1999,6 +1999,281 @@ button.tag-chip {
     padding: 0.5rem 0.8rem;
 }
 
+/* ─────────────────────────────── Cookbook (recipe carousel) ─────────────────────────────── */
+.cookbook-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: flex-end;
+    margin-bottom: 0.8rem;
+}
+
+.cookbook-product-filter {
+    margin: 0;
+}
+
+/* Which recipe is centred — announced above the shelf (a live region). */
+.cookbook-position {
+    margin: 0 0 0.6rem;
+    text-align: center;
+    color: var(--ink-soft);
+}
+
+.cookbook-position strong {
+    color: var(--ink);
+}
+
+/* The preview shelf: a horizontal scroll-snap track of recipe previews. Touch + trackpad swipe come free
+   from scroll-snap; mouse click-drag and centre-reporting come from /js/cookbook-carousel.js. The centred
+   preview is emphasised; its neighbours peek at a smaller scale + softer opacity. */
+.cookbook-shelf-wrap {
+    position: relative;
+    margin-bottom: 1rem;
+}
+
+.cookbook-shelf {
+    --card-w: min(20rem, 74vw);
+    display: flex;
+    gap: 1rem;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    /* Half the shelf minus half a card, so the first and last previews can reach the centre and their
+       neighbours peek in from the edge. */
+    padding: 1rem calc(50% - var(--card-w) / 2);
+    /* Fade the previews out at both edges rather than hard-clipping them. */
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent);
+    mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent);
+    scrollbar-width: none;
+}
+
+.cookbook-shelf::-webkit-scrollbar {
+    display: none;
+}
+
+/* Focusable (the arrow keys page it) — the ring shows it's focused. */
+.cookbook-shelf:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: var(--radius);
+}
+
+/* While a mouse drag is in progress: suspend snap so the drag moves freely (it re-engages on release and
+   snaps to the nearest preview), and suppress text selection + show a grabbing cursor. */
+.cookbook-shelf.is-dragging {
+    scroll-snap-type: none;
+    cursor: grabbing;
+    user-select: none;
+}
+
+.cookbook-preview {
+    scroll-snap-align: center;
+    flex: 0 0 var(--card-w);
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    text-align: left;
+    padding: 0.8rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    color: var(--ink);
+    font: inherit;
+    cursor: pointer;
+    /* Neighbours peek: smaller + softer. The centred preview overrides both below. */
+    opacity: 0.5;
+    transform: scale(0.92);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .cookbook-preview {
+        transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+}
+
+.cookbook-preview.is-current {
+    opacity: 1;
+    transform: scale(1);
+    border-color: var(--accent);
+    cursor: default;
+}
+
+.cookbook-preview-photo {
+    width: 100%;
+    aspect-ratio: 3 / 2;
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--surface-alt);
+    display: grid;
+    place-items: center;
+}
+
+.cookbook-preview-photo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.cookbook-preview-photo.is-placeholder span {
+    font-size: 2.4rem;
+    opacity: 0.5;
+}
+
+.cookbook-preview-name {
+    font-weight: 600;
+    font-size: 1.05rem;
+}
+
+.cookbook-preview-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    align-items: center;
+}
+
+.cookbook-preview-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+}
+
+.cookbook-badges {
+    display: inline-flex;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.cookbook-subhead {
+    margin: 0.6rem 0 0.2rem;
+    font-size: 1rem;
+}
+
+.cookbook-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.8rem;
+}
+
+/* Per-recipe tag chips + the add/suggest controls. */
+.cookbook-tags {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0.4rem 0;
+}
+
+.cookbook-tag-add {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    align-items: center;
+}
+
+.cookbook-tag-add input {
+    width: 9rem;
+}
+
+.cookbook-photo {
+    display: block;
+    max-width: 100%;
+    max-height: 22rem;
+    width: auto;
+    border-radius: var(--radius);
+    margin: 0.2rem 0 0.6rem;
+    object-fit: cover;
+}
+
+.cookbook-head-actions {
+    display: inline-flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+}
+
+/* Recipe import (the /cookbook/import review flow) */
+.import-paste {
+    width: 100%;
+    max-width: 40rem;
+    font: inherit;
+}
+
+.import-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+    align-items: center;
+}
+
+.import-ingredient-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+    margin-bottom: 0.35rem;
+}
+
+.import-qty {
+    width: 7rem;
+}
+
+.import-name {
+    flex: 1 1 12rem;
+    min-width: 10rem;
+}
+
+.import-main {
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.import-step-row {
+    display: flex;
+    gap: 0.4rem;
+    align-items: flex-start;
+    margin-bottom: 0.35rem;
+}
+
+.import-step-row textarea {
+    flex: 1 1 auto;
+    font: inherit;
+}
+
+.import-step-no {
+    padding-top: 0.4rem;
+    color: var(--ink-soft);
+    min-width: 1.5rem;
+}
+
+/* The print-only surfaces never show on screen; @media print reveals the chosen one. */
+.cookbook-print {
+    display: none;
+}
+
+/* A gentle fade as the detail panel mounts (it's @key'd per recipe, so changing the centred recipe
+   remounts it and replays this). Motion-safe only — reduced-motion gets an instant cut, no animation. */
+@media (prefers-reduced-motion: no-preference) {
+    .cookbook-detail {
+        animation: cookbook-detail-in 0.25s ease-out;
+    }
+}
+
+@keyframes cookbook-detail-in {
+    from {
+        opacity: 0;
+        transform: translateY(0.5rem);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 /* Keep the "Next buy" date + relative on one line (the popover keeps normal wrapping). */
 .nextbuy {
     white-space: nowrap;
@@ -2518,6 +2793,50 @@ tfoot td {
     }
 
     .report-chart { max-width: 100%; }
+
+    /* ── Cookbook: print ONLY the chosen print-only block (the recipe card, or its products list).
+       Scoped to .cookbook-root so hiding the page-head/disclaimer here can't hide another printable
+       page's (these @media print rules are global CSS, applied on whatever page prints). ── */
+    .cookbook-root .page-head,
+    .cookbook-root .recipe-disclaimer,
+    .cookbook-root .panel {
+        display: none !important;
+    }
+
+    .cookbook-print {
+        display: block !important;
+    }
+
+    .cookbook-print.show-recipe .print-products,
+    .cookbook-print.show-products .print-recipe {
+        display: none !important;
+    }
+
+    .cookbook-print h1 {
+        font-size: 1.6rem;
+        margin: 0 0 0.4rem;
+    }
+
+    .cookbook-print h2 {
+        font-size: 1.1rem;
+        margin: 1rem 0 0.3rem;
+        border-bottom: 1px solid #000;
+        padding-bottom: 0.15rem;
+    }
+
+    .cookbook-print ul,
+    .cookbook-print ol {
+        margin: 0.3rem 0 0.6rem 1.4rem;
+    }
+
+    .cookbook-print li {
+        margin: 0.15rem 0;
+    }
+
+    .cookbook-print .print-products-list {
+        list-style: none;
+        margin-left: 0;
+    }
 }
 
 /* ---- Blazor form validation + error boundary defaults ---- */

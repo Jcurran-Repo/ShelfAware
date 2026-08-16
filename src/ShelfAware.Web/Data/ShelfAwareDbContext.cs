@@ -24,6 +24,7 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
     public DbSet<Recipe> Recipes => Set<Recipe>();
     public DbSet<RecipeIngredient> RecipeIngredients => Set<RecipeIngredient>();
     public DbSet<RecipeStep> RecipeSteps => Set<RecipeStep>();
+    public DbSet<RecipeTag> RecipeTags => Set<RecipeTag>();
     public DbSet<GroceryExtra> GroceryExtras => Set<GroceryExtra>();
     public DbSet<MealEvent> MealEvents => Set<MealEvent>();
     public DbSet<SavedReport> SavedReports => Set<SavedReport>();
@@ -57,6 +58,7 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
         ApplyHousehold<Recipe>(modelBuilder);
         ApplyHousehold<RecipeIngredient>(modelBuilder);
         ApplyHousehold<RecipeStep>(modelBuilder);
+        ApplyHousehold<RecipeTag>(modelBuilder);
         ApplyHousehold<GroceryExtra>(modelBuilder);
         ApplyHousehold<MealEvent>(modelBuilder);
         ApplyHousehold<SavedReport>(modelBuilder);

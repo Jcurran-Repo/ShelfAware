@@ -13,6 +13,7 @@ public static class SiteNav
         new("Dashboard", "/"),
         new("Grocery List", "/list"),
         new("Recipes", "/recipes"),
+        new("Cookbook", "/cookbook"),
         new("Trends", "/trends"),
         new("Reports", "/reports"),
         new("Upload", "/receipt"),
