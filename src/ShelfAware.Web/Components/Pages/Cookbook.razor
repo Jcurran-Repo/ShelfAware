@@ -1,5 +1,5 @@
 @page "/cookbook"
-@implements IDisposable
+@implements IAsyncDisposable
 @using ShelfAware.Core.Recipes
 @using ShelfAware.Core.Settings
 @inject IHouseholdDbFactory DbFactory
@@ -84,128 +84,168 @@
         }
         else if (Current is { } r)
         {
-            @* An accessible "book" you page through: explicit Prev/Next, arrow-key support on the region,
-               a live "which page of how many" announcement, and each recipe a real <article>. No
-               auto-advance; the flip animation is opt-in via prefers-reduced-motion (see app.css). *@
-            <div class="cookbook-carousel" role="group" aria-roledescription="carousel"
-                 aria-label="Recipe book" tabindex="0" @onkeydown="OnKey">
-                <div class="cookbook-nav">
-                    <button class="secondary" @onclick="Prev" disabled="@(index == 0)"
-                            aria-label="Previous recipe">⏮ Prev</button>
-                    <p class="cookbook-position" role="status" aria-live="polite">
-                        <strong>@r.Name</strong> — @(index + 1) of @filtered.Count
-                    </p>
-                    <button class="secondary" @onclick="Next" disabled="@(index == filtered.Count - 1)"
-                            aria-label="Next recipe">Next ⏭</button>
+            @* Which recipe is centred, announced for everyone (visible) and to screen readers (the live
+               region). Updates as you page with the arrow keys, click a preview, or drag the shelf. *@
+            <p class="cookbook-position" role="status" aria-live="polite">
+                <strong>@r.Name</strong> — @(index + 1) of @filtered.Count
+            </p>
+
+            @* The preview shelf: a horizontal scroll-snap track of read-only previews, one per recipe. The
+               centred one is emphasised; its neighbours peek at a smaller scale + softer opacity. Touch and
+               trackpad swipe come free from scroll-snap; mouse click-drag and centre-reporting come from
+               /js/cookbook-carousel.js. Focusable (tabindex=0) so the arrow keys page it; the previews are
+               tabindex=-1 options so the shelf is a single tab stop, not one per recipe. *@
+            <div class="cookbook-shelf-wrap">
+                <div class="cookbook-shelf" role="group" aria-label="Recipe book — use the arrow keys to page through recipes"
+                     tabindex="0" @ref="shelfRef" @onkeydown="OnKey">
+                    @for (var i = 0; i < filtered.Count; i++)
+                    {
+                        var idx = i;
+                        var pr = filtered[i];
+                        var isCurrent = i == index;
+                        <button type="button" data-card="@i" tabindex="-1"
+                                class="cookbook-preview @(isCurrent ? "is-current" : null)"
+                                aria-current="@(isCurrent ? "true" : null)"
+                                aria-label="@pr.Name"
+                                @onclick="() => Center(idx)">
+                            <span class="cookbook-preview-photo @(pr.ImagePath is null ? "is-placeholder" : null)">
+                                @if (pr.ImagePath is not null)
+                                {
+                                    <img src="@PhotoUrl(pr)" alt="" loading="lazy" />
+                                }
+                                else
+                                {
+                                    <span aria-hidden="true">🍽</span>
+                                }
+                            </span>
+                            <span class="cookbook-preview-name">@pr.Name</span>
+                            <span class="cookbook-preview-badges">
+                                <span class="@MakeableChipClass(pr)">@MakeableChipLabel(pr)</span>
+                                @if (pr.IsVariant)
+                                {
+                                    <span class="chip variant-chip" title="Adapted to use what you have">🔀 adapted</span>
+                                }
+                            </span>
+                            @if (pr.Tags.Count > 0)
+                            {
+                                <span class="cookbook-preview-tags">
+                                    @foreach (var tag in SortedTagValues(pr))
+                                    {
+                                        <span class="tag-chip">@tag</span>
+                                    }
+                                </span>
+                            }
+                        </button>
+                    }
+                </div>
+            </div>
+
+            @* The detail panel — the centred recipe in full, with every interactive control. Stable below
+               the shelf (no layout shift as you drag). Keyed on the recipe id so changing the centre rebuilds
+               it — resetting any open <details>, replaying the gentle fade (motion-safe), and giving the photo
+               input + datalist a fresh instance — exactly as paging replaced the card before. *@
+            <article class="recipe-card cookbook-detail" aria-label="@r.Name" @key="r.Id">
+                <div class="recipe-card-top">
+                    <h2>@r.Name</h2>
+                    <span class="cookbook-badges">
+                        <span class="@MakeableChipClass(r)">@MakeableChipLabel(r)</span>
+                        @if (r.IsVariant)
+                        {
+                            <span class="chip variant-chip" title="Adapted to use what you have">🔀 adapted</span>
+                        }
+                    </span>
                 </div>
 
-                @* Keyed on the recipe id so paging replaces the element — which both resets any open
-                   <details> and replays the gentle page-in animation (motion-safe only). *@
-                <article class="recipe-card cookbook-page" aria-label="@r.Name" @key="r.Id">
-                    <div class="recipe-card-top">
-                        <h2>@r.Name</h2>
-                        <span class="cookbook-badges">
-                            <span class="chip chip-@(Makeable(r) ? "stocked" : "unknown")">
-                                @(Makeable(r) ? "Ready to make" : "Missing items")
-                            </span>
-                            @if (r.IsVariant)
+                @if (r.ImagePath is not null)
+                {
+                    <img class="cookbook-photo" src="@PhotoUrl(r)" alt="Photo of @r.Name" loading="lazy" />
+                }
+
+                <div class="cookbook-tags">
+                    @foreach (var tag in SortedTagValues(r))
+                    {
+                        <span class="tag-chip">@tag<button type="button" class="tag-x" @onclick="() => RemoveTag(tag)"
+                                disabled="@taggingBusy" aria-label="Remove tag @tag from @r.Name">×</button></span>
+                    }
+                    <span class="cookbook-tag-add">
+                        <input list="recipe-tag-vocab" placeholder="add a tag" @bind="newTag" @bind:event="oninput"
+                               @onkeydown="AddTagOnEnter" disabled="@taggingBusy" aria-label="Add a tag to @r.Name" />
+                        <button type="button" class="secondary" @onclick="AddTag"
+                                disabled="@(taggingBusy || string.IsNullOrWhiteSpace(newTag))">Add</button>
+                        <button type="button" class="secondary" @onclick="SuggestTags" disabled="@taggingBusy"
+                                title="Let AI suggest tags for this recipe from its name and ingredients">
+                            @(suggesting ? "Suggesting…" : "✨ Suggest tags")
+                        </button>
+                    </span>
+                </div>
+                @if (tagNote is not null)
+                {
+                    <p class="muted small cookbook-tag-note" role="status">@tagNote</p>
+                }
+
+                @if (r.Blurb is { Length: > 0 } blurb)
+                {
+                    <p class="muted">@blurb</p>
+                }
+                @if (r.EstimatedCaloriesPerServing is { } cal)
+                {
+                    <p class="recipe-cal">~@cal cal / serving <span class="muted">(est.)</span></p>
+                }
+
+                <h3 class="cookbook-subhead">Ingredients</h3>
+                <ul class="ingredient-list">
+                    @foreach (var i in r.MainIngredients)
+                    {
+                        var have = i.IsSatisfiedBy(onHand);
+                        <li class="@(have ? "have" : "grab")">
+                            <span class="ingredient-name">@(have ? "✓" : "🛒") @RecipeFormat.Line(i.Quantity, i.Name)</span>
+                        </li>
+                    }
+                    @{ var extras = r.Seasonings.Select(i => RecipeFormat.Line(i.Quantity, i.Name)).ToList(); }
+                    @if (extras.Count > 0)
+                    {
+                        <li class="muted">+ @string.Join(", ", extras)</li>
+                    }
+                </ul>
+
+                @if (r.Steps.Count > 0)
+                {
+                    <details class="recipe-steps" open>
+                        <summary>Method (@r.Steps.Count @(r.Steps.Count == 1 ? "step" : "steps"))</summary>
+                        <ol>
+                            @foreach (var step in r.Steps.OrderBy(s => s.Order))
                             {
-                                <span class="chip variant-chip" title="Adapted to use what you have">🔀 adapted</span>
+                                <li>@step.Text</li>
                             }
-                        </span>
-                    </div>
+                        </ol>
+                    </details>
+                }
 
-                    @if (r.ImagePath is not null)
-                    {
-                        <img class="cookbook-photo" src="@PhotoUrl(r)" alt="Photo of @r.Name" loading="lazy" />
-                    }
-
-                    <div class="cookbook-tags">
-                        @foreach (var tag in r.Tags.Select(t => t.Value).OrderBy(v => v, StringComparer.CurrentCultureIgnoreCase))
-                        {
-                            <span class="tag-chip">@tag<button type="button" class="tag-x" @onclick="() => RemoveTag(tag)"
-                                    disabled="@taggingBusy" aria-label="Remove tag @tag from @r.Name">×</button></span>
-                        }
-                        <span class="cookbook-tag-add">
-                            <input list="recipe-tag-vocab" placeholder="add a tag" @bind="newTag" @bind:event="oninput"
-                                   @onkeydown="AddTagOnEnter" disabled="@taggingBusy" aria-label="Add a tag to @r.Name" />
-                            <button type="button" class="secondary" @onclick="AddTag"
-                                    disabled="@(taggingBusy || string.IsNullOrWhiteSpace(newTag))">Add</button>
-                            <button type="button" class="secondary" @onclick="SuggestTags" disabled="@taggingBusy"
-                                    title="Let AI suggest tags for this recipe from its name and ingredients">
-                                @(suggesting ? "Suggesting…" : "✨ Suggest tags")
-                            </button>
-                        </span>
-                    </div>
-                    @if (tagNote is not null)
-                    {
-                        <p class="muted small cookbook-tag-note" role="status">@tagNote</p>
-                    }
-
-                    @if (r.Blurb is { Length: > 0 } blurb)
-                    {
-                        <p class="muted">@blurb</p>
-                    }
-                    @if (r.EstimatedCaloriesPerServing is { } cal)
-                    {
-                        <p class="recipe-cal">~@cal cal / serving <span class="muted">(est.)</span></p>
-                    }
-
-                    <h3 class="cookbook-subhead">Ingredients</h3>
-                    <ul class="ingredient-list">
-                        @foreach (var i in r.MainIngredients)
-                        {
-                            var have = i.IsSatisfiedBy(onHand);
-                            <li class="@(have ? "have" : "grab")">
-                                <span class="ingredient-name">@(have ? "✓" : "🛒") @RecipeFormat.Line(i.Quantity, i.Name)</span>
-                            </li>
-                        }
-                        @{ var extras = r.Seasonings.Select(i => RecipeFormat.Line(i.Quantity, i.Name)).ToList(); }
-                        @if (extras.Count > 0)
-                        {
-                            <li class="muted">+ @string.Join(", ", extras)</li>
-                        }
-                    </ul>
-
+                <div class="cookbook-actions">
                     @if (r.Steps.Count > 0)
                     {
-                        <details class="recipe-steps" open>
-                            <summary>Method (@r.Steps.Count @(r.Steps.Count == 1 ? "step" : "steps"))</summary>
-                            <ol>
-                                @foreach (var step in r.Steps.OrderBy(s => s.Order))
-                                {
-                                    <li>@step.Text</li>
-                                }
-                            </ol>
-                        </details>
+                        <button class="secondary" @onclick="() => StartReading(r)"
+                                aria-label="Read @r.Name aloud"
+                                title="Read it to me — synthesized once, then free to re-read.">🔊 Read it to me</button>
                     }
-
-                    <div class="cookbook-actions">
-                        @if (r.Steps.Count > 0)
-                        {
-                            <button class="secondary" @onclick="() => StartReading(r)"
-                                    aria-label="Read @r.Name aloud"
-                                    title="Read it to me — synthesized once, then free to re-read.">🔊 Read it to me</button>
-                        }
-                        <button class="secondary" @onclick="PrintRecipe" aria-label="Print @r.Name">🖨 Print recipe</button>
-                        <button class="secondary" @onclick="PrintProducts"
-                                aria-label="Print the products needed for @r.Name">🛒 Print products</button>
-                        @* Photo add/replace: the input is visually hidden and PRECEDES its label (the
-                           .file-button pattern, sibling selector); @key gives a fresh input per pick so
-                           re-picking the same file still fires a change. *@
-                        <InputFile @key="@($"photo-{r.Id}-{photoGeneration}")" id="cookbook-photo"
-                                   OnChange="OnPhotoSelected" accept="image/*" disabled="@photoBusy"
-                                   class="visually-hidden"
-                                   aria-label="@(r.ImagePath is null ? $"Add a photo to {r.Name}" : $"Replace the photo for {r.Name}")" />
-                        <label class="file-button" for="cookbook-photo">📷 @(r.ImagePath is null ? "Add photo" : "Replace photo")</label>
-                        @if (r.ImagePath is not null)
-                        {
-                            <button class="secondary" @onclick="RemovePhoto" disabled="@photoBusy"
-                                    aria-label="Remove the photo for @r.Name">Remove photo</button>
-                        }
-                    </div>
-                </article>
-            </div>
+                    <button class="secondary" @onclick="PrintRecipe" aria-label="Print @r.Name">🖨 Print recipe</button>
+                    <button class="secondary" @onclick="PrintProducts"
+                            aria-label="Print the products needed for @r.Name">🛒 Print products</button>
+                    @* Photo add/replace: the input is visually hidden and PRECEDES its label (the
+                       .file-button pattern, sibling selector); @key gives a fresh input per pick so
+                       re-picking the same file still fires a change. *@
+                    <InputFile @key="@($"photo-{r.Id}-{photoGeneration}")" id="cookbook-photo"
+                               OnChange="OnPhotoSelected" accept="image/*" disabled="@photoBusy"
+                               class="visually-hidden"
+                               aria-label="@(r.ImagePath is null ? $"Add a photo to {r.Name}" : $"Replace the photo for {r.Name}")" />
+                    <label class="file-button" for="cookbook-photo">📷 @(r.ImagePath is null ? "Add photo" : "Replace photo")</label>
+                    @if (r.ImagePath is not null)
+                    {
+                        <button class="secondary" @onclick="RemovePhoto" disabled="@photoBusy"
+                                aria-label="Remove the photo for @r.Name">Remove photo</button>
+                    }
+                </div>
+            </article>
 
             <datalist id="recipe-tag-vocab">
                 @foreach (var v in tagVocabulary)
@@ -329,6 +369,15 @@ else
     private PrintTarget printTarget = PrintTarget.Recipe;
     private bool printPending;
 
+    // ── Preview-shelf JS interop (mouse drag + centre sync). `index` stays the source of truth; the module
+    //    reports the settled centre (OnCentered) and centres a given index on request (scrollToIndex). ──
+    private ElementReference shelfRef;
+    private IJSObjectReference? _carousel;
+    private DotNetObjectReference<Cookbook>? _selfRef;
+    private bool _shelfWired;     // the module is bound to the CURRENT shelf element
+    private int? _pendingScroll;  // a centre .NET asked for (keyboard / click / filter reset), applied after render
+    private bool _pendingSmooth;  // whether that pending scroll should animate
+
     /// <summary>Deep link / in-page product filter (/cookbook?uses={id}) — same shape and meaning as the
     /// Recipes page's ?uses, so a link works on either surface. Scopes the deck to recipes grounded to
     /// that product (Recipe.Uses — the one shared definition).</summary>
@@ -344,6 +393,16 @@ else
     // IngredientMatcher, exactly as the Recipes page decides it. Seasonings/staples don't count.
     private bool Makeable(Recipe r) => r.IsMakeableWith(onHand);
 
+    // The makeability chip is shown in TWO places now — the preview and the detail panel. Its class and its
+    // label get ONE definition each so the two surfaces can't drift (the state is already the shared Makeable).
+    private string MakeableChipClass(Recipe r) => Makeable(r) ? "chip chip-stocked" : "chip chip-unknown";
+    private string MakeableChipLabel(Recipe r) => Makeable(r) ? "Ready to make" : "Missing items";
+
+    // A recipe's tags in display order — used by both the preview and the detail panel, so the sort lives in
+    // one place. (The tag CLOUD sorts by count instead; that's a different order, kept separate on purpose.)
+    private static IEnumerable<string> SortedTagValues(Recipe r) =>
+        r.Tags.Select(t => t.Value).OrderBy(v => v, StringComparer.CurrentCultureIgnoreCase);
+
     private bool IsActiveTag(string value) => string.Equals(activeTag, value, StringComparison.OrdinalIgnoreCase);
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
@@ -354,6 +413,7 @@ else
     {
         index = 0;
         ApplyFilters();
+        RequestScroll(smooth: false); // a filter change (or the first load) starts at page one — jump, don't glide
     }
 
     private async Task LoadAsync()
@@ -437,15 +497,17 @@ else
 
     private int? filterProductId => UsesProductId;
 
-    private void Prev()
-    {
-        if (index > 0) index--;
-        ResetTransient();
-    }
+    // Paging by keyboard or by clicking a preview. Each moves the centre by setting `index`, asks the shelf
+    // to scroll the new centre into view (applied after the render, once the module has loaded), and closes
+    // any open reader / tag box for the recipe we're leaving. A drag comes the OTHER way — see OnCentered.
+    private void Prev() => Center(index - 1);
 
-    private void Next()
+    private void Next() => Center(index + 1);
+
+    private void Center(int i)
     {
-        if (index < filtered.Count - 1) index++;
+        index = Math.Clamp(i, 0, Math.Max(0, filtered.Count - 1));
+        RequestScroll(smooth: true);
         ResetTransient();
     }
 
@@ -455,9 +517,31 @@ else
         {
             case "ArrowLeft": Prev(); break;
             case "ArrowRight": Next(); break;
-            case "Home": index = 0; ResetTransient(); break;
-            case "End": index = Math.Max(0, filtered.Count - 1); ResetTransient(); break;
+            case "Home": Center(0); break;
+            case "End": Center(filtered.Count - 1); break;
         }
+    }
+
+    // Ask OnAfterRenderAsync to centre the shelf on `index`. Kept out of the handlers so the JS call lands
+    // once per render (after the DOM reflects the new centre), and so a filter reset — which has no module
+    // yet on the very first load — queues the same way and is applied when the module is ready.
+    private void RequestScroll(bool smooth)
+    {
+        _pendingScroll = index;
+        _pendingSmooth = smooth;
+    }
+
+    // The shelf settled on a new centre — a drag, swipe, or momentum fling reported by the JS module. Update
+    // `index`, but never ask to scroll back (a report and a scroll would ping-pong forever). Mirrors paging:
+    // it closes the reader / tag box for the recipe we've just left.
+    [JSInvokable]
+    public Task OnCentered(int i)
+    {
+        var target = Math.Clamp(i, 0, Math.Max(0, filtered.Count - 1));
+        if (target == index) return Task.CompletedTask;
+        index = target;
+        ResetTransient();
+        return InvokeAsync(StateHasChanged);
     }
 
     // The add box and the last tag note belong to the recipe on screen — clear them when it changes.
@@ -690,25 +774,100 @@ else
     private void PrintRecipe() { printTarget = PrintTarget.Recipe; printPending = true; }
     private void PrintProducts() { printTarget = PrintTarget.Products; printPending = true; }
 
-    // Print AFTER the render that reflects printTarget, so the right print-only block is showing when the
-    // browser dialog opens. The click handler flips printTarget + printPending; that render lands here.
+    // First render: load the shelf's JS module. Every render: keep it bound to the current shelf element and
+    // apply any pending centre. Then the print flow — AFTER the render that reflects printTarget, so the right
+    // print-only block is showing when the browser dialog opens (the click handler flips printTarget +
+    // printPending; that render lands here).
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!printPending) return;
-        printPending = false;
-        try
+        if (firstRender)
         {
-            await JS.InvokeVoidAsync("window.print");
+            try
+            {
+                _carousel = await JS.InvokeAsync<IJSObjectReference>("import", "/js/cookbook-carousel.js");
+                _selfRef = DotNetObjectReference.Create(this);
+            }
+            catch (JSDisconnectedException)
+            {
+                return; // circuit gone before the module loaded — nothing more to wire up
+            }
+            catch (JSException ex)
+            {
+                // The shelf module failed to load (404 / CSP / syntax). Degrade gracefully rather than fault
+                // the whole page over a missing static asset: keyboard paging still works through OnKey and
+                // the detail panel still tracks `index`; only the drag and the scroll-to-centre are inert.
+                Logger.LogError(ex, "The cookbook shelf module failed to load; drag and scroll-sync are off.");
+                return;
+            }
         }
-        catch (JSDisconnectedException)
+
+        await SyncShelfAsync();
+
+        if (printPending)
         {
-            // Circuit gone (tab closed / navigated away) before the dialog opened — nothing to print.
+            printPending = false;
+            try
+            {
+                await JS.InvokeVoidAsync("window.print");
+            }
+            catch (JSDisconnectedException)
+            {
+                // Circuit gone (tab closed / navigated away) before the dialog opened — nothing to print.
+            }
         }
     }
 
-    public void Dispose()
+    // Keep the JS module bound to the CURRENT shelf element and apply any centre .NET asked for. The shelf
+    // element is reused across filter changes (same position in the tree), but is created fresh when the deck
+    // goes from empty back to non-empty — rebind on that transition. Every JS call guards the dropped circuit.
+    private async Task SyncShelfAsync()
+    {
+        if (_carousel is null || _selfRef is null) return;
+
+        var shelfPresent = filtered.Count > 0;
+        try
+        {
+            if (shelfPresent && !_shelfWired)
+            {
+                // Mark wired BEFORE the await: renders can overlap an in-flight OnAfterRenderAsync, and this
+                // keeps a re-entrant call out of this branch so init runs once. init() is idempotent anyway
+                // (it unbinds first), so this is belt-and-braces — and the pending-scroll below still waits on
+                // the same _shelfWired, applied after init has bound the shelf in this call.
+                _shelfWired = true;
+                await _carousel.InvokeVoidAsync("init", shelfRef, _selfRef);
+            }
+            else if (!shelfPresent && _shelfWired)
+            {
+                _shelfWired = false; // the element's gone; init rebinds fresh when the deck refills
+            }
+
+            if (_pendingScroll is { } target && _shelfWired)
+            {
+                _pendingScroll = null;
+                await _carousel.InvokeVoidAsync("scrollToIndex", target, _pendingSmooth);
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+            // Circuit gone — the shelf and its listeners went with it.
+        }
+    }
+
+    public async ValueTask DisposeAsync()
     {
         pageCts.Cancel();
+
+        if (_carousel is not null)
+        {
+            try
+            {
+                await _carousel.InvokeVoidAsync("dispose");
+                await _carousel.DisposeAsync();
+            }
+            catch (JSDisconnectedException) { /* circuit already gone — its listeners went with it */ }
+        }
+
+        _selfRef?.Dispose();
         pageCts.Dispose();
     }
 }

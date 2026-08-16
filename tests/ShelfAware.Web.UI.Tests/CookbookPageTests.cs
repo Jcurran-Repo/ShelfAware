@@ -14,13 +14,19 @@ using ShelfAware.Web.Tests;
 namespace ShelfAware.Web.UI.Tests;
 
 /// <summary>
-/// The Cookbook — an accessible carousel over saved recipes with read-aloud, print, and a product
-/// filter. The rules under test: recipes page alphabetically and Prev/Next walk them with a "which of
-/// how many" announcement; the "Ready to make"/"Missing items" chip and the ✓/🛒 marks agree with the
-/// Recipes page (same PantryOnHand + IngredientMatcher); the ?uses filter scopes the deck to recipes
-/// grounded to that product (Recipe.Uses — the one shared definition) and the dropdown navigates there;
-/// the two print buttons choose their print-only surface and fire window.print; and the products list
-/// prints every ingredient with its amount, ticking the ones already on hand.
+/// The Cookbook — a preview shelf over saved recipes with a stable detail panel below, plus read-aloud,
+/// print, tags, photos, and a product filter. The rules under test: recipes page alphabetically and the
+/// arrow keys / clicking a preview walk them with a "which of how many" announcement and an aria-current
+/// marker on the centred preview; the detail panel renders the centred recipe (and is the ONE home of the
+/// fixed-id photo input + tag datalist, however big the deck); the "Ready to make"/"Missing items" chip and
+/// the ✓/🛒 marks agree with the Recipes page (same PantryOnHand + IngredientMatcher); the ?uses filter
+/// scopes the deck to recipes grounded to that product (Recipe.Uses — the one shared definition) and the
+/// dropdown navigates there; the two print buttons choose their print-only surface and fire window.print;
+/// and the products list prints every ingredient with its amount, ticking the ones already on hand.
+///
+/// The drag / swipe / scroll-snap itself is browser behaviour (live-verified) — bUnit runs no real JS, so
+/// these tests assert the Blazor side: N previews render, the detail panel + live region track the centre,
+/// the arrow keys and a preview click move it, and filters still scope + reset.
 /// </summary>
 public class CookbookPageTests : PageTestContext
 {
@@ -91,60 +97,177 @@ public class CookbookPageTests : PageTestContext
     {
         var cut = Render<Cookbook>();
         cut.WaitForState(() =>
-            cut.FindAll(".cookbook-carousel").Count > 0
+            cut.FindAll(".cookbook-shelf").Count > 0
             || cut.Markup.Contains("cookbook is empty")
-            || cut.Markup.Contains("No saved recipes use"));
+            || cut.Markup.Contains("No saved recipes use")
+            || cut.Markup.Contains("No recipes tagged"));
         return cut;
     }
 
     private NavigationManager Nav => Services.GetRequiredService<NavigationManager>();
 
+    // The previews in deck (alphabetical) order — one <button> per recipe in `filtered`.
+    private static IReadOnlyList<AngleSharp.Dom.IElement> Previews(IRenderedComponent<Cookbook> cut) =>
+        cut.FindAll(".cookbook-preview");
+
+    // Page the shelf with an arrow key (the shelf is focusable and owns the keydown handler).
+    private static void PressKey(IRenderedComponent<Cookbook> cut, string key) =>
+        cut.Find(".cookbook-shelf").KeyDown(new KeyboardEventArgs { Key = key });
+
     // ------------------------------------------------------------------ empty / browse / order
 
     [Fact]
-    public void An_empty_cookbook_points_at_Recipes_and_shows_no_carousel()
+    public void An_empty_cookbook_points_at_Recipes_and_shows_no_shelf()
     {
         var cut = RenderCookbook();
 
         Assert.Contains("cookbook is empty", cut.Markup);
-        Assert.Empty(cut.FindAll(".cookbook-carousel"));
+        Assert.Empty(cut.FindAll(".cookbook-shelf"));
     }
 
     [Fact]
-    public void Recipes_page_alphabetically_and_Prev_Next_walk_the_deck()
+    public void The_shelf_renders_one_preview_per_recipe_alphabetically_the_first_centred()
     {
         SeedRecipe("Zucchini Bake", [("Zucchini", true, null, null)], "Bake it.");
         SeedRecipe("Apple Crisp", [("Apples", true, null, null)], "Bake it.");
 
         var cut = RenderCookbook();
 
-        // Alphabetical, not save order: "Apple Crisp" is page one, and Prev is disabled at the start.
+        // One preview per recipe, in alphabetical (deck) order — not save order.
+        var previews = Previews(cut);
+        Assert.Equal(2, previews.Count);
+        Assert.Contains("Apple Crisp", previews[0].TextContent);
+        Assert.Contains("Zucchini Bake", previews[1].TextContent);
+
+        // The first is centred: the live region, the detail panel, and aria-current all point at it.
         Assert.Contains("Apple Crisp", cut.Find(".cookbook-position").TextContent);
         Assert.Contains("1 of 2", Collapsed(cut.Find(".cookbook-position")));
-        Assert.Equal("Apple Crisp", cut.Find(".cookbook-page h2").TextContent);
-        Assert.True(cut.Find("button[aria-label='Previous recipe']").HasAttribute("disabled"));
-
-        cut.Find("button[aria-label='Next recipe']").Click();
-
-        Assert.Contains("Zucchini Bake", cut.Find(".cookbook-position").TextContent);
-        Assert.Contains("2 of 2", Collapsed(cut.Find(".cookbook-position")));
-        Assert.True(cut.Find("button[aria-label='Next recipe']").HasAttribute("disabled"));
+        Assert.Equal("Apple Crisp", cut.Find(".cookbook-detail h2").TextContent);
+        Assert.Equal("true", previews[0].GetAttribute("aria-current"));
+        Assert.False(previews[1].HasAttribute("aria-current"));
     }
 
     [Fact]
-    public void Arrow_keys_page_the_carousel()
+    public void Arrow_keys_page_the_shelf_and_stop_at_the_ends()
     {
         SeedRecipe("Apple Crisp", [("Apples", true, null, null)], "Bake it.");
         SeedRecipe("Banana Bread", [("Bananas", true, null, null)], "Bake it.");
 
         var cut = RenderCookbook();
-        var carousel = cut.Find(".cookbook-carousel");
 
-        carousel.KeyDown(new KeyboardEventArgs { Key = "ArrowRight" });
+        // Left at the start is a no-op — still on the first recipe.
+        PressKey(cut, "ArrowLeft");
+        Assert.Contains("Apple Crisp", cut.Find(".cookbook-position").TextContent);
+
+        PressKey(cut, "ArrowRight");
+        Assert.Contains("Banana Bread", cut.Find(".cookbook-position").TextContent);
+        Assert.Equal("Banana Bread", cut.Find(".cookbook-detail h2").TextContent);
+        Assert.Equal("true", Previews(cut)[1].GetAttribute("aria-current"));
+
+        // Right at the end is a no-op — still on the last recipe.
+        PressKey(cut, "ArrowRight");
         Assert.Contains("Banana Bread", cut.Find(".cookbook-position").TextContent);
 
-        cut.Find(".cookbook-carousel").KeyDown(new KeyboardEventArgs { Key = "ArrowLeft" });
+        PressKey(cut, "ArrowLeft");
         Assert.Contains("Apple Crisp", cut.Find(".cookbook-position").TextContent);
+    }
+
+    [Fact]
+    public void Home_and_End_jump_to_the_ends_of_the_deck()
+    {
+        SeedRecipe("Apple Crisp", [("Apples", true, null, null)], "Bake.");
+        SeedRecipe("Banana Bread", [("Bananas", true, null, null)], "Bake.");
+        SeedRecipe("Cherry Pie", [("Cherries", true, null, null)], "Bake.");
+
+        var cut = RenderCookbook();
+
+        PressKey(cut, "End");
+        Assert.Contains("Cherry Pie", cut.Find(".cookbook-position").TextContent);
+        Assert.Contains("3 of 3", Collapsed(cut.Find(".cookbook-position")));
+
+        PressKey(cut, "Home");
+        Assert.Contains("Apple Crisp", cut.Find(".cookbook-position").TextContent);
+        Assert.Contains("1 of 3", Collapsed(cut.Find(".cookbook-position")));
+    }
+
+    [Fact]
+    public void Clicking_a_preview_centres_it()
+    {
+        SeedRecipe("Apple Crisp", [("Apples", true, null, null)], "Bake.");
+        SeedRecipe("Banana Bread", [("Bananas", true, null, null)], "Bake.");
+        SeedRecipe("Cherry Pie", [("Cherries", true, null, null)], "Bake.");
+
+        var cut = RenderCookbook();
+        Previews(cut)[2].Click(); // click the third preview
+
+        Assert.Contains("Cherry Pie", cut.Find(".cookbook-position").TextContent);
+        Assert.Equal("Cherry Pie", cut.Find(".cookbook-detail h2").TextContent);
+        Assert.Equal("true", Previews(cut)[2].GetAttribute("aria-current"));
+        Assert.False(Previews(cut)[0].HasAttribute("aria-current"));
+    }
+
+    [Fact]
+    public void One_photo_input_and_one_datalist_exist_however_big_the_deck()
+    {
+        // The whole reason for the preview-shelf design: the detail panel is the ONE home of the fixed-id
+        // photo <InputFile id="cookbook-photo"> and <datalist id="recipe-tag-vocab">, so a deck of many
+        // recipes doesn't duplicate those ids (invalid HTML, three tag boxes fighting for focus).
+        SeedRecipe("Apple Crisp", [("Apples", true, null, null)], "Bake.");
+        SeedRecipe("Banana Bread", [("Bananas", true, null, null)], "Bake.");
+        SeedRecipe("Cherry Pie", [("Cherries", true, null, null)], "Bake.");
+
+        var cut = RenderCookbook();
+
+        Assert.Equal(3, Previews(cut).Count);
+        Assert.Single(cut.FindAll("input#cookbook-photo"));
+        Assert.Single(cut.FindAll("datalist#recipe-tag-vocab"));
+    }
+
+    // OnCentered is the JS→.NET half of the sync — the drag/swipe module reports the settled centre here.
+    // bUnit runs no real JS, so we call it directly (it's the only new sync logic with no other test).
+
+    [Fact]
+    public async Task OnCentered_moves_the_centre_the_way_a_drag_reports_it()
+    {
+        SeedRecipe("Apple Crisp", [("Apples", true, null, null)], "Bake.");
+        SeedRecipe("Banana Bread", [("Bananas", true, null, null)], "Bake.");
+
+        var cut = RenderCookbook();
+        await cut.InvokeAsync(() => cut.Instance.OnCentered(1)); // the shelf settled on the 2nd preview
+
+        Assert.Contains("Banana Bread", cut.Find(".cookbook-position").TextContent);
+        Assert.Equal("Banana Bread", cut.Find(".cookbook-detail h2").TextContent);
+        Assert.Equal("true", Previews(cut)[1].GetAttribute("aria-current"));
+    }
+
+    [Fact]
+    public async Task OnCentered_for_the_current_index_is_a_no_op()
+    {
+        SeedRecipe("Apple Crisp", [("Apples", true, null, null)], "Bake.");
+        SeedRecipe("Banana Bread", [("Bananas", true, null, null)], "Bake.");
+
+        var cut = RenderCookbook();
+        cut.Find(".cookbook-tag-add input").Input("Draft"); // unsaved text in the add box
+
+        await cut.InvokeAsync(() => cut.Instance.OnCentered(0)); // already centred on index 0
+
+        // A no-op: it must NOT re-run ResetTransient (which would clear the add box) or move the centre.
+        Assert.Equal("Draft", cut.Find(".cookbook-tag-add input").GetAttribute("value"));
+        Assert.Contains("Apple Crisp", cut.Find(".cookbook-position").TextContent);
+    }
+
+    [Fact]
+    public async Task OnCentered_clamps_a_stale_out_of_range_index()
+    {
+        SeedRecipe("Apple Crisp", [("Apples", true, null, null)], "Bake.");
+        SeedRecipe("Banana Bread", [("Bananas", true, null, null)], "Bake.");
+
+        var cut = RenderCookbook();
+        // The deck can shrink (a filter) between the JS read and this call — a stale index must not throw.
+        await cut.InvokeAsync(() => cut.Instance.OnCentered(99));
+
+        Assert.Contains("2 of 2", Collapsed(cut.Find(".cookbook-position"))); // clamped to the last card
+        Assert.Equal("Banana Bread", cut.Find(".cookbook-detail h2").TextContent);
     }
 
     // ------------------------------------------------------------------ makeability marks
@@ -157,7 +280,7 @@ public class CookbookPageTests : PageTestContext
 
         var cut = RenderCookbook();
 
-        Assert.Contains("Ready to make", cut.Find(".chip-stocked").TextContent);
+        Assert.Contains("Ready to make", cut.Find(".cookbook-detail .chip-stocked").TextContent);
         Assert.Contains("✓", cut.Find(".ingredient-list li.have").TextContent);
         Assert.Empty(cut.FindAll(".ingredient-list li.grab"));
     }
@@ -169,7 +292,7 @@ public class CookbookPageTests : PageTestContext
 
         var cut = RenderCookbook();
 
-        Assert.Contains("Missing items", cut.Find(".chip-unknown").TextContent);
+        Assert.Contains("Missing items", cut.Find(".cookbook-detail .chip-unknown").TextContent);
         Assert.Contains("🛒", cut.Find(".ingredient-list li.grab").TextContent);
         Assert.Empty(cut.FindAll(".ingredient-list li.have"));
     }
@@ -188,7 +311,8 @@ public class CookbookPageTests : PageTestContext
 
         Assert.Contains("Showing recipes that use Chicken Breast", cut.Find(".filter-banner").TextContent);
         Assert.Contains("1 of 1", Collapsed(cut.Find(".cookbook-position")));
-        Assert.Equal("Chicken Dinner", cut.Find(".cookbook-page h2").TextContent);
+        Assert.Single(Previews(cut)); // the deck is scoped to the one matching recipe
+        Assert.Equal("Chicken Dinner", cut.Find(".cookbook-detail h2").TextContent);
         Assert.DoesNotContain("Veggie Stir Fry", cut.Markup);
     }
 
@@ -203,7 +327,7 @@ public class CookbookPageTests : PageTestContext
         var cut = RenderCookbook();
 
         Assert.Contains("No saved recipes use Rolled Oats", cut.Markup);
-        Assert.Empty(cut.FindAll(".cookbook-carousel"));
+        Assert.Empty(cut.FindAll(".cookbook-shelf"));
     }
 
     [Fact]
@@ -262,7 +386,7 @@ public class CookbookPageTests : PageTestContext
         Assert.Single(cut.FindAll("button[aria-label='Read Has Steps aloud']"));
         Assert.Single(cut.FindAll("button[aria-label='Print Has Steps']"));
 
-        cut.Find("button[aria-label='Next recipe']").Click(); // → "No Steps"
+        PressKey(cut, "ArrowRight"); // → "No Steps"
 
         Assert.Empty(cut.FindAll("button[aria-label='Read No Steps aloud']"));
         Assert.Single(cut.FindAll("button[aria-label='Print No Steps']")); // print still offered
@@ -313,7 +437,8 @@ public class CookbookPageTests : PageTestContext
         var cut = RenderCookbook();
 
         Assert.Contains("Showing recipes tagged", cut.Find(".filter-banner").TextContent);
-        Assert.Equal("Pasta Night", cut.Find(".cookbook-page h2").TextContent);
+        Assert.Single(Previews(cut));
+        Assert.Equal("Pasta Night", cut.Find(".cookbook-detail h2").TextContent);
         Assert.DoesNotContain("Taco Tuesday", cut.Markup);
     }
 

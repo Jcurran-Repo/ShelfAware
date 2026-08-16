@@ -2507,10 +2507,45 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48 and 49).
      5 ingredients with amounts + main flags, 3 steps, 3 AI tags) saved and landed in the cookbook. Zero
      console/server errors.
    - **1660 tests green, 0 warnings** (1600 on master; +60). Every new test mutation-checked; five mutation
-     rounds across the arc + the review fixes. ⚠️ **Unpushed — five commits on `feature/recipe-book`, Jordan's
+     rounds across the arc + the review fixes. ⚠️ **Unpushed — six commits on `feature/recipe-book`, Jordan's
      call to push/merge.** The merged-master build-state, the "Beyond the spec's 3 pages" list, and the "1600
      green" figure above are deliberately UNCHANGED here (they are the merged-master truth — finalize at merge,
      adding `/cookbook` + `/cookbook/import` to the pages list and the new green count then).
+   - **Carousel → subtle-peek drag/swipe shelf (2026-08-15, same branch — the sixth commit).** The Prev/Next
+     button carousel became a CSS scroll-snap **preview shelf** (one read-only preview per recipe; the centred
+     one at full emphasis, neighbours peeking at scale .92 / opacity .5) over a **stable detail panel** that
+     renders the centred recipe with EVERY interactive control. ⚠️ **The detail panel is the ONE home of the
+     fixed-id photo `<InputFile id="cookbook-photo">` + tag `<datalist id="recipe-tag-vocab">`** — that split IS
+     the design (N full cards in the track would duplicate those ids and pit three tag boxes/readers against
+     each other for focus). `index` (position in `filtered`) stays .NET's single source of truth → drives
+     `Current` → the detail panel + print blocks.
+     - **`wwwroot/js/cookbook-carousel.js`** (same-origin ES module, strict-CSP clean): mouse click-drag via
+       pointer events; a scroll-settle nearest-centre report to .NET (`OnCentered(i)`, `Math.Clamp`'d);
+       `scrollToIndex(i, smooth)` for keyboard/click/filter-reset. Touch + trackpad swipe come FREE from
+       scroll-snap — the module only adds what they don't.
+     - ⚠️ **Bidirectional sync loop guard:** a report NEVER scrolls (`OnCentered` never requests one), and a
+       programmatic `scrollToIndex` pre-sets `lastReported` so the scroll IT causes is short-circuited in
+       `report()`. Don't add a scroll to `OnCentered` or the two ping-pong. `_pendingScroll` is applied in
+       `OnAfterRenderAsync` (so it survives the first render before the module loads); `_shelfWired` rebinds the
+       module when the deck empties→refills (the shelf element is recreated then).
+     - Accessibility kept: arrow keys + Home/End on the focusable shelf (the module `preventDefault`s those keys
+       so the container doesn't ALSO scroll natively — ⚠️ **Tab is deliberately NOT in that list**, so focus can
+       still leave the shelf), the "N of M" `role=status` live region, `aria-current` on the centre; previews are
+       `tabindex=-1` options (one tab stop, not one per recipe). `prefers-reduced-motion` gates the transition +
+       the detail fade AND the JS smooth-scroll.
+     - Shared-definition directive: `MakeableChipClass`/`MakeableChipLabel`/`SortedTagValues` centralize what the
+       preview + detail both show (the chip class+label, the tag sort), so the two surfaces can't drift.
+     - **`/pre-push` gate (two independent review agents):** security **CLEAN** — UI/JS/CSS only, no new
+       DbContext / `IgnoreQueryFilters` / endpoint / settings-key / per-household disk-write; the one
+       `[JSInvokable]` is a clamped int, no XSS/`MarkupString`. Code review clean (no high/med); its 4 LOW + 2
+       nits all folded in: `_shelfWired`-before-await (re-entrant double-init), `JSException` on module load
+       degrades gracefully (keyboard still pages), the off-window `buttons===0` drag guard, `OnCentered` tests
+       (move/dedup/clamp, mutation-checked), and the shared helpers above.
+     - **1676 green, 0 warnings** on a non-incremental Release build (+6 cookbook tests: 24→30). bUnit runs no
+       real JS, so the drag/scroll/keydown are **live-verified only** (fresh Release server, `/dev/login`): peek
+       styling, mouse drag + click-suppression + the off-window guard, arrow/Home/End + boundary, click-a-preview,
+       filter scope+reset, dark mode via tokens, mobile 375 px with no horizontal page scroll, no console/CSP
+       errors. ⚠️ Still UNPUSHED — Jordan's call.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
