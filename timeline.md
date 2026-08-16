@@ -8,7 +8,10 @@ done yet — survives even if everything else is lost.
 **Terminology:** Phases 1–5 are the original v1 build milestones. v2 / v3 are later versions.
 `[x]` + date = shipped · `[ ]` = not done yet.
 
-_Last updated: 7/30/2026_
+_Last updated: 8/15/2026 (v5.0 Cookbook merged). ⚠ Gap not yet backfilled here: the 8/12–8/15 arc between
+v4.6 and v5.0 — the family public instance (Cloudflare Tunnel + Access), forgot-password/SMTP, brand
+correction + the dev quick-login, and v4.7–v4.9 (in-app problem reporting, camera capture + staged uploads,
+resolve-for-bugs-and-errors). See CLAUDE.md items 44–49 for the full record._
 
 ---
 
@@ -565,6 +568,28 @@ _Last updated: 7/30/2026_
   still does, uncorrectably), and the new junk-name refusal showed nothing on the row before the
   confirm — the MatchMessage arm added covers BOTH NoName shapes, so blank names gained the inline
   message they always lacked too. **1465 green, 0 warnings** — 8/9/2026
+
+---
+
+## v5.0 — The Cookbook (recipe book)
+- [x] **Cookbook (`/cookbook`)** — browse, read-aloud, and print saved recipes; the "Ready to make" /
+  "Missing items" chip and the ✓/🛒 marks agree with the Recipes page (shared PantryOnHand +
+  IngredientMatcher) — 8/15/2026
+- [x] AI-seeded recipe tags + a tag-cloud filter + a "recipes that use X" product filter (RecipeTag table
+  through the full tenancy drill; TagVocabulary.Canonicalize shared with product tags) — 8/15/2026
+- [x] Per-recipe photos (add/replace/remove) served household-scoped via the app's first dynamic image
+  endpoint `GET /api/recipe-image/{id}` — scopes to the caller's household, identical 404 for foreign/missing
+  ids — 8/15/2026
+- [x] Import a recipe from a photo or pasted text (`/cookbook/import`) — vision/text → strict schema with a
+  `found` anti-hallucination floor, always an editable review before save; a photo import keeps that photo — 8/15/2026
+- [x] **Subtle-peek drag/swipe carousel** — the Prev/Next buttons became a CSS scroll-snap preview shelf
+  (neighbours peek at scale .92 / opacity .5) over a stable detail panel that holds the one fixed-id photo
+  input + tag datalist and every control. Mouse click-drag + a scroll-settle centre report via
+  `/js/cookbook-carousel.js`; touch/trackpad free from scroll-snap; keyboard (arrow/Home/End) + "N of M" live
+  region + aria-current + reduced-motion kept. Two independent reviews (security CLEAN, code clean — no
+  high/med) + all LOW fixes folded in; live-verified. Full detail: CLAUDE.md item 50 — 8/15/2026
+- [x] Merged to master (`--no-ff` merge `790004d`) + pushed to the public repo, CI green (Build + four test
+  steps on Linux). **1676 green, 0 warnings** — 8/15/2026
 
 ---
 

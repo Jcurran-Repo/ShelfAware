@@ -89,13 +89,15 @@ Products (`/products`), Grocery List (`/list`, by aisle + copy/print + a manual 
 section), Trends (`/trends`, price tickers + spend forecast — page component is
 `SpendInsight.razor`), Product Detail (`/product/{id}`, rhythm + price-history chart),
 Accuracy (`/accuracy`, renders `eval-results.json`), **Recipes (`/recipes`)**,
-Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptTotals`, Core), and
-**Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**.
+Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptTotals`, Core),
+**Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**, and the
+**Cookbook (`/cookbook`, added 8/15 — browse/read-aloud/print saved recipes, AI tags + cloud filter,
+per-recipe photos, and a subtle-peek drag/swipe carousel; import at `/cookbook/import`; see item 50)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1600 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1676 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
-bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48 and 49).
+bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49 and 50).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -2449,8 +2451,8 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48 and 49).
      bites). **1576 tests green, 0 warnings** on a non-incremental Release build, read off the
      final run.
 
-50. **v5.0 — The Cookbook (2026-08-15, branch `feature/recipe-book` — built + reviewed, ✅ NOT pushed;
-   1660 green / 0 warnings on a non-incremental Release build).** Jordan's ask: a recipe-book carousel with
+50. **v5.0 — The Cookbook (2026-08-15, branch `feature/recipe-book` — ✅ MERGED to master + pushed 2026-08-15,
+   merge `790004d`, CI green; 1676 green / 0 warnings on a non-incremental Release build).** Jordan's ask: a recipe-book carousel with
    print + upload, automatic loading of in-app recipes, audio playback, and tag/category cloud filtering —
    plus his mid-flight add, filtering by specific products. Four phases, one commit each; the whole branch
    then went through the `/pre-push` gate. As-built decisions the code can't say:
@@ -2507,10 +2509,10 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48 and 49).
      5 ingredients with amounts + main flags, 3 steps, 3 AI tags) saved and landed in the cookbook. Zero
      console/server errors.
    - **1660 tests green, 0 warnings** (1600 on master; +60). Every new test mutation-checked; five mutation
-     rounds across the arc + the review fixes. ⚠️ **Unpushed — six commits on `feature/recipe-book`, Jordan's
-     call to push/merge.** The merged-master build-state, the "Beyond the spec's 3 pages" list, and the "1600
-     green" figure above are deliberately UNCHANGED here (they are the merged-master truth — finalize at merge,
-     adding `/cookbook` + `/cookbook/import` to the pages list and the new green count then).
+     rounds across the arc + the review fixes. ✅ **MERGED to master + pushed 2026-08-15** (Jordan's call;
+     `--no-ff` merge commit `790004d`; CI green — Build + all four test steps on Linux, 1m25s). The header
+     build-state, the "Beyond the spec's 3 pages" list, and the green count above were finalized at this merge
+     (`/cookbook` + `/cookbook/import` added to the pages list; count → 1676 after the carousel commit below).
    - **Carousel → subtle-peek drag/swipe shelf (2026-08-15, same branch — the sixth commit).** The Prev/Next
      button carousel became a CSS scroll-snap **preview shelf** (one read-only preview per recipe; the centred
      one at full emphasis, neighbours peeking at scale .92 / opacity .5) over a **stable detail panel** that
@@ -2545,7 +2547,7 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48 and 49).
        real JS, so the drag/scroll/keydown are **live-verified only** (fresh Release server, `/dev/login`): peek
        styling, mouse drag + click-suppression + the off-window guard, arrow/Home/End + boundary, click-a-preview,
        filter scope+reset, dark mode via tokens, mobile 375 px with no horizontal page scroll, no console/CSP
-       errors. ⚠️ Still UNPUSHED — Jordan's call.
+       errors. ✅ Merged to master + pushed 2026-08-15 (CI green) as part of the arc merge above.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
