@@ -2,11 +2,14 @@ using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Tagging;
+using ShelfAware.Web.Undo;
 
 namespace ShelfAware.Web.Data;
 
-/// <summary>EF Core implementation of the chat data port (DESIGN.md §3/§7).</summary>
-public class EfPantryStore(IHouseholdDbFactory dbFactory) : IPantryStore
+/// <summary>EF Core implementation of the chat data port (DESIGN.md §3/§7). Writes that a household can
+/// undo also record an <c>ActivityEntry</c> through <see cref="IActivityLog"/> here in the data layer —
+/// so a chat/voice action is logged for free, on the same one write path as the dashboard.</summary>
+public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityLog) : IPantryStore
 {
     public async Task<IReadOnlyList<Product>> GetProductsAsync(CancellationToken cancellationToken = default)
     {
@@ -70,7 +73,9 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory) : IPantryStore
         return TagVocabulary.Seed.Concat(stored).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    public async Task<bool> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default)
+    public async Task<bool> AddPurchaseAsync(
+        int productId, DateOnly purchasedAt, decimal quantity,
+        PurchaseSource source = PurchaseSource.Chat, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         // The product must exist IN THIS HOUSEHOLD (the filtered lookup enforces it) — a raw id for
@@ -87,19 +92,27 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory) : IPantryStore
             product.IsTracked = true;
             retracked = true;
         }
-        // §13.2: a purchase moves the count wherever it comes from. Chat purchases carry no ReceiptId,
-        // so unlike a receipt's this one has no undo — which is fine, it's a deliberate human statement
-        // rather than a machine reading, and the count is correctable by hand.
+        // §13.2: a purchase moves the count wherever it comes from — the dashboard, chat, or a receipt.
         StockLedger.Add(product, quantity);
 
-        db.PurchaseEvents.Add(new PurchaseEvent
+        var purchase = new PurchaseEvent
         {
             ProductId = productId,
             PurchasedAt = purchasedAt,
             Quantity = quantity,
-            Source = PurchaseSource.Chat,
-        });
+            Source = source,
+        };
+        db.PurchaseEvents.Add(purchase);
         await db.SaveChangesAsync(cancellationToken);
+
+        // Record the undoable action AFTER the buy commits: its id is what an undo deletes, and a failed
+        // buy must log nothing. Best-effort and its own transaction — the purchase stands even if the log
+        // write can't (see IActivityLog.RecordAsync). PurchaseAddedHandler reverses it, count and all.
+        await activityLog.RecordAsync(
+            ActivityKind.PurchaseAdded,
+            new PurchaseAddedPayload(purchase.Id, quantity, product.Name, purchasedAt),
+            source.ToString(),
+            cancellationToken);
         return retracked;
     }
 

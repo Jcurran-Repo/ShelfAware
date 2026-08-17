@@ -175,7 +175,7 @@ internal sealed class FakePantryStore : IPantryStore
     public Task<IReadOnlyList<string>> GetKnownTagsAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<string>>(KnownTags);
 
-    public Task<bool> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default)
+    public Task<bool> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, PurchaseSource source = PurchaseSource.Chat, CancellationToken cancellationToken = default)
     {
         // Mirror the real store: the product must exist (nothing recorded otherwise), a purchase
         // re-tracks an untracked product and reports it, and the count moves through the REAL ledger.
@@ -303,7 +303,7 @@ internal sealed class ThrowingPantryStore(params Product[] products) : IPantrySt
     // A read, like GetProductsAsync — only WRITES simulate failure in this fake.
     public Task<Product?> GetProductAsync(int productId, CancellationToken cancellationToken = default) =>
         Task.FromResult(products.FirstOrDefault(p => p.Id == productId));
-    public Task<bool> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default) =>
+    public Task<bool> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, PurchaseSource source = PurchaseSource.Chat, CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("simulated DB write failure");
     public Task<int> CreateProductAsync(string name, Category category, IReadOnlyList<string> tags, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<string>> AddTagsAsync(int productId, IReadOnlyList<string> tags, CancellationToken cancellationToken = default) => throw new NotSupportedException();

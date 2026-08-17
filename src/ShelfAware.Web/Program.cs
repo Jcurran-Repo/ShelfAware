@@ -25,6 +25,7 @@ using ShelfAware.Web.Data;
 using ShelfAware.Web.Diagnostics;
 using ShelfAware.Web.Ingest;
 using ShelfAware.Web.Services;
+using ShelfAware.Web.Undo;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -294,6 +295,11 @@ builder.Services.AddScoped<RecipeImageStorage>(); // where recipe photos live (p
 
 builder.Services.AddScoped<ProductRenameService>(); // rename + re-point the name-keyed recipe links
 builder.Services.AddScoped<ProductMergeService>();  // fold a variety-split product into its item
+
+// The activity log + per-action undo (and the /history page). EfPantryStore and the confirm/edit
+// services record through IActivityLog in the data layer, so chat/voice actions are logged for free;
+// both the inline "↩ Undo" and /history reverse through the one ActivityLogService.UndoAsync.
+builder.Services.AddActivityLog(builder.Configuration);
 builder.Services.AddScoped<ReportDataService>();    // joins EF rows into the report engine's flat facts
 builder.Services.AddScoped<DemoDataSeeder>(); // synthetic demo catalog (guarded: this household's pantry is empty)
 // Export + delete-my-data (one place for both). Takes the speech cache root so a delete reaches the

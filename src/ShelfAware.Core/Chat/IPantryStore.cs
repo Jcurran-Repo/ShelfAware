@@ -33,8 +33,9 @@ public interface IPantryStore
 
     /// <summary>Record a purchase. Returns true when it re-tracked an untracked product — buying an
     /// item again ends its "don't want it for a while" (the grocery list's Untrack), same as receipt
-    /// confirmation — so the assistant can tell the user tracking resumed.</summary>
-    Task<bool> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default);
+    /// confirmation — so the assistant can tell the user tracking resumed. <paramref name="source"/>
+    /// records the surface it came from (the dashboard passes Manual; chat defaults to Chat).</summary>
+    Task<bool> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, PurchaseSource source = PurchaseSource.Chat, CancellationToken cancellationToken = default);
 
     Task RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default);
 

@@ -271,21 +271,16 @@ else
     // purchases — so this is about not recording a stray duplicate row / showing a snappy disabled state.
     private bool actionBusy;
 
+    // One purchase write path for every surface (dashboard, chat) — IPantryStore.AddPurchaseAsync, which
+    // also records the undoable activity entry. Was an inline PurchaseEvents.Add here; consolidated so the
+    // buy and its log entry are the one recorded path (plan §6).
     private async Task BoughtToday(Product p)
     {
         if (actionBusy) return;
         actionBusy = true;
         try
         {
-            await using var db = await DbFactory.CreateDbContextAsync();
-            db.PurchaseEvents.Add(new PurchaseEvent
-            {
-                ProductId = p.Id,
-                PurchasedAt = DateOnly.FromDateTime(DateTime.Today),
-                Quantity = 1,
-                Source = PurchaseSource.Manual
-            });
-            await db.SaveChangesAsync();
+            await Store.AddPurchaseAsync(p.Id, DateOnly.FromDateTime(DateTime.Today), 1, PurchaseSource.Manual);
             await LoadAsync();
         }
         finally { actionBusy = false; }

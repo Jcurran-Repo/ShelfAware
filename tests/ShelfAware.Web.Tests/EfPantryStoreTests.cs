@@ -9,7 +9,7 @@ public class EfPantryStoreTests : IDisposable
     private readonly TestDb _db = new();
     private readonly EfPantryStore _store;
 
-    public EfPantryStoreTests() => _store = new EfPantryStore(_db);
+    public EfPantryStoreTests() => _store = new EfPantryStore(_db, UndoTesting.Log(_db));
 
     public void Dispose() => _db.Dispose();
 

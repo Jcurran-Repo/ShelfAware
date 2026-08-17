@@ -75,6 +75,10 @@ public static class AdditiveSchema
 
         // 2026-08-15: an optional photo per recipe (the cookbook). Pre-existing rows get NULL (no photo).
         EnsureColumn(db, table: "Recipes", column: "ImagePath", definition: "TEXT NULL");
+
+        // 2026-08-17: the activity log — every undoable action a household takes, backing per-action undo
+        // and the /history page. A brand-new table is invisible to existing rows.
+        EnsureTable(db, table: "ActivityEntries");
     }
 
     public static void Apply(AuthDbContext db)
