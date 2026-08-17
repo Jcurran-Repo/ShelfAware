@@ -647,7 +647,7 @@ public class UploadPageTests : PageTestContext
         Assert.Equal([2], Extractor.PageCounts);
     }
 
-    // ------------------------------------------------------- the snap button and the staged list
+    // -------------------------------------------------------- the file picker and the staged list
 
     [Fact]
     public void There_is_one_unfiltered_picker_and_no_camera_capture_button()
@@ -704,8 +704,8 @@ public class UploadPageTests : PageTestContext
     [Fact]
     public void Picks_append_across_change_events_and_a_staged_file_can_be_removed()
     {
-        // Each change event ADDS to the staged list (a camera snap is one file per event, and a
-        // second pick must not throw away the first); the ✕ on a staged row is the way back out.
+        // Each change event ADDS to the staged list (a second pick must not throw away the first);
+        // the ✕ on a staged row is the way back out.
         var cut = RenderUpload();
 
         cut.FindComponent<InputFile>().UploadFiles(Pdf("a.pdf"));

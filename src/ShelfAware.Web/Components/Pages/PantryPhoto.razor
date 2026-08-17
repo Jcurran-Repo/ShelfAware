@@ -331,11 +331,11 @@ else if (phase == Phase.Done)
     private string? errorMessage;
     private List<StagedPhoto> stagedPhotos = [];
     private bool ingesting;
-    // ⚠️ The @key seed for both file inputs — bumped after every finished ingest so the next pick
-    // gets a FRESH <input>. A file input keeps its last value and fires no change event for the
-    // "same" file, and every iOS camera capture shares one name (image.jpg): without this, the
-    // second snap of a shelf is silently ignored. Review-verified — bUnit's fake upload can't
-    // reproduce the browser's same-file suppression.
+    // ⚠️ The @key seed for the file input — bumped after every finished ingest so the next pick gets
+    // a FRESH <input>. A file input keeps its last value and fires no change event for the "same"
+    // file, so without this a second pick of the same file (or two shots an OS both names image.jpg)
+    // is silently ignored. Review-verified — bUnit's fake upload can't reproduce the browser's
+    // same-file suppression.
     private int pickerGeneration;
     private int photoCount;
 

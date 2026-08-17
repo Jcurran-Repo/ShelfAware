@@ -131,8 +131,8 @@ public class PantryPhotoPageTests : PageTestContext
         return cut;
     }
 
-    /// <summary>Feeds photos through the PICKER input (the first of the two — the snap input is
-    /// second; see <see cref="Snap"/>). Staging is eager, so the loader runs inside this call.</summary>
+    /// <summary>Feeds photos through the page's single file picker. Staging is eager, so the loader
+    /// runs inside this call.</summary>
     private static void Upload(IRenderedComponent<PantryPhoto> cut, int photos) =>
         cut.FindComponent<InputFile>().UploadFiles(
             [.. Enumerable.Range(0, photos).Select(i =>
