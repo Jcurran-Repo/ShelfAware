@@ -41,7 +41,15 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
         if (tags.Count > 0)
             TagVocabulary.ApplyTags(product, tags, await LoadVocabularyAsync(db, cancellationToken));
         db.Products.Add(product);
+
+        // The product and its undo record commit together (see AddPurchaseAsync); the entry keys on the
+        // product's generated id, so it saves inside the transaction to assign it, then stages the entry.
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await db.SaveChangesAsync(cancellationToken); // assigns product.Id
+        activityLog.Record(db, ActivityKind.ProductCreated, new ProductCreatedPayload(product.Id, product.Name));
         await db.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
+        await activityLog.TrimAsync(cancellationToken);
         return product.Id;
     }
 
@@ -55,7 +63,12 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
         var before = product.Tags.Select(t => t.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
         TagVocabulary.ApplyTags(product, tags, await LoadVocabularyAsync(db, cancellationToken));
         var added = product.Tags.Select(t => t.Value).Where(v => !before.Contains(v)).ToList();
-        if (added.Count > 0) await db.SaveChangesAsync(cancellationToken);
+        if (added.Count > 0)
+        {
+            activityLog.Record(db, ActivityKind.TagsAdded, new TagsAddedPayload(productId, product.Name, added));
+            await db.SaveChangesAsync(cancellationToken);
+            await activityLog.TrimAsync(cancellationToken);
+        }
         return added;
     }
 
@@ -211,10 +224,18 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
         var product = await db.Products.FindAsync([productId], cancellationToken);
         if (product is null) return false;
 
+        // Snapshot the count-state before any mutation, so an undo can restore it exactly.
+        var oldOnHand = product.QuantityOnHand;
+        var oldCountedAt = product.QuantityCountedAt;
+        var oldTrackQuantity = product.TrackQuantity;
+
         if (stopCounting)
         {
             StockLedger.StopCounting(product);
+            if (product.TrackQuantity != oldTrackQuantity) // only a real change is worth an undo record
+                RecordCountSet(db, product, oldOnHand, oldCountedAt, oldTrackQuantity, createdSignalId: null);
             await db.SaveChangesAsync(cancellationToken);
+            await activityLog.TrimAsync(cancellationToken);
             return true;
         }
 
@@ -237,22 +258,50 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
             ? StockLedger.AdjustByHuman(product, quantity, DateTimeOffset.Now)
             : StockLedger.Attest(product, quantity, DateTimeOffset.Now);
 
+        // Nothing actually moved (a zero-delta relative move) → nothing to record or undo.
+        var changed = product.QuantityOnHand != oldOnHand
+            || product.QuantityCountedAt != oldCountedAt
+            || product.TrackQuantity != oldTrackQuantity;
+
         // §13.4: a HUMAN'S zero is real evidence, so it writes the outage the burn-rate rhythm learns
         // from — dated by running out rather than by remembering to report it. A zero that automated
         // decrements merely arrived at never reaches this method.
         if (assertedOut)
         {
-            db.InventorySignals.Add(new InventorySignal
+            var signal = new InventorySignal
             {
                 ProductId = productId,
                 Kind = SignalKind.OutNow,
                 SignaledAt = DateTimeOffset.Now,
-            });
+            };
+            db.InventorySignals.Add(signal);
+
+            // The count change, the OutNow, and the undo record commit together; the entry keys on the
+            // OutNow's generated id, so save inside the transaction to assign it, then stage the entry.
+            await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+            await db.SaveChangesAsync(cancellationToken); // assigns signal.Id
+            RecordCountSet(db, product, oldOnHand, oldCountedAt, oldTrackQuantity, signal.Id);
+            await db.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+            await activityLog.TrimAsync(cancellationToken);
+            return true;
         }
 
+        if (changed)
+            RecordCountSet(db, product, oldOnHand, oldCountedAt, oldTrackQuantity, createdSignalId: null);
         await db.SaveChangesAsync(cancellationToken);
+        await activityLog.TrimAsync(cancellationToken);
         return true;
     }
+
+    // The CountSet undo record from the pre-action snapshot plus the product's current (post-mutation)
+    // count-state; createdSignalId is the OutNow this change filed, if any (an asserted zero).
+    private void RecordCountSet(
+        ShelfAwareDbContext db, Product product,
+        decimal? oldOnHand, DateTimeOffset? oldCountedAt, bool oldTrackQuantity, int? createdSignalId) =>
+        activityLog.Record(db, ActivityKind.CountSet, new CountSetPayload(
+            product.Id, product.Name, oldOnHand, oldCountedAt, oldTrackQuantity,
+            product.QuantityOnHand, product.TrackQuantity, createdSignalId));
 
     public async Task<bool> SetDefaultUnitAsync(int productId, string? unit, CancellationToken cancellationToken = default)
     {
@@ -288,8 +337,19 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
         var stock = await db.PurchaseEvents
             .Where(p => p.ProductId == productId && p.PurchasedAt == day)
             .ToListAsync(cancellationToken);
+        // Capture each affected row's old date BEFORE overwriting, so an undo can restore them.
+        var rows = stock.Select(pp => new ExpirationRow(pp.Id, pp.ExpirationDate)).ToList();
+        var changed = rows.Any(r => r.OldDate != expiresOn);
         foreach (var purchase in stock) purchase.ExpirationDate = expiresOn;
+        if (changed)
+        {
+            var name = await db.Products.Where(pr => pr.Id == productId)
+                .Select(pr => pr.Name).FirstOrDefaultAsync(cancellationToken) ?? "a product";
+            activityLog.Record(db, ActivityKind.ExpirationSet,
+                new ExpirationSetPayload(productId, name, expiresOn, rows));
+        }
         await db.SaveChangesAsync(cancellationToken);
+        await activityLog.TrimAsync(cancellationToken);
         return true;
     }
 
@@ -345,7 +405,14 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
             db.ProductSubstitutes.Add(new ProductSubstitute { ProductId = productId, Value = v });
             added.Add(v);
         }
-        if (added.Count > 0) await db.SaveChangesAsync(cancellationToken);
+        if (added.Count > 0)
+        {
+            var name = await db.Products.Where(pr => pr.Id == productId)
+                .Select(pr => pr.Name).FirstOrDefaultAsync(cancellationToken) ?? "a product";
+            activityLog.Record(db, ActivityKind.SubstitutesAdded, new SubstitutesAddedPayload(productId, name, added));
+            await db.SaveChangesAsync(cancellationToken);
+            await activityLog.TrimAsync(cancellationToken);
+        }
         return added;
     }
 
@@ -369,7 +436,12 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
             db.GroceryExtras.Add(new GroceryExtra { Name = n });
             added.Add(n);
         }
-        if (added.Count > 0) await db.SaveChangesAsync(cancellationToken);
+        if (added.Count > 0)
+        {
+            activityLog.Record(db, ActivityKind.GroceryExtrasAdded, new GroceryExtrasAddedPayload(added));
+            await db.SaveChangesAsync(cancellationToken);
+            await activityLog.TrimAsync(cancellationToken);
+        }
         return added;
     }
 }

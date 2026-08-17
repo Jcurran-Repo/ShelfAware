@@ -360,6 +360,165 @@ public sealed class ActivityLogTests : IDisposable
         Assert.Empty(await _log.GetHistoryAsync());
     }
 
+    // ---- CountSet ----
+
+    [Fact]
+    public async Task Setting_a_count_logs_an_undoable_entry_and_undo_restores_it()
+    {
+        var id = await SeedProduct(); // never counted
+        await _store.SetQuantityAsync(id, 7); // absolute attest → count 7, opts into counting
+        var p = (await ReadProduct(id))!;
+        Assert.Equal(7m, p.QuantityOnHand);
+        Assert.True(p.TrackQuantity);
+
+        var entry = await LatestEntry();
+        Assert.Equal("Set Whole Milk count to 7", entry.Summary);
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+
+        var after = (await ReadProduct(id))!;
+        Assert.Null(after.QuantityOnHand); // back to unknown
+        Assert.False(after.TrackQuantity); // and un-opted-in
+    }
+
+    [Fact]
+    public async Task Undoing_a_count_that_asserted_zero_deletes_the_out_now_it_filed()
+    {
+        var id = await SeedProduct(count: 5, countedAt: DateTimeOffset.Now.AddDays(-2));
+        await _store.SetQuantityAsync(id, 0); // asserted zero → files an OutNow
+        Assert.Equal(1, await SignalCount(id));
+
+        var entry = await LatestEntry();
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+        Assert.Equal(5m, (await ReadProduct(id))!.QuantityOnHand); // count restored
+        Assert.Equal(0, await SignalCount(id));                    // and the OutNow removed
+    }
+
+    [Fact]
+    public async Task Undoing_a_count_refuses_after_a_recount()
+    {
+        var id = await SeedProduct();
+        await _store.SetQuantityAsync(id, 7);
+        var entry = await LatestEntry();
+        await _store.SetQuantityAsync(id, 12); // recounted since
+
+        Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(entry.Id));
+        Assert.Equal(12m, (await ReadProduct(id))!.QuantityOnHand); // untouched
+    }
+
+    [Fact]
+    public async Task Undoing_stop_counting_resumes_it()
+    {
+        var id = await SeedProduct(count: 5, countedAt: DateTimeOffset.Now.AddDays(-2));
+        await _store.SetQuantityAsync(id, 0, stopCounting: true); // TrackQuantity → false
+        Assert.False((await ReadProduct(id))!.TrackQuantity);
+
+        var entry = await LatestEntry();
+        Assert.Equal("Stopped counting Whole Milk", entry.Summary);
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+        Assert.True((await ReadProduct(id))!.TrackQuantity);
+    }
+
+    // ---- ProductCreated ----
+
+    [Fact]
+    public async Task Creating_a_product_logs_an_undoable_entry_and_undo_deletes_it()
+    {
+        var id = await _store.CreateProductAsync("Olive Oil", Category.Pantry, []);
+        var entry = await LatestEntry();
+        Assert.Equal("Added Olive Oil", entry.Summary);
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+        Assert.False(await ProductExists(id));
+    }
+
+    [Fact]
+    public async Task Undoing_a_product_create_refuses_if_it_gained_history()
+    {
+        var id = await _store.CreateProductAsync("Olive Oil", Category.Pantry, []);
+        var entry = await LatestEntry();
+        await SeedPurchase(id); // it earned its keep
+
+        Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(entry.Id));
+        Assert.True(await ProductExists(id));
+    }
+
+    // ---- ExpirationSet ----
+
+    [Fact]
+    public async Task Undoing_an_expiration_change_restores_the_old_date()
+    {
+        var id = await SeedProduct();
+        await SeedPurchase(id, qty: 1);
+        await _store.SetExpirationAsync(id, new DateOnly(2026, 9, 1));
+        var entry = await LatestEntry();
+        Assert.Equal("Set Whole Milk expiration to Sep 1, 2026", entry.Summary);
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+        Assert.Null((await OnlyPurchase(id)).ExpirationDate); // back to no date
+    }
+
+    [Fact]
+    public async Task Undoing_an_expiration_change_refuses_after_a_later_change()
+    {
+        var id = await SeedProduct();
+        await SeedPurchase(id, qty: 1);
+        await _store.SetExpirationAsync(id, new DateOnly(2026, 9, 1));
+        var entry = await LatestEntry();
+        await _store.SetExpirationAsync(id, new DateOnly(2026, 10, 1)); // re-dated since
+
+        Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(entry.Id));
+        Assert.Equal(new DateOnly(2026, 10, 1), (await OnlyPurchase(id)).ExpirationDate);
+    }
+
+    // ---- TagsAdded / SubstitutesAdded / GroceryExtrasAdded ----
+
+    [Fact]
+    public async Task Undoing_a_tag_add_removes_the_tags()
+    {
+        var id = await SeedProduct();
+        var added = await _store.AddTagsAsync(id, ["dairy", "cold"]);
+        Assert.NotEmpty(added);
+        Assert.Equal(added.Count, await TagCount(id));
+        var entry = await LatestEntry();
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+        Assert.Equal(0, await TagCount(id));
+    }
+
+    [Fact]
+    public async Task Undoing_a_substitute_add_removes_them()
+    {
+        var id = await SeedProduct();
+        await _store.AddSubstitutesAsync(id, ["milk", "cream"]);
+        Assert.Equal(2, await SubstituteCount(id));
+        var entry = await LatestEntry();
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+        Assert.Equal(0, await SubstituteCount(id));
+    }
+
+    [Fact]
+    public async Task Undoing_a_grocery_add_removes_them()
+    {
+        var added = await _store.AddGroceryExtrasAsync(["napkins", "foil"]);
+        Assert.Equal(2, added.Count);
+        var entry = await LatestEntry();
+        Assert.Equal("Added to list: napkins, foil", entry.Summary);
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+        Assert.Equal(0, await GroceryExtraCount());
+    }
+
+    [Fact]
+    public async Task Undoing_a_grocery_add_reports_Gone_when_already_removed()
+    {
+        await _store.AddGroceryExtrasAsync(["napkins"]);
+        var entry = await LatestEntry();
+        await DeleteAllGroceryExtras(); // removed by another path — nothing left to undo
+
+        Assert.Equal(UndoOutcome.Gone, await _log.UndoAsync(entry.Id));
+    }
+
     // ---- helpers ----
 
     private async Task<int> SeedProduct(
@@ -453,5 +612,35 @@ public sealed class ActivityLogTests : IDisposable
     {
         await using var db = _db.CreateDbContext();
         await db.InventorySignals.Where(s => s.ProductId == productId).ExecuteDeleteAsync();
+    }
+
+    private async Task<bool> ProductExists(int id)
+    {
+        await using var db = _db.CreateDbContext();
+        return await db.Products.AnyAsync(p => p.Id == id);
+    }
+
+    private async Task<int> TagCount(int productId)
+    {
+        await using var db = _db.CreateDbContext();
+        return await db.ProductTags.CountAsync(t => t.ProductId == productId);
+    }
+
+    private async Task<int> SubstituteCount(int productId)
+    {
+        await using var db = _db.CreateDbContext();
+        return await db.ProductSubstitutes.CountAsync(s => s.ProductId == productId);
+    }
+
+    private async Task<int> GroceryExtraCount()
+    {
+        await using var db = _db.CreateDbContext();
+        return await db.GroceryExtras.CountAsync();
+    }
+
+    private async Task DeleteAllGroceryExtras()
+    {
+        await using var db = _db.CreateDbContext();
+        await db.GroceryExtras.ExecuteDeleteAsync();
     }
 }
