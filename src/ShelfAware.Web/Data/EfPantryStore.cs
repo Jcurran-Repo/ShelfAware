@@ -123,14 +123,21 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         // Same in-household existence check as AddPurchaseAsync — no signals onto foreign products.
-        if (await db.Products.FindAsync([productId], cancellationToken) is null) return;
-        db.InventorySignals.Add(new InventorySignal
-        {
-            ProductId = productId,
-            Kind = kind,
-            SignaledAt = DateTimeOffset.Now,
-        });
+        var product = await db.Products.FindAsync([productId], cancellationToken);
+        if (product is null) return;
+
+        var signal = new InventorySignal { ProductId = productId, Kind = kind, SignaledAt = DateTimeOffset.Now };
+        db.InventorySignals.Add(signal);
+
+        // The signal and its undo record commit together (see AddPurchaseAsync): the entry keys on the
+        // signal's generated id, so the signal saves inside the transaction to assign it, then the entry.
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await db.SaveChangesAsync(cancellationToken); // assigns signal.Id
+        activityLog.Record(db, ActivityKind.SignalRecorded,
+            new SignalRecordedPayload(signal.Id, kind, product.Name));
         await db.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
+        await activityLog.TrimAsync(cancellationToken);
     }
 
     public async Task<bool> SetPurchaseQuantityAsync(
@@ -150,14 +157,23 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
         // 12 corrected to 2 takes ten off the shelf. Not an attestation: the person is fixing what the
         // RECEIPT said, not reporting what they can see, so QuantityCountedAt stays where it was and
         // the staleness check keeps measuring from the last real look.
+        var oldQuantity = purchase.Quantity;
         StockLedger.Add(product, quantity - purchase.Quantity);
         purchase.Quantity = quantity;
+
+        // The correction and its undo record ride the one save (the entry keys on the existing purchase
+        // id, so no transaction is needed). PurchaseQuantityEditedHandler restores the old quantity and
+        // moves the count back by the same difference.
+        if (quantity != oldQuantity)
+            activityLog.Record(db, ActivityKind.PurchaseQuantityEdited,
+                new PurchaseQuantityEditedPayload(purchaseId, oldQuantity, quantity, product.Name));
 
         // The receipt's own line is deliberately left alone: it's the audit copy of what was read, and
         // a PurchaseEvent points at a receipt rather than at a line, so a receipt with two lines for
         // one product couldn't be updated unambiguously anyway. /receipts stays a record of the
         // receipt; this page is the record of the pantry.
         await db.SaveChangesAsync(cancellationToken);
+        await activityLog.TrimAsync(cancellationToken);
         return true;
     }
 
@@ -166,17 +182,23 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         // The filtered lookup is the in-household existence rule — a raw id can't reach another
-        // household's purchase. No Include(Product): brand moves no count, so nothing else is touched.
+        // household's purchase. Include(Product) only for the undo entry's summary (brand moves no count).
         var purchase = await db.PurchaseEvents
+            .Include(p => p.Product)
             .FirstOrDefaultAsync(p => p.Id == purchaseId, cancellationToken);
         if (purchase is null) return false;
 
         // Blank folds to null — the same "unbranded" the Brands-bought grouping treats whitespace as,
         // so clearing a brand and never having one land in one state, not two.
+        var oldBrand = purchase.Brand;
         purchase.Brand = string.IsNullOrWhiteSpace(brand) ? null : brand.Trim();
+        if (purchase.Brand != oldBrand)
+            activityLog.Record(db, ActivityKind.PurchaseBrandEdited,
+                new PurchaseBrandEditedPayload(purchaseId, oldBrand, purchase.Brand, purchase.Product!.Name));
         // The receipt line is left alone, same as SetPurchaseQuantityAsync: the receipt is the record
         // of what was read, this page is the record of the pantry.
         await db.SaveChangesAsync(cancellationToken);
+        await activityLog.TrimAsync(cancellationToken);
         return true;
     }
 
@@ -239,8 +261,13 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
         var product = await db.Products.FindAsync([productId], cancellationToken);
         if (product is null) return false;
 
+        var oldUnit = product.DefaultUnit;
         product.DefaultUnit = string.IsNullOrWhiteSpace(unit) ? null : unit.Trim();
+        if (product.DefaultUnit != oldUnit)
+            activityLog.Record(db, ActivityKind.DefaultUnitSet,
+                new DefaultUnitSetPayload(productId, oldUnit, product.DefaultUnit, product.Name));
         await db.SaveChangesAsync(cancellationToken);
+        await activityLog.TrimAsync(cancellationToken);
         return true;
     }
 
@@ -271,8 +298,14 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var product = await db.Products.FindAsync([productId], cancellationToken);
         if (product is null) return;
+
+        var was = product.IsTracked;
         product.IsTracked = tracked;
+        if (was != tracked) // only a real change is worth an undo record
+            activityLog.Record(db, ActivityKind.TrackingChanged,
+                new TrackingChangedPayload(productId, was, tracked, product.Name));
         await db.SaveChangesAsync(cancellationToken);
+        await activityLog.TrimAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<RecipeRef>> GetRecipesAsync(CancellationToken cancellationToken = default)

@@ -21,5 +21,10 @@ public static class UndoServiceCollectionExtensions
     public static void AddHandlers(IServiceCollection services)
     {
         services.AddScoped<IUndoHandler, PurchaseAddedHandler>();
+        services.AddScoped<IUndoHandler, SignalRecordedHandler>();
+        services.AddScoped<IUndoHandler, PurchaseQuantityEditedHandler>();
+        services.AddScoped<IUndoHandler, PurchaseBrandEditedHandler>();
+        services.AddScoped<IUndoHandler, DefaultUnitSetHandler>();
+        services.AddScoped<IUndoHandler, TrackingChangedHandler>();
     }
 }

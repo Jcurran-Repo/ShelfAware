@@ -64,10 +64,10 @@ public sealed class ActivityLogTests : IDisposable
     {
         var id = await SeedProduct(count: 5, countedAt: DateTimeOffset.Now.AddDays(-3));
         await _store.AddPurchaseAsync(id, new DateOnly(2026, 8, 17), 1, PurchaseSource.Manual);
+        var entry = await LatestEntry(); // the PurchaseAdded entry, BEFORE the edit records its own
         var purchaseId = await OnlyPurchaseId(id);
         await _store.SetPurchaseQuantityAsync(purchaseId, 3); // a later action changed the same row
 
-        var entry = await LatestEntry();
         Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(entry.Id));
 
         Assert.Equal(1, await PurchaseCount(id));            // still there
@@ -116,6 +116,21 @@ public sealed class ActivityLogTests : IDisposable
     [Fact]
     public async Task Undo_of_a_missing_entry_reports_Gone() =>
         Assert.Equal(UndoOutcome.Gone, await _log.UndoAsync(9999));
+
+    [Fact]
+    public async Task Peek_reports_undoability_without_undoing()
+    {
+        var id = await SeedProduct();
+        await _store.AddPurchaseAsync(id, new DateOnly(2026, 8, 17), 1);
+        var entry = await LatestEntry();
+
+        Assert.Equal(UndoOutcome.Done, await _log.PeekAsync(entry.Id)); // it's undoable...
+        Assert.Equal(1, await PurchaseCount(id));                       // ...but peeking didn't touch the purchase
+        Assert.Null((await Entry(entry.Id))!.UndoneAt);                 // and didn't stamp it
+
+        await DeleteAllPurchases(id);
+        Assert.Equal(UndoOutcome.Gone, await _log.PeekAsync(entry.Id)); // now the reversal is a no-op → not undoable
+    }
 
     // ---- service backbone ----
 
@@ -211,6 +226,140 @@ public sealed class ActivityLogTests : IDisposable
         Assert.Equal(1, await PurchaseCount(id));       // A's purchase untouched
     }
 
+    // ---- SignalRecorded ----
+
+    [Fact]
+    public async Task Recording_a_signal_logs_an_undoable_entry()
+    {
+        var id = await SeedProduct();
+        await _store.RecordSignalAsync(id, SignalKind.Restocked);
+
+        var entry = await LatestEntry();
+        Assert.Equal(ActivityKind.SignalRecorded, entry.Kind);
+        Assert.Equal("Restocked Whole Milk", entry.Summary);
+        Assert.Equal(1, await SignalCount(id));
+    }
+
+    [Fact]
+    public async Task Undoing_a_signal_deletes_the_row()
+    {
+        var id = await SeedProduct();
+        await _store.RecordSignalAsync(id, SignalKind.OutNow);
+        var entry = await LatestEntry();
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+        Assert.Equal(0, await SignalCount(id));
+        Assert.NotNull((await Entry(entry.Id))!.UndoneAt);
+    }
+
+    [Fact]
+    public async Task Undoing_a_signal_whose_row_is_gone_reports_Gone()
+    {
+        var id = await SeedProduct();
+        await _store.RecordSignalAsync(id, SignalKind.RunningLow);
+        var entry = await LatestEntry();
+        await DeleteAllSignals(id); // cleared by another path — undoing would be a no-op
+
+        Assert.Equal(UndoOutcome.Gone, await _log.UndoAsync(entry.Id));
+        Assert.Null((await Entry(entry.Id))!.UndoneAt);
+    }
+
+    // ---- PurchaseQuantityEdited ----
+
+    [Fact]
+    public async Task Undoing_a_quantity_edit_restores_the_old_quantity_and_count()
+    {
+        var id = await SeedProduct(count: 10, countedAt: DateTimeOffset.Now.AddDays(-3));
+        var purchaseId = await SeedPurchase(id, qty: 2);
+        await _store.SetPurchaseQuantityAsync(purchaseId, 5); // +3 to the count (10 → 13)
+        Assert.Equal(13m, (await ReadProduct(id))!.QuantityOnHand);
+
+        var entry = await LatestEntry();
+        Assert.Equal("Changed Whole Milk quantity to 5", entry.Summary);
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+
+        Assert.Equal(2m, (await OnlyPurchase(id)).Quantity);       // old quantity back
+        Assert.Equal(10m, (await ReadProduct(id))!.QuantityOnHand); // count back
+    }
+
+    [Fact]
+    public async Task Undoing_a_quantity_edit_refuses_after_a_later_edit()
+    {
+        var id = await SeedProduct();
+        var purchaseId = await SeedPurchase(id, qty: 2);
+        await _store.SetPurchaseQuantityAsync(purchaseId, 5);
+        var entry = await LatestEntry();
+        await _store.SetPurchaseQuantityAsync(purchaseId, 8); // changed again since
+
+        Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(entry.Id));
+        Assert.Equal(8m, (await OnlyPurchase(id)).Quantity); // untouched
+    }
+
+    // ---- PurchaseBrandEdited ----
+
+    [Fact]
+    public async Task Undoing_a_brand_edit_restores_the_old_brand()
+    {
+        var id = await SeedProduct();
+        var purchaseId = await SeedPurchase(id, brand: "Store Brand");
+        await _store.SetPurchaseBrandAsync(purchaseId, "Great Value");
+        var entry = await LatestEntry();
+        Assert.Equal("Set Whole Milk's brand to Great Value", entry.Summary);
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+        Assert.Equal("Store Brand", (await OnlyPurchase(id)).Brand);
+    }
+
+    [Fact]
+    public async Task Undoing_a_brand_edit_refuses_after_a_later_change()
+    {
+        var id = await SeedProduct();
+        var purchaseId = await SeedPurchase(id, brand: "Store Brand");
+        await _store.SetPurchaseBrandAsync(purchaseId, "Great Value");
+        var entry = await LatestEntry();
+        await _store.SetPurchaseBrandAsync(purchaseId, "Kirkland"); // changed again since
+
+        Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(entry.Id));
+        Assert.Equal("Kirkland", (await OnlyPurchase(id)).Brand);
+    }
+
+    // ---- DefaultUnitSet ----
+
+    [Fact]
+    public async Task Undoing_a_unit_change_restores_the_old_unit()
+    {
+        var id = await SeedProduct();
+        await _store.SetDefaultUnitAsync(id, "lb"); // from null
+        var entry = await LatestEntry();
+        Assert.Equal("Set Whole Milk's unit to lb", entry.Summary);
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+        Assert.Null((await ReadProduct(id))!.DefaultUnit);
+    }
+
+    // ---- TrackingChanged ----
+
+    [Fact]
+    public async Task Undoing_a_tracking_change_flips_it_back()
+    {
+        var id = await SeedProduct(tracked: true);
+        await _store.SetTrackingAsync(id, false); // stop tracking
+        var entry = await LatestEntry();
+        Assert.Equal("Stopped tracking Whole Milk", entry.Summary);
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+        Assert.True((await ReadProduct(id))!.IsTracked);
+    }
+
+    [Fact]
+    public async Task Setting_tracking_to_the_same_value_records_nothing()
+    {
+        var id = await SeedProduct(tracked: true);
+        await _store.SetTrackingAsync(id, true); // no change — nothing to undo
+
+        Assert.Empty(await _log.GetHistoryAsync());
+    }
+
     // ---- helpers ----
 
     private async Task<int> SeedProduct(
@@ -273,5 +422,36 @@ public sealed class ActivityLogTests : IDisposable
         p.QuantityOnHand = count;
         p.QuantityCountedAt = at;
         await db.SaveChangesAsync();
+    }
+
+    private async Task<int> SeedPurchase(int productId, decimal qty = 1, string? brand = null)
+    {
+        await using var db = _db.CreateDbContext();
+        var p = new PurchaseEvent
+        {
+            ProductId = productId, PurchasedAt = new DateOnly(2026, 8, 1),
+            Quantity = qty, Brand = brand, Source = PurchaseSource.Manual,
+        };
+        db.PurchaseEvents.Add(p);
+        await db.SaveChangesAsync();
+        return p.Id;
+    }
+
+    private async Task<PurchaseEvent> OnlyPurchase(int productId)
+    {
+        await using var db = _db.CreateDbContext();
+        return await db.PurchaseEvents.AsNoTracking().SingleAsync(p => p.ProductId == productId);
+    }
+
+    private async Task<int> SignalCount(int productId)
+    {
+        await using var db = _db.CreateDbContext();
+        return await db.InventorySignals.CountAsync(s => s.ProductId == productId);
+    }
+
+    private async Task DeleteAllSignals(int productId)
+    {
+        await using var db = _db.CreateDbContext();
+        await db.InventorySignals.Where(s => s.ProductId == productId).ExecuteDeleteAsync();
     }
 }

@@ -97,24 +97,46 @@ public sealed class ActivityLogService : IActivityLog
     public async Task<UndoOutcome> UndoAsync(int entryId, CancellationToken cancellationToken = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var (outcome, entry) = await EvaluateAsync(db, entryId, cancellationToken);
+        if (outcome != UndoOutcome.Done) return outcome;
+
+        entry!.UndoneAt = DateTimeOffset.Now;
+        await db.SaveChangesAsync(cancellationToken); // the handler's staged reversal + this stamp, one transaction
+        return UndoOutcome.Done;
+    }
+
+    /// <summary>Would undoing this entry succeed RIGHT NOW, without doing it? The page asks this per entry
+    /// so it only offers Undo when the reversal would really act — an undo that has become a no-op (its
+    /// target gone, or superseded) shows greyed, never as a button that does nothing. It runs the EXACT
+    /// same precondition as <see cref="UndoAsync"/> (the handler stages its reversal; Peek simply never
+    /// saves, so the staged work is discarded) — display and undo therefore cannot disagree.</summary>
+    public async Task<UndoOutcome> PeekAsync(int entryId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var (outcome, _) = await EvaluateAsync(db, entryId, cancellationToken);
+        return outcome; // db disposed without SaveChanges → any staged reversal is discarded
+    }
+
+    /// <summary>The ONE precondition path both surfaces share: load the entry household-filtered, apply
+    /// the cheap guards, then let the handler re-read state and STAGE its reversal on <paramref name="db"/>
+    /// (which only <see cref="UndoAsync"/> commits). Returns the outcome and the tracked entry.</summary>
+    private async Task<(UndoOutcome Outcome, ActivityEntry? Entry)> EvaluateAsync(
+        ShelfAwareDbContext db, int entryId, CancellationToken cancellationToken)
+    {
         var entry = await db.ActivityEntries.FirstOrDefaultAsync(e => e.Id == entryId, cancellationToken);
-        if (entry is null) return UndoOutcome.Gone;                        // gone, or another household's
-        if (entry.UndoneAt is not null) return UndoOutcome.AlreadyUndone;
-        if (entry.Reversibility == Reversibility.NotReversible) return UndoOutcome.NotReversible;
-        if (!_handlers.TryGetValue(entry.Kind, out var handler)) return UndoOutcome.NotReversible;
+        if (entry is null) return (UndoOutcome.Gone, null);                       // gone, or another household's
+        if (entry.UndoneAt is not null) return (UndoOutcome.AlreadyUndone, entry);
+        if (entry.Reversibility == Reversibility.NotReversible) return (UndoOutcome.NotReversible, entry);
+        if (!_handlers.TryGetValue(entry.Kind, out var handler)) return (UndoOutcome.NotReversible, entry);
 
         var result = await handler.UndoAsync(db, entry, cancellationToken);
-        if (result != UndoResult.Done)
-            return result switch
-            {
-                UndoResult.Superseded => UndoOutcome.Superseded,
-                UndoResult.Gone => UndoOutcome.Gone,
-                _ => UndoOutcome.NotReversible,
-            };
-
-        entry.UndoneAt = DateTimeOffset.Now;
-        await db.SaveChangesAsync(cancellationToken); // the handler's reversal + this stamp, one transaction
-        return UndoOutcome.Done;
+        return (result switch
+        {
+            UndoResult.Done => UndoOutcome.Done,
+            UndoResult.Superseded => UndoOutcome.Superseded,
+            UndoResult.Gone => UndoOutcome.Gone,
+            _ => UndoOutcome.NotReversible,
+        }, entry);
     }
 
     /// <summary>The household's actions, newest first. Ordered by Id — insert order IS chronological, and
