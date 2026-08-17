@@ -650,21 +650,20 @@ public class UploadPageTests : PageTestContext
     // ------------------------------------------------------- the snap button and the staged list
 
     [Fact]
-    public void The_picker_takes_any_image_and_the_snap_input_opens_the_camera()
+    public void There_is_one_unfiltered_picker_and_no_camera_capture_button()
     {
-        // ⚠️ image/* and not an image-format list — a format list grays HEIC photos out of the iOS
-        // Files browser instead of converting them (the census picker learned this first); PDF is
-        // named because it genuinely is accepted here. The snap input opens the camera directly
-        // (capture), arrives as JPEG on iOS, and takes one photo per activation, appended.
+        // ⚠️ No `accept`: a mixed image+PDF list greys HEIC photos out of the iOS picker (the default
+        // iPhone format), so the one control that takes a photo OR a PDF filters by nothing and lets
+        // the loader refuse non-photos. The camera-capture button was removed — `capture` drops the
+        // Blazor circuit on Android and never opened the camera directly anyway; the picker still
+        // offers the device camera through the OS sheet.
         var cut = RenderUpload();
 
         var inputs = cut.FindAll("input[type=file]");
-        Assert.Equal("image/*,application/pdf", inputs[0].GetAttribute("accept"));
-        Assert.Equal("environment", inputs[1].GetAttribute("capture"));
-        Assert.Equal("image/*", inputs[1].GetAttribute("accept"));
-        Assert.Null(inputs[1].GetAttribute("multiple"));
-        // The label IS the visible button, so it must point at the input it proxies.
-        Assert.Equal(inputs[1].GetAttribute("id"), cut.Find("label.file-button").GetAttribute("for"));
+        Assert.Single(inputs);                              // one control, no separate snap input
+        Assert.Null(inputs[0].GetAttribute("accept"));      // unfiltered, so HEIC + PDF both come through
+        Assert.Null(inputs[0].GetAttribute("capture"));     // no capture — see the removal above
+        Assert.Empty(cut.FindAll("label.file-button"));     // and no proxied camera button
     }
 
     [Fact]
@@ -722,9 +721,9 @@ public class UploadPageTests : PageTestContext
     }
 
     [Fact]
-    public async Task A_snap_lands_beside_picked_files_and_extracts_as_a_batch()
+    public async Task A_photo_lands_beside_a_picked_pdf_and_extracts_as_a_batch()
     {
-        // The snap input feeds the same staged list as the picker — two sources, one model.
+        // A PDF and a photo, picked across two selections, feed the same staged list — one model.
         Extractor.Results.Enqueue(ExtractionResult.Ok(new ExtractedReceipt
         {
             Merchant = "Walmart", PurchaseDate = Today.AddDays(-1), Lines = [Line("GV MILK", "Whole Milk")],
@@ -736,7 +735,7 @@ public class UploadPageTests : PageTestContext
         var cut = RenderUpload();
 
         cut.FindComponent<InputFile>().UploadFiles(Pdf("a.pdf"));
-        await FileEvents.ChangeAsync(cut, 1, "image.jpg");  // a camera snap
+        await FileEvents.ChangeAsync(cut, 0, "image.jpg");  // a second pick — a photo
 
         Assert.Contains("2 file(s) selected", cut.Markup);
         cut.FindAll("button").Single(b => b.TextContent.Trim() == "Extract").Click();
@@ -857,7 +856,7 @@ public class UploadPageTests : PageTestContext
 
         var gate = new TaskCompletionSource();
         PhotoLoader.Hold = gate;
-        var ingest = FileEvents.ChangeAsync(cut, 1, "image.jpg");  // parks mid-ingest
+        var ingest = FileEvents.ChangeAsync(cut, 0, "image.jpg");  // parks mid-ingest
 
         cut.FindAll("button").Single(b => b.TextContent.Trim() == "Extract").Click();  // must NO-OP
         Assert.Empty(Extractor.PageCounts);
@@ -870,19 +869,19 @@ public class UploadPageTests : PageTestContext
     [Fact]
     public async Task A_refused_append_still_hands_back_fresh_inputs()
     {
-        // The cap refusal's recovery ("Extract these first, or remove one") ends in another pick —
-        // often a re-snap sharing the refused capture's name (image.jpg), which fires no change
-        // event unless the element is FRESH (the @key rule). Element identity is the observable
-        // half; the browser's same-name suppression itself can't run under bUnit.
+        // The cap refusal's recovery ("Extract these first, or remove one") ends in another pick,
+        // often re-picking the same file name (image.jpg), which fires no change event unless the
+        // element is FRESH (the @key rule). Element identity is the observable half; the browser's
+        // same-name suppression itself can't run under bUnit.
         var cut = RenderUpload();
         cut.FindComponent<InputFile>().UploadFiles(
             [.. Enumerable.Range(0, 20).Select(i => Pdf($"r{i}.pdf"))]);
-        var before = cut.FindComponents<InputFile>()[1].Instance;
+        var before = cut.FindComponent<InputFile>().Instance;
 
-        await FileEvents.ChangeAsync(cut, 1, "image.jpg"); // would be 21 — refused
+        await FileEvents.ChangeAsync(cut, 0, "image.jpg"); // would be 21 — refused
 
         Assert.Contains("please keep it to 20 per upload", cut.Markup);
-        Assert.NotSame(before, cut.FindComponents<InputFile>()[1].Instance);
+        Assert.NotSame(before, cut.FindComponent<InputFile>().Instance);
     }
 
     [Fact]

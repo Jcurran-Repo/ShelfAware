@@ -138,12 +138,6 @@ public class PantryPhotoPageTests : PageTestContext
             [.. Enumerable.Range(0, photos).Select(i =>
                 InputFileContent.CreateFromBinary([1, 2, 3], $"shelf-{i}.jpg", contentType: "image/jpeg"))]);
 
-    /// <summary>One camera snap through the SNAP input — same file name every time by default,
-    /// exactly what an iPhone camera hands over. Returns the ingest handler's task so a parked
-    /// ingest can be awaited.</summary>
-    private static Task Snap(IRenderedComponent<PantryPhoto> cut, string name = "image.jpg") =>
-        FileEvents.ChangeAsync(cut, 1, name);
-
     /// <summary>Clicks "See what's there" by TEXT — the staged rows' ✕ buttons sit before it in the
     /// DOM, so a bare Find("button") would remove a photo instead of reading.</summary>
     private static void See(IRenderedComponent<PantryPhoto> cut) =>
@@ -1370,36 +1364,34 @@ public class PantryPhotoPageTests : PageTestContext
         Assert.NotEmpty(cut.FindComponents<InputFile>());
     }
 
-    // --- the snap button and the staged list ---------------------------------
+    // --- the file picker and the staged list ---------------------------------
 
     [Fact]
-    public void The_snap_input_opens_the_camera_directly()
+    public void There_is_one_image_picker_and_no_camera_capture_button()
     {
-        // ⚠️ capture is the feature: it opens the camera app itself, so there is no photo to FIND —
-        // and a direct capture arrives as JPEG on iOS, so this path never meets HEIC. Its own input
-        // because capture makes an input camera-ONLY; no `multiple` because each snap is one photo,
-        // appended to what's already staged.
+        // The camera-capture button was removed: `capture` backgrounds the browser on Android and
+        // drops the Blazor circuit, losing the photo, and never opened the camera directly anyway.
+        // The one image/* picker still offers the device camera through the OS sheet.
         var cut = Render<PantryPhoto>();
 
-        var snap = cut.FindAll("input[type=file]")[1];
-        Assert.Equal("environment", snap.GetAttribute("capture"));
-        Assert.Equal("image/*", snap.GetAttribute("accept"));
-        Assert.Null(snap.GetAttribute("multiple"));
-        // The label IS the visible button, so it must point at the input it proxies.
-        Assert.Equal(snap.GetAttribute("id"), cut.Find("label.file-button").GetAttribute("for"));
+        var inputs = cut.FindAll("input[type=file]");
+        Assert.Single(inputs);                              // one control, no separate snap input
+        Assert.Equal("image/*", inputs[0].GetAttribute("accept"));
+        Assert.Null(inputs[0].GetAttribute("capture"));     // no capture — see the removal above
+        Assert.Empty(cut.FindAll("label.file-button"));     // and no proxied camera button
     }
 
     [Fact]
-    public async Task Camera_snaps_append_instead_of_replacing()
+    public async Task Picks_append_across_selections_instead_of_replacing()
     {
-        // Each snap is its own change event, and every iPhone capture shares one file name — so
-        // appending (not replacing) is what makes photographing a pantry corner by corner work.
+        // Each selection is its own change event, so appending (not replacing) is what lets a shelf be
+        // photographed corner by corner across several picks.
         Reader.Results.Enqueue(ShelfCensusResult.Ok([Item("Tilapia Fillets")], "{}"));
         var cut = Render<PantryPhoto>();
 
-        Upload(cut, 1);                 // the picker…
-        await Snap(cut);                // …then two snaps, both "image.jpg"
-        await Snap(cut);
+        Upload(cut, 1);                                       // one pick…
+        await FileEvents.ChangeAsync(cut, 0, "again.jpg");    // …then two more, one at a time
+        await FileEvents.ChangeAsync(cut, 0, "again.jpg");
 
         Assert.Contains("3 photos selected", cut.Markup);
         See(cut);
@@ -1425,12 +1417,12 @@ public class PantryPhotoPageTests : PageTestContext
     public async Task Appending_past_the_photo_cap_is_refused_and_keeps_what_is_staged()
     {
         // The single-selection cap (GetMultipleFiles throws past 8) can't see an APPEND overflow —
-        // eight staged plus one snap is nine photos the reader would refuse, so the page refuses
+        // eight staged plus one more is nine photos the reader would refuse, so the page refuses
         // first, names the limit, and drops nothing.
         var cut = Render<PantryPhoto>();
         Upload(cut, 8);
 
-        await Snap(cut);
+        await FileEvents.ChangeAsync(cut, 0, "again.jpg");
 
         Assert.Contains("would be 9 photos", cut.Markup);
         Assert.Contains("8 photos selected", cut.Markup);  // the staged eight survived
@@ -1451,7 +1443,7 @@ public class PantryPhotoPageTests : PageTestContext
     }
 
     [Fact]
-    public async Task The_read_stands_down_while_a_snap_is_still_being_read_in()
+    public async Task The_read_stands_down_while_a_photo_is_still_being_read_in()
     {
         // A read must not snapshot a staged list an ingest is still appending to — the same
         // double-fire discipline Read() itself carries.
@@ -1461,7 +1453,7 @@ public class PantryPhotoPageTests : PageTestContext
 
         var gate = new TaskCompletionSource();
         PhotoLoader.Hold = gate;
-        var ingest = Snap(cut);         // parks mid-ingest
+        var ingest = FileEvents.ChangeAsync(cut, 0, "again.jpg"); // parks mid-ingest
         See(cut);                       // must NO-OP while ingesting
         Assert.Empty(Reader.PhotoCounts);
 
@@ -1493,18 +1485,17 @@ public class PantryPhotoPageTests : PageTestContext
     [Fact]
     public async Task A_refused_append_still_hands_back_fresh_inputs()
     {
-        // The cap refusal's own recovery is "✕ one, snap again" — and a re-snap shares the refused
-        // capture's name (image.jpg), which fires no change event unless the element is FRESH (the
-        // @key rule). Element identity is the observable half; the browser's same-name suppression
-        // itself can't run under bUnit.
+        // The cap refusal's own recovery is "✕ one, pick again" — and re-picking the same file name
+        // fires no change event unless the element is FRESH (the @key rule). Element identity is the
+        // observable half; the browser's same-name suppression itself can't run under bUnit.
         var cut = Render<PantryPhoto>();
         Upload(cut, 8);
-        var before = cut.FindComponents<InputFile>()[1].Instance;
+        var before = cut.FindComponent<InputFile>().Instance;
 
-        await Snap(cut); // would be 9 — refused
+        await FileEvents.ChangeAsync(cut, 0, "again.jpg"); // would be 9 — refused
 
         Assert.Contains("would be 9 photos", cut.Markup);
-        Assert.NotSame(before, cut.FindComponents<InputFile>()[1].Instance);
+        Assert.NotSame(before, cut.FindComponent<InputFile>().Instance);
     }
 
     [Fact]

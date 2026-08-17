@@ -36,26 +36,17 @@
             behind the front can are yours to add.
         </p>
         <div hidden="@(phase == Phase.Reading)">
-            @* ⚠️ image/* and NOT a format list. iOS transcodes a HEIC photo to JPEG only when the accept
-               list asks for JPEG and nothing it can satisfy more cheaply, so a narrow list is what makes
-               the common iPhone path work — but it also hides HEIC-capable sources rather than converting
-               them. image/* keeps every picker showing photos while letting the loader decide.
+            @* ⚠️ image/* (a wildcard), NOT a format list: iOS greys HEIC photos out of the picker when
+               the accept names specific formats, but a clean image/* keeps every photo — HEIC included —
+               selectable and hands it back as JPEG, letting the loader decide. No PDF here: a shelf is a
+               photo. On phones the picker offers the camera, so photographing the shelf is one tap in.
                ⚠️ Never name image/heic here: Safari 17+ then stops transcoding and converts JPEG and PNG
                INTO HEIC, which makes the rare case universal.
-               ⚠️ @key: a file input keeps its last value and fires NO change event for the "same" file —
-               and every iOS camera capture shares one name (image.jpg). A fresh element per finished
-               ingest is what lets a shelf be snapped corner by corner; the counter bumps only after the
-               reads complete, so no element is torn down under a live stream. *@
+               ⚠️ @key: a file input fires NO change event when the SAME file is re-picked, so a fresh
+               element per finished ingest is what lets a shelf be photographed corner by corner; the
+               counter bumps only after the reads complete, so no element is torn down mid-read. *@
             <InputFile @key="@($"pick-{pickerGeneration}")" OnChange="OnFilesSelected" multiple accept="image/*"
                        disabled="@ingesting" aria-label="Photos of a shelf, freezer, or cupboard" />
-            @* The camera path: `capture` opens the camera directly — snap the shelf where you stand,
-               nothing to find in any picker. Its own input because capture makes an input camera-ONLY.
-               Direct captures arrive as JPEG on iOS, so this path never meets HEIC at all. The input is
-               visually hidden; the label is the button (focus ring rides :focus-visible — .file-button). *@
-            <InputFile @key="@($"snap-{pickerGeneration}")" id="shelf-snap" OnChange="OnFilesSelected"
-                       accept="image/*" capture="environment" disabled="@ingesting"
-                       class="visually-hidden" aria-label="Take a photo of the shelf with your camera" />
-            <label class="file-button" for="shelf-snap">📷 Snap the shelf</label>
             @if (ingesting)
             {
                 <p class="muted" role="status">Reading…</p>
