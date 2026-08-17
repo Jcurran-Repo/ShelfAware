@@ -103,16 +103,19 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
             Source = source,
         };
         db.PurchaseEvents.Add(purchase);
-        await db.SaveChangesAsync(cancellationToken);
 
-        // Record the undoable action AFTER the buy commits: its id is what an undo deletes, and a failed
-        // buy must log nothing. Best-effort and its own transaction — the purchase stands even if the log
-        // write can't (see IActivityLog.RecordAsync). PurchaseAddedHandler reverses it, count and all.
-        await activityLog.RecordAsync(
-            ActivityKind.PurchaseAdded,
-            new PurchaseAddedPayload(purchase.Id, quantity, product.Name, purchasedAt),
-            source.ToString(),
-            cancellationToken);
+        // The buy and its undo record commit TOGETHER: a recorded purchase really happened, and a failed
+        // buy leaves no orphan log row. The entry's payload needs the purchase's generated id, so inside
+        // the transaction the buy saves first (assigning it), then the entry is staged, then one commit
+        // covers both. PurchaseAddedHandler reverses the purchase, count and all.
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await db.SaveChangesAsync(cancellationToken); // assigns purchase.Id
+        activityLog.Record(db, ActivityKind.PurchaseAdded,
+            new PurchaseAddedPayload(purchase.Id, quantity, product.Name, purchasedAt), source.ToString());
+        await db.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
+
+        await activityLog.TrimAsync(cancellationToken); // retention: decoupled, best-effort, after the commit
         return retracked;
     }
 

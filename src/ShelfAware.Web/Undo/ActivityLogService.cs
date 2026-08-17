@@ -1,7 +1,7 @@
-using Microsoft.Data.Sqlite;
+using System.Data.Common;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using System.Text.Json;
 using ShelfAware.Core.Domain;
 using ShelfAware.Web.Data;
 
@@ -17,20 +17,25 @@ public sealed class ActivityLogOptions
     public int? MaxRows { get; set; }
 }
 
-/// <summary>The recording seam the data layer depends on — one method, so <c>EfPantryStore</c> and the
-/// confirm/edit services log an action without knowing how undo works.</summary>
+/// <summary>The recording seam the data layer depends on. Recording is ATOMIC with the action: the entry
+/// is staged on the action's OWN context (and transaction), so it commits with the action — a committed
+/// action always has its undo record, and a rolled-back action leaves none. Retention (<see
+/// cref="TrimAsync"/>) is the separable cleanup half — best-effort, after the commit — so it can never
+/// roll back or block a real action.</summary>
 public interface IActivityLog
 {
-    /// <summary>Record an undoable action AFTER it has committed. Best-effort: returns null (logged as a
-    /// warning) rather than throwing on a store failure — a logged action really happened, and an
-    /// unlogged one merely can't be undone from history. Throws only on a programmer error (recording a
-    /// kind with no registered handler).</summary>
-    Task<RecordedActivity?> RecordAsync(
-        ActivityKind kind, object payload, string? source = null, CancellationToken cancellationToken = default);
-}
+    /// <summary>Stage the undo record on the CALLER's context, to be committed by the caller's
+    /// SaveChanges/transaction together with the action. Returns the (unsaved) entry — read its
+    /// <see cref="ActivityEntry.Id"/> after the save for an inline undo affordance. Does NOT save.
+    /// Throws only on a programmer error (recording a kind with no registered handler); being inside the
+    /// action's transaction, that fails the action loudly rather than shipping a silently-broken log.</summary>
+    ActivityEntry Record(ShelfAwareDbContext db, ActivityKind kind, object payload, string? source = null);
 
-/// <summary>A freshly recorded entry's id and stored summary — enough for an inline "↩ Undo" affordance.</summary>
-public sealed record RecordedActivity(int Id, string Summary, Reversibility Reversibility);
+    /// <summary>Best-effort retention: trim the oldest rows past MaxRows for the current household. A
+    /// no-op (no query, no context) when unbounded. Called AFTER the action commits and swallows its own
+    /// errors — cleanup must never fail the action it follows.</summary>
+    Task TrimAsync(CancellationToken cancellationToken = default);
+}
 
 /// <summary>Typed result of an undo attempt, for the UI to word (item 27: advice splits by what happened).</summary>
 public enum UndoOutcome { Done, AlreadyUndone, Superseded, Gone, NotReversible }
@@ -64,37 +69,24 @@ public sealed class ActivityLogService : IActivityLog
         _logger = logger;
     }
 
-    public async Task<RecordedActivity?> RecordAsync(
-        ActivityKind kind, object payload, string? source = null, CancellationToken cancellationToken = default)
+    public ActivityEntry Record(ShelfAwareDbContext db, ActivityKind kind, object payload, string? source = null)
     {
         if (!_handlers.TryGetValue(kind, out var handler))
             throw new InvalidOperationException(
                 $"No IUndoHandler registered for {kind} — add one before recording that action.");
 
         var json = JsonSerializer.Serialize(payload, payload.GetType());
-        try
+        var entry = new ActivityEntry
         {
-            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
-            var entry = new ActivityEntry
-            {
-                OccurredAt = DateTimeOffset.Now,
-                Kind = kind,
-                Summary = handler.Summarize(json),
-                Reversibility = handler.Reversibility,
-                PayloadJson = json,
-                Source = source,
-            };
-            db.ActivityEntries.Add(entry);
-            await db.SaveChangesAsync(cancellationToken);
-            await TrimAsync(db, cancellationToken); // only an insert grows the table, so only an insert trims
-            return new RecordedActivity(entry.Id, entry.Summary, entry.Reversibility);
-        }
-        catch (Exception ex) when (ex is DbUpdateException or SqliteException)
-        {
-            _logger.LogWarning(ex,
-                "Couldn't record a {Kind} activity entry; the action stands, without an undo record.", kind);
-            return null;
-        }
+            OccurredAt = DateTimeOffset.Now,
+            Kind = kind,
+            Summary = handler.Summarize(json),
+            Reversibility = handler.Reversibility,
+            PayloadJson = json,
+            Source = source,
+        };
+        db.ActivityEntries.Add(entry); // staged on the caller's context — the caller's SaveChanges commits it
+        return entry;
     }
 
     /// <summary>Reverse one entry through its kind's handler — the ONE undo path for both surfaces. Loads
@@ -137,14 +129,22 @@ public sealed class ActivityLogService : IActivityLog
         return await query.ToListAsync(cancellationToken);
     }
 
-    private async Task TrimAsync(ShelfAwareDbContext db, CancellationToken cancellationToken)
+    public async Task TrimAsync(CancellationToken cancellationToken = default)
     {
-        if (_maxRows is not { } max) return; // unbounded (self-host default)
-        var over = await db.ActivityEntries.CountAsync(cancellationToken) - max;
-        if (over <= 0) return;
-        // Oldest by Id (insert order = chronological); Id is an int, so this ORDER BY is legal in SQL.
-        var oldest = await db.ActivityEntries
-            .OrderBy(e => e.Id).Take(over).Select(e => e.Id).ToListAsync(cancellationToken);
-        await db.ActivityEntries.Where(e => oldest.Contains(e.Id)).ExecuteDeleteAsync(cancellationToken);
+        if (_maxRows is not { } max) return; // unbounded (self-host default): no context, no cost
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+            var over = await db.ActivityEntries.CountAsync(cancellationToken) - max;
+            if (over <= 0) return;
+            // Oldest by Id (insert order = chronological); Id is an int, so this ORDER BY is legal in SQL.
+            var oldest = await db.ActivityEntries
+                .OrderBy(e => e.Id).Take(over).Select(e => e.Id).ToListAsync(cancellationToken);
+            await db.ActivityEntries.Where(e => oldest.Contains(e.Id)).ExecuteDeleteAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is DbUpdateException or DbException)
+        {
+            _logger.LogWarning(ex, "Couldn't trim the activity log; it may briefly exceed MaxRows.");
+        }
     }
 }

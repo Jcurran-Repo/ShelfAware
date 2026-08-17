@@ -144,8 +144,25 @@ public sealed class ActivityLogTests : IDisposable
     {
         var empty = new ActivityLogService(_db, [], Options.Create(new ActivityLogOptions()),
             NullLogger<ActivityLogService>.Instance);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => empty.RecordAsync(
-            ActivityKind.PurchaseAdded, new PurchaseAddedPayload(1, 1, "X", new DateOnly(2026, 8, 17))));
+        await using var db = _db.CreateDbContext();
+        Assert.Throws<InvalidOperationException>(() => empty.Record(
+            db, ActivityKind.PurchaseAdded, new PurchaseAddedPayload(1, 1, "X", new DateOnly(2026, 8, 17))));
+    }
+
+    [Fact]
+    public async Task A_failed_record_rolls_back_the_whole_action()
+    {
+        // Atomicity: recording is inside the buy's transaction, so a record that throws (here, a recorder
+        // with no handler) takes the purchase down with it — never an action without its undo entry.
+        var brokenLog = new ActivityLogService(_db, [], Options.Create(new ActivityLogOptions()),
+            NullLogger<ActivityLogService>.Instance);
+        var store = new EfPantryStore(_db, brokenLog);
+        var id = await SeedProduct();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            store.AddPurchaseAsync(id, new DateOnly(2026, 8, 17), 1, PurchaseSource.Manual));
+
+        Assert.Equal(0, await PurchaseCount(id)); // the buy rolled back with the failed record
     }
 
     [Fact]
@@ -164,13 +181,15 @@ public sealed class ActivityLogTests : IDisposable
     public async Task A_bounded_log_trims_the_oldest_rows_first()
     {
         var log = UndoTesting.Log(_db, maxRows: 3);
-        for (var i = 0; i < 5; i++)
-            await log.RecordAsync(ActivityKind.PurchaseAdded,
-                new PurchaseAddedPayload(i, 1, $"Item {i}", new DateOnly(2026, 8, 17)));
+        var store = new EfPantryStore(_db, log);
+        var id = await SeedProduct(name: "Milk");
+        // Five buys (distinct quantities so the survivors are identifiable), trimmed to the newest 3.
+        for (var i = 1; i <= 5; i++)
+            await store.AddPurchaseAsync(id, new DateOnly(2026, 8, 17), i, PurchaseSource.Manual);
 
         var remaining = await log.GetHistoryAsync();
         Assert.Equal(
-            new[] { "Bought 1 × Item 4", "Bought 1 × Item 3", "Bought 1 × Item 2" },
+            new[] { "Bought 5 × Milk", "Bought 4 × Milk", "Bought 3 × Milk" },
             remaining.Select(e => e.Summary).ToArray());
     }
 
