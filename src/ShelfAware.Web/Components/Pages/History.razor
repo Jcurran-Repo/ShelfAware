@@ -1,0 +1,179 @@
+@page "/history"
+@using ShelfAware.Core.Domain
+@using ShelfAware.Web.Undo
+@inject ActivityLogService ActivityLog
+@inject ILogger<History> Logger
+
+<PageTitle>History — Shelf Aware</PageTitle>
+
+<div class="page-head">
+    <h1>Activity history</h1>
+</div>
+
+<p class="muted">Everything you've done here, newest first — undo anything that's still reversible.</p>
+
+@* Persistent announcer, mounted before any action: a live region first filled on insert isn't
+   reliably announced, so the region exists up front and only its text changes (items 47/49). *@
+<div class="visually-hidden" role="status" aria-live="polite">@announcement</div>
+@if (actionError is not null)
+{
+    <p class="error" role="alert">@actionError</p>
+}
+
+<section class="panel history">
+    @if (loadError is not null)
+    {
+        <p class="error" role="alert">@loadError</p>
+    }
+    else if (rows is null)
+    {
+        <p>Loading…</p>
+    }
+    else if (rows.Count == 0)
+    {
+        <p class="muted">Nothing yet — your purchases, counts, and edits will show up here.</p>
+    }
+    else
+    {
+        @foreach (var day in rows.GroupBy(r => DayOf(r.Entry)))
+        {
+            <table>
+                <caption>@DayLabel(day.Key)</caption>
+                <tbody>
+                    @foreach (var row in day)
+                    {
+                        @* Greyed unless it can actually be undone right now — never a dead Undo button. *@
+                        <tr @key="row.Entry.Id" class="@(row.State == UndoOutcome.Done ? null : "muted")">
+                            <td class="history-time muted">@row.Entry.OccurredAt.ToString("h:mm tt")</td>
+                            <td class="history-what">@row.Entry.Summary</td>
+                            <td class="history-action">
+                                @switch (row.State)
+                                {
+                                    case UndoOutcome.Done:
+                                        <button class="linkish" @onclick="() => UndoAsync(row.Entry)" disabled="@busy"
+                                                aria-label="@($"Undo: {row.Entry.Summary}")">↩ Undo</button>
+                                        break;
+                                    case UndoOutcome.AlreadyUndone:
+                                        <span>undone @row.Entry.UndoneAt?.ToString("MMM d")</span>
+                                        break;
+                                    case UndoOutcome.Superseded:
+                                        <span title="Something changed this since — undoing would overwrite it">changed since</span>
+                                        break;
+                                    case UndoOutcome.Gone:
+                                        <span>no longer here</span>
+                                        break;
+                                    default:
+                                        <span>can't be undone</span>
+                                        break;
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+
+        @if (canShowMore)
+        {
+            <button class="secondary" @onclick="ShowAllAsync" disabled="@busy">Show all history</button>
+        }
+        else if (truncated)
+        {
+            <p class="muted">Showing the most recent @rows.Count actions.</p>
+        }
+    }
+</section>
+
+@code {
+    private sealed record Row(ActivityEntry Entry, UndoOutcome State);
+
+    private const int RecentCount = 30;
+    private const int AllCap = 500;
+
+    private List<Row>? rows;
+    private string? announcement;
+    private string? actionError;
+    private string? loadError;
+    private bool busy;
+    private bool showingAll;
+    private bool canShowMore;
+    private bool truncated;
+
+    protected override Task OnInitializedAsync() => LoadAsync(all: false);
+
+    /// <summary>Load the history and, for each shown entry, its live undoability via <c>PeekAsync</c> —
+    /// the SAME precondition the real undo runs, so the button shows only when it would truly act.</summary>
+    private async Task LoadAsync(bool all)
+    {
+        try
+        {
+            var limit = all ? AllCap : RecentCount;
+            var fetched = await ActivityLog.GetHistoryAsync(limit + 1); // +1 to detect "there's more"
+            canShowMore = !all && fetched.Count > RecentCount;
+            truncated = all && fetched.Count > AllCap;
+
+            var built = new List<Row>();
+            foreach (var entry in fetched.Take(limit))
+                built.Add(new Row(entry, await ActivityLog.PeekAsync(entry.Id)));
+            rows = built;
+            showingAll = all;
+            loadError = null;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Loading the activity history failed.");
+            loadError = "Couldn't load your history just now — reload the page to try again.";
+        }
+    }
+
+    private async Task ShowAllAsync()
+    {
+        if (busy) return;
+        busy = true;
+        try { await LoadAsync(all: true); }
+        finally { busy = false; }
+    }
+
+    private async Task UndoAsync(ActivityEntry entry)
+    {
+        if (busy) return;
+        busy = true;
+        announcement = null; // cleared first so the change is re-announced even if the text repeats
+        actionError = null;
+        try
+        {
+            // No cancellation token: an undo is a one-shot write and must not be torn down by a
+            // navigate-away mid-flight (the same posture as ReportResolutionService, item 49).
+            var outcome = await ActivityLog.UndoAsync(entry.Id);
+            await LoadAsync(showingAll); // re-read: the undo may have changed sibling entries' states too
+            announcement = outcome switch
+            {
+                UndoOutcome.Done => $"Undone: {entry.Summary}",
+                UndoOutcome.AlreadyUndone => "That was already undone.",
+                UndoOutcome.Superseded => "Couldn't undo — something changed since.",
+                UndoOutcome.Gone => "Couldn't undo — it's no longer here.",
+                _ => "That can't be undone.",
+            };
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Undoing activity {Id} failed.", entry.Id);
+            actionError = "Couldn't undo just now — please try again.";
+        }
+        finally { busy = false; }
+    }
+
+    // The day an entry belongs to, by its recorded (server-local) date — the same ".Date" reading the
+    // rest of the app uses for a stamped time (SignalDate.Of, item 19), so grouping matches everywhere.
+    private static DateOnly DayOf(ActivityEntry e) => DateOnly.FromDateTime(e.OccurredAt.Date);
+
+    private static string DayLabel(DateOnly day)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        if (day == today) return "Today";
+        if (day == today.AddDays(-1)) return "Yesterday";
+        return day.ToString("dddd, MMM d, yyyy");
+    }
+}

@@ -1,0 +1,20 @@
+/* Activity history — reuses the global table styling; this only shapes the day caption and columns. */
+
+caption {
+    text-align: left;
+    font-weight: 600;
+    font-size: 1.05rem;
+    padding: 0.9rem 0 0.35rem;
+}
+
+.history-time {
+    white-space: nowrap;
+    width: 5.5rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.history-action {
+    text-align: right;
+    white-space: nowrap;
+    width: 8rem;
+}
