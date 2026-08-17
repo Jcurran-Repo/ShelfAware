@@ -2337,10 +2337,11 @@ button.tag-chip {
     cursor: default;
 }
 
-/* A label that proxies a visually-hidden file input — the 📷 snap-a-photo buttons on the receipt
-   and census pages. Styled as the primary button; the focus ring is mirrored from the INPUT's
-   focus (a label isn't focusable, and the real input is visually hidden, so its own ring would
-   draw around a 1px clip). The input must precede the label in the DOM for these selectors. */
+/* A label that proxies a visually-hidden file input — the 📷 photo buttons on the Cookbook and
+   Recipe-import pages (the receipt and census pages dropped theirs). Styled as the primary button;
+   the focus ring is mirrored from the INPUT's focus (a label isn't focusable, and the real input is
+   visually hidden, so its own ring would draw around a 1px clip). The input must precede the label
+   in the DOM for these selectors. */
 .file-button {
     display: inline-block;
     font: inherit;

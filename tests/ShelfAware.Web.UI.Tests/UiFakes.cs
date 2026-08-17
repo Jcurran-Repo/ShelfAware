@@ -13,8 +13,9 @@ namespace ShelfAware.Web.UI.Tests;
 
 /// <summary>Raises a file input's change event by hand, WITHOUT bUnit's UploadFiles, and hands back
 /// the HANDLER's task. Needed wherever a test parks the ingest (staging is eager, so UploadFiles'
-/// own dispatch would sit inside the parked handler with no task to await) — and it's also how the
-/// snap input is driven with the same file name per event, exactly what an iPhone camera produces.</summary>
+/// own dispatch would sit inside the parked handler with no task to await) — and it's also how a
+/// re-pick of the SAME file name is driven, which the photo pages' append-across-change-events
+/// behaviour turns on.</summary>
 internal static class FileEvents
 {
     internal sealed class FakeBrowserFile(string name, string contentType = "image/jpeg") : IBrowserFile
@@ -27,8 +28,8 @@ internal static class FileEvents
             new MemoryStream([1, 2, 3]);
     }
 
-    /// <summary>Dispatch a change on the Nth file input of the page (0 = the picker, 1 = the snap
-    /// input on both photo-taking pages).</summary>
+    /// <summary>Dispatch a change on the Nth file input of the page. The photo-taking pages (receipt
+    /// upload, census) render a single picker, so that's index 0.</summary>
     public static Task ChangeAsync<T>(IRenderedComponent<T> cut, int inputIndex, params string[] names)
         where T : class, IComponent =>
         cut.InvokeAsync(() => cut.FindComponents<InputFile>()[inputIndex].Instance.OnChange.InvokeAsync(

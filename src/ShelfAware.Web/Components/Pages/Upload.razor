@@ -51,28 +51,20 @@
             </p>
         }
         <div hidden="@(phase == Phase.Extracting)">
-            @* ⚠️ image/* and NOT an image-format list — the census picker's rule (PantryPhoto.razor):
-               iOS transcodes HEIC only when the accept list invites JPEG, and a format list GRAYS
-               HEIC photos out of the Files browser instead of converting them. The loader decides
-               what's an image, not the picker; PDF is named because it genuinely is accepted here.
-               ⚠️ Never name image/heic: Safari 17+ then stops transcoding and converts JPEG and PNG
-               INTO HEIC, making the rare case universal.
-               ⚠️ @key: a file input keeps its last value and fires NO change event when the "same"
-               file is picked again — and every iOS camera capture shares one name (image.jpg). A
-               fresh element per finished ingest is what makes snap → snap → snap work; the counter
-               bumps only after the reads complete, so no element is torn down under a live stream. *@
+            @* No `accept` filter, on purpose. This one control takes both a receipt photo and a
+               print-to-PDF order page, and on iOS a photo picker restricted by type can grey out HEIC
+               shots — the default iPhone format. Left unfiltered, iOS offers BOTH the Photo Library
+               (which hands HEIC back as JPEG) and the file browser (for PDFs), so nothing is hidden;
+               the loader refuses anything that isn't a photo, and a PDF is taken as-is, so a filter
+               earned us nothing. On phones the picker offers the camera, so "take a new photo" is still
+               one tap in.
+               ⚠️ Never add accept="image/heic" here: Safari 17+ then stops transcoding and converts
+               JPEG and PNG INTO HEIC, making the rare case universal.
+               ⚠️ @key: a file input keeps its last value and fires NO change event when the SAME file is
+               picked again, so a fresh element per finished ingest is what lets a re-pick register; the
+               counter bumps only after the reads complete, so no element is torn down mid-read. *@
             <InputFile @key="@($"pick-{pickerGeneration}")" OnChange="OnFilesSelected" multiple
-                       accept="image/*,application/pdf" disabled="@ingesting"
-                       aria-label="Upload receipt images or PDF" />
-            @* The camera path: `capture` opens the camera directly — nothing to find in any picker,
-               which is the whole feature. Its own input because capture makes an input camera-ONLY,
-               with no PDF in its accept because a camera takes photos. Direct captures arrive as
-               JPEG on iOS, so this path never meets HEIC at all. The input is visually hidden; the
-               label is the button (focus ring rides the input's :focus-visible — see .file-button). *@
-            <InputFile @key="@($"snap-{pickerGeneration}")" id="receipt-snap" OnChange="OnFilesSelected"
-                       accept="image/*" capture="environment" disabled="@ingesting"
-                       class="visually-hidden" aria-label="Take a photo of a receipt with your camera" />
-            <label class="file-button" for="receipt-snap">📷 Snap the receipt</label>
+                       disabled="@ingesting" aria-label="Upload receipt photos or a PDF" />
             @if (ingesting)
             {
                 <p class="muted" role="status">Reading…</p>
@@ -391,11 +383,11 @@ else if (phase == Phase.Done)
     private string? errorMessage;
     private List<StagedFile> stagedFiles = [];
     private bool ingesting;
-    // ⚠️ The @key seed for both file inputs — bumped after every finished ingest so the next pick
-    // gets a FRESH <input>. A file input keeps its last value and fires no change event for the
-    // "same" file, and every iOS camera capture shares one name (image.jpg): without this, the
-    // second snap of a multi-page receipt is silently ignored. Review-verified — bUnit's fake
-    // upload can't reproduce the browser's same-file suppression.
+    // ⚠️ The @key seed for the file input — bumped after every finished ingest so the next pick gets
+    // a FRESH <input>. A file input keeps its last value and fires no change event for the "same"
+    // file, so without this a second pick of the same file (or two shots an OS both names image.jpg)
+    // is silently ignored. Review-verified — bUnit's fake upload can't reproduce the browser's
+    // same-file suppression.
     private int pickerGeneration;
     // Cancels in-flight selection-time reads when the page goes away (the census page's pattern),
     // so a navigate-away mid-read is distinguishable from a failed read. Extraction deliberately
