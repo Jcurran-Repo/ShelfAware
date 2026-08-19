@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Features;
@@ -281,6 +282,7 @@ builder.Services.AddScoped<IAppSettings, EfAppSettings>();          // settings 
 builder.Services.AddScoped<ReceiptAutoConfirmer>(); // routes an uploaded receipt per the household's ImportMode
 builder.Services.AddScoped<ReceiptDuplicateDetector>(); // "is this a re-upload?" — a detected dupe never auto-confirms
 builder.Services.AddScoped<ReceiptConfirmationService>();
+builder.Services.AddScoped<ReceiptIngestionService>(); // images → PendingReview receipt + auto-confirm route (the page and the upload endpoint share it)
 builder.Services.AddScoped<ReceiptRemovalService>(); // the confirm's inverse — the duplicate-upload escape hatch
 // The census's OWN confirm path, deliberately not the receipt one: a shelf photo writes counts and must
 // never write a PurchaseEvent (§13.8's ★ rule).
@@ -328,6 +330,12 @@ builder.Services.AddRateLimiter(o =>
         RateLimitPartition.GetFixedWindowLimiter(
             ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions { PermitLimit = 12, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+    // Receipt/shelf-photo uploads: each is an AI (vision) call, metered per household in managed mode, so
+    // this is just an anti-hammer brake per IP. Generous enough for a legitimate batch (one request each).
+    o.AddPolicy("photo-upload", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
     // Credential endpoints get a per-IP brake on top of Identity's per-account lockout: lockout
     // protects one account from many guesses, this protects all accounts from one hammering IP.
     // Razor-component form posts aren't attachable endpoints for a named policy, so the global
@@ -594,6 +602,73 @@ app.MapGet("/api/recipe-image/{id:int}", async (
     ctx.Response.Headers.CacheControl = "private, max-age=3600";
     return Results.File(image.Value.Bytes, image.Value.MediaType);
 }).RequireAuthorization();
+
+// Receipt upload — the browser resizes each photo and POSTs the bytes HERE, off the SignalR circuit, so a
+// mobile file-pick that briefly drops the circuit can't lose the upload (the bug this endpoint exists to
+// fix: the InputFile change event fired while the circuit was down and was lost forever). ONE request =
+// ONE receipt — a long receipt's photos arrive as several parts in one request; a batch of separate
+// receipts is several requests. Cookie-authed + household-scoped like the rest of /api (ReceiptIngestionService
+// goes through IHouseholdDbFactory). Antiforgery, size/type/count limits, and the BYOK key are handled by
+// PhotoUploadIntake — the shared front door both photo endpoints use.
+app.MapPost("/api/receipts/extract", async (
+    HttpRequest request, HttpContext ctx, IAntiforgery antiforgery, CircuitAiSettings ai,
+    ReceiptIngestionService ingestion, ILoggerFactory logs, CancellationToken ct) =>
+{
+    var (files, error) = await PhotoUploadIntake.ReadAsync(request, ctx, antiforgery,
+        mt => mt.StartsWith("image/", StringComparison.OrdinalIgnoreCase) || mt == "application/pdf",
+        "Only photos and PDFs are accepted.", ct);
+    if (error is not null) return error;
+
+    PhotoUploadIntake.ApplyByok(request, ai);
+    var pages = files!.Select(f => new ReceiptAttachment(f.Bytes, f.MediaType)).ToList();
+    try
+    {
+        var outcome = await ingestion.IngestAsync(pages, ct);
+        return Results.Ok(outcome);
+    }
+    catch (OperationCanceledException) { throw; } // the client went away — nothing to report
+    catch (Exception ex)
+    {
+        logs.CreateLogger("ReceiptUpload").LogError(ex, "Receipt upload extraction failed.");
+        return Results.Json(new { error = "Sorry — something went wrong reading that receipt. Please try again." },
+            statusCode: StatusCodes.Status500InternalServerError);
+    }
+}).RequireAuthorization().RequireRateLimiting("photo-upload");
+
+// Shelf-census upload — the browser resizes each shelf photo and POSTs it HERE, off the circuit (same
+// reason as the receipt endpoint). The reader PROPOSES what's on the shelf; nothing is persisted — the
+// photo of someone's freezer goes to the model and stops there (§13.8), which is why there's no storage or
+// audit copy here. ONE request = ONE census over all the photos it carries. Images only (nobody prints a
+// freezer to PDF). The raw model output is deliberately NOT shipped back — it's debug-only and can be large.
+app.MapPost("/api/pantry-photo/read", async (
+    HttpRequest request, HttpContext ctx, IAntiforgery antiforgery, CircuitAiSettings ai,
+    IShelfCensusReader reader, IHouseholdDbFactory dbFactory, ILoggerFactory logs, CancellationToken ct) =>
+{
+    // maxFiles: 8 matches the census page's own cap (PantryPhoto.MaxPhotos — the shelf reader looks at a
+    // handful per go), enforced here server-side, not just in the UI.
+    var (files, error) = await PhotoUploadIntake.ReadAsync(request, ctx, antiforgery,
+        mt => mt.StartsWith("image/", StringComparison.OrdinalIgnoreCase),
+        "Only photos are accepted.", ct, maxFiles: 8);
+    if (error is not null) return error;
+
+    PhotoUploadIntake.ApplyByok(request, ai);
+    var photos = files!.Select(f => new ShelfPhoto(f.Bytes, f.MediaType)).ToList();
+    try
+    {
+        List<string> names;
+        await using (var db = await dbFactory.CreateDbContextAsync(ct))
+            names = await db.Products.AsNoTracking().OrderBy(p => p.Name).Select(p => p.Name).Distinct().ToListAsync(ct);
+        var result = await reader.ReadAsync(photos, names, ct);
+        return Results.Ok(new { result.Success, result.Error, result.Items });
+    }
+    catch (OperationCanceledException) { throw; }
+    catch (Exception ex)
+    {
+        logs.CreateLogger("ShelfCensus").LogError(ex, "Shelf census read failed.");
+        return Results.Json(new { error = "Sorry — something went wrong reading those photos. Please try again." },
+            statusCode: StatusCodes.Status500InternalServerError);
+    }
+}).RequireAuthorization().RequireRateLimiting("photo-upload");
 
 // PWA manifest — makes the app installable ("Add to home screen"). Served explicitly so the content type
 // is right regardless of static-file MIME config; it loads under the same-origin CSP (manifest-src falls
