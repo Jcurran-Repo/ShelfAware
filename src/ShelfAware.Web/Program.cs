@@ -608,80 +608,19 @@ app.MapGet("/api/recipe-image/{id:int}", async (
 // fix: the InputFile change event fired while the circuit was down and was lost forever). ONE request =
 // ONE receipt — a long receipt's photos arrive as several parts in one request; a batch of separate
 // receipts is several requests. Cookie-authed + household-scoped like the rest of /api (ReceiptIngestionService
-// goes through IHouseholdDbFactory). The visitor's BYOK key rides the request headers, used only for this
-// call and never stored or logged (the cook-along endpoint's contract) — and IGNORED on a managed deployment,
-// where CircuitAiSettings.Apply is a no-op and the server key is authoritative. CSRF = the antiforgery token
-// in the RequestVerificationToken header; the body is bounded before a byte is read.
+// goes through IHouseholdDbFactory). Antiforgery, size/type/count limits, and the BYOK key are handled by
+// PhotoUploadIntake — the shared front door both photo endpoints use.
 app.MapPost("/api/receipts/extract", async (
     HttpRequest request, HttpContext ctx, IAntiforgery antiforgery, CircuitAiSettings ai,
     ReceiptIngestionService ingestion, ILoggerFactory logs, CancellationToken ct) =>
 {
-    const int maxPages = 20;                        // one receipt's photos/pages; a batch is many requests
-    const long maxPageBytes = 10L * 1024 * 1024;    // a resized photo is well under 1 MB — this is the abuse ceiling
-    const long maxRequestBytes = 30L * 1024 * 1024;
+    var (files, error) = await PhotoUploadIntake.ReadAsync(request, ctx, antiforgery,
+        mt => mt.StartsWith("image/", StringComparison.OrdinalIgnoreCase) || mt == "application/pdf",
+        "Only photos and PDFs are accepted.", ct);
+    if (error is not null) return error;
 
-    // Bound the request body BEFORE anything reads it.
-    if (ctx.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } size)
-        size.MaxRequestBodySize = maxRequestBytes;
-
-    // CSRF: validate the antiforgery token (sent in the RequestVerificationToken header, paired with the
-    // cookie set on page load). Read from the header so validation doesn't consume the multipart body.
-    try { await antiforgery.ValidateRequestAsync(ctx); }
-    catch (AntiforgeryValidationException)
-    {
-        return Results.Json(new { error = "Your session expired — reload the page and try again." },
-            statusCode: StatusCodes.Status400BadRequest);
-    }
-
-    if (!request.HasFormContentType)
-        return Results.Json(new { error = "Expected a file upload." }, statusCode: StatusCodes.Status400BadRequest);
-
-    IFormCollection form;
-    try { form = await request.ReadFormAsync(ct); }
-    catch (Exception ex) when (ex is BadHttpRequestException or InvalidDataException)
-    {
-        return Results.Json(new { error = "That upload was too large." },
-            statusCode: StatusCodes.Status413PayloadTooLarge);
-    }
-
-    var uploaded = form.Files;
-    if (uploaded.Count == 0)
-        return Results.Json(new { error = "No image was received." }, statusCode: StatusCodes.Status400BadRequest);
-    if (uploaded.Count > maxPages)
-        return Results.Json(new { error = $"A single receipt can be at most {maxPages} pages." },
-            statusCode: StatusCodes.Status400BadRequest);
-
-    var pages = new List<ReceiptAttachment>(uploaded.Count);
-    foreach (var file in uploaded)
-    {
-        if (file.Length <= 0)
-            return Results.Json(new { error = "An empty file was received." }, statusCode: StatusCodes.Status400BadRequest);
-        if (file.Length > maxPageBytes)
-            return Results.Json(new { error = "One of those images is too large." }, statusCode: StatusCodes.Status400BadRequest);
-        var mediaType = string.IsNullOrWhiteSpace(file.ContentType) ? "image/jpeg" : file.ContentType;
-        // The client resizes photos to JPEG and sends PDFs as-is; anything else the extractor can't read.
-        if (!(mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) || mediaType == "application/pdf"))
-            return Results.Json(new { error = "Only photos and PDFs are accepted." }, statusCode: StatusCodes.Status400BadRequest);
-        using var buffer = new MemoryStream();
-        await using (var stream = file.OpenReadStream())
-            await stream.CopyToAsync(buffer, ct);
-        pages.Add(new ReceiptAttachment(buffer.ToArray(), mediaType));
-    }
-
-    // BYOK: overlay the visitor's key from the request headers. Apply is a NO-OP on a managed deployment
-    // (server key wins), and blank models/base-url keep the server defaults. A blank key means "use the
-    // server/dev fallback" (the demo's keyless visitor gets the same "needs a key" as on the circuit).
-    var byokKey = request.Headers["X-AI-Key"].ToString();
-    if (!string.IsNullOrWhiteSpace(byokKey))
-    {
-        var provider = Enum.TryParse<AiProvider>(request.Headers["X-AI-Provider"].ToString(), ignoreCase: true, out var p)
-            ? p : AiProvider.Anthropic;
-        ai.Apply(provider, byokKey,
-            request.Headers["X-AI-Extraction-Model"].ToString(),
-            request.Headers["X-AI-Chat-Model"].ToString(),
-            request.Headers["X-AI-Base-Url"].ToString());
-    }
-
+    PhotoUploadIntake.ApplyByok(request, ai);
+    var pages = files!.Select(f => new ReceiptAttachment(f.Bytes, f.MediaType)).ToList();
     try
     {
         var outcome = await ingestion.IngestAsync(pages, ct);
@@ -692,6 +631,39 @@ app.MapPost("/api/receipts/extract", async (
     {
         logs.CreateLogger("ReceiptUpload").LogError(ex, "Receipt upload extraction failed.");
         return Results.Json(new { error = "Sorry — something went wrong reading that receipt. Please try again." },
+            statusCode: StatusCodes.Status500InternalServerError);
+    }
+}).RequireAuthorization().RequireRateLimiting("photo-upload");
+
+// Shelf-census upload — the browser resizes each shelf photo and POSTs it HERE, off the circuit (same
+// reason as the receipt endpoint). The reader PROPOSES what's on the shelf; nothing is persisted — the
+// photo of someone's freezer goes to the model and stops there (§13.8), which is why there's no storage or
+// audit copy here. ONE request = ONE census over all the photos it carries. Images only (nobody prints a
+// freezer to PDF). The raw model output is deliberately NOT shipped back — it's debug-only and can be large.
+app.MapPost("/api/pantry-photo/read", async (
+    HttpRequest request, HttpContext ctx, IAntiforgery antiforgery, CircuitAiSettings ai,
+    IShelfCensusReader reader, IHouseholdDbFactory dbFactory, ILoggerFactory logs, CancellationToken ct) =>
+{
+    var (files, error) = await PhotoUploadIntake.ReadAsync(request, ctx, antiforgery,
+        mt => mt.StartsWith("image/", StringComparison.OrdinalIgnoreCase),
+        "Only photos are accepted.", ct);
+    if (error is not null) return error;
+
+    PhotoUploadIntake.ApplyByok(request, ai);
+    var photos = files!.Select(f => new ShelfPhoto(f.Bytes, f.MediaType)).ToList();
+    try
+    {
+        List<string> names;
+        await using (var db = await dbFactory.CreateDbContextAsync(ct))
+            names = await db.Products.AsNoTracking().OrderBy(p => p.Name).Select(p => p.Name).Distinct().ToListAsync(ct);
+        var result = await reader.ReadAsync(photos, names, ct);
+        return Results.Ok(new { result.Success, result.Error, result.Items });
+    }
+    catch (OperationCanceledException) { throw; }
+    catch (Exception ex)
+    {
+        logs.CreateLogger("ShelfCensus").LogError(ex, "Shelf census read failed.");
+        return Results.Json(new { error = "Sorry — something went wrong reading those photos. Please try again." },
             statusCode: StatusCodes.Status500InternalServerError);
     }
 }).RequireAuthorization().RequireRateLimiting("photo-upload");
