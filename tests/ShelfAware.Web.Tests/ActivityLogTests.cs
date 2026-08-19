@@ -519,6 +519,59 @@ public sealed class ActivityLogTests : IDisposable
         Assert.Equal(UndoOutcome.Gone, await _log.UndoAsync(entry.Id));
     }
 
+    // ---- ProductRenamed (a service-layer action) ----
+
+    [Fact]
+    public async Task Renaming_a_product_logs_an_undoable_entry_and_undo_restores_the_name()
+    {
+        var id = await SeedProduct("Whole Milk");
+        await new ProductRenameService(_db, _log).RenameAsync(id, "2% Milk");
+
+        var entry = await LatestEntry();
+        Assert.Equal("Renamed Whole Milk to 2% Milk", entry.Summary);
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+
+        Assert.Equal("Whole Milk", (await ReadProduct(id))!.Name);
+    }
+
+    [Fact]
+    public async Task Undoing_a_rename_re_points_recipe_links_back()
+    {
+        var id = await SeedProduct("Whole Milk");
+        await SeedRecipeIngredient("milk", matchedProduct: "Whole Milk");
+        await new ProductRenameService(_db, _log).RenameAsync(id, "2% Milk"); // re-points the link to 2% Milk
+
+        var entry = await LatestEntry();
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+
+        Assert.Equal("Whole Milk", await OnlyIngredientMatchedProduct()); // the link followed the rename back
+    }
+
+    [Fact]
+    public async Task Undoing_a_rename_refuses_after_a_later_rename()
+    {
+        var id = await SeedProduct("Whole Milk");
+        var rename = new ProductRenameService(_db, _log);
+        await rename.RenameAsync(id, "2% Milk");
+        var entry = await LatestEntry();
+        await rename.RenameAsync(id, "Skim Milk"); // renamed again since
+
+        Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(entry.Id));
+        Assert.Equal("Skim Milk", (await ReadProduct(id))!.Name); // untouched
+    }
+
+    [Fact]
+    public async Task Undoing_a_rename_refuses_if_the_old_name_is_taken_now()
+    {
+        var id = await SeedProduct("Whole Milk");
+        await new ProductRenameService(_db, _log).RenameAsync(id, "2% Milk");
+        var entry = await LatestEntry();
+        await SeedProduct("Whole Milk"); // another product now holds the old name — restoring would collide
+
+        Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(entry.Id));
+        Assert.Equal("2% Milk", (await ReadProduct(id))!.Name); // can't restore — stays put
+    }
+
     // ---- helpers ----
 
     private async Task<int> SeedProduct(
@@ -642,5 +695,23 @@ public sealed class ActivityLogTests : IDisposable
     {
         await using var db = _db.CreateDbContext();
         await db.GroceryExtras.ExecuteDeleteAsync();
+    }
+
+    private async Task SeedRecipeIngredient(string ingredientName, string matchedProduct)
+    {
+        await using var db = _db.CreateDbContext();
+        db.Recipes.Add(new Recipe
+        {
+            Name = "Test Recipe",
+            SavedAt = DateTimeOffset.Now,
+            Ingredients = [new RecipeIngredient { Name = ingredientName, IsMain = true, MatchedProduct = matchedProduct }],
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private async Task<string?> OnlyIngredientMatchedProduct()
+    {
+        await using var db = _db.CreateDbContext();
+        return (await db.RecipeIngredients.AsNoTracking().SingleAsync()).MatchedProduct;
     }
 }

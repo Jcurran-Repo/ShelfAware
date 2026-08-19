@@ -93,7 +93,7 @@ public abstract class PageTestContext : BunitContext
         // Keyless BYOK — the public-demo shape. A test needing the managed deployment registers its own
         // over this (RegisterAdditionalServices runs after these, so the later registration wins).
         Services.AddSingleton(new CircuitAiSettings(Options.Create(new LlmOptions())));
-        Services.AddSingleton(new ProductRenameService(Factory));
+        Services.AddSingleton(new ProductRenameService(Factory, ActivityLog));
         Services.AddSingleton(new ProductMergeService(Factory));
         Services.AddLogging();
 
