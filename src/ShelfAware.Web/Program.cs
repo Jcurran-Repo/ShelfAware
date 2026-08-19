@@ -644,9 +644,11 @@ app.MapPost("/api/pantry-photo/read", async (
     HttpRequest request, HttpContext ctx, IAntiforgery antiforgery, CircuitAiSettings ai,
     IShelfCensusReader reader, IHouseholdDbFactory dbFactory, ILoggerFactory logs, CancellationToken ct) =>
 {
+    // maxFiles: 8 matches the census page's own cap (PantryPhoto.MaxPhotos — the shelf reader looks at a
+    // handful per go), enforced here server-side, not just in the UI.
     var (files, error) = await PhotoUploadIntake.ReadAsync(request, ctx, antiforgery,
         mt => mt.StartsWith("image/", StringComparison.OrdinalIgnoreCase),
-        "Only photos are accepted.", ct);
+        "Only photos are accepted.", ct, maxFiles: 8);
     if (error is not null) return error;
 
     PhotoUploadIntake.ApplyByok(request, ai);

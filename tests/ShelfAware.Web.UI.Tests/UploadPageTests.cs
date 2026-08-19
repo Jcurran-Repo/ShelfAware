@@ -35,21 +35,13 @@ public class UploadPageTests : PageTestContext
     internal sealed class QueueExtractor : IReceiptExtractor
     {
         public Queue<ExtractionResult> Results { get; } = new();
-        public List<int> PageCounts { get; } = [];
-        /// <summary>Media type of every page ever handed over — how a test proves a photo reached
-        /// extraction as the loader's JPEG rather than as its raw picked bytes.</summary>
-        public List<string> MediaTypes { get; } = [];
 
         public Task<ExtractionResult> ExtractAsync(
             IReadOnlyList<ReceiptAttachment> pages, IReadOnlyList<string>? knownProductNames = null,
-            IReadOnlyList<string>? knownTags = null, CancellationToken cancellationToken = default)
-        {
-            PageCounts.Add(pages.Count);
-            MediaTypes.AddRange(pages.Select(p => p.MediaType));
-            return Task.FromResult(Results.Count > 0
+            IReadOnlyList<string>? knownTags = null, CancellationToken cancellationToken = default) =>
+            Task.FromResult(Results.Count > 0
                 ? Results.Dequeue()
                 : new ExtractionResult { Success = false, Error = "no result queued", RawModelJson = "{}" });
-        }
     }
 
     internal sealed class FakeTagAdvisor : ITagAdvisor
@@ -754,5 +746,35 @@ public class UploadPageTests : PageTestContext
         Assert.Single(inputs);                          // one control, no separate snap input
         Assert.Null(inputs[0].GetAttribute("accept"));  // unfiltered, so HEIC + PDF both come through
         Assert.Null(inputs[0].GetAttribute("capture")); // no capture — it dropped the circuit on Android
+    }
+
+    [Fact]
+    public async Task Extract_does_not_double_post_when_clicked_again_mid_flight()
+    {
+        // ⚠️ The phase==Extracting guard: setting phase hides the button, but a click queued before that
+        // render lands must not run a SECOND extract — two runs would persist the same staged set twice.
+        var handler = JSInterop.Setup<Upload.UploadResult>("extract", _ => true); // held: not resolved yet
+        var cut = RenderUpload();
+        await PushStaged(cut, Staged("receipt.jpg"));
+
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Extract").Click(); // first: parks awaiting the read
+        cut.FindAll("button").FirstOrDefault(b => b.TextContent.Trim() == "Extract")?.Click(); // second: must NO-OP
+
+        Assert.Equal(1, JSInterop.Invocations.Count(i => i.Identifier == "extract"));
+        handler.SetResult(new Upload.UploadResult { Ok = true, Outcome = new Upload.UploadOutcome { ReceiptId = 1, Success = true, AutoConfirmed = true } });
+    }
+
+    [Fact]
+    public async Task An_ingest_error_does_not_hide_the_review_queue()
+    {
+        // A read problem reaches Phase.Error, which is one bad pick away now that reads happen at
+        // selection — and hiding the queued receipts behind it read as them being lost.
+        SeedPending("Walmart", Today.AddDays(-2), DbLine("GV MILK", "Whole Milk"));
+        var cut = RenderUpload();
+
+        await PushStaged(cut, Staged("bad.jpg"), "“bad.jpg” couldn't be read — take or pick it again.");
+
+        cut.WaitForAssertion(() => Assert.Contains("couldn't be read", Collapsed(cut.Markup)));
+        Assert.Contains("Waiting for review (1)", cut.Markup); // the queue survived the error
     }
 }

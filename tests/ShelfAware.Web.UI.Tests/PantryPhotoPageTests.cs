@@ -1223,4 +1223,20 @@ public class PantryPhotoPageTests : PageTestContext
 
         cut.WaitForAssertion(() => Assert.Contains("session expired", cut.Find("p.error").TextContent));
     }
+
+    [Fact]
+    public void A_second_read_while_reading_does_not_buy_a_second_vision_call()
+    {
+        // ⚠️ The `reading` guard (PantryPhoto.Read): a queued second press before the phase render lands
+        // must NOT fire a second read — that's a second vision call billed to the visitor's key (item 37).
+        var handler = JSInterop.Setup<PantryPhoto.CensusReadResult>("extract", _ => true); // held: unresolved
+        var cut = Render<PantryPhoto>();
+        Stage(cut, 1);
+
+        See(cut); // first: parks awaiting the read
+        See(cut); // second while reading: must NO-OP
+
+        Assert.Equal(1, JSInterop.Invocations.Count(i => i.Identifier == "extract"));
+        handler.SetResult(new PantryPhoto.CensusReadResult { Ok = true, Outcome = new PantryPhoto.CensusReadOutcome { Success = true } });
+    }
 }

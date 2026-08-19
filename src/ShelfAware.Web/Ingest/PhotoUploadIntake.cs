@@ -23,10 +23,12 @@ internal static class PhotoUploadIntake
 
     /// <summary>Validate and read the uploaded files, or return the <see cref="IResult"/> to send back.
     /// Exactly one of the two is non-null. <paramref name="mediaTypeAllowed"/> lets the receipt endpoint
-    /// accept PDFs while the census endpoint takes images only.</summary>
+    /// accept PDFs while the census endpoint takes images only; <paramref name="maxFiles"/> lets the census
+    /// enforce its own smaller cap (the shelf reader looks at a handful) server-side, not just in the UI.</summary>
     internal static async Task<(List<UploadedFile>? Files, IResult? Error)> ReadAsync(
         HttpRequest request, HttpContext ctx, IAntiforgery antiforgery,
-        Func<string, bool> mediaTypeAllowed, string rejectedTypeMessage, CancellationToken ct)
+        Func<string, bool> mediaTypeAllowed, string rejectedTypeMessage, CancellationToken ct,
+        int maxFiles = MaxFiles)
     {
         // Bound the request body BEFORE anything reads it.
         if (ctx.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } size)
@@ -54,8 +56,8 @@ internal static class PhotoUploadIntake
         var uploaded = form.Files;
         if (uploaded.Count == 0)
             return (null, Results.Json(new { error = "No image was received." }, statusCode: StatusCodes.Status400BadRequest));
-        if (uploaded.Count > MaxFiles)
-            return (null, Results.Json(new { error = $"Please keep it to {MaxFiles} at a time." }, statusCode: StatusCodes.Status400BadRequest));
+        if (uploaded.Count > maxFiles)
+            return (null, Results.Json(new { error = $"Please keep it to {maxFiles} at a time." }, statusCode: StatusCodes.Status400BadRequest));
 
         var files = new List<UploadedFile>(uploaded.Count);
         foreach (var file in uploaded)
