@@ -247,11 +247,13 @@ add it later.
 
 ## 13. Suggested build order (within the one branch)
 
-**Progress (branch `feature/undo-history`, unpushed):** steps 1–2 ✅ done. Backbone + atomic recording +
-Peek (no-op undos grey out) + all IPantryStore-layer actions (purchase, signal, quantity/brand/unit/
-tracking edits, count, product-create, expiration, tags/subs/grocery-extras) — each precondition-checked
-and mutation-verified. Suite 1713 green, Release 0 warnings. **Next: step 3 (the `/history` page +
-inline Undo), then step 4 (service-layer), step 5 (history-only), soft actions, `/pre-push`.**
+**Progress (branch `feature/undo-history`, unpushed):** steps 1–3 ✅ done. Backbone + atomic recording +
+Peek (no-op undos grey out) + all IPantryStore-layer actions + the `/history` page (day-grouped, per-row
+undo, greyed states, "Show all") + inline Undo on the dashboard (Bought/Restocked, reusing the Ate-it
+notice). Each precondition-checked, mutation-verified, and browser-verified. The branch now includes the
+merged `fix/mobile-photo-upload` (merge `72ee2b7`). Suite 1716 green, Release 0 warnings. **Next: step 4
+(service-layer: Ate-it / confirm-receipt / rename, reusing their existing inverses), step 5 (history-only:
+merge / receipt-removal / census), soft actions (exclude-food, recipe save/adapt), `/pre-push`.**
 
 1. `ActivityEntry` schema + tenancy drill + `ActivityLogService` + `IUndoHandler` registry + retention.
 2. The `IPantryStore`-layer actions (#1–#13): consolidate `BoughtToday`; record in `AddPurchaseAsync`,
