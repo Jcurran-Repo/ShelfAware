@@ -19,9 +19,9 @@ namespace ShelfAware.Web.UI.Tests;
 
 /// <summary>
 /// The "count from a photo" page (DESIGN.md §13.8) over the REAL census write path on the shared test
-/// database. The read runs off the circuit through photo-upload.js (POST /api/pantry-photo/read), which
-/// bUnit can't run, so the read RESULT is mocked by identifier and staging is driven via OnStaged (what the
-/// module pushes); the capture/resize/POST/retry is JS, live-verified.
+/// database. The read runs off the circuit through photo-upload.js (pick → resize → POST /api/pantry-photo/read
+/// → deliver via OnExtracted), which bUnit can't run — so these deliver the read RESULT straight to OnExtracted,
+/// as the module would; the staging UI, POST, and retry are JS, live-verified.
 /// <para>What these mostly pin is the page's HONESTY contract — which rows arrive ticked, what a row that
 /// couldn't be identified does, and that confirming writes counts and never purchases. The grid is the one
 /// place a household sees the difference between "the label says fish" and "it looks like fish", so the
@@ -83,26 +83,29 @@ public class PantryPhotoPageTests : PageTestContext
         return product;
     }
 
-    /// <summary>Mock the census read, stage a photo, and run it — leaving the page on the review grid. The
-    /// page POSTs through photo-upload.js, which bUnit can't run, so the read RESULT is mocked by identifier
-    /// and staging is driven via OnStaged (exactly what the module pushes). The capture/resize/POST/retry is
+    /// <summary>Render the page and deliver a successful one-photo read straight to OnExtracted — leaving the
+    /// page on the review grid. photo-upload.js does the pick → resize → POST → deliver off the circuit
+    /// (retried across a reconnect) and RENDERS the staged list + read button itself; bUnit can't run that JS,
+    /// so these call OnExtracted with the result the module would deliver. The staging UI + POST + retry are
     /// JS, live-verified.</summary>
     private IRenderedComponent<PantryPhoto> Review(params CensusItem[] items)
     {
-        SetupRead(items);
         var cut = Render<PantryPhoto>();
-        Stage(cut, 1);
-        See(cut);
+        Deliver(cut, items);
         cut.WaitForState(() => cut.FindAll("tbody tr").Count > 0 || cut.FindAll("p.error, p.muted").Count > 0);
         return cut;
     }
 
-    private void SetupRead(params CensusItem[] items) =>
-        JSInterop.Setup<PantryPhoto.CensusReadResult>("extract", _ => true).SetResult(new PantryPhoto.CensusReadResult
-        {
-            Ok = true,
-            Outcome = new PantryPhoto.CensusReadOutcome { Success = true, Items = [.. items.Select(ToDto)] },
-        });
+    /// <summary>Deliver a SUCCESSFUL one-photo read to OnExtracted, exactly as the module does after POSTing
+    /// the photo off the circuit.</summary>
+    private Task Deliver(IRenderedComponent<PantryPhoto> cut, params CensusItem[] items) =>
+        cut.InvokeAsync(() => cut.Instance.OnExtracted(
+            [new PantryPhoto.CensusReadResult
+            {
+                Ok = true,
+                Outcome = new PantryPhoto.CensusReadOutcome { Success = true, Items = [.. items.Select(ToDto)] },
+            }],
+            combined: true, fileCount: 1));
 
     private static PantryPhoto.CensusItemDto ToDto(CensusItem i) => new()
     {
@@ -110,20 +113,6 @@ public class PantryPhotoPageTests : PageTestContext
         Size = i.Size, Variety = i.Variety, Category = i.Category, VisibleCount = i.VisibleCount,
         Confidence = i.Confidence, SuggestedProductName = i.SuggestedProductName,
     };
-
-    /// <summary>Drive the page's OnStaged (what photo-upload.js pushes after a pick) and wait for the staged
-    /// list to render.</summary>
-    private void Stage(IRenderedComponent<PantryPhoto> cut, int photos)
-    {
-        var meta = Enumerable.Range(1, photos).Select(i => new PantryPhoto.StagedMeta(i, $"shelf-{i}.jpg")).ToArray();
-        cut.InvokeAsync(() => cut.Instance.OnStaged(meta, []));
-        cut.WaitForState(() => cut.FindAll("button").Any(b => b.TextContent.Contains("See what's there")));
-    }
-
-    /// <summary>Clicks "See what's there" by TEXT — the staged rows' ✕ buttons sit before it in the
-    /// DOM, so a bare Find("button") would remove a photo instead of reading.</summary>
-    private static void See(IRenderedComponent<PantryPhoto> cut) =>
-        cut.FindAll("button").Single(b => b.TextContent.Contains("See what's there")).Click();
 
     private static IElement RowFor(IRenderedComponent<PantryPhoto> cut, string name) =>
         cut.FindAll("tbody tr").Single(r => r.QuerySelectorAll("input")
@@ -1137,106 +1126,51 @@ public class PantryPhotoPageTests : PageTestContext
     }
 
     [Fact]
-    public void Start_over_lands_on_an_empty_picker()
+    public void Start_over_returns_to_the_idle_picker()
     {
-        // Reset() clears the staged photos along with everything else — Start over means fresh.
-        // (The success path ALSO clears them at consumption, but that is memory hygiene invisible
-        // to markup: a test asserting this after Start over passed with the success-path clear
-        // deleted, so pinning it here would be pinning Reset and calling it the other thing.)
+        // Reset() drops the review grid and lands back on the staging view; the module owns the staged
+        // photos and re-inits empty on return. Start over means fresh.
         var cut = Review(Item("Tilapia Fillets"));
 
         cut.FindAll("button").Single(b => b.TextContent.Contains("Start over")).Click();
 
-        Assert.DoesNotContain("photo selected", cut.Markup);
-        Assert.DoesNotContain("photos selected", cut.Markup);
+        Assert.Empty(cut.FindAll("tbody tr"));              // the grid is gone
+        Assert.Contains("Photograph a shelf", cut.Markup);  // back on the picker
     }
 
-    // --- staging (via the JS uploader) ---------------------------------------
+    // --- delivering the read (the module POSTs off-circuit; .NET routes the result) ------
 
     [Fact]
-    public void Staging_a_photo_shows_it_and_the_read_button()
+    public async Task A_failed_read_is_surfaced_and_keeps_the_photos_for_a_one_tap_retry()
     {
+        // A census has no audit copy, so a failed read must KEEP the staged photos — OnExtracted returns
+        // true and the module leaves them staged so "See what's there" again is one tap, not a re-shoot.
+        // (The staged list itself is JS; what's pinned here is the .NET keep decision that drives it.)
         var cut = Render<PantryPhoto>();
-        Stage(cut, 1);
+        var keep = false;
+        await cut.InvokeAsync(async () => keep = await cut.Instance.OnExtracted(
+            [new PantryPhoto.CensusReadResult
+            {
+                Ok = true, Outcome = new PantryPhoto.CensusReadOutcome { Success = false, Error = "blurry" },
+            }],
+            combined: true, fileCount: 1));
 
-        Assert.Contains("shelf-1.jpg", cut.Markup);
-        Assert.Contains("1 photo selected", cut.Markup);
-        Assert.Contains(cut.FindAll("button"), b => b.TextContent.Contains("See what's there"));
-    }
-
-    [Fact]
-    public void A_problem_reading_a_photo_is_named_and_the_good_ones_stay()
-    {
-        var cut = Render<PantryPhoto>();
-        cut.InvokeAsync(() => cut.Instance.OnStaged(
-            [new PantryPhoto.StagedMeta(1, "fine.jpg")],
-            ["“broken.heic” couldn't be read — take or pick it again."]));
-
-        cut.WaitForAssertion(() => Assert.Contains("couldn't be read", Collapsed(cut.Markup)));
-        Assert.Contains("fine.jpg", cut.Markup);          // the good one is still staged
-        Assert.Contains("1 photo selected", cut.Markup);
-    }
-
-    [Fact]
-    public void Removing_a_staged_photo_asks_the_module_to_drop_it()
-    {
-        var cut = Render<PantryPhoto>();
-        Stage(cut, 2);
-
-        cut.FindAll(".staged-files button").First().Click();
-
-        Assert.Contains(JSInterop.Invocations, i => i.Identifier == "remove");
-    }
-
-    // --- the read (the uploader POST is mocked) ------------------------------
-
-    [Fact]
-    public void A_failed_read_keeps_the_photos_staged_so_retry_is_one_tap()
-    {
-        // A census has no audit copy, so a failed read must KEEP the staged photos — "See what's there"
-        // again is one tap on the same bytes, not a re-shoot.
-        JSInterop.Setup<PantryPhoto.CensusReadResult>("extract", _ => true).SetResult(new PantryPhoto.CensusReadResult
-        {
-            Ok = true, Outcome = new PantryPhoto.CensusReadOutcome { Success = false, Error = "blurry" },
-        });
-        var cut = Render<PantryPhoto>();
-        Stage(cut, 1);
-        See(cut);
-
+        Assert.True(keep); // keep the photos — item 48's asymmetry with the receipt page (which clears)
         cut.WaitForAssertion(() => Assert.Contains("couldn't be read", Collapsed(cut.Find("p.error").TextContent)));
-        Assert.Contains("1 photo selected", cut.Markup); // kept
-        Assert.Contains(cut.FindAll("button"), b => b.TextContent.Contains("See what's there"));
     }
 
     [Fact]
-    public void A_request_level_read_failure_is_surfaced()
+    public async Task A_request_level_read_failure_is_surfaced_and_also_keeps_the_photos()
     {
         // A non-200 from the endpoint (session expired, too large) comes back Ok=false with the endpoint's
-        // own message; the page shows it rather than a generic error.
-        JSInterop.Setup<PantryPhoto.CensusReadResult>("extract", _ => true).SetResult(new PantryPhoto.CensusReadResult
-        {
-            Ok = false, Error = "Your session expired — reload the page and try again.",
-        });
+        // own message; the page shows it and — since nothing was read or saved — keeps the photos too.
         var cut = Render<PantryPhoto>();
-        Stage(cut, 1);
-        See(cut);
+        var keep = false;
+        await cut.InvokeAsync(async () => keep = await cut.Instance.OnExtracted(
+            [new PantryPhoto.CensusReadResult { Ok = false, Error = "Your session expired — reload the page and try again." }],
+            combined: true, fileCount: 1));
 
+        Assert.True(keep);
         cut.WaitForAssertion(() => Assert.Contains("session expired", cut.Find("p.error").TextContent));
-    }
-
-    [Fact]
-    public void A_second_read_while_reading_does_not_buy_a_second_vision_call()
-    {
-        // ⚠️ The `reading` guard (PantryPhoto.Read): a queued second press before the phase render lands
-        // must NOT fire a second read — that's a second vision call billed to the visitor's key (item 37).
-        var handler = JSInterop.Setup<PantryPhoto.CensusReadResult>("extract", _ => true); // held: unresolved
-        var cut = Render<PantryPhoto>();
-        Stage(cut, 1);
-
-        See(cut); // first: parks awaiting the read
-        See(cut); // second while reading: must NO-OP
-
-        Assert.Equal(1, JSInterop.Invocations.Count(i => i.Identifier == "extract"));
-        handler.SetResult(new PantryPhoto.CensusReadResult { Ok = true, Outcome = new PantryPhoto.CensusReadOutcome { Success = true } });
     }
 }

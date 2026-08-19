@@ -17,11 +17,8 @@
 
 <h1>Count from a photo</h1>
 
-@if (phase is Phase.Idle or Phase.Error or Phase.Reading)
+@if (phase is Phase.Idle or Phase.Error)
 {
-    @* Every picked photo is resized in the browser and POSTed to /api/pantry-photo/read OFF the SignalR
-       circuit by photo-upload.js, so a mobile pick that briefly drops the circuit can't lose it. Same
-       model as the receipt upload; the read itself is server-side and nothing is persisted (§13.8). *@
     <section class="panel">
         <p>
             Photograph a shelf, a freezer, or a cupboard and Shelf Aware will list what it can see, with
@@ -38,38 +35,20 @@
             shelf from two angles, or things get counted twice. It can only see the front row — the cans
             behind the front can are yours to add.
         </p>
-        <div hidden="@(phase == Phase.Reading)">
-            @* A plain file input driven by photo-upload.js — NOT Blazor's <InputFile>. The photos are resized
-               in the browser and POSTed to /api/pantry-photo/read off the SignalR circuit, so a mobile pick
-               that briefly drops the circuit can't lose them; the staged list below is fed by the module via
-               OnStaged, retried across a reconnect.
-               ⚠️ image/* (a wildcard), NOT a format list: iOS greys HEIC photos out of the picker when the
-               accept names specific formats, but a clean image/* keeps every photo — HEIC included —
-               selectable and hands it back as JPEG. No PDF here: a shelf is a photo.
-               ⚠️ Never name image/heic here: Safari 17+ then stops transcoding and converts JPEG and PNG
-               INTO HEIC, which makes the rare case universal. *@
-            <input type="file" @ref="fileInput" multiple accept="image/*"
-                   aria-label="Photos of a shelf, freezer, or cupboard" />
-            @if (staged.Count > 0)
-            {
-                <ul class="staged-files">
-                    @foreach (var p in staged)
-                    {
-                        <li>
-                            <span>@p.Name</span>
-                            <button type="button" class="icon-btn" @onclick="() => RemoveStaged(p.Id)"
-                                    disabled="@(phase == Phase.Reading)" aria-label="Remove @p.Name"><span aria-hidden="true">✕</span></button>
-                        </li>
-                    }
-                </ul>
-                <p>@staged.Count photo@(staged.Count == 1 ? "" : "s") selected.</p>
-                <button @onclick="Read" disabled="@(phase == Phase.Reading)">See what's there</button>
-            }
-        </div>
-        @if (phase == Phase.Reading)
-        {
-            <p class="spinner">Looking at @(photoCount == 1 ? "your photo" : $"your {photoCount} photos")… this usually takes a few seconds.</p>
-        }
+        @* A plain file input plus a mount photo-upload.js fills — CLIENT-SIDE — with the staged photo list
+           and the "See what's there" button, so a mobile pick that drops the SignalR circuit still shows
+           them (the receipt page's bug in a second form). The photos are resized in the browser and POSTed
+           to /api/pantry-photo/read off the circuit; only the review grid that follows (OnExtracted) needs
+           the circuit. Nothing is persisted either way — the photo of someone's freezer goes to the model
+           and stops there (§13.8).
+           ⚠️ image/* (a wildcard), NOT a format list: iOS greys HEIC photos out of the picker when the
+           accept names specific formats, but a clean image/* keeps every photo — HEIC included —
+           selectable and hands it back as JPEG. No PDF here: a shelf is a photo.
+           ⚠️ Never name image/heic here: Safari 17+ then stops transcoding and converts JPEG and PNG
+           INTO HEIC, which makes the rare case universal. *@
+        <input type="file" @ref="fileInput" multiple accept="image/*"
+               aria-label="Photos of a shelf, freezer, or cupboard" />
+        <div @ref="stagingMount"></div>
         @if (phase == Phase.Error)
         {
             <p class="error" role="alert">@errorMessage</p>
@@ -317,7 +296,7 @@ else if (phase == Phase.Done)
 }
 
 @code {
-    private enum Phase { Idle, Reading, Review, Done, Error }
+    private enum Phase { Idle, Review, Done, Error }
 
     /// <summary>At or above this the reader wasn't guessing, so the row is ticked for you. The SAME 0.6 the
     /// receipt review grid highlights a low-confidence line at — the one number in the app for "the model was
@@ -330,20 +309,17 @@ else if (phase == Phase.Done)
     private string? errorMessage;
     private int photoCount;
 
-    // The browser-side uploader (photo-upload.js) owns the picked bytes; the page holds only the photo
-    // NAMES it pushes back via OnStaged — this is what moves the bytes off the SignalR circuit so a mobile
-    // pick that drops the circuit during the picker can't lose them.
+    // photo-upload.js owns the whole staging UI: it holds the picked bytes AND renders the staged photo list
+    // and the "See what's there" button into stagingMount — all client-side, so a mobile pick that drops the
+    // SignalR circuit still shows the photos and their button. The page hears back only once, via
+    // OnExtracted, with the reader's finished output.
     private ElementReference fileInput;
+    private ElementReference stagingMount;
     private IJSObjectReference? uploader;
     private IJSObjectReference? _module;
     private DotNetObjectReference<PantryPhoto>? selfRef;
     private string? antiforgeryToken;
     private bool uploaderWired;
-    private List<StagedMeta> staged = [];
-
-    /// <summary>One staged photo as the browser module reports it — a name and the id it keys it by (the
-    /// bytes stay in the browser until Read() POSTs them off-circuit).</summary>
-    public sealed record StagedMeta(int Id, string Name);
 
     /// <summary>How many items the READ produced, so an empty grid can tell "the photo showed nothing"
     /// apart from "you removed every row" — two states that need opposite messages.</summary>
@@ -354,7 +330,6 @@ else if (phase == Phase.Done)
     /// the confirm can't answer "which product does this name mean?" differently.</summary>
     private CatalogIndex catalog = new([]);
     private Dictionary<int, ProductNote> notes = [];
-    private bool reading;
     private bool confirming;
     private bool countedAnything;
     private string? confirmError;
@@ -549,9 +524,9 @@ else if (phase == Phase.Done)
             rows[i].Include = include && !plans[i].NeedsAHumanLook;
     }
 
-    // The input lives inside the staging phases only (Idle/Error/Reading); moving to Review/Done removes it
-    // from the DOM and returning re-creates it, so the uploader is (re)wired whenever it's on screen but
-    // unattached and torn down when it leaves. The module is imported once and reused.
+    // The input + its staging mount live in the staging phases only (Idle/Error); moving to Review/Done
+    // removes them from the DOM and returning re-creates them, so the uploader is (re)wired whenever it's on
+    // screen but unattached and torn down when it leaves. The module is imported once and reused.
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
@@ -559,14 +534,26 @@ else if (phase == Phase.Done)
             antiforgeryToken = Antiforgery.GetAntiforgeryToken()?.Value;
             selfRef = DotNetObjectReference.Create(this);
         }
-        var inputOnScreen = phase is Phase.Idle or Phase.Error or Phase.Reading;
+        var inputOnScreen = phase is Phase.Idle or Phase.Error;
         try
         {
             if (inputOnScreen && !uploaderWired && selfRef is not null)
             {
                 _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "/js/photo-upload.js");
                 uploader = await _module.InvokeAsync<IJSObjectReference>(
-                    "init", fileInput, selfRef, Llm.Value.MaxImageEdgePx, MaxPhotos, "/api/pantry-photo/read");
+                    "init", fileInput, stagingMount, selfRef, new
+                    {
+                        maxEdgePx = Llm.Value.MaxImageEdgePx,
+                        maxFiles = MaxPhotos,
+                        endpoint = "/api/pantry-photo/read",
+                        extractLabel = "See what's there",
+                        busyLabel = "Looking at your photos… this usually takes a few seconds.",
+                        noun = "photo",
+                        allowCombine = false,
+                        token = antiforgeryToken,
+                        reconnectMessage = "Your photos were read, but the connection dropped before the "
+                            + "results could load. Reload the page and take the photos again.",
+                    });
                 uploaderWired = true;
             }
             else if (!inputOnScreen && uploaderWired)
@@ -587,54 +574,108 @@ else if (phase == Phase.Done)
         finally { uploader = null; }
     }
 
-    /// <summary>Called by photo-upload.js after every pick or removal, with the current staged photos (names
-    /// only) and any problems reading them. The module RETRIES this across a circuit reconnect, which is what
-    /// makes the staged list re-appear after a mobile pick briefly dropped the circuit.</summary>
+    /// <summary>Called by photo-upload.js once it has POSTed the staged photos and holds the reader's finished
+    /// output — the ONLY circuit-dependent moment in the flow (the module retries it across a reconnect, so it
+    /// lands once the connection is back). <c>combined</c> is always true here (a census reads all photos in
+    /// one POST); <paramref name="fileCount"/> is how many photos were read, for the "found in N photos" copy.
+    /// <para>Returns whether the module should KEEP the staged photos: a census persists nothing and has no
+    /// audit copy, so any failure keeps them for a one-tap retry — the deliberate asymmetry with the receipt
+    /// page, whose receipt is saved in the queue and so clears (item 48). A clean read moves to review, which
+    /// takes the input off screen, so there's nothing to keep.</para></summary>
     [JSInvokable]
-    public async Task OnStaged(StagedMeta[] files, string[] problems)
+    public async Task<bool> OnExtracted(CensusReadResult[] results, bool combined, int fileCount)
     {
-        staged = files.ToList();
-        if (problems.Length > 0)
+        photoCount = fileCount;
+        errorMessage = null;
+        var keepStaged = false;
+        try
         {
-            // A bad photo doesn't unstage its good neighbours — they stay listed above; it's named here.
-            errorMessage = string.Join(" ", problems);
-            phase = Phase.Error;
+            var result = results.FirstOrDefault();
+            if (result is null || !result.Ok || result.Outcome is null)
+            {
+                errorMessage = result?.Error ?? "Sorry — something went wrong reading those photos. Please try again.";
+                phase = Phase.Error;
+                keepStaged = true; // nothing was read or saved — keep the photos so a retry is one tap
+            }
+            else if (!result.Outcome.Success)
+            {
+                errorMessage = $"Sorry — that couldn't be read. Try again, or take the photo a bit closer. ({result.Outcome.Error})";
+                phase = Phase.Error;
+                keepStaged = true; // a census has no audit copy, so "See what's there" again is one tap
+            }
+            else
+            {
+                await LoadCatalogAsync(CancellationToken.None);
+                rows = result.Outcome.Items.Select(dto =>
+                {
+                    var item = dto.ToItem();
+                    // Trust order, one step shorter than a receipt's: no merchant aliases (a shelf has no
+                    // merchant or printed line), so the model's own match leads and ProductMatcher backs it up
+                    // — all of it in CensusPlan.Prefill.
+                    var prefill = CensusPlan.Prefill(item, catalog);
+                    return new ReviewRow
+                    {
+                        LabelText = item.LabelText,
+                        Evidence = item.Evidence,
+                        Name = item.NormalizedName,
+                        ReadName = item.NormalizedName,
+                        Brand = item.Brand,
+                        Size = item.Size,
+                        Variety = item.Variety,
+                        Count = item.VisibleCount,
+                        Category = item.Category,
+                        Confidence = item.Confidence,
+                        ProductId = prefill.ProductId,
+                        PrefilledProductId = prefill.ProductId,
+                        FuzzyMatch = prefill.BySimilarity,
+                        AmbiguousSuggestion = prefill.AmbiguousSuggestion,
+                        // Include is set below, once the whole census can be planned together.
+                    };
+                }).ToList();
+                readItemCount = rows.Count;
+
+                // The arrival tick: a legible label is ready to confirm, a guess has to be opted into. Exactly
+                // the plan's rule — !NeedsAHumanLook (evidence, a similarity guess, an ambiguity) AND confident
+                // enough. Planned as a whole census so a row can already see what a sibling did.
+                var arrival = PlanRows();
+                for (var j = 0; j < rows.Count; j++)
+                    rows[j].Include = !arrival[j].NeedsAHumanLook && rows[j].Confidence >= ConfidentEnough;
+
+                confirmError = null;
+                phase = Phase.Review;
+            }
         }
-        else if (phase == Phase.Error)
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
         {
-            errorMessage = null;
-            phase = Phase.Idle;
+            Logger.LogError(ex, "Reading a shelf census failed.");
+            errorMessage = "Sorry — something went wrong reading those photos. Please try again.";
+            phase = Phase.Error;
+            keepStaged = true;
         }
         await InvokeAsync(StateHasChanged);
-    }
-
-    /// <summary>The ✕ on a staged row — the module drops it and re-pushes the list via <see cref="OnStaged"/>.</summary>
-    private async Task RemoveStaged(int id)
-    {
-        if (uploader is null) return;
-        try { await uploader.InvokeVoidAsync("remove", id); }
-        catch (JSDisconnectedException) { }
+        return keepStaged;
     }
 
     /// <summary>The census read's result from the browser module: the reader's output, or a request-level
     /// error. Plain get/set DTOs (not the reader's records) so the JS-interop deserializer maps the camelCase
     /// JSON straight onto them — a required/positional record comes back null through interop (the receipt
     /// path's lesson).</summary>
-    internal sealed class CensusReadResult
+    public sealed class CensusReadResult
     {
         public bool Ok { get; set; }
         public CensusReadOutcome? Outcome { get; set; }
         public string? Error { get; set; }
     }
 
-    internal sealed class CensusReadOutcome
+    public sealed class CensusReadOutcome
     {
         public bool Success { get; set; }
         public string? Error { get; set; }
         public List<CensusItemDto> Items { get; set; } = [];
     }
 
-    internal sealed class CensusItemDto
+    public sealed class CensusItemDto
     {
         public string? LabelText { get; set; }
         public CensusEvidence Evidence { get; set; }
@@ -653,97 +694,6 @@ else if (phase == Phase.Done)
             Size = Size, Variety = Variety, Category = Category, VisibleCount = VisibleCount,
             Confidence = Confidence, SuggestedProductName = SuggestedProductName,
         };
-    }
-
-    private async Task Read()
-    {
-        // ⚠️ `reading` and not just the phase check: setting phase hides the button via `hidden`, but a
-        // second click can already be queued before that render lands, and BOTH would then run — two vision
-        // calls billed to the visitor's own key for one press, with the second overwriting the first's rows.
-        // Same double-tap guard the dashboard's quick buttons carry: setting phase hides the button via
-        // `hidden`, but a queued second click could still run — two vision calls billed to the visitor's
-        // key for one press, the second overwriting the first's rows.
-        if (staged.Count == 0 || reading || uploader is null) return;
-        reading = true;
-        photoCount = staged.Count;
-        phase = Phase.Reading;
-        errorMessage = null;
-        StateHasChanged();
-
-        try
-        {
-            // The browser module POSTs the staged photos to /api/pantry-photo/read OFF the circuit; the
-            // server reads them and returns the candidate items. Nothing is persisted either way — the photo
-            // of someone's freezer goes to the model and stops there (§13.8), which is why there's no Retry:
-            // no saved copy to retry FROM, and re-photographing a shelf you're standing at is cheap.
-            var result = await uploader.InvokeAsync<CensusReadResult>("extract", antiforgeryToken);
-            if (!result.Ok || result.Outcome is null)
-            {
-                errorMessage = result.Error ?? "Sorry — something went wrong reading those photos. Please try again.";
-                phase = Phase.Error;
-                return;
-            }
-            var outcome = result.Outcome;
-            if (!outcome.Success)
-            {
-                errorMessage = $"Sorry — that couldn't be read. Try again, or take the photo a bit closer. ({outcome.Error})";
-                phase = Phase.Error;
-                return; // the staged photos are KEPT (a failed census has no audit copy) so "try again" is one tap
-            }
-
-            await LoadCatalogAsync(CancellationToken.None);
-            rows = outcome.Items.Select(dto =>
-            {
-                var item = dto.ToItem();
-                // Trust order, one step shorter than a receipt's: no merchant aliases (a shelf has no merchant
-                // or printed line), so the model's own match leads and ProductMatcher backs it up — all of it
-                // in CensusPlan.Prefill.
-                var prefill = CensusPlan.Prefill(item, catalog);
-                return new ReviewRow
-                {
-                    LabelText = item.LabelText,
-                    Evidence = item.Evidence,
-                    Name = item.NormalizedName,
-                    ReadName = item.NormalizedName,
-                    Brand = item.Brand,
-                    Size = item.Size,
-                    Variety = item.Variety,
-                    Count = item.VisibleCount,
-                    Category = item.Category,
-                    Confidence = item.Confidence,
-                    ProductId = prefill.ProductId,
-                    PrefilledProductId = prefill.ProductId,
-                    FuzzyMatch = prefill.BySimilarity,
-                    AmbiguousSuggestion = prefill.AmbiguousSuggestion,
-                    // Include is set below, once the whole census can be planned together.
-                };
-            }).ToList();
-            readItemCount = rows.Count;
-
-            // The arrival tick: a legible label is ready to confirm, a guess has to be opted into. Exactly the
-            // plan's rule — !NeedsAHumanLook (evidence, a similarity guess, an ambiguity) AND confident enough.
-            // Planned as a whole census so a row can already see what a sibling did.
-            var arrival = PlanRows();
-            for (var j = 0; j < rows.Count; j++)
-                rows[j].Include = !arrival[j].NeedsAHumanLook && rows[j].Confidence >= ConfidentEnough;
-
-            confirmError = null;
-            // On success the page moves to Review, which takes the input off screen, so OnAfterRenderAsync
-            // disposes the uploader and its held photos with it — no explicit clear needed here, and a failed
-            // read above deliberately keeps them for a one-tap retry.
-            phase = Phase.Review;
-        }
-        catch (JSDisconnectedException) { } // the page went away mid-read — nothing to report
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Reading a shelf census failed.");
-            errorMessage = "Sorry — something went wrong reading those photos. Please try again.";
-            phase = Phase.Error;
-        }
-        finally
-        {
-            reading = false;
-        }
     }
 
     private async Task LoadCatalogAsync(CancellationToken ct)
@@ -890,11 +840,10 @@ else if (phase == Phase.Done)
     private void Reset()
     {
         // The JS uploader was disposed when we left staging (Review/Done); returning to Idle re-inits a
-        // fresh one (empty), so clearing the .NET-side list is all that's needed here.
+        // fresh, empty one, and it owns the staged list — so there's nothing .NET-side to clear here.
         phase = Phase.Idle;
         rows = [];
         refusals = [];
-        staged = [];
         photoCount = 0;
         readItemCount = 0;
         countedAnything = false;

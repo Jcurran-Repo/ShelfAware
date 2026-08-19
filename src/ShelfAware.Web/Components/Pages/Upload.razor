@@ -27,11 +27,8 @@
 
 <h1>Upload receipt</h1>
 
-@if (phase is Phase.Idle or Phase.Error or Phase.Extracting)
+@if (phase is Phase.Idle or Phase.Error)
 {
-    @* Every picked file is read into MEMORY inside its own change event (see OnFilesSelected) —
-       extraction never touches a browser file handle, so a circuit blip mid-extract can't break a
-       read, and camera snaps can append across change events at all. *@
     <section class="panel">
         <p>
             Photograph paper receipts — several at once is fine, each image is read as its own receipt.
@@ -53,44 +50,22 @@
                 Change this in <a href="/settings">Settings</a>.
             </p>
         }
-        <div hidden="@(phase == Phase.Extracting)">
-            @* A plain file input driven by photo-upload.js — NOT Blazor's <InputFile>. The picked photo is
-               resized in the BROWSER and its bytes POSTed to /api/receipts/extract off the SignalR circuit,
-               so a mobile file-pick that briefly drops the circuit can't lose the upload. (The bug this
-               replaced: InputFile's OnChange fired while the circuit was down during the native picker, and
-               was lost forever — the file's name showed but no Extract button ever appeared.) The staged
-               list below is fed by the module via OnStaged, retried across a reconnect.
-               No `accept` filter, on purpose: iOS greys out HEIC when the picker is type-restricted; the
-               module resizes whatever the browser can decode (HEIC included) and takes PDFs as-is.
-               ⚠️ Never add accept="image/heic" here: Safari 17+ then stops transcoding and converts JPEG
-               and PNG INTO HEIC, making the rare case universal. *@
-            <input type="file" @ref="fileInput" multiple aria-label="Upload receipt photos or a PDF" />
-            @if (staged.Count > 0)
-            {
-                <ul class="staged-files">
-                    @foreach (var f in staged)
-                    {
-                        <li>
-                            <span>@f.Name</span>
-                            <button type="button" class="icon-btn" @onclick="() => RemoveStaged(f.Id)"
-                                    disabled="@(phase == Phase.Extracting)" aria-label="Remove @f.Name"><span aria-hidden="true">✕</span></button>
-                        </li>
-                    }
-                </ul>
-                <p>@staged.Count file(s) selected@(staged.Count > 1 && !combineAsOne ? $" — {staged.Count} receipts" : "").</p>
-                @if (staged.Count > 1)
-                {
-                    <label class="combine-check">
-                        <input type="checkbox" @bind="combineAsOne" />
-                        These are all <strong>one receipt</strong> (multiple photos/pages of a single long receipt)
-                    </label>
-                }
-                <button @onclick="Extract" disabled="@(phase == Phase.Extracting)">Extract</button>
-            }
-        </div>
+        @* A plain file input plus a mount that photo-upload.js fills — CLIENT-SIDE — with the staged list,
+           the "one receipt" checkbox, and the Extract button. That whole flow runs off the SignalR circuit,
+           so a mobile pick that drops the circuit still shows the photo AND its Extract button (the bug this
+           fixes: the filename — or nothing — appeared but no button, because the staged list rode the
+           circuit). The photo is resized in the browser and POSTed to /api/receipts/extract off the circuit;
+           only the review screen that follows (OnExtracted) needs the circuit, and the module retries that
+           until it's back.
+           No `accept` filter, on purpose: iOS greys out HEIC when the picker is type-restricted; the
+           module resizes whatever the browser can decode (HEIC included) and takes PDFs as-is.
+           ⚠️ Never add accept="image/heic" here: Safari 17+ then stops transcoding and converts JPEG
+           and PNG INTO HEIC, making the rare case universal. *@
+        <input type="file" @ref="fileInput" multiple aria-label="Upload receipt photos or a PDF" />
+        <div @ref="stagingMount"></div>
         @if (batch.Count > 0)
         {
-            <ul class="batch-progress" aria-label="Receipt extraction progress">
+            <ul class="batch-progress" aria-label="Receipt extraction results">
                 @foreach (var b in batch)
                 {
                     <li>
@@ -101,17 +76,9 @@
                 }
             </ul>
         }
-        @if (phase == Phase.Extracting)
-        {
-            <p class="spinner">
-                @(batch.Count > 0
-                    ? $"Reading receipt {Math.Min(batch.Count(x => x.Status is BatchStatus.Done or BatchStatus.Failed) + 1, batch.Count)} of {batch.Count}…"
-                    : "Reading your receipt… this usually takes a few seconds.")
-            </p>
-        }
         @if (phase == Phase.Error)
         {
-            <p class="error">@errorMessage</p>
+            <p class="error" role="alert">@errorMessage</p>
         }
     </section>
 
@@ -371,38 +338,37 @@ else if (phase == Phase.Done)
 }
 
 @code {
-    private enum Phase { Idle, Extracting, Review, Done, Error }
+    private enum Phase { Idle, Review, Done, Error }
 
     private Phase phase = Phase.Idle;
     private string? errorMessage;
     private Receipt? receipt;
 
-    // The browser-side uploader (photo-upload.js) owns the picked bytes; the page holds only the file
-    // NAMES it pushes back via OnStaged, for the staged list + Extract button. This is what moves the
-    // bytes off the SignalR circuit so a mobile file-pick that drops the circuit can't lose the upload.
+    // photo-upload.js owns the whole staging UI: it holds the picked bytes AND renders the staged list, the
+    // "one receipt" checkbox, and the Extract button into stagingMount — all client-side, so a mobile pick
+    // that drops the SignalR circuit still shows the photo and its button. The page hears back only once, via
+    // OnExtracted, with the finished ingest outcome(s).
     private ElementReference fileInput;
+    private ElementReference stagingMount;
     private IJSObjectReference? uploader;
     private DotNetObjectReference<Upload>? selfRef;
     private string? antiforgeryToken;
-    private List<StagedMeta> staged = [];
-
-    /// <summary>One staged file as the browser module reports it — a name and the id the module keys it by
-    /// (the actual bytes stay in the browser until Extract POSTs them off-circuit).</summary>
-    public sealed record StagedMeta(int Id, string Name);
 
     /// <summary>An extract's result from the browser module: the ingest outcome, or a request-level error.
     /// A failed READ comes back as Ok with <c>Outcome.Success</c> false — the receipt was still saved.
-    /// Plain get/set DTOs (not the service's positional record) so the JS-interop deserializer maps the
-    /// camelCase JSON straight onto them — a positional record needs constructor-parameter matching that
-    /// the interop deserializer doesn't do, and silently yields a null Outcome instead.</summary>
-    internal sealed class UploadResult
+    /// <c>Name</c> is the file the module POSTed, for the batch readout. Plain get/set DTOs (not the
+    /// service's positional record) so the JS-interop deserializer maps the camelCase JSON straight onto
+    /// them — a positional record needs constructor-parameter matching that the interop deserializer doesn't
+    /// do, and silently yields a null Outcome instead.</summary>
+    public sealed class UploadResult
     {
         public bool Ok { get; set; }
         public UploadOutcome? Outcome { get; set; }
         public string? Error { get; set; }
+        public string? Name { get; set; }
     }
 
-    internal sealed class UploadOutcome
+    public sealed class UploadOutcome
     {
         public int ReceiptId { get; set; }
         public bool Success { get; set; }
@@ -417,10 +383,10 @@ else if (phase == Phase.Done)
         public bool PossibleDuplicate { get; set; }
     }
 
-    // The file input lives inside the staging phases only (Idle/Error/Extracting); moving to Review/Done
-    // removes it from the DOM and returning re-creates it. So the uploader can't be wired just once — it's
-    // (re)wired whenever the input is on screen but not currently attached, and torn down when it leaves.
-    // The module is imported once and reused.
+    // The file input + its staging mount live in the staging phases only (Idle/Error); moving to Review/Done
+    // removes them from the DOM and returning re-creates them. So the uploader can't be wired just once —
+    // it's (re)wired whenever the input is on screen but not currently attached, and torn down when it
+    // leaves. The module is imported once and reused.
     private IJSObjectReference? _module;
     private bool uploaderWired;
 
@@ -431,14 +397,26 @@ else if (phase == Phase.Done)
             antiforgeryToken = Antiforgery.GetAntiforgeryToken()?.Value;
             selfRef = DotNetObjectReference.Create(this);
         }
-        var inputOnScreen = phase is Phase.Idle or Phase.Error or Phase.Extracting;
+        var inputOnScreen = phase is Phase.Idle or Phase.Error;
         try
         {
             if (inputOnScreen && !uploaderWired && selfRef is not null)
             {
                 _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "/js/photo-upload.js");
                 uploader = await _module.InvokeAsync<IJSObjectReference>(
-                    "init", fileInput, selfRef, Llm.Value.MaxImageEdgePx, MaxFiles, "/api/receipts/extract");
+                    "init", fileInput, stagingMount, selfRef, new
+                    {
+                        maxEdgePx = Llm.Value.MaxImageEdgePx,
+                        maxFiles = MaxFiles,
+                        endpoint = "/api/receipts/extract",
+                        extractLabel = "Extract",
+                        busyLabel = "Reading your receipt… this usually takes a few seconds.",
+                        noun = "file",
+                        allowCombine = true,
+                        token = antiforgeryToken,
+                        reconnectMessage = "Your receipt was uploaded, but the connection dropped before the "
+                            + "review screen could load. Reload the page — it'll be waiting in the review queue below.",
+                    });
                 uploaderWired = true;
             }
             else if (!inputOnScreen && uploaderWired)
@@ -470,38 +448,98 @@ else if (phase == Phase.Done)
         finally { uploader = null; }
     }
 
-    /// <summary>Called by photo-upload.js after every pick or removal, with the current staged files (names
-    /// only) and any problems reading them. The module RETRIES this across a circuit reconnect, which is
-    /// exactly what makes the staged list + Extract button re-appear after a mobile file-pick briefly
-    /// dropped the circuit (the bug this whole path fixes).</summary>
+    /// <summary>Called by photo-upload.js once it has POSTed the staged photos and holds the finished ingest
+    /// outcome(s) — the ONLY circuit-dependent moment in the flow (the module retries it across a reconnect,
+    /// so it lands once the connection is back). <paramref name="combined"/> is true for a single receipt (one
+    /// photo, or the pages of one long receipt ticked together) and false for a stack POSTed one-per-receipt.
+    /// <c>fileCount</c> (the module's shared signature — the census page's "found in N photos" copy) is unused
+    /// here: a receipt's item count comes from its own outcome.</summary>
     [JSInvokable]
-    public async Task OnStaged(StagedMeta[] files, string[] problems)
+    public async Task OnExtracted(UploadResult[] results, bool combined, int fileCount)
     {
-        staged = files.ToList();
-        if (staged.Count == 0) combineAsOne = false; // emptied → clear the one-long-receipt tick (item 48)
-        batch = [];                                   // a fresh selection supersedes the last batch readout
-        if (problems.Length > 0)
+        errorMessage = null;
+        try
         {
-            // A bad file doesn't unstage its good neighbours — they stay listed above; it's named here.
-            errorMessage = string.Join(" ", problems);
-            phase = Phase.Error;
+            if (combined) await HandleCombinedAsync(results.FirstOrDefault());
+            else await HandleBatchAsync(results);
         }
-        else if (phase == Phase.Error)
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
         {
-            errorMessage = null;
-            phase = Phase.Idle;
+            Logger.LogError(ex, "Handling the extracted receipt(s) failed.");
+            errorMessage = "Sorry — something went wrong reading the receipt. Please try again.";
+            phase = Phase.Error;
         }
         await InvokeAsync(StateHasChanged);
     }
 
-    /// <summary>The ✕ on a staged row — the module drops it and re-pushes the list via <see cref="OnStaged"/>.
-    /// Emptying the list is what clears the one-long-receipt tick (in OnStaged): appending KEEPS the tick on
-    /// purpose (adding pages to one receipt is the flagship flow).</summary>
-    private async Task RemoveStaged(int id)
+    // One receipt (a single photo, or the pages of one long receipt): the module already POSTed it and the
+    // server ingested + auto-routed it. A trusted receipt records itself and review never appears; anything
+    // the router won't vouch for falls through to the normal review grid (the service already persisted it,
+    // so a fresh extraction and a queued one share one pre-fill).
+    private async Task HandleCombinedAsync(UploadResult? result)
     {
-        if (uploader is null) return;
-        try { await uploader.InvokeVoidAsync("remove", id); }
-        catch (JSDisconnectedException) { }
+        if (result is null || !result.Ok || result.Outcome is null)
+        {
+            errorMessage = result?.Error ?? "Sorry — something went wrong reading that receipt. Please try again.";
+            phase = Phase.Error;
+            return;
+        }
+        var outcome = result.Outcome;
+        if (!outcome.Success)
+        {
+            errorMessage = $"Sorry — that receipt couldn't be read. The image was kept for review. ({outcome.Error})";
+            phase = Phase.Error;
+            return;
+        }
+        if (outcome.AutoConfirmed)
+        {
+            confirmSummary = Summary(outcome.Purchases, outcome.NewProducts, outcome.Retracked,
+                outcome.Merchant, outcome.PurchasedAt ?? DateOnly.FromDateTime(DateTime.Today));
+            autoConfirmed = true;
+            confirmedReceiptId = outcome.ReceiptId;
+            await LoadPendingAsync();
+            phase = Phase.Done;
+            return;
+        }
+        await LoadReviewAsync(outcome.ReceiptId);
+    }
+
+    // A stack of separate receipts: the module POSTed each on its own and handed back every outcome. Each
+    // read landed in the PendingReview queue below (a success or a saved failed read); the batch readout says
+    // what happened to each, and the queue is refreshed so its Review/Retry apply.
+    private async Task HandleBatchAsync(UploadResult[] results)
+    {
+        batch = results.Select(r =>
+        {
+            var item = new BatchItem { FileName = r.Name ?? "receipt" };
+            if (r.Ok && r.Outcome is { } outcome)
+            {
+                item.InQueue = true; // a receipt row exists (success or a saved failed read), so Retry applies
+                if (outcome.Success)
+                {
+                    item.Status = BatchStatus.Done;
+                    item.Merchant = outcome.Merchant;
+                    item.PurchasedAt = outcome.PurchasedAt;
+                    item.LineCount = outcome.LineCount;
+                    item.AutoConfirmed = outcome.AutoConfirmed;
+                    item.PossibleDuplicate = outcome.PossibleDuplicate;
+                }
+                else
+                {
+                    item.Status = BatchStatus.Failed;
+                }
+            }
+            else
+            {
+                // A request-level failure (bad upload, server error) — no receipt row was saved, so this
+                // isn't a queue Retry case; the readout tells the user to pick + extract again.
+                item.Status = BatchStatus.Failed;
+            }
+            return item;
+        }).ToList();
+        await LoadPendingAsync(); // the batch just filled the review queue
+        phase = Phase.Idle;
     }
     private DateOnly reviewDate = DateOnly.FromDateTime(DateTime.Today);
     private List<ReviewLine> reviewLines = [];
@@ -757,14 +795,14 @@ else if (phase == Phase.Done)
 
     private const int MaxFiles = 20;
 
-    private bool combineAsOne;
-
-    private enum BatchStatus { Waiting, Reading, Done, Failed }
+    // The module reads each receipt itself and hands back only the finished results, so a batch row is only
+    // ever a final Done or Failed — there is no Waiting/Reading state on the .NET side.
+    private enum BatchStatus { Done, Failed }
 
     private sealed class BatchItem
     {
         public required string FileName { get; init; }
-        public BatchStatus Status { get; set; } = BatchStatus.Waiting;
+        public BatchStatus Status { get; set; } = BatchStatus.Failed;
         public string? Merchant { get; set; }
         public DateOnly? PurchasedAt { get; set; }
         public int LineCount { get; set; }
@@ -777,169 +815,22 @@ else if (phase == Phase.Done)
 
     private static string BatchIcon(BatchStatus s) => s switch
     {
-        BatchStatus.Reading => "📖",
         BatchStatus.Done => "✅",
-        BatchStatus.Failed => "⚠️",
-        _ => "⏳",
+        _ => "⚠️",
     };
 
     private static string BatchNote(BatchItem b) => b.Status switch
     {
-        BatchStatus.Waiting => "waiting…",
-        BatchStatus.Reading => "reading…",
         BatchStatus.Done => $"{b.Merchant ?? "Unknown merchant"} · {(b.PurchasedAt is { } d ? d.ToString("MMM d, yyyy") : "no date")} · {b.LineCount} item{(b.LineCount == 1 ? "" : "s")}" +
             (b.AutoConfirmed ? " — recorded automatically"
                 : b.PossibleDuplicate ? " — ⚠️ possible duplicate, waiting for your review below"
                 : " — in the review queue below"),
         _ => b.InQueue
             ? "couldn't be read — retry it from the queue below"
-            // With reads at selection time, this arm means the SAVE failed (folder/audit-copy/
-            // persist), never the read — the file itself was staged fine. Don't send the user
-            // back to the picker for a failure the picker can't fix.
+            // A request-level failure means the POST/save failed, never the read — the photo staged fine.
+            // Don't send the user back to the picker for a failure the picker can't fix.
             : "something went wrong saving this receipt — pick it and extract again",
     };
-
-    // Several files are several receipts (the stack-of-paper-receipts case) unless the user said they're
-    // pages of ONE long receipt. A single file goes straight into review.
-    // ⚠️ Guarded like the census Read(): Extracting hides this button via `hidden`, but a second click can
-    // already be queued before that render lands — two runs would double-POST the same staged set. The
-    // phase guard keeps that from happening.
-    private async Task Extract()
-    {
-        if (phase == Phase.Extracting || staged.Count == 0 || uploader is null) return;
-        if (staged.Count > 1 && !combineAsOne) await ExtractBatchAsync();
-        else await ExtractCombinedAsync();
-    }
-
-    // One receipt (a single photo, or the pages of one long receipt). The browser module POSTs the staged
-    // bytes to /api/receipts/extract OFF the circuit; the server ingests + auto-routes and returns the
-    // outcome. The hardened extract/persist/route logic lives in ReceiptIngestionService, shared with the
-    // page's other entry points — the endpoint is just how the bytes get there reliably from mobile.
-    private async Task ExtractCombinedAsync()
-    {
-        phase = Phase.Extracting;
-        errorMessage = null;
-        StateHasChanged();
-
-        try
-        {
-            var result = await uploader!.InvokeAsync<UploadResult>("extract", antiforgeryToken);
-            if (!result.Ok || result.Outcome is null)
-            {
-                errorMessage = result.Error ?? "Sorry — something went wrong reading that receipt. Please try again.";
-                phase = Phase.Error;
-                return;
-            }
-            var outcome = result.Outcome;
-            if (!outcome.Success)
-            {
-                errorMessage = $"Sorry — that receipt couldn't be read. The image was kept for review. ({outcome.Error})";
-                phase = Phase.Error;
-                return;
-            }
-
-            // Smart/Auto route: a trusted receipt records itself and review never appears; anything the
-            // router won't vouch for falls through to the normal review grid (the service already persisted
-            // it, so a fresh extraction and a queued one share one pre-fill).
-            if (outcome.AutoConfirmed)
-            {
-                confirmSummary = Summary(outcome.Purchases, outcome.NewProducts, outcome.Retracked,
-                    outcome.Merchant, outcome.PurchasedAt ?? DateOnly.FromDateTime(DateTime.Today));
-                autoConfirmed = true;
-                confirmedReceiptId = outcome.ReceiptId;
-                await LoadPendingAsync();
-                phase = Phase.Done;
-                return;
-            }
-            await LoadReviewAsync(outcome.ReceiptId);
-        }
-        catch (JSDisconnectedException) { } // the page went away mid-extract — nothing to report
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Receipt extraction failed.");
-            errorMessage = "Sorry — something went wrong while reading the receipt. Please try again.";
-            phase = Phase.Error;
-        }
-        finally
-        {
-            staged = [];
-            combineAsOne = false;
-            await ClearUploaderAsync();
-        }
-    }
-
-    // Each image is its OWN receipt, POSTed one at a time so the user sees progress per receipt rather than
-    // one long silence. Every read lands in the PendingReview queue below; failures are non-fatal — the
-    // audit copy + raw model output are kept and the row gets the usual Retry.
-    private async Task ExtractBatchAsync()
-    {
-        phase = Phase.Extracting;
-        errorMessage = null;
-        var items = staged.ToList(); // snapshot — the ids we POST one by one
-        batch = items.Select(f => new BatchItem { FileName = f.Name }).ToList();
-        StateHasChanged();
-
-        try
-        {
-            for (var i = 0; i < items.Count; i++)
-            {
-                var item = batch[i];
-                item.Status = BatchStatus.Reading;
-                StateHasChanged();
-                try
-                {
-                    var result = await uploader!.InvokeAsync<UploadResult>("extractOne", antiforgeryToken, items[i].Id);
-                    if (result.Ok && result.Outcome is { } outcome)
-                    {
-                        item.InQueue = true; // a receipt row exists (success or a saved failed read), so Retry applies
-                        if (outcome.Success)
-                        {
-                            item.Status = BatchStatus.Done;
-                            item.Merchant = outcome.Merchant;
-                            item.PurchasedAt = outcome.PurchasedAt;
-                            item.LineCount = outcome.LineCount;
-                            item.AutoConfirmed = outcome.AutoConfirmed;
-                            item.PossibleDuplicate = outcome.PossibleDuplicate;
-                        }
-                        else
-                        {
-                            item.Status = BatchStatus.Failed;
-                        }
-                    }
-                    else
-                    {
-                        // A request-level failure (bad upload, server error) — no receipt row was saved, so
-                        // this isn't a queue Retry case; the readout tells the user to pick + extract again.
-                        item.Status = BatchStatus.Failed;
-                    }
-                }
-                catch (JSDisconnectedException) { break; } // page gone — stop the batch
-                catch (Exception ex)
-                {
-                    // One bad file must not sink the rest of the stack — mark it and keep going.
-                    Logger.LogError(ex, "Batch upload failed for {FileName}.", item.FileName);
-                    item.Status = BatchStatus.Failed;
-                }
-                StateHasChanged();
-            }
-        }
-        finally
-        {
-            staged = [];
-            combineAsOne = false;
-            await ClearUploaderAsync();
-            await LoadPendingAsync(); // the batch just filled the review queue
-            phase = Phase.Idle;
-        }
-    }
-
-    // Clear the browser module's held blobs after an extract (success or failure) so a re-pick starts clean.
-    private async Task ClearUploaderAsync()
-    {
-        if (uploader is null) return;
-        try { await uploader.InvokeVoidAsync("clear"); }
-        catch (JSDisconnectedException) { }
-    }
 
     // The ONE "recorded" summary, so an automatic confirm reads exactly like a manual one.
     private static string Summary(int purchases, int newProducts, int retracked, string? merchant, DateOnly date) =>
@@ -1106,13 +997,11 @@ else if (phase == Phase.Done)
     private void Reset()
     {
         // The JS uploader was disposed when we left staging (Review/Done); returning to Idle re-inits a
-        // fresh one (empty), so clearing the .NET-side list is all that's needed here.
+        // fresh, empty one, and it owns the staged list — so there's nothing .NET-side to clear here.
         phase = Phase.Idle;
         receipt = null;
         reviewLines = [];
-        staged = [];
         batch = [];
-        combineAsOne = false;
         errorMessage = null;
         confirmError = null;
         autoConfirmed = false;

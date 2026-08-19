@@ -538,87 +538,18 @@ public class UploadPageTests : PageTestContext
         });
     }
 
-    // ----------------------------------------------------------- staging (via the JS uploader)
+    // ------------------------------------------ extract delivery (the module POSTs; .NET routes the result)
 
-    // photo-upload.js resizes + holds the picked bytes in the browser and hands the page only the file
-    // NAMES via OnStaged (retried across a circuit reconnect). bUnit can't run the JS, so these call
-    // OnStaged directly — exactly what the module pushes — and mock the uploader for the extract POST.
-    // The capture/resize/retry itself is JS, live-verified on the dev server.
-    private static Upload.StagedMeta[] Staged(params string[] names)
-    {
-        var id = 0;
-        return [.. names.Select(n => new Upload.StagedMeta(++id, n))];
-    }
-
-    private Task PushStaged(IRenderedComponent<Upload> cut, Upload.StagedMeta[] files, params string[] problems) =>
-        cut.InvokeAsync(() => cut.Instance.OnStaged(files, problems));
-
-    [Fact]
-    public async Task Staging_a_file_shows_it_and_the_extract_button()
-    {
-        var cut = RenderUpload();
-        await PushStaged(cut, Staged("receipt.jpg"));
-
-        Assert.Contains("receipt.jpg", cut.Markup);
-        Assert.Contains("1 file(s) selected", cut.Markup);
-        Assert.Contains(cut.FindAll("button"), b => b.TextContent.Trim() == "Extract");
-        Assert.Empty(cut.FindAll(".combine-check")); // one file offers no "these are one receipt" choice
-    }
-
-    [Fact]
-    public async Task Staging_several_files_offers_the_one_receipt_tick_and_counts_them_as_receipts()
-    {
-        var cut = RenderUpload();
-        await PushStaged(cut, Staged("a.jpg", "b.jpg", "c.jpg"));
-
-        Assert.Contains("3 file(s) selected — 3 receipts", cut.Markup);
-        Assert.Single(cut.FindAll(".combine-check input"));
-    }
-
-    [Fact]
-    public async Task A_problem_reading_a_file_is_shown_and_the_good_ones_stay()
-    {
-        var cut = RenderUpload();
-        await PushStaged(cut, Staged("fine.jpg"), "“broken.heic” couldn't be read — take or pick it again.");
-
-        Assert.Contains("couldn't be read", Collapsed(cut.Markup));
-        Assert.Contains("fine.jpg", cut.Markup);          // the good one is still staged
-        Assert.Contains("1 file(s) selected", cut.Markup);
-    }
-
-    [Fact]
-    public async Task Emptying_the_staged_list_clears_the_one_receipt_tick()
-    {
-        // Appending keeps the tick (adding pages to one long receipt is the flagship flow), so an
-        // empty list is the one fresh-start boundary — without the clear, a tick made for files that
-        // were all removed would silently merge the NEXT, unrelated pick into one receipt.
-        var cut = RenderUpload();
-        await PushStaged(cut, Staged("a.jpg", "b.jpg"));
-        cut.Find(".combine-check input").Change(true);
-
-        await PushStaged(cut, []);                          // the module reports the list emptied
-        await PushStaged(cut, Staged("c.jpg", "d.jpg"));    // a fresh, unrelated pick
-
-        Assert.False(cut.Find(".combine-check input").HasAttribute("checked"));
-    }
-
-    [Fact]
-    public async Task Removing_a_staged_row_asks_the_module_to_drop_it()
-    {
-        var cut = RenderUpload();
-        await PushStaged(cut, Staged("a.jpg"));
-
-        cut.FindAll(".staged-files button").Single(b => b.GetAttribute("aria-label") == "Remove a.jpg").Click();
-
-        Assert.Contains(JSInterop.Invocations, i => i.Identifier == "remove");
-    }
-
-    // ------------------------------------------------- extract routing (the uploader POST is mocked)
-
+    // photo-upload.js resizes + holds the picked bytes, renders the staged list + Extract button ITSELF
+    // (client-side, so a dropped mobile circuit can't hide them), POSTs off-circuit, and hands the page only
+    // the finished outcome(s) via OnExtracted — retried across a reconnect. bUnit can't run that JS, so these
+    // call OnExtracted directly with the results the module would deliver; the staging UI, the POST, and the
+    // combine/double-tap guards are JS, live-verified on the dev server.
     private static Upload.UploadResult Extracted(int receiptId, bool autoConfirmed, string? merchant = "Walmart",
-        int purchases = 0, int lineCount = 1) => new()
+        int purchases = 0, int lineCount = 1, string name = "receipt.jpg") => new()
     {
         Ok = true,
+        Name = name,
         Outcome = new Upload.UploadOutcome
         {
             ReceiptId = receiptId, Success = true, AutoConfirmed = autoConfirmed, Purchases = purchases,
@@ -626,17 +557,14 @@ public class UploadPageTests : PageTestContext
         },
     };
 
-    private void SetupExtract(Upload.UploadResult result) =>
-        JSInterop.Setup<Upload.UploadResult>("extract", _ => true).SetResult(result);
+    private Task Deliver(IRenderedComponent<Upload> cut, bool combined, params Upload.UploadResult[] results) =>
+        cut.InvokeAsync(() => cut.Instance.OnExtracted(results, combined, results.Length));
 
     [Fact]
     public async Task A_trusted_upload_auto_confirms_and_says_it_did()
     {
-        SetupExtract(Extracted(receiptId: 1, autoConfirmed: true, purchases: 1));
         var cut = RenderUpload();
-        await PushStaged(cut, Staged("receipt.jpg"));
-
-        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Extract").Click();
+        await Deliver(cut, combined: true, Extracted(receiptId: 1, autoConfirmed: true, purchases: 1));
 
         cut.WaitForAssertion(() =>
         {
@@ -651,11 +579,8 @@ public class UploadPageTests : PageTestContext
         // The router wouldn't vouch for it, so the page loads the persisted receipt into review — the
         // ReceiptId the endpoint returned is real (the ingest already saved it).
         var receiptId = SeedPending("Walmart", Today.AddDays(-1), DbLine("ZZZ", "Completely Novel Thing"));
-        SetupExtract(Extracted(receiptId, autoConfirmed: false));
         var cut = RenderUpload();
-        await PushStaged(cut, Staged("receipt.jpg"));
-
-        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Extract").Click();
+        await Deliver(cut, combined: true, Extracted(receiptId, autoConfirmed: false));
 
         cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".review-actions")));
         Assert.Equal("Completely Novel Thing", cut.Find("input[aria-label^='Item name']").GetAttribute("value"));
@@ -664,14 +589,12 @@ public class UploadPageTests : PageTestContext
     [Fact]
     public async Task A_failed_read_says_so_and_keeps_the_image_for_review()
     {
-        JSInterop.Setup<Upload.UploadResult>("extract", _ => true).SetResult(new Upload.UploadResult
-        {
-            Ok = true, Outcome = new Upload.UploadOutcome { ReceiptId = 1, Success = false, Error = "blurry" },
-        });
         var cut = RenderUpload();
-        await PushStaged(cut, Staged("receipt.jpg"));
-
-        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Extract").Click();
+        await Deliver(cut, combined: true, new Upload.UploadResult
+        {
+            Ok = true, Name = "receipt.jpg",
+            Outcome = new Upload.UploadOutcome { ReceiptId = 1, Success = false, Error = "blurry" },
+        });
 
         cut.WaitForAssertion(() => Assert.Contains("couldn't be read", Collapsed(cut.Find("p.error").TextContent)));
     }
@@ -681,28 +604,34 @@ public class UploadPageTests : PageTestContext
     {
         // A non-200 from the endpoint (too large, session expired) comes back as Ok=false with the
         // endpoint's own message; the page shows it rather than a generic error.
-        JSInterop.Setup<Upload.UploadResult>("extract", _ => true).SetResult(new Upload.UploadResult
-        {
-            Ok = false, Error = "That upload was too large.",
-        });
         var cut = RenderUpload();
-        await PushStaged(cut, Staged("receipt.jpg"));
-
-        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Extract").Click();
+        await Deliver(cut, combined: true, new Upload.UploadResult { Ok = false, Error = "That upload was too large." });
 
         cut.WaitForAssertion(() => Assert.Contains("That upload was too large.", cut.Find("p.error").TextContent));
     }
 
     [Fact]
-    public async Task Several_files_extract_one_at_a_time_into_the_queue()
+    public async Task A_combined_delivery_opens_review_rather_than_the_batch_readout()
     {
-        // Two files, combine unticked → a batch: one extractOne POST per file, each its own receipt.
-        JSInterop.Setup<Upload.UploadResult>("extractOne", _ => true)
-            .SetResult(Extracted(receiptId: 1, autoConfirmed: false, merchant: "M"));
+        // combined:true → HandleCombined loads the single receipt into review. The module decides combined
+        // vs batch from the "one receipt" tick (that decision is JS); the page just routes on the flag.
+        var receiptId = SeedPending("Costco", Today.AddDays(-1), DbLine("LONG", "Bulk Thing"));
         var cut = RenderUpload();
-        await PushStaged(cut, Staged("one.jpg", "two.jpg"));
+        await Deliver(cut, combined: true, Extracted(receiptId, autoConfirmed: false));
 
-        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Extract").Click();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".review-actions")));
+        Assert.Empty(cut.FindAll(".batch-progress")); // the combined path, not the batch readout
+    }
+
+    [Fact]
+    public async Task A_batch_delivery_lands_each_receipt_in_the_queue_readout()
+    {
+        // combined:false → the module POSTed each file on its own; every result shows in the batch readout
+        // (by file name) and lands in the review queue.
+        var cut = RenderUpload();
+        await Deliver(cut, combined: false,
+            Extracted(receiptId: 1, autoConfirmed: false, merchant: "M", name: "one.jpg"),
+            Extracted(receiptId: 2, autoConfirmed: false, merchant: "N", name: "two.jpg"));
 
         cut.WaitForAssertion(() =>
         {
@@ -710,24 +639,22 @@ public class UploadPageTests : PageTestContext
             Assert.Equal(2, items.Count);
             Assert.All(items, li => Assert.Contains("in the review queue below", li.TextContent));
         });
-        Assert.Equal(2, JSInterop.Invocations.Count(i => i.Identifier == "extractOne"));
-        Assert.DoesNotContain(JSInterop.Invocations, i => i.Identifier == "extract"); // batched, not combined
+        Assert.Contains("one.jpg", cut.Markup);
+        Assert.Contains("two.jpg", cut.Markup);
     }
 
     [Fact]
-    public async Task Combining_pages_sends_them_as_one_extract_not_a_batch()
+    public async Task A_delivered_error_does_not_hide_the_review_queue()
     {
-        var receiptId = SeedPending("Costco", Today.AddDays(-1), DbLine("LONG", "Bulk Thing"));
-        SetupExtract(Extracted(receiptId, autoConfirmed: false));
+        // A request-level failure reaches Phase.Error; hiding the queued receipts behind it would read as
+        // them being lost.
+        SeedPending("Walmart", Today.AddDays(-2), DbLine("GV MILK", "Whole Milk"));
         var cut = RenderUpload();
-        await PushStaged(cut, Staged("p1.jpg", "p2.jpg"));
-        cut.Find(".combine-check input").Change(true);
 
-        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Extract").Click();
+        await Deliver(cut, combined: true, new Upload.UploadResult { Ok = false, Error = "That upload was too large." });
 
-        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".review-actions")));
-        Assert.Contains(JSInterop.Invocations, i => i.Identifier == "extract");
-        Assert.DoesNotContain(JSInterop.Invocations, i => i.Identifier == "extractOne");
+        cut.WaitForAssertion(() => Assert.Contains("That upload was too large.", cut.Find("p.error").TextContent));
+        Assert.Contains("Waiting for review (1)", cut.Markup); // the queue survived the error
     }
 
     // -------------------------------------------------------------------------- the file picker markup
@@ -738,43 +665,14 @@ public class UploadPageTests : PageTestContext
         // ⚠️ No `accept`: a mixed image+PDF list greys HEIC photos out of the iOS picker (the default
         // iPhone format), so the one control that takes a photo OR a PDF filters by nothing; the module
         // resizes whatever the browser can decode and takes PDFs as-is. A plain <input> drives the JS
-        // uploader — NOT Blazor's <InputFile> — so the picked bytes are captured client-side and a mobile
-        // circuit blip during the picker can't lose them.
+        // uploader — NOT Blazor's <InputFile> — and photo-upload.js renders the staged list + Extract button
+        // beside it, so the picked bytes AND the staging UI are client-side and a mobile circuit blip during
+        // the picker can't lose them.
         var cut = RenderUpload();
 
         var inputs = cut.FindAll("input[type=file]");
         Assert.Single(inputs);                          // one control, no separate snap input
         Assert.Null(inputs[0].GetAttribute("accept"));  // unfiltered, so HEIC + PDF both come through
         Assert.Null(inputs[0].GetAttribute("capture")); // no capture — it dropped the circuit on Android
-    }
-
-    [Fact]
-    public async Task Extract_does_not_double_post_when_clicked_again_mid_flight()
-    {
-        // ⚠️ The phase==Extracting guard: setting phase hides the button, but a click queued before that
-        // render lands must not run a SECOND extract — two runs would persist the same staged set twice.
-        var handler = JSInterop.Setup<Upload.UploadResult>("extract", _ => true); // held: not resolved yet
-        var cut = RenderUpload();
-        await PushStaged(cut, Staged("receipt.jpg"));
-
-        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Extract").Click(); // first: parks awaiting the read
-        cut.FindAll("button").FirstOrDefault(b => b.TextContent.Trim() == "Extract")?.Click(); // second: must NO-OP
-
-        Assert.Equal(1, JSInterop.Invocations.Count(i => i.Identifier == "extract"));
-        handler.SetResult(new Upload.UploadResult { Ok = true, Outcome = new Upload.UploadOutcome { ReceiptId = 1, Success = true, AutoConfirmed = true } });
-    }
-
-    [Fact]
-    public async Task An_ingest_error_does_not_hide_the_review_queue()
-    {
-        // A read problem reaches Phase.Error, which is one bad pick away now that reads happen at
-        // selection — and hiding the queued receipts behind it read as them being lost.
-        SeedPending("Walmart", Today.AddDays(-2), DbLine("GV MILK", "Whole Milk"));
-        var cut = RenderUpload();
-
-        await PushStaged(cut, Staged("bad.jpg"), "“bad.jpg” couldn't be read — take or pick it again.");
-
-        cut.WaitForAssertion(() => Assert.Contains("couldn't be read", Collapsed(cut.Markup)));
-        Assert.Contains("Waiting for review (1)", cut.Markup); // the queue survived the error
     }
 }
