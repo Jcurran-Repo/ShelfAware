@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Features;
@@ -281,6 +282,7 @@ builder.Services.AddScoped<IAppSettings, EfAppSettings>();          // settings 
 builder.Services.AddScoped<ReceiptAutoConfirmer>(); // routes an uploaded receipt per the household's ImportMode
 builder.Services.AddScoped<ReceiptDuplicateDetector>(); // "is this a re-upload?" — a detected dupe never auto-confirms
 builder.Services.AddScoped<ReceiptConfirmationService>();
+builder.Services.AddScoped<ReceiptIngestionService>(); // images → PendingReview receipt + auto-confirm route (the page and the upload endpoint share it)
 builder.Services.AddScoped<ReceiptRemovalService>(); // the confirm's inverse — the duplicate-upload escape hatch
 // The census's OWN confirm path, deliberately not the receipt one: a shelf photo writes counts and must
 // never write a PurchaseEvent (§13.8's ★ rule).
@@ -328,6 +330,12 @@ builder.Services.AddRateLimiter(o =>
         RateLimitPartition.GetFixedWindowLimiter(
             ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions { PermitLimit = 12, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+    // Receipt/shelf-photo uploads: each is an AI (vision) call, metered per household in managed mode, so
+    // this is just an anti-hammer brake per IP. Generous enough for a legitimate batch (one request each).
+    o.AddPolicy("photo-upload", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
     // Credential endpoints get a per-IP brake on top of Identity's per-account lockout: lockout
     // protects one account from many guesses, this protects all accounts from one hammering IP.
     // Razor-component form posts aren't attachable endpoints for a named policy, so the global
@@ -594,6 +602,99 @@ app.MapGet("/api/recipe-image/{id:int}", async (
     ctx.Response.Headers.CacheControl = "private, max-age=3600";
     return Results.File(image.Value.Bytes, image.Value.MediaType);
 }).RequireAuthorization();
+
+// Receipt upload — the browser resizes each photo and POSTs the bytes HERE, off the SignalR circuit, so a
+// mobile file-pick that briefly drops the circuit can't lose the upload (the bug this endpoint exists to
+// fix: the InputFile change event fired while the circuit was down and was lost forever). ONE request =
+// ONE receipt — a long receipt's photos arrive as several parts in one request; a batch of separate
+// receipts is several requests. Cookie-authed + household-scoped like the rest of /api (ReceiptIngestionService
+// goes through IHouseholdDbFactory). The visitor's BYOK key rides the request headers, used only for this
+// call and never stored or logged (the cook-along endpoint's contract) — and IGNORED on a managed deployment,
+// where CircuitAiSettings.Apply is a no-op and the server key is authoritative. CSRF = the antiforgery token
+// in the RequestVerificationToken header; the body is bounded before a byte is read.
+app.MapPost("/api/receipts/extract", async (
+    HttpRequest request, HttpContext ctx, IAntiforgery antiforgery, CircuitAiSettings ai,
+    ReceiptIngestionService ingestion, ILoggerFactory logs, CancellationToken ct) =>
+{
+    const int maxPages = 20;                        // one receipt's photos/pages; a batch is many requests
+    const long maxPageBytes = 10L * 1024 * 1024;    // a resized photo is well under 1 MB — this is the abuse ceiling
+    const long maxRequestBytes = 30L * 1024 * 1024;
+
+    // Bound the request body BEFORE anything reads it.
+    if (ctx.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } size)
+        size.MaxRequestBodySize = maxRequestBytes;
+
+    // CSRF: validate the antiforgery token (sent in the RequestVerificationToken header, paired with the
+    // cookie set on page load). Read from the header so validation doesn't consume the multipart body.
+    try { await antiforgery.ValidateRequestAsync(ctx); }
+    catch (AntiforgeryValidationException)
+    {
+        return Results.Json(new { error = "Your session expired — reload the page and try again." },
+            statusCode: StatusCodes.Status400BadRequest);
+    }
+
+    if (!request.HasFormContentType)
+        return Results.Json(new { error = "Expected a file upload." }, statusCode: StatusCodes.Status400BadRequest);
+
+    IFormCollection form;
+    try { form = await request.ReadFormAsync(ct); }
+    catch (Exception ex) when (ex is BadHttpRequestException or InvalidDataException)
+    {
+        return Results.Json(new { error = "That upload was too large." },
+            statusCode: StatusCodes.Status413PayloadTooLarge);
+    }
+
+    var uploaded = form.Files;
+    if (uploaded.Count == 0)
+        return Results.Json(new { error = "No image was received." }, statusCode: StatusCodes.Status400BadRequest);
+    if (uploaded.Count > maxPages)
+        return Results.Json(new { error = $"A single receipt can be at most {maxPages} pages." },
+            statusCode: StatusCodes.Status400BadRequest);
+
+    var pages = new List<ReceiptAttachment>(uploaded.Count);
+    foreach (var file in uploaded)
+    {
+        if (file.Length <= 0)
+            return Results.Json(new { error = "An empty file was received." }, statusCode: StatusCodes.Status400BadRequest);
+        if (file.Length > maxPageBytes)
+            return Results.Json(new { error = "One of those images is too large." }, statusCode: StatusCodes.Status400BadRequest);
+        var mediaType = string.IsNullOrWhiteSpace(file.ContentType) ? "image/jpeg" : file.ContentType;
+        // The client resizes photos to JPEG and sends PDFs as-is; anything else the extractor can't read.
+        if (!(mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) || mediaType == "application/pdf"))
+            return Results.Json(new { error = "Only photos and PDFs are accepted." }, statusCode: StatusCodes.Status400BadRequest);
+        using var buffer = new MemoryStream();
+        await using (var stream = file.OpenReadStream())
+            await stream.CopyToAsync(buffer, ct);
+        pages.Add(new ReceiptAttachment(buffer.ToArray(), mediaType));
+    }
+
+    // BYOK: overlay the visitor's key from the request headers. Apply is a NO-OP on a managed deployment
+    // (server key wins), and blank models/base-url keep the server defaults. A blank key means "use the
+    // server/dev fallback" (the demo's keyless visitor gets the same "needs a key" as on the circuit).
+    var byokKey = request.Headers["X-AI-Key"].ToString();
+    if (!string.IsNullOrWhiteSpace(byokKey))
+    {
+        var provider = Enum.TryParse<AiProvider>(request.Headers["X-AI-Provider"].ToString(), ignoreCase: true, out var p)
+            ? p : AiProvider.Anthropic;
+        ai.Apply(provider, byokKey,
+            request.Headers["X-AI-Extraction-Model"].ToString(),
+            request.Headers["X-AI-Chat-Model"].ToString(),
+            request.Headers["X-AI-Base-Url"].ToString());
+    }
+
+    try
+    {
+        var outcome = await ingestion.IngestAsync(pages, ct);
+        return Results.Ok(outcome);
+    }
+    catch (OperationCanceledException) { throw; } // the client went away — nothing to report
+    catch (Exception ex)
+    {
+        logs.CreateLogger("ReceiptUpload").LogError(ex, "Receipt upload extraction failed.");
+        return Results.Json(new { error = "Sorry — something went wrong reading that receipt. Please try again." },
+            statusCode: StatusCodes.Status500InternalServerError);
+    }
+}).RequireAuthorization().RequireRateLimiting("photo-upload");
 
 // PWA manifest — makes the app installable ("Add to home screen"). Served explicitly so the content type
 // is right regardless of static-file MIME config; it loads under the same-origin CSP (manifest-src falls
