@@ -175,14 +175,21 @@ export function init(inputEl, mountEl, dotNetRef, config) {
                 results.push({ ...(await post(staged)), name: only });
             }
             const outcome = await deliver(results, !batch, fileCount);
-            if (outcome.delivered && !outcome.keep) {
-                // .NET took the result and doesn't need the photos kept (moved to review/done, or the receipt
-                // is safe in the queue). Drop our staged bytes so a return to staging starts fresh; render()
-                // is a no-op if the mount was already torn down. When .NET asks to KEEP (a census whose read
-                // failed — it has no audit copy), the photos stay so a retry is one tap.
-                staged.length = 0;
-                combine = false;
+            if (outcome.delivered) {
+                // .NET received the result and now owns the on-screen message (the review/done screen, or a
+                // Phase.Error note), so drop our "reading…" status EITHER WAY — leaving it up contradicts
+                // .NET's message (a census failed read otherwise shows "couldn't be read" AND a stale
+                // "Looking at your photos…" spinner). Only the giveup path (delivered:false) keeps its own
+                // reconnectMessage, since .NET never heard about it.
                 status = null;
+                if (!outcome.keep) {
+                    // .NET doesn't need the photos kept (moved to review/done, or the receipt is safe in the
+                    // queue). Drop the staged bytes so a return to staging starts fresh; render() is a no-op
+                    // if the mount was already torn down. When it asks to KEEP (a census whose read failed —
+                    // no audit copy), the photos stay so a retry is one tap.
+                    staged.length = 0;
+                    combine = false;
+                }
             }
         } finally {
             busy = false;

@@ -320,6 +320,7 @@ else if (phase == Phase.Done)
     private DotNetObjectReference<PantryPhoto>? selfRef;
     private string? antiforgeryToken;
     private bool uploaderWired;
+    private bool uploaderWiring; // set across the import+init awaits so a re-render can't wire a second uploader
 
     /// <summary>How many items the READ produced, so an empty grid can tell "the photo showed nothing"
     /// apart from "you removed every row" — two states that need opposite messages.</summary>
@@ -537,24 +538,31 @@ else if (phase == Phase.Done)
         var inputOnScreen = phase is Phase.Idle or Phase.Error;
         try
         {
-            if (inputOnScreen && !uploaderWired && selfRef is not null)
+            if (inputOnScreen && !uploaderWired && !uploaderWiring && selfRef is not null)
             {
-                _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "/js/photo-upload.js");
-                uploader = await _module.InvokeAsync<IJSObjectReference>(
-                    "init", fileInput, stagingMount, selfRef, new
-                    {
-                        maxEdgePx = Llm.Value.MaxImageEdgePx,
-                        maxFiles = MaxPhotos,
-                        endpoint = "/api/pantry-photo/read",
-                        extractLabel = "See what's there",
-                        busyLabel = "Looking at your photos… this usually takes a few seconds.",
-                        noun = "photo",
-                        allowCombine = false,
-                        token = antiforgeryToken,
-                        reconnectMessage = "Your photos were read, but the connection dropped before the "
-                            + "results could load. Reload the page and take the photos again.",
-                    });
-                uploaderWired = true;
+                // Guard the two-await window (import + init): a re-render firing OnAfterRenderAsync before
+                // uploaderWired flips must not wire a SECOND uploader (two change listeners on one input).
+                uploaderWiring = true;
+                try
+                {
+                    _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "/js/photo-upload.js");
+                    uploader = await _module.InvokeAsync<IJSObjectReference>(
+                        "init", fileInput, stagingMount, selfRef, new
+                        {
+                            maxEdgePx = Llm.Value.MaxImageEdgePx,
+                            maxFiles = MaxPhotos,
+                            endpoint = "/api/pantry-photo/read",
+                            extractLabel = "See what's there",
+                            busyLabel = "Looking at your photos… this usually takes a few seconds.",
+                            noun = "photo",
+                            allowCombine = false,
+                            token = antiforgeryToken,
+                            reconnectMessage = "Your photos were read, but the connection dropped before the "
+                                + "results could load. Reload the page and take the photos again.",
+                        });
+                    uploaderWired = true;
+                }
+                finally { uploaderWiring = false; }
             }
             else if (!inputOnScreen && uploaderWired)
             {

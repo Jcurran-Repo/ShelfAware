@@ -389,6 +389,7 @@ else if (phase == Phase.Done)
     // leaves. The module is imported once and reused.
     private IJSObjectReference? _module;
     private bool uploaderWired;
+    private bool uploaderWiring; // set across the import+init awaits so a re-render can't wire a second uploader
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -400,24 +401,32 @@ else if (phase == Phase.Done)
         var inputOnScreen = phase is Phase.Idle or Phase.Error;
         try
         {
-            if (inputOnScreen && !uploaderWired && selfRef is not null)
+            if (inputOnScreen && !uploaderWired && !uploaderWiring && selfRef is not null)
             {
-                _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "/js/photo-upload.js");
-                uploader = await _module.InvokeAsync<IJSObjectReference>(
-                    "init", fileInput, stagingMount, selfRef, new
-                    {
-                        maxEdgePx = Llm.Value.MaxImageEdgePx,
-                        maxFiles = MaxFiles,
-                        endpoint = "/api/receipts/extract",
-                        extractLabel = "Extract",
-                        busyLabel = "Reading your receipt… this usually takes a few seconds.",
-                        noun = "file",
-                        allowCombine = true,
-                        token = antiforgeryToken,
-                        reconnectMessage = "Your receipt was uploaded, but the connection dropped before the "
-                            + "review screen could load. Reload the page — it'll be waiting in the review queue below.",
-                    });
-                uploaderWired = true;
+                // Guard the two-await window (import + init): a re-render firing OnAfterRenderAsync before
+                // uploaderWired flips must not wire a SECOND uploader (two change listeners on one input).
+                uploaderWiring = true;
+                try
+                {
+                    _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "/js/photo-upload.js");
+                    uploader = await _module.InvokeAsync<IJSObjectReference>(
+                        "init", fileInput, stagingMount, selfRef, new
+                        {
+                            maxEdgePx = Llm.Value.MaxImageEdgePx,
+                            maxFiles = MaxFiles,
+                            endpoint = "/api/receipts/extract",
+                            extractLabel = "Extract",
+                            busyLabel = "Reading your receipt… this usually takes a few seconds.",
+                            noun = "file",
+                            allowCombine = true,
+                            token = antiforgeryToken,
+                            reconnectMessage = "Your receipt was uploaded, but the connection dropped before the "
+                                + "result could load. Reload the page — it'll be in the review queue below, or "
+                                + "already recorded on the Receipts page if it auto-confirmed.",
+                        });
+                    uploaderWired = true;
+                }
+                finally { uploaderWiring = false; }
             }
             else if (!inputOnScreen && uploaderWired)
             {
