@@ -143,7 +143,7 @@ public class HouseholdIsolationTests : IDisposable
 
         _db.HouseholdId = B;
         var store = new EfPantryStore(_db, UndoTesting.Log(_db));
-        var retracked = await store.AddPurchaseAsync(productId, new DateOnly(2026, 7, 2), 1);
+        var retracked = (await store.AddPurchaseAsync(productId, new DateOnly(2026, 7, 2), 1)).Retracked;
         await store.RecordSignalAsync(productId, SignalKind.RunningLow);
 
         Assert.False(retracked);

@@ -164,6 +164,73 @@ public class HomeCardsTests : PageTestContext
     }
 
     [Fact]
+    public async Task Bought_today_offers_an_inline_undo_that_reverses_the_purchase()
+    {
+        var id = Seed("Whole Milk", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-45), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-30), Quantity = 1m },
+        ]);
+        var cut = RenderHome();
+        cut.WaitForState(() => cut.FindAll(".cards li").Count == 1);
+
+        cut.FindAll(".cards button").Single(b => b.TextContent.Trim() == "Bought today").Click();
+        cut.WaitForAssertion(() =>
+            Assert.Contains("Bought 1 × Whole Milk", cut.Find(".inline-confirm").TextContent));
+
+        // Undo right there — the same one-service undo the /history page uses.
+        cut.Find(".inline-confirm").QuerySelectorAll("button").Single(b => b.TextContent.Contains("Undo")).Click();
+
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".inline-confirm"))); // notice cleared
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Equal(2, await raw.PurchaseEvents.IgnoreQueryFilters().CountAsync(x => x.ProductId == id)); // manual buy reversed
+    }
+
+    [Fact]
+    public async Task Restocked_offers_an_inline_undo_that_reverses_the_signal()
+    {
+        var id = Seed("Whole Milk", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-45), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-30), Quantity = 1m },
+        ]);
+        var cut = RenderHome();
+        cut.WaitForState(() => cut.FindAll(".cards li").Count == 1);
+
+        cut.Find(".cards .split-caret").Click();
+        cut.WaitForState(() => cut.FindAll(".split-menu").Count == 1);
+        cut.FindAll(".split-menu button").Single(b => b.TextContent.Trim() == "Restocked").Click();
+        cut.WaitForAssertion(() =>
+            Assert.Contains("Restocked Whole Milk", cut.Find(".inline-confirm").TextContent));
+
+        cut.Find(".inline-confirm").QuerySelectorAll("button").Single(b => b.TextContent.Contains("Undo")).Click();
+
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".inline-confirm")));
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Empty(await raw.InventorySignals.IgnoreQueryFilters().ToListAsync()); // the restock signal reversed
+    }
+
+    [Fact]
+    public async Task Dismissing_the_inline_notice_is_not_an_undo()
+    {
+        var id = Seed("Whole Milk", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-45), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-30), Quantity = 1m },
+        ]);
+        var cut = RenderHome();
+        cut.WaitForState(() => cut.FindAll(".cards li").Count == 1);
+        cut.FindAll(".cards button").Single(b => b.TextContent.Trim() == "Bought today").Click();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".inline-confirm")));
+
+        cut.Find(".inline-confirm").QuerySelectorAll("button").Single(b => b.TextContent.Contains("Dismiss")).Click();
+
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".inline-confirm")));
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Equal(3, await raw.PurchaseEvents.IgnoreQueryFilters().CountAsync(x => x.ProductId == id)); // buy stays
+    }
+
+    [Fact]
     public async Task An_expired_card_names_the_label_as_the_reason_it_is_red()
     {
         // The rhythm alone would say Stocked (bought 3 days ago) — the LABEL is why the card is

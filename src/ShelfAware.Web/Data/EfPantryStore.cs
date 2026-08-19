@@ -86,7 +86,7 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
         return TagVocabulary.Seed.Concat(stored).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    public async Task<bool> AddPurchaseAsync(
+    public async Task<PurchaseResult> AddPurchaseAsync(
         int productId, DateOnly purchasedAt, decimal quantity,
         PurchaseSource source = PurchaseSource.Chat, CancellationToken cancellationToken = default)
     {
@@ -95,7 +95,7 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
         // someone else's product must not become a cross-tenant insert; child rows aren't filtered
         // into existence, only queries are.
         var product = await db.Products.FindAsync([productId], cancellationToken);
-        if (product is null) return false;
+        if (product is null) return new PurchaseResult(false, null);
 
         // Buying an item again ends its "don't want it for a while" (the grocery list's Untrack) —
         // resume predictions on every purchase path; receipts do the same in ReceiptConfirmationService.
@@ -123,21 +123,21 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
         // covers both. PurchaseAddedHandler reverses the purchase, count and all.
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await db.SaveChangesAsync(cancellationToken); // assigns purchase.Id
-        activityLog.Record(db, ActivityKind.PurchaseAdded,
+        var entry = activityLog.Record(db, ActivityKind.PurchaseAdded,
             new PurchaseAddedPayload(purchase.Id, quantity, product.Name, purchasedAt), source.ToString());
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
         await activityLog.TrimAsync(cancellationToken); // retention: decoupled, best-effort, after the commit
-        return retracked;
+        return new PurchaseResult(retracked, new ActivityRef(entry.Id, entry.Summary));
     }
 
-    public async Task RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default)
+    public async Task<ActivityRef?> RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         // Same in-household existence check as AddPurchaseAsync — no signals onto foreign products.
         var product = await db.Products.FindAsync([productId], cancellationToken);
-        if (product is null) return;
+        if (product is null) return null;
 
         var signal = new InventorySignal { ProductId = productId, Kind = kind, SignaledAt = DateTimeOffset.Now };
         db.InventorySignals.Add(signal);
@@ -146,11 +146,12 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
         // signal's generated id, so the signal saves inside the transaction to assign it, then the entry.
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         await db.SaveChangesAsync(cancellationToken); // assigns signal.Id
-        activityLog.Record(db, ActivityKind.SignalRecorded,
+        var entry = activityLog.Record(db, ActivityKind.SignalRecorded,
             new SignalRecordedPayload(signal.Id, kind, product.Name));
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
         await activityLog.TrimAsync(cancellationToken);
+        return new ActivityRef(entry.Id, entry.Summary);
     }
 
     public async Task<bool> SetPurchaseQuantityAsync(

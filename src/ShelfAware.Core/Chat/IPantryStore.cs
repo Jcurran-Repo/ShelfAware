@@ -31,13 +31,16 @@ public interface IPantryStore
     /// existing tags instead of coining near-duplicates (same dedup-at-source idea as extraction).</summary>
     Task<IReadOnlyList<string>> GetKnownTagsAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>Record a purchase. Returns true when it re-tracked an untracked product — buying an
-    /// item again ends its "don't want it for a while" (the grocery list's Untrack), same as receipt
-    /// confirmation — so the assistant can tell the user tracking resumed. <paramref name="source"/>
-    /// records the surface it came from (the dashboard passes Manual; chat defaults to Chat).</summary>
-    Task<bool> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, PurchaseSource source = PurchaseSource.Chat, CancellationToken cancellationToken = default);
+    /// <summary>Record a purchase. Returns whether it re-tracked an untracked product (buying an item
+    /// again ends its "don't want it for a while" — the grocery list's Untrack — so the assistant can
+    /// tell the user tracking resumed) plus a reference to the undo entry it recorded, for an inline
+    /// "↩ Undo". <paramref name="source"/> records the surface it came from (the dashboard passes Manual;
+    /// chat defaults to Chat).</summary>
+    Task<PurchaseResult> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, PurchaseSource source = PurchaseSource.Chat, CancellationToken cancellationToken = default);
 
-    Task RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default);
+    /// <summary>Record an inventory signal (restocked / out / running-low). Returns a reference to the
+    /// undo entry it recorded (for an inline "↩ Undo"), or null when the product isn't in this household.</summary>
+    Task<ActivityRef?> RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default);
 
     /// <summary>Set (or clear, with null) the expiration date on a product's LATEST purchase — the only
     /// purchase whose date can mark the item out (rebuying supersedes the old jug). Returns false when
@@ -103,3 +106,10 @@ public interface IPantryStore
 
 /// <summary>Lightweight saved-recipe reference for chat-tool resolution.</summary>
 public record RecipeRef(int Id, string Name, bool HasSteps);
+
+/// <summary>The id and stored summary of a recorded undoable action — enough for an inline "↩ Undo".</summary>
+public sealed record ActivityRef(int Id, string Summary);
+
+/// <summary>Recording a purchase: whether it re-tracked the product, and the undo entry it recorded
+/// (null only when the product wasn't found in this household).</summary>
+public sealed record PurchaseResult(bool Retracked, ActivityRef? Recorded);

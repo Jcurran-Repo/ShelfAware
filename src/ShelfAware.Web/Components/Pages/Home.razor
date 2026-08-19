@@ -4,10 +4,12 @@
 @using ShelfAware.Core.Prediction
 @using ShelfAware.Core.Settings
 @using ShelfAware.Core.Shopping
+@using ShelfAware.Web.Undo
 @inject IHouseholdDbFactory DbFactory
 @inject IAppSettings SettingsStore
 @inject IPantryChat Chat
 @inject IPantryStore Store
+@inject ActivityLogService ActivityLog
 @inject NavigationManager Nav
 @inject VoiceCoordinator Coordinator
 @inject IJSRuntime JS
@@ -40,6 +42,21 @@
         </div>
     }
 </header>
+
+@* Inline "↩ Undo" for the action just taken — the same one-service undo the /history page uses,
+   reached without leaving the dashboard (one outstanding at a time, like the Ate-it notice). *@
+@if (lastAction is { } a)
+{
+    <div class="panel inline-confirm" role="status">
+        <span>Recorded: @a.Summary</span>
+        <button type="button" class="secondary" @onclick="UndoLast" disabled="@actionBusy">↩ Undo</button>
+        <button type="button" class="secondary" @onclick="DismissLast" disabled="@actionBusy">Dismiss</button>
+        @if (actionNote is not null)
+        {
+            <span class="muted">@actionNote</span>
+        }
+    </div>
+}
 
 @if (products is null)
 {
@@ -271,6 +288,12 @@ else
     // purchases — so this is about not recording a stray duplicate row / showing a snappy disabled state.
     private bool actionBusy;
 
+    // The action just taken, offered for an inline "↩ Undo" (id + stored summary from the store's
+    // recorded entry). One outstanding at a time, like the Ate-it notice; actionNote carries a rare
+    // undo-failure reason.
+    private (int Id, string Summary)? lastAction;
+    private string? actionNote;
+
     // One purchase write path for every surface (dashboard, chat) — IPantryStore.AddPurchaseAsync, which
     // also records the undoable activity entry. Was an inline PurchaseEvents.Add here; consolidated so the
     // buy and its log entry are the one recorded path (plan §6).
@@ -278,9 +301,11 @@ else
     {
         if (actionBusy) return;
         actionBusy = true;
+        actionNote = null;
         try
         {
-            await Store.AddPurchaseAsync(p.Id, DateOnly.FromDateTime(DateTime.Today), 1, PurchaseSource.Manual);
+            var result = await Store.AddPurchaseAsync(p.Id, DateOnly.FromDateTime(DateTime.Today), 1, PurchaseSource.Manual);
+            if (result.Recorded is { } rec) lastAction = (rec.Id, rec.Summary);
             await LoadAsync();
         }
         finally { actionBusy = false; }
@@ -291,12 +316,50 @@ else
     {
         if (actionBusy) return;
         actionBusy = true;
+        actionNote = null;
         try
         {
-            await Store.RecordSignalAsync(p.Id, SignalKind.Restocked);
+            var rec = await Store.RecordSignalAsync(p.Id, SignalKind.Restocked);
+            if (rec is not null) lastAction = (rec.Id, rec.Summary);
             await LoadAsync();
         }
         finally { actionBusy = false; }
+    }
+
+    // The inline undo reverses the last dashboard action through the ONE undo path (the /history page
+    // uses the same ActivityLogService.UndoAsync). On the rare race where it's changed since, the notice
+    // stays with a reason rather than silently doing nothing.
+    private async Task UndoLast()
+    {
+        if (actionBusy || lastAction is not { } a) return;
+        actionBusy = true;
+        try
+        {
+            var outcome = await ActivityLog.UndoAsync(a.Id);
+            if (outcome == UndoOutcome.Done)
+            {
+                lastAction = null;
+                actionNote = null;
+            }
+            else
+            {
+                actionNote = "Couldn't undo that — it changed since. Check History.";
+            }
+            await LoadAsync();
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Undoing the last dashboard action failed.");
+            actionNote = "Couldn't undo just now — please try again.";
+        }
+        finally { actionBusy = false; }
+    }
+
+    private void DismissLast()
+    {
+        lastAction = null;
+        actionNote = null;
     }
 
     private async Task SendChat()
