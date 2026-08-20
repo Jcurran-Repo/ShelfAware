@@ -44,6 +44,20 @@ public interface IUndoHandler
     Task<UndoResult> UndoAsync(ShelfAwareDbContext db, ActivityEntry entry, CancellationToken cancellationToken);
 }
 
+/// <summary>A handler whose reversal has a side-effect that must run AFTER the DB commit AND must NEVER run
+/// during a Peek — the receipt-confirm undo deletes the receipt's image folder, a filesystem op that can't
+/// be staged on the context (and so can't roll back with a refused undo) and that a Peek must not perform
+/// (⚠️ Peek re-runs <see cref="IUndoHandler.UndoAsync"/> to test undoability, then discards — a Peek that
+/// deleted the image would destroy it just by rendering the /history row). Implemented ALONGSIDE
+/// <see cref="UndoHandler{TPayload}"/>; <c>ActivityLogService.UndoAsync</c> calls this only on a real,
+/// committed undo, never <c>PeekAsync</c>. Best-effort by contract: the DB reversal has already committed,
+/// so this must not throw back into the undo (an orphaned image folder beats a failed undo, and "delete my
+/// data" still reaches it).</summary>
+public interface IUndoAfterCommit
+{
+    Task AfterCommitAsync(ActivityEntry entry, CancellationToken cancellationToken);
+}
+
 /// <summary>Typed base: a handler works with its own payload record and lets this class own the JSON
 /// (de)serialization at the boundary. Reversible by default; a history-only handler overrides
 /// <see cref="Reversibility"/>, and its <see cref="Reverse"/> is never reached (the service refuses a

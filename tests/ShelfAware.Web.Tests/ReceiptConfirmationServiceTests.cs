@@ -9,7 +9,7 @@ public class ReceiptConfirmationServiceTests : IDisposable
     private readonly TestDb _db = new();
     private readonly ReceiptConfirmationService _service;
 
-    public ReceiptConfirmationServiceTests() => _service = new ReceiptConfirmationService(_db);
+    public ReceiptConfirmationServiceTests() => _service = new ReceiptConfirmationService(_db, UndoTesting.Log(_db));
 
     public void Dispose() => _db.Dispose();
 

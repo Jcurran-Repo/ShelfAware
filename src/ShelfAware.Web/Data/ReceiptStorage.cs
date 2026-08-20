@@ -1,5 +1,14 @@
 namespace ShelfAware.Web.Data;
 
+/// <summary>The one thing the receipt-confirm UNDO needs from receipt storage: forget a receipt's saved
+/// image after its rows are gone. A narrow seam over <see cref="ReceiptStorage"/> so the undo handler stays
+/// cheap to construct (its only dependency) like every other handler, and so a test can prove the undo asks
+/// to delete the RIGHT folder — and that a Peek never does — without a filesystem.</summary>
+public interface IReceiptImageCleanup
+{
+    void DeleteFolder(string imagePath);
+}
+
 /// <summary>
 /// Owns where receipt images live on disk, the way <c>CachingTextToSpeech</c> owns where clips live —
 /// and for the same reason. The saved copy of a receipt is a photograph of a household's shopping, so
@@ -14,6 +23,7 @@ namespace ShelfAware.Web.Data;
 /// still resolve.
 /// </summary>
 public sealed class ReceiptStorage(AppPaths paths, ICurrentHousehold household, ILogger<ReceiptStorage> logger)
+    : IReceiptImageCleanup
 {
     private const string Root = "receipts";
 

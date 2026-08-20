@@ -35,7 +35,7 @@ public class ReceiptIngestionServiceTests : IDisposable
 
     private ReceiptIngestionService Service()
     {
-        var confirmer = new ReceiptConfirmationService(_db);
+        var confirmer = new ReceiptConfirmationService(_db, UndoTesting.Log(_db));
         var duplicates = new ReceiptDuplicateDetector(_db);
         var auto = new ReceiptAutoConfirmer(_db, _settings, confirmer, duplicates,
             NullLogger<ReceiptAutoConfirmer>.Instance);

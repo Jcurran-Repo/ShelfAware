@@ -166,7 +166,7 @@ public class HouseholdIsolationTests : IDisposable
         }
 
         _db.HouseholdId = B;
-        var confirmer = new ReceiptConfirmationService(_db);
+        var confirmer = new ReceiptConfirmationService(_db, UndoTesting.Log(_db));
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             confirmer.ConfirmAsync(receiptId, new DateOnly(2026, 7, 2), [], writeAliases: true));
         Assert.Contains("no longer exists", ex.Message);

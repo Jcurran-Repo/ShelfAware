@@ -638,6 +638,72 @@ public sealed class ActivityLogTests : IDisposable
         Assert.Equal(4m, (await ReadProduct(pickId))!.QuantityOnHand); // AND the restated pick restored
     }
 
+    // ---- ReceiptConfirmed (recorded in ReceiptConfirmationService; undo = a total removal + image cleanup) ----
+
+    [Fact]
+    public async Task Confirming_a_receipt_records_an_undoable_entry_and_undo_removes_everything_and_the_image()
+    {
+        var cleanup = new RecordingImageCleanup();
+        var log = UndoTesting.Log(_db, cleanup);
+        var confirmer = new ReceiptConfirmationService(_db, log);
+        var receiptId = await SeedPendingReceipt("receipt-img-1", ("GV MILK", "Whole Milk"));
+        await confirmer.ConfirmAsync(receiptId, new DateOnly(2026, 8, 17),
+            [Line("GV MILK", "Whole Milk")], writeAliases: true);
+
+        var entry = await LatestEntry();
+        Assert.Equal(ActivityKind.ReceiptConfirmed, entry.Kind);
+        Assert.Equal("Confirmed 1 item from Walmart", entry.Summary);
+        Assert.Equal(1, await PurchaseCountAll());
+        Assert.True(await ProductExistsByName("Whole Milk"));
+
+        Assert.Equal(UndoOutcome.Done, await log.UndoAsync(entry.Id));
+
+        Assert.Equal(0, await PurchaseCountAll());              // the purchase it recorded is gone
+        Assert.False(await ProductExistsByName("Whole Milk"));  // the product it introduced is gone
+        Assert.Equal(0, await ReceiptCount());                  // the receipt row is gone
+        Assert.NotNull((await Entry(entry.Id))!.UndoneAt);      // and the entry is stamped
+        Assert.Equal(["receipt-img-1"], cleanup.Deleted);       // the image folder was forgotten, after the commit
+    }
+
+    [Fact]
+    public async Task Peeking_a_receipt_confirm_is_undoable_but_removes_nothing_and_never_touches_the_image()
+    {
+        // ⚠️ THE trap this whole design exists to avoid: Peek re-runs the reversal to decide whether to grey
+        // the /history row. It must remove nothing — and above all must NOT delete the receipt image, which
+        // rendering the row would otherwise do to every confirmed receipt in the log.
+        var cleanup = new RecordingImageCleanup();
+        var log = UndoTesting.Log(_db, cleanup);
+        var confirmer = new ReceiptConfirmationService(_db, log);
+        var receiptId = await SeedPendingReceipt("receipt-img-2", ("GV MILK", "Whole Milk"));
+        await confirmer.ConfirmAsync(receiptId, new DateOnly(2026, 8, 17),
+            [Line("GV MILK", "Whole Milk")], writeAliases: true);
+        var entry = await LatestEntry();
+
+        Assert.Equal(UndoOutcome.Done, await log.PeekAsync(entry.Id)); // it IS undoable...
+
+        Assert.Equal(1, await ReceiptCount());                 // ...but the peek removed nothing,
+        Assert.Equal(1, await PurchaseCountAll());
+        Assert.Empty(cleanup.Deleted);                         // deleted no image (the post-commit hook never ran),
+        Assert.Null((await Entry(entry.Id))!.UndoneAt);        // and left the entry live
+    }
+
+    [Fact]
+    public async Task Undoing_a_receipt_confirm_whose_receipt_is_already_gone_reports_Gone()
+    {
+        var cleanup = new RecordingImageCleanup();
+        var log = UndoTesting.Log(_db, cleanup);
+        var confirmer = new ReceiptConfirmationService(_db, log);
+        var receiptId = await SeedPendingReceipt("receipt-img-3", ("GV MILK", "Whole Milk"));
+        await confirmer.ConfirmAsync(receiptId, new DateOnly(2026, 8, 17),
+            [Line("GV MILK", "Whole Milk")], writeAliases: true);
+        var entry = await LatestEntry();
+        await DeleteReceipt(receiptId); // the Upload page's ↩ Undo (or the Receipts page) already removed it
+
+        Assert.Equal(UndoOutcome.Gone, await log.UndoAsync(entry.Id));
+        Assert.Null((await Entry(entry.Id))!.UndoneAt); // nothing reversed → not stamped
+        Assert.Empty(cleanup.Deleted);                  // and no image delete for a receipt that was already gone
+    }
+
     // ---- helpers ----
 
     private async Task<int> SeedProduct(
@@ -837,5 +903,57 @@ public sealed class ActivityLogTests : IDisposable
     {
         await using var db = _db.CreateDbContext();
         await db.MealEvents.Where(m => m.Id == mealEventId).ExecuteDeleteAsync();
+    }
+
+    /// <summary>A confirm line for a NEW product (ProductId 0 → the confirm creates and introduces it).</summary>
+    private static ReceiptConfirmationService.ConfirmLine Line(string raw, string name) =>
+        new(raw, name, null, null, null, 1, Category.Pantry, [], 0);
+
+    /// <summary>A pending receipt as an upload leaves it — Walmart, an image folder, and its lines — ready
+    /// for <see cref="ReceiptConfirmationService"/>.</summary>
+    private async Task<int> SeedPendingReceipt(string imagePath, params (string Raw, string Name)[] lines)
+    {
+        await using var db = _db.CreateDbContext();
+        var receipt = new Receipt
+        {
+            Merchant = "Walmart",
+            PurchasedAt = new DateOnly(2026, 8, 17),
+            ImagePath = imagePath,
+            Lines = lines.Select(l => new ReceiptLine
+            {
+                RawText = l.Raw, NormalizedName = l.Name, Quantity = 1, Confidence = 0.9m,
+            }).ToList(),
+        };
+        db.Receipts.Add(receipt);
+        await db.SaveChangesAsync();
+        return receipt.Id;
+    }
+
+    private async Task<int> PurchaseCountAll()
+    {
+        await using var db = _db.CreateDbContext();
+        return await db.PurchaseEvents.CountAsync();
+    }
+
+    private async Task<int> ReceiptCount()
+    {
+        await using var db = _db.CreateDbContext();
+        return await db.Receipts.CountAsync();
+    }
+
+    private async Task<bool> ProductExistsByName(string name)
+    {
+        await using var db = _db.CreateDbContext();
+        return await db.Products.AnyAsync(p => p.Name == name);
+    }
+
+    /// <summary>Remove a receipt the way the Upload/Receipts pages do — through the same DB reversal the
+    /// undo would run — so the "already gone" scenario is exactly what a real prior removal leaves (FKs and
+    /// all), not a bare row-delete that orphans its purchases.</summary>
+    private async Task DeleteReceipt(int receiptId)
+    {
+        await using var db = _db.CreateDbContext();
+        await ReceiptRemovalService.RemoveOnAsync(db, receiptId);
+        await db.SaveChangesAsync();
     }
 }

@@ -29,7 +29,7 @@ public class ReceiptRemovalServiceTests : IDisposable
 
     private ReceiptRemovalService Service() => new(_db, Storage(), NullLogger<ReceiptRemovalService>.Instance);
 
-    private ReceiptConfirmationService Confirmer() => new(_db);
+    private ReceiptConfirmationService Confirmer() => new(_db, UndoTesting.Log(_db));
 
     private static readonly DateOnly Dated = new(2026, 7, 1);
 

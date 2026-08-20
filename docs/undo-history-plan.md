@@ -247,26 +247,40 @@ add it later.
 
 ## 13. Suggested build order (within the one branch)
 
-**Progress (branch `feature/undo-history`, unpushed):** steps 1–3 ✅ done; step 4 in progress — **4a rename
-✅, 4b Ate-it ✅**. Backbone + atomic recording + Peek (no-op undos grey out) + all IPantryStore-layer
+**Progress (branch `feature/undo-history`, unpushed):** steps 1–3 ✅ done; **step 4 ✅ done — 4a rename, 4b
+Ate-it, 4c confirm-receipt.** Backbone + atomic recording + Peek (no-op undos grey out) + all IPantryStore-layer
 actions + the `/history` page (day-grouped, per-row undo, greyed states, "Show all") + inline Undo on the
 dashboard (Bought/Restocked, reusing the Ate-it notice). The branch now includes the merged
 `fix/mobile-photo-upload` (merge `72ee2b7`).
 
 The **static-on-db reversal pattern** the service-layer actions follow: extract the inverse as a
 `static …OnAsync(db, …)` that stages on the caller's context and never saves — `ProductRenameService.RenameOnAsync`
-(4a) and `MealStock.ReverseMealOnAsync` (4b). Both the forward path's inline "↩ Undo" and the /history undo
-run it, so "reverse this action" has one definition, the handler has no service dependency, Peek stays safe,
-and the reversal + `UndoneAt` stamp commit in one transaction. 4b also added `IActivityLog.Restate` (a
-staged-in-stages action — the "Ate it" picker resolves takes AFTER the first commit — keeps its durable
-payload equal to what happened) and routed the inline Ate-it Undo through `ActivityLogService.UndoAsync` (so
-it stamps the entry undone; /history then shows it reversed, never as a live undo of a meal already gone).
+(4a), `MealStock.ReverseMealOnAsync` (4b), `ReceiptRemovalService.RemoveOnAsync` (4c). Both a forward path's
+inline "↩ Undo" and the /history undo run it, so "reverse this action" has one definition, the handler has no
+service dependency, Peek stays safe, and the reversal + `UndoneAt` stamp commit in one transaction. 4b also
+added `IActivityLog.Restate` (a staged-in-stages action — the "Ate it" picker resolves takes AFTER the first
+commit — keeps its durable payload equal to what happened) and routed the inline Ate-it Undo through
+`ActivityLogService.UndoAsync` (so it stamps the entry undone; /history then shows it reversed, never a live
+undo of a meal already gone).
 
-Each precondition-checked, mutation-verified, and browser-verified. Suite **1726 green**, Release 0 warnings.
-**Remaining: step 4c confirm-receipt (the hard one — `ReceiptRemovalService` inverse + a call on the receipt
-image-file cleanup, which doesn't fit the stage-on-db model); step 5 (history-only: merge / receipt-removal /
-census); soft actions (exclude-food, recipe save/adapt); `/pre-push`.** (#17 Report-resolve is likely DROPPED
-from the household log — it's admin cross-household and already has its own /admin reopen undo.)
+**4c (confirm-receipt) — Jordan's call: undoable via total removal** (the same `ReceiptRemovalService` the
+Upload page's ↩ Undo and the Receipts page use). The receipt image is a filesystem side-effect that can't be
+staged on the context AND must never run during Peek (Peek re-runs the reversal to grey the /history row), so
+it needed a small, general framework addition: **`IUndoAfterCommit`** — a Peek-safe post-commit hook
+`ActivityLogService.UndoAsync` runs only on a real, committed undo (never `PeekAsync`). The handler deletes the
+image through a narrow **`IReceiptImageCleanup`** seam (over `ReceiptStorage`) so it stays cheap to construct
+like every other handler and a test can prove the RIGHT folder is deleted — and that a Peek deletes none —
+without a filesystem. The `ImagePath` rides in the payload (captured at confirm), so the post-commit delete
+needs no DB read once the receipt row is gone. Recorded atomically in `ReceiptConfirmationService` (the ONE
+confirm path — manual AND auto), only when the confirm recorded purchases. ⚠️ The Upload page's own ↩ Undo is
+left as-is (RemoveAsync, its detailed messaging) rather than unified through the log; after it runs, its
+/history entry Peeks as **Gone** (greyed) rather than "undone" — accepted (no data harm, no double-action; the
+receipt really is gone), and unifying would only downgrade the panel's messaging.
+
+Each precondition-checked, mutation-verified. Suite **1730 green**, Release 0 warnings.
+**Remaining: step 5 (history-only: merge / receipt-removal / census — greyed, `NotReversible`); soft actions
+(exclude-food add/remove, recipe save/adapt); `/pre-push`.** (#17 Report-resolve is likely DROPPED from the
+household log — it's admin cross-household and already has its own /admin reopen undo.)
 
 1. `ActivityEntry` schema + tenancy drill + `ActivityLogService` + `IUndoHandler` registry + retention.
 2. The `IPantryStore`-layer actions (#1–#13): consolidate `BoughtToday`; record in `AddPurchaseAsync`,

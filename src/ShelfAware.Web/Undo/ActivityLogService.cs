@@ -122,6 +122,13 @@ public sealed class ActivityLogService : IActivityLog
 
         entry!.UndoneAt = DateTimeOffset.Now;
         await db.SaveChangesAsync(cancellationToken); // the handler's staged reversal + this stamp, one transaction
+
+        // Post-commit side-effects (a receipt-confirm undo deletes the image folder): AFTER the DB is
+        // committed, and ONLY on a real undo — PeekAsync never reaches here, so a Peek that re-ran the
+        // reversal to grey the row can't delete anything. Best-effort by the interface's contract; the
+        // undo has already succeeded, so a cleanup failure must not turn a done undo into a reported one.
+        if (_handlers.TryGetValue(entry.Kind, out var handler) && handler is IUndoAfterCommit afterCommit)
+            await afterCommit.AfterCommitAsync(entry, cancellationToken);
         return UndoOutcome.Done;
     }
 
