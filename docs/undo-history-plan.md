@@ -277,15 +277,15 @@ left as-is (RemoveAsync, its detailed messaging) rather than unified through the
 /history entry Peeks as **Gone** (greyed) rather than "undone" — accepted (no data harm, no double-action; the
 receipt really is gone), and unifying would only downgrade the panel's messaging.
 
-**Step 5 (history-only, greyed `NotReversible`) — merge ✅, census ✅.** `HistoryOnlyHandler<T>` is the base
-for a recorded-but-never-reversed action (declares `NotReversible`, so the service refuses the undo before
-dispatch; its `Reverse` is sealed as unreachable). `ProductsMerged` records in `ProductMergeService` (source
-name read before the row goes), `CensusConfirmed` in `CensusConfirmationService` (only when a row actually
-landed a count) — both staged on the action's own transaction. ⚠️ **Receipt-removal is DEFERRED pending a
-call** (see below): 4c made a confirmed receipt's removal already visible in /history — its `ReceiptConfirmed`
-entry greys as **Gone** the moment the receipt is removed — so a separate `ReceiptRemoved` entry would largely
-double-log, and recording one atomically means threading a flag + merchant through the shared `RemoveAsync`
-(which the Upload ↩ Undo and the /history confirm-undo also call). Leaning: skip it.
+**Step 5 (history-only, greyed `NotReversible`) — merge ✅, census ✅; receipt-removal deliberately NOT logged
+(Jordan's call).** `HistoryOnlyHandler<T>` is the base for a recorded-but-never-reversed action (declares
+`NotReversible`, so the service refuses the undo before dispatch; its `Reverse` is sealed as unreachable).
+`ProductsMerged` records in `ProductMergeService` (source name read before the row goes), `CensusConfirmed` in
+`CensusConfirmationService` (only when a row actually landed a count) — both staged on the action's own
+transaction. **`ReceiptRemoved` was dropped** — 4c made a confirmed receipt's removal already visible in
+/history (its `ReceiptConfirmed` entry greys as **Gone** on removal), so a separate entry would only
+double-log the same narrative; the enum value is removed and the reason is noted in `ActivityEntry.cs` so it
+isn't re-added.
 
 **Soft actions ✅ — exclude-food reversible, recipes history-only.** `ExcludedFoodChanged` is a REVERSIBLE
 soft action (add↔remove; the payload carries the direction and the value, so the undo matches by value with
@@ -299,10 +299,14 @@ history guard, like `ProductCreated`) if the deletion-cascade risk is worth taki
 The /history page is kind-AGNOSTIC (it switches on the Peek outcome, never on `ActivityKind`), so every new
 kind renders — reversible ones with an Undo button, history-only greyed — with no page change.
 
-Each precondition-checked, mutation-verified. Suite **1739 green**, Release 0 warnings.
-**Remaining: the `ReceiptRemoved` decision (leaning skip — redundant with `ReceiptConfirmed` greying Gone);
-`/pre-push`.** (#17 Report-resolve is DROPPED from the household log — admin cross-household, already has its
+Each precondition-checked, mutation-verified. Suite **1739 green**, Release 0 warnings. **The feature is
+code-complete.** (#17 Report-resolve is DROPPED from the household log — admin cross-household, already has its
 own /admin reopen undo.)
+
+**Remaining: `/pre-push` (code + security review) before any push — this branch adds new cross-row
+write-orchestration (`ActivityLogService`, the confirm-undo via `RemoveOnAsync`), a new framework hook
+(`IUndoAfterCommit`, whose one job is to keep Peek from deleting a receipt image), and new recording call
+sites in five services + two pages. Pushing is Jordan's call.**
 
 1. `ActivityEntry` schema + tenancy drill + `ActivityLogService` + `IUndoHandler` registry + retention.
 2. The `IPantryStore`-layer actions (#1–#13): consolidate `BoughtToday`; record in `AddPurchaseAsync`,

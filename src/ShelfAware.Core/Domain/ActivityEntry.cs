@@ -74,14 +74,16 @@ public enum ActivityKind
     ExcludedFoodChanged,
 
     // History-only — logged so the record is complete, never a clean inverse (plan §10).
-    ReceiptRemoved,
+    // Removing a receipt is deliberately NOT its own kind: a confirmed receipt already carries a
+    // ReceiptConfirmed entry, which greys as Gone the moment it's removed, so a ReceiptRemoved entry
+    // would only double-log the same narrative.
     CensusConfirmed,
     ProductsMerged,
 }
 
 /// <summary>Whether an <see cref="ActivityKind"/> can ever be undone. A history-only action (a lossy
-/// merge, a receipt removal, a census confirm) is still recorded so the log is complete, but shown
-/// greyed with no Undo button.</summary>
+/// merge or a census confirm) is still recorded so the log is complete, but shown greyed with no Undo
+/// button.</summary>
 public enum Reversibility
 {
     Reversible,
