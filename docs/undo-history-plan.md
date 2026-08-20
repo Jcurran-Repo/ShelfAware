@@ -338,9 +338,19 @@ clean.** Fixed 4:
     force every handler to split "cheap precondition" from "stage reversal" — breaking the guarantee that
     Peek runs the EXACT same reversal as undo (so display and undo can't disagree). The cure is worse.
 
-Suite **1742 green** (strengthened existing tests, no new methods), Release 0 warnings. ⚠️ A formal re-gate
-of these fixes (item 39 — a fix pass needs its own review) is the ideal next step. **Pushing is Jordan's
-call — not done.**
+Suite **1742 green** (strengthened existing tests, no new methods), Release 0 warnings.
+
+**Re-gate of the two fix commits (item 39 — a fix pass needs its own review): CLEAN, no regressions.** An
+independent agent verified both commits statically AND by running 138 affected tests + 2 probes in an
+ISOLATED worktree: the #2 timestamp guard is sound with no false-positive (the attest-before-record ordering
+gives `QuantityCountedAt ≤ OccurredAt` for the own action; relative moves keep the old clock and aren't
+refused — proved), #3 is state-safe, and all seven #1 routings preserved behaviour with no double-record and
+tenancy intact. Its one non-blocking note — the **relative "used one" undo had no committed test** (a
+pre-existing gap, exactly the path the #2 guard could have regressed) — is now closed by
+`Undoing_a_relative_used_one_move_succeeds…`, mutation-checked (an inverted comparison false-refuses it).
+
+Suite **1743 green**, Release 0 warnings. **The branch is fully gated and clean — pushing is Jordan's call,
+not done.**
 
 1. `ActivityEntry` schema + tenancy drill + `ActivityLogService` + `IUndoHandler` registry + retention.
 2. The `IPantryStore`-layer actions (#1–#13): consolidate `BoughtToday`; record in `AddPurchaseAsync`,

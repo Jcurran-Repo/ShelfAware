@@ -436,6 +436,21 @@ public sealed class ActivityLogTests : IDisposable
     }
 
     [Fact]
+    public async Task Undoing_a_relative_used_one_move_succeeds_and_the_timestamp_guard_does_not_false_refuse_it()
+    {
+        // A relative "used one" does NOT re-anchor the attestation clock (§13.1), so its QuantityCountedAt
+        // stays OLDER than the entry — the #2 same-value guard must not read that as a later look and refuse.
+        // (The other half of that guard, pinned separately: it DOES refuse a later re-attest to the same value.)
+        var id = await SeedProduct(count: 5, countedAt: DateTimeOffset.Now.AddDays(-3));
+        await _store.SetQuantityAsync(id, -1, relative: true); // used one → 4, clock untouched
+        var entry = await LatestEntry();
+        Assert.Equal(4m, (await ReadProduct(id))!.QuantityOnHand);
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id)); // not false-refused
+        Assert.Equal(5m, (await ReadProduct(id))!.QuantityOnHand);      // restored
+    }
+
+    [Fact]
     public async Task Undoing_stop_counting_resumes_it()
     {
         var id = await SeedProduct(count: 5, countedAt: DateTimeOffset.Now.AddDays(-2));
