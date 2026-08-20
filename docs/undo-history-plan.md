@@ -303,10 +303,32 @@ Each precondition-checked, mutation-verified. Suite **1739 green**, Release 0 wa
 code-complete.** (#17 Report-resolve is DROPPED from the household log — admin cross-household, already has its
 own /admin reopen undo.)
 
-**Remaining: `/pre-push` (code + security review) before any push — this branch adds new cross-row
-write-orchestration (`ActivityLogService`, the confirm-undo via `RemoveOnAsync`), a new framework hook
-(`IUndoAfterCommit`, whose one job is to keep Peek from deleting a receipt image), and new recording call
-sites in five services + two pages. Pushing is Jordan's call.**
+**`/pre-push` gate run (agent code + security reviews — the local `/code-review` is model-invocation-disabled,
+so each ran as an independent `general-purpose` agent, then every finding re-verified in-code).** Security:
+**tenancy boundary HOLDS** (probe-verified household B can't undo A's entry; `ActivityEntry` walks the full
+drill; no new `IgnoreQueryFilters`/endpoint/settings-key/disk-write) — one LOW pre-existing note (the receipt-
+image delete confines to the receipts ROOT, not the household subtree; not exploitable here — the `ImagePath`
+is server-written per household with no injection path). Code review: **6 findings, no serious correctness
+defect; Peek-safety, atomicity, the restate flow, the static-reversal split and preconditions all confirmed
+clean.** Fixed 4:
+  - ⚠️ **#2 `CountSetHandler`** silently reverted a count PAST a later re-attest to the same value (value
+    comparison can't see a same-value re-count — only the clock moved). Added the `QuantityCountedAt >
+    OccurredAt` guard its sibling `PurchaseAddedHandler` already has (attest-before-record means
+    `QuantityCountedAt ≤ OccurredAt` for the own action, so no false-refuse). Mutation-checked.
+  - ⚠️ **#3 `Recipes.razor` PickCandidate** stranded a decrement when the meal was undone on another surface
+    mid-pick (the entry survives an undo — only stamped — so the restate found it; the gone `MealEvent` is the
+    reliable signal). Guarded before `TakeOne`. Mutation-checked.
+  - **#5** `/history` `AlreadyUndone` rendered a blank date on a concurrent-undo-during-load race — omit it.
+  - **#6** no test asserted every `ActivityKind` has a handler (a new kind would fail only at record-time) —
+    added, mutation-checked (it names the missing kind).
+  - **Deferred, Jordan's call:** **#1 (MEDIUM)** several PAGE buttons write directly instead of through the
+    recording store methods, so create-product / mark-out / set-tracking (Products), add-substitute
+    (ProductDetail) and add-extra (GroceryList/Recipes) are logged via chat/voice but NOT from their own page
+    — a coverage gap, not a correctness bug. **#4 (LOW/efficiency)** `/history` peeks each row in its own
+    context (N+1; a ReceiptConfirmed peek stages a full removal-simulation) — bounded to that page.
+
+Suite **1742 green**, Release 0 warnings. ⚠️ A formal re-gate of the fix commit (item 39) is the ideal next
+step. **Pushing is Jordan's call — not done.**
 
 1. `ActivityEntry` schema + tenancy drill + `ActivityLogService` + `IUndoHandler` registry + retention.
 2. The `IPantryStore`-layer actions (#1–#13): consolidate `BoughtToday`; record in `AddPurchaseAsync`,

@@ -465,4 +465,38 @@ public class RecipesEatFlowTests : PageTestContext
         Assert.Equal(6m, (await raw.Products.IgnoreQueryFilters().SingleAsync(p => p.Id == sirloinId)).QuantityOnHand);
         Assert.Single(await raw.MealEvents.IgnoreQueryFilters().ToListAsync());
     }
+
+    [Fact]
+    public async Task A_pick_after_the_meal_was_undone_elsewhere_takes_nothing()
+    {
+        // The meal can be reversed on another surface (an /history undo, another tab) while the picker
+        // sits open. A pick must NOT then strand a decrement for a meal no longer on record — un-undoable,
+        // since the notice's Undo would report AlreadyUndone. The gone MealEvent is the reliable signal.
+        SeedProduct("Ground Beef", counted: false, onHand: null, unit: null, 1m, 1m);
+        var freezerId = SeedProduct("Quarter Cow Ground Beef", counted: true, onHand: 14m);
+        SeedRecipe("Freezer Chili", "ground beef", "Ground Beef");
+        var cut = RenderRecipes();
+        ClickAteIt(cut, "Freezer Chili");
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll(".picker-modal .alt-bubble")));
+
+        // Another surface reverses the meal (event removed) while the picker is open.
+        using (var db = Db.CreateDbContext())
+        {
+            db.MealEvents.Remove(db.MealEvents.Single());
+            db.SaveChanges();
+        }
+
+        cut.FindAll(".picker-modal .alt-bubble")[0].Click(); // pick — must take nothing
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Empty(cut.FindAll("[role=dialog]")); // the picker (and notice) close
+            Assert.Contains("That meal was undone elsewhere",
+                Collapsed(cut.Find(".error[role=alert]")));
+        });
+
+        // No stray decrement: the freezer count stands.
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Equal(14m, (await raw.Products.IgnoreQueryFilters().SingleAsync(p => p.Id == freezerId)).QuantityOnHand);
+    }
 }

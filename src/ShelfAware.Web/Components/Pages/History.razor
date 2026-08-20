@@ -54,7 +54,10 @@
                                                 aria-label="@($"Undo: {row.Entry.Summary}")">↩ Undo</button>
                                         break;
                                     case UndoOutcome.AlreadyUndone:
-                                        <span>undone @row.Entry.UndoneAt?.ToString("MMM d")</span>
+                                        @* Peek can report AlreadyUndone from a concurrent undo AFTER this
+                                           row's snapshot was fetched, so UndoneAt may be stale-null — omit
+                                           the date rather than render "undone " with a blank. *@
+                                        <span>undone@(row.Entry.UndoneAt is { } at ? $" {at:MMM d}" : "")</span>
                                         break;
                                     case UndoOutcome.Superseded:
                                         <span title="Something changed this since — undoing would overwrite it">changed since</span>

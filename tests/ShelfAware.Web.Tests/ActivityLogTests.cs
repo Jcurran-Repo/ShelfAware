@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Domain;
@@ -133,6 +134,20 @@ public sealed class ActivityLogTests : IDisposable
     }
 
     // ---- service backbone ----
+
+    [Fact]
+    public void Every_activity_kind_has_a_registered_handler()
+    {
+        // A new ActivityKind added without a handler would fail only at RUNTIME, the first time that action
+        // is recorded (Record throws "no IUndoHandler registered"). This locks the mapping at test time.
+        var services = new ServiceCollection();
+        services.AddSingleton<IReceiptImageCleanup>(new RecordingImageCleanup()); // ReceiptConfirmedHandler's one dep
+        UndoServiceCollectionExtensions.AddHandlers(services);
+        var handled = services.BuildServiceProvider().GetServices<IUndoHandler>().Select(h => h.Kind).ToHashSet();
+
+        var missing = Enum.GetValues<ActivityKind>().Where(k => !handled.Contains(k)).ToList();
+        Assert.True(missing.Count == 0, $"ActivityKind(s) with no handler: {string.Join(", ", missing)}");
+    }
 
     [Fact]
     public async Task A_history_only_entry_cannot_be_undone()
@@ -403,6 +418,21 @@ public sealed class ActivityLogTests : IDisposable
 
         Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(entry.Id));
         Assert.Equal(12m, (await ReadProduct(id))!.QuantityOnHand); // untouched
+    }
+
+    [Fact]
+    public async Task Undoing_a_count_refuses_after_a_re_attest_to_the_SAME_value()
+    {
+        // The value-comparison alone can't see this: set 7 (entry A), then re-attest 7 again (entry B —
+        // only the clock moves). Undoing the OLDER entry A must NOT silently revert the count to 5 past B's
+        // look; the attestation-timestamp guard catches what on-hand can't.
+        var id = await SeedProduct(count: 5, countedAt: DateTimeOffset.Now.AddDays(-2));
+        await _store.SetQuantityAsync(id, 7);
+        var entryA = await LatestEntry();
+        await _store.SetQuantityAsync(id, 7); // re-attest the same value — a later look
+
+        Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(entryA.Id));
+        Assert.Equal(7m, (await ReadProduct(id))!.QuantityOnHand); // NOT clobbered back to 5
     }
 
     [Fact]

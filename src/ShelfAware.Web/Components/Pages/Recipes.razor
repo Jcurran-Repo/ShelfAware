@@ -1077,6 +1077,17 @@
         try
         {
             await using var db = await DbFactory.CreateDbContextAsync();
+            // The meal itself may have been undone on another surface since the picker opened (an /history
+            // undo, another tab) — its MealEvent removed and its auto-takes already restored. Taking a
+            // package now would strand a decrement for a meal no longer on record, un-undoable (the notice's
+            // Undo would then report AlreadyUndone). Undo removes the event and stamps the entry in ONE
+            // transaction, so a missing event is the reliable "this was reversed" signal.
+            if (await db.MealEvents.FindAsync(done.MealEventId) is null)
+            {
+                lastEat = null;
+                eatError = (done.RecipeId, "That meal was undone elsewhere — nothing was taken.");
+                return;
+            }
             var product = await db.Products.Include(p => p.Purchases)
                 .FirstOrDefaultAsync(p => p.Id == candidate.ProductId);
             var taken = product is null ? null : MealStock.TakeOne(product);

@@ -19,10 +19,13 @@ public sealed record CountSetPayload(
 /// <see cref="UndoResult.Superseded"/> if the count or tracking changed since (a re-count, or a later
 /// stop/resume — so undoing would clobber it) and <see cref="UndoResult.Gone"/> if the product is gone.
 ///
-/// The change-check compares on-hand (exact decimal) and the tracking flag, NOT the attestation
-/// timestamp — comparing a DB-round-tripped <c>DateTimeOffset</c> to a JSON one risks a false mismatch,
-/// and on-hand already catches a re-count to a different value. Accepted edge: a re-attest to the exact
-/// same count (only the clock moved) isn't detected, so undoing then restores the older clock.</summary>
+/// The change-check compares on-hand (exact decimal) and the tracking flag — a re-count to a DIFFERENT
+/// value, or a stop/resume, is caught there. A re-attest to the exact SAME value moves only the clock, so
+/// on-hand can't see it; the attestation TIMESTAMP catches that — <see cref="ActivityEntry.OccurredAt"/> vs
+/// the product's current <c>QuantityCountedAt</c>, the same guard <c>PurchaseAddedHandler</c> makes against
+/// a re-count (a DB-to-DB comparison, no JSON round-trip — the payload's own timestamp is never compared).
+/// The recording path attests BEFORE it records, so <c>QuantityCountedAt ≤ OccurredAt</c> for this entry's
+/// own action and the guard never false-refuses an immediate undo.</summary>
 public sealed class CountSetHandler : UndoHandler<CountSetPayload>
 {
     public override ActivityKind Kind => ActivityKind.CountSet;
@@ -38,7 +41,11 @@ public sealed class CountSetHandler : UndoHandler<CountSetPayload>
         var product = await db.Products.FirstOrDefaultAsync(x => x.Id == p.ProductId, ct);
         if (product is null) return UndoResult.Gone;
         if (product.QuantityOnHand != p.NewOnHand || product.TrackQuantity != p.NewTrackQuantity)
-            return UndoResult.Superseded; // re-counted / re-toggled since
+            return UndoResult.Superseded; // re-counted / re-toggled to a DIFFERENT value since
+        // A later attestation that re-set the SAME value moved only the clock — undoing this older entry
+        // would silently revert past it (discard the newer look). The timestamp catches what on-hand can't.
+        if (product.QuantityCountedAt is { } counted && counted > entry.OccurredAt)
+            return UndoResult.Superseded;
 
         product.QuantityOnHand = p.OldOnHand;
         product.QuantityCountedAt = p.OldCountedAt;
