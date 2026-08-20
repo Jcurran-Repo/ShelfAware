@@ -838,7 +838,11 @@
         {
             await using var db = await DbFactory.CreateDbContextAsync();
             db.ExcludedFoods.Add(new ExcludedFood { Value = value });
+            // Undoable: the entry matches the food by value, so it needs no generated id — staged on this
+            // same save, so the exclusion and its undo record commit together.
+            ActivityLog.Record(db, ActivityKind.ExcludedFoodChanged, new ExcludedFoodChangedPayload(WasAdded: true, value));
             await db.SaveChangesAsync();
+            await ActivityLog.TrimAsync();
         }
         newExcluded = "";
         await LoadAsync();
@@ -851,7 +855,9 @@
         if (await db.ExcludedFoods.FindAsync(f.Id) is { } row)
         {
             db.ExcludedFoods.Remove(row);
+            ActivityLog.Record(db, ActivityKind.ExcludedFoodChanged, new ExcludedFoodChangedPayload(WasAdded: false, row.Value));
             await db.SaveChangesAsync();
+            await ActivityLog.TrimAsync();
         }
         await LoadAsync();
     }
@@ -912,7 +918,11 @@
             Steps = s.Steps.Select((t, idx) => new RecipeStep { Order = idx + 1, Text = t }).ToList(),
             EstimatedCaloriesPerServing = s.CaloriesPerServing,
         });
+        // History-only: recorded so /history shows the save, never undone (the 🗑 on the card is the
+        // manual removal). No generated id needed — the summary carries only the name.
+        ActivityLog.Record(db, ActivityKind.RecipeSaved, new RecipeSavedPayload(s.Name));
         await db.SaveChangesAsync();
+        await ActivityLog.TrimAsync();
         await LoadAsync();
     }
 

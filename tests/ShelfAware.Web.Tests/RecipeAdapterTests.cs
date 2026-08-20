@@ -40,7 +40,7 @@ public class RecipeAdapterTests : IDisposable
     private RecipeAdapter Adapter(RecipeSuggestion? adaptResult, out FakeRecipeAdvisor advisor)
     {
         advisor = new FakeRecipeAdvisor(adaptResult);
-        return new RecipeAdapter(_db, advisor, new FakeAppSettings(), NullLogger<RecipeAdapter>.Instance);
+        return new RecipeAdapter(_db, advisor, new FakeAppSettings(), UndoTesting.Log(_db), NullLogger<RecipeAdapter>.Instance);
     }
 
     [Fact]
@@ -58,6 +58,11 @@ public class RecipeAdapterTests : IDisposable
         Assert.Equal("Pan-Seared Chicken Thighs", variant.Name);
         Assert.Contains(variant.Ingredients, i => i.Name == "chicken thighs");
         Assert.NotEmpty(variant.Steps);
+
+        // The adapt logs a history-only entry (greyed on /history), naming the family and the variant.
+        var entry = await db.ActivityEntries.SingleAsync(e => e.Kind == ActivityKind.RecipeAdapted);
+        Assert.Equal("Adapted Pan-Seared Chicken → Pan-Seared Chicken Thighs", entry.Summary);
+        Assert.Equal(Reversibility.NotReversible, entry.Reversibility);
     }
 
     [Fact]
@@ -115,6 +120,8 @@ public class RecipeAdapterTests : IDisposable
         Assert.Equal("Use chicken thighs in place of chicken breast.", advisor.LastPreference); // the pick reached the model
         await using var db = _db.CreateDbContext();
         Assert.Empty(await db.Recipes.Where(r => r.ParentRecipeId == parentId).ToListAsync());
+        // Recorded only PAST the guards: a rejected adapt logs no RecipeAdapted entry either.
+        Assert.Empty(await db.ActivityEntries.Where(e => e.Kind == ActivityKind.RecipeAdapted).ToListAsync());
     }
 
     [Fact]

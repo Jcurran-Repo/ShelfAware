@@ -287,9 +287,21 @@ entry greys as **Gone** the moment the receipt is removed — so a separate `Rec
 double-log, and recording one atomically means threading a flag + merchant through the shared `RemoveAsync`
 (which the Upload ↩ Undo and the /history confirm-undo also call). Leaning: skip it.
 
-Each precondition-checked, mutation-verified. Suite **1732 green**, Release 0 warnings.
-**Remaining: `ReceiptRemoved` decision; soft actions (exclude-food add/remove, recipe save/adapt); `/pre-push`.**
-(#17 Report-resolve is likely DROPPED from the household log — it's admin cross-household and already has its
+**Soft actions ✅ — exclude-food reversible, recipes history-only.** `ExcludedFoodChanged` is a REVERSIBLE
+soft action (add↔remove; the payload carries the direction and the value, so the undo matches by value with
+no generated id — recorded on AddExcluded/RemoveExcluded's own save; a reversal that's become a no-op greys as
+Gone). `RecipeSaved` (Recipes.razor Save) and `RecipeAdapted` (RecipeAdapter, past its guards) are HISTORY-ONLY:
+a recipe accumulates history (times eaten, dated meal events, adapted variants) and its delete cascades that
+away / orphans the variants (the self-ref FK is nullable), so undoing a save is not a clean reversal — and a
+manual 🗑 delete already exists. ⚠️ **History-only → reversible is an easy later upgrade** (delete-with-a-gained-
+history guard, like `ProductCreated`) if the deletion-cascade risk is worth taking on; deferred for v1.
+
+The /history page is kind-AGNOSTIC (it switches on the Peek outcome, never on `ActivityKind`), so every new
+kind renders — reversible ones with an Undo button, history-only greyed — with no page change.
+
+Each precondition-checked, mutation-verified. Suite **1739 green**, Release 0 warnings.
+**Remaining: the `ReceiptRemoved` decision (leaning skip — redundant with `ReceiptConfirmed` greying Gone);
+`/pre-push`.** (#17 Report-resolve is DROPPED from the household log — admin cross-household, already has its
 own /admin reopen undo.)
 
 1. `ActivityEntry` schema + tenancy drill + `ActivityLogService` + `IUndoHandler` registry + retention.

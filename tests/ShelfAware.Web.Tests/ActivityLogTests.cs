@@ -738,6 +738,84 @@ public sealed class ActivityLogTests : IDisposable
         Assert.Null((await Entry(entry.Id))!.UndoneAt);
     }
 
+    // ---- soft actions: ExcludedFoodChanged (reversible), RecipeSaved / RecipeAdapted (history-only) ----
+
+    [Fact]
+    public async Task Undoing_an_excluded_food_add_removes_it()
+    {
+        var entryId = await RecordExcludedAdd("cilantro");
+        Assert.True(await ExcludedFoodExists("cilantro"));
+        Assert.Equal("Added cilantro to your won't-eat list", (await Entry(entryId))!.Summary);
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entryId));
+        Assert.False(await ExcludedFoodExists("cilantro"));
+        Assert.NotNull((await Entry(entryId))!.UndoneAt);
+    }
+
+    [Fact]
+    public async Task Undoing_an_excluded_food_remove_re_adds_it()
+    {
+        await RecordExcludedAdd("olives");
+        var entryId = await RecordExcludedRemove("olives");
+        Assert.False(await ExcludedFoodExists("olives"));
+        Assert.Equal("Removed olives from your won't-eat list", (await Entry(entryId))!.Summary);
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entryId));
+        Assert.True(await ExcludedFoodExists("olives"));
+    }
+
+    [Fact]
+    public async Task Undoing_an_excluded_food_add_is_a_no_op_when_it_was_already_removed()
+    {
+        var entryId = await RecordExcludedAdd("cilantro");
+        await DeleteExcludedFood("cilantro"); // removed by hand since — the undo would do nothing
+
+        Assert.Equal(UndoOutcome.Gone, await _log.UndoAsync(entryId));
+    }
+
+    [Fact]
+    public async Task Undoing_an_excluded_food_remove_is_a_no_op_when_it_is_already_back()
+    {
+        await RecordExcludedAdd("olives");
+        var removeEntryId = await RecordExcludedRemove("olives");
+        await RecordExcludedAdd("olives"); // re-added by hand since — it's already back
+
+        Assert.Equal(UndoOutcome.Gone, await _log.UndoAsync(removeEntryId));
+    }
+
+    [Fact]
+    public async Task Saving_a_recipe_records_a_history_only_entry_that_cannot_be_undone()
+    {
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Recipes.Add(new Recipe { Name = "Sheet-Pan Chicken", SavedAt = DateTimeOffset.Now });
+            _log.Record(db, ActivityKind.RecipeSaved, new RecipeSavedPayload("Sheet-Pan Chicken"));
+            await db.SaveChangesAsync();
+        }
+
+        var entry = await LatestEntry();
+        Assert.Equal(ActivityKind.RecipeSaved, entry.Kind);
+        Assert.Equal(Reversibility.NotReversible, entry.Reversibility);
+        Assert.Equal("Saved recipe: Sheet-Pan Chicken", entry.Summary);
+        Assert.Equal(UndoOutcome.NotReversible, await _log.UndoAsync(entry.Id));
+    }
+
+    [Fact]
+    public async Task Adapting_a_recipe_records_a_history_only_entry_that_cannot_be_undone()
+    {
+        await using (var db = _db.CreateDbContext())
+        {
+            _log.Record(db, ActivityKind.RecipeAdapted, new RecipeAdaptedPayload("Beef Stew", "Beef Stew with thighs"));
+            await db.SaveChangesAsync();
+        }
+
+        var entry = await LatestEntry();
+        Assert.Equal(ActivityKind.RecipeAdapted, entry.Kind);
+        Assert.Equal(Reversibility.NotReversible, entry.Reversibility);
+        Assert.Equal("Adapted Beef Stew → Beef Stew with thighs", entry.Summary);
+        Assert.Equal(UndoOutcome.NotReversible, await _log.UndoAsync(entry.Id));
+    }
+
     // ---- helpers ----
 
     private async Task<int> SeedProduct(
@@ -989,5 +1067,39 @@ public sealed class ActivityLogTests : IDisposable
         await using var db = _db.CreateDbContext();
         await ReceiptRemovalService.RemoveOnAsync(db, receiptId);
         await db.SaveChangesAsync();
+    }
+
+    /// <summary>Replicates Recipes.razor's AddExcluded DB effect — add the food and record the undoable
+    /// entry on one save (the entry matches by value, so no generated id is needed).</summary>
+    private async Task<int> RecordExcludedAdd(string value)
+    {
+        await using var db = _db.CreateDbContext();
+        db.ExcludedFoods.Add(new ExcludedFood { Value = value });
+        var entry = _log.Record(db, ActivityKind.ExcludedFoodChanged, new ExcludedFoodChangedPayload(WasAdded: true, value));
+        await db.SaveChangesAsync();
+        return entry.Id;
+    }
+
+    /// <summary>Replicates Recipes.razor's RemoveExcluded DB effect — remove the food and record the entry.</summary>
+    private async Task<int> RecordExcludedRemove(string value)
+    {
+        await using var db = _db.CreateDbContext();
+        var row = await db.ExcludedFoods.FirstAsync(f => f.Value == value);
+        db.ExcludedFoods.Remove(row);
+        var entry = _log.Record(db, ActivityKind.ExcludedFoodChanged, new ExcludedFoodChangedPayload(WasAdded: false, value));
+        await db.SaveChangesAsync();
+        return entry.Id;
+    }
+
+    private async Task<bool> ExcludedFoodExists(string value)
+    {
+        await using var db = _db.CreateDbContext();
+        return await db.ExcludedFoods.AnyAsync(f => f.Value == value);
+    }
+
+    private async Task DeleteExcludedFood(string value)
+    {
+        await using var db = _db.CreateDbContext();
+        await db.ExcludedFoods.Where(f => f.Value == value).ExecuteDeleteAsync();
     }
 }
