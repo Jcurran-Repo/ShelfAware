@@ -277,10 +277,20 @@ left as-is (RemoveAsync, its detailed messaging) rather than unified through the
 /history entry Peeks as **Gone** (greyed) rather than "undone" — accepted (no data harm, no double-action; the
 receipt really is gone), and unifying would only downgrade the panel's messaging.
 
-Each precondition-checked, mutation-verified. Suite **1730 green**, Release 0 warnings.
-**Remaining: step 5 (history-only: merge / receipt-removal / census — greyed, `NotReversible`); soft actions
-(exclude-food add/remove, recipe save/adapt); `/pre-push`.** (#17 Report-resolve is likely DROPPED from the
-household log — it's admin cross-household and already has its own /admin reopen undo.)
+**Step 5 (history-only, greyed `NotReversible`) — merge ✅, census ✅.** `HistoryOnlyHandler<T>` is the base
+for a recorded-but-never-reversed action (declares `NotReversible`, so the service refuses the undo before
+dispatch; its `Reverse` is sealed as unreachable). `ProductsMerged` records in `ProductMergeService` (source
+name read before the row goes), `CensusConfirmed` in `CensusConfirmationService` (only when a row actually
+landed a count) — both staged on the action's own transaction. ⚠️ **Receipt-removal is DEFERRED pending a
+call** (see below): 4c made a confirmed receipt's removal already visible in /history — its `ReceiptConfirmed`
+entry greys as **Gone** the moment the receipt is removed — so a separate `ReceiptRemoved` entry would largely
+double-log, and recording one atomically means threading a flag + merchant through the shared `RemoveAsync`
+(which the Upload ↩ Undo and the /history confirm-undo also call). Leaning: skip it.
+
+Each precondition-checked, mutation-verified. Suite **1732 green**, Release 0 warnings.
+**Remaining: `ReceiptRemoved` decision; soft actions (exclude-food add/remove, recipe save/adapt); `/pre-push`.**
+(#17 Report-resolve is likely DROPPED from the household log — it's admin cross-household and already has its
+own /admin reopen undo.)
 
 1. `ActivityEntry` schema + tenancy drill + `ActivityLogService` + `IUndoHandler` registry + retention.
 2. The `IPantryStore`-layer actions (#1–#13): consolidate `BoughtToday`; record in `AddPurchaseAsync`,

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
+using ShelfAware.Web.Undo;
 
 namespace ShelfAware.Web.Data;
 
@@ -19,7 +20,7 @@ namespace ShelfAware.Web.Data;
 /// would destroy the history the merge exists to combine. Tenancy: every query here runs through
 /// the household-scoped context, so a foreign household's product id simply fails to load.
 /// </summary>
-public class ProductMergeService(IHouseholdDbFactory dbFactory)
+public class ProductMergeService(IHouseholdDbFactory dbFactory, IActivityLog activityLog)
 {
     public sealed record Result(bool Ok, string Message, int MovedPurchases = 0, int RelinkedIngredients = 0);
 
@@ -90,9 +91,15 @@ public class ProductMergeService(IHouseholdDbFactory dbFactory)
         target.IsTracked |= source.IsTracked;
         target.DefaultUnit ??= source.DefaultUnit;
 
+        // History-only record, staged inside the merge's transaction so it commits with the merge (the
+        // source name is read now, before the row is gone). NotReversible — the app records the merge but
+        // doesn't rebuild the split it collapsed.
+        activityLog.Record(db, ActivityKind.ProductsMerged, new ProductsMergedPayload(source.Name, target.Name));
+
         db.Products.Remove(source);
         await db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
+        await activityLog.TrimAsync(cancellationToken);
 
         return new(true, $"Merged into {target.Name}: {movedPurchases} purchase{(movedPurchases == 1 ? "" : "s")} moved.",
             movedPurchases, linked.Count);

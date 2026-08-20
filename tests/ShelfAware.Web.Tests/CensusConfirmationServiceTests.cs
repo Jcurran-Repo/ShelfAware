@@ -14,7 +14,7 @@ public class CensusConfirmationServiceTests : IDisposable
     private readonly TestDb _db = new();
     private readonly CensusConfirmationService _service;
 
-    public CensusConfirmationServiceTests() => _service = new CensusConfirmationService(_db);
+    public CensusConfirmationServiceTests() => _service = new CensusConfirmationService(_db, UndoTesting.Log(_db));
 
     public void Dispose() => _db.Dispose();
 

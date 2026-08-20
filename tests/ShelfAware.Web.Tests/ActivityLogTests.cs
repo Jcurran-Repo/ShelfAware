@@ -704,6 +704,40 @@ public sealed class ActivityLogTests : IDisposable
         Assert.Empty(cleanup.Deleted);                  // and no image delete for a receipt that was already gone
     }
 
+    // ---- history-only (recorded, greyed, never reversed): ProductsMerged, CensusConfirmed ----
+
+    [Fact]
+    public async Task Merging_products_records_a_history_only_entry_that_cannot_be_undone()
+    {
+        var sourceId = await SeedProduct("Strawberry Drink Mix");
+        var targetId = await SeedProduct("Drink Mix");
+        await new ProductMergeService(_db, _log).MergeAsync(sourceId, targetId);
+
+        var entry = await LatestEntry();
+        Assert.Equal(ActivityKind.ProductsMerged, entry.Kind);
+        Assert.Equal(Reversibility.NotReversible, entry.Reversibility);
+        Assert.Equal("Merged Strawberry Drink Mix into Drink Mix", entry.Summary);
+
+        Assert.Equal(UndoOutcome.NotReversible, await _log.UndoAsync(entry.Id)); // greyed — refused before dispatch
+        Assert.Null((await Entry(entry.Id))!.UndoneAt);                          // and never stamped
+    }
+
+    [Fact]
+    public async Task A_census_records_a_history_only_entry_that_cannot_be_undone()
+    {
+        var productId = await SeedProduct("Canned Beans");
+        await new CensusConfirmationService(_db, _log).ConfirmAsync(
+            [new CensusConfirmationService.CensusRow("Canned Beans", Category.Pantry, 5m, productId)]);
+
+        var entry = await LatestEntry();
+        Assert.Equal(ActivityKind.CensusConfirmed, entry.Kind);
+        Assert.Equal(Reversibility.NotReversible, entry.Reversibility);
+        Assert.Equal("Counted 1 item from a photo", entry.Summary);
+
+        Assert.Equal(UndoOutcome.NotReversible, await _log.UndoAsync(entry.Id));
+        Assert.Null((await Entry(entry.Id))!.UndoneAt);
+    }
+
     // ---- helpers ----
 
     private async Task<int> SeedProduct(

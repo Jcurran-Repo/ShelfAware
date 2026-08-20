@@ -94,7 +94,7 @@ public abstract class PageTestContext : BunitContext
         // over this (RegisterAdditionalServices runs after these, so the later registration wins).
         Services.AddSingleton(new CircuitAiSettings(Options.Create(new LlmOptions())));
         Services.AddSingleton(new ProductRenameService(Factory, ActivityLog));
-        Services.AddSingleton(new ProductMergeService(Factory));
+        Services.AddSingleton(new ProductMergeService(Factory, ActivityLog));
         Services.AddLogging();
 
         JSInterop.Mode = JSRuntimeMode.Loose;

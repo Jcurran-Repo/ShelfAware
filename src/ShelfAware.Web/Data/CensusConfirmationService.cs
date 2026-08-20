@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Census;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
+using ShelfAware.Web.Undo;
 
 namespace ShelfAware.Web.Data;
 
@@ -21,7 +22,7 @@ namespace ShelfAware.Web.Data;
 /// signals exactly as the plan says. One SaveChanges, one transaction — a failure persists nothing, so a
 /// half-recorded census can't leave counts for the top of the shelf and none for the bottom.</para>
 /// </summary>
-public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
+public class CensusConfirmationService(IHouseholdDbFactory dbFactory, IActivityLog activityLog)
 {
     /// <param name="ProductId">The product this row resolved to, or 0 for none.</param>
     /// <param name="CreateNew">⚠️ Whether the HUMAN explicitly chose "create a new product" for this row,
@@ -196,7 +197,15 @@ public class CensusConfirmationService(IHouseholdDbFactory dbFactory)
             assertedOut++;
         }
 
+        // History-only record, staged on the census's single-SaveChanges transaction. Only when the census
+        // actually counted something — an all-refused census recorded no counts and has nothing to log.
+        // NotReversible: a census attests counts, creates products, and files OutNow signals across many
+        // rows at once, and v1 doesn't unpick that.
+        if (totals.Count > 0)
+            activityLog.Record(db, ActivityKind.CensusConfirmed, new CensusConfirmedPayload(totals.Count, created));
+
         await db.SaveChangesAsync(cancellationToken);
+        await activityLog.TrimAsync(cancellationToken);
         return new CensusOutcome(
             Counted: totals.Count,
             Rows: rowsLanded,

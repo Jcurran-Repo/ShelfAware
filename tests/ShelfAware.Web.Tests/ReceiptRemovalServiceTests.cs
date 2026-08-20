@@ -282,7 +282,7 @@ public class ReceiptRemovalServiceTests : IDisposable
             productId = (await db.Products.SingleAsync()).Id;
         }
         // The census's own write path — the real service, so the probe can't be kinder than the app.
-        var census = await new CensusConfirmationService(_db).ConfirmAsync(
+        var census = await new CensusConfirmationService(_db, UndoTesting.Log(_db)).ConfirmAsync(
             [new CensusConfirmationService.CensusRow("Frozen Peas", Category.Frozen, 12m, productId)]);
         Assert.Equal(1, census.Counted);
 

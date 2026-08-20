@@ -85,3 +85,18 @@ public abstract class UndoHandler<TPayload> : IUndoHandler
         JsonSerializer.Deserialize<TPayload>(json) ?? throw new InvalidOperationException(
             $"Activity payload for {typeof(TPayload).Name} deserialized to null: {json}");
 }
+
+/// <summary>A handler for an action that is RECORDED but has no clean inverse — merge, census-confirm,
+/// receipt-removal (DESIGN.md's "hard to reverse → history-only for v1"). It declares
+/// <see cref="Reversibility.NotReversible"/>, so <c>ActivityLogService</c> refuses the undo (greyed on
+/// /history) before ever dispatching, and its <see cref="UndoHandler{TPayload}.Reverse"/> is never reached
+/// — implemented here once, so a concrete history-only handler only writes its <see cref="Kind"/> and its
+/// summary and cannot accidentally ship as reversible.</summary>
+public abstract class HistoryOnlyHandler<TPayload> : UndoHandler<TPayload>
+{
+    public sealed override Reversibility Reversibility => Reversibility.NotReversible;
+
+    protected sealed override Task<UndoResult> Reverse(
+        ShelfAwareDbContext db, TPayload payload, ActivityEntry entry, CancellationToken ct) =>
+        Task.FromResult(UndoResult.NotReversible); // unreachable: the service refuses NotReversible before dispatch
+}
