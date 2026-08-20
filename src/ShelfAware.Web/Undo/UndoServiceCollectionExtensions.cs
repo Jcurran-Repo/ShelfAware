@@ -33,5 +33,6 @@ public static class UndoServiceCollectionExtensions
         services.AddScoped<IUndoHandler, SubstitutesAddedHandler>();
         services.AddScoped<IUndoHandler, GroceryExtrasAddedHandler>();
         services.AddScoped<IUndoHandler, ProductRenamedHandler>();
+        services.AddScoped<IUndoHandler, MealLoggedHandler>();
     }
 }

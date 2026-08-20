@@ -572,6 +572,72 @@ public sealed class ActivityLogTests : IDisposable
         Assert.Equal("2% Milk", (await ReadProduct(id))!.Name); // can't restore — stays put
     }
 
+    // ---- MealLogged (a page-orchestrated action; recording replicated by LogMeal) ----
+
+    [Fact]
+    public async Task Logging_a_meal_records_an_undoable_entry_and_undo_reverses_all_three_writes()
+    {
+        var productId = await SeedProduct("Ground Beef", count: 3, countedAt: DateTimeOffset.Now.AddDays(-3));
+        var recipeId = await SeedRecipeWithMain("Tacos", "ground beef", "Ground Beef");
+        var (_, entryId, _) = await LogMeal(recipeId, "Tacos");
+        Assert.Equal(2m, (await ReadProduct(productId))!.QuantityOnHand); // one package off on the way in
+
+        var entry = (await Entry(entryId))!;
+        Assert.Equal(ActivityKind.MealLogged, entry.Kind);
+        Assert.Equal(Reversibility.Reversible, entry.Reversibility);
+        Assert.Equal("Logged a meal: Tacos", entry.Summary);
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entryId));
+
+        Assert.Equal(0, await MealEventCount());                          // the dated event is gone
+        Assert.Equal(0, await RecipeTimesEaten(recipeId));               // the counter stepped back
+        Assert.Equal(3m, (await ReadProduct(productId))!.QuantityOnHand); // the taken package returned
+        Assert.NotNull((await Entry(entryId))!.UndoneAt);               // and the entry is stamped
+    }
+
+    [Fact]
+    public async Task Undoing_a_logged_meal_whose_event_is_gone_reports_Gone_and_restores_nothing()
+    {
+        var productId = await SeedProduct("Ground Beef", count: 3, countedAt: DateTimeOffset.Now.AddDays(-3));
+        var recipeId = await SeedRecipeWithMain("Tacos", "ground beef", "Ground Beef");
+        var (mealId, entryId, _) = await LogMeal(recipeId, "Tacos");
+        await DeleteMealEvent(mealId); // another surface removed it (the inline undo, another device)
+
+        Assert.Equal(UndoOutcome.Gone, await _log.UndoAsync(entryId));
+        Assert.Null((await Entry(entryId))!.UndoneAt); // nothing reversed → not stamped
+        // Critically, the count is NOT put back: the meal is gone (whoever removed it already restored its
+        // stock), so restoring here would invent a package. The handler must check the meal BEFORE restoring.
+        Assert.Equal(2m, (await ReadProduct(productId))!.QuantityOnHand);
+    }
+
+    [Fact]
+    public async Task Undo_after_a_restated_pick_restores_the_picked_package_too()
+    {
+        // A picker answer lands AFTER the meal's first commit; the page restates the entry so its durable
+        // record includes the pick. Without that, a later undo would restore only the auto-take and leave
+        // the picked package wrongly deducted — the whole reason Restate exists.
+        var autoId = await SeedProduct("Rice", count: 5, countedAt: DateTimeOffset.Now.AddDays(-3));
+        var pickId = await SeedProduct("Ground Beef", count: 4, countedAt: DateTimeOffset.Now.AddDays(-3));
+        var recipeId = await SeedRecipeWithMain("Tacos", "rice", "Rice"); // grounded to Rice → Rice auto-takes
+        var (mealId, entryId, taken) = await LogMeal(recipeId, "Tacos");
+        Assert.Equal(4m, (await ReadProduct(pickId))!.QuantityOnHand); // the pick hasn't happened yet
+
+        // The picker answer: take one Ground Beef and restate the entry to include it (what PickCandidate does).
+        await using (var db = _db.CreateDbContext())
+        {
+            var beef = await db.Products.Include(p => p.Purchases).FirstAsync(p => p.Id == pickId);
+            var picked = MealStock.TakeOne(beef)!;
+            var entry = await db.ActivityEntries.FindAsync(entryId);
+            _log.Restate(entry!, new MealLoggedPayload(mealId, "Tacos", [.. taken, picked]));
+            await db.SaveChangesAsync(); // the take and the payload restate, one commit
+        }
+        Assert.Equal(3m, (await ReadProduct(pickId))!.QuantityOnHand); // the pick took one
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entryId));
+        Assert.Equal(5m, (await ReadProduct(autoId))!.QuantityOnHand); // auto-take restored
+        Assert.Equal(4m, (await ReadProduct(pickId))!.QuantityOnHand); // AND the restated pick restored
+    }
+
     // ---- helpers ----
 
     private async Task<int> SeedProduct(
@@ -713,5 +779,63 @@ public sealed class ActivityLogTests : IDisposable
     {
         await using var db = _db.CreateDbContext();
         return (await db.RecipeIngredients.AsNoTracking().SingleAsync()).MatchedProduct;
+    }
+
+    private async Task<int> SeedRecipeWithMain(string recipeName, string mainName, string? matchedProduct)
+    {
+        await using var db = _db.CreateDbContext();
+        var recipe = new Recipe
+        {
+            Name = recipeName,
+            SavedAt = DateTimeOffset.Now,
+            Ingredients = [new RecipeIngredient { Name = mainName, IsMain = true, MatchedProduct = matchedProduct }],
+        };
+        db.Recipes.Add(recipe);
+        await db.SaveChangesAsync();
+        return recipe.Id;
+    }
+
+    /// <summary>Replicates the page's MarkEaten DB effect (Recipes.razor): bump TimesEaten, create a dated
+    /// MealEvent, take one package off each counted main via <see cref="MealStock"/>, and record the
+    /// MealLogged entry inside one transaction (the entry keys on the meal's generated id). Returns the meal
+    /// id, the entry id, and the actual takes — everything a MealLogged undo reverses.</summary>
+    private async Task<(int MealEventId, int EntryId, IReadOnlyList<MealStock.Applied> Taken)> LogMeal(
+        int recipeId, string recipeName)
+    {
+        await using var db = _db.CreateDbContext();
+        var recipe = await db.Recipes.Include(r => r.Ingredients).FirstAsync(r => r.Id == recipeId);
+        recipe.TimesEaten++;
+        var resolution = await MealStock.ResolveAsync(db, recipe);
+        var meal = new MealEvent { RecipeId = recipeId, AteAt = new DateOnly(2026, 8, 17) };
+        db.MealEvents.Add(meal);
+        var taken = MealStock.Apply(resolution);
+
+        ActivityEntry entry;
+        await using (var tx = await db.Database.BeginTransactionAsync())
+        {
+            await db.SaveChangesAsync(); // assigns meal.Id + the counter/take on the same commit
+            entry = _log.Record(db, ActivityKind.MealLogged, new MealLoggedPayload(meal.Id, recipeName, taken.ToList()));
+            await db.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        return (meal.Id, entry.Id, taken);
+    }
+
+    private async Task<int> MealEventCount()
+    {
+        await using var db = _db.CreateDbContext();
+        return await db.MealEvents.CountAsync();
+    }
+
+    private async Task<int> RecipeTimesEaten(int recipeId)
+    {
+        await using var db = _db.CreateDbContext();
+        return (await db.Recipes.AsNoTracking().SingleAsync(r => r.Id == recipeId)).TimesEaten;
+    }
+
+    private async Task DeleteMealEvent(int mealEventId)
+    {
+        await using var db = _db.CreateDbContext();
+        await db.MealEvents.Where(m => m.Id == mealEventId).ExecuteDeleteAsync();
     }
 }

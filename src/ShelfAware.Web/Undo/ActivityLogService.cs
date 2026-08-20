@@ -31,6 +31,14 @@ public interface IActivityLog
     /// action's transaction, that fails the action loudly rather than shipping a silently-broken log.</summary>
     ActivityEntry Record(ShelfAwareDbContext db, ActivityKind kind, object payload, string? source = null);
 
+    /// <summary>Restate an already-recorded entry's payload (and its <see cref="ActivityEntry.Summary"/>) on
+    /// the caller's context, to be committed by the caller's SaveChanges. For an action that lands in
+    /// stages — a meal's picker resolves takes AFTER the initial commit — so the durable undo record stays
+    /// equal to what actually happened; without it, a /history undo after a pick would restore only the
+    /// takes known at the first save. Does NOT save. <paramref name="entry"/> must already be tracked on
+    /// the caller's household-filtered context (so <c>EnforceHousehold</c> still guards the write).</summary>
+    void Restate(ActivityEntry entry, object payload);
+
     /// <summary>Best-effort retention: trim the oldest rows past MaxRows for the current household. A
     /// no-op (no query, no context) when unbounded. Called AFTER the action commits and swallows its own
     /// errors — cleanup must never fail the action it follows.</summary>
@@ -87,6 +95,18 @@ public sealed class ActivityLogService : IActivityLog
         };
         db.ActivityEntries.Add(entry); // staged on the caller's context — the caller's SaveChanges commits it
         return entry;
+    }
+
+    public void Restate(ActivityEntry entry, object payload)
+    {
+        if (!_handlers.TryGetValue(entry.Kind, out var handler))
+            throw new InvalidOperationException(
+                $"No IUndoHandler registered for {entry.Kind} — can't restate its payload.");
+
+        var json = JsonSerializer.Serialize(payload, payload.GetType());
+        entry.PayloadJson = json;
+        entry.Summary = handler.Summarize(json); // recompute so a summary that reads the payload stays true
+        // The entry is already tracked; mutating its fields marks it Modified for the caller's SaveChanges.
     }
 
     /// <summary>Reverse one entry through its kind's handler — the ONE undo path for both surfaces. Loads

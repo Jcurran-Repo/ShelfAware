@@ -93,6 +93,34 @@ public static class MealStock
         }
     }
 
+    /// <summary>Reverse a logged meal on the CALLER's context (no save): remove the <see cref="MealEvent"/>,
+    /// step its recipe's <see cref="Recipe.TimesEaten"/> back, and put the <paramref name="taken"/> packages
+    /// back via <see cref="Restore"/>. Returns false when the meal is already gone — another surface removed
+    /// it (an inline "↩ Undo", another device) — so nothing coherent is left to reverse; the caller turns
+    /// that into "nothing to undo"/<c>UndoResult.Gone</c>.
+    /// <para>The ONE reversal both surfaces run: the inline notice's Undo and the /history undo call this
+    /// (via <c>MealLoggedHandler</c>), so "reverse a meal" has a single definition — the same
+    /// static-on-db pattern <c>ProductRenameService.RenameOnAsync</c> uses, staging on the passed context
+    /// so the reversal and the <c>ActivityEntry.UndoneAt</c> stamp commit in one transaction and no
+    /// self-committing service runs mid-Peek.</para></summary>
+    public static async Task<bool> ReverseMealOnAsync(
+        ShelfAwareDbContext db, int mealEventId, IReadOnlyList<Applied> taken, CancellationToken ct = default)
+    {
+        var meal = await db.MealEvents.FindAsync([mealEventId], ct);
+        if (meal is null) return false;
+
+        db.MealEvents.Remove(meal);
+        if (await db.Recipes.FindAsync([meal.RecipeId], ct) is { } recipe)
+            recipe.TimesEaten = Math.Max(0, recipe.TimesEaten - 1);
+
+        var ids = taken.Select(t => t.ProductId).ToList();
+        var products = ids.Count == 0
+            ? []
+            : await db.Products.Where(p => ids.Contains(p.Id)).ToListAsync(ct);
+        Restore(products, taken);
+        return true;
+    }
+
     /// <summary>The counted products this recipe's MAIN ingredients resolve to — ONE definition, so the
     /// notice can never report a decrement the write didn't make.
     /// <para>⚠️ It asks <see cref="IngredientMatcher.Covering"/>, the SAME rule the ✓/🛒 mark on the row
