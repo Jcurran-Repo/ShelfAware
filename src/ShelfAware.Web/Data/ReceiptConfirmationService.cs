@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Tagging;
+using ShelfAware.Web.Undo;
 
 namespace ShelfAware.Web.Data;
 
@@ -12,7 +13,7 @@ namespace ShelfAware.Web.Data;
 /// on tag handling, quantity clamping, and alias policy). Idempotent: confirming an already-confirmed
 /// receipt is a no-op, so a double-click or a queued duplicate event can't double-record purchases.
 /// </summary>
-public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
+public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory, IActivityLog activityLog)
 {
     /// <param name="ProductId">Resolved product id; 0 means "create a new product" from this line.</param>
     /// <param name="ExpirationDate">The label's expiration date the reviewer typed, or null. Defaulted so
@@ -196,7 +197,19 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory)
         // (§13.2). The early AlreadyConfirmed return above is what keeps a re-confirm from moving it.
         receipt.ConfirmedAt = DateTimeOffset.Now;
         receipt.VerifiedForEval = verifiedForEval;
+
+        // The undo record, committed with the confirm (staged on this same context — the receipt id and
+        // image path are already known, so no id-assigning first save is needed). Its undo is a total
+        // removal (ReceiptRemovalService), reachable from /history whether this was a manual or an auto
+        // confirm. Only when the confirm actually recorded purchases — a confirm that landed nothing has
+        // nothing to unwind, and RemovalService would call it untraceable. The image path rides in the
+        // payload so the post-commit image delete needs no DB read once the receipt row is gone.
+        if (purchases > 0)
+            activityLog.Record(db, ActivityKind.ReceiptConfirmed,
+                new ReceiptConfirmedPayload(receipt.Id, receipt.Merchant, purchases, receipt.ImagePath));
+
         await db.SaveChangesAsync(cancellationToken);
+        await activityLog.TrimAsync(cancellationToken); // retention: best-effort, after the commit
         return new(AlreadyConfirmed: false, purchases, created, retracked.Count);
     }
 

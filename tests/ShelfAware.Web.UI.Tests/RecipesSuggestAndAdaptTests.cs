@@ -212,6 +212,27 @@ public class RecipesSuggestAndAdaptTests : PageTestContext
         Assert.Equal(2, recipe.Ingredients.Count);
         Assert.Equal(2, recipe.Steps.Count);
         Assert.Equal(450, recipe.EstimatedCaloriesPerServing);
+
+        // The save is logged (history-only — the card's 🗑 is the manual removal).
+        var entry = await raw.ActivityEntries.IgnoreQueryFilters().SingleAsync(e => e.Kind == ActivityKind.RecipeSaved);
+        Assert.Equal("Saved recipe: Weeknight Tacos", entry.Summary);
+        Assert.Equal(Reversibility.NotReversible, entry.Reversibility);
+    }
+
+    [Fact]
+    public async Task Adding_a_wont_eat_food_records_an_undoable_entry()
+    {
+        var cut = RenderRecipes();
+
+        cut.Find("input[aria-label=\"Add a food you won't eat\"]").Input("mushrooms");
+        cut.FindAll("button").First(b => b.TextContent.Trim() == "Add").Click();
+        cut.WaitForState(() => cut.Find(".tag-list").TextContent.Contains("mushrooms"));
+
+        // A won't-eat change is a reversible soft action — one undo removes it again.
+        await using var raw = Db.CreateUnscopedContext();
+        var entry = await raw.ActivityEntries.IgnoreQueryFilters().SingleAsync(e => e.Kind == ActivityKind.ExcludedFoodChanged);
+        Assert.Equal("Added mushrooms to your won't-eat list", entry.Summary);
+        Assert.Equal(Reversibility.Reversible, entry.Reversibility);
     }
 
     [Fact]
@@ -329,6 +350,9 @@ public class RecipesSuggestAndAdaptTests : PageTestContext
         await using (var raw = Db.CreateUnscopedContext())
         {
             Assert.Single(await raw.GroceryExtras.IgnoreQueryFilters().ToListAsync());
+            // Through the store, so the add is logged + undoable; the second (all-dupes) click records nothing.
+            Assert.Single(await raw.ActivityEntries.IgnoreQueryFilters()
+                .Where(e => e.Kind == ActivityKind.GroceryExtrasAdded).ToListAsync());
         }
     }
 

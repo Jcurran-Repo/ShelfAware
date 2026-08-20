@@ -125,6 +125,75 @@ public class RecipesEatFlowTests : PageTestContext
         Assert.Equal(3m, (await raw.Products.IgnoreQueryFilters().SingleAsync(p => p.Id == productId)).QuantityOnHand);
     }
 
+    // ------------------------------------------------------------ the meal is an undoable log entry
+
+    [Fact]
+    public async Task Ate_it_records_a_MealLogged_entry_committed_with_the_meal()
+    {
+        SeedProduct("Beef Chuck Roast", counted: true, onHand: 3m, unit: "cans", 1m, 1m);
+        SeedRecipe("Beef Stew", "beef chuck roast", "Beef Chuck Roast");
+        var cut = RenderRecipes();
+
+        ClickAteIt(cut, "Beef Stew");
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find(".inline-confirm")));
+
+        // The tap wrote the meal AND its undo record, atomically — one entry, one meal, committed together.
+        await using var raw = Db.CreateUnscopedContext();
+        var entry = Assert.Single(await raw.ActivityEntries.IgnoreQueryFilters().ToListAsync());
+        Assert.Equal(ActivityKind.MealLogged, entry.Kind);
+        Assert.Equal("Logged a meal: Beef Stew", entry.Summary);
+        Assert.Null(entry.UndoneAt);
+        Assert.Single(await raw.MealEvents.IgnoreQueryFilters().ToListAsync());
+    }
+
+    [Fact]
+    public async Task Inline_undo_reverses_through_the_activity_log_and_stamps_the_entry()
+    {
+        SeedProduct("Beef Chuck Roast", counted: true, onHand: 3m, unit: "cans", 1m, 1m);
+        SeedRecipe("Beef Stew", "beef chuck roast", "Beef Chuck Roast");
+        var cut = RenderRecipes();
+        ClickAteIt(cut, "Beef Stew");
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find(".inline-confirm")));
+
+        cut.FindAll(".inline-confirm button").Single(b => b.TextContent.Contains("Undo")).Click();
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".inline-confirm")));
+
+        // The inline Undo runs the SAME undo path /history does, so the entry is stamped undone — /history
+        // shows the meal reversed, never as a live undo of a meal already gone.
+        await using var raw = Db.CreateUnscopedContext();
+        var entry = Assert.Single(await raw.ActivityEntries.IgnoreQueryFilters().ToListAsync());
+        Assert.NotNull(entry.UndoneAt);
+        Assert.Empty(await raw.MealEvents.IgnoreQueryFilters().ToListAsync());
+    }
+
+    [Fact]
+    public async Task Undo_after_a_pick_restores_the_picked_package_too()
+    {
+        // The recipe pins to an UNCOUNTED store pack, so the only take is the picker's — no auto-take at
+        // all. The pick restates the meal's undo record; the inline Undo then puts that package back. If
+        // the restate were a no-op the payload would stay empty and the undo would restore nothing, leaving
+        // the freezer wrongly short — so this pins the durable record tracking a staged pick, end to end.
+        SeedProduct("Ground Beef", counted: false, onHand: null, unit: null, 1m, 1m);
+        var freezerId = SeedProduct("Quarter Cow Ground Beef", counted: true, onHand: 14m);
+        SeedRecipe("Freezer Chili", "ground beef", "Ground Beef");
+        var cut = RenderRecipes();
+        ClickAteIt(cut, "Freezer Chili");
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll(".picker-modal .alt-bubble")));
+
+        cut.FindAll(".picker-modal .alt-bubble")[0].Click(); // pick the freezer stock
+        cut.WaitForAssertion(() => Assert.Contains("1 off", Collapsed(cut.Find(".inline-confirm li"))));
+        await using (var mid = Db.CreateUnscopedContext())
+            Assert.Equal(13m, (await mid.Products.IgnoreQueryFilters().SingleAsync(p => p.Id == freezerId)).QuantityOnHand);
+
+        cut.FindAll(".inline-confirm button").Single(b => b.TextContent.Contains("Undo")).Click();
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".inline-confirm")));
+
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Equal(14m, (await raw.Products.IgnoreQueryFilters().SingleAsync(p => p.Id == freezerId)).QuantityOnHand);
+        Assert.NotNull((await raw.ActivityEntries.IgnoreQueryFilters().SingleAsync()).UndoneAt);
+        Assert.Empty(await raw.MealEvents.IgnoreQueryFilters().ToListAsync());
+    }
+
     // ------------------------------------------------------- split failure advice, proven by DB state
 
     [Fact]
@@ -395,5 +464,39 @@ public class RecipesEatFlowTests : PageTestContext
         Assert.Equal(0m, (await raw.Products.IgnoreQueryFilters().SingleAsync(p => p.Id == chuckId)).QuantityOnHand);
         Assert.Equal(6m, (await raw.Products.IgnoreQueryFilters().SingleAsync(p => p.Id == sirloinId)).QuantityOnHand);
         Assert.Single(await raw.MealEvents.IgnoreQueryFilters().ToListAsync());
+    }
+
+    [Fact]
+    public async Task A_pick_after_the_meal_was_undone_elsewhere_takes_nothing()
+    {
+        // The meal can be reversed on another surface (an /history undo, another tab) while the picker
+        // sits open. A pick must NOT then strand a decrement for a meal no longer on record — un-undoable,
+        // since the notice's Undo would report AlreadyUndone. The gone MealEvent is the reliable signal.
+        SeedProduct("Ground Beef", counted: false, onHand: null, unit: null, 1m, 1m);
+        var freezerId = SeedProduct("Quarter Cow Ground Beef", counted: true, onHand: 14m);
+        SeedRecipe("Freezer Chili", "ground beef", "Ground Beef");
+        var cut = RenderRecipes();
+        ClickAteIt(cut, "Freezer Chili");
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll(".picker-modal .alt-bubble")));
+
+        // Another surface reverses the meal (event removed) while the picker is open.
+        using (var db = Db.CreateDbContext())
+        {
+            db.MealEvents.Remove(db.MealEvents.Single());
+            db.SaveChanges();
+        }
+
+        cut.FindAll(".picker-modal .alt-bubble")[0].Click(); // pick — must take nothing
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Empty(cut.FindAll("[role=dialog]")); // the picker (and notice) close
+            Assert.Contains("That meal was undone elsewhere",
+                Collapsed(cut.Find(".error[role=alert]")));
+        });
+
+        // No stray decrement: the freezer count stands.
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Equal(14m, (await raw.Products.IgnoreQueryFilters().SingleAsync(p => p.Id == freezerId)).QuantityOnHand);
     }
 }

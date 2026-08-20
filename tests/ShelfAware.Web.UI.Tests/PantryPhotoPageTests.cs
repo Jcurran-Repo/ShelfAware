@@ -31,7 +31,7 @@ public class PantryPhotoPageTests : PageTestContext
 {
     protected override void RegisterAdditionalServices()
     {
-        Services.AddSingleton(new CensusConfirmationService(Factory));
+        Services.AddSingleton(new CensusConfirmationService(Factory, ActivityLog));
         // The census page injects AntiforgeryStateProvider (the read endpoint's CSRF token); bUnit
         // registers none, so a render would fail to resolve it without this stand-in.
         Services.AddSingleton<AntiforgeryStateProvider>(new TestAntiforgery());

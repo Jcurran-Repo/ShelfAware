@@ -4,6 +4,7 @@ using ShelfAware.Core.Domain;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Settings;
 using ShelfAware.Web.Data;
+using ShelfAware.Web.Undo;
 
 namespace ShelfAware.Web.Services;
 
@@ -17,7 +18,7 @@ namespace ShelfAware.Web.Services;
 /// </summary>
 public class RecipeAdapter(
     IHouseholdDbFactory dbFactory, IRecipeAdvisor advisor, IAppSettings settings,
-    ILogger<RecipeAdapter> logger) : IRecipeAdapter
+    IActivityLog activityLog, ILogger<RecipeAdapter> logger) : IRecipeAdapter
 {
     public async Task<AdaptResult> AdaptToOnHandAsync(int recipeId, IngredientSwap? swap = null, CancellationToken cancellationToken = default)
     {
@@ -102,7 +103,11 @@ public class RecipeAdapter(
             Steps = adapted.Steps.Select((t, idx) => new RecipeStep { Order = idx + 1, Text = t }).ToList(),
         };
         db.Recipes.Add(variant);
+        // History-only record, staged on the adapt's single SaveChanges. Only here, past the guards, so a
+        // failed or dishonoured adapt logs nothing. NotReversible — a variant is a saved recipe of its own.
+        activityLog.Record(db, ActivityKind.RecipeAdapted, new RecipeAdaptedPayload(familyName, variant.Name));
         await db.SaveChangesAsync(cancellationToken);
+        await activityLog.TrimAsync(cancellationToken);
         logger.LogInformation("Adapted recipe {RecipeId} into variant {VariantId} (replaced {Removed} duplicate(s)).",
             recipeId, variant.Id, stale.Count);
         return new AdaptResult(true, $"Saved \"{variant.Name}\" — a version of {familyName} using what you have.", variant.Id);

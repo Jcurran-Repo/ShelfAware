@@ -400,6 +400,10 @@ public class ProductDetailEditFlowsTests : PageTestContext
 
         // Case variants are the same phrase — one row, not two.
         Assert.Single((await LoadAsync(id)).Substitutes);
+        // Through the store, so adding a substitute is logged + undoable like a chat suggest_substitutes.
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.NotEmpty(await raw.ActivityEntries.IgnoreQueryFilters()
+            .Where(e => e.Kind == ActivityKind.SubstitutesAdded).ToListAsync());
     }
 
     [Fact]

@@ -144,7 +144,7 @@ internal sealed class FakePantryStore : IPantryStore
 
     public List<string> KnownTags { get; } = [];
 
-    public Task<int> CreateProductAsync(string name, Category category, IReadOnlyList<string> tags, CancellationToken cancellationToken = default)
+    public Task<int> CreateProductAsync(string name, Category category, IReadOnlyList<string> tags, string? defaultUnit = null, CancellationToken cancellationToken = default)
     {
         Created.Add((name, category));
         var product = new Product
@@ -152,6 +152,7 @@ internal sealed class FakePantryStore : IPantryStore
             Id = 1000 + Products.Count,
             Name = name,
             Category = category,
+            DefaultUnit = string.IsNullOrWhiteSpace(defaultUnit) ? null : defaultUnit.Trim(),
             Tags = [.. tags.Select(t => new ProductTag { Value = t })],
         };
         Products.Add(product);
@@ -175,11 +176,13 @@ internal sealed class FakePantryStore : IPantryStore
     public Task<IReadOnlyList<string>> GetKnownTagsAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<string>>(KnownTags);
 
-    public Task<bool> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default)
+    public Task<PurchaseResult> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, PurchaseSource source = PurchaseSource.Chat, CancellationToken cancellationToken = default)
     {
         // Mirror the real store: the product must exist (nothing recorded otherwise), a purchase
         // re-tracks an untracked product and reports it, and the count moves through the REAL ledger.
-        if (Products.FirstOrDefault(p => p.Id == productId) is not { } product) return Task.FromResult(false);
+        // No activity entry (this AI-layer fake doesn't log undo) — chat tests read Retracked only.
+        if (Products.FirstOrDefault(p => p.Id == productId) is not { } product)
+            return Task.FromResult(new PurchaseResult(false, null));
         Purchases.Add((productId, purchasedAt, quantity));
         var retracked = false;
         if (!product.IsTracked)
@@ -188,14 +191,14 @@ internal sealed class FakePantryStore : IPantryStore
             retracked = true;
         }
         StockLedger.Add(product, quantity);
-        return Task.FromResult(retracked);
+        return Task.FromResult(new PurchaseResult(retracked, null));
     }
 
-    public Task RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default)
+    public Task<ActivityRef?> RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default)
     {
         // Mirror the real store's in-household existence rule: no signals onto unknown products.
         if (Products.Any(p => p.Id == productId)) Signals.Add((productId, kind));
-        return Task.CompletedTask;
+        return Task.FromResult<ActivityRef?>(null); // fake doesn't record undo entries
     }
 
     public Task SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default)
@@ -303,13 +306,13 @@ internal sealed class ThrowingPantryStore(params Product[] products) : IPantrySt
     // A read, like GetProductsAsync — only WRITES simulate failure in this fake.
     public Task<Product?> GetProductAsync(int productId, CancellationToken cancellationToken = default) =>
         Task.FromResult(products.FirstOrDefault(p => p.Id == productId));
-    public Task<bool> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, CancellationToken cancellationToken = default) =>
+    public Task<PurchaseResult> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, PurchaseSource source = PurchaseSource.Chat, CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("simulated DB write failure");
-    public Task<int> CreateProductAsync(string name, Category category, IReadOnlyList<string> tags, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<int> CreateProductAsync(string name, Category category, IReadOnlyList<string> tags, string? defaultUnit = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<string>> AddTagsAsync(int productId, IReadOnlyList<string> tags, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     // Prompt composition reads the vocabulary before any tool runs — must succeed even in this fake.
     public Task<IReadOnlyList<string>> GetKnownTagsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<string>>([]);
-    public Task RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<ActivityRef?> RecordSignalAsync(int productId, SignalKind kind, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task SetTrackingAsync(int productId, bool tracked, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<bool> SetExpirationAsync(int productId, DateOnly? expiresOn, CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("simulated DB write failure");

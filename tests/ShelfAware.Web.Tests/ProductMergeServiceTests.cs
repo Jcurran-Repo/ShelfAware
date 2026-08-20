@@ -16,7 +16,7 @@ public class ProductMergeServiceTests : IDisposable
     private readonly TestDb _db = new();
     private readonly ProductMergeService _service;
 
-    public ProductMergeServiceTests() => _service = new ProductMergeService(_db);
+    public ProductMergeServiceTests() => _service = new ProductMergeService(_db, UndoTesting.Log(_db));
 
     public void Dispose() => _db.Dispose();
 

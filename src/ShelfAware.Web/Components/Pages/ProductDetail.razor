@@ -1234,9 +1234,8 @@ else
         newSubstitute = "";
         if (value.Length == 0 || product is null) return;
         if (product.Substitutes.Any(s => string.Equals(s.Value, value, StringComparison.OrdinalIgnoreCase))) return;
+        await Store.AddSubstitutesAsync(product.Id, [value]); // dedupes + logs a SubstitutesAdded
         await using var db = await DbFactory.CreateDbContextAsync();
-        db.ProductSubstitutes.Add(new ProductSubstitute { ProductId = product.Id, Value = value });
-        await db.SaveChangesAsync();
         await ReloadSubstitutes(db);
     }
 
@@ -1263,10 +1262,8 @@ else
                 .Where(v => !product.Substitutes.Any(s => string.Equals(s.Value, v, StringComparison.OrdinalIgnoreCase)))
                 .ToList();
             if (toAdd.Count == 0) return;
+            await Store.AddSubstitutesAsync(product.Id, toAdd); // dedupes + logs a SubstitutesAdded
             await using var db = await DbFactory.CreateDbContextAsync();
-            foreach (var v in toAdd)
-                db.ProductSubstitutes.Add(new ProductSubstitute { ProductId = product.Id, Value = v });
-            await db.SaveChangesAsync();
             await ReloadSubstitutes(db);
         }
         finally

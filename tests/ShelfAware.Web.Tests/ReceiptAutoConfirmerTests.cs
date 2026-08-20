@@ -21,7 +21,7 @@ public class ReceiptAutoConfirmerTests : IDisposable
     public void Dispose() => _db.Dispose();
 
     private ReceiptAutoConfirmer Confirmer() => new(
-        _db, _settings, new ReceiptConfirmationService(_db), new ReceiptDuplicateDetector(_db),
+        _db, _settings, new ReceiptConfirmationService(_db, UndoTesting.Log(_db)), new ReceiptDuplicateDetector(_db),
         NullLogger<ReceiptAutoConfirmer>.Instance);
 
     private async Task<int> SeedProduct(string name)

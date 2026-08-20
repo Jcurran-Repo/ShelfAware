@@ -20,6 +20,7 @@ public static class SiteNav
         new("Receipts", "/receipts"),
         new("Count Stock", "/pantry-photo"),
         new("Products", "/products"),
+        new("History", "/history"),
         new("Accuracy", "/accuracy"),
         new("Settings", "/settings"),
     ];

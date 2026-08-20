@@ -331,14 +331,9 @@ else
         var name = newExtra.Trim();
         if (name.Length == 0) return;
         copyStatus = null; // the copied list is now stale
-        await using var db = await DbFactory.CreateDbContextAsync();
-        var have = await db.GroceryExtras.Select(e => e.Name).ToListAsync();
-        if (!have.Any(h => string.Equals(h, name, StringComparison.OrdinalIgnoreCase)))
-        {
-            db.GroceryExtras.Add(new GroceryExtra { Name = name });
-            await db.SaveChangesAsync();
-        }
+        await Store.AddGroceryExtrasAsync([name]); // dedupes existing + logs a GroceryExtrasAdded
         newExtra = "";
+        await using var db = await DbFactory.CreateDbContextAsync();
         extras = await db.GroceryExtras.OrderBy(e => e.Name).ToListAsync();
     }
 

@@ -9,7 +9,7 @@ public class ProductRenameServiceTests : IDisposable
     private readonly TestDb _db = new();
     private readonly ProductRenameService _service;
 
-    public ProductRenameServiceTests() => _service = new ProductRenameService(_db);
+    public ProductRenameServiceTests() => _service = new ProductRenameService(_db, UndoTesting.Log(_db));
 
     public void Dispose() => _db.Dispose();
 

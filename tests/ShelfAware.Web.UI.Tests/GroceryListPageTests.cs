@@ -69,6 +69,8 @@ public class GroceryListPageTests : PageTestContext
 
         await using var raw = Db.CreateUnscopedContext();
         Assert.Equal(2, await raw.GroceryExtras.IgnoreQueryFilters().CountAsync());
+        // Through the store, so each real add is logged + undoable — and the deduped 3rd records nothing.
+        Assert.Equal(2, await raw.ActivityEntries.IgnoreQueryFilters().CountAsync(e => e.Kind == ActivityKind.GroceryExtrasAdded));
     }
 
     [Fact]

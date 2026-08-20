@@ -161,6 +161,28 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Creates_the_ActivityEntries_table_on_an_older_db_with_the_fresh_schema()
+    {
+        await using var db = _db.CreateDbContext();
+        var fresh = await TableSchemaAsync(db, "ActivityEntries");
+        Assert.NotEmpty(fresh);
+
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE ActivityEntries;");
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        Assert.Equal(fresh, await TableSchemaAsync(db, "ActivityEntries"));
+
+        db.ActivityEntries.Add(new ActivityEntry
+        {
+            Kind = ActivityKind.PurchaseAdded, OccurredAt = DateTimeOffset.Now,
+            Summary = "Bought 1 × Whole Milk", PayloadJson = "{}", Reversibility = Reversibility.Reversible,
+        });
+        await db.SaveChangesAsync();
+        Assert.Single(await db.ActivityEntries.ToListAsync());
+    }
+
+    [Fact]
     public async Task Adds_the_resolved_at_column_to_a_pre_resolve_error_log()
     {
         // The auth-side twin — same reasoning, same live-deployment path.

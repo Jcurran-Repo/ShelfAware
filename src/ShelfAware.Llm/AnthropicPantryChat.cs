@@ -219,10 +219,10 @@ public class AnthropicPantryChat : IPantryChat
                     return ($"No product matches \"{name}\". Call create_product first if it's new.", true);
                 var date = DateOnly.TryParse(Str("date"), out var d) ? d : DateOnly.FromDateTime(DateTime.Today);
                 var qty = Dec("quantity") is { } q && q > 0 ? q : 1m;
-                var retracked = await _store.AddPurchaseAsync(product.Id, date, qty, ct);
+                var result = await _store.AddPurchaseAsync(product.Id, date, qty, cancellationToken: ct);
                 actions.Add($"purchase → {product.Name}");
                 return ($"Logged {qty:0.##} × {product.Name} on {date:yyyy-MM-dd}." +
-                    (retracked ? " It was untracked; this purchase resumed tracking — mention that to the user." : ""), false);
+                    (result.Retracked ? " It was untracked; this purchase resumed tracking — mention that to the user." : ""), false);
             }
 
             case "query_status":
@@ -380,7 +380,7 @@ public class AnthropicPantryChat : IPantryChat
                         return ($"That sounds like \"{existing.Name}\", which already exists. If it's the same item, use \"{existing.Name}\"; if the user confirms it's genuinely different, call create_product again with confirmed_distinct=true.", false);
                 }
                 var tags = StrList("tags") ?? [];
-                await _store.CreateProductAsync(name, category, tags, ct);
+                await _store.CreateProductAsync(name, category, tags, cancellationToken: ct);
                 actions.Add($"created {name}");
                 return ($"Created {name} ({category}){(tags.Count > 0 ? $", tagged {string.Join(", ", tags)}" : "")}.", false);
             }

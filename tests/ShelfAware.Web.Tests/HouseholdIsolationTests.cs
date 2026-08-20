@@ -73,6 +73,11 @@ public class HouseholdIsolationTests : IDisposable
             db.MealEvents.Add(new MealEvent { Recipe = toast, AteAt = new DateOnly(2026, 7, 10) });
             db.SavedReports.Add(new SavedReport { Name = "Mine", Query = "from=2026-06-01&to=2026-07-01", SavedAt = DateTimeOffset.Now });
             db.BugReports.Add(new BugReport { Body = "The milk chart looks wrong", CreatedAt = DateTimeOffset.Now });
+            db.ActivityEntries.Add(new ActivityEntry
+            {
+                Kind = ActivityKind.PurchaseAdded, OccurredAt = DateTimeOffset.Now,
+                Summary = "Bought 1 × Whole Milk", PayloadJson = "{}", Reversibility = Reversibility.Reversible,
+            });
             await db.SaveChangesAsync();
         }
 
@@ -90,6 +95,7 @@ public class HouseholdIsolationTests : IDisposable
             Assert.Empty(await db.MealEvents.ToListAsync());
             Assert.Empty(await db.SavedReports.ToListAsync());
             Assert.Empty(await db.BugReports.ToListAsync());
+            Assert.Empty(await db.ActivityEntries.ToListAsync());
         }
 
         await using (var db = As(A))
@@ -136,8 +142,8 @@ public class HouseholdIsolationTests : IDisposable
         }
 
         _db.HouseholdId = B;
-        var store = new EfPantryStore(_db);
-        var retracked = await store.AddPurchaseAsync(productId, new DateOnly(2026, 7, 2), 1);
+        var store = new EfPantryStore(_db, UndoTesting.Log(_db));
+        var retracked = (await store.AddPurchaseAsync(productId, new DateOnly(2026, 7, 2), 1)).Retracked;
         await store.RecordSignalAsync(productId, SignalKind.RunningLow);
 
         Assert.False(retracked);
@@ -160,7 +166,7 @@ public class HouseholdIsolationTests : IDisposable
         }
 
         _db.HouseholdId = B;
-        var confirmer = new ReceiptConfirmationService(_db);
+        var confirmer = new ReceiptConfirmationService(_db, UndoTesting.Log(_db));
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             confirmer.ConfirmAsync(receiptId, new DateOnly(2026, 7, 2), [], writeAliases: true));
         Assert.Contains("no longer exists", ex.Message);
@@ -328,7 +334,7 @@ public class HouseholdIsolationTests : IDisposable
         var (productId, _) = await CountedProductOwnedByB();
 
         _db.HouseholdId = A;
-        var store = new EfPantryStore(_db);
+        var store = new EfPantryStore(_db, UndoTesting.Log(_db));
 
         Assert.False(await store.SetQuantityAsync(productId, 99));
         Assert.False(await store.SetQuantityAsync(productId, -1, relative: true));
@@ -351,7 +357,7 @@ public class HouseholdIsolationTests : IDisposable
         var (productId, _) = await CountedProductOwnedByB();
 
         _db.HouseholdId = A;
-        Assert.False(await new EfPantryStore(_db).SetDefaultUnitAsync(productId, "lb"));
+        Assert.False(await new EfPantryStore(_db, UndoTesting.Log(_db)).SetDefaultUnitAsync(productId, "lb"));
 
         Assert.Null((await ReadAsB(productId)).DefaultUnit);
     }
@@ -362,7 +368,7 @@ public class HouseholdIsolationTests : IDisposable
         var (productId, purchaseId) = await CountedProductOwnedByB();
 
         _db.HouseholdId = A;
-        Assert.False(await new EfPantryStore(_db).SetPurchaseQuantityAsync(purchaseId, 1));
+        Assert.False(await new EfPantryStore(_db, UndoTesting.Log(_db)).SetPurchaseQuantityAsync(purchaseId, 1));
 
         await using var raw = _db.CreateUnscopedContext();
         Assert.Equal(6m, // the history A tried to rewrite

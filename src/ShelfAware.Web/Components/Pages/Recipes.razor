@@ -6,8 +6,10 @@
 @using ShelfAware.Core.Recipes
 @using ShelfAware.Core.Settings
 @using ShelfAware.Core.Shopping
+@using ShelfAware.Web.Undo
 @inject IHouseholdDbFactory DbFactory
 @inject IPantryStore Store
+@inject ActivityLogService ActivityLog
 @inject IAppSettings Settings
 @inject IRecipeAdvisor Advisor
 @inject IRecipeAdapter Adapter
@@ -836,7 +838,11 @@
         {
             await using var db = await DbFactory.CreateDbContextAsync();
             db.ExcludedFoods.Add(new ExcludedFood { Value = value });
+            // Undoable: the entry matches the food by value, so it needs no generated id — staged on this
+            // same save, so the exclusion and its undo record commit together.
+            ActivityLog.Record(db, ActivityKind.ExcludedFoodChanged, new ExcludedFoodChangedPayload(WasAdded: true, value));
             await db.SaveChangesAsync();
+            await ActivityLog.TrimAsync();
         }
         newExcluded = "";
         await LoadAsync();
@@ -849,7 +855,9 @@
         if (await db.ExcludedFoods.FindAsync(f.Id) is { } row)
         {
             db.ExcludedFoods.Remove(row);
+            ActivityLog.Record(db, ActivityKind.ExcludedFoodChanged, new ExcludedFoodChangedPayload(WasAdded: false, row.Value));
             await db.SaveChangesAsync();
+            await ActivityLog.TrimAsync();
         }
         await LoadAsync();
     }
@@ -910,7 +918,11 @@
             Steps = s.Steps.Select((t, idx) => new RecipeStep { Order = idx + 1, Text = t }).ToList(),
             EstimatedCaloriesPerServing = s.CaloriesPerServing,
         });
+        // History-only: recorded so /history shows the save, never undone (the 🗑 on the card is the
+        // manual removal). No generated id needed — the summary carries only the name.
+        ActivityLog.Record(db, ActivityKind.RecipeSaved, new RecipeSavedPayload(s.Name));
         await db.SaveChangesAsync();
+        await ActivityLog.TrimAsync();
         await LoadAsync();
     }
 
@@ -922,7 +934,12 @@
     private sealed class EatDone
     {
         public required int RecipeId { get; init; }
+        public required string RecipeName { get; init; }
         public required int MealEventId { get; init; }
+        /// <summary>The MealLogged activity entry recorded with this meal — both the inline "↩ Undo" and
+        /// the /history undo reverse THROUGH it (one reversal path), and a picker answer restates its
+        /// payload so the durable record keeps matching <see cref="Taken"/>.</summary>
+        public required int ActivityEntryId { get; init; }
         public List<MealStock.Applied> Taken { get; } = [];
         public List<MealStock.Ambiguity> ToPick { get; } = [];
         public List<MealStock.Ambiguity> Skipped { get; } = [];
@@ -965,13 +982,30 @@
             var meal = new MealEvent { RecipeId = rec.Id, AteAt = DateOnly.FromDateTime(DateTime.Today) };
             db.MealEvents.Add(meal);
             var taken = MealStock.Apply(resolution); // same save as the MealEvent — one tap, one transaction
-            await db.SaveChangesAsync();
+
+            // The meal AND its undo record commit together (like a create in EfPantryStore): the entry keys
+            // on the meal's generated id, so the meal saves inside the transaction to assign it, then the
+            // entry is staged and saved. The transaction is scoped to close BEFORE LoadAsync opens its own
+            // context on this shared connection.
+            ActivityEntry entry;
+            await using (var tx = await db.Database.BeginTransactionAsync())
+            {
+                await db.SaveChangesAsync(); // assigns meal.Id + the counter/take on the same commit
+                entry = ActivityLog.Record(db, ActivityKind.MealLogged,
+                    new MealLoggedPayload(meal.Id, r.Name, taken.ToList()));
+                await db.SaveChangesAsync();
+                await tx.CommitAsync();
+            }
             saved = true;
-            var done = new EatDone { RecipeId = r.Id, MealEventId = meal.Id };
+            var done = new EatDone
+            {
+                RecipeId = r.Id, RecipeName = r.Name, MealEventId = meal.Id, ActivityEntryId = entry.Id,
+            };
             done.Taken.AddRange(taken);
             done.ToPick.AddRange(resolution.Ambiguous); // the picker asks these; click-away skips them
             lastEat = done;
             await LoadAsync();
+            await ActivityLog.TrimAsync(); // retention: decoupled, best-effort, after the commit
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -983,43 +1017,38 @@
         finally { eatBusy = false; }
     }
 
-    /// <summary>Reverse the last "Ate it": the meal event goes, the counter steps back, and the ACTUAL
-    /// taken amounts return to their counts. Restoring commutes with anything that moved the counts in
-    /// between (a receipt's +N, another cook), so no compare-and-refuse step is needed; a product whose
-    /// counting stopped meanwhile stays dormant — the ledger's own gate.</summary>
+    /// <summary>Reverse the last "Ate it" through the ONE undo path — <see cref="ActivityLogService"/> —
+    /// exactly as the /history page does: the meal event goes, the counter steps back, the ACTUAL taken
+    /// amounts (auto + any picked) return, and the entry is stamped undone so /history shows it reversed.
+    /// The reversal itself is <see cref="MealStock.ReverseMealOnAsync"/> (via the handler), so the inline
+    /// and history surfaces can never disagree about what undoing a meal does. Restoring commutes with
+    /// anything that moved the counts in between; a product whose counting stopped meanwhile stays dormant
+    /// — the ledger's own gate.</summary>
     private async Task UndoEat()
     {
         if (lastEat is not { } done || eatBusy) return;
         eatBusy = true;
         eatError = null;
-        var saved = false;
+        var undone = false;
         try
         {
-            await using var db = await DbFactory.CreateDbContextAsync();
-            var meal = await db.MealEvents.FindAsync(done.MealEventId);
-            if (meal is null)
+            var outcome = await ActivityLog.UndoAsync(done.ActivityEntryId);
+            if (outcome != UndoOutcome.Done)
             {
-                // Another surface already removed it; nothing coherent to undo.
+                // Gone/Superseded/AlreadyUndone — another surface already reversed it (an /history undo,
+                // another device). Nothing coherent left to undo here.
                 lastEat = null;
                 eatError = (done.RecipeId, "That meal is no longer on record — nothing to undo.");
                 return;
             }
-
-            db.MealEvents.Remove(meal);
-            var rec = await db.Recipes.FindAsync(done.RecipeId);
-            if (rec is not null) rec.TimesEaten = Math.Max(0, rec.TimesEaten - 1);
-            var ids = done.Taken.Select(t => t.ProductId).ToList();
-            var products = await db.Products.Where(p => ids.Contains(p.Id)).ToListAsync();
-            MealStock.Restore(products, done.Taken);
-            await db.SaveChangesAsync();
-            saved = true;
+            undone = true; // the reversal is committed; only the reload can fail past here
             lastEat = null;
             await LoadAsync();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Logger.LogError(ex, "Undoing the last meal for recipe {RecipeId} failed (saved: {Saved}).", done.RecipeId, saved);
-            eatError = saved
+            Logger.LogError(ex, "Undoing the last meal for recipe {RecipeId} failed (undone: {Undone}).", done.RecipeId, undone);
+            eatError = undone
                 ? (done.RecipeId, "Undone — but the page couldn't refresh. Reload to see it.")
                 : (done.RecipeId, "The undo didn't save. Try again, or reload the page.");
         }
@@ -1048,11 +1077,30 @@
         try
         {
             await using var db = await DbFactory.CreateDbContextAsync();
+            // The meal itself may have been undone on another surface since the picker opened (an /history
+            // undo, another tab) — its MealEvent removed and its auto-takes already restored. Taking a
+            // package now would strand a decrement for a meal no longer on record, un-undoable (the notice's
+            // Undo would then report AlreadyUndone). Undo removes the event and stamps the entry in ONE
+            // transaction, so a missing event is the reliable "this was reversed" signal.
+            if (await db.MealEvents.FindAsync(done.MealEventId) is null)
+            {
+                lastEat = null;
+                eatError = (done.RecipeId, "That meal was undone elsewhere — nothing was taken.");
+                return;
+            }
             var product = await db.Products.Include(p => p.Purchases)
                 .FirstOrDefaultAsync(p => p.Id == candidate.ProductId);
             var taken = product is null ? null : MealStock.TakeOne(product);
             if (taken is not null)
             {
+                // Restate the meal's undo record so it keeps matching what was actually taken: a /history
+                // (or inline) undo after this pick must restore the pick too, not just the auto-takes. The
+                // count take and the payload restate commit in ONE save. Built from a prospective list so
+                // done.Taken is mutated only after the DB commits (a failed save must leave page state
+                // untouched — the split failure advice below relies on it).
+                var updated = new List<MealStock.Applied>(done.Taken) { taken };
+                if (await db.ActivityEntries.FindAsync(done.ActivityEntryId) is { } entry)
+                    ActivityLog.Restate(entry, new MealLoggedPayload(done.MealEventId, done.RecipeName, updated));
                 await db.SaveChangesAsync();
                 saved = true;
                 done.Taken.Add(taken);
@@ -1099,19 +1147,9 @@
         var missing = r.MissingMains(onHand).Select(i => i.Name).ToList();
         if (missing.Count == 0) { extraNote = "You already have everything for this."; return; }
 
-        await using var db = await DbFactory.CreateDbContextAsync();
-        var have = await db.GroceryExtras.Select(e => e.Name).ToListAsync();
-        var added = 0;
-        foreach (var name in missing)
-        {
-            if (!have.Any(h => string.Equals(h, name, StringComparison.OrdinalIgnoreCase)))
-            {
-                db.GroceryExtras.Add(new GroceryExtra { Name = name });
-                have.Add(name);
-                added++;
-            }
-        }
-        await db.SaveChangesAsync();
+        // Through the store's ONE add-extras path: it skips ones already on the list (no re-implemented
+        // "skip existing" here) and logs a GroceryExtrasAdded. The count back is what was actually added.
+        var added = (await Store.AddGroceryExtrasAsync(missing)).Count;
         extraNote = added > 0
             ? $"Added {added} item{(added == 1 ? "" : "s")} to your grocery list."
             : "Those are already on your grocery list.";

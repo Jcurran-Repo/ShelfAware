@@ -4,6 +4,7 @@
 @using ShelfAware.Core.Settings
 @using ShelfAware.Core.Shopping
 @inject IHouseholdDbFactory DbFactory
+@inject IPantryStore Store
 @inject IAppSettings SettingsStore
 @inject IJSRuntime JS
 @inject ILogger<Products> Logger
@@ -453,14 +454,9 @@ else
     private async Task CreateAsync(string name)
     {
         duplicateOf = null;
-        await using var db = await DbFactory.CreateDbContextAsync();
-        db.Products.Add(new Product
-        {
-            Name = name,
-            Category = newCategory,
-            DefaultUnit = string.IsNullOrWhiteSpace(newUnit) ? null : newUnit.Trim()
-        });
-        await db.SaveChangesAsync();
+        // Through the ONE create path so the add is logged + undoable, exactly as chat's create_product is
+        // (the page's own duplicate guard ran first). DefaultUnit rides along.
+        await Store.CreateProductAsync(name, newCategory, [], newUnit);
         newName = "";
         newUnit = "";
         await LoadAsync();
@@ -478,8 +474,8 @@ else
 
     private async Task SetTracked(Product p, bool tracked)
     {
-        p.IsTracked = tracked;
-        await Save(p);
+        p.IsTracked = tracked; // reflect it in the grid immediately
+        await Store.SetTrackingAsync(p.Id, tracked); // persists + logs a TrackingChanged (no-op if unchanged)
     }
 
     private async Task Save(Product p)
@@ -513,16 +509,7 @@ else
         markOutNote = null;
         try
         {
-            await using (var db = await DbFactory.CreateDbContextAsync())
-            {
-                db.InventorySignals.Add(new InventorySignal
-                {
-                    ProductId = p.Id,
-                    Kind = SignalKind.OutNow,
-                    SignaledAt = DateTimeOffset.Now
-                });
-                await db.SaveChangesAsync();
-            }
+            await Store.RecordSignalAsync(p.Id, SignalKind.OutNow); // writes the signal + logs a SignalRecorded
             await LoadAsync();
             if (predictions is not null && predictions.TryGetValue(p.Id, out var prediction)
                 && prediction.SignalTodayWouldBeInert)

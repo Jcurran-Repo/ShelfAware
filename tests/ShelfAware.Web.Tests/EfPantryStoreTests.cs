@@ -9,7 +9,7 @@ public class EfPantryStoreTests : IDisposable
     private readonly TestDb _db = new();
     private readonly EfPantryStore _store;
 
-    public EfPantryStoreTests() => _store = new EfPantryStore(_db);
+    public EfPantryStoreTests() => _store = new EfPantryStore(_db, UndoTesting.Log(_db));
 
     public void Dispose() => _db.Dispose();
 
@@ -455,7 +455,7 @@ public class EfPantryStoreTests : IDisposable
             cocoaId = cocoa.Id;
         }
 
-        var retracked = await _store.AddPurchaseAsync(cocoaId, new DateOnly(2026, 7, 6), 1m);
+        var retracked = (await _store.AddPurchaseAsync(cocoaId, new DateOnly(2026, 7, 6), 1m)).Retracked;
 
         Assert.True(retracked);
         await using var read = _db.CreateDbContext();
@@ -575,7 +575,7 @@ public class EfPantryStoreTests : IDisposable
             milkId = milk.Id;
         }
 
-        var retracked = await _store.AddPurchaseAsync(milkId, new DateOnly(2026, 7, 6), 1m);
+        var retracked = (await _store.AddPurchaseAsync(milkId, new DateOnly(2026, 7, 6), 1m)).Retracked;
 
         Assert.False(retracked);
         await using var read = _db.CreateDbContext();

@@ -64,6 +64,7 @@ public sealed class UserDataService(
             GroceryExtras = await db.GroceryExtras.AsNoTracking().ToListAsync(ct),
             SavedReports = await db.SavedReports.AsNoTracking().ToListAsync(ct),
             BugReports = await db.BugReports.AsNoTracking().ToListAsync(ct),
+            ActivityEntries = await db.ActivityEntries.AsNoTracking().ToListAsync(ct),
         };
     }
 
@@ -272,6 +273,7 @@ public sealed class UserDataService(
             + await db.ExcludedFoods.CountAsync(ct)
             + await db.GroceryExtras.CountAsync(ct)
             + await db.BugReports.CountAsync(ct)
+            + await db.ActivityEntries.CountAsync(ct)
             + await db.AppSettings.CountAsync(ct);
     }
 
@@ -306,6 +308,7 @@ public sealed class UserDataService(
         await db.GroceryExtras.ExecuteDeleteAsync(ct);
         await db.SavedReports.ExecuteDeleteAsync(ct); // no FKs — but a report config is user content
         await db.BugReports.ExecuteDeleteAsync(ct); // no FKs — the household's own words, so they go too
+        await db.ActivityEntries.ExecuteDeleteAsync(ct); // no FKs (ids ride in PayloadJson) — user content
 
         // Settings go with everything else, and wholesale rather than by a list of keys. Some of this
         // table is pantry-derived content outright (the last recipe ideas; the self-eval's per-receipt
@@ -394,4 +397,8 @@ public sealed class DataExport
     public IReadOnlyList<ExcludedFood> ExcludedFoods { get; init; } = [];
     public IReadOnlyList<GroceryExtra> GroceryExtras { get; init; } = [];
     public IReadOnlyList<BugReport> BugReports { get; init; } = [];
+
+    /// <summary>The activity log — every undoable action the household took. User content (it names
+    /// their products, dates and merchants), so it exports and is wiped by "delete all my data".</summary>
+    public IReadOnlyList<ActivityEntry> ActivityEntries { get; init; } = [];
 }

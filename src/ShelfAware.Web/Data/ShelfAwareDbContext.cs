@@ -31,6 +31,7 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
     public DbSet<BugReport> BugReports => Set<BugReport>();
     public DbSet<AppSetting> AppSettings => Set<AppSetting>();
     public DbSet<AiUsage> AiUsages => Set<AiUsage>();
+    public DbSet<ActivityEntry> ActivityEntries => Set<ActivityEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -64,6 +65,7 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
         ApplyHousehold<SavedReport>(modelBuilder);
         ApplyHousehold<BugReport>(modelBuilder);
         ApplyHousehold<AiUsage>(modelBuilder);
+        ApplyHousehold<ActivityEntry>(modelBuilder);
 
         // One usage row per household per day (the upsert's race-safety anchor).
         modelBuilder.Entity<AiUsage>()

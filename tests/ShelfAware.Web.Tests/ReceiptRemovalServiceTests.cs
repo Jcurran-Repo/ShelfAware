@@ -29,7 +29,7 @@ public class ReceiptRemovalServiceTests : IDisposable
 
     private ReceiptRemovalService Service() => new(_db, Storage(), NullLogger<ReceiptRemovalService>.Instance);
 
-    private ReceiptConfirmationService Confirmer() => new(_db);
+    private ReceiptConfirmationService Confirmer() => new(_db, UndoTesting.Log(_db));
 
     private static readonly DateOnly Dated = new(2026, 7, 1);
 
@@ -282,7 +282,7 @@ public class ReceiptRemovalServiceTests : IDisposable
             productId = (await db.Products.SingleAsync()).Id;
         }
         // The census's own write path — the real service, so the probe can't be kinder than the app.
-        var census = await new CensusConfirmationService(_db).ConfirmAsync(
+        var census = await new CensusConfirmationService(_db, UndoTesting.Log(_db)).ConfirmAsync(
             [new CensusConfirmationService.CensusRow("Frozen Peas", Category.Frozen, 12m, productId)]);
         Assert.Equal(1, census.Counted);
 

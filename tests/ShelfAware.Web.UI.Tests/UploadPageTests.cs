@@ -66,7 +66,7 @@ public class UploadPageTests : PageTestContext
             new AppPaths(dataDir, Path.Combine(dataDir, "receipts")), household, NullLogger<ReceiptStorage>.Instance);
         Extractor = new QueueExtractor();
         TagAdvisor = new FakeTagAdvisor();
-        var confirmer = new ReceiptConfirmationService(Factory);
+        var confirmer = new ReceiptConfirmationService(Factory, ActivityLog);
         var duplicates = new ReceiptDuplicateDetector(Factory);
         Services.AddSingleton<IReceiptExtractor>(Extractor);
         Services.AddSingleton<ITagAdvisor>(TagAdvisor);
@@ -386,6 +386,23 @@ public class UploadPageTests : PageTestContext
 
         await using var raw = Db.CreateUnscopedContext();
         Assert.Single(await raw.PurchaseEvents.IgnoreQueryFilters().ToListAsync()); // once, not twice
+    }
+
+    [Fact]
+    public async Task Confirming_on_the_page_records_an_undoable_ReceiptConfirmed_entry()
+    {
+        SeedPending("Walmart", Today.AddDays(-2), DbLine("GV MILK", "Whole Milk"));
+        var cut = OpenReview();
+        cut.FindAll(".review-actions button").Single(b => b.TextContent.Trim() == "Confirm all").Click();
+        cut.WaitForState(() => cut.Markup.Contains("Undo — remove this receipt"));
+
+        // The confirm and its undo record commit together — so /history can undo this receipt later, not
+        // only the Done panel's ↩ Undo right here.
+        await using var raw = Db.CreateUnscopedContext();
+        var entry = Assert.Single(await raw.ActivityEntries.IgnoreQueryFilters()
+            .Where(e => e.Kind == ActivityKind.ReceiptConfirmed).ToListAsync());
+        Assert.Equal("Confirmed 1 item from Walmart", entry.Summary);
+        Assert.Null(entry.UndoneAt);
     }
 
     [Fact]
