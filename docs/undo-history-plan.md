@@ -321,14 +321,26 @@ clean.** Fixed 4:
   - **#5** `/history` `AlreadyUndone` rendered a blank date on a concurrent-undo-during-load race — omit it.
   - **#6** no test asserted every `ActivityKind` has a handler (a new kind would fail only at record-time) —
     added, mutation-checked (it names the missing kind).
-  - **Deferred, Jordan's call:** **#1 (MEDIUM)** several PAGE buttons write directly instead of through the
-    recording store methods, so create-product / mark-out / set-tracking (Products), add-substitute
-    (ProductDetail) and add-extra (GroceryList/Recipes) are logged via chat/voice but NOT from their own page
-    — a coverage gap, not a correctness bug. **#4 (LOW/efficiency)** `/history` peeks each row in its own
-    context (N+1; a ReceiptConfirmed peek stages a full removal-simulation) — bounded to that page.
+  - ⚠️ **#1 (MEDIUM) FIXED (Jordan's call).** Several PAGE buttons wrote directly to the DB instead of
+    through the recording store methods, so those actions were logged via chat/voice but NOT from their own
+    page. Routed every one through the store's ONE definition: `CreateAsync` (Products; `CreateProductAsync`
+    gained a `defaultUnit` param so the page keeps its unit — the chat caller now names `ct` so it doesn't
+    bind to it), `MarkOut` → `RecordSignalAsync`, `SetTracked` → `SetTrackingAsync`, `AddSubstitute`/
+    `SuggestSubstitutes` → `AddSubstitutesAsync`, `AddExtra` + Recipes' `AddMissingToList` →
+    `AddGroceryExtrasAsync` (which also DELETED `AddMissingToList`'s re-implemented "skip existing" — the
+    store owns it, one definition). Products now injects `IPantryStore`. Each pinned by an
+    entry-recorded page test (mutation-checked: a direct-write mutation fails the create assertion); the
+    72 existing page tests stay green, so no page behaviour changed (the DefaultUnit test even proves the
+    unit still rides through the store). Deliberately NOT logged (no such kind, consistent with chat):
+    removing an extra/substitute, deleting a product.
+  - **#4 (LOW/efficiency, left documented):** `/history` peeks each row in its own context (N+1; a
+    ReceiptConfirmed peek stages a full removal-simulation). Bounded to that page, and the clean fix would
+    force every handler to split "cheap precondition" from "stage reversal" — breaking the guarantee that
+    Peek runs the EXACT same reversal as undo (so display and undo can't disagree). The cure is worse.
 
-Suite **1742 green**, Release 0 warnings. ⚠️ A formal re-gate of the fix commit (item 39) is the ideal next
-step. **Pushing is Jordan's call — not done.**
+Suite **1742 green** (strengthened existing tests, no new methods), Release 0 warnings. ⚠️ A formal re-gate
+of these fixes (item 39 — a fix pass needs its own review) is the ideal next step. **Pushing is Jordan's
+call — not done.**
 
 1. `ActivityEntry` schema + tenancy drill + `ActivityLogService` + `IUndoHandler` registry + retention.
 2. The `IPantryStore`-layer actions (#1–#13): consolidate `BoughtToday`; record in `AddPurchaseAsync`,

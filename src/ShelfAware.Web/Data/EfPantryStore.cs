@@ -34,10 +34,17 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
             .FirstOrDefaultAsync(p => p.Id == productId, cancellationToken);
     }
 
-    public async Task<int> CreateProductAsync(string name, Category category, IReadOnlyList<string> tags, CancellationToken cancellationToken = default)
+    public async Task<int> CreateProductAsync(
+        string name, Category category, IReadOnlyList<string> tags, string? defaultUnit = null,
+        CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var product = new Product { Name = name, Category = category };
+        var product = new Product
+        {
+            Name = name,
+            Category = category,
+            DefaultUnit = string.IsNullOrWhiteSpace(defaultUnit) ? null : defaultUnit.Trim(),
+        };
         if (tags.Count > 0)
             TagVocabulary.ApplyTags(product, tags, await LoadVocabularyAsync(db, cancellationToken));
         db.Products.Add(product);

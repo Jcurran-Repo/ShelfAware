@@ -60,6 +60,9 @@ public class ProductsPageTests : PageTestContext
         Assert.Equal("Whole Milk", product.Name);
         Assert.Equal(Category.Dairy, product.Category);
         Assert.Equal("gal", product.DefaultUnit);
+        // Through the store's one create path, so the page add is logged + undoable like a chat create.
+        var entry = await raw.ActivityEntries.IgnoreQueryFilters().SingleAsync(e => e.Kind == ActivityKind.ProductCreated);
+        Assert.Equal("Added Whole Milk", entry.Summary);
     }
 
     [Fact]
@@ -260,6 +263,9 @@ public class ProductsPageTests : PageTestContext
         var signal = Assert.Single(await raw.InventorySignals.IgnoreQueryFilters().ToListAsync());
         Assert.Equal(SignalKind.OutNow, signal.Kind);
         Assert.Equal(id, signal.ProductId);
+        // Through the store, so the grid's Out is logged + undoable like a dashboard/chat signal.
+        Assert.Single(await raw.ActivityEntries.IgnoreQueryFilters()
+            .Where(e => e.Kind == ActivityKind.SignalRecorded).ToListAsync());
     }
 
     [Fact]
@@ -380,6 +386,9 @@ public class ProductsPageTests : PageTestContext
         {
             await using var raw = Db.CreateUnscopedContext();
             Assert.False((await raw.Products.IgnoreQueryFilters().SingleAsync(p => p.Id == id)).IsTracked);
+            // Through the store, so the toggle is logged + undoable like a chat set_tracking.
+            Assert.Single(await raw.ActivityEntries.IgnoreQueryFilters()
+                .Where(e => e.Kind == ActivityKind.TrackingChanged).ToListAsync());
         });
     }
 

@@ -20,8 +20,12 @@ public interface IPantryStore
     Task<Product?> GetProductAsync(int productId, CancellationToken cancellationToken = default);
 
     /// <summary>Create a product with optional descriptive tags (canonicalized against the global
-    /// vocabulary, same dedup as receipt confirmation). Pass an empty list for no tags.</summary>
-    Task<int> CreateProductAsync(string name, Category category, IReadOnlyList<string> tags, CancellationToken cancellationToken = default);
+    /// vocabulary, same dedup as receipt confirmation) and an optional display <paramref name="defaultUnit"/>.
+    /// Pass an empty tag list for no tags. THE one create path — records a ProductCreated activity entry —
+    /// so a product added from any surface (chat, the Products page) is logged and undoable alike.</summary>
+    Task<int> CreateProductAsync(
+        string name, Category category, IReadOnlyList<string> tags, string? defaultUnit = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>Add descriptive tags to an existing product (canonicalized + deduped like receipt
     /// confirmation); returns the tag values actually added.</summary>

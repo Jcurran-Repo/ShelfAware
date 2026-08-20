@@ -380,7 +380,7 @@ public class AnthropicPantryChat : IPantryChat
                         return ($"That sounds like \"{existing.Name}\", which already exists. If it's the same item, use \"{existing.Name}\"; if the user confirms it's genuinely different, call create_product again with confirmed_distinct=true.", false);
                 }
                 var tags = StrList("tags") ?? [];
-                await _store.CreateProductAsync(name, category, tags, ct);
+                await _store.CreateProductAsync(name, category, tags, cancellationToken: ct);
                 actions.Add($"created {name}");
                 return ($"Created {name} ({category}){(tags.Count > 0 ? $", tagged {string.Join(", ", tags)}" : "")}.", false);
             }

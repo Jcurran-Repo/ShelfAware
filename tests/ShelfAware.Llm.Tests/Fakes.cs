@@ -144,7 +144,7 @@ internal sealed class FakePantryStore : IPantryStore
 
     public List<string> KnownTags { get; } = [];
 
-    public Task<int> CreateProductAsync(string name, Category category, IReadOnlyList<string> tags, CancellationToken cancellationToken = default)
+    public Task<int> CreateProductAsync(string name, Category category, IReadOnlyList<string> tags, string? defaultUnit = null, CancellationToken cancellationToken = default)
     {
         Created.Add((name, category));
         var product = new Product
@@ -152,6 +152,7 @@ internal sealed class FakePantryStore : IPantryStore
             Id = 1000 + Products.Count,
             Name = name,
             Category = category,
+            DefaultUnit = string.IsNullOrWhiteSpace(defaultUnit) ? null : defaultUnit.Trim(),
             Tags = [.. tags.Select(t => new ProductTag { Value = t })],
         };
         Products.Add(product);
@@ -307,7 +308,7 @@ internal sealed class ThrowingPantryStore(params Product[] products) : IPantrySt
         Task.FromResult(products.FirstOrDefault(p => p.Id == productId));
     public Task<PurchaseResult> AddPurchaseAsync(int productId, DateOnly purchasedAt, decimal quantity, PurchaseSource source = PurchaseSource.Chat, CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("simulated DB write failure");
-    public Task<int> CreateProductAsync(string name, Category category, IReadOnlyList<string> tags, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<int> CreateProductAsync(string name, Category category, IReadOnlyList<string> tags, string? defaultUnit = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<string>> AddTagsAsync(int productId, IReadOnlyList<string> tags, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     // Prompt composition reads the vocabulary before any tool runs — must succeed even in this fake.
     public Task<IReadOnlyList<string>> GetKnownTagsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<string>>([]);

@@ -1147,19 +1147,9 @@
         var missing = r.MissingMains(onHand).Select(i => i.Name).ToList();
         if (missing.Count == 0) { extraNote = "You already have everything for this."; return; }
 
-        await using var db = await DbFactory.CreateDbContextAsync();
-        var have = await db.GroceryExtras.Select(e => e.Name).ToListAsync();
-        var added = 0;
-        foreach (var name in missing)
-        {
-            if (!have.Any(h => string.Equals(h, name, StringComparison.OrdinalIgnoreCase)))
-            {
-                db.GroceryExtras.Add(new GroceryExtra { Name = name });
-                have.Add(name);
-                added++;
-            }
-        }
-        await db.SaveChangesAsync();
+        // Through the store's ONE add-extras path: it skips ones already on the list (no re-implemented
+        // "skip existing" here) and logs a GroceryExtrasAdded. The count back is what was actually added.
+        var added = (await Store.AddGroceryExtrasAsync(missing)).Count;
         extraNote = added > 0
             ? $"Added {added} item{(added == 1 ? "" : "s")} to your grocery list."
             : "Those are already on your grocery list.";

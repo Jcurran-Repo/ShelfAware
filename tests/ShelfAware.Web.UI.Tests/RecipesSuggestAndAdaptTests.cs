@@ -350,6 +350,9 @@ public class RecipesSuggestAndAdaptTests : PageTestContext
         await using (var raw = Db.CreateUnscopedContext())
         {
             Assert.Single(await raw.GroceryExtras.IgnoreQueryFilters().ToListAsync());
+            // Through the store, so the add is logged + undoable; the second (all-dupes) click records nothing.
+            Assert.Single(await raw.ActivityEntries.IgnoreQueryFilters()
+                .Where(e => e.Kind == ActivityKind.GroceryExtrasAdded).ToListAsync());
         }
     }
 
