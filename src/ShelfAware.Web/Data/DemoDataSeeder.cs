@@ -562,6 +562,24 @@ public sealed class DemoDataSeeder(
             products.Add(product);
         }
 
+        // Stamp each confirmed trip with the money figures a real receipt prints — feeding the /receipts
+        // breakdown and the household's running "amount saved". Subtotal is the line-item gross less any
+        // savings, tax a flat rate on it, and total = subtotal + tax, so the four read as one coherent
+        // receipt. Savings lands on a deterministic subset (null elsewhere, so those show no savings row).
+        // Only these no-image trips get synthetic totals; the shipped-image pending receipt keeps its
+        // totals null so the screen never claims a figure the picture doesn't show.
+        foreach (var trip in trips.Values)
+        {
+            var gross = ReceiptTotals.Summarize(trip.Lines).Total;
+            var savings = trip.PurchasedAt is { } d && d.DayNumber % 3 == 0 ? Math.Round(gross * 0.05m, 2) : 0m;
+            var subtotal = gross - savings;
+            var tax = Math.Round(subtotal * 0.0825m, 2);
+            trip.Subtotal = subtotal;
+            trip.Tax = tax;
+            trip.Total = subtotal + tax;
+            trip.Savings = savings > 0 ? savings : null;
+        }
+
         return (products, [.. trips.Values.OrderBy(r => r.PurchasedAt)]);
     }
 

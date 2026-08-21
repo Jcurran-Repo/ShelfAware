@@ -18,10 +18,26 @@
     }
 </div>
 <p class="muted">
-    Every receipt the pantry has learned from — when it was, and what it cost. Totals are summed from
-    the extracted line items (unit price × quantity), so a multi-quantity line can drift from the
-    printed total by a cent or two.
+    Every receipt the pantry has learned from — when it was, what it cost, and what you saved. Each
+    shows the subtotal, tax, savings and total printed on it; where those weren't captured, the total is
+    summed from the line items (unit price × quantity) and can drift by a cent or two.
 </p>
+
+@if (receipts is not null && (totalSaved > 0 || totalTax > 0))
+{
+    @* Each clause is conditional so a household with tax but no captured savings never reads
+       "you've saved $0.00 …" (and vice-versa); the outer guard means at least one clause shows. *@
+    <p class="receipt-running muted" role="status">
+        @if (totalSaved > 0)
+        {
+            <text>Across your recorded trips you've saved <span class="receipt-saved">@totalSaved.ToString("C")</span>@(totalTax > 0 ? $" and paid {totalTax.ToString("C")} in tax" : "").</text>
+        }
+        else
+        {
+            <text>Across your recorded trips you've paid @totalTax.ToString("C") in tax.</text>
+        }
+    </p>
+}
 
 @if (loadError is not null)
 {
@@ -54,7 +70,13 @@ else
                     {
                         <span class="chip chip-stocked" title="You verified every line — graded by the accuracy check">✓ Accuracy check</span>
                     }
-                    <span class="receipt-total">@row.Summary.Total.ToString("C")</span>
+                    @if (row.Receipt.Savings is { } sv && sv > 0)
+                    {
+                        <span class="chip chip-saved" title="Total saved on this receipt">saved @sv.ToString("C")</span>
+                    }
+                    @* The printed total is what was actually paid (incl. tax); fall back to the line-item
+                       sum only when the receipt didn't print one (older receipts, or a read that missed it). *@
+                    <span class="receipt-total">@((row.Receipt.Total ?? row.Summary.Total).ToString("C"))</span>
                 </summary>
 
                 @if (row.Receipt.Status == ReceiptStatus.PendingReview)
@@ -100,11 +122,40 @@ else
                     </tbody>
                     <tfoot>
                         <tr>
-                            <td colspan="4" class="subtotal-label">Total@(row.Summary.UnpricedLines > 0 ? $" ({row.Summary.UnpricedLines} line{(row.Summary.UnpricedLines == 1 ? "" : "s")} without a price)" : "")</td>
+                            <td colspan="4" class="subtotal-label">Line items@(row.Summary.UnpricedLines > 0 ? $" ({row.Summary.UnpricedLines} line{(row.Summary.UnpricedLines == 1 ? "" : "s")} without a price)" : "")</td>
                             <td class="subtotal">@row.Summary.Total.ToString("C")</td>
                         </tr>
                     </tfoot>
                 </table>
+
+                @* What the receipt itself printed — subtotal/tax/total/savings — when extraction captured
+                   them. Self-consistent (subtotal + tax = total); the line-item sum above is a separate,
+                   computed figure and legitimately differs by any savings + rounding. *@
+                @if (HasPrintedTotals(row.Receipt))
+                {
+                    <div class="receipt-totals">
+                        @* Sources the printed figures apart from the computed "Line items" sum above — on a
+                           receipt with instant savings the two legitimately differ (line items are rung at
+                           full price; the printed subtotal is post-discount), so this labels them distinct. *@
+                        <div class="rt-caption">From the receipt</div>
+                        @if (row.Receipt.Subtotal is { } sub)
+                        {
+                            <div class="rt-row"><span>Subtotal</span><span>@sub.ToString("C")</span></div>
+                        }
+                        @if (row.Receipt.Savings is { } sav && sav > 0)
+                        {
+                            <div class="rt-row rt-savings"><span>Savings</span><span>-@sav.ToString("C")</span></div>
+                        }
+                        @if (row.Receipt.Tax is { } tx)
+                        {
+                            <div class="rt-row"><span>Tax</span><span>@tx.ToString("C")</span></div>
+                        }
+                        @if (row.Receipt.Total is { } tot)
+                        {
+                            <div class="rt-row rt-final"><span>Total</span><span>@tot.ToString("C")</span></div>
+                        }
+                    </div>
+                }
                 @if (row.Receipt.Status == ReceiptStatus.Confirmed)
                 {
                     <div class="receipt-eval-actions">
@@ -168,6 +219,12 @@ else
     private string? loadError;
     private IJSObjectReference? downloadModule;
 
+    // The household's running "amount saved" (and tax paid) — summed over CONFIRMED receipts only, so
+    // the tally reflects trips that actually count, not an unreviewed pending scan. Recomputed on load
+    // and whenever a removal changes the set.
+    private decimal totalSaved;
+    private decimal totalTax;
+
     // Receipt is the tracked mutable entity so the verify toggle can flip in place; HasImage gates
     // verification — a receipt with no audit copy (e.g. demo data) can never be re-read for grading.
     // Removable = its purchases carry provenance (ReceiptId), so "remove everything it did" is safe.
@@ -204,6 +261,7 @@ else
                 .OrderByDescending(row => row.Receipt.PurchasedAt ?? DateOnly.MinValue)
                 .ThenByDescending(row => row.Receipt.Id)
                 .ToList();
+            RecomputeRunningTotals();
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -241,6 +299,7 @@ else
                 return;
             }
             receipts?.Remove(row);
+            RecomputeRunningTotals(); // a removed confirmed receipt's savings/tax leave the running tally
             removeResult = $"Removed the receipt and its {outcome.Purchases} purchase{(outcome.Purchases == 1 ? "" : "s")}" +
                 (outcome.ProductsRemoved > 0 ? $", plus {outcome.ProductsRemoved} product{(outcome.ProductsRemoved == 1 ? "" : "s")} it introduced" : "") +
                 (outcome.ProductsKept > 0 ? $" ({outcome.ProductsKept} kept — they have other history)" : "") +
@@ -260,6 +319,18 @@ else
     }
 
     private bool HasAuditImage(Receipt r) => Storage.HasPages(r.ImagePath);
+
+    // Sum savings + tax across CONFIRMED receipts currently loaded. Pending scans carry totals too, but
+    // an unreviewed figure shouldn't inflate the household's headline tally.
+    private void RecomputeRunningTotals()
+    {
+        var confirmed = receipts?.Where(row => row.Receipt.Status == ReceiptStatus.Confirmed) ?? [];
+        totalSaved = confirmed.Sum(row => row.Receipt.Savings ?? 0);
+        totalTax = confirmed.Sum(row => row.Receipt.Tax ?? 0);
+    }
+
+    private static bool HasPrintedTotals(Receipt r) =>
+        r.Subtotal is not null || r.Tax is not null || r.Total is not null || r.Savings is not null;
 
     private async Task SetVerifiedAsync(ReceiptRow row, bool verified)
     {

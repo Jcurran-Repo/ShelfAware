@@ -29,5 +29,18 @@ public class Receipt : IHouseholdOwned
     /// only; a re-confirm is a no-op and must not move it.</summary>
     public DateTimeOffset? ConfirmedAt { get; set; }
 
+    /// <summary>The receipt's OWN printed money figures, captured once at extraction — distinct from the
+    /// line-item sum <see cref="ReceiptTotals"/> computes, which can differ by tax, per-unit rounding,
+    /// and discount lines that are never stored as items. Null when the receipt didn't print the figure,
+    /// or was recorded before totals were captured (2026-08-21). A record of what the paper said; nothing
+    /// recomputes them. <see cref="Subtotal"/> is pre-tax, <see cref="Total"/> the amount paid, so
+    /// Subtotal + <see cref="Tax"/> = Total on a well-formed receipt.</summary>
+    public decimal? Subtotal { get; set; }
+    public decimal? Tax { get; set; }
+    public decimal? Total { get; set; }
+    /// <summary>Total instant-savings / coupon / member discount printed on the receipt. Summed across a
+    /// household's confirmed receipts for its running "amount saved". Null = none printed.</summary>
+    public decimal? Savings { get; set; }
+
     public List<ReceiptLine> Lines { get; set; } = [];
 }

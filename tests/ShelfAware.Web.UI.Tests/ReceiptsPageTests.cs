@@ -82,6 +82,89 @@ public class ReceiptsPageTests : PageTestContext
     }
 
     [Fact]
+    public void Prints_the_captured_money_totals_and_headlines_the_amount_paid()
+    {
+        // Self-consistent printed figures: subtotal + tax = total; the line items sum to only $7.00.
+        SeedReceipt(r =>
+        {
+            r.Subtotal = 100.00m;
+            r.Savings = 5.00m;
+            r.Tax = 8.25m;
+            r.Total = 108.25m;
+        });
+        var cut = RenderReceipts();
+
+        var card = cut.Find(".receipt-card");
+        var totals = card.QuerySelector(".receipt-totals")!.TextContent;
+        Assert.Contains(100.00m.ToString("C"), totals);           // subtotal
+        Assert.Contains("-" + 5.00m.ToString("C"), totals);       // savings shown as a reduction
+        Assert.Contains(8.25m.ToString("C"), totals);             // tax
+        Assert.Contains(108.25m.ToString("C"), totals);           // total
+
+        // The headline is what was actually PAID, not the line-item sum ($7.00).
+        var headline = card.QuerySelector(".receipt-total")!.TextContent;
+        Assert.Contains(108.25m.ToString("C"), headline);
+        Assert.DoesNotContain((2m * 3.50m).ToString("C"), headline);
+
+        // …and the savings win gets a chip.
+        Assert.Contains("saved " + 5.00m.ToString("C"), card.TextContent);
+    }
+
+    [Fact]
+    public void A_receipt_without_captured_totals_falls_back_to_the_line_item_sum()
+    {
+        SeedReceipt(); // no printed totals
+        var cut = RenderReceipts();
+
+        var card = cut.Find(".receipt-card");
+        Assert.Null(card.QuerySelector(".receipt-totals"));                 // no printed breakdown
+        Assert.Contains((2m * 3.50m).ToString("C"), card.QuerySelector(".receipt-total")!.TextContent);
+        Assert.Null(card.QuerySelector(".chip-saved"));                    // no savings chip
+        Assert.Empty(cut.FindAll(".receipt-running"));                     // no running-saved line
+    }
+
+    [Fact]
+    public void The_running_saved_total_sums_confirmed_receipts_only()
+    {
+        SeedReceipt(r => { r.Savings = 5.00m; r.Tax = 8.25m; });
+        SeedReceipt(r => { r.Savings = 3.00m; r.Tax = 4.00m; });
+        // A pending scan carries savings too, but an unreviewed figure must not inflate the tally.
+        SeedReceipt(r => { r.Status = ReceiptStatus.PendingReview; r.Savings = 99.00m; r.Tax = 50.00m; });
+        var cut = RenderReceipts();
+
+        var running = cut.Find(".receipt-running").TextContent;
+        Assert.Contains(8.00m.ToString("C"), running);       // 5 + 3, NOT 107
+        Assert.DoesNotContain(99.00m.ToString("C"), running);
+        Assert.Contains(12.25m.ToString("C"), running);      // tax 8.25 + 4.00, NOT 62.25
+    }
+
+    [Fact]
+    public void The_running_line_reports_tax_alone_without_a_zero_savings_clause()
+    {
+        // A household with tax but no captured savings must never read "you've saved $0.00 …".
+        SeedReceipt(r => { r.Tax = 6.00m; r.Savings = null; });
+        var cut = RenderReceipts();
+
+        var running = cut.Find(".receipt-running").TextContent;
+        Assert.Contains(6.00m.ToString("C"), running);        // "…paid $6.00 in tax."
+        Assert.Contains("paid", running);
+        Assert.DoesNotContain("saved", running);
+        Assert.DoesNotContain(0m.ToString("C"), running);     // no "$0.00"
+    }
+
+    [Fact]
+    public void The_running_line_reports_savings_alone_without_a_tax_clause()
+    {
+        SeedReceipt(r => { r.Savings = 4.00m; r.Tax = null; });
+        var cut = RenderReceipts();
+
+        var running = cut.Find(".receipt-running").TextContent;
+        Assert.Contains("saved", running);
+        Assert.Contains(4.00m.ToString("C"), running);        // "…you've saved $4.00."
+        Assert.DoesNotContain("tax", running);
+    }
+
+    [Fact]
     public void Receipts_order_newest_first_and_discarded_ones_do_not_exist_here()
     {
         SeedReceipt(r => { r.Merchant = "Older"; r.PurchasedAt = Today.AddDays(-9); });

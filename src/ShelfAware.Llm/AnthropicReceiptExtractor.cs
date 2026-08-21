@@ -21,6 +21,10 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
       "properties": {
         "merchant": { "type": ["string", "null"] },
         "purchase_date": { "type": ["string", "null"], "description": "ISO 8601 date" },
+        "subtotal": { "type": ["number", "null"], "description": "Printed SUBTOTAL (pre-tax), or null" },
+        "tax":      { "type": ["number", "null"], "description": "Printed total tax, or null" },
+        "total":    { "type": ["number", "null"], "description": "Printed final TOTAL / amount paid, or null" },
+        "savings":  { "type": ["number", "null"], "description": "Printed total savings/discounts, or null" },
         "lines": {
           "type": "array",
           "items": {
@@ -43,7 +47,7 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
           }
         }
       },
-      "required": ["merchant", "purchase_date", "lines"],
+      "required": ["merchant", "purchase_date", "subtotal", "tax", "total", "savings", "lines"],
       "additionalProperties": false
     }
     """;
@@ -188,9 +192,16 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
         {
             Merchant = GetNullableString(root, "merchant"),
             PurchaseDate = DateOnly.TryParse(GetNullableString(root, "purchase_date"), out var d) ? d : null,
+            Subtotal = GetNullableDecimal(root, "subtotal"),
+            Tax = GetNullableDecimal(root, "tax"),
+            Total = GetNullableDecimal(root, "total"),
+            Savings = GetNullableDecimal(root, "savings"),
             Lines = lines,
         };
     }
+
+    private static decimal? GetNullableDecimal(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var prop) && prop.ValueKind == JsonValueKind.Number ? prop.GetDecimal() : null;
 
     private static string[] ParseTags(JsonElement line) =>
         line.TryGetProperty("tags", out var t) && t.ValueKind == JsonValueKind.Array
