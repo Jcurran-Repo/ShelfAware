@@ -139,6 +139,32 @@ public class ReceiptsPageTests : PageTestContext
     }
 
     [Fact]
+    public void The_running_line_reports_tax_alone_without_a_zero_savings_clause()
+    {
+        // A household with tax but no captured savings must never read "you've saved $0.00 …".
+        SeedReceipt(r => { r.Tax = 6.00m; r.Savings = null; });
+        var cut = RenderReceipts();
+
+        var running = cut.Find(".receipt-running").TextContent;
+        Assert.Contains(6.00m.ToString("C"), running);        // "…paid $6.00 in tax."
+        Assert.Contains("paid", running);
+        Assert.DoesNotContain("saved", running);
+        Assert.DoesNotContain(0m.ToString("C"), running);     // no "$0.00"
+    }
+
+    [Fact]
+    public void The_running_line_reports_savings_alone_without_a_tax_clause()
+    {
+        SeedReceipt(r => { r.Savings = 4.00m; r.Tax = null; });
+        var cut = RenderReceipts();
+
+        var running = cut.Find(".receipt-running").TextContent;
+        Assert.Contains("saved", running);
+        Assert.Contains(4.00m.ToString("C"), running);        // "…you've saved $4.00."
+        Assert.DoesNotContain("tax", running);
+    }
+
+    [Fact]
     public void Receipts_order_newest_first_and_discarded_ones_do_not_exist_here()
     {
         SeedReceipt(r => { r.Merchant = "Older"; r.PurchasedAt = Today.AddDays(-9); });

@@ -1095,6 +1095,15 @@ button.mic-speaking {
     font-variant-numeric: tabular-nums;
 }
 
+.receipt-totals .rt-caption {
+    color: var(--ink-soft);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    text-align: right;
+    margin-bottom: 0.3rem;
+}
+
 .receipt-totals .rt-row {
     display: flex;
     justify-content: space-between;

@@ -98,7 +98,7 @@ and **History (`/history`, added 8/20 — the household's activity log, newest f
 undo; see item 51)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1764 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1766 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51 and 52).
 
@@ -2726,10 +2726,20 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51 and 
      covered Receipt table.
    - Live + browser verified (throwaway `--DataDir`, real dev data untouched): the breakdown reconciles
      and the running total + savings chips render in dark mode.
-   - **1764 tests green, 0 warnings** on a non-incremental Release build (1756 before; +8: extractor
-     parse ×2, ingestion both call sites ×2, AdditiveSchema parity ×1, page display + running total ×3).
-     Every new test mutation-checked (5 mutations across the page + ingestion write paths, each killing
-     exactly its tests).
+   - **The `/pre-push` gate** (security + code review, each in its own isolated worktree — item 40's
+     no-shared-tree lesson): security CLEAN and probe-verified (tenancy boundary intact, the 4 columns
+     covered by export/delete/CountAll on the already-scoped Receipt table); code review found NO
+     correctness defect and mutation-checked the four load-bearing tests. Three LOW findings, all fixed
+     in a follow-up commit: (a) the running-line copy read "you've saved $0.00 …" for a household with
+     tax but no captured savings — each clause is conditional now; (b) a "From the receipt" caption
+     sources the printed figures apart from the computed "Line items" sum (on a receipt with instant
+     savings the two legitimately differ — line items are pre-discount, subtotal is post — so the label
+     stops them reading as two numbers that should match); (c) rule 8's non-receipt example lists the
+     four now-required money nulls (non-functional prompt tidiness).
+   - **1766 tests green, 0 warnings** on a non-incremental Release build (1756 before; +10: extractor
+     parse ×2, ingestion both call sites ×2, AdditiveSchema parity ×1, page display + running total ×3,
+     the tax-only / savings-only running-line cases ×2). Every new test mutation-checked (6 mutations
+     across the page + ingestion write paths, each killing exactly its tests).
    - **Backlog (Jordan's call, 2026-08-21):** the alias mechanism (`ProductAlias`, keyed household +
      merchant + raw text, taught on human confirm) already reuses a correction so the SECOND Costco trip
      resolves "HONEST COW" to the product you picked. The gap worth a follow-up: an alias fixes which

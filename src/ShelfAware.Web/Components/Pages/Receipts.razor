@@ -25,8 +25,17 @@
 
 @if (receipts is not null && (totalSaved > 0 || totalTax > 0))
 {
+    @* Each clause is conditional so a household with tax but no captured savings never reads
+       "you've saved $0.00 …" (and vice-versa); the outer guard means at least one clause shows. *@
     <p class="receipt-running muted" role="status">
-        Across your recorded trips you've saved <span class="receipt-saved">@totalSaved.ToString("C")</span>@(totalTax > 0 ? $" and paid {totalTax.ToString("C")} in tax" : "").
+        @if (totalSaved > 0)
+        {
+            <text>Across your recorded trips you've saved <span class="receipt-saved">@totalSaved.ToString("C")</span>@(totalTax > 0 ? $" and paid {totalTax.ToString("C")} in tax" : "").</text>
+        }
+        else
+        {
+            <text>Across your recorded trips you've paid @totalTax.ToString("C") in tax.</text>
+        }
     </p>
 }
 
@@ -125,6 +134,10 @@ else
                 @if (HasPrintedTotals(row.Receipt))
                 {
                     <div class="receipt-totals">
+                        @* Sources the printed figures apart from the computed "Line items" sum above — on a
+                           receipt with instant savings the two legitimately differ (line items are rung at
+                           full price; the printed subtotal is post-discount), so this labels them distinct. *@
+                        <div class="rt-caption">From the receipt</div>
                         @if (row.Receipt.Subtotal is { } sub)
                         {
                             <div class="rt-row"><span>Subtotal</span><span>@sub.ToString("C")</span></div>
