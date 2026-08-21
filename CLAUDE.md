@@ -92,12 +92,14 @@ Accuracy (`/accuracy`, renders `eval-results.json`), **Recipes (`/recipes`)**,
 Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptTotals`, Core),
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**, and the
 **Cookbook (`/cookbook`, added 8/15 — browse/read-aloud/print saved recipes, AI tags + cloud filter,
-per-recipe photos, and a subtle-peek drag/swipe carousel; import at `/cookbook/import`; see item 50)**.
+per-recipe photos, and a subtle-peek drag/swipe carousel; import at `/cookbook/import`; see item 50)**,
+and **History (`/history`, added 8/20 — the household's activity log, newest first, with per-action
+undo; see item 51)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1676 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1756 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
-bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49 and 50).
+bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50 and 51).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -2548,6 +2550,141 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49 and 50).
        styling, mouse drag + click-suppression + the off-window guard, arrow/Home/End + boundary, click-a-preview,
        filter scope+reset, dark mode via tokens, mobile 375 px with no horizontal page scroll, no console/CSP
        errors. ✅ Merged to master + pushed 2026-08-15 (CI green) as part of the arc merge above.
+
+51. **v5.1 — Undo history + the `/history` page (2026-08-20/21, THREE merged PRs — #14 core, #15 bucket 1,
+   #16 warn-not-refuse; all ✅ MERGED to master + pushed, CI green on master).** Jordan's ask: undo, and a page
+   that shows everything the household has done. `docs/undo-history-plan.md` is the arc's full handoff spec (step
+   order, the action inventory, the open questions settled with Jordan); what belongs HERE is the as-built shape
+   and the decisions the code can't say. **Redo is a documented next step, NOT built** — the schema (`UndoneAt` +
+   `PayloadJson`) leaves room for it without a migration.
+   - **One backbone, two surfaces, ONE reversal.** `ActivityLogService` is the single source of "what happened +
+     how to reverse it"; the inline "↩ Undo" notice and the `/history` page BOTH call the same `UndoAsync(entryId)`
+     — never a per-surface copy of the undo logic (the top directive). `ActivityEntry` is a household-owned table
+     that walks the full tenancy drill (query filter + stamping, `AdditiveSchema.EnsureTable` + schema-parity,
+     isolation test, export, delete-my-data, `CountAll`). ⚠️ **Placement:** `IUndoHandler` takes
+     `ShelfAwareDbContext`, so it, `UndoResult`, every handler, and the service live in **Web** (Core has no EF);
+     only the `ActivityEntry` entity + the `ActivityKind`/`Reversibility` enums live in Core (they're columns).
+   - ⚠️ **The load-bearing rule: an undo is precondition-checked, NEVER blind.** This repo's signature failure is
+     two places disagreeing about one fact; a blind undo is exactly that ACROSS TIME — it reverses to a past state
+     the world has moved past. So every handler re-reads current state on the passed context and reverses ONLY if
+     it still matches what the entry recorded, else returns `Superseded`/`Gone`. Same discipline as
+     `ReceiptRemovalService` (reverse by stored provenance, keep what gained other history) and `MealStock`
+     (re-plan in the commit's own context — items 27/28). It STAGES on `db` but never saves; the service commits
+     the reversal AND the `UndoneAt` stamp in ONE transaction, so a refused undo leaves nothing half-written.
+   - ⚠️ **Peek runs the EXACT same reversal as the real undo, then discards it** (the db is disposed without
+     `SaveChanges`). That is what lets `/history` grey a no-op undo (target gone, superseded) instead of showing a
+     dead button — display and undo cannot disagree, because they run the same code. It is also why the per-row
+     N+1 Peek cost (gate finding #4) was ACCEPTED rather than "fixed": splitting a cheap precondition out from the
+     staged reversal would break the one guarantee the whole design rests on. The cure is worse.
+   - **Recording is ATOMIC with the action, at the DATA layer.** `IActivityLog.Record(db, kind, payload)` STAGES
+     the entry on the action's OWN context/transaction — the caller's `SaveChanges` commits both — so a committed
+     action always has its undo record and a rolled-back one leaves none. Recorded inside the `IPantryStore`
+     implementations and the confirm/edit services, **not** in each page handler, so there is one write-path per
+     action AND **chat/voice actions get logged for free** (they already go through the store). `Restate` keeps a
+     staged-in-stages action's payload equal to what actually happened (the "Ate it" picker resolves takes AFTER
+     the first commit — without it a later /history undo would restore only the takes known at the first save).
+   - ⚠️ **Gate finding #1 (MEDIUM), and it is the "one definition" rule again:** several PAGE buttons wrote
+     straight to the DB instead of through the recording store methods, so those actions were logged from chat/
+     voice but NOT from their own page. Routed every one through the store's ONE definition (`CreateAsync` →
+     `CreateProductAsync`, `MarkOut` → `RecordSignalAsync`, `SetTracked` → `SetTrackingAsync`, the substitute
+     adds → `AddSubstitutesAsync`, `AddExtra`/Recipes' `AddMissingToList` → `AddGroceryExtrasAsync` — which also
+     DELETED `AddMissingToList`'s re-implemented "skip existing", the store owns it). Each pinned by an
+     entry-recorded page test, mutation-checked.
+   - **The handler pattern.** One `IUndoHandler` per `ActivityKind`, owning its payload shape, its `Summarize`
+     (computed at RECORD time and STORED on the entry, so the page renders no per-kind wording — one place), its
+     `Reversibility`, and its precondition-checked `Reverse`. `UndoHandler<TPayload>` owns the JSON boundary;
+     `HistoryOnlyHandler<TPayload>` declares `NotReversible` and seals `Reverse` as unreachable (the service
+     refuses a NotReversible kind BEFORE dispatch) so a lossy action cannot accidentally ship reversible. **Add an
+     action → add a handler; nothing else changes.** A reflection test asserts every `ActivityKind` has a
+     registered handler (a new kind would otherwise fail only at record-time). The `/history` page is
+     **kind-AGNOSTIC** — it switches on the Peek OUTCOME, never on `ActivityKind` — so every new kind renders with
+     no page change (reversible → Undo button, history-only → greyed).
+   - **The static-on-db reversal pattern** for actions whose inverse already exists as a service: extract the
+     inverse as a `static …OnAsync(db, …)` that stages on the caller's context and never saves —
+     `ProductRenameService.RenameOnAsync`, `MealStock.ReverseMealOnAsync` (reuses the existing `Restore`),
+     `ReceiptRemovalService.RemoveOnAsync`. Both a forward path's own inline "↩ Undo" and the /history undo run
+     it, so "reverse this action" has one definition, the handler carries no service dependency, Peek stays safe,
+     and the reversal + `UndoneAt` stamp commit together.
+   - ⚠️ **`IUndoAfterCommit` — the Peek-safe post-commit hook for filesystem side-effects** (a confirmed-receipt
+     undo deletes the receipt's image folder; a recipe undo reaps its photo). A filesystem op can't be staged on
+     the context (so it can't roll back with a refused undo) AND **must never run during a Peek** — Peek re-runs
+     the reversal to grey the row, so a Peek that deleted the image would destroy it just by RENDERING /history.
+     `ActivityLogService.UndoAsync` calls it ONLY after a real committed undo, never `PeekAsync`. The delete goes
+     through a narrow `IReceiptImageCleanup`/`IRecipeImageCleanup` seam (over the storage services) so handlers
+     stay cheap to construct and a test can prove the RIGHT folder is deleted — and that a Peek deletes none —
+     without touching a real filesystem. The path rides in the payload (captured at record time), so the delete
+     needs no DB read once the row is gone.
+   - **The classification, all Jordan's calls (plan §7/§10).** REVERSIBLE: purchases, signals, the `Set*` edits,
+     create-product (delete only if it gained no other history — mirrors `ReceiptRemovalService`), tags/subs/
+     extras adds, "Ate it" (via `MealStock.Restore`), **confirm-receipt via TOTAL removal** (`ReceiptRemovalService`
+     — the same inverse the Upload page's ↩ Undo uses; the receipt image is the `IUndoAfterCommit` case), rename,
+     the won't-eat list. HISTORY-ONLY greyed: **merge** (lossy — moves purchases/aliases/signals, unions tags,
+     deletes the source) and **census confirm** (a real inverse — reverting summed per-product attestations — is
+     genuine work, deferred). ⚠️ **`ReceiptRemoved` was DROPPED**: a confirmed receipt already carries a
+     `ReceiptConfirmed` entry, which greys as **Gone** the instant the receipt is removed, so a separate entry
+     would only double-log the same narrative — the enum value is gone and the reason is written into
+     `ActivityEntry.cs` so it isn't re-added. Report-resolve is NOT in the household log (it's admin
+     cross-household and already has its own /admin reopen undo).
+   - ⚠️ **`CountSetHandler` finding #2 — value comparison can't see a same-value re-attest.** It reverted a count
+     PAST a later re-count to the same number (only the clock had moved, which the value check is blind to). Added
+     the `QuantityCountedAt > OccurredAt` guard its sibling `PurchaseAddedHandler` already carried (attest-before-
+     record means the own action's `QuantityCountedAt ≤ OccurredAt`, so no false-refuse). Mutation-checked, both
+     directions. A relative "used one" undo also had no committed test (the exact path that guard could regress) —
+     closed by `Undoing_a_relative_used_one_move_succeeds…`.
+   - **PR #15 — bucket 1: removes made symmetric.** The ADD of a grocery-list extra or a substitute was logged +
+     undoable, but the REMOVE wasn't logged at all — so you could undo the add but not an accidental remove.
+     `GroceryExtraRemoved` + `SubstituteRemoved` (undo = re-add, or `Gone` if it's already back) close that,
+     matching how the won't-eat list already covered both directions. New store methods
+     `RemoveGroceryExtraAsync`/`RemoveSubstituteAsync` own the remove-and-record (the pages route through them —
+     finding #1's lesson). Tags are deliberately NOT in scope (product tags have no remove UI, so no asymmetry).
+     ⚠️ **Bucket 2 (merge/census/product-delete inverses) is explicitly OUT** — Jordan's call: bucket 1 only.
+   - **PR #16 — a built-on recipe undo WARNS instead of refusing (Jordan's call).** `RecipeSaved` (Recipes Save)
+     and `RecipeAdapted` (the adapter) are REVERSIBLE — the undo DELETES the recipe/variant. Pristine (just
+     ingredients + steps) → a plain undo; BUILT ON (cooked, adapted into variants, tagged, photographed) → it
+     **warns** rather than refuses. `RecipeReversal.BuildWarningAsync` is the ONE warning both handlers share
+     (names what would be lost, null when pristine); the service reports `UndoOutcome.NeedsConfirmation` and the
+     /history row stays clickable (not greyed) → clicking pops an `alertdialog` ("…you've cooked it 3×… Delete
+     anyway?") → confirm.
+     - ⚠️ **The confirm is a REAL server gate, not just UI:** `UndoAsync(entryId, confirmDestructive)` refuses to
+       commit a destructive reversal without the flag (a no-flag call discards the staged delete exactly like a
+       Peek), so a destructive undo can't slip through the API. The warning is computed BEFORE the handler stages,
+       so it reads the pre-undo state.
+     - **The whole family goes** (Jordan's call): undoing a save deletes the recipe AND its adapted variants
+       (`StageFamilyDeleteAsync`; a variant re-roots on re-adapt so it has no children, so an adapt-undo deletes
+       just it). Meals/tags/steps cascade; the photo is reaped via `IUndoAfterCommit`/`IRecipeImageCleanup`.
+       `RecipeUndoHandler<T>` is the shared base (warning + family-delete + photo-reap); the two concrete handlers
+       just name their kind/summary/id, and recording gained the generated id via a two-save transaction.
+   - ⚠️ **PR #16's gate finding #1 was REASSESSED as a FALSE POSITIVE (this session), not fixed — and the lesson
+     is the cheap check skipped at the start.** The finding assumed a committed undo followed by a failing
+     `LoadAsync` would bubble a misleading "Couldn't undo — try again" out of `History.razor`'s catch. It CAN'T:
+     `LoadAsync` is self-catching (it sets its own accurate `loadError` and never rethrows non-cancellation) and
+     `Announce` is pure, so nothing reaches the generic catch past a committed undo. Proven with the harness's
+     `FailAfter` fault injection (the undo commits, the reload throws, the product is really deleted, and the
+     rendered alert is the accurate load error). The dead `undone`-tracking was REVERTED, the reachability
+     documented in both catches, and a mutation-checked regression test added (`A_reload_failure_after_a_committed_
+     undo…` — it fails if `LoadAsync` is ever made to rethrow). ⚠️ The first test written for it only passed by
+     asserting the `loadError` it never meant to exercise — the vacuous-test trap (item 34): green was what the
+     defect produced. Reverting a misdiagnosed fix beat shipping dead code behind a test that pinned nothing.
+   - **Retention:** `ActivityLog:MaxRows` (~500/household, null = unbounded, the self-host default), oldest
+     trimmed first like `ErrorLogStore`. ⚠️ Trimming drops an old entry's undo — accepted for old actions.
+   - **The page:** `/history` (`[Authorize]`, `MainLayout`, `SiteNav` link), newest-first grouped by day, each
+     row time · `Summary` · state; Undo where reversible, greyed with a short reason otherwise; a "Show all
+     history" expander over the retained log. A11y per items 47/49 (a persistent visually-hidden status announcer
+     mounted before any action, `@key` per row, year in date stamps; focus-after-action is a known residual the
+     announcer covers). ⚠️ Order by `Id`, never `OccurredAt` — SQLite refuses `DateTimeOffset` in a SQL `ORDER BY`
+     (item 47), and insert order IS chronological.
+   - **The gate, per PR** (agent code + security reviews — the local `/code-review` is model-invocation-disabled,
+     so each ran as an independent `general-purpose` agent with every finding re-verified in-code; a fix pass then
+     got its own review, item 39). Security CLEAN across all three: the **tenancy boundary HOLDS** — probe-verified
+     household B cannot undo A's entry, because the entry is loaded through the household-filtered context and every
+     row a handler touches is reached through that same context (`EnforceHousehold` refuses a cross-household
+     write); NO new `IgnoreQueryFilters`, endpoint, settings key beyond `ActivityLog:MaxRows`, or per-household
+     disk write the storage seams didn't already own. PR #14: 6 code findings, no serious correctness defect (#1
+     routing, #2 count guard, #3 a stranded decrement when a meal was undone mid-pick, #5 a blank concurrent-undo
+     date, #6 the handler-coverage test); PR #14 gated at **1743 green**. PR #16: 4 minor, #1 reassessed above.
+   - **1756 tests green, 0 warnings** on a non-incremental Release build (read off the final run, item 21). Every
+     new test mutation-checked across the arc. All three PRs merged to master with merge commits, each with CI
+     green on master's own post-merge run (item 35 — the run that actually proves master). `/history` is live.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
