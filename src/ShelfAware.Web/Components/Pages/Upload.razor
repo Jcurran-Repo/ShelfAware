@@ -703,9 +703,14 @@ else if (phase == Phase.Done)
         reviewLines = r.Lines.Select(l =>
         {
             var alias = aliases.FirstOrDefault(a => a.RawText == l.RawText);
+            // The alias points at a product by id. Deleting a product cascade-deletes its aliases, so a
+            // matched alias's product is present — but resolve it explicitly and guard: a stale alias must
+            // not dangle the dropdown at a missing id or crash the review. "Alias-resolved" is this one
+            // signal (aliasedProduct is not null), used for the product, the 🔗 mark, AND the name below.
+            var aliasedProduct = alias is null ? null : products.FirstOrDefault(p => p.Id == alias.ProductId);
             Product? match = null;
             var ambiguousTwin = false;
-            if (alias is null)
+            if (aliasedProduct is null)
             {
                 // Size is metadata, not identity — match on item name only (all sizes roll up). Resolve the
                 // model's suggestion by the matcher's rule-1 identity set, not string.Equals: it folds a
@@ -724,10 +729,16 @@ else if (phase == Phase.Done)
                 ambiguousTwin = match is not null && catalogIndex.ExactMatches(match.Name).Count > 1;
                 if (ambiguousTwin) match = null;
             }
+            // A 🔗 alias is a pairing the household TAUGHT, so the corrected display name is the product's
+            // OWN name ("HONEST COW" → "Cottage Cheese") — echo it instead of the model's fresh read of an
+            // opaque abbreviation. Derived from the product (no second copy to drift when it's later
+            // renamed), and scoped to aliases: a fuzzy matcher / model-suggestion guess still shows the
+            // model's read so the reviewer can verify it against the dropdown.
+            var displayName = aliasedProduct?.Name ?? l.NormalizedName;
             return new ReviewLine
             {
                 RawText = l.RawText,
-                NormalizedName = l.NormalizedName,
+                NormalizedName = displayName,
                 Brand = l.Brand,
                 Size = l.Size,
                 Variety = l.Variety,
@@ -737,10 +748,10 @@ else if (phase == Phase.Done)
                 Confidence = l.Confidence,
                 UnitPrice = l.UnitPrice,
                 Tags = ReceiptConfirmationService.DeserializeTags(l.TagsJson),
-                ProductId = alias?.ProductId ?? match?.Id ?? 0,
-                AliasMatched = alias is not null,
+                ProductId = aliasedProduct?.Id ?? match?.Id ?? 0,
+                AliasMatched = aliasedProduct is not null,
                 AmbiguousTwin = ambiguousTwin,
-                ReadName = l.NormalizedName,
+                ReadName = displayName,
             };
         }).ToList();
 

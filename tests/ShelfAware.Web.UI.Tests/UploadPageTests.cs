@@ -217,8 +217,53 @@ public class UploadPageTests : PageTestContext
         Assert.Equal(suggestedId.ToString(), selects[1].GetAttribute("value"));
         Assert.Equal(matchedId.ToString(), selects[2].GetAttribute("value"));
         Assert.Equal("0", selects[3].GetAttribute("value"));
+        // The name column follows the SAME scope: an alias is a pairing the household taught, so its row
+        // shows the product's OWN curated name ("Cod Skin Dog Treats") — NOT the model's opaque read
+        // ("Dog Treats"). A suggestion/matcher/create-new row keeps the model's read so the reviewer can
+        // verify a fuzzy match against the dropdown.
+        var names = cut.FindAll("input[aria-label^='Item name']");
+        Assert.Equal("Cod Skin Dog Treats", names[0].GetAttribute("value")); // alias → product name
+        Assert.Equal("Milk", names[1].GetAttribute("value"));                 // suggestion → model read kept
+        Assert.Equal("lean ground beef", names[2].GetAttribute("value"));     // matcher → model read kept
+        Assert.Equal("Completely Novel Thing", names[3].GetAttribute("value")); // create-new → model read kept
         // Only the alias row wears the "learned from this merchant" link mark.
         Assert.Single(cut.FindAll("[title='Matched a previous receipt line from this merchant']"));
+    }
+
+    [Fact]
+    public async Task An_aliased_line_confirms_under_the_products_curated_name()
+    {
+        // The household once taught "HONEST COW" → their "Cottage Cheese" product; the model can't read
+        // that mapping off the print, so the next trip's alias pre-fills the curated name AND the confirm
+        // records it — the receipt line and its purchase both read "Cottage Cheese", not the opaque
+        // abbreviation, and no twin product is minted. RawText is the print and is never touched.
+        int productId;
+        using (var db = Db.CreateDbContext())
+        {
+            var cottageCheese = new Product { Name = "Cottage Cheese", Category = Category.Dairy };
+            db.Products.Add(cottageCheese);
+            db.SaveChanges();
+            db.ProductAliases.Add(new ProductAlias { Merchant = "Costco", RawText = "HONEST COW", ProductId = cottageCheese.Id });
+            db.SaveChanges();
+            productId = cottageCheese.Id;
+        }
+        // The model re-guesses the opaque line as "HONEST COW" — the read the alias must override.
+        SeedPending("Costco", Today.AddDays(-1), DbLine("HONEST COW", "HONEST COW"));
+
+        var cut = OpenReview();
+        Assert.Equal("Cottage Cheese", cut.Find("input[aria-label^='Item name']").GetAttribute("value"));
+
+        // Confirm WITHOUT editing the line — the pre-filled curated name is what persists.
+        cut.FindAll(".review-actions button").Single(b => b.TextContent.Trim() == "Confirm all").Click();
+        cut.WaitForState(() => cut.FindAll(".review-actions button").Any(b => b.TextContent.Contains("Upload another")));
+
+        await using var raw = Db.CreateUnscopedContext();
+        var purchase = await raw.PurchaseEvents.IgnoreQueryFilters().SingleAsync();
+        Assert.Equal(productId, purchase.ProductId);          // linked to the taught product, no twin minted
+        var line = await raw.ReceiptLines.IgnoreQueryFilters().SingleAsync();
+        Assert.Equal("Cottage Cheese", line.NormalizedName);  // the curated name, not the model's read
+        Assert.Equal("HONEST COW", line.RawText);             // the print is preserved
+        Assert.Single(await raw.Products.IgnoreQueryFilters().ToListAsync()); // no second "Cottage Cheese"
     }
 
     [Fact]
