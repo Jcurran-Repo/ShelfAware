@@ -89,7 +89,8 @@ Products (`/products`), Grocery List (`/list`, by aisle + copy/print + a manual 
 section), Trends (`/trends`, price tickers + spend forecast — page component is
 `SpendInsight.razor`), Product Detail (`/product/{id}`, rhythm + price-history chart),
 Accuracy (`/accuracy`, renders `eval-results.json`), **Recipes (`/recipes`)**,
-Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptTotals`, Core),
+Receipts (`/receipts`, added 7/12 — per-receipt line-item totals via `ReceiptTotals`, Core; plus the
+receipt's own printed subtotal/tax/savings/total + a running "amount saved", 8/21 — see item 52),
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**, and the
 **Cookbook (`/cookbook`, added 8/15 — browse/read-aloud/print saved recipes, AI tags + cloud filter,
 per-recipe photos, and a subtle-peek drag/swipe carousel; import at `/cookbook/import`; see item 50)**,
@@ -97,9 +98,9 @@ and **History (`/history`, added 8/20 — the household's activity log, newest f
 undo; see item 51)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1756 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1764 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
-bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50 and 51).
+bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51 and 52).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -2686,6 +2687,58 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50 and 51).
      new test mutation-checked across the arc. All three PRs merged to master with merge commits, each with CI
      green on master's own post-merge run (item 35 — the run that actually proves master). `/history` is live.
 
+52. **Costco/warehouse extraction fix + per-receipt savings & tax (2026-08-21, branch
+   `feature/receipt-extraction-and-totals`).** Jordan hit both on a real Costco receipt: the wrong date
+   and miscounted wine. One root cause — the extraction prompt normalized names well but had NO rule for
+   READING FIELDS on a receipt whose layout differs from Walmart's, so the model guessed by POSITION
+   ("the AI should be reading the receipt to look for fields, not guessing based on position").
+   - **Field-reading rules (prompt-only, commit 1):** date (rule 13) reads the transaction stamp from
+     its label — on thermal receipts it's at the BOTTOM, and a "Date of Birth" age-check line sat at the
+     TOP as a trap; repeated-units + leading-number (rule 5) — warehouse receipts have NO quantity column
+     and print one line PER UNIT, so identical lines collapse to one quantity, and a leading number is a
+     SKU/dept code not a quantity ("3 WHOLE MILK" is one unit); VOID + savings (rule 4) drop a VOID line
+     AND the unit it cancels, and skip a savings line even when it references an item's SKU. Merge-to-
+     quantity was ALREADY the contract (the Walmart fixtures store `Quantity: 4` on one line), so this
+     makes Costco CONFORM, not a redesign.
+   - **Live-verified on the real photo** (the frozen sandbox key still works): date 2026-08-13, Pinot ×3
+     (4 rung − 1 void), whole milk ×2 (leading "3" not read as qty), 14 items summing to the printed
+     "Items Sold: 17", no phantom void/savings rows. The four Walmart fixtures held 97–100% (no
+     regression). A committed Costco fixture (`costco-2026-08-13.expected.json`, LABELS ONLY — the photo
+     is private, like the Walmart ones) locks it; its NAME score is lower (~64–71%) purely from Costco's
+     opaque abbreviations, some genuinely unknowable from text (HONEST COW → cottage cheese) — field
+     accuracy (qty+category) was 100%. ⚠️ Ground truth records what's PRINTED, never a guess: "WLMTTE
+     PINOT" → "Pinot", never "Pinot Noir" (Willamette makes several; the varietal isn't on the receipt) —
+     see the extraction-read-dont-invent memory.
+   - **Savings & tax (rule 14 + storage + UI, commit 2):** extraction also reads the receipt's printed
+     subtotal/tax/total/savings into receipt-level fields (`ExtractedReceipt`), stored on `Receipt` via
+     four additive `TEXT`-decimal columns (AdditiveSchema, like `QuantityOnHand`; the new-columns ALTER
+     path is pinned by its own parity test — the drop-column path a live DB actually takes). `/receipts`
+     shows a per-receipt breakdown beneath the line table (subtotal / savings / tax / total, self-
+     consistent: subtotal + tax = total), headlines the amount PAID (printed total, falling back to the
+     computed line sum), flags a savings chip, and sums a running "amount saved" across CONFIRMED receipts
+     only. The line-table footer is relabelled "Line items" so the computed sum and the printed total
+     don't both read "Total".
+   - **One definition:** `ReceiptIngestionService.ApplyHeader` copies the extracted receipt-level fields
+     onto the entity — shared by a fresh ingest AND Retry (the line mapping differs; the header doesn't),
+     so the two call sites can't drift. Demo seeder stamps synthetic totals on the no-image confirmed
+     trips; ⚠️ the shipped-image pending receipt keeps its totals NULL so the screen never claims a figure
+     the picture doesn't show. Export/delete/CountAll ride along — the new columns are on the already-
+     covered Receipt table.
+   - Live + browser verified (throwaway `--DataDir`, real dev data untouched): the breakdown reconciles
+     and the running total + savings chips render in dark mode.
+   - **1764 tests green, 0 warnings** on a non-incremental Release build (1756 before; +8: extractor
+     parse ×2, ingestion both call sites ×2, AdditiveSchema parity ×1, page display + running total ×3).
+     Every new test mutation-checked (5 mutations across the page + ingestion write paths, each killing
+     exactly its tests).
+   - **Backlog (Jordan's call, 2026-08-21):** the alias mechanism (`ProductAlias`, keyed household +
+     merchant + raw text, taught on human confirm) already reuses a correction so the SECOND Costco trip
+     resolves "HONEST COW" to the product you picked. The gap worth a follow-up: an alias fixes which
+     PRODUCT a line maps to, not the model's fresh NAME guess in the review grid — learn the corrected
+     DISPLAY NAME per (merchant, raw text) too, so review pre-fills "Cottage Cheese" instead of re-
+     guessing. Barcode/SKU lookup for receipts was weighed and REJECTED: receipts print internal store
+     SKUs (not scannable UPCs), and no public API maps them — it'd mean maintaining per-store tables by
+     hand. (Also in the backlog list below.)
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active
@@ -2709,7 +2762,10 @@ date and renders `¤3.99` (invariant culture; a systemd service starts with NO `
 the first live deploy). Set the droplet's timezone (`timedatectl set-timezone`, or `TZ` in the
 service env) and keep `LANG` in the env file — runbook step 2 covers both.
 Also backlog: **CSV history importer — PARKED** (Walmart won't export to Jordan's state; needs another
-itemized source); a tiny "dapper blob" mascot for the header; a per-size Trends price chart.
+itemized source); a tiny "dapper blob" mascot for the header; a per-size Trends price chart;
+**learn the corrected DISPLAY NAME from receipt review** (item 52 — aliases already reuse the
+product mapping per merchant; also remember the corrected normalized name per (merchant, raw text) so
+opaque abbreviations like "HONEST COW" pre-fill as "Cottage Cheese" instead of re-guessing).
 (Shipped since this note: the double-scroll fix; the **two-stream cadence model** — rebuy rhythm +
 burn rate, hybrid, restock is status-only (§6); and the whole **production-hardening pass** —
 logging, the SQLite CVE patch, the `IChatClient` migration, and faked-client tests.)

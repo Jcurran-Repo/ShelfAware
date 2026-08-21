@@ -122,8 +122,7 @@ public sealed class ReceiptIngestionService(
         if (!result.Success || result.Receipt is null) return RetryResult.ReadFailed(result.Error);
 
         r.RawModelJson = result.RawModelJson;
-        r.Merchant = result.Receipt.Merchant;
-        r.PurchasedAt = result.Receipt.PurchaseDate;
+        ApplyHeader(r, result.Receipt);
         db.ReceiptLines.RemoveRange(r.Lines);
         r.Lines = MapLines(result.Receipt);
         await db.SaveChangesAsync(cancellationToken);
@@ -156,13 +155,25 @@ public sealed class ReceiptIngestionService(
         };
         if (result.Success && result.Receipt is not null)
         {
-            r.Merchant = result.Receipt.Merchant;
-            r.PurchasedAt = result.Receipt.PurchaseDate;
+            ApplyHeader(r, result.Receipt);
             r.Lines = MapLines(result.Receipt);
         }
         db.Receipts.Add(r);
         await db.SaveChangesAsync(cancellationToken);
         return r;
+    }
+
+    /// <summary>Copy the receipt-level fields extraction reads off the paper — merchant, date, and the
+    /// printed money totals — onto the entity. One definition so a fresh ingest and a Retry re-extract
+    /// can't drift on which header fields they carry over (the line mapping differs; this doesn't).</summary>
+    private static void ApplyHeader(Receipt r, ExtractedReceipt extracted)
+    {
+        r.Merchant = extracted.Merchant;
+        r.PurchasedAt = extracted.PurchaseDate;
+        r.Subtotal = extracted.Subtotal;
+        r.Tax = extracted.Tax;
+        r.Total = extracted.Total;
+        r.Savings = extracted.Savings;
     }
 
     private static List<ReceiptLine> MapLines(ExtractedReceipt extracted) => extracted.Lines.Select(l => new ReceiptLine

@@ -263,6 +263,47 @@ public class AdditiveSchemaTests : IDisposable
         Assert.Null((await db.Receipts.AsNoTracking().SingleAsync(r => r.Id == receipt.Id)).ConfirmedAt);
     }
 
+    [Fact]
+    public async Task Adds_the_receipt_total_columns_to_a_pre_totals_db()
+    {
+        await using var db = _db.CreateDbContext();
+        var fresh = await ColumnTypesAsync(db, "Receipts");
+
+        // Simulate a DB built before 2026-08-21's receipt money figures existed.
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Receipts DROP COLUMN Subtotal;");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Receipts DROP COLUMN Tax;");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Receipts DROP COLUMN Total;");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Receipts DROP COLUMN Savings;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        // Same declared TYPES as a fresh file — the pin a can-EF-query check would miss (an ALTER whose
+        // type guess differs from EF's TEXT-for-decimal still "works" until it truncates a value).
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "Receipts"));
+
+        // A pre-totals row reads them back NULL; a stamped one round-trips the DECIMAL rather than
+        // truncating to a whole number (the failure a wrong column type would actually produce on money).
+        var receipt = new Receipt { ImagePath = "totals-test", Status = ReceiptStatus.Confirmed };
+        db.Receipts.Add(receipt);
+        await db.SaveChangesAsync();
+        var blank = await db.Receipts.AsNoTracking().SingleAsync(r => r.Id == receipt.Id);
+        Assert.Null(blank.Subtotal);
+        Assert.Null(blank.Total);
+
+        receipt.Subtotal = 177.35m;
+        receipt.Tax = 10.13m;
+        receipt.Total = 187.48m;
+        receipt.Savings = 5.00m;
+        await db.SaveChangesAsync();
+
+        var stored = await db.Receipts.AsNoTracking().SingleAsync(r => r.Id == receipt.Id);
+        Assert.Equal(177.35m, stored.Subtotal);
+        Assert.Equal(10.13m, stored.Tax);
+        Assert.Equal(187.48m, stored.Total);
+        Assert.Equal(5.00m, stored.Savings);
+    }
+
     /// <summary>Each column's declared type, keyed by name — order-independent, so it survives the fact
     /// that ADD COLUMN appends while EnsureCreated writes the model's order.</summary>
     // DbContext, not ShelfAwareDbContext: the resolve columns live on BOTH files, so the auth-side

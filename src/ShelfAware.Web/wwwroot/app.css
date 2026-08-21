@@ -1086,6 +1086,53 @@ button.mic-speaking {
     margin-top: 0.75rem;
 }
 
+/* The money figures printed on the receipt (subtotal/tax/savings/total) — a compact right-aligned
+   summary beneath the line-item table, distinct from that table's computed line-item sum. */
+.receipt-totals {
+    width: fit-content;
+    min-width: 13rem;
+    margin: 0.85rem 0 0 auto;
+    font-variant-numeric: tabular-nums;
+}
+
+.receipt-totals .rt-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 1.5rem;
+    padding: 0.12rem 0;
+}
+
+.receipt-totals .rt-row > span:first-child {
+    color: var(--ink-soft);
+}
+
+.receipt-totals .rt-savings > span {
+    color: var(--stocked-ink);
+    font-weight: 600;
+}
+
+.receipt-totals .rt-final {
+    margin-top: 0.25rem;
+    padding-top: 0.4rem;
+    border-top: 1px solid var(--line);
+    font-weight: 700;
+}
+
+/* Running "amount saved" line under the page intro, and its figure. */
+.receipt-running {
+    margin-top: -0.35rem;
+}
+
+.receipt-running .receipt-saved {
+    color: var(--stocked-ink);
+    font-weight: 700;
+}
+
+.chip-saved {
+    background: var(--stocked-bg);
+    color: var(--stocked-ink);
+}
+
 .receipt-eval-actions,
 .receipt-remove-actions {
     display: flex;

@@ -246,6 +246,49 @@ public class ReceiptIngestionServiceTests : IDisposable
         Assert.Equal("still no good", result.Error);
     }
 
+    // --- the printed money totals are stored (both call sites, via one shared ApplyHeader) -----
+
+    private static ExtractionResult WithTotals(decimal subtotal, decimal tax, decimal total, decimal savings) =>
+        ExtractionResult.Ok(new ExtractedReceipt
+        {
+            Merchant = "Costco",
+            PurchaseDate = Dated,
+            Subtotal = subtotal, Tax = tax, Total = total, Savings = savings,
+            Lines = [new ExtractedLine { RawText = "PINOT", NormalizedName = "Pinot", Quantity = 3, Confidence = 0.9m }],
+        }, rawJson: "{}");
+
+    [Fact]
+    public async Task A_read_stores_the_receipts_money_totals()
+    {
+        await _settings.SetAsync(SettingKeys.ImportMode, "Review"); // isolate the persist from auto-confirm
+        _extractor.Respond = _ => WithTotals(177.35m, 10.13m, 187.48m, 5.00m);
+
+        await Service().IngestAsync([Page()]);
+
+        await using var db = _db.CreateDbContext();
+        var receipt = await db.Receipts.SingleAsync();
+        Assert.Equal(177.35m, receipt.Subtotal);
+        Assert.Equal(10.13m, receipt.Tax);
+        Assert.Equal(187.48m, receipt.Total);
+        Assert.Equal(5.00m, receipt.Savings);
+    }
+
+    [Fact]
+    public async Task Retry_re_applies_the_money_totals()
+    {
+        // Retry uses the SAME ApplyHeader as a fresh ingest — a separate call site, so pin it too.
+        _extractor.Respond = _ => ExtractionResult.Fail("blip");
+        var failed = await Service().IngestAsync([Page()]);
+
+        _extractor.Respond = _ => WithTotals(50.00m, 4.00m, 54.00m, 2.00m);
+        await Service().RetryAsync(failed.ReceiptId);
+
+        await using var db = _db.CreateDbContext();
+        var receipt = await db.Receipts.SingleAsync();
+        Assert.Equal(54.00m, receipt.Total);
+        Assert.Equal(2.00m, receipt.Savings);
+    }
+
     /// <summary>A stand-in extractor: returns whatever <see cref="Respond"/> is set to, and records how
     /// many pages each call was handed (so "several pages, one call" is provable).</summary>
     private sealed class StubExtractor : IReceiptExtractor

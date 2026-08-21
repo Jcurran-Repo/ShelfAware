@@ -144,6 +144,46 @@ public class ReceiptExtractorTests
     }
 
     [Fact]
+    public async Task Parses_the_receipt_money_totals()
+    {
+        const string json = """
+        {
+          "merchant": "Costco", "purchase_date": "2026-08-13",
+          "subtotal": 177.35, "tax": 10.13, "total": 187.48, "savings": 5.00,
+          "lines": [
+            {
+              "raw_text": "425537 WLMTTE PINOT", "normalized_name": "Pinot", "brand": null, "quantity": 3,
+              "size": null, "unit_price": 17.99, "category": "Beverage", "tags": [], "confidence": 0.9,
+              "existing_product": null
+            }
+          ]
+        }
+        """;
+
+        var result = await Extractor(FakeChatClient.Returning(Responses.Text(json))).ExtractAsync(OneImage);
+
+        Assert.True(result.Success);
+        Assert.Equal(177.35m, result.Receipt!.Subtotal);
+        Assert.Equal(10.13m, result.Receipt.Tax);
+        Assert.Equal(187.48m, result.Receipt.Total);
+        Assert.Equal(5.00m, result.Receipt.Savings);
+    }
+
+    [Fact]
+    public async Task Money_totals_are_null_when_the_receipt_omits_them()
+    {
+        // A receipt with no printed totals — or one recorded before the fields existed — parses fine with
+        // all four money figures null (the parse is tolerant), so /receipts falls back to the line sum.
+        var result = await Extractor(FakeChatClient.Returning(Responses.Text(ValidJson))).ExtractAsync(OneImage);
+
+        Assert.True(result.Success);
+        Assert.Null(result.Receipt!.Subtotal);
+        Assert.Null(result.Receipt.Tax);
+        Assert.Null(result.Receipt.Total);
+        Assert.Null(result.Receipt.Savings);
+    }
+
+    [Fact]
     public async Task Carries_the_existing_product_suggestion_through()
     {
         const string json = """

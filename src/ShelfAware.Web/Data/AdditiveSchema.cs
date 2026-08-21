@@ -79,6 +79,15 @@ public static class AdditiveSchema
         // 2026-08-17: the activity log — every undoable action a household takes, backing per-action undo
         // and the /history page. A brand-new table is invisible to existing rows.
         EnsureTable(db, table: "ActivityEntries");
+
+        // 2026-08-21: the receipt's OWN printed money figures — receipt-level subtotal/tax/total/savings
+        // for the /receipts breakdown and the household's running "amount saved". Pre-existing rows get
+        // NULL (their totals were never captured; the page falls back to the computed line-item sum).
+        // decimal? maps to TEXT in SQLite (as QuantityOnHand does), so the type matches EnsureCreated's.
+        EnsureColumn(db, table: "Receipts", column: "Subtotal", definition: "TEXT NULL");
+        EnsureColumn(db, table: "Receipts", column: "Tax", definition: "TEXT NULL");
+        EnsureColumn(db, table: "Receipts", column: "Total", definition: "TEXT NULL");
+        EnsureColumn(db, table: "Receipts", column: "Savings", definition: "TEXT NULL");
     }
 
     public static void Apply(AuthDbContext db)

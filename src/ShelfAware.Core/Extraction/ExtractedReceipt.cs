@@ -6,6 +6,16 @@ public record ExtractedReceipt
 {
     public string? Merchant { get; init; }
     public DateOnly? PurchaseDate { get; init; }
+    /// <summary>The receipt's printed SUBTOTAL (pre-tax), or null if not printed. A receipt-level
+    /// figure read straight from the paper, distinct from the sum of the item <see cref="Lines"/>.</summary>
+    public decimal? Subtotal { get; init; }
+    /// <summary>The receipt's printed total TAX charged, or null if not printed.</summary>
+    public decimal? Tax { get; init; }
+    /// <summary>The receipt's printed final TOTAL / amount paid, or null if not printed.</summary>
+    public decimal? Total { get; init; }
+    /// <summary>The receipt's printed total savings/discounts (instant savings, coupons, member
+    /// savings), or null if none is printed.</summary>
+    public decimal? Savings { get; init; }
     public List<ExtractedLine> Lines { get; init; } = [];
 }
 
