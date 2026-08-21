@@ -58,6 +58,17 @@ public interface IUndoAfterCommit
     Task AfterCommitAsync(ActivityEntry entry, CancellationToken cancellationToken);
 }
 
+/// <summary>A handler whose reversal is valid but can be DESTRUCTIVE beyond a plain undo — deleting a recipe
+/// that's been cooked, adapted, tagged, or photographed since it was saved. Instead of REFUSING
+/// (<see cref="UndoResult.Superseded"/>), it stages the reversal as normal and returns a human warning here
+/// naming what would be lost; <c>ActivityLogService</c> turns that into <see cref="UndoOutcome.NeedsConfirmation"/>
+/// and requires an explicit <c>confirmDestructive</c> before committing. Null ⇒ the undo is a plain one, no
+/// warning. Reads state only — never stages or commits.</summary>
+public interface IUndoConfirmable
+{
+    Task<string?> DestructiveWarningAsync(ShelfAwareDbContext db, ActivityEntry entry, CancellationToken cancellationToken);
+}
+
 /// <summary>Typed base: a handler works with its own payload record and lets this class own the JSON
 /// (de)serialization at the boundary. Reversible by default; a history-only handler overrides
 /// <see cref="Reversibility"/>, and its <see cref="Reverse"/> is never reached (the service refuses a
@@ -81,7 +92,9 @@ public abstract class UndoHandler<TPayload> : IUndoHandler
     protected abstract Task<UndoResult> Reverse(
         ShelfAwareDbContext db, TPayload payload, ActivityEntry entry, CancellationToken ct);
 
-    private static TPayload Deserialize(string json) =>
+    /// <summary>Deserialize an entry's payload — protected so a specialized base (e.g. the recipe handlers'
+    /// shared base, which reads the payload to warn before it reverses) can reuse the one definition.</summary>
+    protected static TPayload Deserialize(string json) =>
         JsonSerializer.Deserialize<TPayload>(json) ?? throw new InvalidOperationException(
             $"Activity payload for {typeof(TPayload).Name} deserialized to null: {json}");
 }

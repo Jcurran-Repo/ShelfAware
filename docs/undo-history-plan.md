@@ -292,14 +292,22 @@ REVERSIBLE soft action (add↔remove; the payload carries the direction and the 
 value with no generated id — recorded on AddExcluded/RemoveExcluded's own save; a reversal that's become a
 no-op greys as Gone).
 
-**`RecipeSaved` (Recipes.razor Save) and `RecipeAdapted` (RecipeAdapter) are now REVERSIBLE** (Jordan's call,
-the branch AFTER the undo-history merge): undo DELETES the recipe/variant, but only while it is still exactly
-as created — `RecipeReversal.HasBeenBuiltOnAsync` (the ONE guard both handlers share) refuses
-(`Superseded`) the moment it's been cooked (`TimesEaten`/a `MealEvent`), adapted into a child variant
-(deleting the parent would orphan it via the nullable self-FK), tagged, or given a photo. A pristine recipe
-has only ingredients + steps, which cascade cleanly; the manual 🗑 stays the explicit destructive removal.
-Recording gained the id via the two-save transaction (like a create). Adapting's undo removes only the
-variant it made — it does NOT restore any stale variants that adapt replaced (bucket-2 territory).
+**`RecipeSaved` (Recipes.razor Save) and `RecipeAdapted` (RecipeAdapter) are REVERSIBLE, and WARN rather than
+refuse** (Jordan's calls, the branches after the undo-history merge): undo DELETES the recipe/variant. If it's
+still pristine that's a plain undo; if it's been BUILT ON (cooked, adapted, tagged, photographed) the undo
+**warns instead of refusing** — `RecipeReversal.BuildWarningAsync` (the ONE warning both handlers share) names
+what would be lost, the service reports `UndoOutcome.NeedsConfirmation`, and the /history row stays clickable
+(not greyed) → clicking pops an `alertdialog` ("…you've cooked it 3×… Delete anyway?") → confirm.
+- **The confirm is a real server gate, not just UI**: `UndoAsync(entryId, confirmDestructive)` refuses to
+  commit a destructive reversal without the flag (a Peek/no-flag call discards the staged delete, exactly
+  like any Peek). `IUndoConfirmable.DestructiveWarningAsync` supplies the warning; it's computed BEFORE the
+  handler stages, so it reads the pre-undo state.
+- **The whole family goes** (Jordan's call): undoing a save deletes the recipe AND its adapted variants
+  (`StageFamilyDeleteAsync`; a variant has no children, so an adapt-undo deletes just it). Meals/tags/steps
+  cascade; the **photo file is reaped** via `IUndoAfterCommit` through the narrow `IRecipeImageCleanup` seam
+  (mirrors `IReceiptImageCleanup`) — captured pre-delete, deleted only after commit, never on a Peek.
+- Recording gained the id via the two-save transaction (like a create). `RecipeUndoHandler<T>` is the shared
+  base (warning + family-delete + photo-reap); the two concrete handlers just name their kind/summary/id.
 
 **Removes made symmetric (same branch, bucket 1).** The add of a grocery-list extra or a substitute was
 logged + undoable, but the REMOVE wasn't logged at all — so you could undo the add but not an accidental

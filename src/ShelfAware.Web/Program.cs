@@ -296,6 +296,8 @@ builder.Services.AddScoped<ReceiptStorage>();
 // The narrow seam the receipt-confirm undo deletes an image through (same instance as ReceiptStorage).
 builder.Services.AddScoped<IReceiptImageCleanup>(sp => sp.GetRequiredService<ReceiptStorage>());
 builder.Services.AddScoped<RecipeImageStorage>(); // where recipe photos live (per household); mirrors ReceiptStorage
+// The narrow seam the recipe-save/adapt undo reaps a photo through (same instance as RecipeImageStorage).
+builder.Services.AddScoped<IRecipeImageCleanup>(sp => sp.GetRequiredService<RecipeImageStorage>());
 
 builder.Services.AddScoped<ProductRenameService>(); // rename + re-point the name-keyed recipe links
 builder.Services.AddScoped<ProductMergeService>();  // fold a variety-split product into its item

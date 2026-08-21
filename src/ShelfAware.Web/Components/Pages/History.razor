@@ -20,6 +20,20 @@
     <p class="error" role="alert">@actionError</p>
 }
 
+@if (pendingConfirm is not null)
+{
+    <div class="picker-backdrop" @onclick="CancelDestructiveUndo">
+        <div class="panel picker-modal" @onclick:stopPropagation="true" role="alertdialog"
+             aria-label="Confirm delete" aria-describedby="destructive-undo-warning">
+            <p id="destructive-undo-warning">@confirmWarning</p>
+            <div class="modal-actions">
+                <button class="danger" @onclick="ConfirmDestructiveUndo" disabled="@busy">Delete anyway</button>
+                <button class="secondary" @onclick="CancelDestructiveUndo" disabled="@busy">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
 <section class="panel history">
     @if (loadError is not null)
     {
@@ -42,8 +56,10 @@
                 <tbody>
                     @foreach (var row in day)
                     {
-                        @* Greyed unless it can actually be undone right now — never a dead Undo button. *@
-                        <tr @key="row.Entry.Id" class="@(row.State == UndoOutcome.Done ? null : "muted")">
+                        @* Greyed unless it can actually be undone right now — never a dead Undo button. A
+                           NeedsConfirmation row IS actionable (it warns first), so it isn't greyed either. *@
+                        <tr @key="row.Entry.Id"
+                            class="@(row.State is UndoOutcome.Done or UndoOutcome.NeedsConfirmation ? null : "muted")">
                             <td class="history-time muted">@row.Entry.OccurredAt.ToString("h:mm tt")</td>
                             <td class="history-what">@row.Entry.Summary</td>
                             <td class="history-action">
@@ -52,6 +68,13 @@
                                     case UndoOutcome.Done:
                                         <button class="linkish" @onclick="() => UndoAsync(row.Entry)" disabled="@busy"
                                                 aria-label="@($"Undo: {row.Entry.Summary}")">↩ Undo</button>
+                                        break;
+                                    case UndoOutcome.NeedsConfirmation:
+                                        @* Still undoable, but destructive (a recipe used since it was saved) — click
+                                           warns first. Not greyed. *@
+                                        <button class="linkish" @onclick="() => UndoAsync(row.Entry)" disabled="@busy"
+                                                title="You've used this since saving it — undoing will confirm first"
+                                                aria-label="@($"Undo: {row.Entry.Summary} — will confirm first")">↩ Undo…</button>
                                         break;
                                     case UndoOutcome.AlreadyUndone:
                                         @* Peek can report AlreadyUndone from a concurrent undo AFTER this
@@ -101,6 +124,10 @@
     private bool showingAll;
     private bool canShowMore;
     private bool truncated;
+    /// <summary>The entry a destructive undo is being confirmed for (a recipe used since it was saved), and
+    /// the warning to show; null when no confirm is pending.</summary>
+    private ActivityEntry? pendingConfirm;
+    private string? confirmWarning;
 
     protected override Task OnInitializedAsync() => LoadAsync(all: false);
 
@@ -148,25 +175,69 @@
         {
             // No cancellation token: an undo is a one-shot write and must not be torn down by a
             // navigate-away mid-flight (the same posture as ReportResolutionService, item 49).
-            var outcome = await ActivityLog.UndoAsync(entry.Id);
-            await LoadAsync(showingAll); // re-read: the undo may have changed sibling entries' states too
-            announcement = outcome switch
+            var outcome = await ActivityLog.UndoAsync(entry.Id); // confirmDestructive: false
+            if (outcome == UndoOutcome.NeedsConfirmation)
             {
-                UndoOutcome.Done => $"Undone: {entry.Summary}",
-                UndoOutcome.AlreadyUndone => "That was already undone.",
-                UndoOutcome.Superseded => "Couldn't undo — something changed since.",
-                UndoOutcome.Gone => "Couldn't undo — it's no longer here.",
-                _ => "That can't be undone.",
-            };
+                // Destructive (a recipe used since it was saved) — nothing was deleted; warn and ask.
+                confirmWarning = await ActivityLog.DescribeDestructiveUndoAsync(entry.Id)
+                    ?? "Undoing this deletes the recipe and everything you've added to it since. Delete anyway?";
+                pendingConfirm = entry;
+                return; // finally clears busy; the dialog takes it from here
+            }
+            await LoadAsync(showingAll); // re-read: the undo may have changed sibling entries' states too
+            announcement = Announce(outcome, entry);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
+            // Only reachable when the undo itself threw (its commit failed) — LoadAsync is self-catching
+            // (it sets loadError, never rethrows non-cancellation) and Announce is pure, so past a committed
+            // undo nothing lands here. So "try again" is always accurate: nothing was committed.
             Logger.LogError(ex, "Undoing activity {Id} failed.", entry.Id);
             actionError = "Couldn't undo just now — please try again.";
         }
         finally { busy = false; }
     }
+
+    /// <summary>The user confirmed a destructive undo — do it for real.</summary>
+    private async Task ConfirmDestructiveUndo()
+    {
+        if (pendingConfirm is not { } entry || busy) return;
+        busy = true;
+        announcement = null;
+        actionError = null;
+        try
+        {
+            var outcome = await ActivityLog.UndoAsync(entry.Id, confirmDestructive: true);
+            pendingConfirm = null;
+            confirmWarning = null;
+            await LoadAsync(showingAll);
+            announcement = Announce(outcome, entry);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // As in UndoAsync: reachable only when the undo itself threw, so "try again" is accurate.
+            Logger.LogError(ex, "Confirming a destructive undo of activity {Id} failed.", entry.Id);
+            actionError = "Couldn't undo just now — please try again.";
+        }
+        finally { busy = false; }
+    }
+
+    private void CancelDestructiveUndo()
+    {
+        pendingConfirm = null;
+        confirmWarning = null;
+    }
+
+    private static string Announce(UndoOutcome outcome, ActivityEntry entry) => outcome switch
+    {
+        UndoOutcome.Done => $"Undone: {entry.Summary}",
+        UndoOutcome.AlreadyUndone => "That was already undone.",
+        UndoOutcome.Superseded => "Couldn't undo — something changed since.",
+        UndoOutcome.Gone => "Couldn't undo — it's no longer here.",
+        _ => "That can't be undone.",
+    };
 
     // The day an entry belongs to, by its recorded (server-local) date — the same ".Date" reading the
     // rest of the app uses for a stamped time (SignalDate.Of, item 19), so grouping matches everywhere.

@@ -141,7 +141,8 @@ public sealed class ActivityLogTests : IDisposable
         // A new ActivityKind added without a handler would fail only at RUNTIME, the first time that action
         // is recorded (Record throws "no IUndoHandler registered"). This locks the mapping at test time.
         var services = new ServiceCollection();
-        services.AddSingleton<IReceiptImageCleanup>(new RecordingImageCleanup()); // ReceiptConfirmedHandler's one dep
+        services.AddSingleton<IReceiptImageCleanup>(new RecordingImageCleanup());       // ReceiptConfirmedHandler's dep
+        services.AddSingleton<IRecipeImageCleanup>(new RecordingRecipeImageCleanup());  // the recipe handlers' dep
         UndoServiceCollectionExtensions.AddHandlers(services);
         var handled = services.BuildServiceProvider().GetServices<IUndoHandler>().Select(h => h.Kind).ToHashSet();
 
@@ -845,27 +846,37 @@ public sealed class ActivityLogTests : IDisposable
     }
 
     [Fact]
-    public async Task Undoing_a_recipe_save_refuses_once_the_recipe_has_been_cooked()
+    public async Task Undoing_a_built_on_recipe_save_warns_then_deletes_on_confirm()
     {
-        var recipeId = await SeedRecipe("Sheet-Pan Chicken", timesEaten: 2); // built on since
+        var recipeId = await SeedRecipe("Sheet-Pan Chicken", timesEaten: 2); // cooked since saving
         await RecordRecipeSaved(recipeId, "Sheet-Pan Chicken");
         var entry = await LatestEntry();
 
-        Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(entry.Id));
-        Assert.True(await RecipeExists(recipeId)); // kept — the 🗑 is the explicit removal
+        // Without confirmation: warns (naming the history), deletes nothing.
+        Assert.Equal(UndoOutcome.NeedsConfirmation, await _log.UndoAsync(entry.Id));
+        Assert.True(await RecipeExists(recipeId));
+        Assert.Contains("cooked it 2×", await _log.DescribeDestructiveUndoAsync(entry.Id));
+
+        // With confirmation: deletes.
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id, confirmDestructive: true));
+        Assert.False(await RecipeExists(recipeId));
+        Assert.NotNull((await Entry(entry.Id))!.UndoneAt);
     }
 
     [Fact]
-    public async Task Undoing_a_recipe_save_refuses_once_it_has_an_adapted_variant()
+    public async Task Undoing_a_recipe_save_with_variants_warns_then_deletes_the_whole_family()
     {
-        // Deleting the parent would orphan the variant (nullable self-FK), so the guard must refuse.
         var recipeId = await SeedRecipe("Beef Stew");
-        await SeedRecipe("Beef Stew with thighs", parentId: recipeId);
+        var variantId = await SeedRecipe("Beef Stew with thighs", parentId: recipeId);
         await RecordRecipeSaved(recipeId, "Beef Stew");
         var entry = await LatestEntry();
 
-        Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(entry.Id));
-        Assert.True(await RecipeExists(recipeId));
+        Assert.Equal(UndoOutcome.NeedsConfirmation, await _log.UndoAsync(entry.Id));
+        Assert.Contains("adapted it into 1 version", await _log.DescribeDestructiveUndoAsync(entry.Id));
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id, confirmDestructive: true));
+        Assert.False(await RecipeExists(recipeId));   // the original is gone
+        Assert.False(await RecipeExists(variantId));  // AND its adapted version (Jordan's call: the whole family)
     }
 
     [Fact]
@@ -888,7 +899,7 @@ public sealed class ActivityLogTests : IDisposable
     }
 
     [Fact]
-    public async Task Undoing_an_adapt_refuses_once_the_variant_has_been_cooked()
+    public async Task Undoing_a_built_on_adapt_warns_then_deletes_the_variant_on_confirm()
     {
         var parentId = await SeedRecipe("Beef Stew");
         var variantId = await SeedRecipe("Beef Stew with thighs", parentId: parentId, timesEaten: 1);
@@ -899,8 +910,44 @@ public sealed class ActivityLogTests : IDisposable
         }
         var entry = await LatestEntry();
 
-        Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(entry.Id));
+        Assert.Equal(UndoOutcome.NeedsConfirmation, await _log.UndoAsync(entry.Id));
         Assert.True(await RecipeExists(variantId));
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id, confirmDestructive: true));
+        Assert.False(await RecipeExists(variantId)); // the variant is gone
+        Assert.True(await RecipeExists(parentId));   // the original stays
+    }
+
+    [Fact]
+    public async Task A_peek_of_a_built_on_recipe_save_reports_NeedsConfirmation_without_deleting()
+    {
+        var recipeId = await SeedRecipe("Sheet-Pan Chicken", timesEaten: 1);
+        await RecordRecipeSaved(recipeId, "Sheet-Pan Chicken");
+        var entry = await LatestEntry();
+
+        Assert.Equal(UndoOutcome.NeedsConfirmation, await _log.PeekAsync(entry.Id)); // flagged, still undoable
+        Assert.True(await RecipeExists(recipeId));                                   // ...but peek deleted nothing
+    }
+
+    [Fact]
+    public async Task Undoing_a_recipe_save_with_a_photo_reaps_the_photo_file_after_the_commit()
+    {
+        var cleanup = new RecordingRecipeImageCleanup();
+        var log = UndoTesting.Log(_db, cleanup);
+        var recipeId = await SeedRecipe("Sheet-Pan Chicken", imagePath: "recipe-images/hh/pic.jpg");
+        await using (var db = _db.CreateDbContext())
+        {
+            log.Record(db, ActivityKind.RecipeSaved, new RecipeSavedPayload(recipeId, "Sheet-Pan Chicken"));
+            await db.SaveChangesAsync();
+        }
+        var entry = await LatestEntry();
+
+        // ⚠️ A peek re-runs the reversal to flag the row — it must NOT reap the photo.
+        Assert.Equal(UndoOutcome.NeedsConfirmation, await log.PeekAsync(entry.Id));
+        Assert.Empty(cleanup.Deleted);
+
+        Assert.Equal(UndoOutcome.Done, await log.UndoAsync(entry.Id, confirmDestructive: true));
+        Assert.Equal(["recipe-images/hh/pic.jpg"], cleanup.Deleted); // reaped once, after the commit
     }
 
     // ---- GroceryExtraRemoved / SubstituteRemoved (the symmetric counterparts of the adds) ----
@@ -1250,10 +1297,14 @@ public sealed class ActivityLogTests : IDisposable
         await db.ExcludedFoods.Where(f => f.Value == value).ExecuteDeleteAsync();
     }
 
-    private async Task<int> SeedRecipe(string name, int timesEaten = 0, int? parentId = null)
+    private async Task<int> SeedRecipe(string name, int timesEaten = 0, int? parentId = null, string? imagePath = null)
     {
         await using var db = _db.CreateDbContext();
-        var recipe = new Recipe { Name = name, SavedAt = DateTimeOffset.Now, TimesEaten = timesEaten, ParentRecipeId = parentId };
+        var recipe = new Recipe
+        {
+            Name = name, SavedAt = DateTimeOffset.Now, TimesEaten = timesEaten,
+            ParentRecipeId = parentId, ImagePath = imagePath,
+        };
         db.Recipes.Add(recipe);
         await db.SaveChangesAsync();
         return recipe.Id;

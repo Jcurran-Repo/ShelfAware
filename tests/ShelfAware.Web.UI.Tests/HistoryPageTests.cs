@@ -2,6 +2,7 @@ using Bunit.TestDoubles;
 using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Domain;
 using ShelfAware.Web.Components.Pages;
+using ShelfAware.Web.Undo;
 
 namespace ShelfAware.Web.UI.Tests;
 
@@ -97,6 +98,45 @@ public class HistoryPageTests : PageTestContext
     }
 
     [Fact]
+    public async Task A_built_on_recipe_undo_warns_and_only_deletes_on_confirm()
+    {
+        // A saved recipe that's been cooked → the undo must WARN (not grey, not silently delete).
+        var recipeId = await SeedRecipe("Sheet-Pan Chicken", timesEaten: 3);
+        SeedRecipeSavedEntry(recipeId, "Sheet-Pan Chicken");
+        var cut = RenderHistory();
+        cut.WaitForAssertion(() => Assert.Contains("Saved recipe: Sheet-Pan Chicken", cut.Markup));
+
+        // Offered (not greyed), and clicking pops the confirm dialog naming the history — nothing deleted yet.
+        var row = RowFor(cut, "Saved recipe: Sheet-Pan Chicken");
+        Assert.DoesNotContain("muted", row.ClassName);
+        row.QuerySelector("button")!.Click();
+        cut.WaitForAssertion(() => Assert.Contains("cooked it 3×", cut.Find("[role=alertdialog]").TextContent));
+        Assert.True(await RecipeExists(recipeId));
+
+        cut.FindAll("[role=alertdialog] button").Single(b => b.TextContent.Contains("Delete anyway")).Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("Undone: Saved recipe: Sheet-Pan Chicken", cut.Markup));
+        Assert.False(await RecipeExists(recipeId)); // deleted only after confirming
+    }
+
+    [Fact]
+    public async Task Cancelling_the_warning_leaves_the_recipe()
+    {
+        var recipeId = await SeedRecipe("Sheet-Pan Chicken", timesEaten: 3);
+        SeedRecipeSavedEntry(recipeId, "Sheet-Pan Chicken");
+        var cut = RenderHistory();
+        cut.WaitForAssertion(() => Assert.Contains("Saved recipe: Sheet-Pan Chicken", cut.Markup));
+
+        RowFor(cut, "Saved recipe: Sheet-Pan Chicken").QuerySelector("button")!.Click();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[role=alertdialog]")));
+
+        cut.FindAll("[role=alertdialog] button").Single(b => b.TextContent.Trim() == "Cancel").Click();
+
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll("[role=alertdialog]"))); // dialog closed
+        Assert.True(await RecipeExists(recipeId));                                   // recipe survives
+    }
+
+    [Fact]
     public void Show_all_reveals_older_entries_beyond_the_recent_window()
     {
         for (var i = 0; i < 35; i++)
@@ -119,6 +159,25 @@ public class HistoryPageTests : PageTestContext
         cut.WaitForAssertion(() => Assert.Contains("Couldn't load your history", cut.Markup));
     }
 
+    [Fact]
+    public async Task A_reload_failure_after_a_committed_undo_still_reverses_and_reports_the_load_error()
+    {
+        // The undo commits (one context); the reload right after it fails (FailAfter=1). LoadAsync is
+        // self-catching, so it reports its own accurate loadError rather than bubbling a misleading
+        // "couldn't undo" up to UndoAsync — and the reversal really did commit. (Re-verifies gate finding
+        // #1's premise: no false "try again" is possible past a committed undo.)
+        var id = await Store.CreateProductAsync("Olive Oil", Category.Pantry, []);
+        var cut = RenderHistory();
+        cut.WaitForAssertion(() => Assert.Contains("Added Olive Oil", cut.Markup));
+
+        Factory.FailAfter = 1;
+        RowFor(cut, "Added Olive Oil").QuerySelector("button")!.Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("Couldn't load your history", cut.Markup)); // the load error, accurate
+        Assert.DoesNotContain("Couldn't undo", cut.Markup); // never the false "the undo failed — try again"
+        Assert.False(await ProductExists(id));              // and the reversal really did commit
+    }
+
     private void SeedEntry(ActivityKind kind, string summary, Reversibility reversibility)
     {
         using var db = Db.CreateDbContext();
@@ -134,5 +193,27 @@ public class HistoryPageTests : PageTestContext
     {
         await using var db = Db.CreateDbContext();
         await db.PurchaseEvents.Where(p => p.ProductId == productId).ExecuteDeleteAsync();
+    }
+
+    private async Task<int> SeedRecipe(string name, int timesEaten = 0)
+    {
+        await using var db = Db.CreateDbContext();
+        var recipe = new Recipe { Name = name, SavedAt = DateTimeOffset.Now, TimesEaten = timesEaten };
+        db.Recipes.Add(recipe);
+        await db.SaveChangesAsync();
+        return recipe.Id;
+    }
+
+    private void SeedRecipeSavedEntry(int recipeId, string name)
+    {
+        using var db = Db.CreateDbContext();
+        ActivityLog.Record(db, ActivityKind.RecipeSaved, new RecipeSavedPayload(recipeId, name));
+        db.SaveChanges();
+    }
+
+    private async Task<bool> RecipeExists(int id)
+    {
+        await using var db = Db.CreateDbContext();
+        return await db.Recipes.AnyAsync(r => r.Id == id);
     }
 }

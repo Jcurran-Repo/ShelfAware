@@ -45,8 +45,11 @@ public interface IActivityLog
     Task TrimAsync(CancellationToken cancellationToken = default);
 }
 
-/// <summary>Typed result of an undo attempt, for the UI to word (item 27: advice splits by what happened).</summary>
-public enum UndoOutcome { Done, AlreadyUndone, Superseded, Gone, NotReversible }
+/// <summary>Typed result of an undo attempt, for the UI to word (item 27: advice splits by what happened).
+/// <see cref="NeedsConfirmation"/> = the reversal is valid and staged, but destructive beyond a plain undo
+/// (deleting a recipe that's been cooked/adapted/tagged/photographed), so the caller must WARN and re-ask
+/// with <c>confirmDestructive: true</c> — it is NOT a refusal, unlike <see cref="Superseded"/>.</summary>
+public enum UndoOutcome { Done, AlreadyUndone, Superseded, Gone, NotReversible, NeedsConfirmation }
 
 /// <summary>The backbone of the activity log + undo. ONE service backs both surfaces — the inline
 /// "↩ Undo" and the /history page call the same <see cref="UndoAsync"/>, never a per-surface copy of
@@ -114,19 +117,26 @@ public sealed class ActivityLogService : IActivityLog
     /// refuses an already-undone or history-only entry, then lets the handler re-read state and decide.
     /// On success the handler's staged reversal AND the UndoneAt stamp commit in one SaveChanges; on a
     /// refusal nothing is saved.</summary>
-    public async Task<UndoOutcome> UndoAsync(int entryId, CancellationToken cancellationToken = default)
+    public async Task<UndoOutcome> UndoAsync(
+        int entryId, bool confirmDestructive = false, CancellationToken cancellationToken = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
-        var (outcome, entry) = await EvaluateAsync(db, entryId, cancellationToken);
-        if (outcome != UndoOutcome.Done) return outcome;
+        var (outcome, entry, _) = await EvaluateAsync(db, entryId, cancellationToken);
+
+        // A destructive-beyond-normal reversal needs an explicit yes. Without it, DON'T commit — the staged
+        // reversal is discarded (db disposed without save), exactly like a Peek — and the caller shows the
+        // warning and re-asks with confirmDestructive: true. This is the server-side half of the warn-confirm
+        // (the /history dialog is the UI half); a destructive undo can't slip through without the flag.
+        if (outcome == UndoOutcome.NeedsConfirmation && !confirmDestructive) return UndoOutcome.NeedsConfirmation;
+        if (outcome != UndoOutcome.Done && outcome != UndoOutcome.NeedsConfirmation) return outcome;
 
         entry!.UndoneAt = DateTimeOffset.Now;
         await db.SaveChangesAsync(cancellationToken); // the handler's staged reversal + this stamp, one transaction
 
-        // Post-commit side-effects (a receipt-confirm undo deletes the image folder): AFTER the DB is
-        // committed, and ONLY on a real undo — PeekAsync never reaches here, so a Peek that re-ran the
-        // reversal to grey the row can't delete anything. Best-effort by the interface's contract; the
-        // undo has already succeeded, so a cleanup failure must not turn a done undo into a reported one.
+        // Post-commit side-effects (a receipt-confirm undo deletes the image folder; a recipe undo reaps its
+        // photo file): AFTER the DB is committed, and ONLY on a real undo — PeekAsync never reaches here, so a
+        // Peek that re-ran the reversal to grey the row can't delete anything. Best-effort by the interface's
+        // contract; the undo has already succeeded, so a cleanup failure must not turn a done undo into a reported one.
         if (_handlers.TryGetValue(entry.Kind, out var handler) && handler is IUndoAfterCommit afterCommit)
             await afterCommit.AfterCommitAsync(entry, cancellationToken);
         return UndoOutcome.Done;
@@ -136,34 +146,59 @@ public sealed class ActivityLogService : IActivityLog
     /// so it only offers Undo when the reversal would really act — an undo that has become a no-op (its
     /// target gone, or superseded) shows greyed, never as a button that does nothing. It runs the EXACT
     /// same precondition as <see cref="UndoAsync"/> (the handler stages its reversal; Peek simply never
-    /// saves, so the staged work is discarded) — display and undo therefore cannot disagree.</summary>
+    /// saves, so the staged work is discarded) — display and undo therefore cannot disagree. A destructive
+    /// reversal reports <see cref="UndoOutcome.NeedsConfirmation"/>, so the page can flag it (still undoable,
+    /// with a warning) rather than grey it.</summary>
     public async Task<UndoOutcome> PeekAsync(int entryId, CancellationToken cancellationToken = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
-        var (outcome, _) = await EvaluateAsync(db, entryId, cancellationToken);
+        var (outcome, _, _) = await EvaluateAsync(db, entryId, cancellationToken);
         return outcome; // db disposed without SaveChanges → any staged reversal is discarded
     }
 
+    /// <summary>The warning to show before a destructive undo (a recipe that's been cooked / adapted /
+    /// tagged / photographed since it was saved), or null if it's a plain undo. The /history page calls this
+    /// when the user clicks an Undo that Peek flagged <see cref="UndoOutcome.NeedsConfirmation"/>, to word the
+    /// "delete anyway?" prompt. Reads the current state only — stages and commits nothing.</summary>
+    public async Task<string?> DescribeDestructiveUndoAsync(int entryId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        var entry = await db.ActivityEntries.FirstOrDefaultAsync(e => e.Id == entryId, cancellationToken);
+        if (entry is null || entry.UndoneAt is not null) return null;
+        if (entry.Reversibility == Reversibility.NotReversible) return null; // same short-circuit EvaluateAsync makes
+        if (!_handlers.TryGetValue(entry.Kind, out var handler) || handler is not IUndoConfirmable confirmable)
+            return null;
+        return await confirmable.DestructiveWarningAsync(db, entry, cancellationToken);
+    }
+
     /// <summary>The ONE precondition path both surfaces share: load the entry household-filtered, apply
-    /// the cheap guards, then let the handler re-read state and STAGE its reversal on <paramref name="db"/>
-    /// (which only <see cref="UndoAsync"/> commits). Returns the outcome and the tracked entry.</summary>
-    private async Task<(UndoOutcome Outcome, ActivityEntry? Entry)> EvaluateAsync(
+    /// the cheap guards, compute any destructive-undo warning, then let the handler re-read state and STAGE
+    /// its reversal on <paramref name="db"/> (which only <see cref="UndoAsync"/> commits). Returns the
+    /// outcome, the tracked entry, and the warning (non-null ⇒ NeedsConfirmation).</summary>
+    private async Task<(UndoOutcome Outcome, ActivityEntry? Entry, string? Warning)> EvaluateAsync(
         ShelfAwareDbContext db, int entryId, CancellationToken cancellationToken)
     {
         var entry = await db.ActivityEntries.FirstOrDefaultAsync(e => e.Id == entryId, cancellationToken);
-        if (entry is null) return (UndoOutcome.Gone, null);                       // gone, or another household's
-        if (entry.UndoneAt is not null) return (UndoOutcome.AlreadyUndone, entry);
-        if (entry.Reversibility == Reversibility.NotReversible) return (UndoOutcome.NotReversible, entry);
-        if (!_handlers.TryGetValue(entry.Kind, out var handler)) return (UndoOutcome.NotReversible, entry);
+        if (entry is null) return (UndoOutcome.Gone, null, null);                       // gone, or another household's
+        if (entry.UndoneAt is not null) return (UndoOutcome.AlreadyUndone, entry, null);
+        if (entry.Reversibility == Reversibility.NotReversible) return (UndoOutcome.NotReversible, entry, null);
+        if (!_handlers.TryGetValue(entry.Kind, out var handler)) return (UndoOutcome.NotReversible, entry, null);
+
+        // Computed BEFORE the handler stages its reversal, so it reads the pre-undo state.
+        var warning = handler is IUndoConfirmable confirmable
+            ? await confirmable.DestructiveWarningAsync(db, entry, cancellationToken)
+            : null;
 
         var result = await handler.UndoAsync(db, entry, cancellationToken);
-        return (result switch
+        var outcome = result switch
         {
-            UndoResult.Done => UndoOutcome.Done,
+            // A valid reversal that carries a warning is destructive-beyond-normal → NeedsConfirmation.
+            UndoResult.Done => warning is null ? UndoOutcome.Done : UndoOutcome.NeedsConfirmation,
             UndoResult.Superseded => UndoOutcome.Superseded,
             UndoResult.Gone => UndoOutcome.Gone,
             _ => UndoOutcome.NotReversible,
-        }, entry);
+        };
+        return (outcome, entry, warning);
     }
 
     /// <summary>The household's actions, newest first. Ordered by Id — insert order IS chronological, and
