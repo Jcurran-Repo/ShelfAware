@@ -165,6 +165,7 @@ public sealed class ActivityLogService : IActivityLog
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
         var entry = await db.ActivityEntries.FirstOrDefaultAsync(e => e.Id == entryId, cancellationToken);
         if (entry is null || entry.UndoneAt is not null) return null;
+        if (entry.Reversibility == Reversibility.NotReversible) return null; // same short-circuit EvaluateAsync makes
         if (!_handlers.TryGetValue(entry.Kind, out var handler) || handler is not IUndoConfirmable confirmable)
             return null;
         return await confirmable.DestructiveWarningAsync(db, entry, cancellationToken);

@@ -33,7 +33,7 @@ public static class RecipeReversal
 
         if (parts.Count == 0) return null;
 
-        var variantNote = variants > 0 ? " (including the adapted versions)" : "";
+        var variantNote = variants > 0 ? $" (including the adapted version{(variants == 1 ? "" : "s")})" : "";
         return $"Since you saved this you've {Join(parts)}. Undoing permanently deletes the recipe{variantNote} " +
                "and everything above. Delete anyway?";
     }

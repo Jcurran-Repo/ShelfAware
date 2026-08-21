@@ -190,6 +190,9 @@
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
+            // Only reachable when the undo itself threw (its commit failed) — LoadAsync is self-catching
+            // (it sets loadError, never rethrows non-cancellation) and Announce is pure, so past a committed
+            // undo nothing lands here. So "try again" is always accurate: nothing was committed.
             Logger.LogError(ex, "Undoing activity {Id} failed.", entry.Id);
             actionError = "Couldn't undo just now — please try again.";
         }
@@ -214,6 +217,7 @@
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
+            // As in UndoAsync: reachable only when the undo itself threw, so "try again" is accurate.
             Logger.LogError(ex, "Confirming a destructive undo of activity {Id} failed.", entry.Id);
             actionError = "Couldn't undo just now — please try again.";
         }

@@ -159,6 +159,25 @@ public class HistoryPageTests : PageTestContext
         cut.WaitForAssertion(() => Assert.Contains("Couldn't load your history", cut.Markup));
     }
 
+    [Fact]
+    public async Task A_reload_failure_after_a_committed_undo_still_reverses_and_reports_the_load_error()
+    {
+        // The undo commits (one context); the reload right after it fails (FailAfter=1). LoadAsync is
+        // self-catching, so it reports its own accurate loadError rather than bubbling a misleading
+        // "couldn't undo" up to UndoAsync — and the reversal really did commit. (Re-verifies gate finding
+        // #1's premise: no false "try again" is possible past a committed undo.)
+        var id = await Store.CreateProductAsync("Olive Oil", Category.Pantry, []);
+        var cut = RenderHistory();
+        cut.WaitForAssertion(() => Assert.Contains("Added Olive Oil", cut.Markup));
+
+        Factory.FailAfter = 1;
+        RowFor(cut, "Added Olive Oil").QuerySelector("button")!.Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("Couldn't load your history", cut.Markup)); // the load error, accurate
+        Assert.DoesNotContain("Couldn't undo", cut.Markup); // never the false "the undo failed — try again"
+        Assert.False(await ProductExists(id));              // and the reversal really did commit
+    }
+
     private void SeedEntry(ActivityKind kind, string summary, Reversibility reversibility)
     {
         using var db = Db.CreateDbContext();
