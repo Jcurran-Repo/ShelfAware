@@ -1,5 +1,14 @@
 namespace ShelfAware.Web.Data;
 
+/// <summary>The one thing the recipe-save/adapt UNDO needs from recipe storage: reap a recipe's photo file
+/// after its row is gone. A narrow seam over <see cref="RecipeImageStorage"/> so the undo handler stays cheap
+/// to construct, and a test can prove the RIGHT file is deleted (and that a Peek never deletes one) without a
+/// filesystem — the recipe analogue of <see cref="IReceiptImageCleanup"/>.</summary>
+public interface IRecipeImageCleanup
+{
+    void Delete(string imagePath);
+}
+
 /// <summary>
 /// Owns where recipe images live on disk — the recipe-photo analogue of <see cref="ReceiptStorage"/>,
 /// and for the same reasons: a photo of a household's cooking is theirs, so "delete my data" must reach
@@ -12,6 +21,7 @@ namespace ShelfAware.Web.Data;
 /// replaced photo lands at a new URL rather than serving a stale cached copy.
 /// </summary>
 public sealed class RecipeImageStorage(AppPaths paths, ICurrentHousehold household, ILogger<RecipeImageStorage> logger)
+    : IRecipeImageCleanup
 {
     private const string Root = "recipe-images";
 
