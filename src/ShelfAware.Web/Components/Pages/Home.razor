@@ -66,7 +66,10 @@ else
 {
     @if (runningLow.Count == 0)
     {
-        <p class="muted empty-note">Tracked items show up here as they approach their predicted run-out date.</p>
+        <div class="empty-state">
+            <img src="icons/icon-512.png" alt="" class="mascot empty-mascot" />
+            <p class="muted empty-note">Nothing's running low right now. Tracked items show up here as they approach their predicted run-out date.</p>
+        </div>
     }
     else
     {
