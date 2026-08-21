@@ -9,7 +9,12 @@
     <link rel="stylesheet" href="@Assets["app.css"]" />
     <link rel="stylesheet" href="@Assets["ShelfAware.Web.styles.css"]" />
     <link rel="manifest" href="manifest.webmanifest" />
-    <meta name="theme-color" content="#2563eb" />
+    @* Managed by js/theme.js (set to match the effective theme's page background). Must precede the
+       script so it's in the DOM when the script runs. *@
+    <meta name="theme-color" id="theme-color-meta" content="#131619" />
+    @* Resolves the colour theme (Auto→OS / Light / Dark) and stamps data-theme on <html> BEFORE first
+       paint, so there's no flash. External (not inline) because the strict CSP forbids inline scripts. *@
+    <script src="@Assets["js/theme.js"]"></script>
     <link rel="icon" type="image/png" href="icons/icon-192.png" />
     <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />

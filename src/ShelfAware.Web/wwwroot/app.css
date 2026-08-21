@@ -1,5 +1,7 @@
 /* Shelf Aware — clean, minimal design system (polish unlocked after Phase 4, DESIGN.md §8). */
-:root {
+:root,
+:root[data-theme="light"] {
+    color-scheme: light;
     --ink: #1f2328;
     --ink-soft: #59636e;
     --line: #e2e5e9;
@@ -31,35 +33,37 @@
     --chart-pooled: #8a939e;
 }
 
-@media (prefers-color-scheme: dark) {
-    :root {
-        --ink: #e6e8eb;
-        --ink-soft: #9aa4af;
-        --line: #2b3138;
-        --surface: #1b1f24;
-        --surface-alt: #20252b;
-        --bg: #131619;
-        --accent: #4b86ff;
-        --accent-ink: #7aa6ff;
+/* Dark palette. The theme script (wwwroot/js/theme.js) stamps data-theme=light|dark on <html>
+   before first paint — resolving "auto" against the OS — so the dark tokens live in ONE place,
+   keyed on data-theme, rather than being split across a prefers-color-scheme media query. */
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --ink: #e6e8eb;
+    --ink-soft: #9aa4af;
+    --line: #2b3138;
+    --surface: #1b1f24;
+    --surface-alt: #20252b;
+    --bg: #131619;
+    --accent: #4b86ff;
+    --accent-ink: #7aa6ff;
 
-        --overdue-bg: #3a1d1f;  --overdue-ink: #f4a6a0;  --overdue-line: #b4524a;
-        --duesoon-bg: #38300f;  --duesoon-ink: #eccf85;  --duesoon-line: #9a7d2c;
-        --stocked-bg: #143427;  --stocked-ink: #84dfac;  --stocked-line: #3f8e64;
-        --unknown-bg: #2a2f36;  --unknown-ink: #aab2bb;  --unknown-line: #586675;
+    --overdue-bg: #3a1d1f;  --overdue-ink: #f4a6a0;  --overdue-line: #b4524a;
+    --duesoon-bg: #38300f;  --duesoon-ink: #eccf85;  --duesoon-line: #9a7d2c;
+    --stocked-bg: #143427;  --stocked-ink: #84dfac;  --stocked-line: #3f8e64;
+    --unknown-bg: #2a2f36;  --unknown-ink: #aab2bb;  --unknown-line: #586675;
 
-        --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
 
-        /* Same eight hues re-stepped for the dark surface (validated separately) — not a hue flip. */
-        --chart-1: #3987e5;
-        --chart-2: #199e70;
-        --chart-3: #c98500;
-        --chart-4: #008300;
-        --chart-5: #9085e9;
-        --chart-6: #e66767;
-        --chart-7: #d55181;
-        --chart-8: #d95926;
-        --chart-pooled: #6d7783;
-    }
+    /* Same eight hues re-stepped for the dark surface (validated separately) — not a hue flip. */
+    --chart-1: #3987e5;
+    --chart-2: #199e70;
+    --chart-3: #c98500;
+    --chart-4: #008300;
+    --chart-5: #9085e9;
+    --chart-6: #e66767;
+    --chart-7: #d55181;
+    --chart-8: #d95926;
+    --chart-pooled: #6d7783;
 }
 
 body {
@@ -989,10 +993,8 @@ button.mic-speaking {
     box-shadow: 0 6px 24px rgba(16, 24, 40, 0.18);
 }
 
-@media (prefers-color-scheme: dark) {
-    .voice-agent-panel {
-        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
-    }
+:root[data-theme="dark"] .voice-agent-panel {
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
 }
 
 /* Reader / cook-along header actions (Back to assistant + close) */
@@ -3029,6 +3031,29 @@ tfoot td {
 
 .account-signout:hover {
     color: var(--accent-ink);
+}
+
+/* Colour-theme switcher (Auto / Light / Dark) in the header. Drives wwwroot/js/theme.js, which
+   stamps data-theme on <html>; the select itself is themed by the tokens like everything else. */
+.site-header .theme-switch {
+    display: inline-flex;
+    align-self: center;
+}
+
+.site-header .theme-switch select {
+    font: inherit;
+    font-size: 0.9rem;
+    color: var(--ink-soft);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 0.2rem 0.4rem;
+    cursor: pointer;
+}
+
+.site-header .theme-switch select:hover {
+    border-color: var(--ink-soft);
+    color: var(--ink);
 }
 
 .auth-shell {

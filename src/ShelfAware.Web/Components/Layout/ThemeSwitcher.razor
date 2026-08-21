@@ -1,0 +1,43 @@
+@using Microsoft.JSInterop
+@inject IJSRuntime JS
+
+@* Auto (follow the OS) / Light / Dark. The heavy lifting is in wwwroot/js/theme.js — this just reflects
+   the stored choice and writes the new one. No data change, so nothing to persist server-side. *@
+<label class="theme-switch" title="Colour theme">
+    <span class="visually-hidden">Colour theme</span>
+    <select @bind="pref" @bind:after="ApplyAsync" aria-label="Colour theme">
+        <option value="auto">🌓 Auto</option>
+        <option value="light">☀ Light</option>
+        <option value="dark">🌙 Dark</option>
+    </select>
+</label>
+
+@code {
+    private string pref = "auto";
+
+    // The theme is already applied (by the pre-paint script); this only syncs the control to the stored
+    // choice once the circuit can talk to JS. Guard the two teardown exceptions like every other interop
+    // site — this island lives in MainLayout, so it's on every page.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            var current = await JS.InvokeAsync<string>("shelfawareTheme.get");
+            if (current is "auto" or "light" or "dark" && current != pref)
+            {
+                pref = current;
+                StateHasChanged();
+            }
+        }
+        catch (JSDisconnectedException) { }
+        catch (JSException) { }
+    }
+
+    private async Task ApplyAsync()
+    {
+        try { await JS.InvokeVoidAsync("shelfawareTheme.set", pref); }
+        catch (JSDisconnectedException) { }
+        catch (JSException) { }
+    }
+}
