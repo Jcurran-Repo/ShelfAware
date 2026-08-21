@@ -909,7 +909,7 @@
     private async Task Save(RecipeSuggestion s)
     {
         await using var db = await DbFactory.CreateDbContextAsync();
-        db.Recipes.Add(new Recipe
+        var recipe = new Recipe
         {
             Name = s.Name,
             Blurb = s.Blurb,
@@ -917,11 +917,16 @@
             Ingredients = s.Ingredients.Select(i => new RecipeIngredient { Name = i.Name, IsMain = i.IsMain, MatchedProduct = i.MatchedProduct, Quantity = i.Quantity }).ToList(),
             Steps = s.Steps.Select((t, idx) => new RecipeStep { Order = idx + 1, Text = t }).ToList(),
             EstimatedCaloriesPerServing = s.CaloriesPerServing,
-        });
-        // History-only: recorded so /history shows the save, never undone (the 🗑 on the card is the
-        // manual removal). No generated id needed — the summary carries only the name.
-        ActivityLog.Record(db, ActivityKind.RecipeSaved, new RecipeSavedPayload(s.Name));
+        };
+        db.Recipes.Add(recipe);
+        // Undoable: the entry keys on the recipe's generated id (so undo can delete it), so the recipe
+        // saves inside a transaction to assign it, then the entry is staged and saved — one commit (like a
+        // create in EfPantryStore).
+        await using var tx = await db.Database.BeginTransactionAsync();
+        await db.SaveChangesAsync(); // assigns recipe.Id
+        ActivityLog.Record(db, ActivityKind.RecipeSaved, new RecipeSavedPayload(recipe.Id, s.Name));
         await db.SaveChangesAsync();
+        await tx.CommitAsync();
         await ActivityLog.TrimAsync();
         await LoadAsync();
     }

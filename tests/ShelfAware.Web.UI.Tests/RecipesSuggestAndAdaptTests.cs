@@ -213,10 +213,10 @@ public class RecipesSuggestAndAdaptTests : PageTestContext
         Assert.Equal(2, recipe.Steps.Count);
         Assert.Equal(450, recipe.EstimatedCaloriesPerServing);
 
-        // The save is logged (history-only — the card's 🗑 is the manual removal).
+        // The save is logged and undoable (undo deletes a still-pristine recipe).
         var entry = await raw.ActivityEntries.IgnoreQueryFilters().SingleAsync(e => e.Kind == ActivityKind.RecipeSaved);
         Assert.Equal("Saved recipe: Weeknight Tacos", entry.Summary);
-        Assert.Equal(Reversibility.NotReversible, entry.Reversibility);
+        Assert.Equal(Reversibility.Reversible, entry.Reversibility);
     }
 
     [Fact]

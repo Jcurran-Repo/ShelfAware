@@ -452,4 +452,33 @@ public class EfPantryStore(IHouseholdDbFactory dbFactory, IActivityLog activityL
         }
         return added;
     }
+
+    public async Task<bool> RemoveGroceryExtraAsync(int id, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var row = await db.GroceryExtras.FindAsync([id], cancellationToken);
+        if (row is null) return false; // already gone (a double tap), or not this household's
+        db.GroceryExtras.Remove(row);
+        // Undoable: the entry matches by NAME (the row's id dies with it), so no generated-id dependency —
+        // staged on this same save, so the removal and its undo record commit together.
+        activityLog.Record(db, ActivityKind.GroceryExtraRemoved, new GroceryExtraRemovedPayload(row.Name));
+        await db.SaveChangesAsync(cancellationToken);
+        await activityLog.TrimAsync(cancellationToken);
+        return true;
+    }
+
+    public async Task<bool> RemoveSubstituteAsync(int id, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var row = await db.ProductSubstitutes.FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+        if (row is null) return false;
+        var productName = await db.Products.Where(pr => pr.Id == row.ProductId)
+            .Select(pr => pr.Name).FirstOrDefaultAsync(cancellationToken) ?? "a product";
+        db.ProductSubstitutes.Remove(row);
+        activityLog.Record(db, ActivityKind.SubstituteRemoved,
+            new SubstituteRemovedPayload(row.ProductId, productName, row.Value));
+        await db.SaveChangesAsync(cancellationToken);
+        await activityLog.TrimAsync(cancellationToken);
+        return true;
+    }
 }

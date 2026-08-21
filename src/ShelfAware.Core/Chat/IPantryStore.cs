@@ -98,6 +98,10 @@ public interface IPantryStore
     /// returns the values actually added. Lets the assistant fill in a product's substitutes by voice/chat.</summary>
     Task<IReadOnlyList<string>> AddSubstitutesAsync(int productId, IReadOnlyList<string> values, CancellationToken cancellationToken = default);
 
+    /// <summary>Remove one "also works as" substitute by its row id (records an undoable SubstituteRemoved).
+    /// Returns false if it was already gone. The symmetric counterpart to <see cref="AddSubstitutesAsync"/>.</summary>
+    Task<bool> RemoveSubstituteAsync(int id, CancellationToken cancellationToken = default);
+
     /// <summary>Foods the user won't eat (allergies/dislikes) — passed to the recipe advisor so a
     /// generated recipe never includes them.</summary>
     Task<IReadOnlyList<string>> GetExcludedFoodsAsync(CancellationToken cancellationToken = default);
@@ -106,6 +110,10 @@ public interface IPantryStore
     /// insensitive); returns the names actually added. Deliberately NEVER records an inventory signal — a
     /// shopping-list add is not an "I'm out" statement, so it must not feed the prediction engine.</summary>
     Task<IReadOnlyList<string>> AddGroceryExtrasAsync(IReadOnlyList<string> names, CancellationToken cancellationToken = default);
+
+    /// <summary>Remove one manual grocery-list extra by its row id (records an undoable GroceryExtraRemoved).
+    /// Returns false if it was already gone. The symmetric counterpart to <see cref="AddGroceryExtrasAsync"/>.</summary>
+    Task<bool> RemoveGroceryExtraAsync(int id, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Lightweight saved-recipe reference for chat-tool resolution.</summary>

@@ -103,10 +103,14 @@ public class RecipeAdapter(
             Steps = adapted.Steps.Select((t, idx) => new RecipeStep { Order = idx + 1, Text = t }).ToList(),
         };
         db.Recipes.Add(variant);
-        // History-only record, staged on the adapt's single SaveChanges. Only here, past the guards, so a
-        // failed or dishonoured adapt logs nothing. NotReversible — a variant is a saved recipe of its own.
-        activityLog.Record(db, ActivityKind.RecipeAdapted, new RecipeAdaptedPayload(familyName, variant.Name));
+        // Undoable, only here past the guards (a failed or dishonoured adapt logs nothing). The entry keys
+        // on the variant's generated id (so undo can delete it), so the variant + the stale-variant removals
+        // save inside a transaction to assign it, then the entry is staged and saved — one commit.
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        await db.SaveChangesAsync(cancellationToken); // assigns variant.Id
+        activityLog.Record(db, ActivityKind.RecipeAdapted, new RecipeAdaptedPayload(variant.Id, familyName, variant.Name));
         await db.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
         await activityLog.TrimAsync(cancellationToken);
         logger.LogInformation("Adapted recipe {RecipeId} into variant {VariantId} (replaced {Removed} duplicate(s)).",
             recipeId, variant.Id, stale.Count);

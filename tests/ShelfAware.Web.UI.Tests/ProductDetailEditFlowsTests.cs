@@ -417,6 +417,12 @@ public class ProductDetailEditFlowsTests : PageTestContext
 
         cut.WaitForAssertion(() => Assert.Contains("None yet", cut.Find(".tag-list").TextContent));
         Assert.Empty((await LoadAsync(id)).Substitutes);
+
+        // Through the store, so removing a substitute is logged + undoable (symmetric with adding one).
+        await using var raw = Db.CreateUnscopedContext();
+        var entry = await raw.ActivityEntries.IgnoreQueryFilters()
+            .SingleAsync(e => e.Kind == ActivityKind.SubstituteRemoved);
+        Assert.Equal("Removed \"chicken breast\" from Chicken Breast Tenderloins's substitutes", entry.Summary);
     }
 
     [Fact]

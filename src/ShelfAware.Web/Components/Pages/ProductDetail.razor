@@ -1242,12 +1242,10 @@ else
     private async Task RemoveSubstitute(ProductSubstitute s)
     {
         if (product is null) return;
+        // Through the store: removes it (household-filtered — a miss is a no-op) and logs an undoable
+        // SubstituteRemoved, so an accidental removal can be taken back.
+        await Store.RemoveSubstituteAsync(s.Id);
         await using var db = await DbFactory.CreateDbContextAsync();
-        if (await db.ProductSubstitutes.FindAsync(s.Id) is { } row)
-        {
-            db.ProductSubstitutes.Remove(row);
-            await db.SaveChangesAsync();
-        }
         await ReloadSubstitutes(db);
     }
 
