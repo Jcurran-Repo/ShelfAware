@@ -61,7 +61,9 @@ public enum ActivityKind
     ProductCreated,
     TagsAdded,
     SubstitutesAdded,
+    SubstituteRemoved,
     GroceryExtrasAdded,
+    GroceryExtraRemoved,
 
     // Reversible — recorded in the confirm/edit services, reusing their existing inverses.
     MealLogged,

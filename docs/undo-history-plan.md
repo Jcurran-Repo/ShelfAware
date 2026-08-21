@@ -287,14 +287,28 @@ transaction. **`ReceiptRemoved` was dropped** — 4c made a confirmed receipt's 
 double-log the same narrative; the enum value is removed and the reason is noted in `ActivityEntry.cs` so it
 isn't re-added.
 
-**Soft actions ✅ — exclude-food reversible, recipes history-only.** `ExcludedFoodChanged` is a REVERSIBLE
-soft action (add↔remove; the payload carries the direction and the value, so the undo matches by value with
-no generated id — recorded on AddExcluded/RemoveExcluded's own save; a reversal that's become a no-op greys as
-Gone). `RecipeSaved` (Recipes.razor Save) and `RecipeAdapted` (RecipeAdapter, past its guards) are HISTORY-ONLY:
-a recipe accumulates history (times eaten, dated meal events, adapted variants) and its delete cascades that
-away / orphans the variants (the self-ref FK is nullable), so undoing a save is not a clean reversal — and a
-manual 🗑 delete already exists. ⚠️ **History-only → reversible is an easy later upgrade** (delete-with-a-gained-
-history guard, like `ProductCreated`) if the deletion-cascade risk is worth taking on; deferred for v1.
+**Soft actions ✅ — exclude-food reversible, recipes reversible-with-a-guard.** `ExcludedFoodChanged` is a
+REVERSIBLE soft action (add↔remove; the payload carries the direction and the value, so the undo matches by
+value with no generated id — recorded on AddExcluded/RemoveExcluded's own save; a reversal that's become a
+no-op greys as Gone).
+
+**`RecipeSaved` (Recipes.razor Save) and `RecipeAdapted` (RecipeAdapter) are now REVERSIBLE** (Jordan's call,
+the branch AFTER the undo-history merge): undo DELETES the recipe/variant, but only while it is still exactly
+as created — `RecipeReversal.HasBeenBuiltOnAsync` (the ONE guard both handlers share) refuses
+(`Superseded`) the moment it's been cooked (`TimesEaten`/a `MealEvent`), adapted into a child variant
+(deleting the parent would orphan it via the nullable self-FK), tagged, or given a photo. A pristine recipe
+has only ingredients + steps, which cascade cleanly; the manual 🗑 stays the explicit destructive removal.
+Recording gained the id via the two-save transaction (like a create). Adapting's undo removes only the
+variant it made — it does NOT restore any stale variants that adapt replaced (bucket-2 territory).
+
+**Removes made symmetric (same branch, bucket 1).** The add of a grocery-list extra or a substitute was
+logged + undoable, but the REMOVE wasn't logged at all — so you could undo the add but not an accidental
+remove. `GroceryExtraRemoved` + `SubstituteRemoved` (undo = re-add, unless it's already back → `Gone`) close
+that, matching how the won't-eat list already handled both directions. New store methods
+`RemoveGroceryExtraAsync`/`RemoveSubstituteAsync` own the remove-and-record (the pages route through them,
+per #1's one-definition lesson). Tags are NOT in scope — product tags have no remove UI (no asymmetry), and
+the Cookbook's recipe-tag remove belongs to a separate feature that isn't logged at all. The lossy/cascading
+actions (merge, census, and the deletes) stay as they are — explicitly out of bucket 1 (Jordan's call).
 
 The /history page is kind-AGNOSTIC (it switches on the Peek outcome, never on `ActivityKind`), so every new
 kind renders — reversible ones with an Undo button, history-only greyed — with no page change.

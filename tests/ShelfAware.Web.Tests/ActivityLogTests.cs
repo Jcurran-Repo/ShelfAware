@@ -829,36 +829,138 @@ public sealed class ActivityLogTests : IDisposable
     }
 
     [Fact]
-    public async Task Saving_a_recipe_records_a_history_only_entry_that_cannot_be_undone()
+    public async Task Undoing_a_recipe_save_deletes_the_pristine_recipe()
     {
-        await using (var db = _db.CreateDbContext())
-        {
-            db.Recipes.Add(new Recipe { Name = "Sheet-Pan Chicken", SavedAt = DateTimeOffset.Now });
-            _log.Record(db, ActivityKind.RecipeSaved, new RecipeSavedPayload("Sheet-Pan Chicken"));
-            await db.SaveChangesAsync();
-        }
+        var recipeId = await SeedRecipe("Sheet-Pan Chicken");
+        await RecordRecipeSaved(recipeId, "Sheet-Pan Chicken");
 
         var entry = await LatestEntry();
         Assert.Equal(ActivityKind.RecipeSaved, entry.Kind);
-        Assert.Equal(Reversibility.NotReversible, entry.Reversibility);
+        Assert.Equal(Reversibility.Reversible, entry.Reversibility);
         Assert.Equal("Saved recipe: Sheet-Pan Chicken", entry.Summary);
-        Assert.Equal(UndoOutcome.NotReversible, await _log.UndoAsync(entry.Id));
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+        Assert.False(await RecipeExists(recipeId));            // the recipe is deleted
+        Assert.NotNull((await Entry(entry.Id))!.UndoneAt);
     }
 
     [Fact]
-    public async Task Adapting_a_recipe_records_a_history_only_entry_that_cannot_be_undone()
+    public async Task Undoing_a_recipe_save_refuses_once_the_recipe_has_been_cooked()
     {
+        var recipeId = await SeedRecipe("Sheet-Pan Chicken", timesEaten: 2); // built on since
+        await RecordRecipeSaved(recipeId, "Sheet-Pan Chicken");
+        var entry = await LatestEntry();
+
+        Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(entry.Id));
+        Assert.True(await RecipeExists(recipeId)); // kept — the 🗑 is the explicit removal
+    }
+
+    [Fact]
+    public async Task Undoing_a_recipe_save_refuses_once_it_has_an_adapted_variant()
+    {
+        // Deleting the parent would orphan the variant (nullable self-FK), so the guard must refuse.
+        var recipeId = await SeedRecipe("Beef Stew");
+        await SeedRecipe("Beef Stew with thighs", parentId: recipeId);
+        await RecordRecipeSaved(recipeId, "Beef Stew");
+        var entry = await LatestEntry();
+
+        Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(entry.Id));
+        Assert.True(await RecipeExists(recipeId));
+    }
+
+    [Fact]
+    public async Task Undoing_an_adapt_deletes_the_variant_but_keeps_the_original()
+    {
+        var parentId = await SeedRecipe("Beef Stew");
+        var variantId = await SeedRecipe("Beef Stew with thighs", parentId: parentId);
         await using (var db = _db.CreateDbContext())
         {
-            _log.Record(db, ActivityKind.RecipeAdapted, new RecipeAdaptedPayload("Beef Stew", "Beef Stew with thighs"));
+            _log.Record(db, ActivityKind.RecipeAdapted, new RecipeAdaptedPayload(variantId, "Beef Stew", "Beef Stew with thighs"));
             await db.SaveChangesAsync();
         }
+        var entry = await LatestEntry();
+        Assert.Equal(Reversibility.Reversible, entry.Reversibility);
+        Assert.Equal("Adapted Beef Stew → Beef Stew with thighs", entry.Summary);
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+        Assert.False(await RecipeExists(variantId)); // the variant is gone
+        Assert.True(await RecipeExists(parentId));   // the original stays
+    }
+
+    [Fact]
+    public async Task Undoing_an_adapt_refuses_once_the_variant_has_been_cooked()
+    {
+        var parentId = await SeedRecipe("Beef Stew");
+        var variantId = await SeedRecipe("Beef Stew with thighs", parentId: parentId, timesEaten: 1);
+        await using (var db = _db.CreateDbContext())
+        {
+            _log.Record(db, ActivityKind.RecipeAdapted, new RecipeAdaptedPayload(variantId, "Beef Stew", "Beef Stew with thighs"));
+            await db.SaveChangesAsync();
+        }
+        var entry = await LatestEntry();
+
+        Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(entry.Id));
+        Assert.True(await RecipeExists(variantId));
+    }
+
+    // ---- GroceryExtraRemoved / SubstituteRemoved (the symmetric counterparts of the adds) ----
+
+    [Fact]
+    public async Task Undoing_a_grocery_extra_removal_puts_it_back()
+    {
+        await _store.AddGroceryExtrasAsync(["napkins"]);
+        var extraId = await OnlyGroceryExtraId();
+        Assert.True(await _store.RemoveGroceryExtraAsync(extraId));
+        Assert.Equal(0, await GroceryExtraCount());
 
         var entry = await LatestEntry();
-        Assert.Equal(ActivityKind.RecipeAdapted, entry.Kind);
-        Assert.Equal(Reversibility.NotReversible, entry.Reversibility);
-        Assert.Equal("Adapted Beef Stew → Beef Stew with thighs", entry.Summary);
-        Assert.Equal(UndoOutcome.NotReversible, await _log.UndoAsync(entry.Id));
+        Assert.Equal(ActivityKind.GroceryExtraRemoved, entry.Kind);
+        Assert.Equal("Removed napkins from the grocery list", entry.Summary);
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+        Assert.Equal(1, await GroceryExtraCount()); // back on the list
+    }
+
+    [Fact]
+    public async Task Undoing_a_grocery_extra_removal_is_a_no_op_when_it_is_already_back()
+    {
+        await _store.AddGroceryExtrasAsync(["napkins"]);
+        var extraId = await OnlyGroceryExtraId();
+        await _store.RemoveGroceryExtraAsync(extraId);
+        var entry = await LatestEntry();
+        await _store.AddGroceryExtrasAsync(["napkins"]); // re-added by hand since
+
+        Assert.Equal(UndoOutcome.Gone, await _log.UndoAsync(entry.Id));
+    }
+
+    [Fact]
+    public async Task Undoing_a_substitute_removal_puts_it_back()
+    {
+        var id = await SeedProduct("Chicken Breast Tenderloins");
+        await _store.AddSubstitutesAsync(id, ["chicken breast"]);
+        var subId = await OnlySubstituteId(id);
+        Assert.True(await _store.RemoveSubstituteAsync(subId));
+        Assert.Equal(0, await SubstituteCount(id));
+
+        var entry = await LatestEntry();
+        Assert.Equal(ActivityKind.SubstituteRemoved, entry.Kind);
+        Assert.Equal("Removed \"chicken breast\" from Chicken Breast Tenderloins's substitutes", entry.Summary);
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+        Assert.Equal(1, await SubstituteCount(id)); // back on the product
+    }
+
+    [Fact]
+    public async Task Undoing_a_substitute_removal_reports_Gone_when_the_product_is_deleted()
+    {
+        var id = await SeedProduct("Chicken Breast Tenderloins");
+        await _store.AddSubstitutesAsync(id, ["chicken breast"]);
+        var subId = await OnlySubstituteId(id);
+        await _store.RemoveSubstituteAsync(subId);
+        var entry = await LatestEntry();
+        await DeleteProduct(id); // the whole product is gone now — nothing to put a substitute back on
+
+        Assert.Equal(UndoOutcome.Gone, await _log.UndoAsync(entry.Id));
     }
 
     // ---- helpers ----
@@ -1146,5 +1248,45 @@ public sealed class ActivityLogTests : IDisposable
     {
         await using var db = _db.CreateDbContext();
         await db.ExcludedFoods.Where(f => f.Value == value).ExecuteDeleteAsync();
+    }
+
+    private async Task<int> SeedRecipe(string name, int timesEaten = 0, int? parentId = null)
+    {
+        await using var db = _db.CreateDbContext();
+        var recipe = new Recipe { Name = name, SavedAt = DateTimeOffset.Now, TimesEaten = timesEaten, ParentRecipeId = parentId };
+        db.Recipes.Add(recipe);
+        await db.SaveChangesAsync();
+        return recipe.Id;
+    }
+
+    private async Task RecordRecipeSaved(int recipeId, string name)
+    {
+        await using var db = _db.CreateDbContext();
+        _log.Record(db, ActivityKind.RecipeSaved, new RecipeSavedPayload(recipeId, name));
+        await db.SaveChangesAsync();
+    }
+
+    private async Task<bool> RecipeExists(int id)
+    {
+        await using var db = _db.CreateDbContext();
+        return await db.Recipes.AnyAsync(r => r.Id == id);
+    }
+
+    private async Task<int> OnlyGroceryExtraId()
+    {
+        await using var db = _db.CreateDbContext();
+        return (await db.GroceryExtras.AsNoTracking().SingleAsync()).Id;
+    }
+
+    private async Task<int> OnlySubstituteId(int productId)
+    {
+        await using var db = _db.CreateDbContext();
+        return (await db.ProductSubstitutes.AsNoTracking().SingleAsync(s => s.ProductId == productId)).Id;
+    }
+
+    private async Task DeleteProduct(int id)
+    {
+        await using var db = _db.CreateDbContext();
+        await db.Products.Where(p => p.Id == id).ExecuteDeleteAsync();
     }
 }

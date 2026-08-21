@@ -96,6 +96,24 @@ public class GroceryListPageTests : PageTestContext
         Assert.Empty(await raw.GroceryExtras.IgnoreQueryFilters().ToListAsync());
     }
 
+    [Fact]
+    public async Task Removing_an_extra_records_an_undoable_entry()
+    {
+        var cut = RenderList();
+        AddExtra(cut, "Batteries");
+        cut.WaitForState(() => cut.FindAll(".extras .tag-x").Count == 1);
+
+        cut.Find(".extras .tag-x").Click(); // remove it
+        cut.WaitForState(() => cut.FindAll(".extras .tag-x").Count == 0);
+
+        // Through the store, so an accidental removal is logged + undoable (symmetric with the add).
+        await using var raw = Db.CreateUnscopedContext();
+        var entry = await raw.ActivityEntries.IgnoreQueryFilters()
+            .SingleAsync(e => e.Kind == ActivityKind.GroceryExtraRemoved);
+        Assert.Equal("Removed Batteries from the grocery list", entry.Summary);
+        Assert.Equal(Reversibility.Reversible, entry.Reversibility);
+    }
+
     // ------------------------------------------------------------------------------- row actions
 
     [Fact]

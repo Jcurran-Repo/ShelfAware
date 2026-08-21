@@ -59,10 +59,10 @@ public class RecipeAdapterTests : IDisposable
         Assert.Contains(variant.Ingredients, i => i.Name == "chicken thighs");
         Assert.NotEmpty(variant.Steps);
 
-        // The adapt logs a history-only entry (greyed on /history), naming the family and the variant.
+        // The adapt logs an undoable entry, naming the family and the variant (undo deletes the variant).
         var entry = await db.ActivityEntries.SingleAsync(e => e.Kind == ActivityKind.RecipeAdapted);
         Assert.Equal("Adapted Pan-Seared Chicken → Pan-Seared Chicken Thighs", entry.Summary);
-        Assert.Equal(Reversibility.NotReversible, entry.Reversibility);
+        Assert.Equal(Reversibility.Reversible, entry.Reversibility);
     }
 
     [Fact]

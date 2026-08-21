@@ -281,6 +281,9 @@ internal sealed class FakePantryStore : IPantryStore
         return Task.FromResult<IReadOnlyList<string>>(added);
     }
 
+    // Removes are page actions, not chat tools — no chat test exercises them.
+    public Task<bool> RemoveSubstituteAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
     public Task<IReadOnlyList<string>> GetExcludedFoodsAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<string>>(Excluded);
 
@@ -295,6 +298,8 @@ internal sealed class FakePantryStore : IPantryStore
         }
         return Task.FromResult<IReadOnlyList<string>>(added);
     }
+
+    public Task<bool> RemoveGroceryExtraAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 }
 
 /// <summary>An <see cref="IPantryStore"/> whose write throws — exercises the chat loop's tool-error
@@ -328,8 +333,10 @@ internal sealed class ThrowingPantryStore(params Product[] products) : IPantrySt
         throw new InvalidOperationException("simulated DB write failure");
     public Task<IReadOnlyList<RecipeRef>> GetRecipesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<string>> AddSubstitutesAsync(int productId, IReadOnlyList<string> values, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<bool> RemoveSubstituteAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<string>> GetExcludedFoodsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<string>>([]);
     public Task<IReadOnlyList<string>> AddGroceryExtrasAsync(IReadOnlyList<string> names, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<bool> RemoveGroceryExtraAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 }
 
 /// <summary>

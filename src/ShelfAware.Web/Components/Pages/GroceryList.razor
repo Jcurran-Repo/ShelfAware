@@ -340,15 +340,10 @@ else
     private async Task RemoveExtra(GroceryExtra e)
     {
         copyStatus = null; // the copied list is now stale
+        // Through the store: removes it (household-filtered — a miss is a no-op, not an error) and logs an
+        // undoable GroceryExtraRemoved, so an accidental removal can be taken back.
+        await Store.RemoveGroceryExtraAsync(e.Id);
         await using var db = await DbFactory.CreateDbContextAsync();
-        // No fallback to the detached `e`: the lookup is household-filtered, so a miss means the row is
-        // gone (a double tap) or isn't ours — and removing `e` anyway would delete it keyed on the id
-        // alone, unfiltered. Nothing to delete is a no-op, not an error.
-        if (await db.GroceryExtras.FindAsync(e.Id) is { } row)
-        {
-            db.GroceryExtras.Remove(row);
-            await db.SaveChangesAsync();
-        }
         extras = await db.GroceryExtras.OrderBy(x => x.Name).ToListAsync();
     }
 
