@@ -1,0 +1,16 @@
+[
+  { "NormalizedName": "Baking Potatoes", "Quantity": 1, "Category": "Produce" },
+  { "NormalizedName": "Pinot", "Quantity": 3, "Category": "Beverage" },
+  { "NormalizedName": "Chocolate Milk", "Quantity": 1, "Category": "Dairy" },
+  { "NormalizedName": "Whole Milk", "Quantity": 2, "Category": "Dairy" },
+  { "NormalizedName": "Cottage Cheese", "Quantity": 1, "Category": "Dairy" },
+  { "NormalizedName": "Bread", "Quantity": 1, "Category": "Pantry" },
+  { "NormalizedName": "Cucumber", "Quantity": 1, "Category": "Produce" },
+  { "NormalizedName": "Whipped Cream", "Quantity": 1, "Category": "Dairy" },
+  { "NormalizedName": "Broccoli", "Quantity": 1, "Category": "Produce" },
+  { "NormalizedName": "Protein Yogurt", "Quantity": 1, "Category": "Dairy" },
+  { "NormalizedName": "2032 Batteries", "Quantity": 1, "Category": "Other" },
+  { "NormalizedName": "Cocktail Tomatoes", "Quantity": 1, "Category": "Produce" },
+  { "NormalizedName": "Dried Apricots", "Quantity": 1, "Category": "Pantry" },
+  { "NormalizedName": "Lemons", "Quantity": 1, "Category": "Produce" }
+]
