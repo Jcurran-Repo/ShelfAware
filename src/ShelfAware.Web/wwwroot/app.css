@@ -79,9 +79,9 @@ body {
 }
 
 /* ---- App chrome: a persistent left nav rail beside the content column ---- */
-/* On phones the rail collapses to an off-canvas drawer (see the max-width:768px block) opened from a
-   slim top bar. Above that breakpoint the rail is always visible, which is what kills the old header
-   overflow — the 13 links no longer share one horizontal row. */
+/* On narrow viewports the rail collapses to an off-canvas drawer (see the max-width:1100px block) opened
+   from a slim top bar. Above that breakpoint the rail is always visible, which is what kills the old
+   header overflow — the 13 links no longer share one horizontal row. */
 .app-shell {
     display: grid;
     grid-template-columns: var(--sidebar-w) 1fr;
@@ -230,7 +230,7 @@ body {
     cursor: pointer;
 }
 
-/* Shown only once the rail becomes a drawer (the max-width:768px block flips these on). */
+/* Shown only once the rail becomes a drawer (the max-width:1100px block flips these on). */
 .nav-close,
 .mobile-bar,
 .sidebar-backdrop {
@@ -324,6 +324,12 @@ body {
 
     .app-shell.nav-open .sidebar-backdrop {
         display: block;
+    }
+
+    /* Lock background scroll while the drawer is open, so a drag on the backdrop doesn't scroll the page
+       behind it. The rail carries its own overflow-y for the link list, so it still scrolls internally. */
+    body:has(.app-shell.nav-open) {
+        overflow: hidden;
     }
 }
 

@@ -12,19 +12,20 @@
     @* Mobile-only top bar: brand + hamburger. display:none on desktop, where the rail carries the brand. *@
     <header class="mobile-bar">
         @BrandMark
-        <button type="button" class="nav-toggle" @onclick="() => navOpen = !navOpen"
+        <button type="button" class="nav-toggle" @ref="toggleButton" @onclick="() => navOpen = !navOpen"
                 aria-expanded="@(navOpen ? "true" : "false")" aria-controls="primary-nav"
                 aria-label="@(navOpen ? "Close menu" : "Open menu")">
             <span aria-hidden="true">☰</span>
         </button>
     </header>
 
-    @* The nav rail. Escape closes the drawer (no-op when it's a fixed rail). *@
+    @* The nav rail. On open, focus moves to the ✕ (below) so this Escape handler actually fires and AT
+       lands inside the drawer; Escape / ✕ / backdrop return focus to the ☰. No-op as a fixed desktop rail. *@
     <aside class="sidebar" id="primary-nav" @onkeydown="OnSidebarKey">
         <div class="sidebar-head">
             @BrandMark
             @* Mobile-only: closes the drawer. Hidden on desktop, where there's nothing to close. *@
-            <button type="button" class="nav-close" @onclick="() => navOpen = false"
+            <button type="button" class="nav-close" @ref="closeButton" @onclick="CloseDrawer"
                     aria-label="Close menu">
                 <span aria-hidden="true">✕</span>
             </button>
@@ -63,9 +64,10 @@
     </aside>
 
     @* Dismiss layer behind the open drawer; display:none except on mobile when nav-open. *@
-    <div class="sidebar-backdrop" @onclick="() => navOpen = false"></div>
+    <div class="sidebar-backdrop" @onclick="CloseDrawer"></div>
 
-    <div class="content">
+    @* `inert` while the drawer is open takes the obscured page behind the backdrop out of tab/AT reach. *@
+    <div class="content" inert="@navOpen">
         <main id="main-content" class="site-main">
             @Body
         </main>
@@ -96,14 +98,49 @@
 
 @code {
     private bool navOpen;
+    private bool wasNavOpen;
+    // Set only by the non-navigating closes (Escape / ✕ / backdrop) so focus returns to the hamburger
+    // for those. A link tap closes the drawer AND navigates, where pulling focus back to the ☰ would
+    // fight the navigation — it deliberately leaves this false.
+    private bool restoreFocusOnClose;
+    private ElementReference toggleButton;
+    private ElementReference closeButton;
 
     // The brand mark appears in the mobile top bar and at the head of the rail — one definition so the
     // two can't drift.
     private RenderFragment BrandMark =>@<span class="brand"><img src="icons/icon-192.png" alt="" class="mascot brand-mascot" />Shelf Aware</span>;
 
+    private void CloseDrawer()
+    {
+        navOpen = false;
+        restoreFocusOnClose = true;
+    }
+
     private void OnSidebarKey(KeyboardEventArgs e)
     {
-        if (e.Key == "Escape") navOpen = false;
+        if (e.Key == "Escape") CloseDrawer();
+    }
+
+    // Move focus INTO the drawer when it opens — so the <aside>'s Escape handler actually fires and AT
+    // lands inside the drawer rather than behind it — and back to the ☰ when a non-navigating close asks
+    // for it. Paired with `inert` on the content column, this keeps keyboard focus within the open drawer.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (navOpen == wasNavOpen) return;
+        wasNavOpen = navOpen;
+        try
+        {
+            if (navOpen) await closeButton.FocusAsync();
+            else if (restoreFocusOnClose) await toggleButton.FocusAsync();
+        }
+        catch (Microsoft.JSInterop.JSDisconnectedException)
+        {
+            // The circuit went away mid-focus (tab closed / navigated) — nothing to focus.
+        }
+        finally
+        {
+            restoreFocusOnClose = false;
+        }
     }
 
     private static NavLinkMatch MatchFor(SiteNav.Page page) =>
