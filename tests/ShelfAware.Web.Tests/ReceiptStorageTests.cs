@@ -196,6 +196,20 @@ public class ReceiptStorageTests : IDisposable
         Assert.Null(await storage.ReadForDownloadAsync(imagePath, "receipt-1"));
     }
 
+    [Fact]
+    public async Task Pages_beyond_single_digits_stay_in_numeric_order_not_string_order()
+    {
+        // An ordinal filename sort puts page-10 before page-2; the upload cap is 20 pages, so a long
+        // receipt must order (and its download zip renumber) by the real page index, not the string.
+        var storage = Storage();
+        var imagePath = await storage.NewFolderAsync();
+        foreach (var i in new[] { 0, 1, 2, 10 })
+            await storage.WritePageAsync(imagePath, i, [(byte)i], "image/jpeg");
+
+        Assert.Equal(["page-0.jpg", "page-1.jpg", "page-2.jpg", "page-10.jpg"],
+            storage.Pages(imagePath).Select(Path.GetFileName));
+    }
+
     private static byte[] ReadEntry(ZipArchive zip, string name)
     {
         using var entry = zip.GetEntry(name)!.Open();

@@ -628,10 +628,7 @@ app.MapGet("/api/receipt-image/{id:int}", async (
         .Select(r => new { r.ImagePath, r.Merchant, r.PurchasedAt }).FirstOrDefaultAsync(ct);
     if (row is null || string.IsNullOrEmpty(row.ImagePath)) return Results.NotFound();
 
-    var slug = ReceiptFileName.MerchantSlug(row.Merchant);
-    var baseName = "receipt"
-        + (slug.Length > 0 ? $"-{slug}" : "")
-        + (row.PurchasedAt is { } d ? $"-{d:yyyy-MM-dd}" : $"-{id}");
+    var baseName = ReceiptFileName.ForDownload(row.Merchant, row.PurchasedAt, id);
     var download = await storage.ReadForDownloadAsync(row.ImagePath, baseName, ct);
     if (download is null) return Results.NotFound();
 

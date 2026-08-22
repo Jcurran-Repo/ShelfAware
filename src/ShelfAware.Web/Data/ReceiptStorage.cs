@@ -66,7 +66,18 @@ public sealed class ReceiptStorage(AppPaths paths, ICurrentHousehold household, 
     {
         var folder = Within(imagePath);
         if (folder is null || !Directory.Exists(folder)) return [];
-        return [.. Directory.GetFiles(folder, "page-*.*").OrderBy(f => f, StringComparer.OrdinalIgnoreCase)];
+        // Order by the numeric page index, not the filename string: an ordinal sort puts page-10 before
+        // page-2, so a 10+ page receipt (the upload cap is 20) would misorder the extractor's re-read and
+        // mislabel the download zip's renumbered entries.
+        return [.. Directory.GetFiles(folder, "page-*.*").OrderBy(PageIndex)];
+    }
+
+    // The <n> in "page-<n>.<ext>". A malformed name sorts last rather than throwing.
+    private static int PageIndex(string file)
+    {
+        var name = Path.GetFileNameWithoutExtension(file);
+        var dash = name.LastIndexOf('-');
+        return dash >= 0 && int.TryParse(name.AsSpan(dash + 1), out var n) ? n : int.MaxValue;
     }
 
     public bool HasPages(string imagePath) => Pages(imagePath).Count > 0;

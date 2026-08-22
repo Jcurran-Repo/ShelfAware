@@ -14,4 +14,15 @@ public static class ReceiptFileName
         return new string(merchant.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray())
             .Trim('-');
     }
+
+    /// <summary>The download filename (WITHOUT extension) for a receipt's saved copy: "receipt", the
+    /// merchant slug when there is one, and the purchase date — or the receipt id when it's undated. The
+    /// endpoint appends the page's own extension, or ".zip".</summary>
+    public static string ForDownload(string? merchant, DateOnly? purchasedAt, int id)
+    {
+        var slug = MerchantSlug(merchant);
+        return "receipt"
+            + (slug.Length > 0 ? $"-{slug}" : "")
+            + (purchasedAt is { } d ? $"-{d:yyyy-MM-dd}" : $"-{id}");
+    }
 }
