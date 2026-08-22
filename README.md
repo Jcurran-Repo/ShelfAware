@@ -187,7 +187,7 @@ The extractor is scored against hand-labeled fixtures built from **real Walmart 
 
 <sub>4 real Walmart receipts · 160 hand-labeled line items · model `claude-haiku-4-5-20251001`. The receipt files are private (gitignored); only the labels and results are committed.</sub>
 
-<!-- TODO: screenshot of the /accuracy page → docs/accuracy.png -->
+![The in-app /accuracy page — the extraction eval (100% recall / 100% precision / 99% field vs hand-labelled receipts) and the walk-forward prediction backtest (74% within ±2 days).](docs/accuracy.png)
 
 **The honest part:** the first run read **58% recall** — and the flaw turned out to be the
 *metric*, not the extraction. Symmetric Jaccard was punishing valid descriptor-word differences
