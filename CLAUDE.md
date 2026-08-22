@@ -2019,6 +2019,14 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52 
    - ⚠️ **A negative DNS answer cached during setup outlives the fix** — SOA minimum here is 1800s,
      per resolver (router, each carrier). The tells and the don't-re-edit-healthy-config rule are in
      the runbook; `Resolve-DnsName … -Server 1.1.1.1` is the truth during the countdown.
+   - **Adding a friend with their OWN pantry (Jordan's case, 2026-08-22) is two steps, not one:** (1) add
+     their email to the **Cloudflare Access** application's policy allow-list — the edge gate; a one-time
+     PIN to that address is what lets them reach the app at all; (2) they **register** a Shelf Aware
+     account (registration is open on the family box — `Auth:AllowRegistration: true` since 2026-08-13,
+     item 46), which creates their **own empty household** by default. That's it — no invite code.
+     Cloudflare alone only gets them to the door; registration is what gives them a pantry. (Sharing YOUR
+     pantry would be the extra step instead: generate an **invite code** in Settings and have them redeem
+     it at registration — item 13. Not what Jordan's doing here.)
    Queued next (Jordan's call, 2026-08-12): **forgot-password** — an `IEmailSender`/SMTP seam
    (config-gated like Google OAuth), Identity's existing reset-token flow, two static-SSR Account
    pages + tests + the gate; his wife (currently locked out, in no hurry) is the planned first
@@ -2832,15 +2840,16 @@ date and renders `¤3.99` (invariant culture; a systemd service starts with NO `
 the first live deploy). Set the droplet's timezone (`timedatectl set-timezone`, or `TZ` in the
 service env) and keep `LANG` in the env file — runbook step 2 covers both.
 Also backlog: **CSV history importer — PARKED** (Walmart won't export to Jordan's state; needs another
-itemized source); the header nav overflows at ~1280px laptop widths → a base-header rework (a left
-sidebar preferred over top-bar submenus, or raise the hamburger breakpoint) as its own branch off master
-(item 53); a per-size Trends price chart;
+itemized source); a per-size Trends price chart;
 **learn the corrected DISPLAY NAME from receipt review** (item 52 — aliases already reuse the
 product mapping per merchant; also remember the corrected normalized name per (merchant, raw text) so
 opaque abbreviations like "HONEST COW" pre-fill as "Cottage Cheese" instead of re-guessing).
 (Shipped since this note: the double-scroll fix; the **two-stream cadence model** — rebuy rhythm +
-burn rate, hybrid, restock is status-only (§6); and the whole **production-hardening pass** —
-logging, the SQLite CVE patch, the `IChatClient` migration, and faked-client tests.)
+burn rate, hybrid, restock is status-only (§6); the whole **production-hardening pass** —
+logging, the SQLite CVE patch, the `IChatClient` migration, and faked-client tests; the **left sidebar
+nav rail** that retired the ~768–1400px header overflow (PR #21, 2026-08-22); and **download a receipt's
+saved image copy** — a household-scoped `/api/receipt-image/{id}` (mirrors the recipe-image tenancy
+shape) plus a Download link on /receipts, both merged 2026-08-22 (PR #22).)
 
 ## Voice: the built-in cook-along (v3.3, branch `feature/voice-engine`)
 
