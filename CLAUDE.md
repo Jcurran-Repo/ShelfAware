@@ -98,9 +98,9 @@ and **History (`/history`, added 8/20 — the household's activity log, newest f
 undo; see item 51)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1766 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1770 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
-bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51 and 52).
+bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52 and 53).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -2749,6 +2749,66 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51 and 
      SKUs (not scannable UPCs), and no public API maps them — it'd mean maintaining per-store tables by
      hand. (Also in the backlog list below.)
 
+53. **UI polish batch — theme switcher, alias review name, dapper-blob mascot (2026-08-21; three branches,
+   all ✅ MERGED to master + pushed — PRs #18/#19/#20, CI green).** One session's UI work, each branch gated
+   through `/pre-push` (code + security) on its own, then merged **after** verifying the combined tree (all
+   three touch the shared header). As-built decisions the code can't say:
+   - **Auto/Light/Dark theme switcher (PR #18, `feature/theme-switcher`).** The app already followed the OS
+     via a `prefers-color-scheme` query; this adds a header override — **Auto (=follow the OS, the default)** /
+     Light / Dark. `wwwroot/js/theme.js` resolves the choice (localStorage `shelfaware.theme`; absent = auto →
+     `matchMedia`) and stamps `data-theme` on `<html>` **before first paint** (no flash) — an **external**
+     `self` script, not inline, because the strict CSP forbids inline scripts; it also keeps the toolbar
+     `theme-color` meta in step with `--bg`. `ThemeSwitcher.razor` lives in `MainLayout` (every page) and
+     drives it via JS interop, catching the two teardown exceptions like every interop site.
+     - ⚠️ **The dark palette now lives in ONE place** — moved out of `@media (prefers-color-scheme: dark)`
+       into a single `:root[data-theme="dark"]` block keyed on the attribute the script stamps; the CSS carries
+       no `prefers-color-scheme` query at all (theme.js owns the auto→OS resolution). The "one accessible
+       definition" directive, applied to the palette.
+     - ⚠️ **The HIGH the gate caught: Blazor enhanced navigation strips a client-set `data-theme`.** Enhanced
+       nav morphs `<html>` and drops attributes the framework didn't set, so navigating between the static-SSR
+       account pages (login → register) reverted a dark visitor to light — browser-confirmed. Fixed by
+       re-applying on the framework's own `window.Blazor.addEventListener('enhancedload', …)` hook. **Any
+       future client-set `<html>` attribute has the same exposure** — re-apply it on `enhancedload`.
+     - Manifest `background_color`/`theme_color` → `#131619` (dark splash matching the new icon). Gate: 1 HIGH
+       + 1 MED + 8 LOW → 9 fixed (fix commit re-reviewed clean), 1 **accepted**: with JS fully disabled a
+       dark-OS visitor gets light — Blazor Server needs JS anyway, and a CSS fallback would reintroduce the
+       palette duplication this change removed.
+   - **Alias-resolved receipt-review name (PR #19, `feature/alias-review-display-name`).** When a
+     `(merchant, raw text)` `ProductAlias` resolves a review line, the **Item name** column shows that
+     product's own curated name ("HONEST COW" → "Cottage Cheese") instead of the model's fresh read of the
+     opaque abbreviation, so the name and the product dropdown agree. **Derived from the product**, not copied
+     onto the alias (no second field to drift on a rename — the same directive). Scoped to alias hits only: a
+     fuzzy matcher / model-suggestion guess still shows the model's read to verify against the dropdown, and
+     "alias-resolved" is now one signal driving the product id, the 🔗 mark, and the name (a stale alias can't
+     dangle the dropdown). ⚠️ **Accepted MED:** for a *verified* receipt this stores the curated name, so the
+     in-app Accuracy self-eval grades a fresh extraction (which correctly reads "HONEST COW") as a name miss —
+     an opt-in, display-only metric, and the curated name is the correct data per the brand-agnostic model. The
+     fix if it bites: exclude aliased lines from the self-eval. Directly complements item 52's backlog (learn
+     the corrected display name per merchant + raw text) and the extraction-read-don't-invent rule.
+   - **Dapper-blob app icon + in-app mascot (PR #20, `feature/app-icon-dapper-blob`).** Replaces the
+     placeholder "SA" icon with the mascot — a gold-suited gentleman blob in a top hat and Shelf Aware-blue
+     bow tie, tucking a light-brown clipboard, on the app's dark background. `wwwroot/icons/{icon-512,icon-192,
+     apple-touch-icon}.png` regenerated from a committed vector source (`docs/icons/` — SVG explorations +
+     README; rasterized with Svg.Skia). The PWA install plumbing already existed (`b77c032`) — the icon was
+     the work. The mascot also shows as a 26×26 brand badge in the header (every page) and as the friendly
+     face on the dashboard empty state + the not-found page (one `.mascot` rounding rule, reuses the served
+     PNGs, decorative `alt=""`). Prior-art check came back clear. ⚠️ **The gate caught a regression:** the
+     inline-flex badge floated the header wordmark ~7px above the nav (the header was `align-items: baseline`)
+     — fixed with `.site-header` + `.account-box { align-items: center }`, which centers **every** header item
+     (measured: brand/nav/account/switcher all align at center 37).
+   - ⚠️ **Cross-cutting, and the next feature: the header overflows at ~1280px laptop widths.** The nav has 13
+     links (~1050px) and only collapses to the hamburger at ≤768px, so laptop widths overflow the page.
+     **Pre-existing on master** (~80px over with the mascot hidden) — not caused by these; the mascot adds
+     ~34px and the switcher ~90px on top. The fix is a **separate base-header rework** (agreed direction: a
+     left sidebar over top-bar submenus; raising the hamburger breakpoint is the quick fallback) — its own
+     branch off master, Jordan's next context. See the `nav-header-rework` memory.
+   - **Merged after verifying the COMBINATION, not just the branches.** The three-way merge on master was a
+     state no branch tested, so it was built on a throwaway integration branch first — **0-warning Release
+     build, full suite 1770 green, and the combined header browser-checked** (mascot + switcher coexist and
+     align, dark is the default, the switcher flips light/dark/auto) — then `origin/master`'s tree was
+     confirmed **byte-identical** to that tested tree before syncing. **1770 tests green, 0 warnings** (1766
+     before; +4: +1 alias UI test, +3 `ThemeSwitcher` tests), read off the combined run.
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active
@@ -2772,7 +2832,9 @@ date and renders `¤3.99` (invariant culture; a systemd service starts with NO `
 the first live deploy). Set the droplet's timezone (`timedatectl set-timezone`, or `TZ` in the
 service env) and keep `LANG` in the env file — runbook step 2 covers both.
 Also backlog: **CSV history importer — PARKED** (Walmart won't export to Jordan's state; needs another
-itemized source); a tiny "dapper blob" mascot for the header; a per-size Trends price chart;
+itemized source); the header nav overflows at ~1280px laptop widths → a base-header rework (a left
+sidebar preferred over top-bar submenus, or raise the hamburger breakpoint) as its own branch off master
+(item 53); a per-size Trends price chart;
 **learn the corrected DISPLAY NAME from receipt review** (item 52 — aliases already reuse the
 product mapping per merchant; also remember the corrected normalized name per (merchant, raw text) so
 opaque abbreviations like "HONEST COW" pre-fill as "Cottage Cheese" instead of re-guessing).
