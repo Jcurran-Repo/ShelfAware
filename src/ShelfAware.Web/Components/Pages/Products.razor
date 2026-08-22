@@ -110,6 +110,11 @@ else
         </p>
     }
 
+    @* The products grid is wider than the default reading column. `table-scroll--wide` lets this page
+       use the fuller content-column width (see .site-main:has(...) in app.css) so the grid just fits
+       on a desktop window with no horizontal scroll; `table-scroll` keeps it scrolling inside its own
+       box on a narrow window rather than pushing the whole page sideways. *@
+    <div class="table-scroll table-scroll--wide">
     <table>
         <caption class="visually-hidden">Products with category, tracking, purchase count, replenishment status, and next predicted buy date. Use the filter row to narrow the list.</caption>
         <thead>
@@ -246,6 +251,7 @@ else
             }
         </tbody>
     </table>
+    </div>
     @if (markOutNote is not null)
     {
         <p class="muted" role="status">@markOutNote</p>

@@ -9,7 +9,9 @@
     padding: 0.6rem 1.25rem 0.7rem 1.25rem;
     position: fixed;
     width: 100%;
-    z-index: 1000;
+    /* Above the mobile nav drawer (1100) and its backdrop (1050) so a fatal error is never hidden by an
+       open drawer; still below the skip link (2000). */
+    z-index: 1200;
 }
 
     #blazor-error-ui .dismiss {
