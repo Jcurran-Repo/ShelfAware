@@ -72,11 +72,20 @@ public sealed class ApiTokenAuthenticationHandler(
         return AuthenticateResult.Success(ticket);
     }
 
-    /// <summary>A bare 401 — no HTML login redirect. A GraphQL client is a program, not a browser at a
-    /// sign-in page (mirrors the cookie scheme's <c>/api</c> handling).</summary>
-    protected override Task HandleChallengeAsync(AuthenticationProperties properties)
+    /// <summary>A 401 with a small JSON error body — no HTML login redirect. A GraphQL client is a
+    /// program, not a browser at a sign-in page (mirrors the cookie scheme's <c>/api</c> handling).
+    ///
+    /// ⚠️ The body is load-bearing, not decoration: the app's <c>UseStatusCodePagesWithReExecute</c>
+    /// re-executes an EMPTY error response through the pipeline PRESERVING the method, so an empty 401 on
+    /// a POST became POST /not-found → antiforgery → a misleading 400. Writing a body starts the response,
+    /// which tells StatusCodePages to leave it alone, so the real 401 stands. The GraphQL-style
+    /// <c>{ "errors": [...] }</c> shape is also what a GraphQL client expects.</summary>
+    protected override async Task HandleChallengeAsync(AuthenticationProperties properties)
     {
         Response.StatusCode = StatusCodes.Status401Unauthorized;
-        return Task.CompletedTask;
+        Response.ContentType = "application/json; charset=utf-8";
+        await Response.WriteAsync(
+            """{"errors":[{"message":"Unauthorized. Provide a valid API token in the 'Authorization: Bearer' header."}]}""",
+            Context.RequestAborted);
     }
 }

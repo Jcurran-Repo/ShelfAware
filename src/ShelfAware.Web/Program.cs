@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
+using HotChocolate.AspNetCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
@@ -25,6 +26,7 @@ using ShelfAware.Web.Components;
 using ShelfAware.Web.Components.Account;
 using ShelfAware.Web.Data;
 using ShelfAware.Web.Diagnostics;
+using ShelfAware.Web.GraphQL;
 using ShelfAware.Web.Ingest;
 using ShelfAware.Web.Services;
 using ShelfAware.Web.Undo;
@@ -235,6 +237,15 @@ builder.Services.AddScoped<HouseholdService>();
 // always — the auth handler and Settings gate their EXPOSURE on GraphQL:Enabled, but the service
 // itself is harmless dormant and the delete-my-data flow may need it regardless.
 builder.Services.AddScoped<ApiTokenService>();
+
+// ---- Read-only GraphQL API (gated on GraphQL:Enabled) ----
+// The schema is registered only when the API is enabled, so a disabled deployment builds no schema and
+// maps no endpoint. Every resolver reads through IHouseholdDbFactory (Query.cs), so the household query
+// filter scopes each read for free — no new IgnoreQueryFilters, no Mutation type (read-only by absence).
+if (graphQlEnabled)
+{
+    builder.Services.AddPantryGraphQL();
+}
 
 // ---- In-app problem reporting ----
 // The error log: a logging provider captures every Error/Critical event (handled ones included —
@@ -491,7 +502,16 @@ app.UseHttpsRedirection();
 // resolved the principal before UseAntiforgery sees the request.
 app.UseAuthentication();
 app.UseAuthorization();
-app.UseAntiforgery();
+// Antiforgery guards the Blazor cookie/form world; the GraphQL endpoint is deliberately outside it. It
+// authenticates by BEARER TOKEN, not a cookie, so there is no ambient credential a cross-site form could
+// ride (CSRF doesn't apply), and it's read-only besides — nothing to forge. Its endpoint declares form
+// acceptance (Hot Chocolate's multipart upload support), so without this skip the antiforgery middleware
+// 400s every token request before the resolver runs. Only /graphql is exempted; the rest of the app keeps
+// full antiforgery. (The tidy per-endpoint .DisableAntiforgery() can't be used — it routes through
+// IEndpointConventionBuilder.Finally(), which Hot Chocolate's endpoint builder does not implement.)
+app.UseWhen(
+    ctx => !ctx.Request.Path.StartsWithSegments("/graphql"),
+    branch => branch.UseAntiforgery());
 app.UseRateLimiter();
 
 // Signed in, but in no household — send them somewhere that says so.
@@ -770,5 +790,18 @@ app.MapAdditionalIdentityEndpoints();
 // DevAuth.IsEnabled (Development + the Dev:QuickLogin flag), so this line is inert on every real
 // deployment. See ShelfAware.Web.Auth.DevAuth.
 app.MapDevQuickLogin();
+
+// The read-only GraphQL endpoint (gated on GraphQL:Enabled). Requires the ApiToken policy specifically:
+// that is what makes PolicyEvaluator run the token scheme and promote its household-claim principal to
+// HttpContext.User — so a browser cookie can't reach it and every resolver scopes to the token's
+// household. Introspection stays behind the token too (no anonymous schema). The embedded Nitro IDE is
+// served only in Development: outside it the strict CSP would block the tool's inline scripts anyway, and
+// prod exposes no explorer UI.
+if (graphQlEnabled)
+{
+    app.MapGraphQL()
+        .RequireAuthorization(ApiTokenAuthenticationHandler.PolicyName)
+        .WithOptions(options => options.Tool.Enable = app.Environment.IsDevelopment());
+}
 
 app.Run();

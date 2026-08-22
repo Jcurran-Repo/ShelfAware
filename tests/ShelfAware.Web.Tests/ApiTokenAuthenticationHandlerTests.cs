@@ -39,6 +39,7 @@ public class ApiTokenAuthenticationHandlerTests : IDisposable
             new ApiTokenService(_authDb));
 
         var context = new DefaultHttpContext();
+        context.Response.Body = new MemoryStream(); // so a challenge body can be read back
         if (authorizationHeader is not null) context.Request.Headers.Authorization = authorizationHeader;
 
         var scheme = new AuthenticationScheme(
@@ -123,7 +124,7 @@ public class ApiTokenAuthenticationHandlerTests : IDisposable
     }
 
     [Fact]
-    public async Task The_challenge_writes_a_bare_401_not_a_login_redirect()
+    public async Task The_challenge_writes_a_401_with_a_json_body_and_no_login_redirect()
     {
         var (_, context, handler) = await RunAsync(authorizationHeader: null);
 
@@ -131,5 +132,13 @@ public class ApiTokenAuthenticationHandlerTests : IDisposable
 
         Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
         Assert.False(context.Response.Headers.ContainsKey("Location")); // no redirect to a sign-in page
+
+        // The body is load-bearing, not cosmetic: an EMPTY error response is what UseStatusCodePages
+        // re-executes (method preserved) into a misleading 400 on a POST. A non-empty JSON body starts
+        // the response so StatusCodePages leaves the real 401 alone.
+        Assert.StartsWith("application/json", context.Response.ContentType);
+        context.Response.Body.Position = 0;
+        var body = await new StreamReader(context.Response.Body).ReadToEndAsync();
+        Assert.Contains("Unauthorized", body);
     }
 }

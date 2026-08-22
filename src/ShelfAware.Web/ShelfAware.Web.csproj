@@ -6,6 +6,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="HotChocolate.AspNetCore" Version="16.6.1" />
     <PackageReference Include="MailKit" Version="4.17.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.Google" Version="10.0.9" />
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.9" />
@@ -40,6 +41,11 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- HotChocolate.AspNetCore otherwise injects `global using HotChocolate;` (and 4 more), and
+         HotChocolate.Path collides with System.IO.Path across the whole project. Disable the package's
+         implicit usings and import HotChocolate.Types / HotChocolate.AspNetCore / GreenDonut explicitly
+         in the few GraphQL files that need them. -->
+    <HotChocolateImplicitUsings>disable</HotChocolateImplicitUsings>
     <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
     <UserSecretsId>3d6755e6-9881-43a6-813c-fe3ebd974cd9</UserSecretsId>
   </PropertyGroup>
