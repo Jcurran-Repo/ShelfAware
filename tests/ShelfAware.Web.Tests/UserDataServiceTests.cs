@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Settings;
 using ShelfAware.Core.Speech;
+using ShelfAware.Web.Auth;
 using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.Tests;
@@ -11,13 +12,20 @@ namespace ShelfAware.Web.Tests;
 public class UserDataServiceTests : IDisposable
 {
     private readonly TestDb _db = new();
+    private readonly TestAuthDb _authDb = new();
     private readonly FakeCurrentHousehold _household = new();
     private readonly string _dataDir =
         Path.Combine(Path.GetTempPath(), "shelfaware-web-tests", Guid.NewGuid().ToString("N"));
 
+    // The household FakeCurrentHousehold resolves to — token operations scope to it.
+    private const string HouseholdId = "household-under-test";
+
+    private ApiTokenService Tokens => new(_authDb);
+
     public void Dispose()
     {
         _db.Dispose();
+        _authDb.Dispose();
         try { Directory.Delete(_dataDir, recursive: true); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
     }
 
@@ -32,7 +40,46 @@ public class UserDataServiceTests : IDisposable
         NullLogger<RecipeImageStorage>.Instance);
 
     private UserDataService Service(ISpeechCache? speech = null) =>
-        new(_db, _household, Storage(), RecipeImages(), speech, NullLogger<UserDataService>.Instance);
+        new(_db, _household, Storage(), RecipeImages(), speech, Tokens, NullLogger<UserDataService>.Instance);
+
+    [Fact]
+    public async Task Export_lists_token_metadata_but_never_the_secret_or_hash()
+    {
+        var mint = await Tokens.CreateAsync(HouseholdId, "user-1", "my script", DateTimeOffset.Now);
+
+        var export = await Service().ExportAsync();
+
+        var token = Assert.Single(export.ApiTokens);
+        Assert.Equal("my script", token.Name);
+        Assert.Equal(mint.Token.Prefix, token.Prefix);
+
+        // The credential must not survive an export: neither the raw secret nor its hash appears anywhere
+        // in the serialized data (the metadata record has no hash field, so this is guaranteed by shape —
+        // pinned so a future field addition can't quietly leak it).
+        var json = System.Text.Json.JsonSerializer.Serialize(export);
+        Assert.DoesNotContain(mint.Secret, json);
+        Assert.DoesNotContain(mint.Token.TokenHash, json);
+    }
+
+    [Fact]
+    public async Task Delete_removes_the_households_tokens()
+    {
+        await Tokens.CreateAsync(HouseholdId, "user-1", "my script", DateTimeOffset.Now);
+        Assert.Equal(1, await Tokens.CountForHouseholdAsync(HouseholdId));
+
+        await Service().DeleteAllAsync();
+
+        Assert.Equal(0, await Tokens.CountForHouseholdAsync(HouseholdId)); // a token is the household's to wipe
+    }
+
+    [Fact]
+    public async Task Count_includes_the_households_tokens()
+    {
+        var before = await Service().CountAllAsync();
+        await Tokens.CreateAsync(HouseholdId, "user-1", "my script", DateTimeOffset.Now);
+
+        Assert.Equal(before + 1, await Service().CountAllAsync()); // the delete confirm counts tokens too
+    }
 
     [Fact]
     public async Task Export_includes_a_recipes_saved_photo()

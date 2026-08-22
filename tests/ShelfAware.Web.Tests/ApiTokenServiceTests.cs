@@ -142,6 +142,41 @@ public class ApiTokenServiceTests : IDisposable
         Assert.DoesNotContain(listed, t => t.HouseholdId == "hh-b");
     }
 
+    [Fact]
+    public async Task ListMetadata_returns_export_safe_rows_scoped_to_the_household_newest_first()
+    {
+        var svc = Service();
+        await svc.CreateAsync("hh-a", "user-1", "first", Now);
+        var second = await svc.CreateAsync("hh-a", "user-1", "second", Now.AddMinutes(5));
+        await svc.CreateAsync("hh-b", "user-9", "other household", Now);
+
+        var metadata = await svc.ListMetadataAsync("hh-a");
+
+        Assert.Equal(2, metadata.Count);
+        Assert.Equal("second", metadata[0].Name); // newest first
+        Assert.Equal(second.Token.Prefix, metadata[0].Prefix);
+        Assert.DoesNotContain(metadata, m => m.Name == "other household"); // household-scoped
+        // The metadata record has no hash field at all — the credential can't leak through an export. This
+        // asserts the shape the export serializes (name/prefix/dates), which is exactly the safe surface.
+        Assert.All(metadata, m => Assert.StartsWith("sa_", m.Prefix));
+    }
+
+    [Fact]
+    public async Task Count_and_DeleteAll_are_household_scoped()
+    {
+        var svc = Service();
+        await svc.CreateAsync("hh-a", "user-1", "one", Now);
+        await svc.CreateAsync("hh-a", "user-1", "two", Now);
+        await svc.CreateAsync("hh-b", "user-9", "theirs", Now);
+
+        Assert.Equal(2, await svc.CountForHouseholdAsync("hh-a"));
+
+        Assert.Equal(2, await svc.DeleteAllForHouseholdAsync("hh-a"));
+
+        Assert.Equal(0, await svc.CountForHouseholdAsync("hh-a"));
+        Assert.Equal(1, await svc.CountForHouseholdAsync("hh-b")); // the other household is untouched
+    }
+
     // (revoked, expiresAt-offset-hours-from-Now, expected-usable) — the ONE reading of "is this
     // credential live", mirroring the Household.InviteIsUsable / ErrorLogEntry.Resolved theory style.
     public static TheoryData<bool, int?, bool> UsableCases => new()

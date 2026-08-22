@@ -10,6 +10,13 @@ namespace ShelfAware.Web.Auth;
 /// only for the length of the create call.</summary>
 public sealed record ApiTokenMint(ApiToken Token, string Secret);
 
+/// <summary>Export-safe view of a token: everything a person's data export should say about it, and
+/// NOTHING it shouldn't — no <see cref="ApiToken.TokenHash"/> (revealing it would let anyone with the
+/// export impersonate the token, since the handler only ever has the hash to compare against).</summary>
+public sealed record ApiTokenMetadata(
+    string Name, string Prefix, DateTimeOffset CreatedAt,
+    DateTimeOffset? LastUsedAt, DateTimeOffset? RevokedAt, DateTimeOffset? ExpiresAt);
+
 /// <summary>Mint / validate / list / revoke for GraphQL API tokens — the ONE definition of those
 /// operations, shared by the Settings UI (mint, list, revoke), the auth handler (validate), and the
 /// delete-my-data flow. Talks to auth.db through the RAW <see cref="IDbContextFactory{AuthDbContext}"/>
@@ -96,6 +103,35 @@ public sealed class ApiTokenService(IDbContextFactory<AuthDbContext> dbFactory)
         return await db.ApiTokens
             .Where(t => t.Id == id && t.HouseholdId == householdId && t.RevokedAt == null)
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, now), ct) > 0;
+    }
+
+    /// <summary>Export-safe metadata for a household's tokens (never the hash) — for "download my data",
+    /// which lists a token by name/prefix/lifecycle so a person can see what credentials exist without the
+    /// secret. Newest first, client-side ordered (SQLite can't ORDER BY a DateTimeOffset).</summary>
+    public async Task<List<ApiTokenMetadata>> ListMetadataAsync(string householdId, CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var rows = await db.ApiTokens.AsNoTracking()
+            .Where(t => t.HouseholdId == householdId)
+            .Select(t => new ApiTokenMetadata(t.Name, t.Prefix, t.CreatedAt, t.LastUsedAt, t.RevokedAt, t.ExpiresAt))
+            .ToListAsync(ct);
+        return [.. rows.OrderByDescending(t => t.CreatedAt)];
+    }
+
+    /// <summary>How many tokens this household has — for the "N records will be removed" delete confirm.</summary>
+    public async Task<int> CountForHouseholdAsync(string householdId, CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        return await db.ApiTokens.Where(t => t.HouseholdId == householdId).CountAsync(ct);
+    }
+
+    /// <summary>Remove ALL of a household's tokens — the "delete my data" wiring. A token is a credential
+    /// the household created, so it's theirs to have wiped; the household id scopes it (auth.db has no
+    /// query filter). Returns how many were removed.</summary>
+    public async Task<int> DeleteAllForHouseholdAsync(string householdId, CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        return await db.ApiTokens.Where(t => t.HouseholdId == householdId).ExecuteDeleteAsync(ct);
     }
 
     /// <summary>SHA-256 (hex) of the raw secret — the same shape <c>ErrorLogStore.FingerprintOf</c> uses.

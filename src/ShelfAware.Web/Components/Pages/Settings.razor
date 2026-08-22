@@ -18,6 +18,8 @@
 @inject ILogger<Settings> Logger
 @inject UserDataService UserData
 @inject TourCoordinator Tour
+@inject ApiTokenService Tokens
+@inject IConfiguration Configuration
 
 <PageTitle>Settings — Shelf Aware</PageTitle>
 
@@ -386,6 +388,87 @@
     }
 </section>
 
+@if (graphqlEnabled)
+{
+    <section class="panel">
+        <h2>API access</h2>
+        <p class="muted">
+            A read-only <strong>GraphQL API</strong> for your pantry — for a script or app that reads your
+            products, predictions, and recipes. A token grants READ access to this household's data and
+            nothing more; it can't change anything. Point a client at <code>/graphql</code> and send the
+            token as an <code>Authorization: Bearer …</code> header.
+        </p>
+
+        @if (mintedSecret is not null)
+        {
+            <div class="review-actions token-secret" role="status">
+                <p class="muted small">
+                    <strong>Copy your new token now — you won't see it again.</strong>
+                    Only a fingerprint is stored, so if you lose it you'll need to revoke it and make a new one.
+                </p>
+                <div class="tag-add">
+                    <code class="invite-code">@mintedSecret</code>
+                    <button @onclick="CopySecret">Copy</button>
+                </div>
+            </div>
+        }
+
+        @if (apiTokens.Count == 0)
+        {
+            <p class="muted small">No tokens yet.</p>
+        }
+        else
+        {
+            <div class="table-scroll">
+                <table>
+                    <caption class="visually-hidden">Your API tokens: name, prefix, when created, last used, and status.</caption>
+                    <thead>
+                        <tr>
+                            <th scope="col">Name</th>
+                            <th scope="col">Prefix</th>
+                            <th scope="col">Created</th>
+                            <th scope="col">Last used</th>
+                            <th scope="col">Status</th>
+                            <th scope="col"><span class="visually-hidden">Actions</span></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var t in apiTokens)
+                        {
+                            <tr>
+                                <td>@t.Name</td>
+                                <td><code>@t.Prefix…</code></td>
+                                <td>@t.CreatedAt.ToString("MMM d, yyyy")</td>
+                                <td>@(t.LastUsedAt is { } used ? used.ToString("MMM d, yyyy") : "—")</td>
+                                <td>@TokenStatus(t)</td>
+                                <td>
+                                    @if (t.RevokedAt is null)
+                                    {
+                                        <button class="secondary" @onclick="() => RevokeToken(t.Id)" disabled="@tokenBusy">Revoke</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        <label><span>Create a token</span></label>
+        <div class="tag-add">
+            <input @bind="newTokenName" @bind:event="oninput" aria-label="Token name"
+                   placeholder="e.g. meal-planner script" size="30" maxlength="60" />
+            <button @onclick="CreateToken" disabled="@(tokenBusy || string.IsNullOrWhiteSpace(newTokenName))">
+                @(tokenBusy ? "Working…" : "Create token")
+            </button>
+        </div>
+        @if (tokenNote is not null)
+        {
+            <p class="muted small" role="status">@tokenNote</p>
+        }
+    </section>
+}
+
 <section class="panel">
     <h2>Receipt confirmation</h2>
     <p class="muted">
@@ -528,6 +611,21 @@
     private string? memberNote;
     private string? memberError;
     private string? removingId;
+
+    // ---- API access (read-only GraphQL tokens) ----
+    private bool graphqlEnabled;
+    private IReadOnlyList<ApiToken> apiTokens = [];
+    private string newTokenName = "";
+    // The just-minted secret, shown ONCE (GitHub-PAT model). Held only in this circuit's state until the
+    // page reloads or navigates — never persisted; only its hash is stored.
+    private string? mintedSecret;
+    private bool tokenBusy;
+    private string? tokenNote;
+
+    private static string TokenStatus(ApiToken t) =>
+        t.RevokedAt is not null ? "Revoked"
+        : t.ExpiresAt is { } exp && exp <= DateTimeOffset.Now ? "Expired"
+        : "Live";
     private bool HouseholdNameChanged =>
         household is not null && householdName.Trim().Length > 0 && householdName.Trim() != household.Name;
 
@@ -945,12 +1043,69 @@
 
     protected override async Task OnInitializedAsync()
     {
+        graphqlEnabled = Configuration.GetValue<bool>("GraphQL:Enabled");
         await LoadHouseholdAsync();
+        await LoadTokensAsync(); // after LoadHouseholdAsync — it needs the household id
         // Usage is recorded in every key mode now (BYOK included), so the readouts always load. They
         // outlive a delete deliberately, which is why they aren't in the reload below.
         todayUsage = await UsageMeter.GetTodayAsync();
         usageHistory = await UsageMeter.GetRecentAsync(days: 14);
         await LoadSettingsStateAsync();
+    }
+
+    // ---- API access handlers ----
+    private async Task LoadTokensAsync()
+    {
+        if (!graphqlEnabled || household is null) return;
+        apiTokens = await Tokens.ListAsync(household.Id);
+    }
+
+    private async Task CreateToken()
+    {
+        if (household is null || currentUserId is null || tokenBusy || string.IsNullOrWhiteSpace(newTokenName)) return;
+        tokenBusy = true;
+        try
+        {
+            var mint = await Tokens.CreateAsync(household.Id, currentUserId, newTokenName, DateTimeOffset.Now);
+            mintedSecret = mint.Secret; // shown once, below the form
+            newTokenName = "";
+            tokenNote = "Token created — copy the secret shown above now; you won't see it again.";
+            await LoadTokensAsync();
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Creating an API token failed.");
+            tokenNote = "Couldn't create a token just now — please try again.";
+        }
+        finally { tokenBusy = false; }
+    }
+
+    private async Task RevokeToken(int id)
+    {
+        if (household is null || tokenBusy) return;
+        tokenBusy = true;
+        try
+        {
+            await Tokens.RevokeAsync(id, household.Id, DateTimeOffset.Now);
+            tokenNote = "Token revoked — it will no longer be accepted.";
+            await LoadTokensAsync();
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Revoking an API token failed.");
+            tokenNote = "Couldn't revoke that token just now — please try again.";
+        }
+        finally { tokenBusy = false; }
+    }
+
+    private async Task CopySecret()
+    {
+        if (mintedSecret is null) return;
+        tokenNote = await ClipboardCopy.TryWriteAsync(JS, Logger, mintedSecret)
+            ? "Token copied to the clipboard."
+            : "Couldn't copy — select the token and copy it by hand.";
     }
 
     /// <summary>Everything on this page that is read out of the household's own data, in one place

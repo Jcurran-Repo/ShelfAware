@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.JSInterop;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -37,6 +38,10 @@ public abstract class SettingsTestBase : PageTestContext
 
     private protected virtual LlmOptions ServerLlm => new(); // keyless → the BYOK view
 
+    // Whether the read-only GraphQL API (and its Settings "API access" section) is on. Off by default;
+    // the API-access tests flip it.
+    private protected virtual bool GraphQlEnabled => false;
+
     protected override void RegisterAdditionalServices()
     {
         AuthContext = authDb.CreateDbContext();
@@ -66,13 +71,19 @@ public abstract class SettingsTestBase : PageTestContext
             new AppPaths(dataDir, Path.Combine(dataDir, "receipts")), household, NullLogger<ReceiptStorage>.Instance);
         var recipeImages = new RecipeImageStorage(
             new AppPaths(dataDir, Path.Combine(dataDir, "receipts")), household, NullLogger<RecipeImageStorage>.Instance);
+        var tokens = new ApiTokenService(authDb);
         Services.AddSingleton(Households);
+        Services.AddSingleton(tokens);
+        Services.AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?> { ["GraphQL:Enabled"] = GraphQlEnabled ? "true" : "false" })
+                .Build());
         Services.AddSingleton(new CircuitAiSettings(Options.Create(ServerLlm)));
         Services.AddSingleton(Options.Create(ServerLlm));
         Services.AddSingleton(new AiUsageMeter(Factory, Options.Create(ServerLlm),
             Options.Create(new ElevenLabsOptions()), NullLogger<AiUsageMeter>.Instance));
         Services.AddSingleton(new UserDataService(Factory, household, storage, recipeImages, null,
-            NullLogger<UserDataService>.Instance));
+            tokens, NullLogger<UserDataService>.Instance));
     }
 
     protected override void Dispose(bool disposing)
@@ -183,6 +194,14 @@ public class SettingsPageTests : SettingsTestBase
         Section(cut, "Recipe ingredients").QuerySelector("select")!.Change("Auto");
         await cut.WaitForAssertionAsync(async () =>
             Assert.Equal("Auto", await AppSettings.GetAsync(SettingKeys.RecipeAddConfirm)));
+    }
+
+    [Fact]
+    public void The_api_access_section_is_hidden_when_the_flag_is_off()
+    {
+        // GraphQlEnabled is false in this base view — the section (and every token control) is absent.
+        var cut = RenderSettings();
+        Assert.DoesNotContain(cut.FindAll("section.panel h2"), h => h.TextContent.Contains("API access"));
     }
 
     // ------------------------------------------------------------------------------------- usage
@@ -491,5 +510,50 @@ public class SettingsManagedModeTests : SettingsTestBase
         Assert.Contains("runs on the host's own keys", section.TextContent);
         Assert.Empty(cut.FindAll(".ai-settings"));
         Assert.Empty(cut.FindAll("input[aria-label='Anthropic API key']"));
+    }
+}
+
+/// <summary>The read-only GraphQL API is enabled, so the Settings "API access" section is present and its
+/// mint/list/revoke flow works.</summary>
+public class SettingsApiAccessTests : SettingsTestBase
+{
+    private protected override bool GraphQlEnabled => true;
+
+    private static void ClickButton(IRenderedComponent<Settings> cut, string section, string text) =>
+        Section(cut, section).QuerySelectorAll("button").Single(b => b.TextContent.Trim() == text).Click();
+
+    [Fact]
+    public void The_section_appears_when_the_flag_is_on()
+    {
+        var cut = RenderSettings();
+        Assert.Contains(cut.FindAll("section.panel h2"), h => h.TextContent.Contains("API access"));
+    }
+
+    [Fact]
+    public void Creating_a_token_shows_the_secret_once_lists_it_then_revoke_marks_it_revoked()
+    {
+        var cut = RenderSettings();
+
+        Section(cut, "API access").QuerySelector("input[aria-label='Token name']")!.Input("meal planner");
+        ClickButton(cut, "API access", "Create token");
+
+        // The secret is shown once, and the token is listed as Live under its name.
+        cut.WaitForAssertion(() =>
+        {
+            var section = Section(cut, "API access");
+            Assert.Contains("Copy your new token now", section.TextContent);
+            Assert.Contains("meal planner", section.TextContent);
+            Assert.Contains("Live", section.TextContent);
+            Assert.StartsWith("sa_", section.QuerySelector("code.invite-code")!.TextContent);
+        });
+
+        // Revoke it — the row flips to Revoked and the Revoke button is gone.
+        ClickButton(cut, "API access", "Revoke");
+        cut.WaitForAssertion(() =>
+        {
+            var section = Section(cut, "API access");
+            Assert.Contains("Revoked", section.TextContent);
+            Assert.DoesNotContain(section.QuerySelectorAll("button"), b => b.TextContent.Trim() == "Revoke");
+        });
     }
 }
