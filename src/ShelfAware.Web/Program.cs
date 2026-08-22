@@ -203,6 +203,10 @@ builder.Services.AddOptions<EmailOptions>()
     .ValidateOnStart();
 builder.Services.AddSingleton<IAccountMailer, SmtpAccountMailer>();
 builder.Services.AddScoped<HouseholdService>();
+// Mint/validate/list/revoke for read-only GraphQL API tokens (credentials in auth.db). Registered
+// always — the auth handler and Settings gate their EXPOSURE on GraphQL:Enabled, but the service
+// itself is harmless dormant and the delete-my-data flow may need it regardless.
+builder.Services.AddScoped<ApiTokenService>();
 
 // ---- In-app problem reporting ----
 // The error log: a logging provider captures every Error/Critical event (handled ones included —

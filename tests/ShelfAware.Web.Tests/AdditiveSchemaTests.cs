@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Domain;
+using ShelfAware.Web.Auth;
 using ShelfAware.Web.Data;
 using ShelfAware.Web.Diagnostics;
 
@@ -180,6 +181,33 @@ public class AdditiveSchemaTests : IDisposable
         });
         await db.SaveChangesAsync();
         Assert.Single(await db.ActivityEntries.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Creates_the_ApiTokens_table_on_an_older_auth_db_with_the_fresh_schema()
+    {
+        // The auth-side twin of the pantry table tests: API tokens are credentials, so they live in
+        // auth.db, and a live deployment's auth file predates the GraphQL API feature.
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await TableSchemaAsync(db, "ApiTokens");
+        Assert.NotEmpty(fresh); // includes the unique TokenHash index + the HouseholdId index
+
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE ApiTokens;");
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // second boot — a no-op, not a table-exists error
+
+        // The migrated table is byte-identical to a fresh file's — same DDL, same indexes — which is the
+        // pin on EnsureTable's premise (DDL lifted from EF's create script, no second schema copy).
+        Assert.Equal(fresh, await TableSchemaAsync(db, "ApiTokens"));
+
+        db.ApiTokens.Add(new ApiToken
+        {
+            HouseholdId = "h1", CreatedByUserId = "u1", Name = "script",
+            TokenHash = "ABC", Prefix = "sa_1a2b3c4", CreatedAt = DateTimeOffset.Now,
+        });
+        await db.SaveChangesAsync();
+        Assert.Single(await db.ApiTokens.ToListAsync());
     }
 
     [Fact]
