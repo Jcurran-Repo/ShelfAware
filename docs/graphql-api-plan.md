@@ -1,6 +1,10 @@
 # GraphQL API — implementation plan
 
-**Status:** PLANNED, not started (2026-08-18). A read-only GraphQL API over the pantry
+**Status:** ✅ IMPLEMENTED (2026-08-22, branch `feature/graphql-api`) — this is the historical
+plan; the as-built API is documented in [`graphql-api.md`](graphql-api.md). All seven phases below
+shipped; the arc followed them in order.
+
+A read-only GraphQL API over the pantry
 domain, so a household can query its own data with a token. Portfolio/showcase feature;
 there is no real user demand for it, so it must ship as a **complete vertical slice** or
 not at all — a half-built API reads worse than none.
