@@ -1,48 +1,77 @@
 @inherits LayoutComponentBase
 
-<header class="site-header @(navOpen ? "nav-open" : null)">
-    <span class="brand"><img src="icons/icon-192.png" alt="" class="mascot brand-mascot" />Shelf Aware</span>
-    @* Mobile-only disclosure for the nav — this many links swamp a phone. display:none on desktop, so
-       navOpen (and the nav-open class) can only take effect under the small-screen media query. *@
-    <button type="button" class="nav-toggle" @onclick="() => navOpen = !navOpen"
-            aria-expanded="@(navOpen ? "true" : "false")" aria-controls="primary-nav"
-            aria-label="@(navOpen ? "Close menu" : "Open menu")">
-        <span aria-hidden="true">@(navOpen ? "✕" : "☰")</span>
-    </button>
-    @* A tap on any link both navigates and (via bubbling) folds the mobile menu. *@
-    <nav id="primary-nav" aria-label="Primary" @onclick="() => navOpen = false">
-        @* The page list is SiteNav's — the bug form's "where" dropdown renders the same one, so a
-           new page appears in both or neither. Only "/" needs Match=All (Prefix would light it on
-           every page); NavLink's Prefix match is segment-aware, so /receipt does NOT light on
-           /receipts. *@
-        @* ⚠️ Loop variable must not be named `page` — Razor reads inline `@page.` as the @page
-           DIRECTIVE (the same reserved-word class as lowercase <text>). *@
-        @foreach (var entry in SiteNav.Pages)
-        {
-            <NavLink href="@entry.Href" Match="@MatchFor(entry)">@entry.Label</NavLink>
-        }
-    </nav>
-    <AuthorizeView>
-        <div class="account-box">
-            <a href="Account/Manage/ChangePassword" class="account-email" title="Signed in as @context.User.Identity?.Name">
-                @context.User.Identity?.Name
-            </a>
-            @* A plain HTML POST, not an EditForm: signing out must clear the auth cookie, which only a
-               real HTTP request (escaping the circuit) can do. *@
-            <form method="post" action="Account/Logout" data-enhance="false">
-                <AntiforgeryToken />
-                <button type="submit" class="account-signout">Sign out</button>
-            </form>
+@* Skip the whole nav straight to the content — keyboard users otherwise tab through every rail link
+   on every page. Off-screen until focused (see .skip-link). *@
+<a class="skip-link" href="#main-content">Skip to main content</a>
+
+@* The app shell: a persistent left nav rail beside the content column on desktop; on phones the rail
+   is an off-canvas drawer opened from the slim top bar. navOpen only takes effect under the drawer
+   media query — the rail is always visible above it. *@
+<div class="app-shell @(navOpen ? "nav-open" : null)">
+
+    @* Mobile-only top bar: brand + hamburger. display:none on desktop, where the rail carries the brand. *@
+    <header class="mobile-bar">
+        @BrandMark
+        <button type="button" class="nav-toggle" @onclick="() => navOpen = !navOpen"
+                aria-expanded="@(navOpen ? "true" : "false")" aria-controls="primary-nav"
+                aria-label="@(navOpen ? "Close menu" : "Open menu")">
+            <span aria-hidden="true">☰</span>
+        </button>
+    </header>
+
+    @* The nav rail. Escape closes the drawer (no-op when it's a fixed rail). *@
+    <aside class="sidebar" id="primary-nav" @onkeydown="OnSidebarKey">
+        <div class="sidebar-head">
+            @BrandMark
+            @* Mobile-only: closes the drawer. Hidden on desktop, where there's nothing to close. *@
+            <button type="button" class="nav-close" @onclick="() => navOpen = false"
+                    aria-label="Close menu">
+                <span aria-hidden="true">✕</span>
+            </button>
         </div>
-    </AuthorizeView>
-    <ThemeSwitcher />
-</header>
 
-<main class="site-main">
-    @Body
-</main>
+        @* A tap on any link both navigates and (via bubbling) folds the mobile drawer. *@
+        <nav aria-label="Primary" @onclick="() => navOpen = false">
+            @* The page list is SiteNav's — the bug form's "where" dropdown renders the same one, so a
+               new page appears in both or neither. Only "/" needs Match=All (Prefix would light it on
+               every page); NavLink's Prefix match is segment-aware, so /receipt does NOT light on
+               /receipts. *@
+            @* ⚠️ Loop variable must not be named `page` — Razor reads inline `@page.` as the @page
+               DIRECTIVE (the same reserved-word class as lowercase <text>). *@
+            @foreach (var entry in SiteNav.Pages)
+            {
+                <NavLink href="@entry.Href" Match="@MatchFor(entry)">@entry.Label</NavLink>
+            }
+        </nav>
 
-<SiteFooter />
+        <div class="sidebar-foot">
+            <AuthorizeView>
+                <div class="account-box">
+                    <a href="Account/Manage/ChangePassword" class="account-email" title="Signed in as @context.User.Identity?.Name">
+                        @context.User.Identity?.Name
+                    </a>
+                    @* A plain HTML POST, not an EditForm: signing out must clear the auth cookie, which
+                       only a real HTTP request (escaping the circuit) can do. *@
+                    <form method="post" action="Account/Logout" data-enhance="false">
+                        <AntiforgeryToken />
+                        <button type="submit" class="account-signout">Sign out</button>
+                    </form>
+                </div>
+            </AuthorizeView>
+            <ThemeSwitcher />
+        </div>
+    </aside>
+
+    @* Dismiss layer behind the open drawer; display:none except on mobile when nav-open. *@
+    <div class="sidebar-backdrop" @onclick="() => navOpen = false"></div>
+
+    <div class="content">
+        <main id="main-content" class="site-main">
+            @Body
+        </main>
+        <SiteFooter />
+    </div>
+</div>
 
 @* Pins this circuit's household so detached background work (the voice loop) resolves it without
    an out-of-context auth-state call. Headless; must run inside the authenticated layout. *@
@@ -67,6 +96,15 @@
 
 @code {
     private bool navOpen;
+
+    // The brand mark appears in the mobile top bar and at the head of the rail — one definition so the
+    // two can't drift.
+    private RenderFragment BrandMark =>@<span class="brand"><img src="icons/icon-192.png" alt="" class="mascot brand-mascot" />Shelf Aware</span>;
+
+    private void OnSidebarKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") navOpen = false;
+    }
 
     private static NavLinkMatch MatchFor(SiteNav.Page page) =>
         page.Href == "/" ? NavLinkMatch.All : NavLinkMatch.Prefix;

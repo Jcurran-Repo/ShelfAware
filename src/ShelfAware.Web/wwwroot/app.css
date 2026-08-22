@@ -19,6 +19,10 @@
     --radius: 8px;
     --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.05);
 
+    /* Width of the left nav rail. Shared by both themes (dark doesn't redefine it) and by the fixed
+       tour panel, which offsets itself past the rail. */
+    --sidebar-w: 15rem;
+
     /* Report chart series — fixed slot order (the ordering IS the colorblind-safety mechanism:
        it maximizes adjacent-pair CVD distance; validated against --surface in both modes).
        Series are assigned 1..8 in rank order and never cycled; pooled series wear --chart-pooled. */
@@ -74,20 +78,58 @@ body {
     line-height: 1.45;
 }
 
-/* ---- App chrome ---- */
-.site-header {
-    display: flex;
-    /* center, not baseline: the brand carries a 26px mascot badge, so baseline alignment floats the
-       wordmark above the text-only nav/account. Centering aligns the badge, wordmark, nav, and account
-       row; the account-box below is centered to match. (The mobile rule already centers.) */
-    align-items: center;
-    gap: 1.5rem;
-    padding: 0.85rem 1.5rem;
-    background: var(--surface);
-    border-bottom: 1px solid var(--line);
+/* ---- App chrome: a persistent left nav rail beside the content column ---- */
+/* On phones the rail collapses to an off-canvas drawer (see the max-width:768px block) opened from a
+   slim top bar. Above that breakpoint the rail is always visible, which is what kills the old header
+   overflow — the 13 links no longer share one horizontal row. */
+.app-shell {
+    display: grid;
+    grid-template-columns: var(--sidebar-w) 1fr;
+    min-height: 100vh;
 }
 
-.site-header .brand {
+/* The content column. min-width:0 lets it shrink below its content's intrinsic width, so a wide table
+   (which scrolls inside its own .table-scroll box) can't blow the grid out into a page-wide scrollbar.
+   Kept a plain block so .site-main stays a normal block child that honours its own max-width — a flex
+   column would make main a flex item whose min-width:auto (its content size) overrides that cap. */
+.content {
+    grid-column: 2;
+    min-width: 0;
+}
+
+/* The rail: sticky + full-height so it stays in view while the content column scrolls; the link list
+   scrolls inside it if the viewport is too short to hold every link plus the account footer. */
+.sidebar {
+    grid-column: 1;
+    position: sticky;
+    top: 0;
+    align-self: start;
+    height: 100dvh;
+    /* border-box so the 100dvh height INCLUDES the padding (content-box would add it on top, pushing
+       the footer ~27px below the fold). min-height:0 so that height actually caps the item — its
+       default min-height:auto is the content height, which would otherwise win and stop the nav from
+       scrolling internally when links + footer are taller than the viewport. */
+    box-sizing: border-box;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.85rem 0.75rem;
+    background: var(--surface);
+    border-right: 1px solid var(--line);
+    overflow: hidden;
+}
+
+.sidebar-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.25rem 0.35rem 0.5rem;
+}
+
+/* Shared by the rail head and the mobile top bar. (AccountLayout's .auth-brand .brand sizes its own.) */
+.brand {
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
@@ -129,79 +171,171 @@ body {
     }
 }
 
-.site-header nav a {
-    margin-right: 1rem;
+/* The link list fills the space between the brand and the account footer, scrolling on its own if it
+   can't all fit a short viewport. */
+.sidebar nav {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.sidebar nav a {
+    display: block;
+    padding: 0.5rem 0.6rem;
+    border-radius: 6px;
     color: var(--ink-soft);
     text-decoration: none;
     font-weight: 500;
-    /* The row wraps, and without this a two-word label wraps INSIDE itself — "Count Stock" split across
-       two lines reads as two separate links, both highlighted when active. Latent for "Grocery List" too;
-       it just never happened to land on the break. Wrap between links, never through one. */
+    /* A two-word label must wrap as a unit, never split down the middle into two apparent links. */
     white-space: nowrap;
 }
 
-.site-header nav a:hover {
+.sidebar nav a:hover {
+    background: var(--surface-alt);
     color: var(--accent-ink);
 }
 
-.site-header nav a.active {
+/* Active page: tinted, bolder, with a left accent bar drawn as an inset shadow so it adds no width
+   (a border would shift the label left↔right on every navigation). */
+.sidebar nav a.active {
+    background: var(--surface-alt);
     color: var(--accent-ink);
-    font-weight: 700;
+    font-weight: 600;
+    box-shadow: inset 3px 0 0 var(--accent);
 }
 
-/* Mobile-only nav disclosure (☰). Hidden on desktop, where the full link row renders as always. */
-.nav-toggle {
-    display: none;
+/* Account email + Sign out + theme switcher, pinned to the bottom of the rail. */
+.sidebar-foot {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--line);
+}
+
+/* ☰ opens the drawer (in the mobile top bar); ✕ closes it (in the rail head). Both are hidden on
+   desktop: the top bar is display:none and the close button is display:none until the drawer exists. */
+.nav-toggle,
+.nav-close {
     background: none;
     border: 1px solid var(--line);
     border-radius: 8px;
     color: var(--ink);
     font-size: 1.1rem;
     line-height: 1;
-    padding: 0.35rem 0.6rem;
+    padding: 0.3rem 0.55rem;
     cursor: pointer;
 }
 
-/* Small screens: eight links swamp a phone, so the nav collapses behind the toggle and opens as a
-   full-width column under the bar. Desktop (above the breakpoint) is untouched. */
-@media (max-width: 768px) {
-    .site-header {
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 0.75rem;
-        padding: 0.7rem 1rem;
-    }
+/* Shown only once the rail becomes a drawer (the max-width:768px block flips these on). */
+.nav-close,
+.mobile-bar,
+.sidebar-backdrop {
+    display: none;
+}
 
-    .nav-toggle {
+/* Keyboard users tab past the whole rail on every page; this jumps them straight to the content.
+   Off-screen until focused. */
+.skip-link {
+    position: fixed;
+    top: -4rem;
+    left: 0.5rem;
+    z-index: 2000;
+    padding: 0.5rem 0.75rem;
+    background: var(--surface);
+    color: var(--accent-ink);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    text-decoration: none;
+}
+
+.skip-link:focus {
+    top: 0.5rem;
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .skip-link {
+        transition: top 0.15s ease;
+    }
+}
+
+/* Below this width the rail collapses to an off-canvas drawer opened from the slim top bar. The
+   breakpoint is chosen so the rail only appears once it can be carved off WITHOUT squeezing the
+   content: every content page but Products fits in ≤765px, and 1100 − 15rem rail − scrollbar leaves
+   ~845px, a comfortable margin. Below it the content spans the whole width, exactly as before this
+   rework, so the original ~768–1400px header overflow is gone (a drawer has no horizontal link row). */
+@media (max-width: 1100px) {
+    .app-shell {
         display: block;
-        order: 5; /* visual right edge; DOM (tab) order stays brand → toggle → nav → account */
     }
 
-    .site-header nav {
-        display: none;
-        order: 6;
-        width: 100%;
-        flex-direction: column;
-        border-top: 1px solid var(--line);
-        padding-top: 0.25rem;
-    }
-
-    .site-header.nav-open nav {
+    .mobile-bar {
         display: flex;
-    }
-
-    .site-header nav a {
-        margin-right: 0;
-        padding: 0.55rem 0.25rem;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding: 0.6rem 1rem;
+        background: var(--surface);
         border-bottom: 1px solid var(--line);
+        position: sticky;
+        top: 0;
+        z-index: 30;
     }
 
-    .site-header nav a:last-child {
-        border-bottom: none;
+    /* The drawer sits above the bottom-fixed furniture (voice assistant z-60), and its backdrop above
+       that but below the drawer itself. */
+    .sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 100dvh;
+        width: min(80vw, 17rem);
+        transform: translateX(-100%);
+        /* Off-canvas isn't enough on its own: a translated element stays in the tab order, so the
+           closed drawer's links would still be keyboard-focusable (and read by AT) off-screen.
+           visibility:hidden takes it out of both; the transition below delays the hide until the
+           slide-out has finished so the animation still plays. */
+        visibility: hidden;
+        z-index: 1100;
+        border-right: 1px solid var(--line);
+        box-shadow: 0 0 24px rgba(0, 0, 0, 0.25);
     }
 
-    .site-header .account-email {
-        max-width: 9rem;
+    .app-shell.nav-open .sidebar {
+        transform: translateX(0);
+        visibility: visible;
+    }
+
+    .nav-close {
+        display: inline-flex;
+    }
+
+    .sidebar-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+        z-index: 1050;
+    }
+
+    .app-shell.nav-open .sidebar-backdrop {
+        display: block;
+    }
+}
+
+/* The drawer slides rather than snaps — but only where motion is welcome. On close, the visibility
+   change is held back until the slide-out finishes (0s change, 0.2s delay); on open it flips
+   immediately (the open rule doesn't transition visibility) so the drawer is visible as it slides in. */
+@media (max-width: 1100px) and (prefers-reduced-motion: no-preference) {
+    .sidebar {
+        transition: transform 0.2s ease, visibility 0s linear 0.2s;
+    }
+    .app-shell.nav-open .sidebar {
+        transition: transform 0.2s ease;
     }
 }
 
@@ -226,7 +360,7 @@ h1:focus {
 }
 
 /* Content links use the chart blue (--accent) so they match the price-history line charts.
-   The top nav (.site-header nav a) has its own muted/active treatment and overrides this. */
+   The nav rail (.sidebar nav a) has its own muted/active treatment and overrides this. */
 a {
     color: var(--accent);
 }
@@ -554,11 +688,14 @@ input:focus, select:focus {
 
 /* ---- Guided walkthrough (Components/Layout/GuidedTour.razor) ----
    Docked bottom-LEFT because the voice assistant owns bottom-right; the two are the only fixed-position
-   furniture in the app and must not stack. Non-modal on purpose: no backdrop, nothing blocked — the page
-   under it stays usable, so a visitor can follow a step by actually doing it. */
+   furniture in the app and must not stack. It's a fixed element, so it doesn't know about the nav rail's
+   grid column — clear it explicitly (see left, below). Non-modal on purpose: no backdrop, nothing
+   blocked — the page under it stays usable, so a visitor can follow a step by actually doing it. */
 .tour-panel {
     position: fixed;
-    left: 1rem;
+    /* Sit just past the left rail on desktop; the max-width:1100px override drops it back to the edge
+       when the rail becomes an off-canvas drawer and no longer occupies that space. */
+    left: calc(var(--sidebar-w) + 1rem);
     bottom: 1rem;
     /* Above ordinary page content, deliberately BELOW the modal layer (.picker-backdrop, 60): a
        walkthrough is transient furniture, and floating it over a modal leaves the modal not modal. */
@@ -568,6 +705,14 @@ input:focus, select:focus {
     border-left: 4px solid var(--accent);
     max-height: calc(100vh - 2rem);
     overflow-y: auto;
+}
+
+/* Drawer widths: no rail occupies the left edge, so the panel returns to it. The narrower max-width:560px
+   rule below (full-width bottom sheet) still wins at phone sizes by coming later in source order. */
+@media (max-width: 1100px) {
+    .tour-panel {
+        left: 1rem;
+    }
 }
 
 .tour-head {
@@ -2843,7 +2988,10 @@ tfoot td {
 .report-print-header { display: none; }
 
 @media print {
-    .site-header,
+    .mobile-bar,
+    .sidebar,
+    .sidebar-backdrop,
+    .skip-link,
     .list-actions,
     details.everything-else,
     .info-btn,
@@ -2855,7 +3003,9 @@ tfoot td {
     .voice-agent,
     .tour-panel,
     .site-footer {
-        /* .voice-agent: the assistant is a floating control on every page — screen furniture,
+        /* .sidebar / .mobile-bar: the nav rail (and its phone top bar) are app chrome, not document
+           content — hidden so a printed grocery list or report is just the document.
+           .voice-agent: the assistant is a floating control on every page — screen furniture,
            never document content. Global, not report-only: no printout wants it.
            .tour-panel: same class of thing, and the walkthrough deliberately VISITS the two pages
            built to be printed — Reports and the grocery list — so it would otherwise land in the
@@ -2863,6 +3013,12 @@ tfoot td {
            .site-footer: app chrome on every page — "Report a bug" doesn't belong in a printed
            grocery list. */
         display: none !important;
+    }
+
+    /* With the rail hidden, drop the two-column grid so the content prints full width rather than
+       squeezed into the (now empty) sidebar track. */
+    .app-shell {
+        display: block;
     }
 
     body {
@@ -3036,25 +3192,26 @@ tfoot td {
     }
 }
 
-/* ---- Accounts: header sign-out + the static Account pages ---- */
-.site-header .account-box {
-    margin-left: auto;
+/* ---- Accounts: rail sign-out + the static Account pages ---- */
+/* In the rail footer the email + Sign out stack; the email truncates to the rail width. */
+.account-box {
     display: flex;
-    align-items: center;
-    gap: 0.75rem;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.3rem;
 }
 
-.site-header .account-email {
+.account-email {
     color: var(--ink-soft);
     text-decoration: none;
     font-size: 0.9rem;
-    max-width: 14rem;
+    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.site-header .account-email:hover {
+.account-email:hover {
     color: var(--accent-ink);
 }
 
@@ -3073,18 +3230,9 @@ tfoot td {
     color: var(--accent-ink);
 }
 
-/* Colour-theme switcher (Auto / Light / Dark) in the header. Drives wwwroot/js/theme.js, which
+/* Colour-theme switcher (Auto / Light / Dark) in the rail footer. Drives wwwroot/js/theme.js, which
    stamps data-theme on <html>; the select itself is themed by the tokens like everything else. */
-.site-header .theme-switch {
-    display: inline-flex;
-    align-self: center;
-    /* When the header wraps on mobile, sit just before the hamburger (order 5) / nav (order 6) rather
-       than defaulting to order 0 and lumping in with the brand. No effect on desktop, where the
-       switcher is already the last header child. */
-    order: 4;
-}
-
-.site-header .theme-switch select {
+.theme-switch select {
     /* font, background, and border come from the base `input, select` rule — only the overrides here. */
     font-size: 0.9rem;
     color: var(--ink-soft);
@@ -3093,7 +3241,7 @@ tfoot td {
     cursor: pointer;
 }
 
-.site-header .theme-switch select:hover {
+.theme-switch select:hover {
     border-color: var(--ink-soft);
     color: var(--ink);
 }
