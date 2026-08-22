@@ -77,7 +77,10 @@ body {
 /* ---- App chrome ---- */
 .site-header {
     display: flex;
-    align-items: baseline;
+    /* center, not baseline: the brand carries a 26px mascot badge, so baseline alignment floats the
+       wordmark above the text-only nav/account. Centering aligns the badge, wordmark, nav, and account
+       row; the account-box below is centered to match. (The mobile rule already centers.) */
+    align-items: center;
     gap: 1.5rem;
     padding: 0.85rem 1.5rem;
     background: var(--surface);
@@ -85,8 +88,45 @@ body {
 }
 
 .site-header .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
     font-weight: 700;
     letter-spacing: -0.01em;
+}
+
+/* The dapper-blob mascot, reused as a small brand badge and as the friendly face on the empty and
+   not-found states. A rounded square cut from the same art as the app icon, so it reads the same in
+   light and dark; sizes are set per use, the rounding scales with them. */
+.mascot {
+    display: block;
+    border-radius: 22%;
+    flex-shrink: 0;
+}
+
+.brand-mascot {
+    width: 26px;
+    height: 26px;
+}
+
+.empty-state {
+    display: flex;
+    align-items: center;
+    gap: 1.1rem;
+    padding: 0.5rem 0;
+}
+
+.empty-mascot {
+    width: 88px;
+    height: 88px;
+}
+
+@media (max-width: 480px) {
+    .empty-state {
+        flex-direction: column;
+        text-align: center;
+        gap: 0.75rem;
+    }
 }
 
 .site-header nav a {
@@ -3000,7 +3040,7 @@ tfoot td {
 .site-header .account-box {
     margin-left: auto;
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 0.75rem;
 }
 
