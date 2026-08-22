@@ -345,6 +345,14 @@ body {
     margin: 0 auto;
 }
 
+/* A page holding a wide data grid opts out of the 56rem reading cap (which is meant for prose/forms)
+   and uses a fuller column, so the grid fits without a horizontal scroll on a desktop window. Bounded
+   so it doesn't sprawl on an ultra-wide monitor; it still scrolls inside its own box below this width.
+   Opt-in via `table-scroll--wide` on the grid (see Products.razor) — only that page is affected. */
+.site-main:has(.table-scroll--wide) {
+    max-width: 72rem;
+}
+
 h1 {
     font-size: 1.6rem;
     letter-spacing: -0.02em;
@@ -383,6 +391,11 @@ table {
 .table-scroll {
     overflow-x: auto;
     margin: 1rem 0;
+    /* Positioned so an absolutely-positioned descendant — e.g. a table's `.visually-hidden` <caption> —
+       has THIS box as its containing block, and so is anchored and clipped by it. Otherwise the caption
+       escapes to the page and its off-screen position extends documentElement's scroll width (a phantom
+       horizontal scrollbar). Harmless to the sticky header in .table-scroll--capped. */
+    position: relative;
 }
 
 .table-scroll table {

@@ -110,11 +110,11 @@ else
         </p>
     }
 
-    @* The products grid is wider than the content column, so scroll it inside its own box — the app's
-       standard pattern for wide tables (Upload's review grid, etc.). Without this the grid pushes the
-       whole page into a horizontal scroll, which the narrower content column beside the nav rail makes
-       worse. *@
-    <div class="table-scroll">
+    @* The products grid is wider than the default reading column. `table-scroll--wide` lets this page
+       use the fuller content-column width (see .site-main:has(...) in app.css) so the grid just fits
+       on a desktop window with no horizontal scroll; `table-scroll` keeps it scrolling inside its own
+       box on a narrow window rather than pushing the whole page sideways. *@
+    <div class="table-scroll table-scroll--wide">
     <table>
         <caption class="visually-hidden">Products with category, tracking, purchase count, replenishment status, and next predicted buy date. Use the filter row to narrow the list.</caption>
         <thead>
