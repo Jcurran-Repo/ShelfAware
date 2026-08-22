@@ -82,12 +82,26 @@ builder.Services.AddScoped<IdentityRedirectManager>();
 builder.Services.AddScoped<AuthenticationStateProvider, IdentityRevalidatingAuthenticationStateProvider>();
 builder.Services.AddHttpContextAccessor();
 
+// Read-only GraphQL API exposure is a pure config flag (default false), NOT an env.IsDevelopment()
+// lock — the API is meant to reach prod, so enabling it there is a config flip, not a code change.
+// The ApiToken scheme, its policy, the endpoint, and the Settings UI all gate on this one flag.
+var graphQlEnabled = builder.Configuration.GetValue<bool>("GraphQL:Enabled");
+
 var authentication = builder.Services.AddAuthentication(options =>
 {
     options.DefaultScheme = IdentityConstants.ApplicationScheme;
     options.DefaultSignInScheme = IdentityConstants.ExternalScheme;
 });
 authentication.AddIdentityCookies();
+
+// The API-token scheme rides alongside the cookie schemes but is NEVER the default — it runs only when
+// the GraphQL endpoint's policy names it. Registered only when the API is enabled, so a deployment with
+// the flag off has no extra auth surface at all.
+if (graphQlEnabled)
+{
+    authentication.AddScheme<ApiTokenAuthenticationOptions, ApiTokenAuthenticationHandler>(
+        ApiTokenAuthenticationHandler.SchemeName, configureOptions: null);
+}
 
 // External login is CONFIG-GATED: registered only when a Google client id is present, so an
 // unconfigured deployment has zero OAuth surface (no button, no endpoints that go anywhere).
@@ -174,8 +188,22 @@ builder.Services.Configure<SecurityStampValidatorOptions>(options =>
 // change needs the restart every other option here already needs. Unset = the policy refuses
 // everyone, so an unconfigured deployment has zero admin surface (the Google-OAuth posture).
 var adminOptions = builder.Configuration.GetSection(AdminOptions.SectionName).Get<AdminOptions>() ?? new();
-builder.Services.AddAuthorization(options => options.AddPolicy(AdminOptions.PolicyName,
-    policy => policy.RequireAssertion(ctx => adminOptions.IsAdmin(ctx.User))));
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy(AdminOptions.PolicyName,
+        policy => policy.RequireAssertion(ctx => adminOptions.IsAdmin(ctx.User)));
+
+    // The GraphQL endpoint requires the ApiToken scheme SPECIFICALLY (so a browser cookie can't reach
+    // it) plus an authenticated token. RequireAuthenticatedUser + AddAuthenticationSchemes together are
+    // what make PolicyEvaluator run the scheme and promote its household-claim principal to
+    // HttpContext.User — the tenancy hand-off. Registered only when the API is enabled.
+    if (graphQlEnabled)
+    {
+        options.AddPolicy(ApiTokenAuthenticationHandler.PolicyName, policy => policy
+            .AddAuthenticationSchemes(ApiTokenAuthenticationHandler.SchemeName)
+            .RequireAuthenticatedUser());
+    }
+});
 builder.Services.AddOptions<AdminOptions>()
     .Bind(builder.Configuration.GetSection(AdminOptions.SectionName));
 // Validated at STARTUP, not trusted. A lifetime of 0 or negative used to be read as "never expires" —
