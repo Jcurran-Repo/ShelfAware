@@ -24,6 +24,7 @@ public sealed class Query
         return await db.Products
             .AsNoTracking()
             .Include(p => p.Purchases)
+            .Include(p => p.Signals) // Predict reads outage/restock signals — load them like EfPantryStore
             .OrderBy(p => p.Name)
             .ToListAsync(ct);
     }
@@ -37,6 +38,7 @@ public sealed class Query
         return await db.Products
             .AsNoTracking()
             .Include(p => p.Purchases)
+            .Include(p => p.Signals) // Predict reads outage/restock signals — load them like EfPantryStore
             .FirstOrDefaultAsync(p => p.Id == id, ct);
     }
 
