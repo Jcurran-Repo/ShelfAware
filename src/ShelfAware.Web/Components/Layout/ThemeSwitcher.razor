@@ -1,23 +1,25 @@
 @using Microsoft.JSInterop
 @inject IJSRuntime JS
+@inject ILogger<ThemeSwitcher> Logger
 
 @* Auto (follow the OS) / Light / Dark. The heavy lifting is in wwwroot/js/theme.js — this just reflects
-   the stored choice and writes the new one. No data change, so nothing to persist server-side. *@
-<label class="theme-switch" title="Colour theme">
-    <span class="visually-hidden">Colour theme</span>
+   the stored choice and writes the new one. No data change, so nothing to persist server-side. The span
+   is the styling hook; aria-label is the select's accessible name. *@
+<span class="theme-switch">
     <select @bind="pref" @bind:after="ApplyAsync" aria-label="Colour theme">
         <option value="auto">🌓 Auto</option>
-        <option value="light">☀ Light</option>
+        <option value="light">☀️ Light</option>
         <option value="dark">🌙 Dark</option>
     </select>
-</label>
+</span>
 
 @code {
     private string pref = "auto";
 
     // The theme is already applied (by the pre-paint script); this only syncs the control to the stored
-    // choice once the circuit can talk to JS. Guard the two teardown exceptions like every other interop
-    // site — this island lives in MainLayout, so it's on every page.
+    // choice once the circuit can talk to JS. JSDisconnectedException is the teardown case (this island
+    // lives in MainLayout, so it's on every page) — swallow it; a real JSException (e.g. theme.js failed
+    // to load, so shelfawareTheme is undefined) is a genuine bug, so it's logged.
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
@@ -31,13 +33,13 @@
             }
         }
         catch (JSDisconnectedException) { }
-        catch (JSException) { }
+        catch (JSException ex) { Logger.LogWarning(ex, "Reading the stored theme preference failed."); }
     }
 
     private async Task ApplyAsync()
     {
         try { await JS.InvokeVoidAsync("shelfawareTheme.set", pref); }
         catch (JSDisconnectedException) { }
-        catch (JSException) { }
+        catch (JSException ex) { Logger.LogWarning(ex, "Writing the theme preference failed."); }
     }
 }

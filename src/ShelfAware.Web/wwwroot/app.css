@@ -3038,14 +3038,16 @@ tfoot td {
 .site-header .theme-switch {
     display: inline-flex;
     align-self: center;
+    /* When the header wraps on mobile, sit just before the hamburger (order 5) / nav (order 6) rather
+       than defaulting to order 0 and lumping in with the brand. No effect on desktop, where the
+       switcher is already the last header child. */
+    order: 4;
 }
 
 .site-header .theme-switch select {
-    font: inherit;
+    /* font, background, and border come from the base `input, select` rule — only the overrides here. */
     font-size: 0.9rem;
     color: var(--ink-soft);
-    background: var(--surface);
-    border: 1px solid var(--line);
     border-radius: var(--radius);
     padding: 0.2rem 0.4rem;
     cursor: pointer;

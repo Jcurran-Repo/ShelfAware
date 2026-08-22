@@ -22,10 +22,16 @@
 
     function apply() {
         var eff = resolve(pref());
-        document.documentElement.setAttribute('data-theme', eff);
-        // Keep the browser toolbar / status bar colour in step with the page background.
+        var root = document.documentElement;
+        root.setAttribute('data-theme', eff);
+        // Keep the browser toolbar / status-bar colour in step with the page background by reading the
+        // resolved --bg token, so it can't drift from the palette. Fall back to the literal if the CSSOM
+        // isn't ready (it is: the head stylesheet precedes this script, which blocks on it).
         var meta = document.getElementById('theme-color-meta');
-        if (meta) meta.setAttribute('content', eff === 'dark' ? '#131619' : '#f6f7f9');
+        if (meta) {
+            var bg = getComputedStyle(root).getPropertyValue('--bg').trim();
+            meta.setAttribute('content', bg || (eff === 'dark' ? '#131619' : '#f6f7f9'));
+        }
     }
 
     apply(); // pre-paint
@@ -36,6 +42,17 @@
         if (mq.addEventListener) mq.addEventListener('change', onChange);
         else if (mq.addListener) mq.addListener(onChange); // older Safari
     }
+
+    // Blazor enhanced navigation morphs <html> to match the server response, which never carries
+    // data-theme (the pref is client-only) — so it STRIPS our attribute and the page would revert to
+    // light (confirmed on the static account pages: login → register). Re-stamp after each enhanced
+    // load. theme.js runs before blazor.web.js, so defer the hook; the handler runs in the same task
+    // as the morph, before the browser repaints, so there's no flash.
+    function hookEnhancedNav() {
+        if (window.Blazor && window.Blazor.addEventListener) window.Blazor.addEventListener('enhancedload', apply);
+    }
+    if (window.Blazor && window.Blazor.addEventListener) hookEnhancedNav();
+    else window.addEventListener('load', hookEnhancedNav);
 
     // The in-app switcher (ThemeSwitcher.razor) drives this.
     window.shelfawareTheme = {

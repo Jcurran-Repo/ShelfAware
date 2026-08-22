@@ -1,3 +1,4 @@
+using AngleSharp.Html.Dom;
 using Bunit;
 using ShelfAware.Web.Components.Layout;
 
@@ -22,10 +23,12 @@ public class ThemeSwitcherTests : PageTestContext
     [Fact]
     public void Reads_the_stored_preference_on_load()
     {
-        // The switcher reflects the choice the pre-paint script already applied, so it must ASK for it.
+        // The switcher reflects the choice the pre-paint script already applied — it must ASK for it AND
+        // sync the control to the answer (asserting the invoke alone would survive dropping the sync).
         JSInterop.Setup<string>("shelfawareTheme.get").SetResult("dark");
         var cut = Render<ThemeSwitcher>();
-        cut.WaitForAssertion(() => JSInterop.VerifyInvoke("shelfawareTheme.get"));
+        cut.WaitForAssertion(() =>
+            Assert.Equal("dark", ((IHtmlSelectElement)cut.Find(".theme-switch select")).Value));
     }
 
     [Fact]
