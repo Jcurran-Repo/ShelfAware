@@ -244,7 +244,7 @@ builder.Services.AddScoped<ApiTokenService>();
 // filter scopes each read for free — no new IgnoreQueryFilters, no Mutation type (read-only by absence).
 if (graphQlEnabled)
 {
-    builder.Services.AddPantryGraphQL();
+    builder.Services.AddPantryGraphQL(includeExceptionDetails: builder.Environment.IsDevelopment());
 }
 
 // ---- In-app problem reporting ----
@@ -380,6 +380,20 @@ builder.Services.AddScoped<IVoiceCredentials>(sp => sp.GetRequiredService<Circui
 builder.Services.AddRateLimiter(o =>
 {
     o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    // The GraphQL API's 429 needs a body, for the same reason its 401 does: an empty error response is
+    // re-executed by UseStatusCodePages (method preserved) into POST /not-found → antiforgery → a
+    // misleading 400. Writing a small JSON body starts the response so the real 429 stands (and it's the
+    // shape a GraphQL client expects). Scoped to /graphql so the other rate-limit policies are unchanged.
+    o.OnRejected = async (context, ct) =>
+    {
+        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        if (context.HttpContext.Request.Path.StartsWithSegments("/graphql"))
+        {
+            context.HttpContext.Response.ContentType = "application/json; charset=utf-8";
+            await context.HttpContext.Response.WriteAsync(
+                """{"errors":[{"message":"Too many requests — slow down and retry shortly."}]}""", ct);
+        }
+    };
     o.AddPolicy("cookalong", ctx =>
         RateLimitPartition.GetFixedWindowLimiter(
             ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -390,6 +404,15 @@ builder.Services.AddRateLimiter(o =>
         RateLimitPartition.GetFixedWindowLimiter(
             ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+    // The read-only GraphQL API throttles per TOKEN, not per IP — prod sits behind Caddy/Cloudflare/
+    // Tailscale, so per-IP would bucket every caller under one proxy address. The token id rides in a
+    // claim the ApiToken scheme sets, and a request only reaches the limiter after passing authorization
+    // (an unauthenticated one is 401'd earlier), so the claim is present. 120/min is generous for a real
+    // client and caps a runaway.
+    o.AddPolicy("graphql", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ctx.User.FindFirst(ApiTokenAuthenticationHandler.TokenIdClaim)?.Value ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
     // Credential endpoints get a per-IP brake on top of Identity's per-account lockout: lockout
     // protects one account from many guesses, this protects all accounts from one hammering IP.
     // Razor-component form posts aren't attachable endpoints for a named policy, so the global
@@ -801,6 +824,7 @@ if (graphQlEnabled)
 {
     app.MapGraphQL()
         .RequireAuthorization(ApiTokenAuthenticationHandler.PolicyName)
+        .RequireRateLimiting("graphql")
         .WithOptions(options => options.Tool.Enable = app.Environment.IsDevelopment());
 }
 
