@@ -156,6 +156,14 @@ else
                         }
                     </div>
                 }
+                @* Available whether the receipt is pending or confirmed — a real browser download (Blazor's
+                   router skips `download` anchors), served household-scoped by /api/receipt-image. *@
+                @if (row.HasImage)
+                {
+                    <div class="receipt-download-actions">
+                        <a class="linkish" href="/api/receipt-image/@(row.Receipt.Id)" download>⬇ Download saved copy</a>
+                    </div>
+                }
                 @if (row.Receipt.Status == ReceiptStatus.Confirmed)
                 {
                     <div class="receipt-eval-actions">
@@ -366,10 +374,11 @@ else
         await downloadModule.InvokeVoidAsync("downloadText", $"{FixtureName(row.Receipt)}.expected.json", json);
     }
 
+    // Shares its merchant slug with the receipt-image download endpoint (ReceiptFileName) so the two name a
+    // receipt the same way; the fixture keeps its own "<merchant>-<date>" shape, the download prefixes "receipt-".
     private static string FixtureName(Receipt r)
     {
-        var merchant = new string((r.Merchant ?? "receipt").ToLowerInvariant()
-            .Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray()).Trim('-');
+        var merchant = ReceiptFileName.MerchantSlug(r.Merchant) is { Length: > 0 } m ? m : "receipt";
         return r.PurchasedAt is { } d ? $"{merchant}-{d:yyyy-MM-dd}" : $"{merchant}-{r.Id}";
     }
 

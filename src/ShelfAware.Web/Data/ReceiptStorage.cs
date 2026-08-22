@@ -1,4 +1,11 @@
+using System.IO.Compression;
+
 namespace ShelfAware.Web.Data;
+
+/// <summary>A receipt's saved copy packaged for a browser download: the bytes, the content type to serve
+/// them as, and the filename to save under. One saved page comes back as its own image/PDF; several as a
+/// zip of the pages.</summary>
+public readonly record struct ReceiptDownload(byte[] Bytes, string MediaType, string FileName);
 
 /// <summary>The one thing the receipt-confirm UNDO needs from receipt storage: forget a receipt's saved
 /// image after its rows are gone. A narrow seam over <see cref="ReceiptStorage"/> so the undo handler stays
@@ -59,7 +66,18 @@ public sealed class ReceiptStorage(AppPaths paths, ICurrentHousehold household, 
     {
         var folder = Within(imagePath);
         if (folder is null || !Directory.Exists(folder)) return [];
-        return [.. Directory.GetFiles(folder, "page-*.*").OrderBy(f => f, StringComparer.OrdinalIgnoreCase)];
+        // Order by the numeric page index, not the filename string: an ordinal sort puts page-10 before
+        // page-2, so a 10+ page receipt (the upload cap is 20) would misorder the extractor's re-read and
+        // mislabel the download zip's renumbered entries.
+        return [.. Directory.GetFiles(folder, "page-*.*").OrderBy(PageIndex)];
+    }
+
+    // The <n> in "page-<n>.<ext>". A malformed name sorts last rather than throwing.
+    private static int PageIndex(string file)
+    {
+        var name = Path.GetFileNameWithoutExtension(file);
+        var dash = name.LastIndexOf('-');
+        return dash >= 0 && int.TryParse(name.AsSpan(dash + 1), out var n) ? n : int.MaxValue;
     }
 
     public bool HasPages(string imagePath) => Pages(imagePath).Count > 0;
@@ -68,6 +86,42 @@ public sealed class ReceiptStorage(AppPaths paths, ICurrentHousehold household, 
     public async Task<(byte[] Bytes, string MediaType)> ReadPageAsync(
         string file, CancellationToken cancellationToken = default) =>
         (await File.ReadAllBytesAsync(file, cancellationToken), ReceiptMediaTypes.ForPath(file));
+
+    /// <summary>Packages a receipt's saved copy for a browser download: the single page as-is when there
+    /// is exactly one, or a zip of the pages in order when there are several. Null when the copy is
+    /// missing (an older receipt, a demo row, a hand-edited data dir). <paramref name="baseName"/> is the
+    /// download filename WITHOUT extension — this adds the page's own extension, or ".zip".</summary>
+    public async Task<ReceiptDownload?> ReadForDownloadAsync(
+        string imagePath, string baseName, CancellationToken cancellationToken = default)
+    {
+        var pages = Pages(imagePath);
+        if (pages.Count == 0) return null;
+
+        if (pages.Count == 1)
+        {
+            var (bytes, mediaType) = await ReadPageAsync(pages[0], cancellationToken);
+            return new ReceiptDownload(bytes, mediaType, $"{baseName}.{Extension(pages[0])}");
+        }
+
+        // Build the zip in memory, not on the response stream: ZipArchive's writes are synchronous, and a
+        // MemoryStream doesn't care — so this needs no AllowSynchronousIO opt-in (unlike the data export,
+        // which zips straight onto Kestrel's response body). Receipts are a handful of pages, so the whole
+        // archive comfortably fits in memory.
+        using var buffer = new MemoryStream();
+        using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            for (var i = 0; i < pages.Count; i++)
+            {
+                var (bytes, _) = await ReadPageAsync(pages[i], cancellationToken);
+                var entry = zip.CreateEntry($"page-{i + 1}.{Extension(pages[i])}", CompressionLevel.Fastest);
+                await using var entryStream = entry.Open();
+                entryStream.Write(bytes, 0, bytes.Length);
+            }
+        }
+        return new ReceiptDownload(buffer.ToArray(), "application/zip", $"{baseName}.zip");
+    }
+
+    private static string Extension(string file) => Path.GetExtension(file).TrimStart('.');
 
     /// <summary>Removes one receipt's saved copy. Used to reach rows filed before this type existed,
     /// whose <c>ImagePath</c> has no household segment and so isn't under the household's tree.</summary>

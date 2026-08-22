@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using Microsoft.Extensions.Logging.Abstractions;
 using ShelfAware.Web.Data;
 
@@ -148,5 +149,72 @@ public class ReceiptStorageTests : IDisposable
 
         Assert.False(storage.HasPages(theirs));
         Assert.True(storage.HasPages(mine));
+    }
+
+    [Fact]
+    public async Task A_single_page_downloads_as_that_file_with_its_own_extension()
+    {
+        var storage = Storage();
+        var imagePath = await storage.NewFolderAsync();
+        await storage.WritePageAsync(imagePath, 0, [1, 2, 3], "image/jpeg");
+
+        var download = await storage.ReadForDownloadAsync(imagePath, "receipt-walmart-2026-08-13");
+
+        Assert.NotNull(download);
+        Assert.Equal<byte[]>([1, 2, 3], download.Value.Bytes);
+        Assert.Equal("image/jpeg", download.Value.MediaType);
+        Assert.Equal("receipt-walmart-2026-08-13.jpg", download.Value.FileName);
+    }
+
+    [Fact]
+    public async Task Several_pages_download_as_a_zip_of_the_pages_in_order()
+    {
+        var storage = Storage();
+        var imagePath = await storage.NewFolderAsync();
+        await storage.WritePageAsync(imagePath, 0, [1], "image/jpeg");
+        await storage.WritePageAsync(imagePath, 1, [2, 2], "application/pdf");
+
+        var download = await storage.ReadForDownloadAsync(imagePath, "receipt-costco-2026-08-13");
+
+        Assert.NotNull(download);
+        Assert.Equal("application/zip", download.Value.MediaType);
+        Assert.Equal("receipt-costco-2026-08-13.zip", download.Value.FileName);
+
+        using var zip = new ZipArchive(new MemoryStream(download.Value.Bytes), ZipArchiveMode.Read);
+        Assert.Equal(["page-1.jpg", "page-2.pdf"], zip.Entries.Select(e => e.FullName));
+        // and each page's bytes round-trip into its entry
+        Assert.Equal<byte[]>([1], ReadEntry(zip, "page-1.jpg"));
+        Assert.Equal<byte[]>([2, 2], ReadEntry(zip, "page-2.pdf"));
+    }
+
+    [Fact]
+    public async Task A_receipt_with_no_saved_pages_has_nothing_to_download()
+    {
+        var storage = Storage();
+        var imagePath = await storage.NewFolderAsync(); // folder created, but no pages written
+
+        Assert.Null(await storage.ReadForDownloadAsync(imagePath, "receipt-1"));
+    }
+
+    [Fact]
+    public async Task Pages_beyond_single_digits_stay_in_numeric_order_not_string_order()
+    {
+        // An ordinal filename sort puts page-10 before page-2; the upload cap is 20 pages, so a long
+        // receipt must order (and its download zip renumber) by the real page index, not the string.
+        var storage = Storage();
+        var imagePath = await storage.NewFolderAsync();
+        foreach (var i in new[] { 0, 1, 2, 10 })
+            await storage.WritePageAsync(imagePath, i, [(byte)i], "image/jpeg");
+
+        Assert.Equal(["page-0.jpg", "page-1.jpg", "page-2.jpg", "page-10.jpg"],
+            storage.Pages(imagePath).Select(Path.GetFileName));
+    }
+
+    private static byte[] ReadEntry(ZipArchive zip, string name)
+    {
+        using var entry = zip.GetEntry(name)!.Open();
+        using var buffer = new MemoryStream();
+        entry.CopyTo(buffer);
+        return buffer.ToArray();
     }
 }

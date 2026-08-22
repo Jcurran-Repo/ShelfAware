@@ -12,6 +12,7 @@ using System.Threading.RateLimiting;
 using System.Text.Json;
 using ShelfAware.Core.Census;
 using ShelfAware.Core.Chat;
+using ShelfAware.Core.Domain;
 using ShelfAware.Core.Extraction;
 using ShelfAware.Core.Ingest;
 using ShelfAware.Core.Recipes;
@@ -611,6 +612,28 @@ app.MapGet("/api/recipe-image/{id:int}", async (
     // changes on every replace (a fresh GUID filename), so a new photo is fetched fresh regardless.
     ctx.Response.Headers.CacheControl = "private, max-age=3600";
     return Results.File(image.Value.Bytes, image.Value.MediaType);
+}).RequireAuthorization();
+
+// A receipt's saved copy, served household-scoped as a download — the same tenancy shape as
+// /api/recipe-image above: the receipt is looked up through the caller's household filter, so a foreign id
+// is a 404 (never a cross-household read or an existence oracle), the folder path is read from that
+// filtered row (NEVER the request), and ReceiptStorage's Within guard keeps the reads inside the store.
+// One saved page downloads as its own image/PDF; several download as a zip. Under /api so the no-household
+// middleware answers 401/403 rather than an HTML redirect.
+app.MapGet("/api/receipt-image/{id:int}", async (
+    int id, IHouseholdDbFactory dbFactory, ReceiptStorage storage, HttpContext ctx, CancellationToken ct) =>
+{
+    await using var db = await dbFactory.CreateDbContextAsync(ct);
+    var row = await db.Receipts.AsNoTracking().Where(r => r.Id == id)
+        .Select(r => new { r.ImagePath, r.Merchant, r.PurchasedAt }).FirstOrDefaultAsync(ct);
+    if (row is null || string.IsNullOrEmpty(row.ImagePath)) return Results.NotFound();
+
+    var baseName = ReceiptFileName.ForDownload(row.Merchant, row.PurchasedAt, id);
+    var download = await storage.ReadForDownloadAsync(row.ImagePath, baseName, ct);
+    if (download is null) return Results.NotFound();
+
+    ctx.Response.Headers.CacheControl = "private, no-store"; // a photo of a personal receipt — don't cache
+    return Results.File(download.Value.Bytes, download.Value.MediaType, download.Value.FileName);
 }).RequireAuthorization();
 
 // Receipt upload — the browser resizes each photo and POSTs the bytes HERE, off the SignalR circuit, so a
