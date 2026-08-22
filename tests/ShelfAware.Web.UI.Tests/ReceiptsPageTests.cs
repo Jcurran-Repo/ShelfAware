@@ -297,4 +297,42 @@ public class ReceiptsPageTests : PageTestContext
         Assert.Contains("it can't be removed as a unit",
             Collapsed(cut.Find(".receipt-remove-actions")));
     }
+
+    [Fact]
+    public async Task The_download_link_appears_for_any_receipt_with_a_saved_copy_pending_or_confirmed()
+    {
+        var confirmedId = SeedReceipt(r => r.Merchant = "ConfirmedWithImage");
+        await GiveImage(confirmedId);
+        var pendingId = SeedReceipt(r => { r.Merchant = "PendingWithImage"; r.Status = ReceiptStatus.PendingReview; });
+        await GiveImage(pendingId);
+        SeedReceipt(r => r.Merchant = "NoImage"); // default ImagePath "no-copy" resolves to no pages
+
+        var cut = RenderReceipts();
+
+        // A saved copy → a real download link at the household-scoped endpoint for THIS receipt, marked
+        // `download` so the browser saves it rather than the router treating it as a navigation.
+        var confirmed = cut.FindAll(".receipt-card").Single(c => c.TextContent.Contains("ConfirmedWithImage"));
+        var link = confirmed.QuerySelector(".receipt-download-actions a")!;
+        Assert.Equal($"/api/receipt-image/{confirmedId}", link.GetAttribute("href"));
+        Assert.True(link.HasAttribute("download"));
+        Assert.Contains("Download saved copy", link.TextContent);
+
+        // Deliberately NOT gated on Confirmed — a pending receipt's copy is downloadable too.
+        var pending = cut.FindAll(".receipt-card").Single(c => c.TextContent.Contains("PendingWithImage"));
+        Assert.Equal($"/api/receipt-image/{pendingId}",
+            pending.QuerySelector(".receipt-download-actions a")!.GetAttribute("href"));
+
+        // No saved copy → no link at all (nothing to download).
+        var noImage = cut.FindAll(".receipt-card").Single(c => c.TextContent.Contains("NoImage"));
+        Assert.Null(noImage.QuerySelector(".receipt-download-actions"));
+    }
+
+    private async Task GiveImage(int receiptId)
+    {
+        var imagePath = await Storage.NewFolderAsync();
+        await Storage.WritePageAsync(imagePath, 0, [1, 2, 3], "image/jpeg");
+        using var db = Db.CreateDbContext();
+        db.Receipts.Single(r => r.Id == receiptId).ImagePath = imagePath;
+        db.SaveChanges();
+    }
 }

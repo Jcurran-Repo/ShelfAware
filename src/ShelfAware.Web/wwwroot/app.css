@@ -1349,12 +1349,19 @@ button.mic-speaking {
 }
 
 .receipt-eval-actions,
-.receipt-remove-actions {
+.receipt-remove-actions,
+.receipt-download-actions {
     display: flex;
     align-items: center;
     gap: 0.75rem;
     flex-wrap: wrap;
     margin-top: 0.75rem;
+}
+
+/* The download link is a .linkish anchor, whose inline-after-text left margin would indent it from the
+   card edge — drop it here where the link stands alone in its row. */
+.receipt-download-actions .linkish {
+    margin-left: 0;
 }
 
 /* ---- Review opt-in + accuracy self-check run row ---- */
