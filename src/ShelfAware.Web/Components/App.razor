@@ -9,7 +9,13 @@
     <link rel="stylesheet" href="@Assets["app.css"]" />
     <link rel="stylesheet" href="@Assets["ShelfAware.Web.styles.css"]" />
     <link rel="manifest" href="manifest.webmanifest" />
-    <meta name="theme-color" content="#2563eb" />
+    @* The browser toolbar / status-bar colour. js/theme.js updates it to the effective theme's --bg on
+       load and on every change; the initial value is the LIGHT default (matching the no-data-theme CSS
+       default) so a JS-off light visitor's chrome matches the light page. Must precede the script. *@
+    <meta name="theme-color" id="theme-color-meta" content="#f6f7f9" />
+    @* Resolves the colour theme (Auto→OS / Light / Dark) and stamps data-theme on <html> BEFORE first
+       paint, so there's no flash. External (not inline) because the strict CSP forbids inline scripts. *@
+    <script src="@Assets["js/theme.js"]"></script>
     <link rel="icon" type="image/png" href="icons/icon-192.png" />
     <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
