@@ -791,9 +791,18 @@ app.MapPost("/api/pantry-photo/read", async (
 // Computed ONCE at startup (icons don't change without a redeploy, which restarts the app).
 string IconSrc(string file)
 {
+    // WebRootPath is null when wwwroot can't be located (a misconfigured content root / working directory —
+    // the deploy gotcha class). Guard it explicitly: Path.Combine would throw ArgumentNullException, which the
+    // IO catch below deliberately doesn't cover, and this helper exists precisely NOT to crash startup.
+    var webRoot = app.Environment.WebRootPath;
+    if (string.IsNullOrEmpty(webRoot))
+    {
+        app.Logger.LogWarning("WebRootPath is not set; serving PWA icon {File} unversioned.", file);
+        return $"/icons/{file}";
+    }
     try
     {
-        var bytes = File.ReadAllBytes(Path.Combine(app.Environment.WebRootPath, "icons", file));
+        var bytes = File.ReadAllBytes(Path.Combine(webRoot, "icons", file));
         var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))[..8].ToLowerInvariant();
         return $"/icons/{file}?v={hash}";
     }
