@@ -782,7 +782,41 @@ app.MapPost("/api/pantry-photo/read", async (
 // PWA manifest — makes the app installable ("Add to home screen"). Served explicitly so the content type
 // is right regardless of static-file MIME config; it loads under the same-origin CSP (manifest-src falls
 // back to default-src 'self'). No service worker: this is a server-rendered app, so there's no offline mode.
-app.MapGet("/manifest.webmanifest", () => Results.Content("""
+//
+// The icon "src"s carry a short content hash as ?v=, so the URL changes whenever the art changes and a
+// phone/CDN that cached an older icon under the old path is forced to re-fetch instead of installing the
+// stale one. The head links (App.razor) get the same effect from @Assets/MapStaticAssets; the manifest
+// can't use @Assets — it's handed to Razor components by the renderer, not via DI, so a minimal-API GET
+// param of that type is inferred as a request body and throws at startup — so it hashes the bytes itself.
+// Computed ONCE at startup (icons don't change without a redeploy, which restarts the app).
+string IconSrc(string file)
+{
+    // WebRootPath is null when wwwroot can't be located (a misconfigured content root / working directory —
+    // the deploy gotcha class). Guard it explicitly: Path.Combine would throw ArgumentNullException, which the
+    // IO catch below deliberately doesn't cover, and this helper exists precisely NOT to crash startup.
+    var webRoot = app.Environment.WebRootPath;
+    if (string.IsNullOrEmpty(webRoot))
+    {
+        app.Logger.LogWarning("WebRootPath is not set; serving PWA icon {File} unversioned.", file);
+        return $"/icons/{file}";
+    }
+    try
+    {
+        var bytes = File.ReadAllBytes(Path.Combine(webRoot, "icons", file));
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))[..8].ToLowerInvariant();
+        return $"/icons/{file}?v={hash}";
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        // A missing/unreadable icon must not take the whole app down over a cache-bust — serve it unversioned.
+        app.Logger.LogWarning(ex, "Couldn't hash icon {File} for the PWA manifest; serving it unversioned.", file);
+        return $"/icons/{file}";
+    }
+}
+var icon192Src = IconSrc("icon-192.png");
+var icon512Src = IconSrc("icon-512.png");
+
+app.MapGet("/manifest.webmanifest", () => Results.Content($$"""
 {
   "name": "Shelf Aware",
   "short_name": "ShelfAware",
@@ -793,9 +827,9 @@ app.MapGet("/manifest.webmanifest", () => Results.Content("""
   "background_color": "#131619",
   "theme_color": "#131619",
   "icons": [
-    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    { "src": "{{icon192Src}}", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "{{icon512Src}}", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "{{icon512Src}}", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }
 """, "application/manifest+json"));
