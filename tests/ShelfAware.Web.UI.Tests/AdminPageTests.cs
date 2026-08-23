@@ -280,6 +280,36 @@ public class AdminPageTests : PageTestContext
         });
     }
 
+    [Fact]
+    public void The_online_now_section_updates_live_after_a_connection_arrives_or_leaves()
+    {
+        // Rendered with nobody on — the initial snapshot is empty.
+        var cut = Render<Components.Pages.Admin>();
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("Online now (0)", cut.Markup);
+            Assert.Contains("Nobody's connected right now.", cut.Markup);
+        });
+
+        // A connection arrives on ANOTHER circuit after the page is already up. The page must re-render
+        // live off the Changed subscription (OnPresenceChanged marshals StateHasChanged) — not only from
+        // the first snapshot. Removing the `Presence.Changed += OnPresenceChanged` wiring fails this.
+        presence.Connect("c1", new OnlineUser("u1", "newcomer@test.local"), DateTimeOffset.Now);
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("Online now (1)", cut.Markup);
+            Assert.Contains("newcomer@test.local", cut.Markup);
+        });
+
+        // …and it empties live when they leave.
+        presence.Disconnect("c1");
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("Online now (0)", cut.Markup);
+            Assert.Contains("Nobody's connected right now.", cut.Markup);
+        });
+    }
+
     // ------------------------------------------------------------------- resolve / reopen
 
     [Fact]
