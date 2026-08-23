@@ -139,7 +139,7 @@ public class ApiTokenServiceTests : IDisposable
         Assert.Equal(2, listed.Count);
         Assert.Equal(second.Token.Id, listed[0].Id); // newest first
         Assert.Equal(first.Token.Id, listed[1].Id);
-        Assert.DoesNotContain(listed, t => t.HouseholdId == "hh-b");
+        Assert.DoesNotContain(listed, t => t.Name == "other households"); // household-scoped
     }
 
     [Fact]

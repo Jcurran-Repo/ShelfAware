@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace ShelfAware.Web.Auth;
 
@@ -17,13 +18,21 @@ public sealed record ApiTokenMetadata(
     string Name, string Prefix, DateTimeOffset CreatedAt,
     DateTimeOffset? LastUsedAt, DateTimeOffset? RevokedAt, DateTimeOffset? ExpiresAt);
 
+/// <summary>What the owner's Settings list needs to render each token — the id (to revoke it) plus the
+/// display fields, but NEVER the hash. So the credential's fingerprint never even enters the component's
+/// render tree, matching the export path's discipline. (Distinct from <see cref="ApiTokenMetadata"/>,
+/// which carries no id because an export never revokes.)</summary>
+public sealed record ApiTokenSummary(
+    int Id, string Name, string Prefix, DateTimeOffset CreatedAt,
+    DateTimeOffset? LastUsedAt, DateTimeOffset? RevokedAt, DateTimeOffset? ExpiresAt);
+
 /// <summary>Mint / validate / list / revoke for GraphQL API tokens — the ONE definition of those
 /// operations, shared by the Settings UI (mint, list, revoke), the auth handler (validate), and the
 /// delete-my-data flow. Talks to auth.db through the RAW <see cref="IDbContextFactory{AuthDbContext}"/>
 /// (like <c>ErrorLogStore</c>): these are credentials, not pantry data, and the lookup happens before a
 /// household is known, so there is no query filter to go through — the household scope is enforced HERE,
 /// explicitly, on the operations that need it (list/revoke take the caller's household id).</summary>
-public sealed class ApiTokenService(IDbContextFactory<AuthDbContext> dbFactory)
+public sealed class ApiTokenService(IDbContextFactory<AuthDbContext> dbFactory, ILogger<ApiTokenService>? logger = null)
 {
     /// <summary>Every raw secret starts with this, so a leaked string is recognisable as a Shelf Aware
     /// API token (the GitHub-<c>ghp_</c> convention) and the display prefix is human-identifiable.</summary>
@@ -77,18 +86,33 @@ public sealed class ApiTokenService(IDbContextFactory<AuthDbContext> dbFactory)
         var token = await db.ApiTokens.FirstOrDefaultAsync(t => t.TokenHash == hash, ct);
         if (token is null || !token.IsUsable(now)) return null;
 
-        token.LastUsedAt = now;
-        await db.SaveChangesAsync(ct);
+        // Best-effort: LastUsedAt is a non-essential display field, and this runs on the auth hot path
+        // against the SHARED auth.db (login, the security-stamp revalidation, the error log all live
+        // there). A transient write failure — a SQLite busy lock under load, say — must NOT turn an
+        // already-valid token into a 500. Stamp if we can; log and carry on if we can't.
+        try
+        {
+            token.LastUsedAt = now;
+            await db.SaveChangesAsync(ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            logger?.LogWarning(ex, "Couldn't stamp LastUsedAt on an accepted API token; the token is still valid.");
+        }
         return token;
     }
 
     /// <summary>This household's tokens, newest first — for the Settings list. Ordered client-side
     /// because SQLite can't <c>ORDER BY</c> a <c>DateTimeOffset</c> in SQL (the <c>ErrorLogStore</c>
     /// constraint); the per-household count is tiny, so the fetch-then-sort is free.</summary>
-    public async Task<List<ApiToken>> ListAsync(string householdId, CancellationToken ct = default)
+    public async Task<List<ApiTokenSummary>> ListAsync(string householdId, CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var rows = await db.ApiTokens.AsNoTracking().Where(t => t.HouseholdId == householdId).ToListAsync(ct);
+        var rows = await db.ApiTokens.AsNoTracking()
+            .Where(t => t.HouseholdId == householdId)
+            .Select(t => new ApiTokenSummary(t.Id, t.Name, t.Prefix, t.CreatedAt, t.LastUsedAt, t.RevokedAt, t.ExpiresAt))
+            .ToListAsync(ct);
         return [.. rows.OrderByDescending(t => t.CreatedAt).ThenByDescending(t => t.Id)];
     }
 

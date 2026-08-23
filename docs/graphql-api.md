@@ -139,12 +139,15 @@ A slice of a real response:
   in the `Authorization` header sidesteps cookie-CORS concerns. Cross-origin browser access is a
   deliberate later addition.
 
-## The GraphQL IDE
+## Tooling — no in-browser IDE
 
-In **Development**, the embedded [Nitro](https://chillicream.com/docs/nitro) explorer is served at
-`/graphql` (a browser `GET`). It's off in production — the strict production CSP would block its
-inline scripts, and prod exposes no explorer UI. The endpoint requires the token in every
-environment, so point the explorer's connection headers at a token (or just use `curl`/Postman).
+The endpoint is mapped **HTTP-only** (`MapGraphQLHttp`) — there's no WebSocket transport (the API has
+no subscriptions, and an unused socket would just be a rate-limit-bypass surface) and no embedded
+in-browser explorer. Because the whole endpoint requires the bearer token, a plain browser navigation
+to `/graphql` would only 401 anyway. Use `curl`, Postman/Insomnia, or the standalone
+[Nitro](https://chillicream.com/docs/nitro) desktop app — set an `Authorization: Bearer sa_…` header
+on the connection. Introspection works over `POST` (behind the token), so schema-aware tooling and
+codegen work normally.
 
 ## Deployment note (family box)
 

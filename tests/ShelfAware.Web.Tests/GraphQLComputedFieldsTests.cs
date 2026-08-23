@@ -167,6 +167,30 @@ public class GraphQLComputedFieldsTests : IDisposable
         Assert.Contains("\"pinned\":true", json.Replace(" ", ""));
     }
 
+    [Fact]
+    public async Task Tags_and_substitutes_are_empty_arrays_for_a_product_with_none()
+    {
+        _db.HouseholdId = "hh-a";
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Products.Add(new Product
+            {
+                Name = "Plain", Category = Category.Pantry,
+                Purchases = [new PurchaseEvent { PurchasedAt = Today.AddDays(-5), Quantity = 1 }],
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var json = await ExecuteAsync("{ products { name tags { value } substitutes { value } } }");
+
+        // The DataLoader returns null for a key with no rows; the resolver's `?? []` turns that into an
+        // empty array, not a null or an error.
+        Assert.DoesNotContain("errors", json);
+        var compact = json.Replace(" ", "");
+        Assert.Contains("\"tags\":[]", compact);
+        Assert.Contains("\"substitutes\":[]", compact);
+    }
+
     private async Task<string> ExecuteAsync(string query)
     {
         await using var provider = new ServiceCollection()

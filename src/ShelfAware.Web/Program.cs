@@ -818,15 +818,19 @@ app.MapDevQuickLogin();
 // The read-only GraphQL endpoint (gated on GraphQL:Enabled). Requires the ApiToken policy specifically:
 // that is what makes PolicyEvaluator run the token scheme and promote its household-claim principal to
 // HttpContext.User — so a browser cookie can't reach it and every resolver scopes to the token's
-// household. Introspection stays behind the token too (no anonymous schema). The embedded Nitro IDE is
-// served only in Development: outside it the strict CSP would block the tool's inline scripts anyway, and
-// prod exposes no explorer UI.
+// household. Introspection stays behind the token too (no anonymous schema).
+//
+// MapGraphQLHttp, NOT MapGraphQL: HTTP transport only. There are no subscriptions, so the WebSocket
+// transport MapGraphQL would also map is pure attack surface — a query sent over an established socket
+// acquires the per-token rate-limit lease only once at the upgrade, sidestepping the 120/min cap. It
+// also drops the in-browser Nitro IDE, which was unreachable anyway (the whole endpoint requires the
+// bearer token, so a plain browser navigation to it just 401s) — clients use curl/Postman or the Nitro
+// desktop app with a Bearer header, per docs/graphql-api.md.
 if (graphQlEnabled)
 {
-    app.MapGraphQL()
+    app.MapGraphQLHttp()
         .RequireAuthorization(ApiTokenAuthenticationHandler.PolicyName)
-        .RequireRateLimiting("graphql")
-        .WithOptions(options => options.Tool.Enable = app.Environment.IsDevelopment());
+        .RequireRateLimiting("graphql");
 }
 
 app.Run();

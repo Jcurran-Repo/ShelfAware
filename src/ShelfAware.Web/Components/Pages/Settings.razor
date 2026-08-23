@@ -458,10 +458,17 @@
         <div class="tag-add">
             <input @bind="newTokenName" @bind:event="oninput" aria-label="Token name"
                    placeholder="e.g. meal-planner script" size="30" maxlength="60" />
+            <select @bind="newTokenExpiryDays" aria-label="Token expiry">
+                <option value="">Never expires</option>
+                <option value="30">Expires in 30 days</option>
+                <option value="90">Expires in 90 days</option>
+                <option value="365">Expires in 1 year</option>
+            </select>
             <button @onclick="CreateToken" disabled="@(tokenBusy || string.IsNullOrWhiteSpace(newTokenName))">
                 @(tokenBusy ? "Working…" : "Create token")
             </button>
         </div>
+        <p class="muted small">An expiry bounds the damage of a leaked token without your having to remember to revoke it.</p>
         @if (tokenNote is not null)
         {
             <p class="muted small" role="status">@tokenNote</p>
@@ -614,15 +621,19 @@
 
     // ---- API access (read-only GraphQL tokens) ----
     private bool graphqlEnabled;
-    private IReadOnlyList<ApiToken> apiTokens = [];
+    // A hash-free projection (ApiTokenSummary), so the token's stored fingerprint never enters this
+    // component's render tree.
+    private IReadOnlyList<ApiTokenSummary> apiTokens = [];
     private string newTokenName = "";
+    // null = never expires; otherwise the number of days from now the token stops working.
+    private int? newTokenExpiryDays;
     // The just-minted secret, shown ONCE (GitHub-PAT model). Held only in this circuit's state until the
     // page reloads or navigates — never persisted; only its hash is stored.
     private string? mintedSecret;
     private bool tokenBusy;
     private string? tokenNote;
 
-    private static string TokenStatus(ApiToken t) =>
+    private static string TokenStatus(ApiTokenSummary t) =>
         t.RevokedAt is not null ? "Revoked"
         : t.ExpiresAt is { } exp && exp <= DateTimeOffset.Now ? "Expired"
         : "Live";
@@ -1066,9 +1077,11 @@
         tokenBusy = true;
         try
         {
-            var mint = await Tokens.CreateAsync(household.Id, currentUserId, newTokenName, DateTimeOffset.Now);
+            var expiresAt = newTokenExpiryDays is { } days ? DateTimeOffset.Now.AddDays(days) : (DateTimeOffset?)null;
+            var mint = await Tokens.CreateAsync(household.Id, currentUserId, newTokenName, DateTimeOffset.Now, expiresAt);
             mintedSecret = mint.Secret; // shown once, below the form
             newTokenName = "";
+            newTokenExpiryDays = null;
             tokenNote = "Token created — copy the secret shown above now; you won't see it again.";
             await LoadTokensAsync();
         }
