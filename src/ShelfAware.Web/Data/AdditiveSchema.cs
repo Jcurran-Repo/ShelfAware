@@ -105,6 +105,12 @@ public static class AdditiveSchema
 
         // 2026-08-14: resolved errors leave the admin's open list until they recur.
         EnsureColumn(db, table: "ErrorLog", column: "ResolvedAt", definition: "TEXT NULL");
+
+        // 2026-08-22: API tokens for the read-only GraphQL API. Credentials, so they live in auth.db
+        // beside accounts and invite codes (the lookup is the auth step — it happens before any
+        // household is known, so this can't be a household-filtered pantry table). A new table —
+        // existing rows unaffected.
+        EnsureTable(db, table: "ApiTokens");
     }
 
     /// <summary>Create <paramref name="table"/> (and its indexes) on a DB built before it existed. The

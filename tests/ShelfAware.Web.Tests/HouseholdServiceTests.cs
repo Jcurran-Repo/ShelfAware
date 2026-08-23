@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using ShelfAware.Web.Auth;
@@ -518,6 +519,33 @@ public class HouseholdServiceTests : IDisposable
         // asserting membership until it happened to be re-issued — this is what actually removes them.
         Assert.NotEqual(stampBefore, other.SecurityStamp);
         Assert.Equal(["a@example.com"], (await _service.GetMembersAsync(household.Id)).Select(m => m.Email));
+    }
+
+    [Fact]
+    public async Task Removing_a_member_revokes_only_that_members_API_tokens()
+    {
+        // ⚠️ A GraphQL API token carries the household id DIRECTLY (a second credential the security stamp
+        // doesn't reach), so eviction must revoke the removed member's tokens too — or they keep reading
+        // the pantry with a secret they kept. Both directions pinned: theirs revoked, the remover's not.
+        var (household, owner, other) = await TwoMemberHouseholdAsync();
+        _context.ApiTokens.Add(new ApiToken
+        {
+            HouseholdId = household.Id, CreatedByUserId = other.Id, Name = "theirs",
+            TokenHash = "H-other", Prefix = "sa_oooo", CreatedAt = DateTimeOffset.Now,
+        });
+        _context.ApiTokens.Add(new ApiToken
+        {
+            HouseholdId = household.Id, CreatedByUserId = owner.Id, Name = "the remover's",
+            TokenHash = "H-owner", Prefix = "sa_wwww", CreatedAt = DateTimeOffset.Now,
+        });
+        await _context.SaveChangesAsync();
+
+        Assert.Null(await _service.RemoveMemberAsync(household.Id, other.Id, actingUserId: owner.Id));
+
+        var theirs = await _context.ApiTokens.AsNoTracking().SingleAsync(t => t.CreatedByUserId == other.Id);
+        var removers = await _context.ApiTokens.AsNoTracking().SingleAsync(t => t.CreatedByUserId == owner.Id);
+        Assert.NotNull(theirs.RevokedAt);  // the removed member's token can no longer read the pantry
+        Assert.Null(removers.RevokedAt);   // the remover's own token is untouched
     }
 
     [Fact]

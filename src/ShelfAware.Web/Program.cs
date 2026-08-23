@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
+using HotChocolate.AspNetCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
@@ -25,6 +26,7 @@ using ShelfAware.Web.Components;
 using ShelfAware.Web.Components.Account;
 using ShelfAware.Web.Data;
 using ShelfAware.Web.Diagnostics;
+using ShelfAware.Web.GraphQL;
 using ShelfAware.Web.Ingest;
 using ShelfAware.Web.Services;
 using ShelfAware.Web.Undo;
@@ -82,12 +84,26 @@ builder.Services.AddScoped<IdentityRedirectManager>();
 builder.Services.AddScoped<AuthenticationStateProvider, IdentityRevalidatingAuthenticationStateProvider>();
 builder.Services.AddHttpContextAccessor();
 
+// Read-only GraphQL API exposure is a pure config flag (default false), NOT an env.IsDevelopment()
+// lock — the API is meant to reach prod, so enabling it there is a config flip, not a code change.
+// The ApiToken scheme, its policy, the endpoint, and the Settings UI all gate on this one flag.
+var graphQlEnabled = builder.Configuration.GetValue<bool>("GraphQL:Enabled");
+
 var authentication = builder.Services.AddAuthentication(options =>
 {
     options.DefaultScheme = IdentityConstants.ApplicationScheme;
     options.DefaultSignInScheme = IdentityConstants.ExternalScheme;
 });
 authentication.AddIdentityCookies();
+
+// The API-token scheme rides alongside the cookie schemes but is NEVER the default — it runs only when
+// the GraphQL endpoint's policy names it. Registered only when the API is enabled, so a deployment with
+// the flag off has no extra auth surface at all.
+if (graphQlEnabled)
+{
+    authentication.AddScheme<ApiTokenAuthenticationOptions, ApiTokenAuthenticationHandler>(
+        ApiTokenAuthenticationHandler.SchemeName, configureOptions: null);
+}
 
 // External login is CONFIG-GATED: registered only when a Google client id is present, so an
 // unconfigured deployment has zero OAuth surface (no button, no endpoints that go anywhere).
@@ -174,8 +190,22 @@ builder.Services.Configure<SecurityStampValidatorOptions>(options =>
 // change needs the restart every other option here already needs. Unset = the policy refuses
 // everyone, so an unconfigured deployment has zero admin surface (the Google-OAuth posture).
 var adminOptions = builder.Configuration.GetSection(AdminOptions.SectionName).Get<AdminOptions>() ?? new();
-builder.Services.AddAuthorization(options => options.AddPolicy(AdminOptions.PolicyName,
-    policy => policy.RequireAssertion(ctx => adminOptions.IsAdmin(ctx.User))));
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy(AdminOptions.PolicyName,
+        policy => policy.RequireAssertion(ctx => adminOptions.IsAdmin(ctx.User)));
+
+    // The GraphQL endpoint requires the ApiToken scheme SPECIFICALLY (so a browser cookie can't reach
+    // it) plus an authenticated token. RequireAuthenticatedUser + AddAuthenticationSchemes together are
+    // what make PolicyEvaluator run the scheme and promote its household-claim principal to
+    // HttpContext.User — the tenancy hand-off. Registered only when the API is enabled.
+    if (graphQlEnabled)
+    {
+        options.AddPolicy(ApiTokenAuthenticationHandler.PolicyName, policy => policy
+            .AddAuthenticationSchemes(ApiTokenAuthenticationHandler.SchemeName)
+            .RequireAuthenticatedUser());
+    }
+});
 builder.Services.AddOptions<AdminOptions>()
     .Bind(builder.Configuration.GetSection(AdminOptions.SectionName));
 // Validated at STARTUP, not trusted. A lifetime of 0 or negative used to be read as "never expires" —
@@ -203,6 +233,19 @@ builder.Services.AddOptions<EmailOptions>()
     .ValidateOnStart();
 builder.Services.AddSingleton<IAccountMailer, SmtpAccountMailer>();
 builder.Services.AddScoped<HouseholdService>();
+// Mint/validate/list/revoke for read-only GraphQL API tokens (credentials in auth.db). Registered
+// always — the auth handler and Settings gate their EXPOSURE on GraphQL:Enabled, but the service
+// itself is harmless dormant and the delete-my-data flow may need it regardless.
+builder.Services.AddScoped<ApiTokenService>();
+
+// ---- Read-only GraphQL API (gated on GraphQL:Enabled) ----
+// The schema is registered only when the API is enabled, so a disabled deployment builds no schema and
+// maps no endpoint. Every resolver reads through IHouseholdDbFactory (Query.cs), so the household query
+// filter scopes each read for free — no new IgnoreQueryFilters, no Mutation type (read-only by absence).
+if (graphQlEnabled)
+{
+    builder.Services.AddPantryGraphQL(includeExceptionDetails: builder.Environment.IsDevelopment());
+}
 
 // ---- In-app problem reporting ----
 // The error log: a logging provider captures every Error/Critical event (handled ones included —
@@ -317,6 +360,7 @@ builder.Services.AddScoped(sp => new UserDataService(
     sp.GetRequiredService<ReceiptStorage>(),
     sp.GetRequiredService<RecipeImageStorage>(),
     sp.GetService<ISpeechCache>(), // null when Speech:CacheMegabytes = 0: no cache, nothing to find or forget
+    sp.GetRequiredService<ApiTokenService>(), // token metadata for export + removal on delete-my-data (auth.db)
     sp.GetRequiredService<ILogger<UserDataService>>()));
 
 // Voice I/O (ElevenLabs): Scribe = STT (ear), TTS = mouth. Speech is its own REST API, not an
@@ -337,6 +381,20 @@ builder.Services.AddScoped<IVoiceCredentials>(sp => sp.GetRequiredService<Circui
 builder.Services.AddRateLimiter(o =>
 {
     o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    // The GraphQL API's 429 needs a body, for the same reason its 401 does: an empty error response is
+    // re-executed by UseStatusCodePages (method preserved) into POST /not-found → antiforgery → a
+    // misleading 400. Writing a small JSON body starts the response so the real 429 stands (and it's the
+    // shape a GraphQL client expects). Scoped to /graphql so the other rate-limit policies are unchanged.
+    o.OnRejected = async (context, ct) =>
+    {
+        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        if (context.HttpContext.Request.Path.StartsWithSegments("/graphql"))
+        {
+            context.HttpContext.Response.ContentType = "application/json; charset=utf-8";
+            await context.HttpContext.Response.WriteAsync(
+                """{"errors":[{"message":"Too many requests — slow down and retry shortly."}]}""", ct);
+        }
+    };
     o.AddPolicy("cookalong", ctx =>
         RateLimitPartition.GetFixedWindowLimiter(
             ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -347,6 +405,15 @@ builder.Services.AddRateLimiter(o =>
         RateLimitPartition.GetFixedWindowLimiter(
             ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+    // The read-only GraphQL API throttles per TOKEN, not per IP — prod sits behind Caddy/Cloudflare/
+    // Tailscale, so per-IP would bucket every caller under one proxy address. The token id rides in a
+    // claim the ApiToken scheme sets, and a request only reaches the limiter after passing authorization
+    // (an unauthenticated one is 401'd earlier), so the claim is present. 120/min is generous for a real
+    // client and caps a runaway.
+    o.AddPolicy("graphql", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ctx.User.FindFirst(ApiTokenAuthenticationHandler.TokenIdClaim)?.Value ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
     // Credential endpoints get a per-IP brake on top of Identity's per-account lockout: lockout
     // protects one account from many guesses, this protects all accounts from one hammering IP.
     // Razor-component form posts aren't attachable endpoints for a named policy, so the global
@@ -459,7 +526,16 @@ app.UseHttpsRedirection();
 // resolved the principal before UseAntiforgery sees the request.
 app.UseAuthentication();
 app.UseAuthorization();
-app.UseAntiforgery();
+// Antiforgery guards the Blazor cookie/form world; the GraphQL endpoint is deliberately outside it. It
+// authenticates by BEARER TOKEN, not a cookie, so there is no ambient credential a cross-site form could
+// ride (CSRF doesn't apply), and it's read-only besides — nothing to forge. Its endpoint declares form
+// acceptance (Hot Chocolate's multipart upload support), so without this skip the antiforgery middleware
+// 400s every token request before the resolver runs. Only /graphql is exempted; the rest of the app keeps
+// full antiforgery. (The tidy per-endpoint .DisableAntiforgery() can't be used — it routes through
+// IEndpointConventionBuilder.Finally(), which Hot Chocolate's endpoint builder does not implement.)
+app.UseWhen(
+    ctx => !ctx.Request.Path.StartsWithSegments("/graphql"),
+    branch => branch.UseAntiforgery());
 app.UseRateLimiter();
 
 // Signed in, but in no household — send them somewhere that says so.
@@ -738,5 +814,23 @@ app.MapAdditionalIdentityEndpoints();
 // DevAuth.IsEnabled (Development + the Dev:QuickLogin flag), so this line is inert on every real
 // deployment. See ShelfAware.Web.Auth.DevAuth.
 app.MapDevQuickLogin();
+
+// The read-only GraphQL endpoint (gated on GraphQL:Enabled). Requires the ApiToken policy specifically:
+// that is what makes PolicyEvaluator run the token scheme and promote its household-claim principal to
+// HttpContext.User — so a browser cookie can't reach it and every resolver scopes to the token's
+// household. Introspection stays behind the token too (no anonymous schema).
+//
+// MapGraphQLHttp, NOT MapGraphQL: HTTP transport only. There are no subscriptions, so the WebSocket
+// transport MapGraphQL would also map is pure attack surface — a query sent over an established socket
+// acquires the per-token rate-limit lease only once at the upgrade, sidestepping the 120/min cap. It
+// also drops the in-browser Nitro IDE, which was unreachable anyway (the whole endpoint requires the
+// bearer token, so a plain browser navigation to it just 401s) — clients use curl/Postman or the Nitro
+// desktop app with a Bearer header, per docs/graphql-api.md.
+if (graphQlEnabled)
+{
+    app.MapGraphQLHttp()
+        .RequireAuthorization(ApiTokenAuthenticationHandler.PolicyName)
+        .RequireRateLimiting("graphql");
+}
 
 app.Run();

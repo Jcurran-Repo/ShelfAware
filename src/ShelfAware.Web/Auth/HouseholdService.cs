@@ -233,8 +233,22 @@ public sealed class HouseholdService(
         // person, so it has at least two, and the actor is still in it afterwards. The invariant that a
         // household never empties out — its pantry would be data nobody could read, export, or delete —
         // falls out of the two checks above rather than needing a third that could never fire.
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+
         user.HouseholdId = null;
         await db.SaveChangesAsync(ct);
+
+        // ⚠️ Revoke the removed member's API tokens in the SAME transaction. A token carries the household
+        // id DIRECTLY as a claim (a second credential the cookie's security stamp below never reaches), and
+        // is accepted on hash + not-revoked + not-expired alone — so without this, a member who kept their
+        // sa_… secret would keep reading the whole pantry after their cookie dies, until a remaining member
+        // happened to revoke it by hand. This is the eviction gap CLAUDE.md item 12 closed for cookies,
+        // reopened by the GraphQL token; removal must reach both credentials.
+        await db.ApiTokens
+            .Where(t => t.CreatedByUserId == userId && t.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, DateTimeOffset.Now), ct);
+
+        await tx.CommitAsync(ct);
 
         var stamped = await users.UpdateSecurityStampAsync(user);
         if (!stamped.Succeeded)

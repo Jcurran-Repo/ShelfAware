@@ -16,6 +16,7 @@ public class AuthDbContext(DbContextOptions<AuthDbContext> options) : IdentityDb
 {
     public DbSet<Household> Households => Set<Household>();
     public DbSet<ErrorLogEntry> ErrorLog => Set<ErrorLogEntry>();
+    public DbSet<ApiToken> ApiTokens => Set<ApiToken>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -40,5 +41,11 @@ public class AuthDbContext(DbContextOptions<AuthDbContext> options) : IdentityDb
         // Derived from ResolvedAt/LastSeenAt for display — same trap and same fix as
         // InviteUsesRemaining above: a phantom column would break EnsureCreated against a live auth.db.
         modelBuilder.Entity<ErrorLogEntry>().Ignore(e => e.Resolved);
+
+        // Unique on the hash: the auth handler looks a presented token up by TokenHash, so the index is
+        // both the lookup path and a guarantee two rows can't share a hash. Indexed by household so
+        // listing a household's tokens (and revoking them all on delete-my-data) doesn't table-scan.
+        modelBuilder.Entity<ApiToken>().HasIndex(t => t.TokenHash).IsUnique();
+        modelBuilder.Entity<ApiToken>().HasIndex(t => t.HouseholdId);
     }
 }

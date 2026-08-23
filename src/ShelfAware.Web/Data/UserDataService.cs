@@ -34,6 +34,7 @@ public sealed class UserDataService(
     ReceiptStorage receiptStorage,
     RecipeImageStorage recipeImageStorage,
     ISpeechCache? speechCache,
+    ShelfAware.Web.Auth.ApiTokenService apiTokens,
     ILogger<UserDataService> logger)
 {
     /// <summary>Everything, flattened (loaded without navigations so there are no serialization cycles) —
@@ -42,10 +43,14 @@ public sealed class UserDataService(
     public async Task<DataExport> ExportAsync(CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
+        // Token metadata lives in auth.db, outside the pantry context — fetched by household id (never the
+        // hash or secret). Null household (shouldn't happen for a signed-in export) → no tokens listed.
+        var householdId = await currentHousehold.GetIdAsync(ct);
         return new DataExport
         {
             ExportedAt = DateTimeOffset.Now,
             Settings = await db.AppSettings.AsNoTracking().ToListAsync(ct),
+            ApiTokens = householdId is null ? [] : await apiTokens.ListMetadataAsync(householdId, ct),
             AiUsage = await db.AiUsages.AsNoTracking().ToListAsync(ct),
             Products = await db.Products.AsNoTracking().ToListAsync(ct),
             Purchases = await db.PurchaseEvents.AsNoTracking().ToListAsync(ct),
@@ -256,7 +261,12 @@ public sealed class UserDataService(
     public async Task<int> CountAllAsync(CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        return await db.Products.CountAsync(ct)
+        // API tokens live in auth.db (outside this pantry context) but the delete removes them, so the
+        // "N records will be removed" count includes them.
+        var householdId = await currentHousehold.GetIdAsync(ct);
+        var tokenCount = householdId is null ? 0 : await apiTokens.CountForHouseholdAsync(householdId, ct);
+        return tokenCount
+            + await db.Products.CountAsync(ct)
             + await db.PurchaseEvents.CountAsync(ct)
             + await db.InventorySignals.CountAsync(ct)
             + await db.ProductTags.CountAsync(ct)
@@ -328,6 +338,21 @@ public sealed class UserDataService(
         // Recipe photos are always filed under the household folder (no pre-scoping legacy rows exist),
         // so the whole-tree delete reaches every one — no per-row path list needed.
         await recipeImageStorage.DeleteHouseholdAsync(ct);
+
+        // API tokens are credentials the household created — theirs to have wiped. They live in auth.db, a
+        // separate file, so they can't join the pantry transaction above; removed after the commit, and a
+        // leftover token to a now-empty pantry is harmless (grants access to nothing), so a failure here is
+        // logged, not surfaced — reporting it would only invite pressing delete again.
+        try
+        {
+            var householdId = await currentHousehold.GetIdAsync(ct);
+            if (householdId is not null) await apiTokens.DeleteAllForHouseholdAsync(householdId, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Deleted the household's data, but removing its API tokens failed.");
+        }
     }
 
     /// <summary>
@@ -379,6 +404,11 @@ public sealed class DataExport
     /// <summary>What their AI features have spent, per day. Not removed by "delete my data" (that would
     /// make the button a quota reset), which is exactly why it has to be readable here.</summary>
     public IReadOnlyList<AiUsage> AiUsage { get; init; } = [];
+
+    /// <summary>Their GraphQL API tokens — name, prefix, and lifecycle dates only. NEVER the secret or its
+    /// hash (revealing the hash would hand over the credential). Lives in auth.db, so it's fetched by
+    /// household id rather than read from the pantry context like everything else here.</summary>
+    public IReadOnlyList<ShelfAware.Web.Auth.ApiTokenMetadata> ApiTokens { get; init; } = [];
 
     public IReadOnlyList<Product> Products { get; init; } = [];
     public IReadOnlyList<PurchaseEvent> Purchases { get; init; } = [];

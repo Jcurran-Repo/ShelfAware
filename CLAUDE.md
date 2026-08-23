@@ -98,9 +98,9 @@ and **History (`/history`, added 8/20 — the household's activity log, newest f
 undo; see item 51)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1770 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1836 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
-bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52 and 53).
+bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53 and 54).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -2816,6 +2816,83 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52 
      align, dark is the default, the switcher flips light/dark/auto) — then `origin/master`'s tree was
      confirmed **byte-identical** to that tested tree before syncing. **1770 tests green, 0 warnings** (1766
      before; +4: +1 alias UI test, +3 `ThemeSwitcher` tests), read off the combined run.
+
+54. **v5.2 — the read-only GraphQL API (2026-08-22, branch `feature/graphql-api`; 7 atomic phase commits;
+   NOT yet gated/pushed at time of writing — the `/pre-push` gate is phase 7's own step).** A read-only
+   GraphQL API over the pantry so a household can query its own data with a token. `docs/graphql-api-plan.md`
+   is the arc's plan (now marked implemented); `docs/graphql-api.md` is the as-built doc. Hot Chocolate
+   `HotChocolate.AspNetCore` **16.6.1** in Web (Core stays EF/web-free). The as-built decisions and gotchas a
+   future session needs:
+   - ⚠️ **The whole tenancy story is REUSE, not new code.** The `ApiToken` auth scheme (phase 2) builds a
+     principal carrying the SAME `shelfaware:household` claim the cookie factory bakes in, so `CurrentHousehold`
+     + `IHouseholdDbFactory` scope every resolver for free through the existing query filter. No new
+     `IgnoreQueryFilters`, no `Mutation` type (read-only by ABSENCE), no cross-household reach — a token grants
+     exactly one household and a query for another's data can't be expressed. The headline security property is
+     an ARCHITECTURAL one, verified end to end (unauthed→401, authed→scoped data, `householdId` unqueryable).
+   - **The credential (`ApiToken`, phase 1) lives in auth.db, NOT a pantry table** — the token→household lookup
+     IS the auth step, so it happens before any household is known (a pantry filter would hide the row). Raw
+     secret shown ONCE, only its SHA-256 hash + a display prefix stored (GitHub-PAT model). `ApiTokenService`
+     owns mint/validate/list/revoke; household scope is enforced in the WHERE (auth.db has no query filter).
+   - ⚠️ **`HotChocolateImplicitUsings=disable` in the csproj is load-bearing** — HotChocolate's packages inject
+     `global using HotChocolate;`, whose `HotChocolate.Path` collides with `System.IO.Path` across the WHOLE
+     project (dozens of CS0104). Disable the package's implicit usings; import `HotChocolate.Types` /
+     `HotChocolate.AspNetCore` / `GreenDonut` explicitly in the few GraphQL files.
+   - ⚠️ **Two integration bugs found ONLY by running it live (green tests missed both), both fixed** — the
+     recurring lesson of this repo. (a) Antiforgery (`UseAntiforgery`) 400'd every `/graphql` POST: HC's endpoint
+     declares form acceptance (multipart), so the middleware validated a bearer API with no CSRF surface —
+     exempted via `UseWhen` on the path (the tidy `.DisableAntiforgery()` throws NotImplementedException on HC's
+     endpoint builder, which routes through `IEndpointConventionBuilder.Finally()`). (b) The empty-bodied 401
+     challenge — and later the rate limiter's empty 429 — were re-executed by `UseStatusCodePagesWithReExecute`
+     (**method preserved**) into `POST /not-found` → antiforgery → a misleading 400 (GET stayed 401). Fixed by
+     giving each a small JSON body, which starts the response so StatusCodePages leaves the real status alone
+     (and is the shape a GraphQL client expects). **When an API status comes back wrong, suspect StatusCodePages
+     re-execution + antiforgery before the endpoint.**
+   - **Computed fields are "one prediction, one story" by construction (phase 4).** `Product.prediction` /
+     `Product.estimate` run the pure engine on read (never stored) through `PantryReadContext` (scoped), which
+     derives `today`/the expiration setting/the price index ONCE per request and MEMOIZES the prediction per
+     product — so the two fields return the SAME `PredictionResult`. Flags match the product SURFACES exactly
+     (`honorQuantity: true`, `honorExpirations` = the household setting), NOT reports/backtest. ⚠️ `Query.cs`
+     Includes **Signals** as well as Purchases (Predict reads outage/restock signals — without them the API
+     would silently contradict the UI). Tags/substitutes are DataLoader-batched (the N+1 fix).
+   - **Security limits (phase 5):** `AddMaxExecutionDepthRule(15)` (belt-and-suspenders — the schema has no
+     cycles, so a data query can't nest deep), cost analysis enforced (`ModifyCostOptions`, generous ceilings),
+     per-TOKEN rate limit (120/min — per token not IP, since prod is behind a proxy; the token id rides in a
+     claim), errors masked outside Development (`ModifyRequestOptions IncludeExceptionDetails`, default false).
+     ⚠️ The depth rule and cost analyzer are testable only by OVERRIDING to a tiny limit (like the cost test) —
+     the production values can't be exceeded by this shallow schema.
+   - **Settings "API access" + delete/export wiring (phase 6):** mint/list/revoke in Settings, gated on the
+     flag. ⚠️ Tokens are in auth.db, OUTSIDE `UserDataService`'s pantry context, so they're wired in explicitly:
+     export lists their metadata (name/prefix/dates — NEVER the hash, guaranteed by the `ApiTokenMetadata`
+     record's shape), the delete-count includes them, and delete-my-data removes them (post-commit, best-effort).
+   - ⚠️ **Exposure is a pure config flag `GraphQL:Enabled` (default false), NOT an env lock** — the API is meant
+     to reach prod, so enabling it there is a config flip. Off = no schema built, no endpoint mapped, Settings
+     section hidden. On in `appsettings.Development.json`. The endpoint is `POST /graphql`; the Nitro IDE is
+     Development-only (prod CSP would block its inline scripts).
+   - **1836 tests green, 0 warnings** on a non-incremental Release build (1770 at branch point; +66 across the
+     phases + the gate fixes). Every load-bearing rule mutation-checked (the flags, the tenancy scope, the
+     depth/cost mechanisms, the token delete, the removal-revoke). Each phase live-verified where it mattered —
+     the authed HTTP round-trip (real minted token → 200 scoped data), the 120/10 rate-limit burst, and the
+     Settings create/list/revoke flow in a browser.
+   - **The `/pre-push` gate RAN (2026-08-22, phase 7): both reviews as independent worktree agents (the local
+     `/code-review` is model-invocation-disabled, item 42). Security verdict: the tenancy boundary HOLDS** —
+     token → claim → CurrentHousehold → IHouseholdDbFactory → filter traced end to end, no cross-household path,
+     no new IgnoreQueryFilters, hash-only credentials with no timing oracle, metadata-only export, fail-closed
+     resolution. One MED-HIGH + several LOW/INFO, ALL fixed in a gate-fix commit that then got its OWN
+     re-review (item 39; came back with zero regressions):
+     - ⚠️ **[MED-HIGH] Removing a household member didn't revoke the API tokens they minted** — the token
+       carries the household id DIRECTLY as a claim, so the security-stamp bump (which evicts cookies, item 12)
+       never reached it: a removed member who kept their `sa_…` secret kept reading the whole pantry until
+       someone revoked it by hand. `RemoveMemberAsync` now revokes their tokens in the SAME transaction as
+       clearing HouseholdId (scoped `CreatedByUserId == userId`), mutation-checked both directions. (No
+       account-delete flow exists yet — removal is the only eviction path.) **The lesson: a second credential
+       that carries the tenant id needs the SAME eviction reach as the first.**
+     - [LOW] `ValidateAsync` stamps LastUsedAt best-effort now (a transient auth.db write lock mustn't 500 a
+       valid token); the endpoint is `MapGraphQLHttp` not `MapGraphQL` (no subscriptions → the WS transport was
+       a rate-limit-bypass surface, and the in-browser Nitro IDE it also mapped was unreachable behind the token
+       anyway — verified live WS→404 / tool→404 / authed POST→200); the Settings mint form gained an optional
+       expiry; `ListAsync` returns a hash-free `ApiTokenSummary` so the fingerprint never enters the render tree.
+   - **Pushed/merged: NO — the branch is gated-clean and Jordan's to push.** 8 commits (7 phases + the gate
+     fix) on `feature/graphql-api`, unpushed.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
