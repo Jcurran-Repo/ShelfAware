@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using ShelfAware.Web.Auth;
@@ -83,5 +84,97 @@ public class LoginAuditTests : IDisposable
         var stats = await audit.ListAsync();
 
         Assert.Equal(["newer@example.com", "older@example.com"], stats.Select(s => s.Email));
+    }
+
+    [Fact]
+    public async Task A_first_login_that_loses_the_insert_race_falls_back_to_the_increment_not_a_second_row()
+    {
+        // Two devices sign in for the FIRST time at the same instant: RecordAsync's IncrementAsync sees no
+        // row, so it inserts — but the other sign-in slips the same PK in first, so this insert hits the
+        // constraint. The catch(DbUpdateException) fallback must increment the winner's row, NOT throw and
+        // NOT mint a duplicate. RacingAuthDbFactory reproduces exactly that race deterministically (the
+        // "concurrent" writer commits from its own context inside this one's SaveChanges).
+        using var racing = new RacingAuthDbFactory();
+        var audit = new LoginAudit(racing, NullLogger<LoginAudit>.Instance);
+
+        await audit.RecordAsync("u1", "jordan@example.com", T0);
+
+        await using var db = racing.CreateDbContext();
+        var row = Assert.Single(await db.UserLoginStats.ToListAsync()); // one row — the PK held
+        Assert.Equal("u1", row.UserId);
+        Assert.Equal(2, row.LoginCount);               // the racer's insert (1) + this login's fallback increment (1)
+        Assert.Equal("jordan@example.com", row.Email); // the fallback refreshed Email to this caller — proof it ran
+    }
+
+    /// <summary>A real in-memory auth.db (like <see cref="TestAuthDb"/>) whose FIRST handed-out context is
+    /// a <see cref="RacingAuthDbContext"/> — it lets a concurrent writer insert the same login-stat row
+    /// mid-save so the caller's insert loses the PK race. Every later context is plain, so a read after
+    /// the race is ordinary.</summary>
+    private sealed class RacingAuthDbFactory : IDbContextFactory<AuthDbContext>, IDisposable
+    {
+        private readonly SqliteConnection _connection;
+        private readonly DbContextOptions<AuthDbContext> _options;
+        private bool _armed = true;
+
+        public RacingAuthDbFactory()
+        {
+            _connection = new SqliteConnection("DataSource=:memory:");
+            _connection.Open();
+            _options = new DbContextOptionsBuilder<AuthDbContext>().UseSqlite(_connection).Options;
+            using var db = new AuthDbContext(_options);
+            db.Database.EnsureCreated();
+        }
+
+        public AuthDbContext CreateDbContext()
+        {
+            if (_armed)
+            {
+                _armed = false; // only the first context (RecordAsync's) races; the test's read is plain
+                return new RacingAuthDbContext(_options, () => new AuthDbContext(_options));
+            }
+            return new AuthDbContext(_options);
+        }
+
+        public Task<AuthDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(CreateDbContext());
+
+        public void Dispose() => _connection.Dispose();
+    }
+
+    /// <summary>The first time this context tries to INSERT login-stat rows, a "concurrent" sign-in inserts
+    /// the same account first (its own context, committed before we save), so our insert below loses the PK
+    /// race — the two-devices-at-once case RecordAsync's DbUpdateException catch exists for. One-shot, so
+    /// the fallback's own write (an ExecuteUpdate, which doesn't route here anyway) is never intercepted.</summary>
+    private sealed class RacingAuthDbContext(DbContextOptions<AuthDbContext> options, Func<AuthDbContext> concurrentWriter)
+        : AuthDbContext(options)
+    {
+        private bool _raced;
+
+        public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        {
+            if (!_raced)
+            {
+                var incoming = ChangeTracker.Entries<UserLoginStat>()
+                    .Where(e => e.State == EntityState.Added)
+                    .Select(e => e.Entity)
+                    .ToList();
+                if (incoming.Count > 0)
+                {
+                    _raced = true;
+                    await using var other = concurrentWriter();
+                    foreach (var e in incoming)
+                        other.UserLoginStats.Add(new UserLoginStat
+                        {
+                            UserId = e.UserId,
+                            Email = "concurrent@example.com",
+                            LoginCount = 1,
+                            FirstLoginAt = e.FirstLoginAt,
+                            LastLoginAt = e.FirstLoginAt,
+                        });
+                    await other.SaveChangesAsync(cancellationToken);
+                }
+            }
+            return await base.SaveChangesAsync(cancellationToken);
+        }
     }
 }
