@@ -98,7 +98,7 @@ and **History (`/history`, added 8/20 — the household's activity log, newest f
 undo; see item 51)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1834 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1836 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53 and 54).
 
@@ -2868,11 +2868,31 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      to reach prod, so enabling it there is a config flip. Off = no schema built, no endpoint mapped, Settings
      section hidden. On in `appsettings.Development.json`. The endpoint is `POST /graphql`; the Nitro IDE is
      Development-only (prod CSP would block its inline scripts).
-   - **1834 tests green, 0 warnings** on a non-incremental Release build (1770 at branch point; +64 across the
-     phases). Every load-bearing rule mutation-checked (the flags, the tenancy scope, the depth/cost mechanisms,
-     the token delete). Each phase live-verified where it mattered — the authed HTTP round-trip (real minted
-     token → 200 scoped data), the 120/10 rate-limit burst, and the Settings create/list/revoke flow in a
-     browser. `/pre-push` gate is phase 7 and is Jordan's call to act on.
+   - **1836 tests green, 0 warnings** on a non-incremental Release build (1770 at branch point; +66 across the
+     phases + the gate fixes). Every load-bearing rule mutation-checked (the flags, the tenancy scope, the
+     depth/cost mechanisms, the token delete, the removal-revoke). Each phase live-verified where it mattered —
+     the authed HTTP round-trip (real minted token → 200 scoped data), the 120/10 rate-limit burst, and the
+     Settings create/list/revoke flow in a browser.
+   - **The `/pre-push` gate RAN (2026-08-22, phase 7): both reviews as independent worktree agents (the local
+     `/code-review` is model-invocation-disabled, item 42). Security verdict: the tenancy boundary HOLDS** —
+     token → claim → CurrentHousehold → IHouseholdDbFactory → filter traced end to end, no cross-household path,
+     no new IgnoreQueryFilters, hash-only credentials with no timing oracle, metadata-only export, fail-closed
+     resolution. One MED-HIGH + several LOW/INFO, ALL fixed in a gate-fix commit that then got its OWN
+     re-review (item 39; came back with zero regressions):
+     - ⚠️ **[MED-HIGH] Removing a household member didn't revoke the API tokens they minted** — the token
+       carries the household id DIRECTLY as a claim, so the security-stamp bump (which evicts cookies, item 12)
+       never reached it: a removed member who kept their `sa_…` secret kept reading the whole pantry until
+       someone revoked it by hand. `RemoveMemberAsync` now revokes their tokens in the SAME transaction as
+       clearing HouseholdId (scoped `CreatedByUserId == userId`), mutation-checked both directions. (No
+       account-delete flow exists yet — removal is the only eviction path.) **The lesson: a second credential
+       that carries the tenant id needs the SAME eviction reach as the first.**
+     - [LOW] `ValidateAsync` stamps LastUsedAt best-effort now (a transient auth.db write lock mustn't 500 a
+       valid token); the endpoint is `MapGraphQLHttp` not `MapGraphQL` (no subscriptions → the WS transport was
+       a rate-limit-bypass surface, and the in-browser Nitro IDE it also mapped was unreachable behind the token
+       anyway — verified live WS→404 / tool→404 / authed POST→200); the Settings mint form gained an optional
+       expiry; `ListAsync` returns a hash-free `ApiTokenSummary` so the fingerprint never enters the render tree.
+   - **Pushed/merged: NO — the branch is gated-clean and Jordan's to push.** 8 commits (7 phases + the gate
+     fix) on `feature/graphql-api`, unpushed.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
