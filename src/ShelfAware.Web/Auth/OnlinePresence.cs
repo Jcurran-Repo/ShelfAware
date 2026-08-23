@@ -31,9 +31,12 @@ public sealed class OnlinePresence
     public void Connect(string circuitId, OnlineUser user, DateTimeOffset at)
     {
         var added = false;
+        // First Connect for a circuit records it (and fires Changed below). A duplicate Connect for a
+        // circuit still present keeps its first timestamp — a REAL reconnect goes through Disconnect first
+        // (TryRemove), so it re-adds fresh and "since" then reflects the reconnection, which is intended.
         _circuits.AddOrUpdate(circuitId,
             _ => { added = true; return (user, at); },
-            (_, existing) => existing); // a reconnect keeps the original arrival time
+            (_, existing) => existing);
         if (added) Changed?.Invoke();
     }
 
@@ -45,13 +48,11 @@ public sealed class OnlinePresence
     }
 
     /// <summary>The online accounts, one entry per account (tabs collapsed to a connection count),
-    /// email-ordered. "Since" is the earliest of the account's connections.</summary>
+    /// email-ordered. "Since" is the earliest of the account's connections. This is the ONE reading of
+    /// "who's online" — its <c>Count</c> is the distinct-account count, so no surface needs a second one.</summary>
     public IReadOnlyList<OnlineEntry> Snapshot() =>
         [.. _circuits.Values
             .GroupBy(c => c.User.UserId)
             .Select(g => new OnlineEntry(g.First().User, g.Count(), g.Min(c => c.At)))
             .OrderBy(e => e.User.Email, StringComparer.OrdinalIgnoreCase)];
-
-    /// <summary>How many distinct accounts are online (not how many connections).</summary>
-    public int OnlineCount => _circuits.Values.Select(c => c.User.UserId).Distinct().Count();
 }

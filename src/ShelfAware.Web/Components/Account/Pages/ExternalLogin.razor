@@ -95,11 +95,9 @@
             if (result.Succeeded)
             {
                 Logger.LogInformation("User signed in with {Provider}.", externalLoginInfo.LoginProvider);
-                // Count the login for the admin view (best-effort). Fetch the account behind this
-                // external login to get its stable id + email.
-                var user = await UserManager.FindByLoginAsync(externalLoginInfo.LoginProvider, externalLoginInfo.ProviderKey);
-                if (user is not null)
-                    await LoginAudit.RecordAsync(user.Id, user.Email ?? user.UserName ?? user.Id, DateTimeOffset.Now);
+                // Count the login for the admin view (fully best-effort — the account lookup runs inside
+                // the audit's guard, so it can't break a sign-in that already succeeded).
+                await LoginAudit.RecordByLoginAsync(UserManager, externalLoginInfo.LoginProvider, externalLoginInfo.ProviderKey, DateTimeOffset.Now);
                 RedirectManager.RedirectTo(ReturnUrl);
             }
             else if (result.IsLockedOut)

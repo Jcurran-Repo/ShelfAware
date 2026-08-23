@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
 namespace ShelfAware.Web.Auth;
@@ -51,6 +52,42 @@ public sealed class LoginAudit(IDbContextFactory<AuthDbContext> dbFactory, ILogg
         {
             // The sign-in already succeeded; a login-audit failure must not surface as a failed login.
             logger.LogWarning(ex, "Couldn't record the login for {UserId}; the sign-in still succeeded.", userId);
+        }
+    }
+
+    /// <summary>Record a sign-in known only by email (the password login path): the account lookup that
+    /// finds the stable user id runs INSIDE the best-effort boundary, so an auth.db hiccup on the LOOKUP
+    /// can't break a sign-in that already succeeded — the same promise <see cref="RecordAsync"/> makes for
+    /// the write. Callers that already hold the account use <see cref="RecordAsync"/> directly.</summary>
+    public async Task RecordByEmailAsync(UserManager<AppUser> users, string email, DateTimeOffset at, CancellationToken ct = default)
+    {
+        try
+        {
+            var user = await users.FindByEmailAsync(email);
+            if (user is not null)
+                await RecordAsync(user.Id, user.Email ?? email, at, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Couldn't look up {Email} to record its login; the sign-in still succeeded.", email);
+        }
+    }
+
+    /// <summary>The external-login twin of <see cref="RecordByEmailAsync"/>: resolve the account behind a
+    /// provider login and record it, with the lookup inside the best-effort boundary.</summary>
+    public async Task RecordByLoginAsync(UserManager<AppUser> users, string provider, string providerKey, DateTimeOffset at, CancellationToken ct = default)
+    {
+        try
+        {
+            var user = await users.FindByLoginAsync(provider, providerKey);
+            if (user is not null)
+                await RecordAsync(user.Id, user.Email ?? user.UserName ?? user.Id, at, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Couldn't look up the {Provider} account to record its login; the sign-in still succeeded.", provider);
         }
     }
 

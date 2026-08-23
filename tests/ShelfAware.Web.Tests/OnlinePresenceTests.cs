@@ -17,7 +17,6 @@ public class OnlinePresenceTests
         var presence = new OnlinePresence();
         presence.Connect("c1", User("u1", "a@example.com"), T0);
 
-        Assert.Equal(1, presence.OnlineCount);
         var entry = Assert.Single(presence.Snapshot());
         Assert.Equal("a@example.com", entry.User.Email);
         Assert.Equal(1, entry.Connections);
@@ -31,8 +30,7 @@ public class OnlinePresenceTests
         presence.Connect("c1", User("u1", "a@example.com"), T0);
         presence.Connect("c2", User("u1", "a@example.com"), T0.AddMinutes(5));
 
-        Assert.Equal(1, presence.OnlineCount); // ONE account, not two connections
-        var entry = Assert.Single(presence.Snapshot());
+        var entry = Assert.Single(presence.Snapshot()); // ONE account, not two connections
         Assert.Equal(2, entry.Connections);
         Assert.Equal(T0, entry.Since); // the EARLIEST connection
     }
@@ -44,7 +42,7 @@ public class OnlinePresenceTests
         presence.Connect("c1", User("u1", "a@example.com"), T0);
         presence.Connect("c2", User("u2", "b@example.com"), T0);
 
-        Assert.Equal(2, presence.OnlineCount);
+        Assert.Equal(2, presence.Snapshot().Count);
         Assert.Equal(["a@example.com", "b@example.com"], presence.Snapshot().Select(e => e.User.Email));
     }
 
@@ -56,11 +54,10 @@ public class OnlinePresenceTests
         presence.Connect("c2", User("u1", "a@example.com"), T0);
 
         presence.Disconnect("c1");
-        Assert.Equal(1, presence.OnlineCount); // still online via the other tab
+        Assert.Single(presence.Snapshot()); // still online via the other tab
         Assert.Equal(1, presence.Snapshot()[0].Connections);
 
         presence.Disconnect("c2");
-        Assert.Equal(0, presence.OnlineCount);
         Assert.Empty(presence.Snapshot());
     }
 

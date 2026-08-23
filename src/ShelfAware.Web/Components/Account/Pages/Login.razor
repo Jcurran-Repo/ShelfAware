@@ -91,11 +91,9 @@
         if (result.Succeeded)
         {
             Logger.LogInformation("User signed in.");
-            // Count the login for the admin view (best-effort — RecordAsync never throws for a DB issue,
-            // so it can't turn a good sign-in into an error). The user exists: they just authenticated.
-            var user = await SignInManager.UserManager.FindByEmailAsync(Input.Email);
-            if (user is not null)
-                await LoginAudit.RecordAsync(user.Id, user.Email ?? Input.Email, DateTimeOffset.Now);
+            // Count the login for the admin view. Fully best-effort (the id lookup runs inside the audit's
+            // guard too), so nothing here can turn a sign-in that already succeeded into an error page.
+            await LoginAudit.RecordByEmailAsync(SignInManager.UserManager, Input.Email, DateTimeOffset.Now);
             RedirectManager.RedirectTo(ReturnUrl);
         }
         else if (result.IsLockedOut)

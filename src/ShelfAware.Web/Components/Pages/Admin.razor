@@ -37,12 +37,15 @@ else
         <p class="error" role="alert">@actionError</p>
     }
     <section class="panel">
-        <h2>Online now (@Presence.OnlineCount)</h2>
-        <p class="muted">Accounts with the app open and connected right this moment — this updates live
-            as people arrive and leave. Several tabs from one person count as one.</p>
+        @* One snapshot per render, used for BOTH the header count and the list below — reading presence
+           twice could show a header number that disagrees with the rows for a frame (it's mutated from
+           other circuits' threads). Snapshot's Count is the distinct-account count. *@
         @{
             var online = Presence.Snapshot();
         }
+        <h2>Online now (@online.Count)</h2>
+        <p class="muted">Accounts with the app open and connected right this moment — this updates live
+            as people arrive and leave. Several tabs from one person count as one.</p>
         @if (online.Count == 0)
         {
             <p class="muted">Nobody's connected right now.</p>
@@ -340,15 +343,24 @@ else
         await RefreshAsync();
     }
 
-    // Fired from the CHANGING circuit's thread, so marshal to this component's renderer. Swallows the
-    // dispose race (a change landing as the page tears down) rather than logging teardown noise.
+    // Fired from the CHANGING circuit's thread (the user who just connected/left), so marshal to THIS
+    // component's renderer — and never let anything escape: an exception out of an async void handler
+    // re-raises onto that innocent user's circuit and faults it (OnlinePresence.Changed's "must not throw"
+    // contract). A dispose/cancel race as this page tears down is expected and quiet; log anything else.
     private async void OnPresenceChanged()
     {
         try
         {
             await InvokeAsync(StateHasChanged);
         }
-        catch (ObjectDisposedException) { /* the page went away between the event and the marshal */ }
+        catch (Exception ex) when (ex is ObjectDisposedException or OperationCanceledException)
+        {
+            // Expected: the admin's circuit went away between the event and the marshal.
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "A live presence re-render on the admin page threw; swallowed so it can't fault the connecting user's circuit.");
+        }
     }
 
     public void Dispose()
