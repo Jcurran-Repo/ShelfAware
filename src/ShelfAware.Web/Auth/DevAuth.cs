@@ -35,7 +35,7 @@ public static class DevAuth
             IHostEnvironment env, IConfiguration config,
             UserManager<AppUser> users, SignInManager<AppUser> signIn,
             HouseholdService households, AuthDbContext authDb,
-            ICurrentHousehold current, DemoDataSeeder seeder,
+            ICurrentHousehold current, DemoDataSeeder seeder, LoginAudit loginAudit,
             ILoggerFactory loggerFactory) =>
         {
             var log = loggerFactory.CreateLogger("DevAuth");
@@ -64,6 +64,9 @@ public static class DevAuth
             // Sign in AFTER the household exists so the issued cookie carries the household claim (the
             // claims factory reads user.HouseholdId) — the same ordering registration uses.
             await signIn.SignInAsync(user, isPersistent: true);
+
+            // Count the login for the admin view, like the real sign-in sites (best-effort).
+            await loginAudit.RecordAsync(user.Id, user.Email ?? DevEmail, DateTimeOffset.Now);
 
             // Fill the sandbox with the sample catalog once, so a fresh dev DB isn't a ghost town.
             // Best-effort: being signed in is the point, and the onboarding banner can seed it too, so a

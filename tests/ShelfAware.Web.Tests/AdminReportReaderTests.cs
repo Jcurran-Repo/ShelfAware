@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Domain;
 using ShelfAware.Web.Auth;
@@ -38,7 +39,8 @@ public class AdminReportReaderTests : IDisposable
         _authDb,
         new FakeAuthState(SignedIn(signedInAs)),
         Options.Create(new AdminOptions { Emails = [AdminEmail] }),
-        new ErrorLogStore(_authDb));
+        new ErrorLogStore(_authDb),
+        new LoginAudit(_authDb, NullLogger<LoginAudit>.Instance));
 
     private void SeedReport(string household, string body)
     {
@@ -70,13 +72,29 @@ public class AdminReportReaderTests : IDisposable
     }
 
     [Fact]
-    public async Task Anyone_but_the_configured_admin_is_refused_by_both_lists()
+    public async Task Anyone_but_the_configured_admin_is_refused_by_every_list()
     {
         SeedReport("hh-a", "Private to hh-a");
         var reader = Reader(signedInAs: "wife@example.com");
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => reader.ListBugReportsAsync());
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => reader.ListErrorsAsync());
+        // The login history is a who's-been-here list — a non-admin must never read it.
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => reader.ListLoginStatsAsync());
+    }
+
+    [Fact]
+    public async Task The_admin_reads_the_login_stats_through_the_same_gate()
+    {
+        var audit = new LoginAudit(_authDb, NullLogger<LoginAudit>.Instance);
+        await audit.RecordAsync("u1", "jordan@example.com", DateTimeOffset.Now);
+        await audit.RecordAsync("u1", "jordan@example.com", DateTimeOffset.Now.AddHours(1));
+
+        var stats = await Reader().ListLoginStatsAsync();
+
+        var row = Assert.Single(stats);
+        Assert.Equal("jordan@example.com", row.Email);
+        Assert.Equal(2, row.LoginCount);
     }
 
     [Fact]

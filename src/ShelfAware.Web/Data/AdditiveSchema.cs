@@ -111,6 +111,10 @@ public static class AdditiveSchema
         // household is known, so this can't be a household-filtered pantry table). A new table —
         // existing rows unaffected.
         EnsureTable(db, table: "ApiTokens");
+
+        // 2026-08-23: per-account login counts (the admin "who has logged in" view). Operator data, like
+        // the error log, so it lives here. A new table — existing rows unaffected.
+        EnsureTable(db, table: "UserLoginStats");
     }
 
     /// <summary>Create <paramref name="table"/> (and its indexes) on a DB built before it existed. The

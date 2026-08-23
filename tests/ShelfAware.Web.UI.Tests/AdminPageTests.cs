@@ -22,16 +22,20 @@ public class AdminPageTests : PageTestContext
     private readonly TestAuthDb authDb = new();
     private BunitAuthorizationContext auth = null!;
     private ErrorLogSink sink = null!;
+    private OnlinePresence presence = null!;
 
     protected override void RegisterAdditionalServices()
     {
         auth = this.AddAuthorization();
         auth.SetAuthorized(AdminEmail);
         sink = new ErrorLogSink();
+        presence = new OnlinePresence();
         Services.AddSingleton(Options.Create(new AdminOptions { Emails = [AdminEmail] }));
         Services.AddSingleton(sink);
+        Services.AddSingleton(presence);
         Services.AddSingleton<IDbContextFactory<AuthDbContext>>(authDb);
         Services.AddSingleton(new ErrorLogStore(authDb));
+        Services.AddSingleton<LoginAudit>();
         Services.AddScoped<AdminReportReader>();
         Services.AddScoped<ReportResolutionService>();
     }
@@ -216,8 +220,63 @@ public class AdminPageTests : PageTestContext
 
         cut.WaitForAssertion(() =>
         {
+            Assert.Contains("Nobody's connected right now.", cut.Markup);
+            Assert.Contains("No logins recorded yet.", cut.Markup);
             Assert.Contains("Nothing logged — quiet so far.", cut.Markup);
             Assert.Contains("No reports yet.", cut.Markup);
+        });
+    }
+
+    // ------------------------------------------------------------------- logins + presence
+
+    [Fact]
+    public async Task The_admin_sees_the_login_stats_with_a_total()
+    {
+        using (var db = authDb.CreateDbContext())
+        {
+            db.UserLoginStats.Add(new UserLoginStat
+            {
+                UserId = "u1", Email = "jordan@test.local", LoginCount = 3,
+                FirstLoginAt = DateTimeOffset.Now.AddDays(-10), LastLoginAt = DateTimeOffset.Now,
+            });
+            db.UserLoginStats.Add(new UserLoginStat
+            {
+                UserId = "u2", Email = "wife@test.local", LoginCount = 2,
+                FirstLoginAt = DateTimeOffset.Now.AddDays(-5), LastLoginAt = DateTimeOffset.Now.AddDays(-1),
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var cut = Render<Components.Pages.Admin>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("jordan@test.local", cut.Markup);
+            Assert.Contains("wife@test.local", cut.Markup);
+            // The total is the SUM (3 + 2), across the two accounts. Asserted in parts because the
+            // sentence wraps in the source, so the raw markup carries a newline where the browser shows
+            // a space (HTML collapses it).
+            Assert.Contains("5 total sign-in", cut.Markup);
+            Assert.Contains("2 account", cut.Markup);
+        });
+    }
+
+    [Fact]
+    public void The_online_now_section_reflects_live_presence()
+    {
+        // The singleton the page reads is the one this suite registered — populate it directly (no
+        // circuits exist under bUnit) and the page shows who's on.
+        presence.Connect("c1", new OnlineUser("u1", "jordan@test.local"), DateTimeOffset.Now);
+        presence.Connect("c2", new OnlineUser("u2", "wife@test.local"), DateTimeOffset.Now);
+
+        var cut = Render<Components.Pages.Admin>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("Online now (2)", cut.Markup);
+            Assert.Contains("jordan@test.local", cut.Markup);
+            Assert.Contains("wife@test.local", cut.Markup);
+            Assert.DoesNotContain("Nobody's connected right now.", cut.Markup);
         });
     }
 

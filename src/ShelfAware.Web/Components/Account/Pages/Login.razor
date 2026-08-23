@@ -5,6 +5,7 @@
 @inject IdentityRedirectManager RedirectManager
 @inject ILogger<Login> Logger
 @inject IOptions<EmailOptions> Email
+@inject LoginAudit LoginAudit
 
 <PageTitle>Sign in — Shelf Aware</PageTitle>
 
@@ -90,6 +91,11 @@
         if (result.Succeeded)
         {
             Logger.LogInformation("User signed in.");
+            // Count the login for the admin view (best-effort — RecordAsync never throws for a DB issue,
+            // so it can't turn a good sign-in into an error). The user exists: they just authenticated.
+            var user = await SignInManager.UserManager.FindByEmailAsync(Input.Email);
+            if (user is not null)
+                await LoginAudit.RecordAsync(user.Id, user.Email ?? Input.Email, DateTimeOffset.Now);
             RedirectManager.RedirectTo(ReturnUrl);
         }
         else if (result.IsLockedOut)

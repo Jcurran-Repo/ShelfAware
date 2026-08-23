@@ -211,6 +211,33 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Creates_the_UserLoginStats_table_on_an_older_auth_db_with_the_fresh_schema()
+    {
+        // The auth-side twin: per-account login counts are operator data (like the error log), so they
+        // live in auth.db, and a live deployment's auth file predates the login-audit feature.
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await TableSchemaAsync(db, "UserLoginStats");
+        Assert.NotEmpty(fresh);
+
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE UserLoginStats;");
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // second boot — a no-op, not a table-exists error
+
+        // Byte-identical to a fresh file's — the pin on EnsureTable's premise (DDL from EF's create
+        // script, no second schema copy). The string key on UserId (not the convention's Id) rides along.
+        Assert.Equal(fresh, await TableSchemaAsync(db, "UserLoginStats"));
+
+        db.UserLoginStats.Add(new UserLoginStat
+        {
+            UserId = "u1", Email = "jordan@example.com", LoginCount = 1,
+            FirstLoginAt = DateTimeOffset.Now, LastLoginAt = DateTimeOffset.Now,
+        });
+        await db.SaveChangesAsync();
+        Assert.Single(await db.UserLoginStats.ToListAsync());
+    }
+
+    [Fact]
     public async Task Adds_the_resolved_at_column_to_a_pre_resolve_error_log()
     {
         // The auth-side twin — same reasoning, same live-deployment path.

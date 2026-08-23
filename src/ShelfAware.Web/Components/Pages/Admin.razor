@@ -4,10 +4,12 @@
 @using ShelfAware.Web.Auth
 @using ShelfAware.Web.Diagnostics
 @attribute [Authorize(Policy = AdminOptions.PolicyName)]
+@implements IDisposable
 @inject AdminReportReader Reader
 @inject ReportResolutionService Actions
 @inject IOptions<AdminOptions> AdminConfig
 @inject ErrorLogSink Sink
+@inject OnlinePresence Presence
 @inject ILogger<Admin> Logger
 
 <PageTitle>Admin — Shelf Aware</PageTitle>
@@ -34,6 +36,75 @@ else
     {
         <p class="error" role="alert">@actionError</p>
     }
+    <section class="panel">
+        <h2>Online now (@Presence.OnlineCount)</h2>
+        <p class="muted">Accounts with the app open and connected right this moment — this updates live
+            as people arrive and leave. Several tabs from one person count as one.</p>
+        @{
+            var online = Presence.Snapshot();
+        }
+        @if (online.Count == 0)
+        {
+            <p class="muted">Nobody's connected right now.</p>
+        }
+        else
+        {
+            <table>
+                <caption class="visually-hidden">Accounts currently connected</caption>
+                <thead>
+                    <tr><th>Account</th><th>Connections</th><th>Since</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var e in online)
+                    {
+                        <tr @key="e.User.UserId">
+                            <td>@e.User.Email</td>
+                            <td>@e.Connections tab@(e.Connections == 1 ? "" : "s")</td>
+                            <td>@e.Since.ToString("MMM d, HH:mm")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    <section class="panel">
+        <h2>Logins</h2>
+        <p class="muted">Every account's sign-in count, most-recently-active first — one row per account,
+            counting registrations and each later sign-in.</p>
+        @if (loginStats is null)
+        {
+            <p>Loading…</p>
+        }
+        else if (loginStats.Count == 0)
+        {
+            <p class="muted">No logins recorded yet.</p>
+        }
+        else
+        {
+            var totalLogins = loginStats.Sum(s => s.LoginCount);
+            <p class="muted">@totalLogins total sign-in@(totalLogins == 1 ? "" : "s") across
+                @loginStats.Count account@(loginStats.Count == 1 ? "" : "s").</p>
+            <table>
+                <caption class="visually-hidden">Per-account login counts, most recently active first</caption>
+                <thead>
+                    <tr><th>Account</th><th>Logins</th><th>Last seen</th><th>First</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var s in loginStats)
+                    {
+                        <tr @key="s.UserId">
+                            <td>@s.Email</td>
+                            <td>@s.LoginCount×</td>
+                            <td>@s.LastLoginAt.ToString("MMM d, HH:mm")</td>
+                            <td>@s.FirstLoginAt.ToString("MMM d, yyyy")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+
     <section class="panel">
         <h2>Errors the app has logged</h2>
         <p class="muted">Every Error-level event, handled ones included, deduplicated by where it
@@ -245,7 +316,9 @@ else
 
     private IReadOnlyList<ErrorLogEntry>? errors;
     private IReadOnlyList<AdminBugReport>? bugReports;
+    private IReadOnlyList<UserLoginStat>? loginStats;
     private bool refused;
+    private bool subscribed;
     private bool busy;
     private bool actionBusy;
     private string? loadError;
@@ -260,7 +333,27 @@ else
             refused = true;
             return;
         }
+        // Live-update the "Online now" list. Subscribe only for the admin (a refused visitor renders none
+        // of this), and only after the gate so a stranger's page never wires into presence.
+        Presence.Changed += OnPresenceChanged;
+        subscribed = true;
         await RefreshAsync();
+    }
+
+    // Fired from the CHANGING circuit's thread, so marshal to this component's renderer. Swallows the
+    // dispose race (a change landing as the page tears down) rather than logging teardown noise.
+    private async void OnPresenceChanged()
+    {
+        try
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (ObjectDisposedException) { /* the page went away between the event and the marshal */ }
+    }
+
+    public void Dispose()
+    {
+        if (subscribed) Presence.Changed -= OnPresenceChanged;
     }
 
     /// <summary>Self-reporting (returns whether it worked) so callers can split their advice by
@@ -277,6 +370,7 @@ else
         {
             errors = await Reader.ListErrorsAsync();
             bugReports = await Reader.ListBugReportsAsync();
+            loginStats = await Reader.ListLoginStatsAsync();
             return true;
         }
         catch (OperationCanceledException) { throw; }

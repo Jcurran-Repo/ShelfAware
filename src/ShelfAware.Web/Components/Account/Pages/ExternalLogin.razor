@@ -9,6 +9,7 @@
 @inject IOptions<AuthOptions> Auth
 @inject IdentityRedirectManager RedirectManager
 @inject ILogger<ExternalLogin> Logger
+@inject LoginAudit LoginAudit
 
 <PageTitle>Sign in — Shelf Aware</PageTitle>
 
@@ -94,6 +95,11 @@
             if (result.Succeeded)
             {
                 Logger.LogInformation("User signed in with {Provider}.", externalLoginInfo.LoginProvider);
+                // Count the login for the admin view (best-effort). Fetch the account behind this
+                // external login to get its stable id + email.
+                var user = await UserManager.FindByLoginAsync(externalLoginInfo.LoginProvider, externalLoginInfo.ProviderKey);
+                if (user is not null)
+                    await LoginAudit.RecordAsync(user.Id, user.Email ?? user.UserName ?? user.Id, DateTimeOffset.Now);
                 RedirectManager.RedirectTo(ReturnUrl);
             }
             else if (result.IsLockedOut)
@@ -164,6 +170,8 @@
             externalLoginInfo.LoginProvider, joining ? "joined household" : "new household");
 
         await SignInManager.SignInAsync(user, isPersistent: false);
+        // First login for this newly linked account — count it for the admin view (best-effort).
+        await LoginAudit.RecordAsync(user.Id, user.Email ?? user.UserName ?? user.Id, DateTimeOffset.Now);
         RedirectManager.RedirectTo(ReturnUrl);
     }
 
