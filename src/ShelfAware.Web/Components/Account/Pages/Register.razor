@@ -8,6 +8,7 @@
 @inject IOptions<AuthOptions> Auth
 @inject IdentityRedirectManager RedirectManager
 @inject ILogger<Register> Logger
+@inject LoginAudit LoginAudit
 
 <PageTitle>Create account — Shelf Aware</PageTitle>
 
@@ -113,6 +114,8 @@
 
         // Sign in AFTER the commit, so the issued cookie always carries a real household claim.
         await SignInManager.SignInAsync(user, isPersistent: false);
+        // A registration is the account's first login — count it for the admin view (best-effort).
+        await LoginAudit.RecordAsync(user.Id, user.Email ?? Input.Email, DateTimeOffset.Now);
         RedirectManager.RedirectTo(ReturnUrl);
     }
 

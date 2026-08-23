@@ -22,7 +22,8 @@ public sealed class AdminReportReader(
     IDbContextFactory<AuthDbContext> authDb,
     AuthenticationStateProvider auth,
     IOptions<AdminOptions> admin,
-    ErrorLogStore errors)
+    ErrorLogStore errors,
+    LoginAudit logins)
 {
     /// <summary>The admin page loads at most this many reports (open ones first, newest within
     /// each half — ListBugReportsAsync's ordering) — the same bounded posture as the error log's
@@ -64,6 +65,15 @@ public sealed class AdminReportReader(
     {
         await RequireAdminAsync();
         return await errors.ListAsync(ct);
+    }
+
+    /// <summary>Per-account login stats (auth.db operator data), most-recently-active first — the
+    /// persisted half of the "who's logged in" view. Admin-gated like the rest, so a login history is
+    /// never served to anyone but the admin.</summary>
+    public async Task<IReadOnlyList<UserLoginStat>> ListLoginStatsAsync(CancellationToken ct = default)
+    {
+        await RequireAdminAsync();
+        return await logins.ListAsync(ct);
     }
 
     private async Task RequireAdminAsync()

@@ -263,6 +263,14 @@ builder.Services.AddScoped<AdminReportReader>();
 // Its write sibling: resolve/reopen, the app's one cross-household write — see the class doc.
 builder.Services.AddScoped<ReportResolutionService>();
 
+// ---- Who's using the app: the admin "logins + who's online" view ----
+// LoginAudit persists per-account login counts (auth.db operator data, like the error log; read through
+// AdminReportReader's gate). OnlinePresence is the live half — a singleton fed by a per-circuit
+// CircuitHandler as connections come and go. The recorder is called from the sign-in sites only.
+builder.Services.AddSingleton<LoginAudit>();
+builder.Services.AddSingleton<OnlinePresence>();
+builder.Services.AddScoped<Microsoft.AspNetCore.Components.Server.Circuits.CircuitHandler, PresenceCircuitHandler>();
+
 // Auth cookies + antiforgery tokens are encrypted with DataProtection keys. Persist them next to the
 // DBs (app-data is gitignored and survives republish) — otherwise every restart/redeploy would sign
 // the whole household out and invalidate in-flight forms.

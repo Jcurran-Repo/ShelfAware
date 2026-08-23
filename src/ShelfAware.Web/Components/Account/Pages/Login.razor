@@ -5,6 +5,7 @@
 @inject IdentityRedirectManager RedirectManager
 @inject ILogger<Login> Logger
 @inject IOptions<EmailOptions> Email
+@inject LoginAudit LoginAudit
 
 <PageTitle>Sign in — Shelf Aware</PageTitle>
 
@@ -90,6 +91,9 @@
         if (result.Succeeded)
         {
             Logger.LogInformation("User signed in.");
+            // Count the login for the admin view. Fully best-effort (the id lookup runs inside the audit's
+            // guard too), so nothing here can turn a sign-in that already succeeded into an error page.
+            await LoginAudit.RecordByEmailAsync(SignInManager.UserManager, Input.Email, DateTimeOffset.Now);
             RedirectManager.RedirectTo(ReturnUrl);
         }
         else if (result.IsLockedOut)

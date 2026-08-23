@@ -35,6 +35,13 @@
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
       <_Parameter1>ShelfAware.Web.UI.Tests</_Parameter1>
     </AssemblyAttribute>
+    <!-- The plain unit-test project reaches internal service logic that can't be driven through a
+         public seam — e.g. PresenceCircuitHandler's guarded connect/disconnect, whose framework hooks
+         take a Circuit that can't be constructed outside ASP.NET, so the guardable logic is internal
+         and keyed on the circuit id instead. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>ShelfAware.Web.Tests</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <PropertyGroup>
