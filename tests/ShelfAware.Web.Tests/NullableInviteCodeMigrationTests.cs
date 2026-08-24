@@ -15,9 +15,11 @@ public class NullableInviteCodeMigrationTests : IDisposable
 
     public void Dispose() => _db.Dispose();
 
-    /// <summary>The pre-v3.4 shape: EnsureCreated builds the CURRENT (nullable) schema, so an old DB has to
-    /// be reconstructed to test against. This is the live 7/15 shape exactly — four v3 columns plus the
-    /// three AdditiveSchema ALTERed on, InviteCode NOT NULL, unfiltered unique index.</summary>
+    /// <summary>The pre-nullable shape the migration actually sees at boot: EnsureCreated builds the
+    /// CURRENT (nullable) schema, so an old DB has to be reconstructed. This is the live shape after
+    /// AdditiveSchema.Apply has run (which always precedes this migration) but before the nullable
+    /// rebuild — the v3 columns, the three 7/15 invite columns, and the 8/24 tier columns, with
+    /// InviteCode still NOT NULL and the unfiltered unique index.</summary>
     /// <summary>Built by substitution rather than interpolation so it stays an ExecuteSqlRawAsync(string):
     /// the interpolated overload trips EF1002 (SQL injection), which is the right warning to get for a
     /// value from outside and the wrong one to suppress just because this one is a test's own literal.</summary>
@@ -29,7 +31,9 @@ public class NullableInviteCodeMigrationTests : IDisposable
             "CreatedAt" TEXT NOT NULL,
             "InviteExpiresAt" TEXT NULL,
             "InviteMaxUses" INTEGER NULL,
-            "InviteUseCount" INTEGER NOT NULL DEFAULT 0/*EXTRAS*/
+            "InviteUseCount" INTEGER NOT NULL DEFAULT 0,
+            "Tier" INTEGER NOT NULL DEFAULT 0,
+            "FounderSince" TEXT NULL/*EXTRAS*/
         );
         """;
 
@@ -78,6 +82,31 @@ public class NullableInviteCodeMigrationTests : IDisposable
         Assert.Null(saved.InviteMaxUses);
         Assert.Null(saved.InviteExpiresAt);
         Assert.Equal(0, saved.InviteUseCount);
+    }
+
+    [Fact]
+    public async Task A_founder_grant_survives_the_rebuild()
+    {
+        // The rebuild retires invite codes, not entitlements: a household's Founder tier + grant date
+        // must come across untouched. Wiping them here would silently strip someone's thank-you tier on
+        // an unrelated migration — the cross-column harm the copy-by-name assert exists to prevent.
+        await using var db = _db.CreateDbContext();
+        await GiveItTheOldSchemaAsync(db);
+        var granted = new DateTimeOffset(2026, 8, 24, 9, 0, 0, TimeSpan.FromHours(-5));
+        db.Households.Add(new Household
+        {
+            Name = "The Currans", InviteCode = "PERMANENT1",
+            Tier = HouseholdTier.Founder, FounderSince = granted,
+        });
+        await db.SaveChangesAsync();
+
+        NullableInviteCodeMigration.Apply(db);
+
+        await using var fresh = _db.CreateDbContext();
+        var saved = fresh.Households.Single();
+        Assert.Null(saved.InviteCode);                     // the code went…
+        Assert.Equal(HouseholdTier.Founder, saved.Tier);   // …the tier stayed
+        Assert.Equal(granted, saved.FounderSince);
     }
 
     [Fact]
