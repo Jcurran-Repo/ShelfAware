@@ -22,6 +22,16 @@ public interface IEntitlements
 /// entitlement tier-AND-live-credit-balance, and a balance changes on every AI call — it can never be
 /// a claim. Building the live-read seam now is what lets phase 2 EXTEND this service (add the balance)
 /// rather than rip out a claim and replace it.
+///
+/// ⚠️ Cached per SCOPE, and a Blazor Server scope is the CIRCUIT, which lives as long as the SignalR
+/// connection — a left-open tab can be HOURS. So a grant/revoke bites on the household's NEXT circuit,
+/// not mid-session: a newly-granted Founder stays capped until they reconnect (safe), and a REVOKED
+/// Founder keeps unlimited until their circuit ends (the one staleness in the host's-wallet direction —
+/// bounded, still recorded, acceptable for a rare operator-granted trust tier where revocation is
+/// non-adversarial). ⚠️ Phase 2's live credit BALANCE must NOT inherit this per-circuit cache: a
+/// balance changes on every call, so caching it for a circuit's lifetime would let one long session
+/// overspend. The live-read SEAM is here; the caching CONTRACT is per-value — the balance's is "read
+/// fresh each check", not "cache for the scope".
 /// </summary>
 public sealed class Entitlements(
     ICurrentHousehold currentHousehold,

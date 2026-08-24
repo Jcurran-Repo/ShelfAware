@@ -23,6 +23,25 @@ public class EntitlementsTests : IDisposable
         public void UseFixed(string householdId) { }
     }
 
+    /// <summary>Throws on the FIRST context open (a transient auth.db error), then delegates — so a test
+    /// can prove the fail-safe path both fails safe AND doesn't poison the per-scope cache.</summary>
+    private sealed class FailOnceAuthFactory(IDbContextFactory<AuthDbContext> inner) : IDbContextFactory<AuthDbContext>
+    {
+        private bool _failed;
+
+        public AuthDbContext CreateDbContext() => inner.CreateDbContext();
+
+        public Task<AuthDbContext> CreateDbContextAsync(CancellationToken ct = default)
+        {
+            if (!_failed)
+            {
+                _failed = true;
+                throw new InvalidOperationException("transient auth.db error");
+            }
+            return inner.CreateDbContextAsync(ct);
+        }
+    }
+
     private async Task<string> SeedHouseholdAsync(HouseholdTier tier)
     {
         await using var db = _auth.CreateDbContext();
@@ -74,6 +93,24 @@ public class EntitlementsTests : IDisposable
         var tier = await For("does-not-exist").GetTierAsync();
 
         Assert.Equal(HouseholdTier.Free, tier);
+    }
+
+    [Fact]
+    public async Task A_transient_error_reads_as_free_and_is_not_cached()
+    {
+        // The fail-SAFE path: a tier we couldn't read is Free (limits apply), NEVER unlimited off a
+        // transient auth.db error — and deliberately NOT cached, so a later call in the same scope
+        // can still succeed. (The code review proved this by probe; this pins it against a later
+        // "improvement" that caches the error.)
+        var id = await SeedHouseholdAsync(HouseholdTier.Founder);
+        var flaky = new FailOnceAuthFactory(_auth);
+        var entitlements = new Entitlements(new FixedHousehold(id), flaky, NullLogger<Entitlements>.Instance);
+
+        // First call: the factory throws → Free, and the errored result is not cached.
+        Assert.Equal(HouseholdTier.Free, await entitlements.GetTierAsync());
+
+        // The recovered call reads the REAL tier — which only works if the error wasn't cached.
+        Assert.Equal(HouseholdTier.Founder, await entitlements.GetTierAsync());
     }
 
     [Fact]
