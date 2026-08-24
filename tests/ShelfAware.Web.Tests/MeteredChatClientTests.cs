@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Domain;
 using ShelfAware.Llm;
+using ShelfAware.Web.Auth;
 using ShelfAware.Web.Services;
 
 namespace ShelfAware.Web.Tests;
@@ -58,7 +59,8 @@ public class MeteredChatClientTests : IDisposable
     }
 
     private (MeteredChatClient client, AiUsageMeter meter) Build(
-        string keyMode, int? dailyCalls = null, long? dailyTokens = null, int? dailyMints = null)
+        string keyMode, int? dailyCalls = null, long? dailyTokens = null, int? dailyMints = null,
+        HouseholdTier tier = HouseholdTier.Free)
     {
         var llm = Options.Create(new LlmOptions
         {
@@ -70,6 +72,7 @@ public class MeteredChatClientTests : IDisposable
         var settings = new CircuitAiSettings(llm);
         var meter = new AiUsageMeter(_db, llm,
             Options.Create(new ElevenLabsOptions { DailySignedUrlLimit = dailyMints }),
+            new FakeEntitlements(tier),
             NullLogger<AiUsageMeter>.Instance);
         var byok = new ByokChatClient(settings, new FakeFactory(_provider));
         return (new MeteredChatClient(byok, settings, meter, NullLogger<MeteredChatClient>.Instance), meter);
@@ -142,6 +145,45 @@ public class MeteredChatClientTests : IDisposable
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => AskAsync(client));
         Assert.Equal(0, _provider.Calls);
+    }
+
+    [Fact]
+    public async Task A_founder_is_exempt_from_the_call_cap_but_still_recorded()
+    {
+        // Same setup that blocks a Free household in At_the_call_cap... above — but a Founder rides the
+        // host's key freely, and the call is still recorded (unlimited-but-recorded, like BYOK).
+        await SeedTodayAsync("hh-test", calls: 5);
+        var (client, meter) = Build("Managed", dailyCalls: 5, tier: HouseholdTier.Founder);
+
+        var response = await AskAsync(client);
+
+        Assert.Equal("ok", response.Text);
+        Assert.Equal(1, _provider.Calls);                       // the provider WAS reached (the Free run throws)
+        Assert.Equal(6, (await meter.GetTodayAsync()).Calls);   // seeded 5 + the Founder's recorded call
+    }
+
+    [Fact]
+    public async Task A_founder_is_exempt_from_the_token_cap()
+    {
+        await SeedTodayAsync("hh-test", calls: 1, tokens: 10_000);
+        var (client, _) = Build("Managed", dailyTokens: 10_000, tier: HouseholdTier.Founder);
+
+        var response = await AskAsync(client);
+
+        Assert.Equal("ok", response.Text);
+        Assert.Equal(1, _provider.Calls);
+    }
+
+    [Fact]
+    public async Task A_founder_is_exempt_from_the_voice_mint_cap()
+    {
+        // At a Free household's mint cap of 2...
+        var (_, meter) = Build("Managed", dailyMints: 2, tier: HouseholdTier.Founder);
+        await meter.RecordVoiceSessionMintAsync();
+        await meter.RecordVoiceSessionMintAsync();
+
+        // ...a Founder may still mint (Free would be refused here — see Voice_session_mints_honor...).
+        Assert.True(await meter.MayMintVoiceSessionAsync());
     }
 
     [Fact]

@@ -81,7 +81,7 @@ public abstract class SettingsTestBase : PageTestContext
         Services.AddSingleton(new CircuitAiSettings(Options.Create(ServerLlm)));
         Services.AddSingleton(Options.Create(ServerLlm));
         Services.AddSingleton(new AiUsageMeter(Factory, Options.Create(ServerLlm),
-            Options.Create(new ElevenLabsOptions()), NullLogger<AiUsageMeter>.Instance));
+            Options.Create(new ElevenLabsOptions()), new FakeEntitlements(), NullLogger<AiUsageMeter>.Instance));
         Services.AddSingleton(new UserDataService(Factory, household, storage, recipeImages, null,
             tokens, NullLogger<UserDataService>.Instance));
     }

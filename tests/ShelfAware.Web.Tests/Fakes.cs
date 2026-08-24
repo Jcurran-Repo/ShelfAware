@@ -1,8 +1,16 @@
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Settings;
+using ShelfAware.Web.Auth;
 using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.Tests;
+
+/// <summary>A fixed entitlement tier, standing in for the scoped auth.db read. Defaults to Free (the
+/// state that leaves the managed caps in force); pass Founder to exercise the meter's exemption.</summary>
+internal sealed class FakeEntitlements(HouseholdTier tier = HouseholdTier.Free) : IEntitlements
+{
+    public ValueTask<HouseholdTier> GetTierAsync(CancellationToken cancellationToken = default) => new(tier);
+}
 
 /// <summary>A fixed household, standing in for the scope resolution (claim / circuit auth state) that only
 /// exists in a real request. Null models an unauthenticated scope.</summary>
