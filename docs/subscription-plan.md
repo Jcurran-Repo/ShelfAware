@@ -353,6 +353,21 @@ across US states + EU VAT remain the merchant's problem — exactly the work bei
 is legally the seller, so all of it is theirs.) The ~25¢/transaction premium over raw Stripe is the
 price of never thinking about VAT, and the annual-first posture pays the fixed fee once a year.
 
+**PHASE-3 DECISION (2026-08-24): Stripe Managed Payments (SMP) CHOSEN**, superseding LS-"for now"
+(Jordan delegated: "I don't care which one, I just want it cheap and stable — recommend"). SMP is now
+GA (the preview in the table below shipped): all-in ≈ 2.9% + $0.30 base card + 3.5% MoR surcharge +
+~0.5–0.8% Billing on recurring ≈ **~7% + $0.30 per US charge**, $15/dispute (verify on
+stripe.com/pricing at wire-up — the third-party fee blogs run pessimistic; the components check out on
+Stripe's own pages). Highest *headline* rate of the MoRs, but the LOWEST *fixed* fee ($0.30 vs
+everyone else's $0.50) — and on these sub-$28 tickets the fixed fee dominates, so SMP lands within
+pennies and is actually CHEAPER than a 5% MoR on the $2.99 monthly (~$0.51 vs ~$0.66; roughly a wash
+on annual). Chosen for **stability** over the ~1%: Stripe just consolidated the MoR space by absorbing
+Lemon Squeezy into SMP, so the genuinely-cheaper options are startups (Creem/Dodo/Polar) carrying
+re-integration risk a portfolio piece shouldn't take, and LS is now a transition path INTO SMP, not a
+durable standalone. **No recurring/setup/minimum fee** — the integration is built and tested in test
+mode for free; nothing is charged until a real customer pays. The provider seam below keeps the choice
+swappable if the fee ever stings at scale.
+
 | Candidate | Fee (verified 2026-08-23) | Disputes | Notes |
 |---|---|---|---|
 | **Lemon Squeezy** — **CHOSEN ("for now")** | 5% + 50¢; **5.5% + 50¢ on subscriptions**; +1.5% intl / PayPal | ~$15 passed through | Supports the exact product shape (subs + one-time packs, documented API-credit pattern). ⚠️ **In an announced transition**: Stripe launched its own MoR (**Stripe Managed Payments**, public preview 2/2026) and LS is building migration paths onto it — SMP preview pricing (~6.4% + 30¢ ≈ $0.49 on $2.99) would be CHEAPER than LS on these tickets. Decision stands as "for now" — and Jordan is positively disposed to Stripe ("I like Stripe"): **at phase 3, check Stripe Managed Payments FIRST; if it's available at MoR parity, prefer it**. Apply for whichever store EARLY (activation review is the long pole); the seam below is the insurance |
