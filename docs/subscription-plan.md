@@ -299,7 +299,20 @@ sketch hides (review finding): `AiUsageMeter` today knows neither the household 
 tier check needs `ICurrentHousehold` + an `AuthDbContext` read (or a tier claim in the cookie, with
 the 5-minute security-stamp revalidation as the grant/revoke propagation bound). Granted from a Households section on
 `/admin` via the one `AdminOptions.IsAdmin` predicate — would be the second admin cross-household write
-after `ReportResolutionService`, same review posture. Optional Settings badge: "You're a Founder —
+after `ReportResolutionService`, same review posture.
+
+**The Households section is a full ROSTER (Jordan, 2026-08-23): every household · its members (emails)
+· tier · FounderSince — the operator's view of who is on the box and what they're entitled to** — with
+the Founder toggle on each row. Ships in phase 1 (the toggle needs the list anyway). The read is an
+admin-gated reader service over auth.db (ordinary reads — auth.db has no query filter to punch
+through; the gate is the service's own `RequireAdmin`, the `AdminReportReader` posture). Columns grow
+with the phases: subscription state + period once billing exists (phase 3), credit balance once the
+ledger exists (phase 2) — and if a per-household USAGE column is ever wanted, that read crosses into
+the pantry db and follows the `AdminReportReader` `IgnoreQueryFilters` precedent, made explicitly,
+not casually. Precedent for showing operator-side member info: /admin already lists bug reporters
+with household names and the online-presence roster.
+
+Optional Settings badge: "You're a Founder —
 unlimited usage, thank you 💛". **Grandfathering decided (2026-08-23): every current family-box
 household is a Founder** — Jordan grants them from /admin when phase 1 ships; no pre-work needed.
 
@@ -441,8 +454,9 @@ only on someone who actually came back.
 ## 9. Build order (each phase gated by `/pre-push`, per the house rule)
 
 1. **Entitlement seam + Founder** — `Household.Tier`/`FounderSince`, plan→limits indirection in the
-   meter (⚠️ needs `ICurrentHousehold` + an auth.db read or a tier claim — §5), `/admin` Households
-   grant, badge. No payments; immediately useful on the family box.
+   meter (⚠️ needs `ICurrentHousehold` + an auth.db read or a tier claim — §5), the `/admin`
+   Households ROSTER (every household · members · tier · FounderSince — §5) with the Founder grant
+   toggle, badge. No payments; immediately useful on the family box.
 2. **Cost accounting** — pricing catalog, `CostMicros` stamped on usage rows, period rollup, credit
    ledger with **bucket accounting + refund-reversal entries + lazy per-period grant** (§4), Settings
    "this month" display in dollars. Still no payments; proves the math on real usage.
