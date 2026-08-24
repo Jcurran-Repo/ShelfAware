@@ -87,6 +87,12 @@ public sealed class HouseholdService(
             var existingId = user.HouseholdId ?? throw new InvalidOperationException(
                 $"CreateForAsync claimed no slot for user {user.Id} and it has no household — the user row "
                 + "must be persisted before this call.");
+            // Parity with JoinAsync's lost-claim log: a genuinely-concurrent double-create is invisible
+            // otherwise, and this is the one line that confirms the guard fired in production.
+            logger.LogInformation(
+                "A create for user {UserId} found the household slot already taken (a concurrent winner, or "
+                + "an already-placed user); returned existing household {HouseholdId}, created nothing.",
+                user.Id, existingId);
             return await db.Households.SingleAsync(h => h.Id == existingId, ct);
         }
 

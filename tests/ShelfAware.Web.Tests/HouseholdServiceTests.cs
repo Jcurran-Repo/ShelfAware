@@ -183,6 +183,37 @@ public class HouseholdServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task The_losing_concurrent_create_reloads_the_user_onto_the_winners_household()
+    {
+        // Pins the LOST-path reload specifically. The test above reuses one `user` entity that the winning
+        // call already synced, so it never exercises the reload — deleting it stays green there while a real
+        // concurrent loser breaks. The true shape is two requests on two contexts: request B loaded its user
+        // while the slot was still null, so B's in-memory user.HouseholdId is null even after A committed the
+        // slot to the database. B's claim then matches 0 rows and B must RE-READ the user to learn the
+        // household it now belongs to — without that reload B sees a null slot and throws (a 500 for the
+        // losing post). Here A runs on its OWN context, so this test's `user` (tracked by _context) stays
+        // genuinely null in memory, exactly as request B's would.
+        var user = await PersistedUser("a@example.com");
+
+        // Request A wins on a SEPARATE context — it never touches this test's `user`.
+        await using var contextA = _db.CreateDbContext();
+        var serviceA = new HouseholdService(contextA, NewUserManager(contextA), Options.Create(new AuthOptions()),
+            Options.Create(new LlmOptions { KeyMode = "Managed" }), Options.Create(new BillingOptions()),
+            NullLogger<HouseholdService>.Instance);
+        var userA = await contextA.Users.SingleAsync(u => u.Id == user.Id);
+        var winner = await serviceA.CreateForAsync("Home", userA);
+
+        // Request B loses: its `user` still reads null in memory while the database slot is taken. It must
+        // resolve to the winner's household, creating nothing, and the reload-under-test syncs the entity.
+        var loser = await _service.CreateForAsync("Home again", user);
+
+        Assert.Equal(winner.Id, loser.Id);          // resolved to the winner's household, not a fresh one
+        Assert.Equal(winner.Id, user.HouseholdId);  // the lost-path ReloadAsync synced the loser's user entity
+        await using var fresh = _db.CreateDbContext();
+        Assert.Equal(1, await fresh.Households.CountAsync());  // no orphan
+    }
+
+    [Fact]
     public async Task Join_matches_the_code_case_insensitively_and_trims()
     {
         var (household, code) = await HouseholdWithCodeAsync();
