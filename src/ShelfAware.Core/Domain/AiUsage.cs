@@ -20,8 +20,10 @@ public class AiUsage : IHouseholdOwned
 
     /// <summary>The day's LLM COST in micros (millionths of a dollar), accumulated per call from the
     /// pricing catalog at the rate in force when it was recorded (docs/subscription-plan.md §4 — stamped,
-    /// not re-derived, so a later rate change never rewrites history). Display-only: this is the
-    /// operator's "what did this household cost me" view; the credit LEDGER is the money authority.</summary>
+    /// not re-derived, so a later rate change never rewrites history). Recorded in EVERY key mode, like
+    /// the rest of this row: on a managed call it's the operator's "what did this household cost me", and
+    /// on a BYOK call it's the household's own key spend — either way theirs to see. Display-only; the
+    /// credit LEDGER is the money authority (and it, unlike this, excludes BYOK).</summary>
     public long CostMicros { get; set; }
 
     /// <summary>Cook-along signed-URL mints (each opens a realtime ElevenLabs session on the host's key).</summary>

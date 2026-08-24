@@ -29,13 +29,17 @@ public class MeteredChatClientTests : IDisposable
     {
         public int Calls { get; private set; }
 
+        /// <summary>The model the fake REPORTS on its response. Defaults to Haiku so the cost lookup uses
+        /// the Haiku rate; a test sets it null to exercise the requested-model fallback.</summary>
+        public string? ResponseModelId { get; set; } = "claude-haiku-4-5";
+
         public Task<ChatResponse> GetResponseAsync(
             IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
         {
             Calls++;
             return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "ok"))
             {
-                ModelId = "claude-haiku-4-5", // so the cost lookup uses the Haiku rate, not the fallback
+                ModelId = ResponseModelId,
                 Usage = new UsageDetails { InputTokenCount = 100, OutputTokenCount = 50 },
             });
         }
@@ -48,7 +52,7 @@ public class MeteredChatClientTests : IDisposable
         {
             Calls++;
             await Task.Yield();
-            yield return new ChatResponseUpdate(ChatRole.Assistant, "ok") { ModelId = "claude-haiku-4-5" };
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "ok") { ModelId = ResponseModelId };
             yield return new ChatResponseUpdate
             {
                 Contents = [new UsageContent(new UsageDetails { InputTokenCount = 100, OutputTokenCount = 50 })],
@@ -132,6 +136,20 @@ public class MeteredChatClientTests : IDisposable
         Assert.Equal(150, today.Tokens);
         // Cost stamped from the Haiku rate: 100 in × $1/MTok (=100 micros) + 50 out × $5/MTok (=250) = 350.
         Assert.Equal(350, today.CostMicros);
+    }
+
+    [Fact]
+    public async Task Cost_falls_back_to_the_requested_model_when_the_provider_reports_none()
+    {
+        // The provider echoes no model id; the cost must price at the REQUESTED model (Haiku, 350), not
+        // AiPricing's priciest-tier fallback (1750) — so a missing reported id can't read 5× high.
+        _provider.ResponseModelId = null;
+        var (client, meter) = Build("Managed");
+
+        await client.GetResponseAsync(
+            [new ChatMessage(ChatRole.User, "hi")], new ChatOptions { ModelId = "claude-haiku-4-5" });
+
+        Assert.Equal(350, (await meter.GetTodayAsync()).CostMicros);
     }
 
     [Fact]

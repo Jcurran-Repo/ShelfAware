@@ -249,6 +249,14 @@ not global config). The pieces:
   changes), but a Blazor circuit can be open for hours, so caching a *balance* that decrements every
   call would let one long session overspend. Extend `IEntitlements` for the tier read; read the
   balance FRESH on each gate check (or with a short TTL), never once-per-scope.
+- ⚠️ **Two accounting artifacts phase 2's gate flagged (LOW there, harmless while unenforced —
+  address when phase 3/4 makes them matter):** (a) the AiUsage (pantry) write and the ledger (auth)
+  write are two DBs, not one transaction, so a mid-write failure can record cost without its
+  consumption — an under-charge in the household's favour, bounded to one call; when enforcement
+  lands, decide whether the ledger write is the authoritative one (record it first, or reconcile).
+  (b) A genuinely concurrent double-create can mint an orphaned welcome grant on an unreachable
+  household (dead, unspendable money); harmless as accounting noise, but a reconciliation/cleanup
+  pass should ignore member-less households.
 - **Refunds/clawbacks are designed in, not hoped away** (both external reviews, independently): the
   MoR can refund unilaterally within ~60 days to pre-empt chargebacks, so a refund webhook posts
   reversal entries; **balances may go negative** — a negative balance gates usage and nets against

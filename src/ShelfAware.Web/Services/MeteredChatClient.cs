@@ -32,7 +32,10 @@ public sealed class MeteredChatClient(
             await meter.EnsureLlmCallAllowedAsync(cancellationToken);
         }
         var response = await inner.GetResponseAsync(messages, options, cancellationToken);
-        await RecordAsync(response.Usage, response.ModelId, cancellationToken);
+        // Prefer the model the provider REPORTED; fall back to the one we REQUESTED before AiPricing's own
+        // priciest-tier fallback — so a provider that doesn't echo the model still prices at the real
+        // (usually cheaper) requested model, not Opus rates. (See the code-review hardening, phase 2.)
+        await RecordAsync(response.Usage, response.ModelId ?? options?.ModelId, cancellationToken);
         return response;
     }
 
@@ -57,7 +60,8 @@ public sealed class MeteredChatClient(
             if (update.ModelId is not null) model = update.ModelId;
             yield return update;
         }
-        await RecordAsync(usage, model, cancellationToken);
+        // Reported model, then the requested one (see GetResponseAsync), then AiPricing's fallback.
+        await RecordAsync(usage, model ?? options?.ModelId, cancellationToken);
     }
 
     private async Task RecordAsync(UsageDetails? usage, string? model, CancellationToken cancellationToken)
