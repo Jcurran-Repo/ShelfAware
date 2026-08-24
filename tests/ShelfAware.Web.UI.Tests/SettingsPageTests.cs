@@ -36,6 +36,11 @@ public abstract class SettingsTestBase : PageTestContext
     internal string OtherId = null!;
     internal const string AuthHousehold = "hh-auth";
 
+    // The page's entitlement source (the Founder badge). Shared with the meter below so they agree;
+    // a test flips its tier before rendering. Field-initialized, so it exists when the base ctor's
+    // RegisterAdditionalServices registers it.
+    internal readonly FakeEntitlements Entitlements = new();
+
     private protected virtual LlmOptions ServerLlm => new(); // keyless → the BYOK view
 
     // Whether the read-only GraphQL API (and its Settings "API access" section) is on. Off by default;
@@ -80,8 +85,9 @@ public abstract class SettingsTestBase : PageTestContext
                 .Build());
         Services.AddSingleton(new CircuitAiSettings(Options.Create(ServerLlm)));
         Services.AddSingleton(Options.Create(ServerLlm));
+        Services.AddSingleton<IEntitlements>(Entitlements);
         Services.AddSingleton(new AiUsageMeter(Factory, Options.Create(ServerLlm),
-            Options.Create(new ElevenLabsOptions()), new FakeEntitlements(), NullLogger<AiUsageMeter>.Instance));
+            Options.Create(new ElevenLabsOptions()), Entitlements, NullLogger<AiUsageMeter>.Instance));
         Services.AddSingleton(new UserDataService(Factory, household, storage, recipeImages, null,
             tokens, NullLogger<UserDataService>.Instance));
     }
@@ -111,6 +117,31 @@ public abstract class SettingsTestBase : PageTestContext
 /// doesn't depend on key mode.</summary>
 public class SettingsPageTests : SettingsTestBase
 {
+    // ------------------------------------------------------------------------ Founder badge
+
+    [Fact]
+    public void A_founder_household_sees_the_thank_you_badge()
+    {
+        Entitlements.Tier = HouseholdTier.Founder;
+
+        var cut = RenderSettings();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.NotNull(cut.Find(".founder-badge"));
+            Assert.Contains("Founder", cut.Find(".founder-badge").TextContent);
+        });
+    }
+
+    [Fact]
+    public void A_free_household_sees_no_founder_badge()
+    {
+        // The default tier is Free — no badge, no accidental thank-you.
+        var cut = RenderSettings();
+
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".founder-badge")));
+    }
+
     // ------------------------------------------------------------------------ guided walkthrough
 
     [Fact]

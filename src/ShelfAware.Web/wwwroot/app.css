@@ -705,6 +705,17 @@ input:focus, select:focus {
 }
 .onboarding-x:hover { color: var(--accent-ink); }
 
+/* Founder-tier thank-you badge (Settings AI-usage panel). Uses the positive/"stocked" status palette
+   so it reads as a warm callout, theme-aware in both light and dark for free. */
+.founder-badge {
+    background: var(--stocked-bg);
+    color: var(--stocked-ink);
+    border: 1px solid var(--stocked-line);
+    border-radius: var(--radius);
+    padding: 0.6rem 0.85rem;
+    margin: 0 0 0.75rem;
+}
+
 /* ---- Guided walkthrough (Components/Layout/GuidedTour.razor) ----
    Docked bottom-LEFT because the voice assistant owns bottom-right; the two are the only fixed-position
    furniture in the app and must not stack. It's a fixed element, so it doesn't know about the nav rail's

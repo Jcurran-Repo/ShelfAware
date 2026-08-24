@@ -9,7 +9,11 @@ namespace ShelfAware.Web.Tests;
 /// state that leaves the managed caps in force); pass Founder to exercise the meter's exemption.</summary>
 internal sealed class FakeEntitlements(HouseholdTier tier = HouseholdTier.Free) : IEntitlements
 {
-    public ValueTask<HouseholdTier> GetTierAsync(CancellationToken cancellationToken = default) => new(tier);
+    /// <summary>Settable so a page test can flip the tier after the harness has already registered the
+    /// instance (RegisterAdditionalServices runs before the test body).</summary>
+    public HouseholdTier Tier { get; set; } = tier;
+
+    public ValueTask<HouseholdTier> GetTierAsync(CancellationToken cancellationToken = default) => new(Tier);
 }
 
 /// <summary>A fixed household, standing in for the scope resolution (claim / circuit auth state) that only
