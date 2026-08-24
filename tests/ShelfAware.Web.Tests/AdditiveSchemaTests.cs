@@ -275,6 +275,30 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Creates_the_CreditLedger_table_on_an_older_auth_db_with_the_fresh_schema()
+    {
+        // Auth-side: the money record lives beside accounts (it must survive a pantry "delete my data"),
+        // and a live deployment's auth.db predates the ledger.
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await TableSchemaAsync(db, "CreditLedger");
+        Assert.NotEmpty(fresh); // includes the HouseholdId index
+
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE CreditLedger;");
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        Assert.Equal(fresh, await TableSchemaAsync(db, "CreditLedger"));
+
+        db.CreditLedger.Add(new CreditLedgerEntry
+        {
+            HouseholdId = "hh-1", Kind = CreditEntryKind.Grant, AmountMicros = 1_650_000, Reason = "Welcome grant",
+        });
+        await db.SaveChangesAsync();
+        Assert.Single(await db.CreditLedger.ToListAsync());
+    }
+
+    [Fact]
     public async Task Adds_the_resolved_at_column_to_a_pre_resolve_error_log()
     {
         // The auth-side twin — same reasoning, same live-deployment path.
@@ -394,6 +418,29 @@ public class AdditiveSchemaTests : IDisposable
         Assert.Equal(10.13m, stored.Tax);
         Assert.Equal(187.48m, stored.Total);
         Assert.Equal(5.00m, stored.Savings);
+    }
+
+    [Fact]
+    public async Task Adds_the_cost_column_to_a_pre_cost_ai_usage_table()
+    {
+        // Subscription phase 2: AiUsage gained a per-day CostMicros. A live box's AiUsages table predates
+        // it, so the ALTER path (not the drop-TABLE rebuild) is what runs on its next boot.
+        await using var db = _db.CreateDbContext();
+        var fresh = await ColumnTypesAsync(db, "AiUsages");
+
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE AiUsages DROP COLUMN CostMicros;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        // Same declared type (INTEGER NOT NULL) as a fresh file — a pre-cost row reads 0, a new one
+        // round-trips the accumulated micros.
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "AiUsages"));
+
+        var usage = new AiUsage { Day = new DateOnly(2026, 8, 24), Calls = 1, CostMicros = 350 };
+        db.AiUsages.Add(usage);
+        await db.SaveChangesAsync();
+        Assert.Equal(350, (await db.AiUsages.AsNoTracking().SingleAsync()).CostMicros);
     }
 
     /// <summary>Each column's declared type, keyed by name — order-independent, so it survives the fact

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using ShelfAware.Core.Billing;
 using ShelfAware.Core.Domain;
 using ShelfAware.Llm;
 using ShelfAware.Web.Auth;
@@ -15,13 +16,22 @@ namespace ShelfAware.Web.Tests;
 public class MeteredChatClientTests : IDisposable
 {
     private readonly TestDb _db = new();
+    private readonly TestAuthDb _authDb = new(); // the ledger lives in auth.db
     private readonly ScriptedChatClient _provider = new();
 
-    public void Dispose() => _db.Dispose();
+    public void Dispose()
+    {
+        _db.Dispose();
+        _authDb.Dispose();
+    }
 
     private sealed class ScriptedChatClient : IChatClient
     {
         public int Calls { get; private set; }
+
+        /// <summary>The model the fake REPORTS on its response. Defaults to Haiku so the cost lookup uses
+        /// the Haiku rate; a test sets it null to exercise the requested-model fallback.</summary>
+        public string? ResponseModelId { get; set; } = "claude-haiku-4-5";
 
         public Task<ChatResponse> GetResponseAsync(
             IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
@@ -29,6 +39,7 @@ public class MeteredChatClientTests : IDisposable
             Calls++;
             return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "ok"))
             {
+                ModelId = ResponseModelId,
                 Usage = new UsageDetails { InputTokenCount = 100, OutputTokenCount = 50 },
             });
         }
@@ -41,7 +52,7 @@ public class MeteredChatClientTests : IDisposable
         {
             Calls++;
             await Task.Yield();
-            yield return new ChatResponseUpdate(ChatRole.Assistant, "ok");
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "ok") { ModelId = ResponseModelId };
             yield return new ChatResponseUpdate
             {
                 Contents = [new UsageContent(new UsageDetails { InputTokenCount = 100, OutputTokenCount = 50 })],
@@ -70,16 +81,30 @@ public class MeteredChatClientTests : IDisposable
             DailyTokenLimit = dailyTokens,
         });
         var settings = new CircuitAiSettings(llm);
+        var entitlements = new FakeEntitlements(tier);
         var meter = new AiUsageMeter(_db, llm,
             Options.Create(new ElevenLabsOptions { DailySignedUrlLimit = dailyMints }),
-            new FakeEntitlements(tier),
+            entitlements,
             NullLogger<AiUsageMeter>.Instance);
         var byok = new ByokChatClient(settings, new FakeFactory(_provider));
-        return (new MeteredChatClient(byok, settings, meter, NullLogger<MeteredChatClient>.Instance), meter);
+        var client = new MeteredChatClient(byok, settings, meter, Options.Create(new BillingOptions()),
+            new CreditLedger(_authDb), entitlements, new FakeCurrentHousehold("hh-test"),
+            NullLogger<MeteredChatClient>.Instance);
+        return (client, meter);
     }
 
     private static Task<ChatResponse> AskAsync(MeteredChatClient client) =>
         client.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")]);
+
+    private async Task SeedDayAsync(string household, DateOnly day, int calls, long costMicros)
+    {
+        var previous = _db.HouseholdId;
+        _db.HouseholdId = household;
+        await using var db = _db.CreateDbContext();
+        db.AiUsages.Add(new AiUsage { Day = day, Calls = calls, CostMicros = costMicros });
+        await db.SaveChangesAsync();
+        _db.HouseholdId = previous;
+    }
 
     private async Task SeedTodayAsync(string household, int calls = 0, long tokens = 0, int mints = 0)
     {
@@ -109,6 +134,69 @@ public class MeteredChatClientTests : IDisposable
         var today = await meter.GetTodayAsync();
         Assert.Equal(1, today.Calls);
         Assert.Equal(150, today.Tokens);
+        // Cost stamped from the Haiku rate: 100 in × $1/MTok (=100 micros) + 50 out × $5/MTok (=250) = 350.
+        Assert.Equal(350, today.CostMicros);
+    }
+
+    [Fact]
+    public async Task Cost_falls_back_to_the_requested_model_when_the_provider_reports_none()
+    {
+        // The provider echoes no model id; the cost must price at the REQUESTED model (Haiku, 350), not
+        // AiPricing's priciest-tier fallback (1750) — so a missing reported id can't read 5× high.
+        _provider.ResponseModelId = null;
+        var (client, meter) = Build("Managed");
+
+        await client.GetResponseAsync(
+            [new ChatMessage(ChatRole.User, "hi")], new ChatOptions { ModelId = "claude-haiku-4-5" });
+
+        Assert.Equal(350, (await meter.GetTodayAsync()).CostMicros);
+    }
+
+    [Fact]
+    public async Task A_managed_non_founder_call_draws_the_credit_balance_down()
+    {
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free);
+
+        await AskAsync(client);
+
+        // Cost 350 micros (Haiku 100/50) × 1.65 markup = 578 retail micros, stored as a consumption.
+        Assert.Equal(-578, await new CreditLedger(_authDb).GetBalanceMicrosAsync("hh-test"));
+    }
+
+    [Fact]
+    public async Task A_usage_write_failure_still_records_the_credit_consumption()
+    {
+        // The AiUsage (pantry) write and the ledger (auth) write are INDEPENDENT best-effort: a pantry
+        // failure must not silently drop the MONEY write. Dispose the pantry db so the usage write throws;
+        // the auth ledger is untouched, so consumption still lands.
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free);
+        _db.Dispose();
+
+        var response = await AskAsync(client);
+
+        Assert.Equal("ok", response.Text);  // the user still got their answer
+        Assert.Equal(-578, await new CreditLedger(_authDb).GetBalanceMicrosAsync("hh-test")); // money write landed
+    }
+
+    [Fact]
+    public async Task A_founder_call_records_cost_but_no_credit_consumption()
+    {
+        var (client, meter) = Build("Managed", tier: HouseholdTier.Founder);
+
+        await AskAsync(client);
+
+        Assert.Equal(350, (await meter.GetTodayAsync()).CostMicros);                        // cost still recorded
+        Assert.Equal(0, await new CreditLedger(_authDb).GetBalanceMicrosAsync("hh-test"));  // but no credit drawn
+    }
+
+    [Fact]
+    public async Task A_byok_call_records_no_credit_consumption()
+    {
+        var (client, _) = Build("Byok");
+
+        await AskAsync(client);
+
+        Assert.Equal(0, await new CreditLedger(_authDb).GetBalanceMicrosAsync("hh-test")); // their key, their wallet
     }
 
     [Fact]
@@ -279,6 +367,24 @@ public class MeteredChatClientTests : IDisposable
         await AskAsync(freshClient);
 
         Assert.Equal(1, (await freshMeter.GetTodayAsync()).Calls);
+    }
+
+    [Fact]
+    public async Task Monthly_usage_rolls_up_by_calendar_month_with_cost()
+    {
+        // Two days in a definite PAST month (so "today" can't interfere), summed into one month row —
+        // the "is it steady month to month?" view.
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var lastMonth = new DateOnly(today.Year, today.Month, 1).AddMonths(-1);
+        await SeedDayAsync("hh-test", new DateOnly(lastMonth.Year, lastMonth.Month, 3), calls: 2, costMicros: 1000);
+        await SeedDayAsync("hh-test", new DateOnly(lastMonth.Year, lastMonth.Month, 15), calls: 3, costMicros: 2500);
+
+        var (_, meter) = Build("Managed");
+        var months = await meter.GetMonthlyAsync(3);
+
+        var m = months.Single(x => x.Year == lastMonth.Year && x.Month == lastMonth.Month);
+        Assert.Equal(5, m.Calls);           // 2 + 3, rolled up across the two days
+        Assert.Equal(3500, m.CostMicros);   // 1000 + 2500
     }
 
     [Fact]

@@ -237,6 +237,7 @@ builder.Services.AddScoped<HouseholdService>();
 // always — the auth handler and Settings gate their EXPOSURE on GraphQL:Enabled, but the service
 // itself is harmless dormant and the delete-my-data flow may need it regardless.
 builder.Services.AddScoped<ApiTokenService>();
+builder.Services.AddScoped<CreditLedger>(); // the credit ledger (subscription phase 2 — the money record)
 
 // ---- Read-only GraphQL API (gated on GraphQL:Enabled) ----
 // The schema is registered only when the API is enabled, so a disabled deployment builds no schema and
@@ -291,6 +292,10 @@ if (OperatingSystem.IsWindows())
 }
 
 builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection(LlmOptions.SectionName));
+// Billing tunables — model rates, credit markup, welcome-grant size — as operator config (defaults in
+// BillingOptions), so pricing can be retuned in appsettings without a rebuild.
+builder.Services.Configure<ShelfAware.Core.Billing.BillingOptions>(
+    builder.Configuration.GetSection(ShelfAware.Core.Billing.BillingOptions.SectionName));
 
 // The provider seam: the AI services depend only on IChatClient, so the provider is a swap and the logic
 // stays fakeable in tests. Under BYOK each circuit gets its own IChatClient built from that visitor's
@@ -371,6 +376,7 @@ builder.Services.AddScoped(sp => new UserDataService(
     sp.GetRequiredService<RecipeImageStorage>(),
     sp.GetService<ISpeechCache>(), // null when Speech:CacheMegabytes = 0: no cache, nothing to find or forget
     sp.GetRequiredService<ApiTokenService>(), // token metadata for export + removal on delete-my-data (auth.db)
+    sp.GetRequiredService<CreditLedger>(), // the credit ledger for export (auth.db; NOT removed on delete)
     sp.GetRequiredService<ILogger<UserDataService>>()));
 
 // Voice I/O (ElevenLabs): Scribe = STT (ear), TTS = mouth. Speech is its own REST API, not an

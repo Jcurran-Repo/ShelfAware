@@ -249,6 +249,23 @@ not global config). The pieces:
   changes), but a Blazor circuit can be open for hours, so caching a *balance* that decrements every
   call would let one long session overspend. Extend `IEntitlements` for the tier read; read the
   balance FRESH on each gate check (or with a short TTL), never once-per-scope.
+- **Two accounting edges phase 2's gate flagged, characterised honestly** (not deferred as "harmless
+  because unenforced"): (a) the AiUsage (pantry) write and the ledger (auth) write span two SQLite
+  files, so they can't share a transaction. The *cascade* — a pantry hiccup silently skipping the
+  money write — was a real bug and is **FIXED**: the two are now independent best-effort writes
+  (`MeteredChatClient.RecordAsync`), each logged on its own, pinned by
+  `A_usage_write_failure_still_records_the_credit_consumption`. The residual — a write failing *after*
+  its sibling landed — is inherent to two databases (bounded to one call, logged distinctly); when
+  enforcement lands, decide whether the ledger becomes the single authoritative write or a reconciler
+  backfills from AiUsage. (b) The orphaned-welcome-grant on a concurrent double-create was NOT a bug
+  this branch introduced — `ChooseHousehold`/`Register` carried a pre-existing double-create race that
+  orphaned a *household* regardless of the grant (the grant just rode the orphan, yielding dead,
+  unspendable money — no leak, no spendable double-grant). It is now **FIXED at the root**:
+  `HouseholdService.CreateForAsync` claims the user's household slot with a CONDITIONAL update
+  (`HouseholdId == null`) — the same one-statement mechanism `JoinAsync` already uses for invite uses —
+  so two concurrent creates can no longer both win, and the loser creates (and grants) nothing. Pinned
+  by `Two_creates_for_one_user_make_one_household_never_an_orphan` (one household, one welcome grant),
+  mutation-checked. ChooseHousehold's sequential guard stays as the first, cheaper line of defence.
 - **Refunds/clawbacks are designed in, not hoped away** (both external reviews, independently): the
   MoR can refund unilaterally within ~60 days to pre-empt chargebacks, so a refund webhook posts
   reversal entries; **balances may go negative** — a negative balance gates usage and nets against

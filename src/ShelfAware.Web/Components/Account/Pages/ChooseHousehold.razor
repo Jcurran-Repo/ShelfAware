@@ -103,11 +103,13 @@
         }
 
         // Already in a household — nothing to choose, and choosing AGAIN would REPLACE it. This is
-        // reachable without malice: a double-click or a second onboarding tab posts here after the
-        // first choice landed, the OnInitialized redirect does not stop a form handler running
-        // (BlazorDisableThrowNavigationException — NavigateTo returns without unwinding), and
-        // CreateForAsync/JoinAsync set HouseholdId unconditionally, silently orphaning the first
-        // household and everything in it. Found by the forgot-password review's sibling hunt.
+        // reachable without malice: a double-click or a second onboarding tab posts here after the first
+        // choice landed, and the OnInitialized redirect does not stop a form handler running
+        // (BlazorDisableThrowNavigationException — NavigateTo returns without unwinding). This guard catches
+        // the SEQUENTIAL case, where the second post reloads the user with a household already set. The
+        // truly-concurrent case (both posts in flight before either commits, so both read a null slot) is
+        // closed a layer deeper: CreateForAsync claims the slot with a CONDITIONAL update, so only one create
+        // wins and the loser orphans nothing. Found by the forgot-password review's sibling hunt.
         if (!string.IsNullOrEmpty(user.HouseholdId))
         {
             await SignInManager.RefreshSignInAsync(user);

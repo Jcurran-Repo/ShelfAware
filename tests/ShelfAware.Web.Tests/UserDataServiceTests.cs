@@ -21,6 +21,7 @@ public class UserDataServiceTests : IDisposable
     private const string HouseholdId = "household-under-test";
 
     private ApiTokenService Tokens => new(_authDb);
+    private CreditLedger Ledger => new(_authDb);
 
     public void Dispose()
     {
@@ -40,7 +41,31 @@ public class UserDataServiceTests : IDisposable
         NullLogger<RecipeImageStorage>.Instance);
 
     private UserDataService Service(ISpeechCache? speech = null) =>
-        new(_db, _household, Storage(), RecipeImages(), speech, Tokens, NullLogger<UserDataService>.Instance);
+        new(_db, _household, Storage(), RecipeImages(), speech, Tokens, Ledger, NullLogger<UserDataService>.Instance);
+
+    [Fact]
+    public async Task ExportAsync_includes_the_credit_ledger()
+    {
+        await Ledger.GrantAsync(HouseholdId, 1_650_000, "Welcome grant");
+        await Ledger.RecordConsumptionAsync(HouseholdId, 150_000, "chat");
+
+        var export = await Service().ExportAsync();
+
+        Assert.Equal(2, export.CreditLedger.Count);                              // the money record is theirs
+        Assert.Equal(1_500_000, export.CreditLedger.Sum(e => e.AmountMicros));   // 1,650,000 − 150,000
+    }
+
+    [Fact]
+    public async Task DeleteAllAsync_leaves_the_credit_ledger_alone()
+    {
+        await Ledger.GrantAsync(HouseholdId, 1_650_000, "Welcome grant");
+        await Seed(); // pantry content too, which the delete DOES take
+
+        await Service().DeleteAllAsync();
+
+        // The pantry is wiped, but the balance survives — destroying credit would be destroying money.
+        Assert.Equal(1_650_000, await Ledger.GetBalanceMicrosAsync(HouseholdId));
+    }
 
     [Fact]
     public async Task Export_lists_token_metadata_but_never_the_secret_or_hash()

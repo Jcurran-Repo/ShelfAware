@@ -88,6 +88,11 @@ public static class AdditiveSchema
         EnsureColumn(db, table: "Receipts", column: "Tax", definition: "TEXT NULL");
         EnsureColumn(db, table: "Receipts", column: "Total", definition: "TEXT NULL");
         EnsureColumn(db, table: "Receipts", column: "Savings", definition: "TEXT NULL");
+
+        // 2026-08-24: per-day AI COST in micros (subscription phase 2 — dollar-aware usage). AiUsage is a
+        // PANTRY table (IHouseholdOwned), so this belongs here, not in the auth overload. Existing rows
+        // land on 0 (their cost was never captured); new calls accumulate it. Display-only.
+        EnsureColumn(db, table: "AiUsages", column: "CostMicros", definition: "INTEGER NOT NULL DEFAULT 0");
     }
 
     public static void Apply(AuthDbContext db)
@@ -115,6 +120,10 @@ public static class AdditiveSchema
         // 2026-08-23: per-account login counts (the admin "who has logged in" view). Operator data, like
         // the error log, so it lives here. A new table — existing rows unaffected.
         EnsureTable(db, table: "UserLoginStats");
+
+        // 2026-08-24: the credit ledger (subscription phase 2 — the money record). Auth-side beside the
+        // subscription, so it survives a pantry "delete my data". A new table — existing rows unaffected.
+        EnsureTable(db, table: "CreditLedger");
 
         // 2026-08-24: household entitlement tiers (docs/subscription-plan.md phase 1 — the Founder tier
         // + the subscription seam). Tier is an enum → INTEGER, so existing rows land on Free (0) with no

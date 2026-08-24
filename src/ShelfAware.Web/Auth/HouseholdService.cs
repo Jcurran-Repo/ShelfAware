@@ -2,6 +2,8 @@ using System.Security.Cryptography;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using ShelfAware.Core.Billing;
+using ShelfAware.Llm;
 
 namespace ShelfAware.Web.Auth;
 
@@ -13,7 +15,8 @@ public sealed record HouseholdMember(string Id, string Email);
 /// Takes the SCOPED <see cref="AuthDbContext"/> — the same instance Identity's user store uses in a
 /// request — so registration can wrap "create user + create/join household" in one transaction.</summary>
 public sealed class HouseholdService(
-    AuthDbContext db, UserManager<AppUser> users, IOptions<AuthOptions> options, ILogger<HouseholdService> logger)
+    AuthDbContext db, UserManager<AppUser> users, IOptions<AuthOptions> options,
+    IOptions<LlmOptions> llm, IOptions<BillingOptions> billing, ILogger<HouseholdService> logger)
 {
     /// <summary>Unambiguous alphabet (no 0/O, 1/I/L) so a code survives being read aloud or
     /// handwritten. ~31^10 ≈ 8×10^14 combinations at length 10.</summary>
@@ -46,7 +49,10 @@ public sealed class HouseholdService(
     }
 
     /// <summary>Creates a household and makes <paramref name="user"/> its first member. The caller
-    /// owns the transaction (registration wraps user-create + this in one).
+    /// owns the transaction (registration wraps user-create + this in one), and must have PERSISTED the
+    /// user first — every production caller does (UserManager writes the row before we're reached, or
+    /// ChooseHousehold loads an existing one), and the slot-claim below is a direct UPDATE that can't see
+    /// a user still staged on the change tracker.
     ///
     /// The new household has NO invite code. Minting one here is what made a code a standing fixture —
     /// every household permanently advertising a key to its own pantry, whether or not anyone had ever
@@ -54,9 +60,61 @@ public sealed class HouseholdService(
     public async Task<Household> CreateForAsync(string name, AppUser user, CancellationToken ct = default)
     {
         var household = new Household { Name = name.Trim() };
+
+        // Claim the user's household slot with a CONDITIONAL update rather than assigning it unconditionally.
+        // The razor guard that checks "you have no household yet" and this assignment are otherwise a race:
+        // two concurrent posts (a double-clicked Create, two onboarding tabs) both pass the guard, both
+        // create a household, and the last write wins the user's single slot — silently ORPHANING the other
+        // household and its pantry (data nobody can read, export, or delete — and, on a managed box, a
+        // welcome grant nobody can spend). One statement, so the database decides who created it: only the
+        // FIRST update matches `HouseholdId == null`. It runs on this context, inside the caller's
+        // registration transaction, and rolls back with it.
+        //
+        // Same shape as JoinAsync's use-claim below, and it leans on the same invariant every caller honours
+        // — the user row already EXISTS — because a direct UPDATE can't touch a row that isn't in the
+        // database yet. There is no FK from AppUser.HouseholdId to Household.Id (households and pantry data
+        // span two DB files, so there couldn't be), which is what lets the slot be claimed before the
+        // household row is inserted.
+        var claimed = await db.Users
+            .Where(u => u.Id == user.Id && u.HouseholdId == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(u => u.HouseholdId, household.Id), ct);
+        if (claimed == 0)
+        {
+            // Lost the race, or the user already had a household. Create NOTHING — hand back the one they
+            // actually belong to now. Re-read because the direct update bypassed the change tracker, so the
+            // tracked entity's slot is stale (and a lost race means someone else set it).
+            await db.Entry(user).ReloadAsync(ct);
+            var existingId = user.HouseholdId ?? throw new InvalidOperationException(
+                $"CreateForAsync claimed no slot for user {user.Id} and it has no household — the user row "
+                + "must be persisted before this call.");
+            // Parity with JoinAsync's lost-claim log: a genuinely-concurrent double-create is invisible
+            // otherwise, and this is the one line that confirms the guard fired in production.
+            logger.LogInformation(
+                "A create for user {UserId} found the household slot already taken (a concurrent winner, or "
+                + "an already-placed user); returned existing household {HouseholdId}, created nothing.",
+                user.Id, existingId);
+            return await db.Households.SingleAsync(h => h.Id == existingId, ct);
+        }
+
         db.Households.Add(household);
-        user.HouseholdId = household.Id;
+
+        // The one-time welcome grant, added to THIS transaction so it's atomic with creation — a
+        // household never exists without it, and a rolled-back registration leaves none. This is the one
+        // choke point every creation path shares (Register / ExternalLogin / ChooseHousehold / DevAuth all
+        // call here), so an OAuth signup can't silently miss it. Managed-only: a BYOK/self-host box has no
+        // host-credit concept, so a credit row there would be meaningless noise. The claim above guards it
+        // too: the losing double-post returns before here, so a race can't seed a second grant.
+        if (llm.Value.IsManaged && CreditLedger.WelcomeGrant(household.Id, billing.Value) is { } welcome)
+        {
+            db.CreditLedger.Add(welcome);
+        }
+
         await db.SaveChangesAsync(ct);
+
+        // The slot-claim wrote straight to the database, bypassing the change tracker, so the tracked entity
+        // still shows the pre-claim slot. Sync it (as JoinAsync does after its own claim) so the caller's
+        // cookie re-issue reads the real HouseholdId.
+        await db.Entry(user).ReloadAsync(ct);
         logger.LogInformation("Household {HouseholdId} created.", household.Id);
         return household;
     }

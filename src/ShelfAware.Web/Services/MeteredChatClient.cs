@@ -1,4 +1,8 @@
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Options;
+using ShelfAware.Core.Billing;
+using ShelfAware.Web.Auth;
+using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.Services;
 
@@ -14,6 +18,10 @@ public sealed class MeteredChatClient(
     ByokChatClient inner,
     CircuitAiSettings settings,
     AiUsageMeter meter,
+    IOptions<BillingOptions> billing,
+    CreditLedger ledger,
+    IEntitlements entitlements,
+    ICurrentHousehold currentHousehold,
     ILogger<MeteredChatClient> logger) : IChatClient
 {
     public async Task<ChatResponse> GetResponseAsync(
@@ -24,7 +32,10 @@ public sealed class MeteredChatClient(
             await meter.EnsureLlmCallAllowedAsync(cancellationToken);
         }
         var response = await inner.GetResponseAsync(messages, options, cancellationToken);
-        await RecordAsync(response.Usage, cancellationToken);
+        // Prefer the model the provider REPORTED; fall back to the one we REQUESTED before AiPricing's own
+        // priciest-tier fallback — so a provider that doesn't echo the model still prices at the real
+        // (usually cheaper) requested model, not Opus rates. (See the code-review hardening, phase 2.)
+        await RecordAsync(response.Usage, response.ModelId ?? options?.ModelId, cancellationToken);
         return response;
     }
 
@@ -37,31 +48,76 @@ public sealed class MeteredChatClient(
             await meter.EnsureLlmCallAllowedAsync(cancellationToken);
         }
         UsageDetails? usage = null;
+        string? model = null;
         await foreach (var update in inner.GetStreamingResponseAsync(messages, options, cancellationToken))
         {
-            // Providers report usage in a trailing UsageContent update; remember the last one seen.
+            // Providers report usage in a trailing UsageContent update; remember the last one seen, and
+            // the model id from whichever update carries it (for the cost lookup).
             foreach (var content in update.Contents)
             {
                 if (content is UsageContent u) usage = u.Details;
             }
+            if (update.ModelId is not null) model = update.ModelId;
             yield return update;
         }
-        await RecordAsync(usage, cancellationToken);
+        // Reported model, then the requested one (see GetResponseAsync), then AiPricing's fallback.
+        await RecordAsync(usage, model ?? options?.ModelId, cancellationToken);
     }
 
-    private async Task RecordAsync(UsageDetails? usage, CancellationToken cancellationToken)
+    private async Task RecordAsync(UsageDetails? usage, string? model, CancellationToken cancellationToken)
     {
+        var inputTokens = usage?.InputTokenCount ?? 0;
+        var outputTokens = usage?.OutputTokenCount ?? 0;
+
+        long costMicros;
         try
         {
-            await meter.RecordLlmCallAsync(usage?.InputTokenCount ?? 0, usage?.OutputTokenCount ?? 0, cancellationToken);
+            // Stamp the cost at CALL time from the configured rate, so a later rate change never rewrites
+            // this call's cost (docs §4). An unreported model falls back (never free) — see AiPricing.
+            costMicros = AiPricing.CostMicros(billing.Value, model, inputTokens, outputTokens);
+        }
+        catch (Exception ex) // pure math — only an absurd token count could overflow the long cast
+        {
+            logger.LogError(ex, "Pricing this AI call failed; it went unrecorded.");
+            return;
+        }
+
+        // Two INDEPENDENT best-effort writes on two SEPARATE databases — the AiUsage row (pantry) and the
+        // credit ledger (auth) — which no single transaction can span. Each is guarded on its OWN so one
+        // failing never drops the other: a pantry hiccup must not silently skip the MONEY (ledger) write,
+        // which is what a single wrapping try/catch used to do. Cross-DB atomicity genuinely isn't
+        // available here, so a write that fails after its sibling landed is logged and bounded to this one
+        // call — the user already has their answer, and failing it over a bookkeeping write is worse.
+        try
+        {
+            await meter.RecordLlmCallAsync(inputTokens, outputTokens, costMicros, cancellationToken);
         }
         catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
+        catch (Exception ex) { logger.LogError(ex, "Recording AI usage failed; this call's cost went unrecorded."); }
+
+        try
         {
-            // Deliberate: the user already has their answer — failing it over a bookkeeping write would
-            // be worse than a quota under-count. Logged so a persistent metering problem is visible.
-            logger.LogError(ex, "Recording AI usage failed; this call went unmetered.");
+            await RecordCreditConsumptionAsync(costMicros, model, cancellationToken);
         }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) { logger.LogError(ex, "Recording credit consumption failed; this call didn't draw the balance."); }
+    }
+
+    /// <summary>Draw the household's credit balance down by this call's RETAIL cost — but only for a
+    /// household that actually spends host credits: a MANAGED deployment (BYOK visitors ride their own
+    /// key) and a NON-unlimited tier (a Founder's cost is recorded above for the operator, but they never
+    /// spend credit). Mirrors the meter's gate exemption. Phase 2 RECORDS consumption; it does not yet
+    /// ENFORCE the balance (gating is phase 4) — so no balance is read on this hot path.</summary>
+    private async Task RecordCreditConsumptionAsync(long costMicros, string? model, CancellationToken cancellationToken)
+    {
+        if (!settings.Managed || costMicros <= 0) return;
+        if ((await entitlements.GetTierAsync(cancellationToken)).IsUnlimited()) return;
+
+        var householdId = await currentHousehold.GetIdAsync(cancellationToken);
+        if (householdId is null) return;
+
+        var retailMicros = AiPricing.ToRetailMicros(billing.Value, costMicros);
+        await ledger.RecordConsumptionAsync(householdId, retailMicros, model, cancellationToken);
     }
 
     public object? GetService(Type serviceType, object? serviceKey = null) =>
