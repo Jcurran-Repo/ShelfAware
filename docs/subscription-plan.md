@@ -249,14 +249,20 @@ not global config). The pieces:
   changes), but a Blazor circuit can be open for hours, so caching a *balance* that decrements every
   call would let one long session overspend. Extend `IEntitlements` for the tier read; read the
   balance FRESH on each gate check (or with a short TTL), never once-per-scope.
-- ⚠️ **Two accounting artifacts phase 2's gate flagged (LOW there, harmless while unenforced —
-  address when phase 3/4 makes them matter):** (a) the AiUsage (pantry) write and the ledger (auth)
-  write are two DBs, not one transaction, so a mid-write failure can record cost without its
-  consumption — an under-charge in the household's favour, bounded to one call; when enforcement
-  lands, decide whether the ledger write is the authoritative one (record it first, or reconcile).
-  (b) A genuinely concurrent double-create can mint an orphaned welcome grant on an unreachable
-  household (dead, unspendable money); harmless as accounting noise, but a reconciliation/cleanup
-  pass should ignore member-less households.
+- **Two accounting edges phase 2's gate flagged, characterised honestly** (not deferred as "harmless
+  because unenforced"): (a) the AiUsage (pantry) write and the ledger (auth) write span two SQLite
+  files, so they can't share a transaction. The *cascade* — a pantry hiccup silently skipping the
+  money write — was a real bug and is **FIXED**: the two are now independent best-effort writes
+  (`MeteredChatClient.RecordAsync`), each logged on its own, pinned by
+  `A_usage_write_failure_still_records_the_credit_consumption`. The residual — a write failing *after*
+  its sibling landed — is inherent to two databases (bounded to one call, logged distinctly); when
+  enforcement lands, decide whether the ledger becomes the single authoritative write or a reconciler
+  backfills from AiUsage. (b) The orphaned-welcome-grant on a concurrent double-create is NOT a bug
+  this branch introduced: `ChooseHousehold`/`Register` already carry a pre-existing double-create race
+  (guarded but not fully closed — see the "silently orphaning the first household" comment), which
+  orphans a *household* regardless of the grant; the grant just rides a pre-existing orphan and yields
+  dead, unspendable money (no leak, no spendable double-grant). Fixing the ROOT (an atomic
+  one-household-per-user guarantee) is a separate, pre-existing change.
 - **Refunds/clawbacks are designed in, not hoped away** (both external reviews, independently): the
   MoR can refund unilaterally within ~60 days to pre-empt chargebacks, so a refund webhook posts
   reversal entries; **balances may go negative** — a negative balance gates usage and nets against

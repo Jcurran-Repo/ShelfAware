@@ -164,6 +164,21 @@ public class MeteredChatClientTests : IDisposable
     }
 
     [Fact]
+    public async Task A_usage_write_failure_still_records_the_credit_consumption()
+    {
+        // The AiUsage (pantry) write and the ledger (auth) write are INDEPENDENT best-effort: a pantry
+        // failure must not silently drop the MONEY write. Dispose the pantry db so the usage write throws;
+        // the auth ledger is untouched, so consumption still lands.
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free);
+        _db.Dispose();
+
+        var response = await AskAsync(client);
+
+        Assert.Equal("ok", response.Text);  // the user still got their answer
+        Assert.Equal(-578, await new CreditLedger(_authDb).GetBalanceMicrosAsync("hh-test")); // money write landed
+    }
+
+    [Fact]
     public async Task A_founder_call_records_cost_but_no_credit_consumption()
     {
         var (client, meter) = Build("Managed", tier: HouseholdTier.Founder);

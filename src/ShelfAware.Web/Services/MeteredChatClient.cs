@@ -66,23 +66,41 @@ public sealed class MeteredChatClient(
 
     private async Task RecordAsync(UsageDetails? usage, string? model, CancellationToken cancellationToken)
     {
+        var inputTokens = usage?.InputTokenCount ?? 0;
+        var outputTokens = usage?.OutputTokenCount ?? 0;
+
+        long costMicros;
         try
         {
-            var inputTokens = usage?.InputTokenCount ?? 0;
-            var outputTokens = usage?.OutputTokenCount ?? 0;
             // Stamp the cost at CALL time from the configured rate, so a later rate change never rewrites
-            // this row's cost (docs §4). An unreported model falls back (never free) — see AiPricing.
-            var costMicros = AiPricing.CostMicros(billing.Value, model, inputTokens, outputTokens);
+            // this call's cost (docs §4). An unreported model falls back (never free) — see AiPricing.
+            costMicros = AiPricing.CostMicros(billing.Value, model, inputTokens, outputTokens);
+        }
+        catch (Exception ex) // pure math — only an absurd token count could overflow the long cast
+        {
+            logger.LogError(ex, "Pricing this AI call failed; it went unrecorded.");
+            return;
+        }
+
+        // Two INDEPENDENT best-effort writes on two SEPARATE databases — the AiUsage row (pantry) and the
+        // credit ledger (auth) — which no single transaction can span. Each is guarded on its OWN so one
+        // failing never drops the other: a pantry hiccup must not silently skip the MONEY (ledger) write,
+        // which is what a single wrapping try/catch used to do. Cross-DB atomicity genuinely isn't
+        // available here, so a write that fails after its sibling landed is logged and bounded to this one
+        // call — the user already has their answer, and failing it over a bookkeeping write is worse.
+        try
+        {
             await meter.RecordLlmCallAsync(inputTokens, outputTokens, costMicros, cancellationToken);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) { logger.LogError(ex, "Recording AI usage failed; this call's cost went unrecorded."); }
+
+        try
+        {
             await RecordCreditConsumptionAsync(costMicros, model, cancellationToken);
         }
         catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            // Deliberate: the user already has their answer — failing it over a bookkeeping write would
-            // be worse than a quota under-count. Logged so a persistent metering problem is visible.
-            logger.LogError(ex, "Recording AI usage or credit failed; this call went unmetered.");
-        }
+        catch (Exception ex) { logger.LogError(ex, "Recording credit consumption failed; this call didn't draw the balance."); }
     }
 
     /// <summary>Draw the household's credit balance down by this call's RETAIL cost — but only for a
