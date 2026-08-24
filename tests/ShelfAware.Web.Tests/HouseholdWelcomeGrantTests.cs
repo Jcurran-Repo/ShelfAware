@@ -18,7 +18,7 @@ public class HouseholdWelcomeGrantTests : IDisposable
 
     public void Dispose() => _authDb.Dispose();
 
-    private HouseholdService Service(bool managed)
+    private (HouseholdService Service, AuthDbContext Db) Build(bool managed)
     {
         var db = _authDb.CreateDbContext();
         var users = new UserManager<AppUser>(
@@ -26,18 +26,30 @@ public class HouseholdWelcomeGrantTests : IDisposable
             new PasswordHasher<AppUser>(), [], [], new UpperInvariantLookupNormalizer(),
             new IdentityErrorDescriber(), null!, NullLogger<UserManager<AppUser>>.Instance);
         var llm = new LlmOptions { KeyMode = managed ? "Managed" : "Byok" };
-        return new HouseholdService(db, users, Options.Create(new AuthOptions()),
+        var service = new HouseholdService(db, users, Options.Create(new AuthOptions()),
             Options.Create(llm), Options.Create(new BillingOptions()), NullLogger<HouseholdService>.Instance);
+        return (service, db);
+    }
+
+    /// <summary>A persisted user on the service's own context — the state CreateForAsync's slot-claim
+    /// needs (every production caller writes the user row before we're reached).</summary>
+    private static async Task<AppUser> PersistedUserAsync(AuthDbContext db, string email)
+    {
+        var user = new AppUser { UserName = email, Email = email };
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+        return user;
     }
 
     [Fact]
     public async Task A_managed_deployment_seeds_the_welcome_grant_atomically_with_creation()
     {
-        var household = await Service(managed: true)
-            .CreateForAsync("Home", new AppUser { UserName = "a@x.com", Email = "a@x.com" });
+        var (service, db) = Build(managed: true);
+        var user = await PersistedUserAsync(db, "a@x.com");
+        var household = await service.CreateForAsync("Home", user);
 
-        await using var db = _authDb.CreateDbContext();
-        var grant = Assert.Single(await db.CreditLedger.Where(e => e.HouseholdId == household.Id).ToListAsync());
+        await using var read = _authDb.CreateDbContext();
+        var grant = Assert.Single(await read.CreditLedger.Where(e => e.HouseholdId == household.Id).ToListAsync());
         Assert.Equal(CreditEntryKind.Grant, grant.Kind);
         Assert.Equal(AiPricing.WelcomeGrantRetailMicros(new BillingOptions()), grant.AmountMicros); // $1 × 1.65
     }
@@ -45,10 +57,11 @@ public class HouseholdWelcomeGrantTests : IDisposable
     [Fact]
     public async Task A_byok_deployment_gives_no_welcome_grant()
     {
-        var household = await Service(managed: false)
-            .CreateForAsync("Home", new AppUser { UserName = "a@x.com", Email = "a@x.com" });
+        var (service, db) = Build(managed: false);
+        var user = await PersistedUserAsync(db, "a@x.com");
+        var household = await service.CreateForAsync("Home", user);
 
-        await using var db = _authDb.CreateDbContext();
-        Assert.Empty(await db.CreditLedger.Where(e => e.HouseholdId == household.Id).ToListAsync());
+        await using var read = _authDb.CreateDbContext();
+        Assert.Empty(await read.CreditLedger.Where(e => e.HouseholdId == household.Id).ToListAsync());
     }
 }

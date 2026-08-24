@@ -257,12 +257,15 @@ not global config). The pieces:
   `A_usage_write_failure_still_records_the_credit_consumption`. The residual — a write failing *after*
   its sibling landed — is inherent to two databases (bounded to one call, logged distinctly); when
   enforcement lands, decide whether the ledger becomes the single authoritative write or a reconciler
-  backfills from AiUsage. (b) The orphaned-welcome-grant on a concurrent double-create is NOT a bug
-  this branch introduced: `ChooseHousehold`/`Register` already carry a pre-existing double-create race
-  (guarded but not fully closed — see the "silently orphaning the first household" comment), which
-  orphans a *household* regardless of the grant; the grant just rides a pre-existing orphan and yields
-  dead, unspendable money (no leak, no spendable double-grant). Fixing the ROOT (an atomic
-  one-household-per-user guarantee) is a separate, pre-existing change.
+  backfills from AiUsage. (b) The orphaned-welcome-grant on a concurrent double-create was NOT a bug
+  this branch introduced — `ChooseHousehold`/`Register` carried a pre-existing double-create race that
+  orphaned a *household* regardless of the grant (the grant just rode the orphan, yielding dead,
+  unspendable money — no leak, no spendable double-grant). It is now **FIXED at the root**:
+  `HouseholdService.CreateForAsync` claims the user's household slot with a CONDITIONAL update
+  (`HouseholdId == null`) — the same one-statement mechanism `JoinAsync` already uses for invite uses —
+  so two concurrent creates can no longer both win, and the loser creates (and grants) nothing. Pinned
+  by `Two_creates_for_one_user_make_one_household_never_an_orphan` (one household, one welcome grant),
+  mutation-checked. ChooseHousehold's sequential guard stays as the first, cheaper line of defence.
 - **Refunds/clawbacks are designed in, not hoped away** (both external reviews, independently): the
   MoR can refund unilaterally within ~60 days to pre-empt chargebacks, so a refund webhook posts
   reversal entries; **balances may go negative** — a negative balance gates usage and nets against

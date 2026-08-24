@@ -23,9 +23,11 @@ public class HouseholdServiceTests : IDisposable
         _service = NewService(new AuthOptions());
     }
 
-    private HouseholdService NewService(AuthOptions options) =>
+    private HouseholdService NewService(AuthOptions options, bool managed = false) =>
         // Keyless LlmOptions → not managed → no welcome grant, so these invite/removal tests are unaffected.
-        new(_context, _users, Options.Create(options), Options.Create(new LlmOptions()),
+        // A managed one is only wanted where a test needs the welcome grant in play (the double-create race).
+        new(_context, _users, Options.Create(options),
+            Options.Create(managed ? new LlmOptions { KeyMode = "Managed" } : new LlmOptions()),
             Options.Create(new BillingOptions()), NullLogger<HouseholdService>.Instance);
 
     /// <summary>A REAL UserManager over the test context, not a fake: removing a member is only a removal
@@ -53,6 +55,18 @@ public class HouseholdServiceTests : IDisposable
         UserName = email,
         Email = email,
     };
+
+    /// <summary>Adds a user and PERSISTS it — the state every production caller is in before
+    /// CreateForAsync (UserManager writes the row first). The household slot-claim in CreateForAsync is a
+    /// direct UPDATE, so it only sees a user that's actually in the database, not one merely staged on the
+    /// change tracker.</summary>
+    private async Task<AppUser> PersistedUser(string email)
+    {
+        var user = NewUser(email);
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
+        return user;
+    }
 
     // ---- Invite codes ----
 
@@ -92,8 +106,7 @@ public class HouseholdServiceTests : IDisposable
         HouseholdService? service = null, int? maxUses = null, string ownerEmail = "a@example.com")
     {
         service ??= _service;
-        var owner = NewUser(ownerEmail);
-        _context.Users.Add(owner);
+        var owner = await PersistedUser(ownerEmail);
         var household = await service.CreateForAsync("Home", owner);
         await service.GenerateInviteCodeAsync(household.Id, maxUses);
         return (household, household.InviteCode!);
@@ -102,8 +115,7 @@ public class HouseholdServiceTests : IDisposable
     [Fact]
     public async Task Create_assigns_the_user_and_persists_the_household()
     {
-        var user = NewUser("a@example.com");
-        _context.Users.Add(user);
+        var user = await PersistedUser("a@example.com");
 
         var household = await _service.CreateForAsync("  The Currans  ", user);
 
@@ -120,8 +132,7 @@ public class HouseholdServiceTests : IDisposable
     public async Task A_new_household_has_no_invite_code()
     {
         // The header act of the redesign: creation used to mint a permanent code nobody had asked for.
-        var user = NewUser("a@example.com");
-        _context.Users.Add(user);
+        var user = await PersistedUser("a@example.com");
 
         var household = await _service.CreateForAsync("Home", user);
 
@@ -138,9 +149,8 @@ public class HouseholdServiceTests : IDisposable
         // Why InviteCode is null and not "": the unique index counts NULLs as distinct but would let only
         // ONE household hold "". Without this, the second household created on a deployment would fail to
         // save — which is exactly the bug the sentinel would have shipped.
-        var first = NewUser("a@example.com");
-        var second = NewUser("b@example.com");
-        _context.Users.AddRange(first, second);
+        var first = await PersistedUser("a@example.com");
+        var second = await PersistedUser("b@example.com");
 
         await _service.CreateForAsync("Home", first);
         await _service.CreateForAsync("Elsewhere", second);
@@ -148,6 +158,28 @@ public class HouseholdServiceTests : IDisposable
         await using var fresh = _db.CreateDbContext();
         Assert.Equal(2, fresh.Households.Count());
         Assert.All(fresh.Households.ToList(), h => Assert.Null(h.InviteCode));
+    }
+
+    [Fact]
+    public async Task Two_creates_for_one_user_make_one_household_never_an_orphan()
+    {
+        // The double-create race: a member with no household double-posts "Create" (two onboarding tabs, a
+        // double-click). Both requests pass the "you have no household yet" guard and both land here. The
+        // slot-claim means only the FIRST creates a household; the second finds the slot taken and hands
+        // back the same one, creating NOTHING — so the pantry (and, on a managed box, its welcome grant)
+        // can never be orphaned. Sequential calls reproduce the SERIALISED outcome SQLite gives the
+        // concurrent writes: the second's claim runs after the first committed and sees a taken slot.
+        var user = await PersistedUser("a@example.com");
+        var service = NewService(new AuthOptions(), managed: true); // managed, so a welcome grant is in play
+
+        var first = await service.CreateForAsync("Home", user);
+        var second = await service.CreateForAsync("Home again", user);
+
+        Assert.Equal(first.Id, second.Id); // the loser got the winner's household, not a fresh one
+        await using var fresh = _db.CreateDbContext();
+        Assert.Equal(1, await fresh.Households.CountAsync());                        // no orphan
+        Assert.Equal(first.Id, (await fresh.Users.SingleAsync(u => u.Id == user.Id)).HouseholdId);
+        Assert.Single(await fresh.CreditLedger.ToListAsync());                       // one welcome grant, not two
     }
 
     [Fact]
@@ -192,8 +224,7 @@ public class HouseholdServiceTests : IDisposable
     {
         // Inviting one person shouldn't hand out a key that admits a crowd — widening it is the deliberate
         // act, not narrowing it.
-        var owner = NewUser("a@example.com");
-        _context.Users.Add(owner);
+        var owner = await PersistedUser("a@example.com");
         var household = await _service.CreateForAsync("Home", owner);
 
         var generated = await _service.GenerateInviteCodeAsync(household.Id);
@@ -204,10 +235,9 @@ public class HouseholdServiceTests : IDisposable
     [Fact]
     public async Task Members_lists_only_this_households_emails_sorted()
     {
-        var a = NewUser("zoe@example.com");
-        var b = NewUser("amy@example.com");
-        var stranger = NewUser("stranger@example.com");
-        _context.Users.AddRange(a, b, stranger);
+        var a = await PersistedUser("zoe@example.com");
+        var b = await PersistedUser("amy@example.com");
+        var stranger = await PersistedUser("stranger@example.com");
 
         var household = await _service.CreateForAsync("Home", a);
         await _service.GenerateInviteCodeAsync(household.Id);
@@ -382,8 +412,7 @@ public class HouseholdServiceTests : IDisposable
     public async Task An_empty_code_never_matches()
     {
         // "" must not be a skeleton key into the code-less households that are now the norm.
-        var user = NewUser("a@example.com");
-        _context.Users.Add(user);
+        var user = await PersistedUser("a@example.com");
         await _service.CreateForAsync("Home", user);
 
         Assert.Null(await _service.FindByInviteCodeAsync(""));
@@ -469,8 +498,7 @@ public class HouseholdServiceTests : IDisposable
     [Fact]
     public async Task Clearing_a_household_with_no_code_is_a_no_op()
     {
-        var user = NewUser("a@example.com");
-        _context.Users.Add(user);
+        var user = await PersistedUser("a@example.com");
         var household = await _service.CreateForAsync("Home", user);
 
         await _service.ClearInviteCodeAsync(household.Id);
@@ -497,15 +525,13 @@ public class HouseholdServiceTests : IDisposable
 
     private async Task<(Household Household, AppUser Owner, AppUser Other)> TwoMemberHouseholdAsync()
     {
-        var owner = NewUser("a@example.com");
-        var other = NewUser("b@example.com");
-        _context.Users.AddRange(owner, other);
+        var owner = await PersistedUser("a@example.com");
+        var other = await PersistedUser("b@example.com");
         var household = await _service.CreateForAsync("Home", owner);
         // A code has to be asked for now, and this one is spent by the join below — so anything that wants
         // to invite again has to generate a fresh one, exactly as a person would.
         await _service.GenerateInviteCodeAsync(household.Id);
         await _service.JoinAsync(household.InviteCode!, other);
-        await _context.SaveChangesAsync();
         return (household, owner, other);
     }
 
@@ -569,10 +595,8 @@ public class HouseholdServiceTests : IDisposable
         // The method is the authorization boundary, not Settings.razor. It checks the ACTOR belongs here,
         // rather than trusting its one caller to have derived the id from the right claim.
         var (household, _, other) = await TwoMemberHouseholdAsync();
-        var outsider = NewUser("z@example.com");
-        _context.Users.Add(outsider);
+        var outsider = await PersistedUser("z@example.com");
         await _service.CreateForAsync("Elsewhere", outsider);
-        await _context.SaveChangesAsync();
 
         var refused = await _service.RemoveMemberAsync(household.Id, other.Id, actingUserId: outsider.Id);
 
@@ -587,10 +611,8 @@ public class HouseholdServiceTests : IDisposable
         // export, or delete. No rule enforces this directly — it falls out of "the actor must be a member"
         // plus "you can't remove yourself", which together mean there are always at least two people and
         // the remover is always one of the survivors. This pins the OUTCOME, whatever the mechanism.
-        var owner = NewUser("a@example.com");
-        _context.Users.Add(owner);
+        var owner = await PersistedUser("a@example.com");
         var household = await _service.CreateForAsync("Home", owner);
-        await _context.SaveChangesAsync();
 
         // The only member trying to remove the only member: refused, so the household keeps its last one.
         var refused = await _service.RemoveMemberAsync(household.Id, owner.Id, actingUserId: owner.Id);
@@ -604,10 +626,8 @@ public class HouseholdServiceTests : IDisposable
     public async Task You_cannot_remove_someone_from_a_household_they_are_not_in()
     {
         var (household, owner, _) = await TwoMemberHouseholdAsync();
-        var stranger = NewUser("stranger@example.com");
-        _context.Users.Add(stranger);
+        var stranger = await PersistedUser("stranger@example.com");
         await _service.CreateForAsync("Elsewhere", stranger);
-        await _context.SaveChangesAsync();
 
         var refused = await _service.RemoveMemberAsync(household.Id, stranger.Id, actingUserId: owner.Id);
 
@@ -633,8 +653,7 @@ public class HouseholdServiceTests : IDisposable
     [Fact]
     public async Task Rename_updates_the_household()
     {
-        var owner = NewUser("a@example.com");
-        _context.Users.Add(owner);
+        var owner = await PersistedUser("a@example.com");
         var household = await _service.CreateForAsync("Home", owner);
 
         await _service.RenameAsync(household.Id, " New Name ");
