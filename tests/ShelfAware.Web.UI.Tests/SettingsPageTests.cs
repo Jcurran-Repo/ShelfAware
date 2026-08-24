@@ -89,8 +89,9 @@ public abstract class SettingsTestBase : PageTestContext
         Services.AddSingleton<IEntitlements>(Entitlements);
         Services.AddSingleton(new AiUsageMeter(Factory, Options.Create(ServerLlm),
             Options.Create(new ElevenLabsOptions()), Entitlements, NullLogger<AiUsageMeter>.Instance));
+        Services.AddSingleton(new CreditLedger(authDb));
         Services.AddSingleton(new UserDataService(Factory, household, storage, recipeImages, null,
-            tokens, NullLogger<UserDataService>.Instance));
+            tokens, new CreditLedger(authDb), NullLogger<UserDataService>.Instance));
     }
 
     protected override void Dispose(bool disposing)
@@ -566,6 +567,26 @@ public class SettingsManagedModeTests : SettingsTestBase
         Assert.Contains("runs on the host's own keys", section.TextContent);
         Assert.Empty(cut.FindAll(".ai-settings"));
         Assert.Empty(cut.FindAll("input[aria-label='Anthropic API key']"));
+    }
+
+    [Fact]
+    public void A_managed_household_sees_its_credit_balance()
+    {
+        AuthContext.CreditLedger.Add(new CreditLedgerEntry
+        {
+            HouseholdId = AuthHousehold, Kind = CreditEntryKind.Grant, AmountMicros = 1_650_000, Reason = "Welcome grant",
+        });
+        AuthContext.CreditLedger.Add(new CreditLedgerEntry
+        {
+            HouseholdId = AuthHousehold, Kind = CreditEntryKind.Consumption, AmountMicros = -150_000, Reason = "chat",
+        });
+        AuthContext.SaveChanges();
+
+        var section = Section(RenderSettings(), "AI usage");
+
+        // $1.65 grant − $0.15 consumed = $1.50 balance (same culture both sides).
+        Assert.Contains("Credit balance", section.TextContent);
+        Assert.Contains(1.50m.ToString("C2"), section.TextContent);
     }
 }
 

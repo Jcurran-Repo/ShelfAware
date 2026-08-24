@@ -35,6 +35,7 @@ public sealed class UserDataService(
     RecipeImageStorage recipeImageStorage,
     ISpeechCache? speechCache,
     ShelfAware.Web.Auth.ApiTokenService apiTokens,
+    ShelfAware.Web.Auth.CreditLedger creditLedger,
     ILogger<UserDataService> logger)
 {
     /// <summary>Everything, flattened (loaded without navigations so there are no serialization cycles) —
@@ -51,6 +52,10 @@ public sealed class UserDataService(
             ExportedAt = DateTimeOffset.Now,
             Settings = await db.AppSettings.AsNoTracking().ToListAsync(ct),
             ApiTokens = householdId is null ? [] : await apiTokens.ListMetadataAsync(householdId, ct),
+            // The credit ledger lives in auth.db (the money record) and is the household's data — so it's
+            // in the export. It is NOT in the delete: destroying credit is destroying money, so a wipe
+            // leaves it (the same export-yes / delete-no asymmetry AiUsage has, for a stronger reason).
+            CreditLedger = householdId is null ? [] : await creditLedger.ListForHouseholdAsync(householdId, ct),
             AiUsage = await db.AiUsages.AsNoTracking().ToListAsync(ct),
             Products = await db.Products.AsNoTracking().ToListAsync(ct),
             Purchases = await db.PurchaseEvents.AsNoTracking().ToListAsync(ct),
@@ -343,6 +348,9 @@ public sealed class UserDataService(
         // separate file, so they can't join the pantry transaction above; removed after the commit, and a
         // leftover token to a now-empty pantry is harmless (grants access to nothing), so a failure here is
         // logged, not surfaced — reporting it would only invite pressing delete again.
+        // The credit ledger (auth.db) is deliberately NOT touched here — it's money, and a "delete my
+        // data" that erased a balance would be destroying it (the same reason AiUsage survives, sharper).
+        // It's in the export, not the delete.
         try
         {
             var householdId = await currentHousehold.GetIdAsync(ct);
@@ -404,6 +412,11 @@ public sealed class DataExport
     /// <summary>What their AI features have spent, per day. Not removed by "delete my data" (that would
     /// make the button a quota reset), which is exactly why it has to be readable here.</summary>
     public IReadOnlyList<AiUsage> AiUsage { get; init; } = [];
+
+    /// <summary>Their credit ledger — grants and consumption. The money record (auth.db), so it's part of
+    /// "download my data" and, like AiUsage, deliberately NOT removed by "delete my data": destroying a
+    /// balance would be destroying money.</summary>
+    public IReadOnlyList<ShelfAware.Web.Auth.CreditLedgerEntry> CreditLedger { get; init; } = [];
 
     /// <summary>Their GraphQL API tokens — name, prefix, and lifecycle dates only. NEVER the secret or its
     /// hash (revealing the hash would hand over the credential). Lives in auth.db, so it's fetched by

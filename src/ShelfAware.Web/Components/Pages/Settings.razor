@@ -15,6 +15,7 @@
 @inject CircuitAiSettings AiSettings
 @inject AiUsageMeter UsageMeter
 @inject IEntitlements Entitlements
+@inject CreditLedger Ledger
 @inject IOptions<LlmOptions> LlmConfig
 @inject IOptions<EmailOptions> EmailConfig
 @inject ILogger<Settings> Logger
@@ -339,6 +340,11 @@
     {
         <p class="founder-badge">★ You're a <strong>Founder</strong> — unlimited AI on the house, no caps.
             Thank you for helping build Shelf Aware. 💛</p>
+    }
+    @if (AiSettings.Managed && tier != HouseholdTier.Founder)
+    {
+        <p><strong>Credit balance:</strong> @AiPricing.FormatMicros(creditBalanceMicros)
+            <span class="muted"> — your included AI credit. Recorded, not yet enforced.</span></p>
     }
     @if (todayUsage is { } today)
     {
@@ -1107,6 +1113,7 @@
         usageHistory = await UsageMeter.GetRecentAsync(days: 14);
         monthlyUsage = await UsageMeter.GetMonthlyAsync(months: 12);
         tier = await Entitlements.GetTierAsync();
+        creditBalanceMicros = household is null ? 0 : await Ledger.GetBalanceMicrosAsync(household.Id);
         await LoadSettingsStateAsync();
     }
 
@@ -1187,6 +1194,7 @@
     private AiUsageMeter.TodayUsage? todayUsage;
     private IReadOnlyList<AiUsageMeter.DayUsage> usageHistory = [];
     private IReadOnlyList<AiUsageMeter.MonthUsage> monthlyUsage = [];
+    private long creditBalanceMicros;
 
     private static string MonthLabel(AiUsageMeter.MonthUsage m) => new DateOnly(m.Year, m.Month, 1).ToString("MMM yyyy");
     private string UsageLimitSuffix => LlmConfig.Value.DailyCallLimit is int limit

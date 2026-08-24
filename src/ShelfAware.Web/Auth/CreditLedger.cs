@@ -25,6 +25,19 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory)
             .SumAsync(e => e.AmountMicros, cancellationToken);
     }
 
+    /// <summary>A household's ledger entries, oldest first (by Id — SQLite can't ORDER BY a
+    /// DateTimeOffset, and insert order IS chronological). For the data export: the ledger is the
+    /// household's money record, so it's part of "download my data".</summary>
+    public async Task<IReadOnlyList<CreditLedgerEntry>> ListForHouseholdAsync(
+        string householdId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.CreditLedger.AsNoTracking()
+            .Where(e => e.HouseholdId == householdId)
+            .OrderBy(e => e.Id)
+            .ToListAsync(cancellationToken);
+    }
+
     /// <summary>Append a CONSUMPTION entry (stored negative) — an AI call drawing the balance down.
     /// <paramref name="retailMicros"/> is the positive retail amount; a non-positive amount (a free or
     /// cached call) records nothing.</summary>

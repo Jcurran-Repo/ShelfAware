@@ -376,6 +376,7 @@ builder.Services.AddScoped(sp => new UserDataService(
     sp.GetRequiredService<RecipeImageStorage>(),
     sp.GetService<ISpeechCache>(), // null when Speech:CacheMegabytes = 0: no cache, nothing to find or forget
     sp.GetRequiredService<ApiTokenService>(), // token metadata for export + removal on delete-my-data (auth.db)
+    sp.GetRequiredService<CreditLedger>(), // the credit ledger for export (auth.db; NOT removed on delete)
     sp.GetRequiredService<ILogger<UserDataService>>()));
 
 // Voice I/O (ElevenLabs): Scribe = STT (ear), TTS = mouth. Speech is its own REST API, not an

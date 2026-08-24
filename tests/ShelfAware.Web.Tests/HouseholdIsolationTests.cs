@@ -241,6 +241,7 @@ public class HouseholdIsolationTests : IDisposable
                 NullLogger<RecipeImageStorage>.Instance),
             null,
             new ShelfAware.Web.Auth.ApiTokenService(new TestAuthDb()),
+            new ShelfAware.Web.Auth.CreditLedger(new TestAuthDb()),
             NullLogger<UserDataService>.Instance);
 
         var export = await service.ExportAsync();
