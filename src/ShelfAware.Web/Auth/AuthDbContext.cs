@@ -18,6 +18,7 @@ public class AuthDbContext(DbContextOptions<AuthDbContext> options) : IdentityDb
     public DbSet<ErrorLogEntry> ErrorLog => Set<ErrorLogEntry>();
     public DbSet<ApiToken> ApiTokens => Set<ApiToken>();
     public DbSet<UserLoginStat> UserLoginStats => Set<UserLoginStat>();
+    public DbSet<CreditLedgerEntry> CreditLedger => Set<CreditLedgerEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -52,5 +53,9 @@ public class AuthDbContext(DbContextOptions<AuthDbContext> options) : IdentityDb
         // One row per account, keyed on the Identity user id (not the convention's "Id"), which is what
         // makes LoginAudit's upsert a constraint-guarded increment rather than a growing event log.
         modelBuilder.Entity<UserLoginStat>().HasKey(s => s.UserId);
+
+        // Indexed by household so summing a household's balance (and exporting/reading its ledger)
+        // doesn't table-scan — the hand-scoped read path, since auth.db has no query filter.
+        modelBuilder.Entity<CreditLedgerEntry>().HasIndex(e => e.HouseholdId);
     }
 }

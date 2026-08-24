@@ -275,6 +275,30 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Creates_the_CreditLedger_table_on_an_older_auth_db_with_the_fresh_schema()
+    {
+        // Auth-side: the money record lives beside accounts (it must survive a pantry "delete my data"),
+        // and a live deployment's auth.db predates the ledger.
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await TableSchemaAsync(db, "CreditLedger");
+        Assert.NotEmpty(fresh); // includes the HouseholdId index
+
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE CreditLedger;");
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        Assert.Equal(fresh, await TableSchemaAsync(db, "CreditLedger"));
+
+        db.CreditLedger.Add(new CreditLedgerEntry
+        {
+            HouseholdId = "hh-1", Kind = CreditEntryKind.Grant, AmountMicros = 1_650_000, Reason = "Welcome grant",
+        });
+        await db.SaveChangesAsync();
+        Assert.Single(await db.CreditLedger.ToListAsync());
+    }
+
+    [Fact]
     public async Task Adds_the_resolved_at_column_to_a_pre_resolve_error_log()
     {
         // The auth-side twin — same reasoning, same live-deployment path.

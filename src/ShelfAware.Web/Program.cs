@@ -237,6 +237,7 @@ builder.Services.AddScoped<HouseholdService>();
 // always — the auth handler and Settings gate their EXPOSURE on GraphQL:Enabled, but the service
 // itself is harmless dormant and the delete-my-data flow may need it regardless.
 builder.Services.AddScoped<ApiTokenService>();
+builder.Services.AddScoped<CreditLedger>(); // the credit ledger (subscription phase 2 — the money record)
 
 // ---- Read-only GraphQL API (gated on GraphQL:Enabled) ----
 // The schema is registered only when the API is enabled, so a disabled deployment builds no schema and

@@ -121,6 +121,10 @@ public static class AdditiveSchema
         // the error log, so it lives here. A new table — existing rows unaffected.
         EnsureTable(db, table: "UserLoginStats");
 
+        // 2026-08-24: the credit ledger (subscription phase 2 — the money record). Auth-side beside the
+        // subscription, so it survives a pantry "delete my data". A new table — existing rows unaffected.
+        EnsureTable(db, table: "CreditLedger");
+
         // 2026-08-24: household entitlement tiers (docs/subscription-plan.md phase 1 — the Founder tier
         // + the subscription seam). Tier is an enum → INTEGER, so existing rows land on Free (0) with no
         // FounderSince, which behaves exactly as a pre-tier household did.
