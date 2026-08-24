@@ -1,4 +1,6 @@
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Options;
+using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Web.Services;
 
@@ -14,6 +16,7 @@ public sealed class MeteredChatClient(
     ByokChatClient inner,
     CircuitAiSettings settings,
     AiUsageMeter meter,
+    IOptions<BillingOptions> billing,
     ILogger<MeteredChatClient> logger) : IChatClient
 {
     public async Task<ChatResponse> GetResponseAsync(
@@ -24,7 +27,7 @@ public sealed class MeteredChatClient(
             await meter.EnsureLlmCallAllowedAsync(cancellationToken);
         }
         var response = await inner.GetResponseAsync(messages, options, cancellationToken);
-        await RecordAsync(response.Usage, cancellationToken);
+        await RecordAsync(response.Usage, response.ModelId, cancellationToken);
         return response;
     }
 
@@ -37,23 +40,31 @@ public sealed class MeteredChatClient(
             await meter.EnsureLlmCallAllowedAsync(cancellationToken);
         }
         UsageDetails? usage = null;
+        string? model = null;
         await foreach (var update in inner.GetStreamingResponseAsync(messages, options, cancellationToken))
         {
-            // Providers report usage in a trailing UsageContent update; remember the last one seen.
+            // Providers report usage in a trailing UsageContent update; remember the last one seen, and
+            // the model id from whichever update carries it (for the cost lookup).
             foreach (var content in update.Contents)
             {
                 if (content is UsageContent u) usage = u.Details;
             }
+            if (update.ModelId is not null) model = update.ModelId;
             yield return update;
         }
-        await RecordAsync(usage, cancellationToken);
+        await RecordAsync(usage, model, cancellationToken);
     }
 
-    private async Task RecordAsync(UsageDetails? usage, CancellationToken cancellationToken)
+    private async Task RecordAsync(UsageDetails? usage, string? model, CancellationToken cancellationToken)
     {
         try
         {
-            await meter.RecordLlmCallAsync(usage?.InputTokenCount ?? 0, usage?.OutputTokenCount ?? 0, cancellationToken);
+            var inputTokens = usage?.InputTokenCount ?? 0;
+            var outputTokens = usage?.OutputTokenCount ?? 0;
+            // Stamp the cost at CALL time from the configured rate, so a later rate change never rewrites
+            // this row's cost (docs §4). An unreported model falls back (never free) — see AiPricing.
+            var costMicros = AiPricing.CostMicros(billing.Value, model, inputTokens, outputTokens);
+            await meter.RecordLlmCallAsync(inputTokens, outputTokens, costMicros, cancellationToken);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)

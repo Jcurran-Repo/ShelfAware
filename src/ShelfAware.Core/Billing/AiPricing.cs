@@ -1,64 +1,88 @@
 namespace ShelfAware.Core.Billing;
 
-/// <summary>What a model costs, in dollars per MILLION tokens (Anthropic first-party API rates —
-/// the same figures the pricing skill reports). Input and output are priced separately.</summary>
-public sealed record ModelPrice(decimal InputPerMTok, decimal OutputPerMTok);
+/// <summary>A model's rate, in dollars per MILLION tokens (input and output priced separately). A
+/// settable class rather than a record so the config binder can populate it from the "Billing" section.</summary>
+public sealed class ModelRate
+{
+    public decimal InputPerMTok { get; set; }
+    public decimal OutputPerMTok { get; set; }
+}
 
 /// <summary>
-/// The pricing catalog: model id → cost. Turns a call's token counts into a cost in MICROS (millionths
-/// of a dollar, the integer unit the usage row and the ledger both accumulate — see
-/// docs/subscription-plan.md §4: cost is stamped at call time and integer-only, never TEXT-decimal, so
-/// it can ride the race-safe SQL increment).
+/// Every tunable number in the billing math, bound from the <c>"Billing"</c> config section — so pricing,
+/// the credit markup, and the welcome-grant size are OPERATOR VARIABLES an admin edits in appsettings,
+/// not constants baked into a build (Jordan's requirement). The defaults here are the current published
+/// figures, so a deployment that configures nothing still prices correctly; config keys ADD to or
+/// OVERRIDE these (the binder merges onto the initialized instance).
+/// </summary>
+public sealed class BillingOptions
+{
+    public const string SectionName = "Billing";
+
+    /// <summary>Retail markup on credits: retail = cost × this. Default 1.65 (the 65% markup).</summary>
+    public decimal CreditMarkup { get; set; } = 1.65m;
+
+    /// <summary>The one-time welcome grant per new household, in dollars OF COST (the doc's "$1 of my
+    /// cost"); stored as retail credit = this × <see cref="CreditMarkup"/>.</summary>
+    public decimal WelcomeGrantDollars { get; set; } = 1.00m;
+
+    /// <summary>The rate for a model not in <see cref="ModelRates"/> — a visitor's exotic BYOK model, or
+    /// one added to config before this table. Deliberately the priciest current tier so an unknown model
+    /// OVER-estimates (visible, self-correcting) rather than reads as free (silently eats margin).</summary>
+    public ModelRate FallbackRate { get; set; } = new() { InputPerMTok = 5.00m, OutputPerMTok = 25.00m };
+
+    /// <summary>Model id → rate ($/MTok). Seeded with the current pinned/likely models; an operator
+    /// overrides a rate or adds a model by setting e.g. <c>Billing:ModelRates:claude-haiku-4-5:InputPerMTok</c>.</summary>
+    public Dictionary<string, ModelRate> ModelRates { get; set; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["claude-haiku-4-5"] = new() { InputPerMTok = 1.00m, OutputPerMTok = 5.00m },
+        ["claude-haiku-4-5-20251001"] = new() { InputPerMTok = 1.00m, OutputPerMTok = 5.00m },
+        ["claude-sonnet-4-6"] = new() { InputPerMTok = 3.00m, OutputPerMTok = 15.00m },
+        ["claude-opus-4-8"] = new() { InputPerMTok = 5.00m, OutputPerMTok = 25.00m },
+    };
+}
+
+/// <summary>
+/// Turns a call's token counts into a cost in MICROS (integer millionths of a dollar — the unit the
+/// usage row and the credit ledger both accumulate; docs/subscription-plan.md §4 mandates integer, not
+/// TEXT-decimal, so it rides the race-safe SQL increment). Pure functions that take a
+/// <see cref="BillingOptions"/> (Web consumers pass <c>IOptions&lt;BillingOptions&gt;.Value</c>), so the
+/// money math stays in Core and unit-tested while every number stays operator-configurable.
 ///
-/// Pure and provider-agnostic on purpose — it converts tokens to money and nothing else, so it lives in
-/// Core and is unit-tested there. Rates are the current published figures; when a rate changes, a
-/// historical usage/ledger row keeps the cost it was STAMPED with (that's the whole point of stamping at
-/// call time), and only new calls price at the new rate.
+/// dollars-per-MTok numerically EQUALS micros-per-token (both divide by 1e6), which is why the cost math
+/// below is just tokens × rate. Cost is stamped at call time, so a historical row keeps the price it was
+/// charged at when a rate later changes — only new calls price at the new rate.
 /// </summary>
 public static class AiPricing
 {
-    // Micros of a dollar per whole dollar (and per million tokens): 1 dollar = 1_000_000 micros, and a
-    // rate is dollars-per-MILLION-tokens, so "dollars per MTok" numerically EQUALS "micros per token"
-    // (both divide by 1e6). That identity is why the cost math below is just tokens × rate.
     private const decimal MicrosPerDollar = 1_000_000m;
 
-    /// <summary>Anthropic first-party rates ($/MTok), keyed by the exact model id the app sends. Both the
-    /// dated and undated Haiku ids are listed because the app pins the dated one (LlmOptions) while a
-    /// visitor's BYOK config may use either. Extend this as the app supports more models.</summary>
-    private static readonly IReadOnlyDictionary<string, ModelPrice> Catalog =
-        new Dictionary<string, ModelPrice>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["claude-haiku-4-5"] = new(1.00m, 5.00m),
-            ["claude-haiku-4-5-20251001"] = new(1.00m, 5.00m),
-            ["claude-sonnet-4-6"] = new(3.00m, 15.00m),
-            ["claude-opus-4-8"] = new(5.00m, 25.00m),
-        };
+    /// <summary>The configured rate for a model id, or <see cref="BillingOptions.FallbackRate"/> when it
+    /// isn't listed (or is blank — a provider that didn't report one).</summary>
+    public static ModelRate RateFor(BillingOptions options, string? model) =>
+        !string.IsNullOrWhiteSpace(model) && options.ModelRates.TryGetValue(model, out var rate)
+            ? rate
+            : options.FallbackRate;
 
-    /// <summary>The rate charged for a model not in <see cref="Catalog"/> — a visitor's exotic BYOK model,
-    /// or one added to config before this table. Deliberately the priciest current tier so an unknown
-    /// model OVER-estimates rather than reads as free: an under-count silently eats the host's margin,
-    /// while an over-count is visible and self-corrects the moment the model is added to the catalog.</summary>
-    public static readonly ModelPrice Fallback = new(5.00m, 25.00m);
-
-    /// <summary>The rate for a model id, or <see cref="Fallback"/> when it isn't in the catalog. A blank
-    /// id (a provider that didn't report one) also falls back.</summary>
-    public static ModelPrice PriceFor(string? model) =>
-        !string.IsNullOrWhiteSpace(model) && Catalog.TryGetValue(model, out var price) ? price : Fallback;
-
-    /// <summary>The cost of one call in MICROS (millionths of a dollar), rounded to the nearest micro.
-    /// <paramref name="inputTokens"/>/<paramref name="outputTokens"/> below zero are treated as zero (a
-    /// provider that under-reports must never produce a negative cost).</summary>
-    public static long CostMicros(string? model, long inputTokens, long outputTokens)
+    /// <summary>The COST of one call in micros, rounded to the nearest micro. Token counts below zero
+    /// (an under-reporting provider, or a bug) clamp to zero — never a negative cost.</summary>
+    public static long CostMicros(BillingOptions options, string? model, long inputTokens, long outputTokens)
     {
-        var price = PriceFor(model);
+        var rate = RateFor(options, model);
         var input = Math.Max(0, inputTokens);
         var output = Math.Max(0, outputTokens);
-        // dollars/MTok == micros/token (see MicrosPerDollar), so the product is already in micros.
-        var micros = input * price.InputPerMTok + output * price.OutputPerMTok;
+        var micros = input * rate.InputPerMTok + output * rate.OutputPerMTok;
         return (long)Math.Round(micros, MidpointRounding.AwayFromZero);
     }
 
-    /// <summary>Micros → a display string in dollars (e.g. 1_234_500 → "$1.23"). Two decimal places for
-    /// panel readouts; sub-cent costs still round to $0.00 there, which is honest for a single cheap call.</summary>
+    /// <summary>Cost micros → RETAIL micros (what a credit balance decrements): cost × the configured markup.</summary>
+    public static long ToRetailMicros(BillingOptions options, long costMicros) =>
+        (long)Math.Round(costMicros * options.CreditMarkup, MidpointRounding.AwayFromZero);
+
+    /// <summary>The welcome grant in RETAIL micros: configured cost-dollars × markup, in micros.</summary>
+    public static long WelcomeGrantRetailMicros(BillingOptions options) =>
+        (long)Math.Round(options.WelcomeGrantDollars * MicrosPerDollar * options.CreditMarkup, MidpointRounding.AwayFromZero);
+
+    /// <summary>Micros → a display string in dollars (e.g. 1_234_500 → "$1.23"), on the current culture.</summary>
     public static string FormatMicros(long micros) => (micros / MicrosPerDollar).ToString("C2");
 }

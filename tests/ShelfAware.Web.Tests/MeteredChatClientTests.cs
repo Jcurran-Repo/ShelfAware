@@ -1,6 +1,7 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using ShelfAware.Core.Billing;
 using ShelfAware.Core.Domain;
 using ShelfAware.Llm;
 using ShelfAware.Web.Auth;
@@ -29,6 +30,7 @@ public class MeteredChatClientTests : IDisposable
             Calls++;
             return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "ok"))
             {
+                ModelId = "claude-haiku-4-5", // so the cost lookup uses the Haiku rate, not the fallback
                 Usage = new UsageDetails { InputTokenCount = 100, OutputTokenCount = 50 },
             });
         }
@@ -41,7 +43,7 @@ public class MeteredChatClientTests : IDisposable
         {
             Calls++;
             await Task.Yield();
-            yield return new ChatResponseUpdate(ChatRole.Assistant, "ok");
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "ok") { ModelId = "claude-haiku-4-5" };
             yield return new ChatResponseUpdate
             {
                 Contents = [new UsageContent(new UsageDetails { InputTokenCount = 100, OutputTokenCount = 50 })],
@@ -75,11 +77,22 @@ public class MeteredChatClientTests : IDisposable
             new FakeEntitlements(tier),
             NullLogger<AiUsageMeter>.Instance);
         var byok = new ByokChatClient(settings, new FakeFactory(_provider));
-        return (new MeteredChatClient(byok, settings, meter, NullLogger<MeteredChatClient>.Instance), meter);
+        return (new MeteredChatClient(byok, settings, meter, Options.Create(new BillingOptions()),
+            NullLogger<MeteredChatClient>.Instance), meter);
     }
 
     private static Task<ChatResponse> AskAsync(MeteredChatClient client) =>
         client.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")]);
+
+    private async Task SeedDayAsync(string household, DateOnly day, int calls, long costMicros)
+    {
+        var previous = _db.HouseholdId;
+        _db.HouseholdId = household;
+        await using var db = _db.CreateDbContext();
+        db.AiUsages.Add(new AiUsage { Day = day, Calls = calls, CostMicros = costMicros });
+        await db.SaveChangesAsync();
+        _db.HouseholdId = previous;
+    }
 
     private async Task SeedTodayAsync(string household, int calls = 0, long tokens = 0, int mints = 0)
     {
@@ -109,6 +122,8 @@ public class MeteredChatClientTests : IDisposable
         var today = await meter.GetTodayAsync();
         Assert.Equal(1, today.Calls);
         Assert.Equal(150, today.Tokens);
+        // Cost stamped from the Haiku rate: 100 in × $1/MTok (=100 micros) + 50 out × $5/MTok (=250) = 350.
+        Assert.Equal(350, today.CostMicros);
     }
 
     [Fact]
@@ -279,6 +294,24 @@ public class MeteredChatClientTests : IDisposable
         await AskAsync(freshClient);
 
         Assert.Equal(1, (await freshMeter.GetTodayAsync()).Calls);
+    }
+
+    [Fact]
+    public async Task Monthly_usage_rolls_up_by_calendar_month_with_cost()
+    {
+        // Two days in a definite PAST month (so "today" can't interfere), summed into one month row —
+        // the "is it steady month to month?" view.
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var lastMonth = new DateOnly(today.Year, today.Month, 1).AddMonths(-1);
+        await SeedDayAsync("hh-test", new DateOnly(lastMonth.Year, lastMonth.Month, 3), calls: 2, costMicros: 1000);
+        await SeedDayAsync("hh-test", new DateOnly(lastMonth.Year, lastMonth.Month, 15), calls: 3, costMicros: 2500);
+
+        var (_, meter) = Build("Managed");
+        var months = await meter.GetMonthlyAsync(3);
+
+        var m = months.Single(x => x.Year == lastMonth.Year && x.Month == lastMonth.Month);
+        Assert.Equal(5, m.Calls);           // 2 + 3, rolled up across the two days
+        Assert.Equal(3500, m.CostMicros);   // 1000 + 2500
     }
 
     [Fact]

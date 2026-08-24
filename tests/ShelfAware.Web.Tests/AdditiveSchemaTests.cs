@@ -396,6 +396,29 @@ public class AdditiveSchemaTests : IDisposable
         Assert.Equal(5.00m, stored.Savings);
     }
 
+    [Fact]
+    public async Task Adds_the_cost_column_to_a_pre_cost_ai_usage_table()
+    {
+        // Subscription phase 2: AiUsage gained a per-day CostMicros. A live box's AiUsages table predates
+        // it, so the ALTER path (not the drop-TABLE rebuild) is what runs on its next boot.
+        await using var db = _db.CreateDbContext();
+        var fresh = await ColumnTypesAsync(db, "AiUsages");
+
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE AiUsages DROP COLUMN CostMicros;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        // Same declared type (INTEGER NOT NULL) as a fresh file — a pre-cost row reads 0, a new one
+        // round-trips the accumulated micros.
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "AiUsages"));
+
+        var usage = new AiUsage { Day = new DateOnly(2026, 8, 24), Calls = 1, CostMicros = 350 };
+        db.AiUsages.Add(usage);
+        await db.SaveChangesAsync();
+        Assert.Equal(350, (await db.AiUsages.AsNoTracking().SingleAsync()).CostMicros);
+    }
+
     /// <summary>Each column's declared type, keyed by name — order-independent, so it survives the fact
     /// that ADD COLUMN appends while EnsureCreated writes the model's order.</summary>
     // DbContext, not ShelfAwareDbContext: the resolve columns live on BOTH files, so the auth-side

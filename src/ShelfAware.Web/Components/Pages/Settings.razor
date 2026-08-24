@@ -3,6 +3,7 @@
 @using ShelfAware.Core.Settings
 @using ShelfAware.Core.Speech
 @using ShelfAware.Core.Ingest
+@using ShelfAware.Core.Billing
 @using ShelfAware.Llm
 @using ShelfAware.Web.Auth
 @using Microsoft.Extensions.Options
@@ -354,13 +355,48 @@
                 <span class="stat-label">Today · voice sessions</span>
                 <span class="stat-value">@today.VoiceSessionMints</span>
             </div>
+            <div class="stat">
+                <span class="stat-label">Today · cost</span>
+                <span class="stat-value">@AiPricing.FormatMicros(today.CostMicros)</span>
+            </div>
+        </div>
+    }
+    @if (monthlyUsage.Count > 0)
+    {
+        <h3>By month</h3>
+        <p class="muted">Rolled up per calendar month — the view for checking whether usage is steady
+            before setting any limits. Cost is the AI provider cost, at the rate in force when each call ran.</p>
+        <div class="table-scroll">
+            <table>
+                <caption class="visually-hidden">AI usage per month: calls, total tokens, and cost.</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">Month</th>
+                        <th scope="col">AI calls</th>
+                        <th scope="col">Total tokens</th>
+                        <th scope="col">Cost</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var m in monthlyUsage)
+                    {
+                        <tr>
+                            <td>@MonthLabel(m)</td>
+                            <td>@m.Calls</td>
+                            <td>@m.Tokens.ToString("N0")</td>
+                            <td>@AiPricing.FormatMicros(m.CostMicros)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
         </div>
     }
     @if (usageHistory.Count > 0)
     {
+        <h3>By day</h3>
         <div class="table-scroll">
             <table>
-                <caption class="visually-hidden">Recent daily AI usage: calls, input and output tokens, and voice sessions per day.</caption>
+                <caption class="visually-hidden">Recent daily AI usage: calls, input and output tokens, cost, and voice sessions per day.</caption>
                 <thead>
                     <tr>
                         <th scope="col">Day</th>
@@ -368,6 +404,7 @@
                         <th scope="col">Tokens in</th>
                         <th scope="col">Tokens out</th>
                         <th scope="col">Total tokens</th>
+                        <th scope="col">Cost</th>
                         <th scope="col">Voice sessions</th>
                     </tr>
                 </thead>
@@ -380,6 +417,7 @@
                             <td>@day.InputTokens.ToString("N0")</td>
                             <td>@day.OutputTokens.ToString("N0")</td>
                             <td>@day.Tokens.ToString("N0")</td>
+                            <td>@AiPricing.FormatMicros(day.CostMicros)</td>
                             <td>@day.VoiceSessionMints</td>
                         </tr>
                     }
@@ -1067,6 +1105,7 @@
         // outlive a delete deliberately, which is why they aren't in the reload below.
         todayUsage = await UsageMeter.GetTodayAsync();
         usageHistory = await UsageMeter.GetRecentAsync(days: 14);
+        monthlyUsage = await UsageMeter.GetMonthlyAsync(months: 12);
         tier = await Entitlements.GetTierAsync();
         await LoadSettingsStateAsync();
     }
@@ -1147,6 +1186,9 @@
     private HouseholdTier tier; // Free by default; a Founder gets the thank-you badge + unlimited AI
     private AiUsageMeter.TodayUsage? todayUsage;
     private IReadOnlyList<AiUsageMeter.DayUsage> usageHistory = [];
+    private IReadOnlyList<AiUsageMeter.MonthUsage> monthlyUsage = [];
+
+    private static string MonthLabel(AiUsageMeter.MonthUsage m) => new DateOnly(m.Year, m.Month, 1).ToString("MMM yyyy");
     private string UsageLimitSuffix => LlmConfig.Value.DailyCallLimit is int limit
         ? $" (daily allowance: {limit} calls)"
         : "";

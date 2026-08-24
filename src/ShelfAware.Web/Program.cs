@@ -291,6 +291,10 @@ if (OperatingSystem.IsWindows())
 }
 
 builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection(LlmOptions.SectionName));
+// Billing tunables — model rates, credit markup, welcome-grant size — as operator config (defaults in
+// BillingOptions), so pricing can be retuned in appsettings without a rebuild.
+builder.Services.Configure<ShelfAware.Core.Billing.BillingOptions>(
+    builder.Configuration.GetSection(ShelfAware.Core.Billing.BillingOptions.SectionName));
 
 // The provider seam: the AI services depend only on IChatClient, so the provider is a swap and the logic
 // stays fakeable in tests. Under BYOK each circuit gets its own IChatClient built from that visitor's

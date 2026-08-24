@@ -88,6 +88,11 @@ public static class AdditiveSchema
         EnsureColumn(db, table: "Receipts", column: "Tax", definition: "TEXT NULL");
         EnsureColumn(db, table: "Receipts", column: "Total", definition: "TEXT NULL");
         EnsureColumn(db, table: "Receipts", column: "Savings", definition: "TEXT NULL");
+
+        // 2026-08-24: per-day AI COST in micros (subscription phase 2 — dollar-aware usage). AiUsage is a
+        // PANTRY table (IHouseholdOwned), so this belongs here, not in the auth overload. Existing rows
+        // land on 0 (their cost was never captured); new calls accumulate it. Display-only.
+        EnsureColumn(db, table: "AiUsages", column: "CostMicros", definition: "INTEGER NOT NULL DEFAULT 0");
     }
 
     public static void Apply(AuthDbContext db)

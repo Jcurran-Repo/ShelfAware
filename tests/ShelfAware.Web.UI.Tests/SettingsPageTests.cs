@@ -255,10 +255,34 @@ public class SettingsPageTests : SettingsTestBase
         // Today's stats sum the row the meter keeps per day…
         Assert.Contains("3", section.QuerySelectorAll(".stat").Single(s => s.TextContent.Contains("AI calls")).TextContent);
         Assert.Contains(2000.ToString("N0"), section.QuerySelectorAll(".stat").Single(s => s.TextContent.Contains("tokens")).TextContent);
-        // …and the history table lists both days with in/out split out.
-        var rows = section.QuerySelectorAll("tbody tr").ToList();
-        Assert.Equal(2, rows.Count);
-        Assert.Contains(1200.ToString("N0"), rows.Single(r => r.TextContent.Contains($"{Today:MMM d}")).TextContent);
+        // …and the "By day" table (the LAST of the two tables — the monthly rollup comes first) lists
+        // both days with in/out split out.
+        var dailyRows = section.QuerySelectorAll("table").Last().QuerySelectorAll("tbody tr").ToList();
+        Assert.Equal(2, dailyRows.Count);
+        Assert.Contains(1200.ToString("N0"), dailyRows.Single(r => r.TextContent.Contains($"{Today:MMM d}")).TextContent);
+    }
+
+    [Fact]
+    public void Usage_rolls_up_by_month_with_cost()
+    {
+        // The "is it steady month to month?" view: two days of one month sum into a single month row,
+        // and the cost column shows dollars (the calibration figure).
+        using (var db = Db.CreateDbContext())
+        {
+            var firstOfThisMonth = new DateOnly(Today.Year, Today.Month, 1);
+            db.AiUsages.Add(new AiUsage { Day = firstOfThisMonth, Calls = 2, CostMicros = 1_000_000 });
+            db.AiUsages.Add(new AiUsage { Day = firstOfThisMonth.AddDays(1), Calls = 3, CostMicros = 500_000 });
+            db.SaveChanges();
+        }
+
+        var section = Section(RenderSettings(), "AI usage");
+
+        // The FIRST table is the monthly rollup. Its one row for this month sums 2+3 calls and $1.00+$0.50.
+        var monthRows = section.QuerySelectorAll("table").First().QuerySelectorAll("tbody tr").ToList();
+        var thisMonth = monthRows.Single(r => r.TextContent.Contains(Today.ToString("MMM yyyy")));
+        var cells = thisMonth.QuerySelectorAll("td").ToList();
+        Assert.Equal("5", cells[1].TextContent.Trim());              // AI calls: 2 + 3
+        Assert.Contains(1.50m.ToString("C2"), cells[3].TextContent); // Cost: $1.00 + $0.50 (same culture both sides)
     }
 
     // ----------------------------------------------------------------------------- BYOK panel
