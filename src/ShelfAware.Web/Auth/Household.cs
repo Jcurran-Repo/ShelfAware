@@ -36,6 +36,19 @@ public class Household
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
 
+    /// <summary>The household's entitlement tier — <see cref="HouseholdTier.Free"/> by default, set to
+    /// <see cref="HouseholdTier.Founder"/> when the operator grants it from /admin. Drives the AI
+    /// meter's exemption (Founder = unlimited-but-recorded) and, once billing lands, the paid tiers.
+    /// See <c>docs/subscription-plan.md</c> and <see cref="HouseholdTier"/>. Operator-set only — there
+    /// is no self-service write path, and it is never touched by "delete my data" (an entitlement must
+    /// not be grantable or wipeable by its beneficiary).</summary>
+    public HouseholdTier Tier { get; set; } = HouseholdTier.Free;
+
+    /// <summary>When Founder was granted — for the admin roster and a "Founder since …" thank-you
+    /// badge — or null when the household is not a Founder. Set alongside <see cref="Tier"/> by the
+    /// admin grant, and cleared when Founder is revoked.</summary>
+    public DateTimeOffset? FounderSince { get; set; }
+
     /// <summary>Whether the code would be accepted right now. A method rather than a property so EF leaves
     /// it alone (it's behaviour, not a column) and so the caller has to name the clock — which is what
     /// makes expiry testable without waiting.</summary>

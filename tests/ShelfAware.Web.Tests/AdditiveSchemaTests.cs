@@ -238,6 +238,43 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Adds_the_tier_columns_to_a_pre_tier_auth_db()
+    {
+        // The auth-side path a LIVE deployment takes: its Households table was created before entitlement
+        // tiers existed, so the ALTER (not the drop-TABLE rebuild) is what puts the columns on the family
+        // box's first boot — the same class of gap the ResolvedAt column test guards.
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await ColumnTypesAsync(db, "Households");
+
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Households DROP COLUMN Tier;");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Households DROP COLUMN FounderSince;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        // Same declared types as a fresh file — the enum column as INTEGER NOT NULL, FounderSince as
+        // TEXT NULL — so a household reads Free (0) rather than truncating, and the stamp round-trips.
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "Households"));
+
+        // A pre-tier household reads back Free with no grant date.
+        var household = new Household { Name = "Test" };
+        db.Households.Add(household);
+        await db.SaveChangesAsync();
+        var blank = await db.Households.AsNoTracking().SingleAsync(h => h.Id == household.Id);
+        Assert.Equal(HouseholdTier.Free, blank.Tier);
+        Assert.Null(blank.FounderSince);
+
+        // A granted one round-trips Founder + the timestamp through the migrated columns.
+        household.Tier = HouseholdTier.Founder;
+        household.FounderSince = new DateTimeOffset(2026, 8, 24, 9, 0, 0, TimeSpan.FromHours(-5));
+        await db.SaveChangesAsync();
+        var granted = await db.Households.AsNoTracking().SingleAsync(h => h.Id == household.Id);
+        Assert.Equal(HouseholdTier.Founder, granted.Tier);
+        Assert.Equal(new DateTimeOffset(2026, 8, 24, 9, 0, 0, TimeSpan.FromHours(-5)), granted.FounderSince);
+    }
+
+    [Fact]
     public async Task Adds_the_resolved_at_column_to_a_pre_resolve_error_log()
     {
         // The auth-side twin — same reasoning, same live-deployment path.

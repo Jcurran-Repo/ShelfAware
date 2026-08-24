@@ -301,6 +301,7 @@ builder.Services.AddScoped<CircuitAiSettings>();
 // The chain every AI service sees: MeteredChatClient (daily per-household quotas, managed mode only)
 // over ByokChatClient (builds the real provider client from the circuit's settings at call time).
 builder.Services.AddScoped<ByokChatClient>();
+builder.Services.AddScoped<IEntitlements, Entitlements>(); // the current household's tier — the meter's Founder exemption + the Settings badge
 builder.Services.AddScoped<AiUsageMeter>();
 builder.Services.AddScoped<IChatClient, MeteredChatClient>();
 

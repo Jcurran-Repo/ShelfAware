@@ -115,6 +115,12 @@ public static class AdditiveSchema
         // 2026-08-23: per-account login counts (the admin "who has logged in" view). Operator data, like
         // the error log, so it lives here. A new table — existing rows unaffected.
         EnsureTable(db, table: "UserLoginStats");
+
+        // 2026-08-24: household entitlement tiers (docs/subscription-plan.md phase 1 — the Founder tier
+        // + the subscription seam). Tier is an enum → INTEGER, so existing rows land on Free (0) with no
+        // FounderSince, which behaves exactly as a pre-tier household did.
+        EnsureColumn(db, table: "Households", column: "Tier", definition: "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(db, table: "Households", column: "FounderSince", definition: "TEXT NULL");
     }
 
     /// <summary>Create <paramref name="table"/> (and its indexes) on a DB built before it existed. The
