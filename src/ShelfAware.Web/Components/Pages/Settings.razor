@@ -13,6 +13,7 @@
 @inject IJSRuntime JS
 @inject CircuitAiSettings AiSettings
 @inject AiUsageMeter UsageMeter
+@inject IEntitlements Entitlements
 @inject IOptions<LlmOptions> LlmConfig
 @inject IOptions<EmailOptions> EmailConfig
 @inject ILogger<Settings> Logger
@@ -333,6 +334,11 @@
         and accuracy check counts here, whichever key it ran on. Bring-your-own-key usage is shown
         for your information but never limited.
     </p>
+    @if (tier == HouseholdTier.Founder)
+    {
+        <p class="founder-badge">★ You're a <strong>Founder</strong> — unlimited AI on the house, no caps.
+            Thank you for helping build Shelf Aware. 💛</p>
+    }
     @if (todayUsage is { } today)
     {
         <div class="portfolio">
@@ -1061,6 +1067,7 @@
         // outlive a delete deliberately, which is why they aren't in the reload below.
         todayUsage = await UsageMeter.GetTodayAsync();
         usageHistory = await UsageMeter.GetRecentAsync(days: 14);
+        tier = await Entitlements.GetTierAsync();
         await LoadSettingsStateAsync();
     }
 
@@ -1137,6 +1144,7 @@
     }
 
     // ---- AI usage readouts (recorded in every key mode; limits apply only in managed mode) ----
+    private HouseholdTier tier; // Free by default; a Founder gets the thank-you badge + unlimited AI
     private AiUsageMeter.TodayUsage? todayUsage;
     private IReadOnlyList<AiUsageMeter.DayUsage> usageHistory = [];
     private string UsageLimitSuffix => LlmConfig.Value.DailyCallLimit is int limit

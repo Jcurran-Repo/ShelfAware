@@ -38,6 +38,7 @@ public class AdminPageTests : PageTestContext
         Services.AddSingleton<LoginAudit>();
         Services.AddScoped<AdminReportReader>();
         Services.AddScoped<ReportResolutionService>();
+        Services.AddScoped<AdminHouseholdService>();
     }
 
     protected override void Dispose(bool disposing)
@@ -224,6 +225,73 @@ public class AdminPageTests : PageTestContext
             Assert.Contains("No logins recorded yet.", cut.Markup);
             Assert.Contains("Nothing logged — quiet so far.", cut.Markup);
             Assert.Contains("No reports yet.", cut.Markup);
+        });
+    }
+
+    // ------------------------------------------------------------------- households + Founder
+
+    [Fact]
+    public void The_admin_sees_the_household_roster_with_members_and_tier()
+    {
+        using (var db = authDb.CreateDbContext())
+        {
+            var currans = new Household { Name = "The Currans", Tier = HouseholdTier.Founder };
+            var neighbours = new Household { Name = "The Neighbours" };
+            db.Households.AddRange(currans, neighbours);
+            db.Users.Add(new AppUser { UserName = "jordan@test.local", Email = "jordan@test.local", HouseholdId = currans.Id });
+            db.Users.Add(new AppUser { UserName = "wife@test.local", Email = "wife@test.local", HouseholdId = currans.Id });
+            db.SaveChanges();
+        }
+
+        var cut = Render<Components.Pages.Admin>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("The Currans", cut.Markup);
+            Assert.Contains("wife@test.local", cut.Markup);
+            Assert.Contains("★ Founder", cut.Markup);      // the Founder household is marked
+            Assert.Contains("The Neighbours", cut.Markup);
+        });
+    }
+
+    [Fact]
+    public async Task Granting_founder_flips_the_row_and_removing_reverts_it()
+    {
+        string id;
+        using (var db = authDb.CreateDbContext())
+        {
+            var household = new Household { Name = "The Currans" };
+            db.Households.Add(household);
+            db.SaveChanges();
+            id = household.Id;
+        }
+        var cut = Render<Components.Pages.Admin>();
+        cut.WaitForAssertion(() => Assert.Contains("Grant Founder", cut.Markup));
+
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Grant Founder").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("★ Founder", cut.Markup);                                   // the row's tier flipped
+            Assert.Contains("Remove Founder", cut.FindAll("button").Select(b => b.TextContent.Trim())); // and its button
+        });
+        // The tier really changed in auth.db.
+        await cut.WaitForAssertionAsync(async () =>
+        {
+            await using var db = authDb.CreateDbContext();
+            var h = await db.Households.AsNoTracking().SingleAsync(x => x.Id == id);
+            Assert.Equal(HouseholdTier.Founder, h.Tier);
+            Assert.NotNull(h.FounderSince);
+        });
+
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Remove Founder").Click();
+
+        await cut.WaitForAssertionAsync(async () =>
+        {
+            await using var db = authDb.CreateDbContext();
+            var h = await db.Households.AsNoTracking().SingleAsync(x => x.Id == id);
+            Assert.Equal(HouseholdTier.Free, h.Tier);
+            Assert.Null(h.FounderSince);
         });
     }
 

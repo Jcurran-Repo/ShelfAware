@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Domain;
 using ShelfAware.Llm;
+using ShelfAware.Web.Auth;
 using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.Services;
@@ -17,6 +18,7 @@ public sealed class AiUsageMeter(
     IHouseholdDbFactory dbFactory,
     IOptions<LlmOptions> llm,
     IOptions<ElevenLabsOptions> elevenLabs,
+    IEntitlements entitlements,
     ILogger<AiUsageMeter> logger)
 {
     public sealed record TodayUsage(int Calls, long Tokens, int VoiceSessionMints);
@@ -53,6 +55,12 @@ public sealed class AiUsageMeter(
     {
         if (llm.Value.DailyCallLimit is null && llm.Value.DailyTokenLimit is null) return;
 
+        // A Founder household is exempt from the caps entirely (unlimited-but-recorded). Consulted AFTER
+        // the no-limit check above, so a deployment that configures no caps never pays the tier read;
+        // and only the GATE is skipped — RecordLlmCallAsync (called after the provider replies) is
+        // untouched, so a Founder's usage still lands in the row.
+        if ((await entitlements.GetTierAsync(cancellationToken)).IsUnlimited()) return;
+
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var row = await TodayRowAsync(db, cancellationToken);
         if (row is null) return;
@@ -75,6 +83,8 @@ public sealed class AiUsageMeter(
     public async Task<bool> MayMintVoiceSessionAsync(CancellationToken cancellationToken = default)
     {
         if (elevenLabs.Value.DailySignedUrlLimit is not int limit) return true;
+        // Founder is exempt from the voice cap too; the endpoint still records the mint afterward.
+        if ((await entitlements.GetTierAsync(cancellationToken)).IsUnlimited()) return true;
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var row = await TodayRowAsync(db, cancellationToken);
         return row is null || row.VoiceSessionMints < limit;

@@ -59,7 +59,7 @@ public class AccuracyPageTests : PageTestContext
             Factory, new ThrowingExtractor(), aiSettings, AppSettings, storage, NullLogger<ReceiptSelfEval>.Instance));
         Services.AddSingleton(new AiUsageMeter(
             Factory, Options.Create(new LlmOptions()), Options.Create(new ElevenLabsOptions()),
-            NullLogger<AiUsageMeter>.Instance));
+            new FakeEntitlements(), NullLogger<AiUsageMeter>.Instance));
     }
 
     protected override void Dispose(bool disposing)

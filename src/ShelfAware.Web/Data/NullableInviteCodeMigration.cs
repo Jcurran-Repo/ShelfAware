@@ -32,7 +32,12 @@ public static class NullableInviteCodeMigration
     /// be silently DROPPED here on any deployment that hadn't migrated yet. Better a loud failure at
     /// startup naming the problem than a column that quietly disappears from one deployment in ten.</summary>
     private static readonly string[] ExpectedColumns =
-        ["Id", "Name", "InviteCode", "CreatedAt", "InviteExpiresAt", "InviteMaxUses", "InviteUseCount"];
+        ["Id", "Name", "InviteCode", "CreatedAt", "InviteExpiresAt", "InviteMaxUses", "InviteUseCount",
+         // 2026-08-24: entitlement tiers. AdditiveSchema.Apply runs strictly before this migration, so a
+         // pre-v3.4 box that boots today has these ALTERed on before the rebuild sees the table — the
+         // rebuild carries them across by name (and must NOT wipe them: an invite-code migration losing
+         // someone's Founder grant would be exactly the kind of silent cross-column harm the assert guards).
+         "Tier", "FounderSince"];
 
     public static void Apply(AuthDbContext db)
     {
@@ -69,15 +74,19 @@ public static class NullableInviteCodeMigration
                         "CreatedAt" TEXT NOT NULL,
                         "InviteExpiresAt" TEXT NULL,
                         "InviteMaxUses" INTEGER NULL,
-                        "InviteUseCount" INTEGER NOT NULL DEFAULT 0
+                        "InviteUseCount" INTEGER NOT NULL DEFAULT 0,
+                        "Tier" INTEGER NOT NULL DEFAULT 0,
+                        "FounderSince" TEXT NULL
                     );
                     """);
 
                 // The wipe: codes and their limits come across as NULL/0 regardless of what was there.
+                // Tier/FounderSince are COPIED, not wiped — they're an unrelated entitlement, and this
+                // migration retires invite codes, not tiers.
                 Execute(conn, tx, """
                     INSERT INTO "Households_new"
-                        ("Id", "Name", "InviteCode", "CreatedAt", "InviteExpiresAt", "InviteMaxUses", "InviteUseCount")
-                    SELECT "Id", "Name", NULL, "CreatedAt", NULL, NULL, 0 FROM "Households";
+                        ("Id", "Name", "InviteCode", "CreatedAt", "InviteExpiresAt", "InviteMaxUses", "InviteUseCount", "Tier", "FounderSince")
+                    SELECT "Id", "Name", NULL, "CreatedAt", NULL, NULL, 0, "Tier", "FounderSince" FROM "Households";
                     """);
 
                 // DROP takes the old indexes with it; the unique one is recreated below to match

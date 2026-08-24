@@ -262,6 +262,7 @@ builder.Services.AddHostedService<ErrorLogWriter>();
 builder.Services.AddScoped<AdminReportReader>();
 // Its write sibling: resolve/reopen, the app's one cross-household write — see the class doc.
 builder.Services.AddScoped<ReportResolutionService>();
+builder.Services.AddScoped<AdminHouseholdService>(); // the /admin household roster + the Founder grant
 
 // ---- Who's using the app: the admin "logins + who's online" view ----
 // LoginAudit persists per-account login counts (auth.db operator data, like the error log; read through
@@ -301,6 +302,7 @@ builder.Services.AddScoped<CircuitAiSettings>();
 // The chain every AI service sees: MeteredChatClient (daily per-household quotas, managed mode only)
 // over ByokChatClient (builds the real provider client from the circuit's settings at call time).
 builder.Services.AddScoped<ByokChatClient>();
+builder.Services.AddScoped<IEntitlements, Entitlements>(); // the current household's tier — the meter's Founder exemption + the Settings badge
 builder.Services.AddScoped<AiUsageMeter>();
 builder.Services.AddScoped<IChatClient, MeteredChatClient>();
 

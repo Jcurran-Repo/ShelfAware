@@ -7,6 +7,7 @@
 @implements IDisposable
 @inject AdminReportReader Reader
 @inject ReportResolutionService Actions
+@inject AdminHouseholdService HouseholdAdmin
 @inject IOptions<AdminOptions> AdminConfig
 @inject ErrorLogSink Sink
 @inject OnlinePresence Presence
@@ -36,6 +37,55 @@ else
     {
         <p class="error" role="alert">@actionError</p>
     }
+    <section class="panel">
+        <h2>Households</h2>
+        <p class="muted">Every household on this deployment, its members, and its tier. Grant
+            <strong>Founder</strong> to give a household unlimited AI on the host's keys (still recorded) —
+            the thank-you tier for the people helping out.</p>
+        @if (households is null)
+        {
+            <p>Loading…</p>
+        }
+        else if (households.Count == 0)
+        {
+            <p class="muted">No households yet.</p>
+        }
+        else
+        {
+            <table>
+                <caption class="visually-hidden">Every household, its members, and its tier</caption>
+                <thead>
+                    <tr><th>Household</th><th>Members</th><th>Tier</th><th>Founder since</th><th><span class="visually-hidden">Actions</span></th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var h in households)
+                    {
+                        <tr @key="h.Id">
+                            <td>@h.Name</td>
+                            <td>@(h.MemberEmails.Count == 0 ? "—" : string.Join(", ", h.MemberEmails))</td>
+                            <td>@(h.Tier == HouseholdTier.Founder ? "★ Founder" : h.Tier.ToString())</td>
+                            <td>@(h.FounderSince?.ToString("MMM d, yyyy") ?? "—")</td>
+                            <td>
+                                @if (h.Tier == HouseholdTier.Founder)
+                                {
+                                    <button class="secondary" @onclick="() => SetFounderAsync(h.Id, false)"
+                                            disabled="@(busy || actionBusy)"
+                                            aria-label="Remove Founder from @h.Name">Remove Founder</button>
+                                }
+                                else
+                                {
+                                    <button class="secondary" @onclick="() => SetFounderAsync(h.Id, true)"
+                                            disabled="@(busy || actionBusy)"
+                                            aria-label="Grant Founder to @h.Name">Grant Founder</button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+
     <section class="panel">
         @* One snapshot per render, used for BOTH the header count and the list below — reading presence
            twice could show a header number that disagrees with the rows for a frame (it's mutated from
@@ -320,6 +370,7 @@ else
     private IReadOnlyList<ErrorLogEntry>? errors;
     private IReadOnlyList<AdminBugReport>? bugReports;
     private IReadOnlyList<UserLoginStat>? loginStats;
+    private IReadOnlyList<AdminHousehold>? households;
     private bool refused;
     private bool subscribed;
     private bool busy;
@@ -380,6 +431,7 @@ else
         actionAnnouncement = null;
         try
         {
+            households = await HouseholdAdmin.ListAsync();
             errors = await Reader.ListErrorsAsync();
             bugReports = await Reader.ListBugReportsAsync();
             loginStats = await Reader.ListLoginStatsAsync();
@@ -413,6 +465,12 @@ else
     private Task ReopenErrorAsync(int id) => ActAsync(() => Actions.SetErrorResolvedAsync(id, null), "Reopened.");
     private Task ResolveBugAsync(int id) => ActAsync(() => Actions.SetBugResolvedAsync(id, DateTimeOffset.Now), "Resolved.");
     private Task ReopenBugAsync(int id) => ActAsync(() => Actions.SetBugResolvedAsync(id, null), "Reopened.");
+
+    // Founder grant/revoke rides the same ActAsync as the resolve buttons: the write, then a refresh,
+    // with the advice split by failure point and the roster re-read so the row's tier + button flip.
+    private Task SetFounderAsync(string householdId, bool founder) =>
+        ActAsync(() => HouseholdAdmin.SetFounderAsync(householdId, founder),
+            founder ? "Granted Founder." : "Removed Founder.");
 
     /// <summary>One shape for all four actions, with the advice split by failure point (item 27):
     /// a failed WRITE says "nothing changed — try again" (safe: the write is idempotent), while a

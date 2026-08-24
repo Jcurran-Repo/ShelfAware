@@ -243,7 +243,12 @@ not global config). The pieces:
   express "the grant expires, purchases don't". (b) Order ledger reads by `Id`, never by timestamp
   (SQLite refuses `DateTimeOffset` in ORDER BY — item 47), and bucket periods by the PROVIDER's UTC
   billing period, not server-local `DateTime.Today` (the TZ gotcha). (c) auth.db has no query filter —
-  every ledger query hand-scopes its WHERE to the household, the `ApiTokenService` pattern.
+  every ledger query hand-scopes its WHERE to the household, the `ApiTokenService` pattern. (d) ⚠️
+  **the balance must NOT inherit phase 1's per-circuit cache** (flagged by both gate reviewers): phase
+  1's `IEntitlements` caches the boolean tier for the CIRCUIT's lifetime (safe — a tier rarely
+  changes), but a Blazor circuit can be open for hours, so caching a *balance* that decrements every
+  call would let one long session overspend. Extend `IEntitlements` for the tier read; read the
+  balance FRESH on each gate check (or with a short TTL), never once-per-scope.
 - **Refunds/clawbacks are designed in, not hoped away** (both external reviews, independently): the
   MoR can refund unilaterally within ~60 days to pre-empt chargebacks, so a refund webhook posts
   reversal entries; **balances may go negative** — a negative balance gates usage and nets against
