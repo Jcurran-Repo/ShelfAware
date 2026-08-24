@@ -2,6 +2,8 @@ using System.Security.Cryptography;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using ShelfAware.Core.Billing;
+using ShelfAware.Llm;
 
 namespace ShelfAware.Web.Auth;
 
@@ -13,7 +15,8 @@ public sealed record HouseholdMember(string Id, string Email);
 /// Takes the SCOPED <see cref="AuthDbContext"/> — the same instance Identity's user store uses in a
 /// request — so registration can wrap "create user + create/join household" in one transaction.</summary>
 public sealed class HouseholdService(
-    AuthDbContext db, UserManager<AppUser> users, IOptions<AuthOptions> options, ILogger<HouseholdService> logger)
+    AuthDbContext db, UserManager<AppUser> users, IOptions<AuthOptions> options,
+    IOptions<LlmOptions> llm, IOptions<BillingOptions> billing, ILogger<HouseholdService> logger)
 {
     /// <summary>Unambiguous alphabet (no 0/O, 1/I/L) so a code survives being read aloud or
     /// handwritten. ~31^10 ≈ 8×10^14 combinations at length 10.</summary>
@@ -56,6 +59,17 @@ public sealed class HouseholdService(
         var household = new Household { Name = name.Trim() };
         db.Households.Add(household);
         user.HouseholdId = household.Id;
+
+        // The one-time welcome grant, added to THIS transaction so it's atomic with creation — a
+        // household never exists without it, and a rolled-back registration leaves none. This is the one
+        // choke point every creation path shares (Register / ExternalLogin / ChooseHousehold / DevAuth all
+        // call here), so an OAuth signup can't silently miss it. Managed-only: a BYOK/self-host box has no
+        // host-credit concept, so a credit row there would be meaningless noise.
+        if (llm.Value.IsManaged && CreditLedger.WelcomeGrant(household.Id, billing.Value) is { } welcome)
+        {
+            db.CreditLedger.Add(welcome);
+        }
+
         await db.SaveChangesAsync(ct);
         logger.LogInformation("Household {HouseholdId} created.", household.Id);
         return household;

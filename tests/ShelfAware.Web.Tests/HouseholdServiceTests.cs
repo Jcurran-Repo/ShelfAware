@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using ShelfAware.Core.Billing;
+using ShelfAware.Llm;
 using ShelfAware.Web.Auth;
 
 namespace ShelfAware.Web.Tests;
@@ -22,7 +24,9 @@ public class HouseholdServiceTests : IDisposable
     }
 
     private HouseholdService NewService(AuthOptions options) =>
-        new(_context, _users, Options.Create(options), NullLogger<HouseholdService>.Instance);
+        // Keyless LlmOptions → not managed → no welcome grant, so these invite/removal tests are unaffected.
+        new(_context, _users, Options.Create(options), Options.Create(new LlmOptions()),
+            Options.Create(new BillingOptions()), NullLogger<HouseholdService>.Instance);
 
     /// <summary>A REAL UserManager over the test context, not a fake: removing a member is only a removal
     /// because it bumps the security stamp, and a fake would let that go untested.</summary>

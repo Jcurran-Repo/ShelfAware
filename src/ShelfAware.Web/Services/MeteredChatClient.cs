@@ -1,6 +1,8 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Billing;
+using ShelfAware.Web.Auth;
+using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.Services;
 
@@ -17,6 +19,9 @@ public sealed class MeteredChatClient(
     CircuitAiSettings settings,
     AiUsageMeter meter,
     IOptions<BillingOptions> billing,
+    CreditLedger ledger,
+    IEntitlements entitlements,
+    ICurrentHousehold currentHousehold,
     ILogger<MeteredChatClient> logger) : IChatClient
 {
     public async Task<ChatResponse> GetResponseAsync(
@@ -65,14 +70,32 @@ public sealed class MeteredChatClient(
             // this row's cost (docs §4). An unreported model falls back (never free) — see AiPricing.
             var costMicros = AiPricing.CostMicros(billing.Value, model, inputTokens, outputTokens);
             await meter.RecordLlmCallAsync(inputTokens, outputTokens, costMicros, cancellationToken);
+            await RecordCreditConsumptionAsync(costMicros, model, cancellationToken);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             // Deliberate: the user already has their answer — failing it over a bookkeeping write would
             // be worse than a quota under-count. Logged so a persistent metering problem is visible.
-            logger.LogError(ex, "Recording AI usage failed; this call went unmetered.");
+            logger.LogError(ex, "Recording AI usage or credit failed; this call went unmetered.");
         }
+    }
+
+    /// <summary>Draw the household's credit balance down by this call's RETAIL cost — but only for a
+    /// household that actually spends host credits: a MANAGED deployment (BYOK visitors ride their own
+    /// key) and a NON-unlimited tier (a Founder's cost is recorded above for the operator, but they never
+    /// spend credit). Mirrors the meter's gate exemption. Phase 2 RECORDS consumption; it does not yet
+    /// ENFORCE the balance (gating is phase 4) — so no balance is read on this hot path.</summary>
+    private async Task RecordCreditConsumptionAsync(long costMicros, string? model, CancellationToken cancellationToken)
+    {
+        if (!settings.Managed || costMicros <= 0) return;
+        if ((await entitlements.GetTierAsync(cancellationToken)).IsUnlimited()) return;
+
+        var householdId = await currentHousehold.GetIdAsync(cancellationToken);
+        if (householdId is null) return;
+
+        var retailMicros = AiPricing.ToRetailMicros(billing.Value, costMicros);
+        await ledger.RecordConsumptionAsync(householdId, retailMicros, model, cancellationToken);
     }
 
     public object? GetService(Type serviceType, object? serviceKey = null) =>

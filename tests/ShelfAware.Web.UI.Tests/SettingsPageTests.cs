@@ -55,6 +55,7 @@ public abstract class SettingsTestBase : PageTestContext
             new PasswordHasher<AppUser>(), [], [], new UpperInvariantLookupNormalizer(),
             new IdentityErrorDescriber(), null!, NullLogger<UserManager<AppUser>>.Instance);
         Households = new HouseholdService(AuthContext, Users, Options.Create(new AuthOptions()),
+            Options.Create(ServerLlm), Options.Create(new ShelfAware.Core.Billing.BillingOptions()),
             NullLogger<HouseholdService>.Instance);
 
         AuthContext.Households.Add(new Household { Id = AuthHousehold, Name = "The Currans" });

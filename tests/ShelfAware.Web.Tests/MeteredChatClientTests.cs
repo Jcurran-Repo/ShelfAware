@@ -16,9 +16,14 @@ namespace ShelfAware.Web.Tests;
 public class MeteredChatClientTests : IDisposable
 {
     private readonly TestDb _db = new();
+    private readonly TestAuthDb _authDb = new(); // the ledger lives in auth.db
     private readonly ScriptedChatClient _provider = new();
 
-    public void Dispose() => _db.Dispose();
+    public void Dispose()
+    {
+        _db.Dispose();
+        _authDb.Dispose();
+    }
 
     private sealed class ScriptedChatClient : IChatClient
     {
@@ -72,13 +77,16 @@ public class MeteredChatClientTests : IDisposable
             DailyTokenLimit = dailyTokens,
         });
         var settings = new CircuitAiSettings(llm);
+        var entitlements = new FakeEntitlements(tier);
         var meter = new AiUsageMeter(_db, llm,
             Options.Create(new ElevenLabsOptions { DailySignedUrlLimit = dailyMints }),
-            new FakeEntitlements(tier),
+            entitlements,
             NullLogger<AiUsageMeter>.Instance);
         var byok = new ByokChatClient(settings, new FakeFactory(_provider));
-        return (new MeteredChatClient(byok, settings, meter, Options.Create(new BillingOptions()),
-            NullLogger<MeteredChatClient>.Instance), meter);
+        var client = new MeteredChatClient(byok, settings, meter, Options.Create(new BillingOptions()),
+            new CreditLedger(_authDb), entitlements, new FakeCurrentHousehold("hh-test"),
+            NullLogger<MeteredChatClient>.Instance);
+        return (client, meter);
     }
 
     private static Task<ChatResponse> AskAsync(MeteredChatClient client) =>
@@ -124,6 +132,38 @@ public class MeteredChatClientTests : IDisposable
         Assert.Equal(150, today.Tokens);
         // Cost stamped from the Haiku rate: 100 in × $1/MTok (=100 micros) + 50 out × $5/MTok (=250) = 350.
         Assert.Equal(350, today.CostMicros);
+    }
+
+    [Fact]
+    public async Task A_managed_non_founder_call_draws_the_credit_balance_down()
+    {
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free);
+
+        await AskAsync(client);
+
+        // Cost 350 micros (Haiku 100/50) × 1.65 markup = 578 retail micros, stored as a consumption.
+        Assert.Equal(-578, await new CreditLedger(_authDb).GetBalanceMicrosAsync("hh-test"));
+    }
+
+    [Fact]
+    public async Task A_founder_call_records_cost_but_no_credit_consumption()
+    {
+        var (client, meter) = Build("Managed", tier: HouseholdTier.Founder);
+
+        await AskAsync(client);
+
+        Assert.Equal(350, (await meter.GetTodayAsync()).CostMicros);                        // cost still recorded
+        Assert.Equal(0, await new CreditLedger(_authDb).GetBalanceMicrosAsync("hh-test"));  // but no credit drawn
+    }
+
+    [Fact]
+    public async Task A_byok_call_records_no_credit_consumption()
+    {
+        var (client, _) = Build("Byok");
+
+        await AskAsync(client);
+
+        Assert.Equal(0, await new CreditLedger(_authDb).GetBalanceMicrosAsync("hh-test")); // their key, their wallet
     }
 
     [Fact]
