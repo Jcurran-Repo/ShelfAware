@@ -262,6 +262,7 @@ builder.Services.AddHostedService<ErrorLogWriter>();
 builder.Services.AddScoped<AdminReportReader>();
 // Its write sibling: resolve/reopen, the app's one cross-household write — see the class doc.
 builder.Services.AddScoped<ReportResolutionService>();
+builder.Services.AddScoped<AdminHouseholdService>(); // the /admin household roster + the Founder grant
 
 // ---- Who's using the app: the admin "logins + who's online" view ----
 // LoginAudit persists per-account login counts (auth.db operator data, like the error log; read through
