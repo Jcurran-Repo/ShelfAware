@@ -75,24 +75,9 @@ else
                                 <input type="checkbox" @bind="attachDiagnostics" disabled="@busy" />
                                 <span>Technical details (page address, screen size, browser, theme, recent errors)</span>
                             </label>
-                            <dl class="attach-diag @(attachDiagnostics ? "" : "attach-off")">
-                                <div><dt>Page</dt><dd>@(string.IsNullOrEmpty(d.Url) ? "—" : d.Url)</dd></div>
-                                <div><dt>Screen</dt><dd>@(string.IsNullOrEmpty(d.Viewport) ? "—" : d.Viewport)</dd></div>
-                                <div><dt>Theme</dt><dd>@(string.IsNullOrEmpty(d.Theme) ? "—" : d.Theme)@(d.ReducedMotion ? " · reduced motion" : "")</dd></div>
-                                <div><dt>Browser</dt><dd>@(string.IsNullOrEmpty(d.UserAgent) ? "—" : d.UserAgent)</dd></div>
-                                <div><dt>Time</dt><dd>@(string.IsNullOrEmpty(d.LocalTime) ? "—" : d.LocalTime)@(string.IsNullOrEmpty(d.TimeZone) ? "" : $" ({d.TimeZone})")</dd></div>
-                                @if (d.JsErrors is { Count: > 0 } errors)
-                                {
-                                    <div>
-                                        <dt>Recent errors</dt>
-                                        <dd>
-                                            <ul class="attach-errors">
-                                                @foreach (var e in errors) { <li>@e</li> }
-                                            </ul>
-                                        </dd>
-                                    </div>
-                                }
-                            </dl>
+                            @* The SAME table the admin sees (BugSnapshotView), so what you're shown here can't
+                               drift from what gets attached. Dimmed when you've unchecked it. *@
+                            <BugDiagnosticsView Diagnostics="d" Dimmed="@(!attachDiagnostics)" />
                         </div>
                     }
 
@@ -251,13 +236,24 @@ else
                 where = From;
             }
         }
-        // Collect the snapshot the footer captured on the page the reporter came from. Taken once (it
-        // clears on read), so a back-nav to /bugs or a later direct visit won't re-attach a stale capture.
-        // Each section is opted IN by default when present — the reporter unchecks what they don't want.
-        snapshot = BugContext.TakePending();
-        attachDiagnostics = snapshot?.Diagnostics is not null;
-        attachPageContent = snapshot?.PageContent is not null;
         await LoadAsync();
+    }
+
+    /// <summary>Collect the snapshot the footer captured on the page the reporter came from. Done here, not
+    /// in OnInitializedAsync, so a re-click on "Report a bug" while ALREADY on /bugs — a same-route nav that
+    /// reuses this component and does NOT re-run OnInitialized — still consumes the fresh capture instead of
+    /// leaving it to surface on a later, unrelated visit. Guarded on "there is one to take" so ordinary
+    /// re-renders (which also fire OnParametersSet) can't null out an already-shown panel; TakePending
+    /// clears the courier, so it's taken exactly once. Each section is opted IN by default when present —
+    /// the reporter unchecks what they don't want.</summary>
+    protected override void OnParametersSet()
+    {
+        if (BugContext.TakePending() is { } pending)
+        {
+            snapshot = pending;
+            attachDiagnostics = pending.Diagnostics is not null;
+            attachPageContent = pending.PageContent is not null;
+        }
     }
 
     /// <summary>Self-catching (returns whether it worked), so a transient DB failure lands as a
@@ -326,7 +322,10 @@ else
                     },
                     ReportedBy = user?.Identity?.Name,
                     CreatedAt = DateTimeOffset.Now,
-                    StateJson = kept is { HasAnything: true } ? kept.Serialize() : null,
+                    // Bounded() clamps the content server-side (the JS caps are browser-enforced only) before
+                    // serialize — the same guard Body/PageUrl above get, so a tampered client can't store an
+                    // unbounded blob on the shared DB.
+                    StateJson = kept is { HasAnything: true } ? kept.Bounded().Serialize() : null,
                 });
                 await db.SaveChangesAsync();
             }

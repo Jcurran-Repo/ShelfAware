@@ -67,6 +67,46 @@ public class BugReportSnapshotTests
     }
 
     [Fact]
+    public void Bounded_clamps_oversized_content_fields_and_errors()
+    {
+        // The JS caps are browser-enforced only; a tampered client can return an arbitrarily large snapshot
+        // over the circuit. Bounded() is the server-side clamp before storage.
+        var huge = new BugReportSnapshot(
+            new BugDiagnostics(
+                Url: new string('u', 2000),
+                Viewport: "800x600",
+                UserAgent: new string('a', 2000),
+                Theme: "dark",
+                ReducedMotion: false,
+                LocalTime: "now",
+                TimeZone: "tz",
+                JsErrors: Enumerable.Range(0, 50).Select(_ => new string('e', 1000)).ToList()),
+            new string('p', 20_000));
+
+        var bounded = huge.Bounded();
+
+        Assert.True(bounded.PageContent!.Length <= 10_000);
+        Assert.True(bounded.Diagnostics!.Url!.Length <= 512);
+        Assert.True(bounded.Diagnostics.UserAgent!.Length <= 512);
+        Assert.True(bounded.Diagnostics.JsErrors!.Count <= 30);
+        Assert.All(bounded.Diagnostics.JsErrors, e => Assert.True(e.Length <= 512));
+        // A within-bounds field is left untouched.
+        Assert.Equal("dark", bounded.Diagnostics.Theme);
+    }
+
+    [Fact]
+    public void Bounded_leaves_a_within_bounds_snapshot_unchanged()
+    {
+        var snap = new BugReportSnapshot(SampleDiagnostics(), "Milk\nEggs");
+
+        var bounded = snap.Bounded();
+
+        Assert.Equal("Milk\nEggs", bounded.PageContent);
+        Assert.Equal("/product/12?tab=history", bounded.Diagnostics!.Url);
+        Assert.Equal(new[] { "TypeError: x is null @ readaloud.js:88" }, bounded.Diagnostics.JsErrors);
+    }
+
+    [Fact]
     public void TryParse_tolerates_a_partial_legacy_blob()
     {
         // Only page content, no diagnostics object at all — a shape a future/older writer might produce.

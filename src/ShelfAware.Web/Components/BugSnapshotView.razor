@@ -10,24 +10,8 @@
         <summary>Attached details</summary>
         @if (snap.Diagnostics is { } d)
         {
-            <dl class="attach-diag">
-                <div><dt>Page</dt><dd>@Or(d.Url)</dd></div>
-                <div><dt>Screen</dt><dd>@Or(d.Viewport)</dd></div>
-                <div><dt>Theme</dt><dd>@Or(d.Theme)@(d.ReducedMotion ? " · reduced motion" : "")</dd></div>
-                <div><dt>Browser</dt><dd>@Or(d.UserAgent)</dd></div>
-                <div><dt>Time</dt><dd>@Or(d.LocalTime)@(string.IsNullOrEmpty(d.TimeZone) ? "" : $" ({d.TimeZone})")</dd></div>
-                @if (d.JsErrors is { Count: > 0 } errors)
-                {
-                    <div>
-                        <dt>Recent errors</dt>
-                        <dd>
-                            <ul class="attach-errors">
-                                @foreach (var e in errors) { <li>@e</li> }
-                            </ul>
-                        </dd>
-                    </div>
-                }
-            </dl>
+            @* The SAME table the reporter reviewed on /bugs — one definition, so the two can't drift. *@
+            <BugDiagnosticsView Diagnostics="d" />
         }
         @if (snap.PageContent is { } content)
         {
@@ -39,6 +23,4 @@
 
 @code {
     [Parameter] public string? Json { get; set; }
-
-    private static string Or(string? s) => string.IsNullOrEmpty(s) ? "—" : s;
 }

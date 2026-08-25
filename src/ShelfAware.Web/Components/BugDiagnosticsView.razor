@@ -1,0 +1,35 @@
+@* The diagnostics table (page / screen / theme / browser / time / recent errors) of a bug-report snapshot.
+   ONE definition, rendered BOTH to the reporter on /bugs (the "Details to attach" preview) and to the admin
+   in BugSnapshotView. These two must never drift: the consent guarantee is that the reporter sees exactly
+   what the admin will — a field shown on one surface but not the other would attach data the reporter was
+   never shown. Dimmed is the only difference (the reporter can toggle the section off). *@
+@using ShelfAware.Web.Diagnostics
+
+<dl class="attach-diag @(Dimmed ? "attach-off" : "")">
+    <div><dt>Page</dt><dd>@Or(Diagnostics.Url)</dd></div>
+    <div><dt>Screen</dt><dd>@Or(Diagnostics.Viewport)</dd></div>
+    <div><dt>Theme</dt><dd>@Or(Diagnostics.Theme)@(Diagnostics.ReducedMotion ? " · reduced motion" : "")</dd></div>
+    <div><dt>Browser</dt><dd>@Or(Diagnostics.UserAgent)</dd></div>
+    <div><dt>Time</dt><dd>@Or(Diagnostics.LocalTime)@(string.IsNullOrEmpty(Diagnostics.TimeZone) ? "" : $" ({Diagnostics.TimeZone})")</dd></div>
+    @if (Diagnostics.JsErrors is { Count: > 0 } errors)
+    {
+        <div>
+            <dt>Recent errors</dt>
+            <dd>
+                <ul class="attach-errors">
+                    @foreach (var e in errors) { <li>@e</li> }
+                </ul>
+            </dd>
+        </div>
+    }
+</dl>
+
+@code {
+    [Parameter, EditorRequired] public BugDiagnostics Diagnostics { get; set; } = default!;
+
+    /// <summary>Dim the table to show it won't be sent (the reporter unchecked its section). The admin view
+    /// never dims.</summary>
+    [Parameter] public bool Dimmed { get; set; }
+
+    private static string Or(string? s) => string.IsNullOrEmpty(s) ? "—" : s;
+}

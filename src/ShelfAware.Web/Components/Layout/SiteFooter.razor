@@ -45,24 +45,36 @@
     private bool capturing;
 
     /// <summary>Capture the page snapshot on THIS page (the one the reporter is looking at), stash it for
-    /// /bugs to collect, then navigate. Capture never blocks the report: a JS failure or a disconnecting
-    /// circuit just means we navigate with no snapshot — the href already carries the from= pre-fill, so
-    /// the form still works. Deliberately not silent: /bugs shows whatever was captured and lets the
-    /// reporter drop either section before anything is stored.</summary>
+    /// /bugs to collect, then navigate. Capture never blocks the report: if snapshot() throws we file the
+    /// report anyway, snapshot-less — the href already carries the from= pre-fill. Deliberately not silent:
+    /// /bugs shows whatever was captured and lets the reporter drop either section before anything is stored.</summary>
     private async Task ReportAsync()
     {
         if (capturing) return;
         capturing = true;
         try
         {
+            BugReportSnapshot? snapshot = null;
             try
             {
-                var snapshot = await JS.InvokeAsync<BugReportSnapshot>("shelfawareBugCapture.snapshot");
-                BugContext.Stash(snapshot);
+                snapshot = await JS.InvokeAsync<BugReportSnapshot>("shelfawareBugCapture.snapshot");
             }
-            catch (JSDisconnectedException) { /* circuit going away — just navigate */ }
-            catch (JSException ex) { Logger.LogWarning(ex, "Capturing the page snapshot for a bug report failed."); }
+            catch (JSException ex)
+            {
+                // snapshot() threw (e.g. bug-capture.js failed to load): log it and still open the form,
+                // snapshot-less — capture is a bonus, never a gate on filing.
+                Logger.LogWarning(ex, "Capturing the page snapshot for a bug report failed.");
+            }
+            BugContext.Stash(snapshot);
             Nav.NavigateTo(BugsHref);
+        }
+        catch (JSDisconnectedException)
+        {
+            // The circuit went away mid-capture (this footer is in MainLayout, so it's on every page):
+            // swallow the teardown noise — there is nothing left to file or navigate. JSDisconnectedException
+            // is NOT a JSException (it derives from Exception), so it must be caught on its own.
+            // OperationCanceledException is left to propagate (the house rule) and is unreachable here anyway:
+            // snapshot() is synchronous JS invoked with no cancellation token.
         }
         finally { capturing = false; }
     }

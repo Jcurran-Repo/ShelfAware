@@ -518,4 +518,39 @@ public class BugsPageTests : PageTestContext
         Assert.Contains("Technical details", cut.Markup);
         Assert.DoesNotContain("What was on the page", cut.Markup);
     }
+
+    [Fact]
+    public async Task An_oversized_snapshot_is_clamped_when_stored()
+    {
+        // The JS caps are browser-side only; a tampered client can return a huge snapshot over the circuit.
+        // The store clamps it server-side (Bounded), the same posture as the Body/PageUrl clamp above.
+        BugContext.Stash(new BugReportSnapshot(
+            new BugDiagnostics("/x", "800x600", "ua", "dark", false, "now", "tz", null),
+            new string('p', 50_000)));
+        var cut = RenderBugs();
+
+        cut.Find("textarea").Input("huge page content");
+        cut.Find("form").Submit();
+
+        cut.WaitForAssertion(() => Assert.Contains("Sent — thank you", cut.Markup));
+        await using var raw = Db.CreateUnscopedContext();
+        var stored = BugReportSnapshot.TryParse((await raw.BugReports.IgnoreQueryFilters().SingleAsync()).StateJson);
+        Assert.NotNull(stored);
+        Assert.True(stored!.PageContent!.Length <= 10_000, $"page content was {stored.PageContent!.Length}");
+    }
+
+    [Fact]
+    public void A_snapshot_stashed_after_the_page_loads_is_still_consumed()
+    {
+        // Re-clicking "Report a bug" while ALREADY on /bugs stashes on a same-route nav that doesn't re-run
+        // OnInitialized — so the take happens in OnParametersSet. Render with no stash (no panel), then stash
+        // and re-run the parameter lifecycle (as a navigation would): the panel must now appear.
+        var cut = RenderBugs();
+        Assert.Empty(cut.FindAll("fieldset.bug-attach"));
+
+        BugContext.Stash(Sample());
+        cut.Render(); // re-invokes the parameter lifecycle (OnParametersSet)
+
+        Assert.NotEmpty(cut.FindAll("fieldset.bug-attach"));
+    }
 }
