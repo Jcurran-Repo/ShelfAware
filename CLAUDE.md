@@ -3041,8 +3041,23 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      housemate probe counts only the caller's own verified household, so wording can't leak
      another household's size). Both branches pinned Contains + DoesNotContain, mutation-checked
      (flipping the branch fails exactly the two wording tests); Web.Tests 697 + UI.Tests 485 green.
-   - Both branches await the `/pre-push` gate before merge, per the house rule; pushing is
-     Jordan's call.
+   - **The `/pre-push` gate RAN on both branches (2026-08-25).** Local `/code-review` is
+     model-invocation-disabled (item 42), so each branch got an independent code + security review as
+     a `general-purpose` agent. ⚠️ **The `isolation: worktree` option did NOT give each agent a
+     separate tree** — the agents' `git checkout` commands raced in the shared repo and dragged the
+     MAIN working tree's HEAD to the backup-kit commit; one security reviewer caught it live and
+     re-pinned to its blob, and I restored master. Item 40's isolation hazard, live. **Fix for next
+     time: review agents must read by EXPLICIT SHA (`git show <sha>:<path>`, `git diff <base>..<sha>`)
+     and never `git checkout` / never rely on HEAD** — the re-run code reviewers were told exactly
+     that and came back clean. Outcome: **`fix/self-removal-copy` — SHIP (code) + PASS (security),
+     no changes.** **`feature/family-backup-kit` — PASS (security) + FINDINGS (code): one MEDIUM
+     durability call + three fail-safe LOWs, ALL FIXED** (Jordan: fix all, the family box is the
+     pay-for box's dry run) in commit `869900c`: offsite `rclone sync` now runs `--backup-dir` so a
+     bad local night can't erase good offsite blobs (dated sibling archive); retention survives a
+     malformed stamp folder via `TryParseExact`; the installer validates `-KeepDays`; the log-write
+     catch is no longer empty. Verified end-to-end (retention proof, installer ValidateRange, archive
+     non-overlap, guard) — except the actual `rclone --backup-dir` move, reasoned from rclone docs
+     (rclone isn't installed here). Both branches still UNMERGED, UNPUSHED — pushing is Jordan's call.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
