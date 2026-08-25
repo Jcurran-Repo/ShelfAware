@@ -110,6 +110,7 @@ each session's progress.
 | Date | File | Mutants closed | How |
 |------|------|----------------|-----|
 | 2026-08-25 | Chat/ProductMatcher | 11 (9 survived + 2 no-coverage) | 4 targeted tests + 2 equivalent-mutant annotations. The tests pin the IDF-weighted scorer's exact behaviour: `IdentityKey(null)`, the inclusive 0.5 threshold + first-wins tie, `max(qWeight,pWeight)` as the denominator (a diluted overlap stays below the line), and an absent token counting at full `MaxIdf` weight. The two annotations are genuine equivalents (a `\|\|`→`&&` the downstream guards absorb; an empty-name `continue` that only skips a guaranteed-zero score). |
+| 2026-08-25 | Recipes/IngredientMatcher | 69 (46% → 100%) | ~44 killed by one comprehensive test over the whole `Trivial` modifier set; the rest by targeted tests for the `Singular` suffix rules (ies/oes/ses/xes/ches/shes/plain-s + the length boundaries), the digit-token filter (`v8` kept, pure numbers stripped), punctuation splitting, the mutual-coverage `&&`, and the blank-grounded-name guard. 3 equivalent-mutant annotations (the two `Count`/`Length` non-empty guards, whose `>=`/`<` mutants are non-defects because a count is never negative). |
 
 ## How to run it
 

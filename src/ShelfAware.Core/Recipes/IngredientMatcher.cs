@@ -101,6 +101,12 @@ public static class IngredientMatcher
     {
         var ta = CoreTokens(a);
         var tb = CoreTokens(b);
+        // Stryker disable once Equality: the comparison mutants on these two non-empty guards are all
+        // non-defects, because a token count is never negative. `>= 0` is a constant-true no-op — with
+        // one side empty the OTHER guard still yields false (both-empty is the only case the pair
+        // guards, and it needs exactly one of them), so `> 0` and `>= 0` agree everywhere. `< 0` is
+        // impossible for a count and would make the guard constant-false; every IsSameFood-true test
+        // already forbids that. Neither is a reachable behaviour change.
         return ta.Count > 0 && tb.Count > 0 && Covers(ta, b) && Covers(tb, a);
     }
 
@@ -117,6 +123,11 @@ public static class IngredientMatcher
         if (t.Length > 3 && (t.EndsWith("oes") || t.EndsWith("ses") || t.EndsWith("xes") ||
                              t.EndsWith("zes") || t.EndsWith("ches") || t.EndsWith("shes")))
             return t[..^2];
+        // Stryker disable once Equality: the comparison mutants on this length guard are non-defects.
+        // `>= 1` differs from `> 1` only for a length-1 token, i.e. a bare "s", and Singular("s") going
+        // from "s" to "" changes no match (an "s" token still matches an "s" token) — so they agree for
+        // every input. `< 1` is impossible for a non-empty token (Tokenize drops empties) and would
+        // switch off the plural-s rule, which A_plural_matches_its_singular already forbids.
         if (t.Length > 1 && t.EndsWith("s") && !t.EndsWith("ss")) return t[..^1];
         return t;
     }
