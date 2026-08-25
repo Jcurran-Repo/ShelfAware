@@ -69,6 +69,10 @@ public static class AdditiveSchema
         // BugReports table predates it.
         EnsureColumn(db, table: "BugReports", column: "ResolvedAt", definition: "TEXT NULL");
 
+        // 2026-08-25: the admin can PROPOSE a report as fixed for the reporter to confirm (before it's
+        // resolved). Same additive shape; reaches deployments whose BugReports table predates it.
+        EnsureColumn(db, table: "BugReports", column: "ProposedResolvedAt", definition: "TEXT NULL");
+
         // 2026-08-15: recipe tags — the cookbook's browsable second axis (like ProductTags for
         // products). A brand-new table is invisible to existing rows.
         EnsureTable(db, table: "RecipeTags");

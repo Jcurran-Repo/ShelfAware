@@ -418,6 +418,36 @@ public class AdminPageTests : PageTestContext
     }
 
     [Fact]
+    public async Task Proposing_a_bug_hands_it_to_the_reporter_without_resolving_it()
+    {
+        using (var db = authDb.CreateDbContext())
+        {
+            db.Households.Add(new Household { Id = "hh-a", Name = "The Currans" });
+            db.SaveChanges();
+        }
+        SeedReport("hh-a", "The chart looks wrong");
+        var cut = Render<Components.Pages.Admin>();
+        cut.WaitForAssertion(() => Assert.Contains("Propose resolved", cut.Markup));
+
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Propose resolved").Click();
+
+        // Still OPEN (not resolved), now awaiting the reporter — the unilateral override stays available.
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("awaiting the reporter", cut.Markup);
+            Assert.DoesNotContain("Resolved (1)", cut.Markup);
+            Assert.Contains("Withdraw", cut.FindAll("button").Select(b => b.TextContent.Trim()));
+        });
+        await cut.WaitForAssertionAsync(async () =>
+        {
+            await using var raw = Db.CreateUnscopedContext();
+            var report = await raw.BugReports.IgnoreQueryFilters().SingleAsync();
+            Assert.NotNull(report.ProposedResolvedAt);
+            Assert.Null(report.ResolvedAt);
+        });
+    }
+
+    [Fact]
     public async Task A_resolved_error_leaves_the_open_list_and_returns_when_it_recurs()
     {
         var store = new ErrorLogStore(authDb);
