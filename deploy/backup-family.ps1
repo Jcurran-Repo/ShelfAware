@@ -35,8 +35,12 @@
 # matters most. So the offsite hop runs INSIDE this task: when -RcloneRemote names a configured
 # rclone remote path (e.g. gdrive:ShelfAware-backups), the run ends with `rclone sync` mirroring
 # -Dest to it - provider-agnostic (Google Drive, B2, S3, whatever rclone speaks), no sign-in
-# needed, and retention applies once locally then mirrors out. One-time setup: install rclone,
-# run `rclone config` (interactive OAuth - the operator does this, once), then re-run
+# needed, and retention applies once locally then mirrors out. The sync runs with --backup-dir, so
+# a file it would delete or overwrite offsite is MOVED into a dated archive (<remote>-archive/<stamp>)
+# rather than erased - without it, a bad local night (mass-delete / corruption the /MIR faithfully
+# mirrored) would propagate offsite and leave the blob trees, which have no per-stamp local history,
+# unrecoverable anywhere. The archive grows and is the operator's to prune. One-time setup: install
+# rclone, run `rclone config` (interactive OAuth - the operator does this, once), then re-run
 # install-family-backup.ps1 with -RcloneRemote so the task carries it. Without -RcloneRemote the
 # backup is same-disk only, and that is stated here rather than implied to be more than it is.
 #
@@ -135,9 +139,18 @@ try {
     }
 
     # -- Retention: prune old db-* stamp folders by the date IN THEIR NAME --
+    # TryParseExact, not a [datetime] cast: a stray folder whose name fits the shape but names an
+    # impossible day (db-2026-13-40-000000) would make the cast THROW, and under -ErrorActionPreference
+    # Stop that aborts the whole run and skips retention entirely - a single planted name jams pruning
+    # forever. TryParseExact fails that folder to $false (left alone, never mis-deleted) and the run
+    # carries on. Invariant culture so the yyyy-MM-dd parse is locale-independent.
     $cutoff = (Get-Date).Date.AddDays(-$KeepDays)
     $old = Get-ChildItem $Dest -Directory -Filter 'db-*' | Where-Object {
-        $_.Name -match '^db-(\d{4}-\d{2}-\d{2})-\d{6}$' -and [datetime]$Matches[1] -lt $cutoff
+        $d = [datetime]::MinValue
+        ($_.Name -match '^db-(\d{4}-\d{2}-\d{2})-\d{6}$') -and
+        [datetime]::TryParseExact($Matches[1], 'yyyy-MM-dd', [cultureinfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::None, [ref]$d) -and
+        ($d -lt $cutoff)
     }
     foreach ($dir in $old) {
         if ($DryRun) { Write-Host "[dry run] would remove old snapshot $($dir.Name)" }
@@ -147,23 +160,37 @@ try {
         }
     }
 
-    # -- Offsite: mirror the whole staging folder to the rclone remote --
-    # After retention, so the remote mirrors the pruned local state (rclone sync deletes remote
-    # extras - retention is decided once, locally). A failure here still leaves the LOCAL backup
-    # intact and complete; the thrown message says so, so the log line names which half failed.
+    # -- Offsite: mirror the staging folder to the rclone remote, with versioned protection --
+    # After retention, so the remote mirrors the pruned local state. The danger a plain `rclone
+    # sync` would carry: the blob trees (receipts, recipe-images, keys, tts-cache) have ONLY this
+    # rolling mirror - no per-stamp local history like the DBs get - so a bad LOCAL night (a
+    # mass-delete, an app bug, or ransomware that the /MIR above faithfully mirrored into $Dest)
+    # would propagate the deletion offsite and leave NO recoverable copy of those blobs anywhere.
+    # --backup-dir closes that: instead of DELETING a remote file that has vanished locally, rclone
+    # MOVES it into a dated archive folder, so one bad night can never erase good offsite blobs -
+    # recovery is from the archive. This is the durability model of the pay-for box too (the family
+    # box is its dry run), which is why it's fixed here rather than accepted.
+    #   The archive is a SIBLING of the remote (<remote>-archive/<stamp>), never a child - rclone
+    # refuses a backup-dir nested inside the sync destination, and "<remote>-archive" shares no
+    # path component with "<remote>" so the two provably never overlap.
+    #   Cost, stated so it's a conscious choice: the archive grows over time (every superseded or
+    # deleted file, dated) and has no auto-pruning - it is the operator's to trim, deliberately
+    # manual on this dry run. A failure here still leaves the LOCAL backup intact and complete; the
+    # thrown message says so, so the log line names which half failed.
     if ($RcloneRemote -ne '') {
         $rclone = Get-Command rclone -ErrorAction SilentlyContinue
         if (-not $rclone) {
             throw "Offsite sync skipped: rclone is not installed (the LOCAL backup in $Dest is intact). Install rclone and run 'rclone config', or drop -RcloneRemote."
         }
-        $rcArgs = @('sync', $Dest, $RcloneRemote, '-q')
+        $archive = "$RcloneRemote-archive/$stamp"
+        $rcArgs = @('sync', $Dest, $RcloneRemote, '--backup-dir', $archive, '-q')
         if ($DryRun) { $rcArgs += '--dry-run' }
         & $rclone.Source @rcArgs
         if ($LASTEXITCODE -ne 0) {
             throw "Offsite sync to $RcloneRemote failed (rclone exit $LASTEXITCODE) - the LOCAL backup in $Dest is intact."
         }
-        if ($DryRun) { Write-Host "[dry run] would sync $Dest -> $RcloneRemote" }
-        else { Write-Host "  synced offsite -> $RcloneRemote" }
+        if ($DryRun) { Write-Host "[dry run] would sync $Dest -> $RcloneRemote (superseded files -> $archive)" }
+        else { Write-Host "  synced offsite -> $RcloneRemote (superseded -> $archive)" }
     }
 }
 catch {
@@ -175,7 +202,9 @@ catch {
 $status = 'ok'
 if ($failure) { $status = "FAILED: $failure" }
 if ($DryRun) { $status = "dry-run $status" }
-try { Add-Content -Path $logFile -Value "$stamp $status" -Encoding utf8 } catch {}
+try { Add-Content -Path $logFile -Value "$stamp $status" -Encoding utf8 }
+catch [System.IO.IOException] { Write-Warning "Couldn't write the backup log line ($stamp $status): $($_.Exception.Message)" }
+catch [System.UnauthorizedAccessException] { Write-Warning "Couldn't write the backup log line ($stamp $status): $($_.Exception.Message)" }
 
 if ($failure) {
     Write-Error "Backup failed: $failure"

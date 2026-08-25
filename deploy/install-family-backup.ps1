@@ -26,6 +26,12 @@ param(
     # the task. '' = local-only backups (and backup-family.ps1's header says exactly what that
     # does and doesn't protect against).
     [string]$RcloneRemote = '',
+    # Mirror backup-family.ps1's own [ValidateRange(1,3650)]: reject a bad value HERE, at install,
+    # rather than bake it into the task and have the nightly run fail at param-binding - which is
+    # BEFORE its try/catch, so it would write no backup-log.txt line and fail only where Task
+    # Scheduler shows it. Validating at the front door keeps a fat-fingered value from becoming a
+    # silently log-less failing backup.
+    [ValidateRange(1, 3650)]
     [int]$KeepDays = 14
 )
 
