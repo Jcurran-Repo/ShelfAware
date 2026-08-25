@@ -16,6 +16,10 @@
     @* Resolves the colour theme (Auto→OS / Light / Dark) and stamps data-theme on <html> BEFORE first
        paint, so there's no flash. External (not inline) because the strict CSP forbids inline scripts. *@
     <script src="@Assets["js/theme.js"]"></script>
+    @* Installs a bounded client-side error ring buffer as early as possible (so a bug filed later can
+       carry what went wrong), and exposes shelfawareBugCapture.snapshot() for the "Report a bug" click.
+       External, not inline, for the strict CSP — same reason as theme.js above. *@
+    <script src="@Assets["js/bug-capture.js"]"></script>
     @* Fingerprinted via MapStaticAssets (like the CSS/JS above), so the URL changes whenever the icon
        bytes change — a phone/CDN that cached an older icon is forced to re-fetch instead of serving the
        stale copy under an unchanging path. iOS uses apple-touch-icon; desktop uses the favicon. *@
