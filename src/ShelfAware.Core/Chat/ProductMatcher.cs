@@ -52,6 +52,9 @@ public static class ProductMatcher
     /// a product's stored count, and picking a twin arbitrarily replaces the wrong household number).</summary>
     public static IReadOnlyList<Product> ExactMatches(string? query, IReadOnlyList<Product> products)
     {
+        // Stryker disable once all: equivalent — swapping || for && changes nothing observable. A
+        // whitespace query normalizes to "" and is caught by the q.Length == 0 guard below; empty
+        // products make the Where empty; so both operators return [] in every combination of inputs.
         if (string.IsNullOrWhiteSpace(query) || products.Count == 0) return [];
         var q = IdentityKey(query);
         if (q.Length == 0) return [];
@@ -95,6 +98,9 @@ public static class ProductMatcher
         foreach (var p in products)
         {
             var pTokens = Tokens(Normalize(p.Name));
+            // Stryker disable once all: equivalent — an empty-name product shares 0 weight and has
+            // pWeight 0, so score is 0 / max(qWeight>0, 0) = 0 and it can never beat bestScore (≥ 0);
+            // dropping the continue changes no result. A pure optimization, not a decision.
             if (pTokens.Count == 0) continue;
             var sharedWeight = qTokens.Where(pTokens.Contains).Sum(Weight);
             var pWeight = pTokens.Sum(Weight);

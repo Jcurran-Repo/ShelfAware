@@ -105,6 +105,12 @@ Closed file-by-file; each file re-run scoped (`dotnet stryker --mutate "**/<File
 The top 5 files hold ~400 of the ~646. This is a multi-session arc; the score-history table records
 each session's progress.
 
+### Files closed to 100% (scoped `--mutate`)
+
+| Date | File | Mutants closed | How |
+|------|------|----------------|-----|
+| 2026-08-25 | Chat/ProductMatcher | 11 (9 survived + 2 no-coverage) | 4 targeted tests + 2 equivalent-mutant annotations. The tests pin the IDF-weighted scorer's exact behaviour: `IdentityKey(null)`, the inclusive 0.5 threshold + first-wins tie, `max(qWeight,pWeight)` as the denominator (a diluted overlap stays below the line), and an absent token counting at full `MaxIdf` weight. The two annotations are genuine equivalents (a `\|\|`→`&&` the downstream guards absorb; an empty-name `continue` that only skips a guaranteed-zero score). |
+
 ## How to run it
 
 Stryker.NET is a local dotnet tool, pinned in `.config/dotnet-tools.json` (so CI and any checkout use
