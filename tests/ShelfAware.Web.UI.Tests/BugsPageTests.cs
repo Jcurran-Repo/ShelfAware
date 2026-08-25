@@ -540,6 +540,23 @@ public class BugsPageTests : PageTestContext
     }
 
     [Fact]
+    public void An_ordinary_re_render_keeps_the_shown_panel_and_the_reporters_toggle()
+    {
+        // OnParametersSet fires on every re-render; the "is there one to take" guard makes an EMPTY courier
+        // a no-op, so a re-render can't null out an already-shown panel or undo a section the reporter
+        // unchecked. Without the guard, an unconditional consume sets snapshot=null and the whole panel
+        // vanishes (and the toggle resets) — the load-bearing direction the consume test alone doesn't pin.
+        BugContext.Stash(Sample());
+        var cut = RenderBugs();
+        AttachCheckbox(cut, "What was on the page").Change(false);
+
+        cut.Render(); // a parameter-lifecycle re-render, courier now empty
+
+        Assert.NotEmpty(cut.FindAll("fieldset.bug-attach")); // panel survives
+        Assert.False(((AngleSharp.Html.Dom.IHtmlInputElement)AttachCheckbox(cut, "What was on the page")).IsChecked); // toggle survives
+    }
+
+    [Fact]
     public void A_snapshot_stashed_after_the_page_loads_is_still_consumed()
     {
         // Re-clicking "Report a bug" while ALREADY on /bugs stashes on a same-route nav that doesn't re-run

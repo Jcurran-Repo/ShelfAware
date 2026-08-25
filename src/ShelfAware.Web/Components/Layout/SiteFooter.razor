@@ -73,8 +73,10 @@
             // The circuit went away mid-capture (this footer is in MainLayout, so it's on every page):
             // swallow the teardown noise — there is nothing left to file or navigate. JSDisconnectedException
             // is NOT a JSException (it derives from Exception), so it must be caught on its own.
-            // OperationCanceledException is left to propagate (the house rule) and is unreachable here anyway:
-            // snapshot() is synchronous JS invoked with no cancellation token.
+            // OperationCanceledException is left to propagate (the house rule). A default JS-interop timeout
+            // (CircuitOptions.JSInteropDefaultCallTimeout, ~1 min) could surface one even without an explicit
+            // token, but snapshot() is synchronous JS that returns instantly, so it's effectively unreachable
+            // — and propagating is the correct handling regardless; the finally still resets `capturing`.
         }
         finally { capturing = false; }
     }
