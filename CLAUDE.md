@@ -3017,9 +3017,17 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      the LIVE server with the app up** (integrity ok, mirror counts exact, second run idempotent,
      installed copy run with the task's exact argument line). ⚠️ Task registration needs
      ELEVATION (same class as publish-family.ps1) — Jordan runs `install-family-backup.ps1` once
-     elevated; everything else is proven. Default destination is inside the OneDrive folder:
-     same-disk TODAY (OneDrive was NOT running when built — a backup into an unsynced OneDrive
-     folder is not offsite, stated so nobody mistakes it), free offsite the moment syncing is on.
+     elevated; everything else is proven. **Offsite is `rclone`, not a sync client** (Jordan's
+     call: not OneDrive; also the right design): `-Dest` is a plain LOCAL staging folder, and the
+     nightly task ENDS with `rclone sync -Dest -RcloneRemote` when a remote is configured —
+     because any per-user sync client (OneDrive, Google Drive for desktop) only syncs while its
+     owner is signed in, and the family box serves HEADLESS after a reboot, exactly when a backup
+     matters most. rclone is provider-agnostic (Google Drive, B2, S3…), needs no sign-in, and is
+     the same shape the pay-to-play droplet uses on cron. One-time operator step: install rclone +
+     `rclone config` (interactive OAuth), then re-run the installer with `-RcloneRemote` to bake it
+     into the task. Without `-RcloneRemote` the backup is same-disk only, and both script headers
+     say exactly that. Sync runs AFTER retention (mirrors the pruned state); a sync failure leaves
+     the LOCAL backup intact and the log line names which half failed.
    - **The self-removal refusal stopped naming a feature that doesn't exist** (branch
      `fix/self-removal-copy`, unmerged). `RemoveMemberAsync` told a self-remover to "Use 'Delete
      my account' instead" — no such flow exists (item 54; it's launch-gated with credit-balance
