@@ -3223,6 +3223,77 @@ tfoot td {
     margin-top: 0.2rem;
 }
 
+/* Bug-report "details to attach" — the diagnostic snapshot the reporter reviews and can trim per
+   section before sending (Bugs.razor). Deliberately plain: it's a form aside, not a feature panel. */
+.bug-attach {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem 1rem;
+    margin: 0.25rem 0;
+    max-width: 34rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.bug-attach legend {
+    font-weight: 600;
+    font-size: 0.9rem;
+    padding: 0 0.35rem;
+}
+
+.attach-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.attach-diag {
+    margin: 0;
+    display: grid;
+    gap: 0.15rem 0.75rem;
+    font-size: 0.85rem;
+}
+
+.attach-diag > div {
+    display: grid;
+    grid-template-columns: 6rem 1fr;
+    gap: 0.5rem;
+}
+
+.attach-diag dt {
+    color: var(--ink-soft);
+}
+
+.attach-diag dd {
+    margin: 0;
+    word-break: break-word;
+}
+
+.attach-errors {
+    margin: 0;
+    padding-left: 1rem;
+    list-style: disc;
+}
+
+.attach-content {
+    max-height: 12rem;
+    overflow: auto;
+    background: var(--surface-alt);
+    border-radius: var(--radius);
+    padding: 0.5rem 0.65rem;
+    margin: 0.35rem 0 0;
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* An unchecked section stays visible (so you can see what you're deciding about) but dims, to show it
+   won't be sent. */
+.attach-off {
+    opacity: 0.5;
+}
+
 @media (max-width: 560px) {
     .ai-settings .model-fields {
         grid-template-columns: 1fr;

@@ -2,9 +2,12 @@
 @using Microsoft.Extensions.Options
 @using ShelfAware.Web.Auth
 @using ShelfAware.Web.Components.Layout
+@using ShelfAware.Web.Diagnostics
+@using ShelfAware.Web.Services
 @inject IHouseholdDbFactory DbFactory
 @inject IOptions<AdminOptions> Admin
 @inject ReporterReportService Reporter
+@inject BugReportContext BugContext
 @inject ILogger<Bugs> Logger
 
 <PageTitle>Report a bug — Shelf Aware</PageTitle>
@@ -54,6 +57,64 @@ else
                     <span>Where exactly</span>
                     <input @bind="where" maxlength="300" aria-label="Where it happened" disabled="@busy" />
                 </label>
+            }
+            @if (snapshot is not null)
+            {
+                @* Captured from the page you came from, at the click — shown here in full, NEVER attached
+                   silently. Each part is a separate checkbox, so you can leave off the page's content (the
+                   most personal part) while still sending the technical details, or drop both. *@
+                <fieldset class="bug-attach">
+                    <legend>Details to attach</legend>
+                    <p class="muted small">These help the admin reproduce what you saw. Uncheck anything you'd
+                        rather not send — it stays on your screen, it just isn't attached.</p>
+
+                    @if (snapshot.Diagnostics is { } d)
+                    {
+                        <div class="attach-item">
+                            <label class="checkbox-field">
+                                <input type="checkbox" @bind="attachDiagnostics" disabled="@busy" />
+                                <span>Technical details (page address, screen size, browser, theme, recent errors)</span>
+                            </label>
+                            <dl class="attach-diag @(attachDiagnostics ? "" : "attach-off")">
+                                <div><dt>Page</dt><dd>@(string.IsNullOrEmpty(d.Url) ? "—" : d.Url)</dd></div>
+                                <div><dt>Screen</dt><dd>@(string.IsNullOrEmpty(d.Viewport) ? "—" : d.Viewport)</dd></div>
+                                <div><dt>Theme</dt><dd>@(string.IsNullOrEmpty(d.Theme) ? "—" : d.Theme)@(d.ReducedMotion ? " · reduced motion" : "")</dd></div>
+                                <div><dt>Browser</dt><dd>@(string.IsNullOrEmpty(d.UserAgent) ? "—" : d.UserAgent)</dd></div>
+                                <div><dt>Time</dt><dd>@(string.IsNullOrEmpty(d.LocalTime) ? "—" : d.LocalTime)@(string.IsNullOrEmpty(d.TimeZone) ? "" : $" ({d.TimeZone})")</dd></div>
+                                @if (d.JsErrors is { Count: > 0 } errors)
+                                {
+                                    <div>
+                                        <dt>Recent errors</dt>
+                                        <dd>
+                                            <ul class="attach-errors">
+                                                @foreach (var e in errors) { <li>@e</li> }
+                                            </ul>
+                                        </dd>
+                                    </div>
+                                }
+                            </dl>
+                        </div>
+                    }
+
+                    @if (snapshot.PageContent is { } content)
+                    {
+                        <div class="attach-item">
+                            <label class="checkbox-field">
+                                <input type="checkbox" @bind="attachPageContent" disabled="@busy" />
+                                <span>What was on the page (its visible text)</span>
+                            </label>
+                            <details class="@(attachPageContent ? "" : "attach-off")">
+                                <summary>Preview (@content.Length characters)</summary>
+                                <pre class="attach-content">@content</pre>
+                            </details>
+                        </div>
+                    }
+
+                    @if (!attachDiagnostics && !attachPageContent)
+                    {
+                        <p class="muted small">Nothing extra will be attached — just your message and where it happened.</p>
+                    }
+                </fieldset>
             }
             <button type="submit" disabled="@busy">@(busy ? "Sending…" : "Send report")</button>
         </form>
@@ -156,6 +217,12 @@ else
     private string body = "";
     private string wherePage = "";
     private string where = "";
+    /// <summary>The diagnostic snapshot the footer captured on the page the reporter came from, or null
+    /// (they reached /bugs some other way, or capture failed). Shown in full on the form; each section's
+    /// attach flag decides what's stored.</summary>
+    private BugReportSnapshot? snapshot;
+    private bool attachDiagnostics;
+    private bool attachPageContent;
     private string? note;
     private string? error;
     private string? loadError;
@@ -184,6 +251,12 @@ else
                 where = From;
             }
         }
+        // Collect the snapshot the footer captured on the page the reporter came from. Taken once (it
+        // clears on read), so a back-nav to /bugs or a later direct visit won't re-attach a stale capture.
+        // Each section is opted IN by default when present — the reporter unchecks what they don't want.
+        snapshot = BugContext.TakePending();
+        attachDiagnostics = snapshot?.Diagnostics is not null;
+        attachPageContent = snapshot?.PageContent is not null;
         await LoadAsync();
     }
 
@@ -225,6 +298,12 @@ else
         try
         {
             var user = AuthState is null ? null : (await AuthState).User;
+            // Store only the sections the reporter left checked; if they cleared both (or there was no
+            // snapshot), nothing is attached. The whole snapshot was shown on the form, so this is never
+            // a silent capture — StateJson is exactly what they chose to send.
+            var kept = snapshot is null ? null : new BugReportSnapshot(
+                attachDiagnostics ? snapshot.Diagnostics : null,
+                attachPageContent ? snapshot.PageContent : null);
             await using (var db = await DbFactory.CreateDbContextAsync())
             {
                 db.BugReports.Add(new BugReport
@@ -247,6 +326,7 @@ else
                     },
                     ReportedBy = user?.Identity?.Name,
                     CreatedAt = DateTimeOffset.Now,
+                    StateJson = kept is { HasAnything: true } ? kept.Serialize() : null,
                 });
                 await db.SaveChangesAsync();
             }
@@ -256,6 +336,12 @@ else
             // form was silently filed against the previous report's page.
             wherePage = "";
             where = "";
+            // The snapshot belonged to THIS filing — clear it with the rest of the form so the panel goes
+            // away and a second, unrelated report can't silently re-attach a now-stale capture; a fresh
+            // one needs a fresh "Report a bug" click.
+            snapshot = null;
+            attachDiagnostics = false;
+            attachPageContent = false;
             // The save is DONE — a reload failure past this point must not read as one (the
             // opposite-advice rule: inviting a retry of a recorded report files it twice).
             note = await LoadAsync()
