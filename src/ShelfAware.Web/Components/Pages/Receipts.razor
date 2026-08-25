@@ -128,34 +128,11 @@ else
                     </tfoot>
                 </table>
 
-                @* What the receipt itself printed — subtotal/tax/total/savings — when extraction captured
-                   them. Self-consistent (subtotal + tax = total); the line-item sum above is a separate,
-                   computed figure and legitimately differs by any savings + rounding. *@
-                @if (HasPrintedTotals(row.Receipt))
-                {
-                    <div class="receipt-totals">
-                        @* Sources the printed figures apart from the computed "Line items" sum above — on a
-                           receipt with instant savings the two legitimately differ (line items are rung at
-                           full price; the printed subtotal is post-discount), so this labels them distinct. *@
-                        <div class="rt-caption">From the receipt</div>
-                        @if (row.Receipt.Subtotal is { } sub)
-                        {
-                            <div class="rt-row"><span>Subtotal</span><span>@sub.ToString("C")</span></div>
-                        }
-                        @if (row.Receipt.Savings is { } sav && sav > 0)
-                        {
-                            <div class="rt-row rt-savings"><span>Savings</span><span>-@sav.ToString("C")</span></div>
-                        }
-                        @if (row.Receipt.Tax is { } tx)
-                        {
-                            <div class="rt-row"><span>Tax</span><span>@tx.ToString("C")</span></div>
-                        }
-                        @if (row.Receipt.Total is { } tot)
-                        {
-                            <div class="rt-row rt-final"><span>Total</span><span>@tot.ToString("C")</span></div>
-                        }
-                    </div>
-                }
+                @* What the receipt itself PRINTED (subtotal/tax/total/savings), shown apart from the
+                   computed "Line items" sum above — on a receipt with instant savings the two legitimately
+                   differ (line items are rung at full price; the printed subtotal is post-discount). One
+                   shared panel with the Upload review screen so the two surfaces can't drift. *@
+                <ReceiptTotalsPanel Receipt="row.Receipt" />
                 @* Available whether the receipt is pending or confirmed — a real browser download (Blazor's
                    router skips `download` anchors), served household-scoped by /api/receipt-image. *@
                 @if (row.HasImage)
@@ -336,9 +313,6 @@ else
         totalSaved = confirmed.Sum(row => row.Receipt.Savings ?? 0);
         totalTax = confirmed.Sum(row => row.Receipt.Tax ?? 0);
     }
-
-    private static bool HasPrintedTotals(Receipt r) =>
-        r.Subtotal is not null || r.Tax is not null || r.Total is not null || r.Savings is not null;
 
     private async Task SetVerifiedAsync(ReceiptRow row, bool verified)
     {
