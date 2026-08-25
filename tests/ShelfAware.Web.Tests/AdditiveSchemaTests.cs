@@ -187,6 +187,31 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Adds_the_state_json_column_to_a_pre_capture_bug_reports_table()
+    {
+        // ⚠️ Same live-deployment ALTER path as the two bug-report column tests above: a BugReports table
+        // that predates StateJson (2026-08-25). The drop-TABLE parity test never exercises this branch, so
+        // a typo'd EnsureColumn would ship green and fail only on the family box's next boot.
+        await using var db = _db.CreateDbContext();
+        var fresh = await ColumnTypesAsync(db, "BugReports");
+
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE BugReports DROP COLUMN StateJson;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "BugReports"));
+
+        // And an attached snapshot round-trips through the migrated column.
+        var report = new BugReport { Body = "It looked wrong", CreatedAt = DateTimeOffset.Now };
+        db.BugReports.Add(report);
+        await db.SaveChangesAsync();
+        report.StateJson = """{"diagnostics":{"url":"/list"},"pageContent":"Milk"}""";
+        await db.SaveChangesAsync();
+        Assert.Equal(report.StateJson, (await db.BugReports.AsNoTracking().SingleAsync()).StateJson);
+    }
+
+    [Fact]
     public async Task Creates_the_ActivityEntries_table_on_an_older_db_with_the_fresh_schema()
     {
         await using var db = _db.CreateDbContext();

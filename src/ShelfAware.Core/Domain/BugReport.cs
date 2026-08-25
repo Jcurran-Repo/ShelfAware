@@ -23,6 +23,16 @@ public class BugReport : IHouseholdOwned
     /// is later removed.</summary>
     public string? ReportedBy { get; set; }
 
+    /// <summary>An optional diagnostic snapshot of the page the reporter was on — the JSON serialization
+    /// of what they chose to attach: the environment (URL, viewport, browser, theme, recent client-side
+    /// JS errors) and/or the page's visible content. Null = nothing attached (they opened /bugs directly,
+    /// or removed every section). Captured client-side at the moment they click "Report a bug", but — like
+    /// <see cref="PageUrl"/> — NEVER silently: it is shown on the form in a collapsible panel with each
+    /// section independently removable, so it is only ever the reporter's own household data, attached by
+    /// the reporter's own choice. The shape lives in Web (<c>BugReportSnapshot</c>); Core keeps only the
+    /// stored string.</summary>
+    public string? StateJson { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
 
     /// <summary>When the admin PROPOSED this as fixed and handed it to the reporter to confirm; null =
