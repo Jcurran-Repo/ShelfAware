@@ -20,17 +20,16 @@ param(
     # Passed through to backup-family.ps1 and BAKED INTO the task action, so what the task will do
     # is explicit in Task Scheduler rather than re-derived from the environment every night.
     [string]$ServerDir = "$env:USERPROFILE\ShelfAware-server",
-    [string]$Dest = '',
+    [string]$Dest = "$env:USERPROFILE\ShelfAware-backups",
+    # rclone remote path for the offsite mirror (e.g. gdrive:ShelfAware-backups). Set it AFTER
+    # installing rclone and running `rclone config` once; re-run this installer to bake it into
+    # the task. '' = local-only backups (and backup-family.ps1's header says exactly what that
+    # does and doesn't protect against).
+    [string]$RcloneRemote = '',
     [int]$KeepDays = 14
 )
 
 $ErrorActionPreference = 'Stop'
-
-# Same default logic as backup-family.ps1, resolved HERE so the task action names its destination.
-if ($Dest -eq '') {
-    if ($env:OneDrive -and (Test-Path $env:OneDrive)) { $Dest = Join-Path $env:OneDrive 'ShelfAware-backups' }
-    else { $Dest = Join-Path $env:USERPROFILE 'ShelfAware-backups' }
-}
 
 $csproj = Join-Path $PSScriptRoot 'sqlite-snapshot\SqliteSnapshot.csproj'
 $script = Join-Path $PSScriptRoot 'backup-family.ps1'
@@ -45,6 +44,7 @@ Write-Host "Copied backup-family.ps1 beside it."
 
 $installedScript = Join-Path $ToolDir 'backup-family.ps1'
 $argLine = "-NoProfile -ExecutionPolicy Bypass -File `"$installedScript`" -ServerDir `"$ServerDir`" -Dest `"$Dest`" -KeepDays $KeepDays"
+if ($RcloneRemote -ne '') { $argLine += " -RcloneRemote `"$RcloneRemote`"" }
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $argLine
 $trigger = New-ScheduledTaskTrigger -Daily -At $At
 # StartWhenAvailable: if the box was off or asleep at the trigger time, run on wake instead of

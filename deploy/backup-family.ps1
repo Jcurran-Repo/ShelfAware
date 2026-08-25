@@ -29,10 +29,22 @@
 # testable by creating a fake old-named folder. It only ever deletes db-* stamp folders under
 # -Dest; the files\ mirror is never touched by retention.
 #
+# Offsite: -Dest is a LOCAL staging folder on purpose, and -RcloneRemote is how backups leave the
+# machine. A per-user sync client (OneDrive, Google Drive for desktop) only syncs while its owner
+# is signed in - and this box serves headless after a reboot, which is the exact window a backup
+# matters most. So the offsite hop runs INSIDE this task: when -RcloneRemote names a configured
+# rclone remote path (e.g. gdrive:ShelfAware-backups), the run ends with `rclone sync` mirroring
+# -Dest to it - provider-agnostic (Google Drive, B2, S3, whatever rclone speaks), no sign-in
+# needed, and retention applies once locally then mirrors out. One-time setup: install rclone,
+# run `rclone config` (interactive OAuth - the operator does this, once), then re-run
+# install-family-backup.ps1 with -RcloneRemote so the task carries it. Without -RcloneRemote the
+# backup is same-disk only, and that is stated here rather than implied to be more than it is.
+#
 # Restore: copy the newest db-* pair back into ShelfAware-server\app-data (app stopped), restore
-# the files\ trees beside them. Caveat, stated because it will matter on the day: keys\ is
-# DPAPI-protected, so on a REBUILT machine or different user those DataProtection keys will not
-# decrypt - everyone signs in again. Same-machine restores decrypt fine.
+# the files\ trees beside them (from -Dest, or `rclone copy` them down first). Caveat, stated
+# because it will matter on the day: keys\ is DPAPI-protected, so on a REBUILT machine or
+# different user those DataProtection keys will not decrypt - everyone signs in again.
+# Same-machine restores decrypt fine.
 #
 # Needs no elevation and does not touch the running server (reads only). Exits nonzero on any
 # failure so Task Scheduler's Last Run Result shows red. Scheduled by install-family-backup.ps1,
@@ -41,21 +53,15 @@
 [CmdletBinding()]
 param(
     [string]$ServerDir = "$env:USERPROFILE\ShelfAware-server",
-    # Default: inside the OneDrive folder when one exists (free offsite the moment OneDrive is
-    # actually syncing - it was NOT running when this kit was built, so until then this is a
-    # same-disk backup and says so), else a plain local folder.
-    [string]$Dest = '',
+    [string]$Dest = "$env:USERPROFILE\ShelfAware-backups",
+    # An rclone remote path to mirror -Dest to after a successful run ('' = no offsite step).
+    [string]$RcloneRemote = '',
     [ValidateRange(1, 3650)]
     [int]$KeepDays = 14,
     [switch]$DryRun
 )
 
 $ErrorActionPreference = 'Stop'
-
-if ($Dest -eq '') {
-    if ($env:OneDrive -and (Test-Path $env:OneDrive)) { $Dest = Join-Path $env:OneDrive 'ShelfAware-backups' }
-    else { $Dest = Join-Path $env:USERPROFILE 'ShelfAware-backups' }
-}
 
 $appData = Join-Path $ServerDir 'app-data'
 $pantryDb = Join-Path $appData 'shelfaware.db'
@@ -139,6 +145,25 @@ try {
             Remove-Item $dir.FullName -Recurse -Force
             Write-Host "  removed old snapshot $($dir.Name)"
         }
+    }
+
+    # -- Offsite: mirror the whole staging folder to the rclone remote --
+    # After retention, so the remote mirrors the pruned local state (rclone sync deletes remote
+    # extras - retention is decided once, locally). A failure here still leaves the LOCAL backup
+    # intact and complete; the thrown message says so, so the log line names which half failed.
+    if ($RcloneRemote -ne '') {
+        $rclone = Get-Command rclone -ErrorAction SilentlyContinue
+        if (-not $rclone) {
+            throw "Offsite sync skipped: rclone is not installed (the LOCAL backup in $Dest is intact). Install rclone and run 'rclone config', or drop -RcloneRemote."
+        }
+        $rcArgs = @('sync', $Dest, $RcloneRemote, '-q')
+        if ($DryRun) { $rcArgs += '--dry-run' }
+        & $rclone.Source @rcArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "Offsite sync to $RcloneRemote failed (rclone exit $LASTEXITCODE) - the LOCAL backup in $Dest is intact."
+        }
+        if ($DryRun) { Write-Host "[dry run] would sync $Dest -> $RcloneRemote" }
+        else { Write-Host "  synced offsite -> $RcloneRemote" }
     }
 }
 catch {
