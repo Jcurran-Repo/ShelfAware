@@ -1,8 +1,14 @@
 @using Microsoft.Extensions.Options
+@using Microsoft.JSInterop
 @using ShelfAware.Web.Auth
+@using ShelfAware.Web.Diagnostics
+@using ShelfAware.Web.Services
 @implements IDisposable
 @inject IOptions<AdminOptions> Admin
 @inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject BugReportContext BugContext
+@inject ILogger<SiteFooter> Logger
 
 @if (Admin.Value.Configured)
 {
@@ -10,7 +16,10 @@
        be an invitation to shout into a void, so the whole entry point stands down (the same
        posture as the sign-in page's forgot-password link under EmailOptions.IsConfigured). *@
     <footer class="site-footer">
-        <a href="@BugsHref">🐞 Report a bug</a>
+        @* An anchor, so it still works when JS is off or the click is a middle/modified one (a plain nav
+           to /bugs, snapshot-less). A left click is intercepted to capture the page snapshot HERE — on the
+           page the reporter is still looking at — before navigating; after /bugs loads, that page is gone. *@
+        <a href="@BugsHref" @onclick="ReportAsync" @onclick:preventDefault>🐞 Report a bug</a>
         <AuthorizeView Policy="@AdminOptions.PolicyName">
             <a href="/admin">Admin</a>
         </AuthorizeView>
@@ -31,6 +40,45 @@
             if (query >= 0) relative = relative[..query];
             return $"/bugs?from={Uri.EscapeDataString(relative)}";
         }
+    }
+
+    private bool capturing;
+
+    /// <summary>Capture the page snapshot on THIS page (the one the reporter is looking at), stash it for
+    /// /bugs to collect, then navigate. Capture never blocks the report: if snapshot() throws we file the
+    /// report anyway, snapshot-less — the href already carries the from= pre-fill. Deliberately not silent:
+    /// /bugs shows whatever was captured and lets the reporter drop either section before anything is stored.</summary>
+    private async Task ReportAsync()
+    {
+        if (capturing) return;
+        capturing = true;
+        try
+        {
+            BugReportSnapshot? snapshot = null;
+            try
+            {
+                snapshot = await JS.InvokeAsync<BugReportSnapshot>("shelfawareBugCapture.snapshot");
+            }
+            catch (JSException ex)
+            {
+                // snapshot() threw (e.g. bug-capture.js failed to load): log it and still open the form,
+                // snapshot-less — capture is a bonus, never a gate on filing.
+                Logger.LogWarning(ex, "Capturing the page snapshot for a bug report failed.");
+            }
+            BugContext.Stash(snapshot);
+            Nav.NavigateTo(BugsHref);
+        }
+        catch (JSDisconnectedException)
+        {
+            // The circuit went away mid-capture (this footer is in MainLayout, so it's on every page):
+            // swallow the teardown noise — there is nothing left to file or navigate. JSDisconnectedException
+            // is NOT a JSException (it derives from Exception), so it must be caught on its own.
+            // OperationCanceledException is left to propagate (the house rule). A default JS-interop timeout
+            // (CircuitOptions.JSInteropDefaultCallTimeout, ~1 min) could surface one even without an explicit
+            // token, but snapshot() is synchronous JS that returns instantly, so it's effectively unreachable
+            // — and propagating is the correct handling regardless; the finally still resets `capturing`.
+        }
+        finally { capturing = false; }
     }
 
     // A parameterless component in a layout is skipped when the parent re-renders (nothing

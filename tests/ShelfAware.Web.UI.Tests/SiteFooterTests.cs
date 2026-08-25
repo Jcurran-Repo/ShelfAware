@@ -2,8 +2,10 @@ using Bunit.TestDoubles;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.JSInterop;
 using ShelfAware.Web.Auth;
 using ShelfAware.Web.Components.Layout;
+using ShelfAware.Web.Diagnostics;
 
 namespace ShelfAware.Web.UI.Tests;
 
@@ -65,5 +67,44 @@ public class SiteFooterTests : PageTestContext
         var cut = Render<SiteFooter>();
         Assert.Empty(cut.FindAll("footer"));
         Assert.Empty(cut.FindAll("a"));
+    }
+
+    [Fact]
+    public void Clicking_report_captures_the_page_snapshot_and_hands_it_to_bugs()
+    {
+        var snapshot = new BugReportSnapshot(
+            new BugDiagnostics("/products", "800x600 @2x", "UA", "dark", false, "time", "tz", ["boom"]),
+            "Milk\nEggs");
+        JSInterop.Setup<BugReportSnapshot>("shelfawareBugCapture.snapshot").SetResult(snapshot);
+        var nav = Services.GetRequiredService<NavigationManager>();
+        nav.NavigateTo("/products");
+        var cut = Render<SiteFooter>();
+
+        cut.FindAll("a").Single(a => a.TextContent.Contains("Report a bug")).Click();
+
+        cut.WaitForState(() => nav.Uri.Contains("/bugs"));
+        Assert.EndsWith("/bugs?from=%2Fproducts", nav.Uri);
+        // The snapshot was stashed for /bugs to collect — captured HERE, on the page the reporter was on.
+        var pending = BugContext.TakePending();
+        Assert.NotNull(pending);
+        Assert.Equal("Milk\nEggs", pending!.PageContent);
+        Assert.Equal("/products", pending.Diagnostics?.Url);
+    }
+
+    [Fact]
+    public void Clicking_report_still_navigates_when_capture_fails()
+    {
+        // Capture must never block filing the report: a JS failure (or a disconnecting circuit) just means
+        // we navigate with no snapshot — the href's from= pre-fill still gets the form there.
+        JSInterop.Setup<BugReportSnapshot>("shelfawareBugCapture.snapshot").SetException(new JSException("boom"));
+        var nav = Services.GetRequiredService<NavigationManager>();
+        nav.NavigateTo("/products");
+        var cut = Render<SiteFooter>();
+
+        cut.FindAll("a").Single(a => a.TextContent.Contains("Report a bug")).Click();
+
+        cut.WaitForState(() => nav.Uri.Contains("/bugs"));
+        Assert.EndsWith("/bugs?from=%2Fproducts", nav.Uri);
+        Assert.Null(BugContext.TakePending()); // nothing stashed
     }
 }

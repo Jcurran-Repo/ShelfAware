@@ -98,9 +98,9 @@ and **History (`/history`, added 8/20 — the household's activity log, newest f
 undo; see item 51)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1925 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1957 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
-bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54 and 55).
+bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55 and 56).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -2930,6 +2930,58 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
        live-deployment ALTER path the drop-TABLE test never exercises — item 49's lesson). +~11 tests
        across service / schema / page; the reopen-clears-proposal behaviour also mutation-checked.
    - **1925 green, 0 warnings** (non-incremental Release; A merged, B on its branch pending its gate).
+
+56. **Bug-report state capture (2026-08-25, branch `feature/bug-report-state-capture` — gated clean, PUSHED,
+   PR pending; NOT merged).** Jordan's ask: capture the state of the page when a bug report is filed — "serialize
+   the page and its variables or something", then "if you know a better way lets use that". The literal idea
+   doesn't map onto this app, and naming why is the design:
+   - ⚠️ **The report is filed on a DIFFERENT page.** The footer "Report a bug" link navigates to `/bugs`, and by
+     the time that form renders, the page the reporter had trouble on is GONE — Blazor disposed its component on
+     navigation, and Blazor Server component state is server-side private fields with no generic serializer. So
+     "the page's variables" don't exist at capture time. The snapshot is captured CLIENT-SIDE at the click
+     (`wwwroot/js/bug-capture.js`), stashed in a per-circuit courier (`BugReportContext`, scoped — the
+     `VoiceCoordinator`/`TourCoordinator` bus pattern), carried to `/bugs`, and collected once. The footer went
+     interactive (`@onclick` + `preventDefault` + programmatic nav; the `<a href>` stays for JS-off/middle-click).
+   - ⚠️ **"Never captured silently" made structural** — the same rule the `?from=` pre-fill already stated
+     (item 47). The snapshot is shown IN FULL on `/bugs` in a "Details to attach" panel, with TWO independently-
+     removable sections (Jordan's refinement over either single option): **technical details** (URL, viewport,
+     browser, theme, timezone, and a rolling ring buffer of recent client-side JS errors — `window.onerror` /
+     `unhandledrejection` / a `console.error` wrapper, which the app captures nowhere else) and **page content**
+     (the `#main-content` visible text). Each is a checkbox; only what stays checked is serialized into the new
+     `BugReport.StateJson` column. Page content — the most personal part — drops on its own.
+   - **`BugDiagnosticsView` is the ONE diagnostics table**, rendered to BOTH the reporter (`/bugs`, with a
+     `Dimmed` toggle) and the admin (`BugSnapshotView` on `/admin`). ⚠️ That pair is exactly what the consent
+     guarantee rests on — the reporter must see EXACTLY what the admin gets — so a duplicated table (the code
+     review's top finding) would silently defeat it the first time a field was added to one side. One definition.
+   - ⚠️ **`BugReportSnapshot.Bounded()` clamps the content server-side before serialize** — the JS caps are
+     BROWSER-enforced only, and the snapshot arrives as a JS→.NET interop return a signed-in user can redefine
+     (up to the 4 MB circuit limit) on a shared DB with no row cap. Same guard `Body`/`PageUrl` already get in
+     the same method (item 47 F2). Clamps the SEGMENTS, not the serialized string (a mid-string cut would make
+     `TryParse` read back null and lose the whole snapshot).
+   - ⚠️ **The snapshot is consumed in `OnParametersSet`, not `OnInitializedAsync`** — re-clicking "Report a bug"
+     while ALREADY on `/bugs` is a same-route nav that reuses the component and skips `OnInitialized`, which
+     would leave a stale stash for a later visit. Guarded on "there is one to take" so ordinary re-renders can't
+     null out an already-shown panel or reset a toggle (a real regression the re-review's probe proved, now
+     pinned both directions).
+   - **No `ErrorLog` correlation** — floated, then dropped: `ErrorLog` carries no household key (item 47), so it
+     can't be tied to a reporter; the client-side JS-error buffer is the better signal and it's in. `StateJson`
+     rides the already-covered `BugReports` table, so export/delete-my-data/CountAll reach it with no new wiring
+     (it's the reporter's own household data on both sides).
+   - **The `/pre-push` gate** (two independent review agents in isolated worktrees — one arrived STALE at master
+     and self-corrected, item 40's trap): **security PASS** — one household-scoped write site, the existing
+     admin-gated reader (no new `IgnoreQueryFilters`), no XSS (every field renders as an encoded text node, no
+     `MarkupString`, so `<img onerror>` is inert), CSP sound (`bug-capture.js` is a `self` IIFE, no eval/inline/
+     external host), no polymorphic deserialization. **Code review: no serious correctness defect.** Five
+     findings fixed in a fix pass (shared `BugDiagnosticsView`, `Bounded()`, the footer handler restructure,
+     the `OnParametersSet` consume, a record-equality note); the fix pass got its OWN re-review (item 39),
+     clean, whose two notes (a missing guard test the reviewer PROVED was needed; an imprecise OCE comment) were
+     then fixed + mutation-checked.
+   - **Live drive-tested** end to end (dev sandbox, alt port 5180): the panel showed the real captured
+     environment + an injected `console.error` caught by the ring buffer; unchecking page content dimmed it and
+     the admin then saw diagnostics with NO page-content section; keeping both stored both (4862 chars of the
+     grocery list's visible text); a direct `/bugs` visit showed no panel. Server logged zero errors.
+   - **1957 tests green, 0 warnings** on a non-incremental Release build (+32 over master's 1925). Every
+     load-bearing test mutation-checked. Six commits; branch pushed to origin, PR not yet opened.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

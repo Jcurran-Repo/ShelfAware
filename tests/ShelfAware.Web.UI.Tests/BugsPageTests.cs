@@ -8,6 +8,7 @@ using ShelfAware.Web.Auth;
 using ShelfAware.Web.Components.Layout;
 using ShelfAware.Web.Components.Pages;
 using ShelfAware.Web.Data;
+using ShelfAware.Web.Diagnostics;
 
 namespace ShelfAware.Web.UI.Tests;
 
@@ -391,5 +392,182 @@ public class BugsPageTests : PageTestContext
             Assert.Equal("/list", reports[0].PageUrl);
             Assert.Null(reports[1].PageUrl); // not inherited from the first report
         });
+    }
+
+    // ── The attachable diagnostic snapshot (state capture) ──────────────────────────────────────────
+    // The footer captures it on the page the reporter came from and stashes it in BugContext; the page
+    // collects it, shows it in full, and stores only the sections the reporter leaves checked.
+
+    private static BugReportSnapshot Sample(string? pageContent = "Milk\nEggs") => new(
+        new BugDiagnostics("/product/12", "800x600 @2x", "TestUA", "dark (auto)", ReducedMotion: true,
+            "Aug 25, 7:02 PM", "America/New_York", ["TypeError: boom @ x.js:1"]),
+        pageContent);
+
+    /// <summary>The include/exclude checkbox for one section, found by its label text (not order), so a
+    /// reworded label fails loudly rather than toggling the wrong section.</summary>
+    private static AngleSharp.Dom.IElement AttachCheckbox(IRenderedComponent<Bugs> cut, string labelText) =>
+        cut.FindAll("label.checkbox-field")
+            .Single(l => l.TextContent.Contains(labelText))
+            .QuerySelector("input[type=checkbox]")!;
+
+    [Fact]
+    public async Task A_captured_snapshot_shows_a_panel_and_stores_the_kept_sections()
+    {
+        BugContext.Stash(Sample());
+        var cut = RenderBugs();
+
+        // Shown in full on the form — never a silent capture (the app's stated rule).
+        Assert.Contains("Details to attach", cut.Markup);
+        Assert.Contains("/product/12", cut.Markup);
+        Assert.Contains("TypeError: boom", cut.Markup);
+        Assert.Contains("Milk", cut.Markup);
+        Assert.Equal(2, cut.FindAll("input[type=checkbox]").Count); // both sections present, both opted in
+
+        cut.Find("textarea").Input("Something looked off");
+        cut.Find("form").Submit();
+
+        cut.WaitForAssertion(() => Assert.Contains("Sent — thank you", cut.Markup));
+        await using var raw = Db.CreateUnscopedContext();
+        var stored = BugReportSnapshot.TryParse((await raw.BugReports.IgnoreQueryFilters().SingleAsync()).StateJson);
+        Assert.NotNull(stored);
+        Assert.Equal("/product/12", stored!.Diagnostics?.Url);
+        Assert.Equal("Milk\nEggs", stored.PageContent);
+    }
+
+    [Fact]
+    public async Task Unchecking_page_content_stores_diagnostics_without_it()
+    {
+        // The core of the design: page content — the most personal part — drops on its own, while the
+        // technical details still go.
+        BugContext.Stash(Sample());
+        var cut = RenderBugs();
+
+        AttachCheckbox(cut, "What was on the page").Change(false);
+        cut.Find("textarea").Input("Something looked off");
+        cut.Find("form").Submit();
+
+        cut.WaitForAssertion(() => Assert.Contains("Sent — thank you", cut.Markup));
+        await using var raw = Db.CreateUnscopedContext();
+        var stored = BugReportSnapshot.TryParse((await raw.BugReports.IgnoreQueryFilters().SingleAsync()).StateJson);
+        Assert.NotNull(stored);
+        Assert.NotNull(stored!.Diagnostics); // kept
+        Assert.Null(stored.PageContent);     // dropped, independently
+    }
+
+    [Fact]
+    public async Task Unchecking_diagnostics_stores_page_content_without_it()
+    {
+        // The other direction, pinned on its own so neither checkbox can be wired to both sections.
+        BugContext.Stash(Sample());
+        var cut = RenderBugs();
+
+        AttachCheckbox(cut, "Technical details").Change(false);
+        cut.Find("textarea").Input("Something looked off");
+        cut.Find("form").Submit();
+
+        cut.WaitForAssertion(() => Assert.Contains("Sent — thank you", cut.Markup));
+        await using var raw = Db.CreateUnscopedContext();
+        var stored = BugReportSnapshot.TryParse((await raw.BugReports.IgnoreQueryFilters().SingleAsync()).StateJson);
+        Assert.NotNull(stored);
+        Assert.Null(stored!.Diagnostics);               // dropped, independently
+        Assert.Equal("Milk\nEggs", stored.PageContent); // kept
+    }
+
+    [Fact]
+    public async Task Unchecking_both_sections_attaches_nothing()
+    {
+        BugContext.Stash(Sample());
+        var cut = RenderBugs();
+
+        AttachCheckbox(cut, "Technical details").Change(false);
+        AttachCheckbox(cut, "What was on the page").Change(false);
+        Assert.Contains("Nothing extra will be attached", cut.Markup);
+
+        cut.Find("textarea").Input("Something looked off");
+        cut.Find("form").Submit();
+
+        cut.WaitForAssertion(() => Assert.Contains("Sent — thank you", cut.Markup));
+        await using var raw = Db.CreateUnscopedContext();
+        // Nothing kept → StateJson is null, not an empty "{}" blob.
+        Assert.Null((await raw.BugReports.IgnoreQueryFilters().SingleAsync()).StateJson);
+    }
+
+    [Fact]
+    public async Task Without_a_captured_snapshot_no_panel_shows_and_nothing_is_attached()
+    {
+        var cut = RenderBugs(); // nothing stashed — reached /bugs directly
+
+        Assert.Empty(cut.FindAll("fieldset.bug-attach"));
+
+        cut.Find("textarea").Input("Filed straight from /bugs");
+        cut.Find("form").Submit();
+
+        cut.WaitForAssertion(() => Assert.Contains("Sent — thank you", cut.Markup));
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Null((await raw.BugReports.IgnoreQueryFilters().SingleAsync()).StateJson);
+    }
+
+    [Fact]
+    public void A_snapshot_with_only_diagnostics_shows_just_that_section()
+    {
+        // A partial capture (page content came back empty) shows one section, not an empty page-content box.
+        BugContext.Stash(new BugReportSnapshot(Sample().Diagnostics, null));
+        var cut = RenderBugs();
+
+        Assert.Single(cut.FindAll("input[type=checkbox]"));
+        Assert.Contains("Technical details", cut.Markup);
+        Assert.DoesNotContain("What was on the page", cut.Markup);
+    }
+
+    [Fact]
+    public async Task An_oversized_snapshot_is_clamped_when_stored()
+    {
+        // The JS caps are browser-side only; a tampered client can return a huge snapshot over the circuit.
+        // The store clamps it server-side (Bounded), the same posture as the Body/PageUrl clamp above.
+        BugContext.Stash(new BugReportSnapshot(
+            new BugDiagnostics("/x", "800x600", "ua", "dark", false, "now", "tz", null),
+            new string('p', 50_000)));
+        var cut = RenderBugs();
+
+        cut.Find("textarea").Input("huge page content");
+        cut.Find("form").Submit();
+
+        cut.WaitForAssertion(() => Assert.Contains("Sent — thank you", cut.Markup));
+        await using var raw = Db.CreateUnscopedContext();
+        var stored = BugReportSnapshot.TryParse((await raw.BugReports.IgnoreQueryFilters().SingleAsync()).StateJson);
+        Assert.NotNull(stored);
+        Assert.True(stored!.PageContent!.Length <= 10_000, $"page content was {stored.PageContent!.Length}");
+    }
+
+    [Fact]
+    public void An_ordinary_re_render_keeps_the_shown_panel_and_the_reporters_toggle()
+    {
+        // OnParametersSet fires on every re-render; the "is there one to take" guard makes an EMPTY courier
+        // a no-op, so a re-render can't null out an already-shown panel or undo a section the reporter
+        // unchecked. Without the guard, an unconditional consume sets snapshot=null and the whole panel
+        // vanishes (and the toggle resets) — the load-bearing direction the consume test alone doesn't pin.
+        BugContext.Stash(Sample());
+        var cut = RenderBugs();
+        AttachCheckbox(cut, "What was on the page").Change(false);
+
+        cut.Render(); // a parameter-lifecycle re-render, courier now empty
+
+        Assert.NotEmpty(cut.FindAll("fieldset.bug-attach")); // panel survives
+        Assert.False(((AngleSharp.Html.Dom.IHtmlInputElement)AttachCheckbox(cut, "What was on the page")).IsChecked); // toggle survives
+    }
+
+    [Fact]
+    public void A_snapshot_stashed_after_the_page_loads_is_still_consumed()
+    {
+        // Re-clicking "Report a bug" while ALREADY on /bugs stashes on a same-route nav that doesn't re-run
+        // OnInitialized — so the take happens in OnParametersSet. Render with no stash (no panel), then stash
+        // and re-run the parameter lifecycle (as a navigation would): the panel must now appear.
+        var cut = RenderBugs();
+        Assert.Empty(cut.FindAll("fieldset.bug-attach"));
+
+        BugContext.Stash(Sample());
+        cut.Render(); // re-invokes the parameter lifecycle (OnParametersSet)
+
+        Assert.NotEmpty(cut.FindAll("fieldset.bug-attach"));
     }
 }

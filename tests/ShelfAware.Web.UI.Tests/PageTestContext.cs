@@ -60,6 +60,9 @@ public abstract class PageTestContext : BunitContext
     /// <summary>Real coordinator, not a fake — it is a plain event bus. Settings and the first-run banner
     /// both raise it, and the walkthrough itself subscribes, so a test can watch either end.</summary>
     internal TourCoordinator Tour { get; }
+    /// <summary>Real courier, not a fake — a plain per-circuit slot. The footer stashes a captured snapshot
+    /// into it and /bugs collects it, so a test can watch either end of that hand-off.</summary>
+    internal BugReportContext BugContext { get; }
 
     protected PageTestContext()
     {
@@ -76,6 +79,7 @@ public abstract class PageTestContext : BunitContext
         Voice = new FakeVoiceCredentials();
         Coordinator = new VoiceCoordinator();
         Tour = new TourCoordinator();
+        BugContext = new BugReportContext();
 
         Services.AddSingleton<IHouseholdDbFactory>(Factory);
         Services.AddSingleton<IAppSettings>(AppSettings);
@@ -90,6 +94,7 @@ public abstract class PageTestContext : BunitContext
         Services.AddSingleton<IVoiceCredentials>(Voice);
         Services.AddSingleton(Coordinator);
         Services.AddSingleton(Tour);
+        Services.AddSingleton(BugContext);
         // Keyless BYOK — the public-demo shape. A test needing the managed deployment registers its own
         // over this (RegisterAdditionalServices runs after these, so the later registration wins).
         Services.AddSingleton(new CircuitAiSettings(Options.Create(new LlmOptions())));

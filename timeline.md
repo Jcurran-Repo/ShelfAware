@@ -8,10 +8,10 @@ done yet — survives even if everything else is lost.
 **Terminology:** Phases 1–5 are the original v1 build milestones. v2 / v3 are later versions.
 `[x]` + date = shipped · `[ ]` = not done yet.
 
-_Last updated: 8/15/2026 (v5.0 Cookbook merged). ⚠ Gap not yet backfilled here: the 8/12–8/15 arc between
-v4.6 and v5.0 — the family public instance (Cloudflare Tunnel + Access), forgot-password/SMTP, brand
-correction + the dev quick-login, and v4.7–v4.9 (in-app problem reporting, camera capture + staged uploads,
-resolve-for-bugs-and-errors). See CLAUDE.md items 44–49 for the full record._
+_Last updated: 8/25/2026 — backfilled the full 8/11–8/25 arc (droplet deploy · family public instance ·
+forgot-password · brand correction + dev quick-login · v4.7–v4.9 problem-reporting · Cookbook · undo/history ·
+warehouse extraction + totals · theme/alias/mascot polish · nav rail · GraphQL API · admin people ·
+subscriptions phases 1–2 · support-flow · bug-report state capture)._
 
 ---
 
@@ -34,8 +34,9 @@ resolve-for-bugs-and-errors). See CLAUDE.md items 44–49 for the full record._
 
 ### Phase 5 — Deploy + README
 - [x] Capstone README — 6/30/2026
-- [ ] Azure App Service deploy + live demo URL — Not complete
-- [ ] README assets: demo.gif + accuracy screenshot — Not complete (capture plan: docs/demo-gif-storyboard.md, 7/9/2026)
+- [x] Cloud deploy + live demo URL — **DigitalOcean droplet (NOT Azure)**, live at demo.shelfaware.net via the committed kit (docs/deploy-droplet.md + deploy/deploy.ps1) — 8/11/2026 (full entry under "Phase 5 — LIVE" below)
+- [x] README demo.gif — 7/12/2026 (predates v3.5+, so re-recording is optional polish; its storyboard was deleted with it)
+- [ ] README accuracy.png — Not complete (the one remaining README TODO, ~line 190)
 
 ### v1 enhancements (added over later weekends)
 - [x] UI design-system + dashboard polish — 6/26/2026
@@ -175,7 +176,7 @@ resolve-for-bugs-and-errors). See CLAUDE.md items 44–49 for the full record._
 - [x] Household panel in Settings (rename, invite code copy/regenerate, members) — 7/7/2026
 - [x] Managed-key usage metering + daily quotas per household (the public-Azure gate) — 7/7/2026
 - [x] OAuth external login (Google; config-gated, ships dark without credentials) — 7/7/2026
-- [ ] Email: confirmation + password reset (needs an email sender) — Deferred (no email server)
+- [x] Email: password reset (EmailOptions/SMTP, config-gated) — 8/12/2026 (see "Forgot password" below; email confirmation on registration still not built)
 - [ ] Household switching — Deferred
 
 ---
@@ -571,6 +572,32 @@ resolve-for-bugs-and-errors). See CLAUDE.md items 44–49 for the full record._
 
 ---
 
+## Phase 5 — LIVE + the public deployments
+- [x] **Deployed end-to-end to a DigitalOcean droplet** (demo box, BYOK) via `deploy/deploy.ps1` per the runbook — publish → install.sh → systemd → Caddy cert → registration; live at demo.shelfaware.net. First live deploy fixed the systemd-no-locale gotcha (invariant-culture ¤ prices → `LANG` in the env) — 8/11/2026
+- [x] **The family instance goes public — Cloudflare Tunnel + Access** (`family.shelfaware.net`): `cloudflared` Windows service dials out, Cloudflare Access gates it at the edge (one-time PIN to allow-listed emails, 1-month sessions). ZERO app changes (loopback binding, `AllowRegistration` off, managed keys already fit the shape). Runbook: docs/family-cloudflare.md. ⚠️ Judge Access state by the newest real log row, never the config screens or the (virgin-org-broken) policy tester — 8/12/2026
+
+## Forgot password + the family publish script (PR #7)
+- [x] **Password reset** — `EmailOptions` (all-or-nothing `ValidateOnStart`) + `IAccountMailer`/`SmtpAccountMailer` (MailKit) + two static-SSR pages. `EmailOptions.IsConfigured` is THE one "can this deployment send email" definition (unconfigured deployments — droplet/keyless — untouched). Mandatory STARTTLS, fails closed; enumeration-safe (one response for every outcome). ⚠️ An `OnInitialized` redirect does NOT stop a static-SSR form handler — every handler self-guards (the sibling hunt found the same shape in ChooseHousehold + ChangePassword). Born from Jordan's wife's lockout. **1481 green** — 8/12/2026
+- [x] `deploy/publish-family.ps1` — the family box's stage-and-swap publish (elevated only; data moves FIRST, deleting `-prev` refuses while it still holds an app-data, the boot task is disabled during the swap). Reviewed twice before touching the live box: a `/MIR` mirror draft would have DELETED the July backup — rehearse destructive filesystem tools with `/L` first — 8/12/2026
+
+## Brand correction + the dev quick-login (PRs #8 / #9 / #10)
+- [x] **Correct-a-brand on Product Detail** (PR #9) — an inline ✏️ per Recent-purchases row (`SetPurchaseBrandAsync`); brand is per-purchase and COSMETIC (the cadence pools across every brand), so it moves no count and fires no signal, unlike the quantity pencil beside it. Born from a misread Costco brand being uncorrectable on the live box — 8/13/2026
+- [x] ⚠️ **`DevAuth` — a Development-only passwordless quick sign-in** (PR #8, `GET /dev/login`) into a sample-seeded "Dev Sandbox" household, so automatic drive-testing of authenticated pages works again. THE safety property: `DevAuth.IsEnabled = env.IsDevelopment() && Dev:QuickLogin` — a Production box fails the first conjunct unconditionally, so it maps nothing there no matter where the flag comes from. Doubles as the dev admin — 8/13/2026
+- [x] Dashboard **copy-name** button (PR #10) — a 📋 per Running Low card copies the bare item name; `ClipboardCopy.TryWriteAsync` is THE clipboard posture (the two pre-existing copy sites had no catch — a refused clipboard tore down the circuit), all three converted. **1495 green** — 8/13/2026
+- [x] Family box: `Auth:AllowRegistration` flipped ON (Jordan wanted new sign-ups; a fresh registration there makes a NEW empty household — rejoining the shared pantry is still an invite code) — 8/13/2026
+
+## v4.7 — In-app problem reporting (PR #11)
+- [x] **Machines report ERRORS, humans report WRONGNESS** — one admin surface (`/admin`), two signal sources. An `ILoggerProvider` captures every Error/Critical event (deduped by message TEMPLATE) into `ErrorLog` (auth.db — operator data, no household, no export/delete); `BugReport` is an ordinary household-owned table (full tenancy drill). The admin is config-designated (`Admin:Emails`; unset = the feature doesn't exist anywhere); `AdminReportReader` is the app's FIRST production `IgnoreQueryFilters` (admin-gated INSIDE the service). Footer "🐞 Report a bug" carries the current page as a visible, editable `?from=` — never silent capture. Gate found 8, all fixed (⚠️ a failing persist logs at Error under an EF category the capture must keep watching → an AsyncLocal `BeginPersist` scope breaks the loop; drain-then-sweep on shutdown; server-side clamps). Read-only viewer v1 (resolve deferred to v4.9). **1542 green** — 8/14/2026
+
+## v4.8 — Snap a photo: camera capture + staged uploads (PR #13, + follow-ups)
+- [x] A 📷 **Snap** button on /receipt and /pantry-photo opened the camera (`capture="environment"` on a second InputFile behind a label — NOT getUserMedia, so `Permissions-Policy: camera=()` stands). Every picked file is read into memory in its OWN change event (re-activating an input kills its old `IBrowserFile` handles), so uploads STAGE and append across snaps; `PickedFileReader` is the one classification of a picked file's read. Born from Jordan's wife unable to FIND her photos in the iOS picker (Files hides the camera roll, HEIC greyed out). **1574 green** — 8/15/2026
+- [x] Follow-ups (merged): **dropped the camera-capture button** (`feature/snap-photo-android-capture`) and moved **mobile photo staging OFF the SignalR circuit** (client-side render + off-circuit upload), so a dropped mobile circuit can't hide the photo — the real fix for the Android/iPhone testers' upload trouble — 8/15/2026
+
+## v4.9 — Resolve for bugs and errors (PR #12 — the app's first cross-household WRITE)
+- [x] "Mark resolved" for both halves. **Errors:** resolution is DERIVED (`ResolvedAt` set AND `LastSeenAt ≤ ResolvedAt`), so a recurring error re-enters the open list automatically; ⚠️ the resolve stamps the `LastSeenAt` the admin was LOOKING AT, never the click's clock (an occurrence in the render-to-click window keeps the row open). **Bugs:** `ReportResolutionService` is the ONE cross-household write — `IgnoreQueryFilters().Where(Id).ExecuteUpdate` of exactly `ResolvedAt` (the tenancy guard `EnforceHousehold` FORCED the safe shape: load-flip-save was impossible). The reporter sees the resolve on /bugs. 15 gate findings fixed (the `.field`/`.checkbox-field` unscoping had broken Settings; the where-dropdown allowlists `SiteNav`). **1575 green** — 8/14/2026
+
+---
+
 ## v5.0 — The Cookbook (recipe book)
 - [x] **Cookbook (`/cookbook`)** — browse, read-aloud, and print saved recipes; the "Ready to make" /
   "Missing items" chip and the ✓/🛒 marks agree with the Recipes page (shared PantryOnHand +
@@ -593,13 +620,52 @@ resolve-for-bugs-and-errors). See CLAUDE.md items 44–49 for the full record._
 
 ---
 
+## v5.1 — Undo + the /history page (PRs #14 core / #15 bucket 1 / #16 warn-not-refuse)
+- [x] **Per-action undo + `/history`** (the household's activity log, newest first, with per-action undo). `ActivityLogService` is the single "what happened + how to reverse it"; the inline "↩ Undo" notice and /history both call ONE `UndoAsync`. ⚠️ Every undo is precondition-checked, NEVER blind — a handler re-reads current state and reverses only if it still matches what it recorded (a blind undo is two-screens-disagreeing across TIME). Recording is ATOMIC with the action at the DATA layer, so chat/voice actions get logged for free. `IUndoHandler` per `ActivityKind`; the page is kind-AGNOSTIC (switches on the Peek OUTCOME). ⚠️ Peek runs the SAME reversal then discards it (which is why it greys a no-op undo — and why the per-row N+1 cost is accepted; splitting it breaks the guarantee). Redo is a documented next step, NOT built — 8/20/2026
+- [x] Bucket 1 (#15): grocery-extra + substitute REMOVES made undoable too (the adds were, the removes weren't). Bucket 2 (merge/census/product-delete inverses) explicitly OUT — 8/21/2026
+- [x] Warn-not-refuse recipe undo (#16): a built-on recipe (cooked/adapted/tagged/photographed) WARNS rather than refusing; the confirm is a REAL server gate (`UndoAsync` refuses a destructive reversal without the flag, not just a UI dialog); the whole family goes. ⚠️ Gate finding #1 reassessed as a FALSE POSITIVE and NOT fixed — the reload-after-commit path can't reach the generic catch (proven by fault injection); the misdiagnosed fix was reverted. **1756 green** — 8/21/2026
+
+## Warehouse-receipt extraction + per-receipt savings & tax (PR #17)
+- [x] **Field-reading rules for Costco/warehouse layouts** (prompt-only) — read fields by their LABEL, not by POSITION: transaction date (bottom on thermal receipts; a "Date of Birth" line was a top-of-receipt trap), repeated one-line-per-unit → merge to quantity, a leading SKU/dept number is not a quantity, VOID + savings lines dropped. Live-verified on the real Costco photo; a committed labels-only fixture locks it (opaque abbreviations score lower on NAME, 100% on qty+category). Born from Jordan's real Costco receipt (wrong date, miscounted wine) — 8/21/2026
+- [x] **Per-receipt savings & tax** — extraction reads the printed subtotal/tax/total/savings into four additive `Receipt` columns; /receipts shows the breakdown + a running "amount saved" across confirmed receipts. `ReceiptIngestionService.ApplyHeader` is the one definition (fresh ingest AND Retry). Gate: 3 LOW fixed. **1766 green** — 8/21/2026
+
+## UI polish batch (PRs #18 theme / #19 alias name / #20 mascot)
+- [x] **Auto/Light/Dark theme switcher** — a header override over the OS default; `js/theme.js` stamps `data-theme` before first paint (external, strict-CSP). The dark palette moved into ONE `:root[data-theme="dark"]` block (out of the `prefers-color-scheme` query). ⚠️ Gate caught a HIGH: Blazor enhanced-nav STRIPS a client-set `data-theme` (login→register reverted a dark visitor) — re-applied on the `enhancedload` hook; any future client-set `<html>` attribute has the same exposure — 8/21/2026
+- [x] **Alias-resolved receipt-review name** — an aliased review line shows the product's own curated name ("HONEST COW" → "Cottage Cheese"), DERIVED from the product not copied onto the alias; scoped to alias hits only (a fuzzy/model guess still shows the model's read to verify against the dropdown) — 8/21/2026
+- [x] **Dapper-blob app icon + in-app mascot** — a gold-suited gentleman blob replaces the placeholder "SA"; shows on the dashboard empty state, the not-found page, and a header badge. Regenerated PNGs from a committed vector source (docs/icons/); prior-art check clear. Gate caught the badge floating the wordmark off the nav (header `align-items: center`). **1770 green** — 8/21/2026
+
+## Nav rail + receipt-image download + icon cache (PRs #21 / #22 / #24)
+- [x] **Left sidebar nav rail** (PR #21) — retired the ~768–1400px header overflow the 13-link top bar caused (drawer <1100px); pre-push gate run, 5 a11y findings fixed — 8/22/2026
+- [x] **Download a receipt's saved image** (PR #22) — a household-scoped `/api/receipt-image/{id}` (mirrors the recipe-image tenancy shape: caller's household only, identical 404 for foreign/missing) + a Download link on /receipts — 8/22/2026
+- [x] Icon cache-versioning fix (PR #24) — fingerprinted icon URLs so a phone/CDN can't keep serving a stale cached icon — 8/22/2026
+
+## v5.2 — Read-only GraphQL API (PR #23)
+- [x] **A read-only GraphQL API over the pantry** (Hot Chocolate 16.6.1). The whole tenancy story is REUSE, not new code: an `ApiToken` auth scheme carries the SAME `shelfaware:household` claim the cookie bakes in, so `IHouseholdDbFactory` scopes every resolver for free; read-only by ABSENCE of a Mutation type. `ApiToken` lives in auth.db (the token→household lookup IS the auth step, before any household is known); raw secret shown ONCE, SHA-256 hash stored. Computed `prediction`/`estimate` fields run the pure engine on read, memoized per request so the two agree. Exposure is a pure config flag `GraphQL:Enabled` (default false), meant to reach prod. ⚠️ Two integration bugs found ONLY by running it (antiforgery 400'd every POST; StatusCodePages re-executed the empty 401/429). Gate: 1 MED-HIGH — **removing a household member didn't revoke their API tokens** (a second credential carrying the tenant id needs the same eviction reach as the cookie) — + LOWs, all fixed. **1836 green** — 8/22/2026
+
+## Admin "people" + login audit (PRs #25 / #26)
+- [x] Admin people/presence — "who has logged in" (`UserLoginStat`, auth.db operator data) + a live "Online now" list (guarded presence circuit hooks); login-audit race fallback pinned (PR #26) — 8/23/2026
+
+## Subscriptions (docs/subscription-plan.md; PRs #27 phase 1 / #28 phase 2)
+- [x] **Phase 1 — entitlement seam + Founder tier** (PR #27): tiers (Shelf / Aware / Sous Chef / Founder) as an auth-side `Household.Tier` enum + an admin grant/revoke roster + a Founder badge. Founder = tier #1 of the paid arc ($2.99/mo · $27.99/yr, credits 1.65× subscribers-only, merchant-of-record payments, BYOK by deployment mode) — 8/24/2026
+- [x] **Phase 2 — cost accounting** (PR #28): `AiPricing` catalog + `CostMicros` (per-day AI cost in micros, additive on `AiUsage`) + a monthly usage view + a credit ledger (auth.db) with a welcome grant. L1 fix (independent best-effort money write) + L3 root fix (double-create-orphan race) merged with it; regated clean + live-verified. **1912 green** — 8/24/2026
+- [ ] **Phase 3 — payments** — STARTED, on local branch `feature/subscription-payments` (rebased onto master + the Stripe Managed Payments decision doc). SMP CHOSEN (cheap + stable, no recurring fee); 5 gated sub-steps via a provider seam + a FAKE adapter (foundation → webhook → checkout/portal → lifecycle → real SMP adapter); only the last needs Jordan's Stripe test keys — Not complete (in progress)
+
+## Support-flow polish (PRs #29 / #30)
+- [x] **Receipt totals on the Upload REVIEW screen** (PR #29) — the printed subtotal/savings/tax/total now show during review, not only after confirming; a shared `ReceiptTotalsPanel` renders on BOTH /receipts and the review screen (v5.2's totals capture was the underlying fix) — 8/25/2026
+- [x] **Reporter-side ticket resolution + admin "propose resolved"** (PR #30) — three states from two timestamps: Open → Proposed (`ProposedResolvedAt`, admin-set) → Resolved. The reporter resolves/confirms/reopens their OWN tickets via `ReporterReportService` (ordinary household-scoped context, NO IgnoreQueryFilters — the structural inverse of the admin's cross-household write); the admin can propose a fix for the reporter to confirm OR unilaterally resolve ("ghost customers"). **1925 green** — 8/25/2026
+
+## Bug-report STATE CAPTURE (branch feature/bug-report-state-capture — pushed, PR pending)
+- [x] **A diagnostic snapshot on bug reports** — clicking "🐞 Report a bug" captures the page's state AT THE CLICK (Blazor Server files the report on a DIFFERENT page, so it can't be read on /bugs; a per-circuit `BugReportContext` courier carries it there). Two independently-removable sections in a "Details to attach" panel (⚠️ never silent — shown in full, each dropped on its own): technical details (URL, viewport, browser, theme, timezone, a ring buffer of recent client-side JS errors via `bug-capture.js`) and the page's visible text. Stored as `BugReport.StateJson`; rendered for the admin via a shared `BugDiagnosticsView` (the reporter must see EXACTLY what the admin gets — the pair that must not drift). `Bounded()` clamps server-side (the JS caps are browser-only). Gate: both reviews PASS + fix-pass re-reviewed clean; live drive-tested. **1957 green, 0 warnings** — 8/25/2026
+
+---
+
 ## Backlog (unscheduled)
 - [x] Double-scroll fix (Grocery List + Upload review) — 7/2/2026
 - [x] Photo-upload fix (CSP `img-src blob:` + bounded resize) — 7/21/2026 (the first real photo upload hung forever: the strict CSP blocked Blazor's in-browser resize and its JS never settles the promise; PDFs skip the path, so it hid since 7/5)
 - [ ] CSV history importer — Parked (blocked on an itemized data export)
 - [ ] More eval fixtures (paper / Edwards receipts) — Not complete
 - [x] Per-size Trends price chart — 7/8/2026 (dominant-size ticker/chart; see v3.1)
-- [ ] "Dapper blob" mascot / branding — Not complete
+- [x] "Dapper blob" mascot / branding — 8/21/2026 (shipped in the UI polish batch, PR #20)
 - [ ] Food diary — photo of a meal → which foods you ate: candidates matched to pantry products, logging the dated MealEvent (today only ~1/3 of meals arrive via a saved recipe's "Ate it") and feeding the eat/Waist-watch reports. A third door — consumption — distinct from purchases (receipts) and attestation (census) — Idea, 7/30/2026
 - [x] Interactive demo mode — a guided, hands-on tour that walks a new user through the app's features against the seeded demo catalog (extends the onboarding banner + demo seeder; every major concept already has a seeded hero to point at) — **shipped as v4.5's guided walkthrough** — 8/1/2026
 - [ ] Stale-counts view — one place to see which counts the app has stopped believing, so a stale number gets re-counted instead of quietly deciding things. Floated by Jordan during the 8/3 merge triage as the counterpart to keeping finding 10 as-is: a stale POSITIVE count still reads in-stock on purpose ("if they said it's in stock we shouldn't consider it out unless they say so; marking out or setting zero is one tap, and a recipe suggesting it lets them go 'oh snap, I'm out'"), so the fix for a drifting count is **visibility**, not the engine second-guessing the household. Shows the three states a surface currently only mentions in passing: `CountConfidence.Aging` (no rhythm, past §13.5's 90-day `Unattested` threshold), `CountConfidence.Spent` (a rhythm says it should be gone — `CountRunsOutOn` is past), and DORMANT pairs (`TrackQuantity` false with a kept number + date, §13.1's "off is dormant, not destructive"). Home is undecided: a `/reports` preset (must pass `ReportSpecRules`, and a saved spec the engine refuses would greet a visitor with an error) or a `/products` filter beside the existing tag/category ones — the report reads better for "go fix these", the filter for "while I'm already here". ⚠️ Whatever renders it must **attribute, never assert** ("you counted 9 on Mar 12"), which is `CountConfidence`'s whole reason for existing (§13.5) — a view of distrusted numbers that states them as facts is the one thing this must not become. It asks the engine for `Status`/confidence rather than re-deriving staleness from dates (the "one prediction, one story" rule; `CountLooksStale` reports AGE only and licenses no conclusion about lists). Natural companions if it ships: a one-tap re-count from the row, and the census as the bulk answer when several have drifted at once — Idea, 8/3/2026
