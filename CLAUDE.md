@@ -1552,6 +1552,8 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      mutations, each killing exactly its tests. ⚠️ Not re-verified in a browser since these changes — the
      HEIC path in particular can only be settled on a real iOS device, and the fix is reasoned from
      Blazor's `InputFile.ts` plus WebKit's documented transcode behaviour, not observed.
+     **[SETTLED 2026-08-25: the household's iPhone user (a Founder) confirmed image upload works on a
+     real device — see item 57.]**
 
 40. **The re-gate, and the end of the patch cycle (2026-08-02).** The gate over item 39's own fix commit
    found seven more — five of them regressions that commit had introduced. Three rounds in a row had now
@@ -1604,7 +1606,7 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      of the rule the same commit shipped); and a page test hard-coded loader copy the product no longer
      produces — the wording is pinned on both sides now.
    - **1339 tests green, 0 warnings** on a non-incremental Release build. ⚠️ Still not browser-verified
-     since item 39: the HEIC path needs a real iOS device.
+     since item 39: the HEIC path needs a real iOS device. **[Settled 2026-08-25 — item 57.]**
    - **The gate over the revert found no behaviour regressions — the first round of five that didn't.**
      What it did find was the revert's blind spot: deleting the withholding also deleted its tests, and
      the replacements went onto the census path only. Mutation-proven twice by independent reviewers —
@@ -2330,7 +2332,9 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      included) on both pages, append + ✕ removal, a text file refused instantly by name beside a
      surviving good photo, dark mode, zero console errors. ⚠️ NOT yet verified on a real iPhone —
      the capture attribute and the same-name re-snap are exactly what only her device can prove;
-     first thing to check after the next family publish.
+     first thing to check after the next family publish. **[VERIFIED 2026-08-25: the household's
+     iPhone user (a Founder) confirmed image upload works on a real device — see item 57. The
+     same-name re-snap wasn't itemized separately, but multi-photo flows are in ordinary use.]**
    - **The pre-merge max-effort `/code-review` (2026-08-15): two findings, both fixed.** The two
      refusal paths in each page's OnFilesSelected (the >Max single-selection catch and the
      append-cap check) returned before the finally, so the refused pick stayed as the input
@@ -2982,6 +2986,55 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      grocery list's visible text); a direct `/bugs` visit showed no panel. Server logged zero errors.
    - **1957 tests green, 0 warnings** on a non-incremental Release build (+32 over master's 1925). Every
      load-bearing test mutation-checked. Six commits; branch pushed to origin, PR not yet opened.
+     **[MERGED to master via PR #31, 2026-08-25.]**
+
+57. **Pre-launch readiness pass — iPhone verified, launch ops logged, family backups built, the
+   self-removal ghost fixed (2026-08-25).** Jordan asked what stands between finishing the payments
+   branch and charging money. The answer: nothing blocks *finishing the branch*; the plan's own §9
+   launch gate already names the legal set, and the readiness gaps it missed are now logged in
+   `docs/subscription-plan.md` §9 as the **ops launch gate** (transactional email provider,
+   pay-to-play backups + uptime/error alerting, pre-auth support contact) — all deliberately
+   deferred until promised customers exist (Jordan's call: "I can't justify a real email provider
+   or a real deployment with backups until I have promised customers"). Done NOW instead:
+   - **The iPhone photo path is VERIFIED on a real device** — the household's iPhone user (a
+     Founder) confirmed image upload works, closing the ⚠️ items 39/40/48 carried since 2026-08-02.
+     The HEIC/capture reasoning was sound all along; it just had never been observed.
+   - **`deploy/` gained the nightly family-box backup kit** (branch `feature/family-backup-kit`,
+     unmerged) — built on the family box as the deliberate dry run for the future pay-to-play box's
+     backup provision. `deploy/sqlite-snapshot/` (⚠️ NOT named `backup/`: .gitignore's VS-template
+     `Backup*/` pattern is case-insensitive on Windows and silently swallowed the whole folder —
+     found because `git status` showed only the scripts) is a tiny console tool: **`VACUUM INTO`
+     from a READ-ONLY connection** snapshots a LIVE database consistently (WAL readers never block
+     the app; a plain file copy of a live .db is the torn-backup mistake), then
+     `PRAGMA integrity_check` runs against the COPY — a backup nobody has opened is a hope.
+     `backup-family.ps1`: per-stamp `db-*` snapshot folders (retention prunes by the date IN THE
+     FOLDER NAME — deterministic, rehearsed with a planted `db-2026-01-01-000000`), a rolling
+     robocopy `/MIR` of receipts/recipe-images/keys/tts-cache into dedicated subfolders ONLY (the
+     publish-family `/MIR` lesson), `-DryRun` rehearses everything, and one log line per run,
+     success or FAILURE. `install-family-backup.ps1` publishes tool + script to a stable folder
+     OUTSIDE the repo and points the daily 03:30 task at that COPY — ⚠️ the 3am task must not
+     depend on which branch the working tree is on. S4U + StartWhenAvailable. **Verified against
+     the LIVE server with the app up** (integrity ok, mirror counts exact, second run idempotent,
+     installed copy run with the task's exact argument line). ⚠️ Task registration needs
+     ELEVATION (same class as publish-family.ps1) — Jordan runs `install-family-backup.ps1` once
+     elevated; everything else is proven. Default destination is inside the OneDrive folder:
+     same-disk TODAY (OneDrive was NOT running when built — a backup into an unsynced OneDrive
+     folder is not offsite, stated so nobody mistakes it), free offsite the moment syncing is on.
+   - **The self-removal refusal stopped naming a feature that doesn't exist** (branch
+     `fix/self-removal-copy`, unmerged). `RemoveMemberAsync` told a self-remover to "Use 'Delete
+     my account' instead" — no such flow exists (item 54; it's launch-gated with credit-balance
+     disposition). Jordan proposed pointing at "Delete my data" instead; **the advice now branches,
+     because his pointer is only safe for a SOLE member**: "Delete all my data" wipes the
+     household's SHARED pantry, so offering it to a leaver in a multi-member household invites
+     destroying everyone else's data. With housemates → "ask another member to remove you" (the
+     act that exists; the Settings UI already hides Remove on your own row, so this is the
+     authorization boundary's copy). Alone → the wipe pointer, where there's nobody else's data
+     behind it. The membership check moved before the self check (one actor load serves both; the
+     housemate probe counts only the caller's own verified household, so wording can't leak
+     another household's size). Both branches pinned Contains + DoesNotContain, mutation-checked
+     (flipping the branch fails exactly the two wording tests); Web.Tests 697 + UI.Tests 485 green.
+   - Both branches await the `/pre-push` gate before merge, per the house rule; pushing is
+     Jordan's call.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

@@ -496,3 +496,29 @@ only on someone who actually came back.
    **Launch gate:** ToS + refund policy + privacy update + entity decision + account deletion with
    credit-balance disposition — none exists today, all required before a public deployment takes
    money.
+   **Ops launch gate (added 2026-08-25 — the readiness pass; all deliberately deferred until
+   promised customers exist, Jordan's call: "I can't justify a real email provider or a real
+   deployment with backups until I have promised customers"):**
+   - **Transactional email provider** (Postmark/SES/Resend-class) + SPF/DKIM on shelfaware.net for
+     the pay-to-play box. The Gmail app-password SMTP is a family-box arrangement: daily send
+     limits, deliverability, personal-account coupling — and §1's email-confirmation-before-grant
+     makes every registration depend on a delivered email, so this gates the anti-farming defaults
+     too. Password reset is the only self-serve recovery; it must not be flaky for people who pay.
+   - **Automated offsite backups on the pay-to-play box** — cron + `sqlite3 .backup`/`VACUUM INTO`
+     to object storage, in the deploy kit from day one. The process was dry-run on the family box
+     2026-08-25: `deploy/backup-family.ps1` + `deploy/sqlite-snapshot/` (nightly live-DB snapshots
+     with integrity checks + a rolling blob mirror) — see CLAUDE.md item 57. The droplet version is
+     the same shape on cron.
+   - **Uptime + error alerting.** The ErrorLog is pull-only (someone must visit /admin) and no
+     health endpoint exists; a paid box that dies at 2am must page somebody. Minimum: a free
+     external uptime ping against the sign-in page; better: mail the admin on a new error
+     fingerprint (the `IAccountMailer` seam exists). §1's spend-ceiling alert covers cost, not
+     availability.
+   - **Pre-auth support contact** — a support email on the sign-in page/footer and named in the
+     ToS. Bug reporting requires sign-in; a customer who can't sign in, or has a billing dispute,
+     currently has no way to reach the operator (and MoR onboarding asks for one anyway).
+
+   Settled by the same pass: the iPhone photo path is verified on a real device (2026-08-25 — the
+   ⚠️ from CLAUDE.md items 39/48 is closed), and the self-removal message that named the
+   not-yet-built "Delete my account" is fixed (`fix/self-removal-copy`) — when account deletion
+   ships under this gate, that message's sole-member branch is the place to point at it.
