@@ -84,6 +84,40 @@ public class AdminPageTests : PageTestContext
     }
 
     [Fact]
+    public void A_reports_attached_snapshot_renders_in_its_row()
+    {
+        using (var db = authDb.CreateDbContext())
+        {
+            db.Households.Add(new Household { Id = "hh-a", Name = "The Currans" });
+            db.SaveChanges();
+        }
+        Db.HouseholdId = "hh-a";
+        using (var db = Db.CreateDbContext())
+        {
+            db.BugReports.Add(new BugReport
+            {
+                Body = "The dashboard is off",
+                CreatedAt = DateTimeOffset.Now,
+                StateJson = new BugReportSnapshot(
+                    new BugDiagnostics("/dashboard", "800x600 @2x", "UA", "dark (auto)", false, "7pm",
+                        "America/New_York", ["TypeError: boom @ x.js:1"]),
+                    "on-screen text").Serialize(),
+            });
+            db.SaveChanges();
+        }
+        Db.HouseholdId = "hh-test";
+
+        var cut = Render<Components.Pages.Admin>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("Attached details", cut.Markup);
+            Assert.Contains("/dashboard", cut.Markup);
+            Assert.Contains("TypeError: boom", cut.Markup);
+        });
+    }
+
+    [Fact]
     public void A_non_admin_is_refused_by_the_component_itself()
     {
         // Same signed-in shape, wrong person: the routed policy would already bounce them, but a

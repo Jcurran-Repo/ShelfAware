@@ -320,7 +320,10 @@ else
                                 <td>@r.HouseholdName</td>
                                 <td>@(r.Report.ReportedBy ?? "—")</td>
                                 <td class="muted">@(r.Report.PageUrl ?? "—")</td>
-                                <td>@r.Report.Body</td>
+                                <td>
+                                    @r.Report.Body
+                                    <BugSnapshotView Json="@r.Report.StateJson" />
+                                </td>
                                 <td>
                                     @* Proposed → the reporter has been asked to confirm. Still offer the
                                        unilateral "Resolve" (the ghost-customer override) plus Withdraw.
@@ -371,7 +374,10 @@ else
                                     <td>@r.HouseholdName</td>
                                     <td>@(r.Report.ReportedBy ?? "—")</td>
                                     <td class="muted">@(r.Report.PageUrl ?? "—")</td>
-                                    <td>@r.Report.Body</td>
+                                    <td>
+                                        @r.Report.Body
+                                        <BugSnapshotView Json="@r.Report.StateJson" />
+                                    </td>
                                     <td><button class="secondary" @onclick="() => ReopenBugAsync(r.Report.Id)"
                                                 disabled="@(busy || actionBusy)"
                                                 aria-label="Reopen the report from @r.HouseholdName: @r.Report.Body">Reopen</button></td>

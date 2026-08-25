@@ -3294,6 +3294,18 @@ tfoot td {
     opacity: 0.5;
 }
 
+/* The same snapshot rendered for the admin (BugSnapshotView) — collapsed by default so a report row
+   stays compact until the admin wants the detail. */
+.admin-attach {
+    margin-top: 0.35rem;
+    font-size: 0.85rem;
+}
+
+.admin-attach summary {
+    cursor: pointer;
+    color: var(--ink-soft);
+}
+
 @media (max-width: 560px) {
     .ai-settings .model-fields {
         grid-template-columns: 1fr;

@@ -1,0 +1,44 @@
+@* The diagnostic snapshot a reporter chose to attach to a bug report (BugReport.StateJson), rendered for
+   the admin. Parses the stored blob forgivingly — a pre-feature or corrupt row renders nothing rather than
+   throwing. Read-only: the admin reads what the household sent, never edits it. Shared by the open table
+   and the resolved drawer so the two can't drift (the one-definition rule). *@
+@using ShelfAware.Web.Diagnostics
+
+@if (BugReportSnapshot.TryParse(Json) is { } snap)
+{
+    <details class="admin-attach">
+        <summary>Attached details</summary>
+        @if (snap.Diagnostics is { } d)
+        {
+            <dl class="attach-diag">
+                <div><dt>Page</dt><dd>@Or(d.Url)</dd></div>
+                <div><dt>Screen</dt><dd>@Or(d.Viewport)</dd></div>
+                <div><dt>Theme</dt><dd>@Or(d.Theme)@(d.ReducedMotion ? " · reduced motion" : "")</dd></div>
+                <div><dt>Browser</dt><dd>@Or(d.UserAgent)</dd></div>
+                <div><dt>Time</dt><dd>@Or(d.LocalTime)@(string.IsNullOrEmpty(d.TimeZone) ? "" : $" ({d.TimeZone})")</dd></div>
+                @if (d.JsErrors is { Count: > 0 } errors)
+                {
+                    <div>
+                        <dt>Recent errors</dt>
+                        <dd>
+                            <ul class="attach-errors">
+                                @foreach (var e in errors) { <li>@e</li> }
+                            </ul>
+                        </dd>
+                    </div>
+                }
+            </dl>
+        }
+        @if (snap.PageContent is { } content)
+        {
+            <div class="muted small">What was on the page</div>
+            <pre class="attach-content">@content</pre>
+        }
+    </details>
+}
+
+@code {
+    [Parameter] public string? Json { get; set; }
+
+    private static string Or(string? s) => string.IsNullOrEmpty(s) ? "—" : s;
+}
