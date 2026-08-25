@@ -106,14 +106,48 @@ public class ReportResolutionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Proposing_stamps_a_foreign_households_report_as_awaiting_the_reporter()
+    {
+        var id = SeedReport("hh-a", "The chart looks wrong");
+        _db.HouseholdId = "hh-admin"; // the admin's own scope — IgnoreQueryFilters is what reaches hh-a
+
+        Assert.True(await Service().SetBugProposedAsync(id, DateTimeOffset.Now));
+
+        await using var raw = _db.CreateUnscopedContext();
+        var report = await raw.BugReports.IgnoreQueryFilters().AsNoTracking().SingleAsync();
+        Assert.NotNull(report.ProposedResolvedAt);
+        Assert.True(report.AwaitingReporter); // proposed + not yet resolved
+        Assert.Null(report.ResolvedAt);       // a proposal is not a resolve
+    }
+
+    [Fact]
+    public async Task Reopening_also_clears_a_pending_proposal()
+    {
+        // ⚠️ Reopen (or Withdraw) returns the report to fully OPEN — a lingering proposal would leave it
+        // reading "awaiting reporter" forever. Dropping the second SetProperty must fail this test.
+        var id = SeedReport("hh-a", "Proposed then withdrawn");
+        _db.HouseholdId = "hh-admin";
+        await Service().SetBugProposedAsync(id, DateTimeOffset.Now);
+
+        Assert.True(await Service().SetBugResolvedAsync(id, null));
+
+        await using var raw = _db.CreateUnscopedContext();
+        var report = await raw.BugReports.IgnoreQueryFilters().AsNoTracking().SingleAsync();
+        Assert.Null(report.ProposedResolvedAt);
+        Assert.Null(report.ResolvedAt);
+        Assert.False(report.AwaitingReporter);
+    }
+
+    [Fact]
     public async Task A_report_that_no_longer_exists_answers_false_rather_than_throwing()
     {
         // Deleted with its household's data between the render and the click, say.
         Assert.False(await Service().SetBugResolvedAsync(9999, DateTimeOffset.Now));
+        Assert.False(await Service().SetBugProposedAsync(9999, DateTimeOffset.Now));
     }
 
     [Fact]
-    public async Task Anyone_but_the_configured_admin_is_refused_by_both_halves()
+    public async Task Anyone_but_the_configured_admin_is_refused_by_every_admin_write()
     {
         var id = SeedReport("hh-a", "Private to hh-a");
         var store = new ErrorLogStore(_authDb);
@@ -124,14 +158,20 @@ public class ReportResolutionServiceTests : IDisposable
         var errorId = Assert.Single(await store.ListAsync()).Id;
         var intruder = Service(signedInAs: "wife@example.com");
 
+        // EVERY cross-household write is gated — including the newest, SetBugProposedAsync (the class
+        // the repo elevates above all others; a gate that no test exercises is a gate a refactor drops).
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             intruder.SetBugResolvedAsync(id, DateTimeOffset.Now));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            intruder.SetBugProposedAsync(id, DateTimeOffset.Now));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             intruder.SetErrorResolvedAsync(errorId, DateTimeOffset.Now));
 
         // Refused BEFORE any data was touched, not after.
         await using var raw = _db.CreateUnscopedContext();
-        Assert.Null((await raw.BugReports.IgnoreQueryFilters().SingleAsync()).ResolvedAt);
+        var report = await raw.BugReports.IgnoreQueryFilters().SingleAsync();
+        Assert.Null(report.ResolvedAt);
+        Assert.Null(report.ProposedResolvedAt);
         Assert.Null(Assert.Single(await store.ListAsync()).ResolvedAt);
     }
 

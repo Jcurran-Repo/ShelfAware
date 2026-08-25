@@ -4,6 +4,7 @@
 @using ShelfAware.Web.Components.Layout
 @inject IHouseholdDbFactory DbFactory
 @inject IOptions<AdminOptions> Admin
+@inject ReporterReportService Reporter
 @inject ILogger<Bugs> Logger
 
 <PageTitle>Report a bug — Shelf Aware</PageTitle>
@@ -71,6 +72,14 @@ else
 
 <section class="panel">
     <h2>Your household's reports</h2>
+    @* A persistent announcer, mounted before any action, so a resolve/reopen is announced to a screen
+       reader even though the row it changed re-renders in place (the item 47/49 pattern). *@
+    <div role="status" aria-live="polite">
+        @if (actionMsg is not null)
+        {
+            <p class="@(actionOk ? "muted small" : "error")">@actionMsg</p>
+        }
+    </div>
     @if (loadError is not null)
     {
         <p class="error" role="alert">@loadError</p>
@@ -99,18 +108,30 @@ else
                         <td class="muted">@(r.PageUrl ?? "—")</td>
                         <td>@r.Body</td>
                         <td>
-                            @* The loop closed: the admin's resolve is visible to the household that
-                               filed it, so a report isn't a one-way letterbox. Their own row — an
-                               ordinary scoped read. *@
+                            @* The loop closed: you see (and now DECIDE) the outcome of a report you
+                               filed. Resolving/reopening your own report is a household-SCOPED write —
+                               you can only ever touch your own household's, by the query filter. *@
                             @if (r.Resolved)
                             {
                                 @* ✓, the app's one affirmative glyph (Receipts/Recipes use it) —
                                    and the year, because the When cell beside it carries one. *@
-                                <span class="chip chip-stocked" title="This deployment's admin marked it handled">✓ resolved @r.ResolvedAt?.ToString("MMM d, yyyy")</span>
+                                <span class="chip chip-stocked" title="Marked handled">✓ resolved @r.ResolvedAt?.ToString("MMM d, yyyy")</span>
+                                <button class="secondary" @onclick="() => ReopenAsync(r.Id)" disabled="@(acting || busy)"
+                                        aria-label="Reopen your report: @r.Body">Reopen</button>
+                            }
+                            else if (r.AwaitingReporter)
+                            {
+                                <span class="chip chip-duesoon" title="The admin thinks this is fixed — is it?">proposed fixed</span>
+                                <button class="secondary" @onclick="() => ResolveAsync(r.Id)" disabled="@(acting || busy)"
+                                        aria-label="Confirm the fix for your report: @r.Body">Confirm fixed</button>
+                                <button class="secondary" @onclick="() => ReopenAsync(r.Id)" disabled="@(acting || busy)"
+                                        aria-label="Say your report is still broken: @r.Body">Still broken</button>
                             }
                             else
                             {
                                 <span class="muted">open</span>
+                                <button class="secondary" @onclick="() => ResolveAsync(r.Id)" disabled="@(acting || busy)"
+                                        aria-label="Mark your report fixed: @r.Body">Mark fixed</button>
                             }
                         </td>
                     </tr>
@@ -139,6 +160,9 @@ else
     private string? error;
     private string? loadError;
     private bool busy;
+    private bool acting;      // a resolve/reopen is in flight (guards double-taps, disables the row buttons)
+    private string? actionMsg;
+    private bool actionOk;
 
     protected override async Task OnInitializedAsync()
     {
@@ -248,6 +272,41 @@ else
         {
             busy = false;
         }
+    }
+
+    private Task ResolveAsync(int id) => ActAsync(() => Reporter.ResolveOwnAsync(id), "Marked fixed — thanks for confirming.");
+    private Task ReopenAsync(int id) => ActAsync(() => Reporter.ReopenOwnAsync(id), "Reopened — the admin will see it's open again.");
+
+    /// <summary>Resolve/reopen the reporter's OWN report, then refresh. Advice splits by failure point
+    /// (item 27): a failed WRITE says nothing changed (safe — the write is idempotent); a failed refresh
+    /// AFTER a successful write says "saved, reload to see it" — the list must never show a stale state
+    /// beside advice inviting a retry of a write that already landed. The write is household-scoped
+    /// (ReporterReportService), so it can only ever touch this household's own report.</summary>
+    private async Task ActAsync(Func<Task<bool>> write, string done)
+    {
+        if (acting || busy) return;
+        acting = true;
+        actionMsg = null;
+        try
+        {
+            var ok = await write();
+            var refreshed = await LoadAsync();
+            // Only a clean write-and-refresh reads as success (muted); a refresh failure after a
+            // successful write is surfaced as an alert so the "Reload to see it" instruction lands,
+            // matching Admin.razor's treatment of the same partial-success.
+            actionOk = ok && refreshed;
+            actionMsg = !ok ? "That report isn't there any more."
+                : !refreshed ? "Saved — but the list couldn't refresh just now. Reload to see it."
+                : done;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Resolving or reopening the household's own bug report failed.");
+            actionOk = false;
+            actionMsg = "Couldn't update that just now — please try again.";
+        }
+        finally { acting = false; }
     }
 
     private static string Clamp(string s, int max) => s.Length > max ? s[..max] : s;

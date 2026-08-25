@@ -7,6 +7,7 @@ using ShelfAware.Core.Domain;
 using ShelfAware.Web.Auth;
 using ShelfAware.Web.Components.Layout;
 using ShelfAware.Web.Components.Pages;
+using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.UI.Tests;
 
@@ -25,6 +26,7 @@ public class BugsPageTests : PageTestContext
         var auth = this.AddAuthorization();
         auth.SetAuthorized("wife@test.local");
         Services.AddSingleton(Options.Create(adminOptions));
+        Services.AddScoped<ReporterReportService>(); // the reporter's own resolve/reopen path
     }
 
     private IRenderedComponent<Bugs> RenderBugs()
@@ -279,6 +281,76 @@ public class BugsPageTests : PageTestContext
             Assert.Contains("✓ resolved", rows.Single(r => r.TextContent.Contains("The fixed one")).TextContent);
             Assert.Contains("open", rows.Single(r => r.TextContent.Contains("Still broken here")).TextContent);
         });
+    }
+
+    // ⚠️ Bodies below avoid the words the status cell renders ("open"/"resolved"/"fixed"/"proposed"),
+    // per the cannot-tell-branches-apart lesson noted on the chip test above.
+
+    [Fact]
+    public async Task An_open_report_can_be_self_resolved_by_the_reporter()
+    {
+        using (var raw = Db.CreateUnscopedContext())
+        {
+            raw.BugReports.Add(new BugReport { HouseholdId = "hh-test", Body = "The chart is sideways", CreatedAt = DateTimeOffset.Now });
+            raw.SaveChanges();
+        }
+        var cut = RenderBugs();
+        cut.WaitForState(() => cut.FindAll("button").Any(b => b.TextContent.Trim() == "Mark fixed"));
+
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Mark fixed").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("✓ resolved", cut.Find("tbody tr").TextContent));
+        await using var raw2 = Db.CreateUnscopedContext();
+        Assert.NotNull((await raw2.BugReports.IgnoreQueryFilters().SingleAsync()).ResolvedAt);
+    }
+
+    [Fact]
+    public async Task A_proposed_report_lets_the_reporter_confirm_the_fix()
+    {
+        using (var raw = Db.CreateUnscopedContext())
+        {
+            raw.BugReports.Add(new BugReport
+            {
+                HouseholdId = "hh-test", Body = "The widget misbehaves", CreatedAt = DateTimeOffset.Now.AddDays(-1),
+                ProposedResolvedAt = DateTimeOffset.Now, // the admin proposed it
+            });
+            raw.SaveChanges();
+        }
+        var cut = RenderBugs();
+        cut.WaitForState(() => cut.FindAll("button").Any(b => b.TextContent.Trim() == "Confirm fixed"));
+        Assert.Contains("proposed fixed", cut.Find("tbody tr").TextContent);
+        Assert.Contains("Still broken", cut.FindAll("button").Select(b => b.TextContent.Trim()));
+
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Confirm fixed").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("✓ resolved", cut.Find("tbody tr").TextContent));
+        await using var raw2 = Db.CreateUnscopedContext();
+        Assert.NotNull((await raw2.BugReports.IgnoreQueryFilters().SingleAsync()).ResolvedAt);
+    }
+
+    [Fact]
+    public async Task Still_broken_returns_a_proposed_report_to_open()
+    {
+        using (var raw = Db.CreateUnscopedContext())
+        {
+            raw.BugReports.Add(new BugReport
+            {
+                HouseholdId = "hh-test", Body = "The widget misbehaves", CreatedAt = DateTimeOffset.Now.AddDays(-1),
+                ProposedResolvedAt = DateTimeOffset.Now,
+            });
+            raw.SaveChanges();
+        }
+        var cut = RenderBugs();
+        cut.WaitForState(() => cut.FindAll("button").Any(b => b.TextContent.Trim() == "Still broken"));
+
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Still broken").Click();
+
+        // Back to open — and the proposal is cleared, so it never lingers as "awaiting reporter".
+        cut.WaitForAssertion(() => Assert.Contains("open", cut.Find("tbody tr").TextContent));
+        await using var raw2 = Db.CreateUnscopedContext();
+        var report = await raw2.BugReports.IgnoreQueryFilters().SingleAsync();
+        Assert.Null(report.ResolvedAt);
+        Assert.Null(report.ProposedResolvedAt);
     }
 
     [Fact]

@@ -321,9 +321,30 @@ else
                                 <td>@(r.Report.ReportedBy ?? "—")</td>
                                 <td class="muted">@(r.Report.PageUrl ?? "—")</td>
                                 <td>@r.Report.Body</td>
-                                <td><button class="secondary" @onclick="() => ResolveBugAsync(r.Report.Id)"
-                                            disabled="@(busy || actionBusy)"
-                                            aria-label="Resolve the report from @r.HouseholdName: @r.Report.Body">Resolve</button></td>
+                                <td>
+                                    @* Proposed → the reporter has been asked to confirm. Still offer the
+                                       unilateral "Resolve" (the ghost-customer override) plus Withdraw.
+                                       Open → Propose (the courteous default) or Resolve directly. *@
+                                    @if (r.Report.AwaitingReporter)
+                                    {
+                                        <div class="muted small">Proposed @r.Report.ProposedResolvedAt?.ToString("MMM d") — awaiting the reporter</div>
+                                        <button class="secondary" @onclick="() => ResolveBugAsync(r.Report.Id)"
+                                                disabled="@(busy || actionBusy)"
+                                                aria-label="Resolve the report from @r.HouseholdName: @r.Report.Body">Resolve</button>
+                                        <button class="secondary" @onclick="() => WithdrawBugAsync(r.Report.Id)"
+                                                disabled="@(busy || actionBusy)"
+                                                aria-label="Withdraw the proposal on the report from @r.HouseholdName: @r.Report.Body">Withdraw</button>
+                                    }
+                                    else
+                                    {
+                                        <button class="secondary" @onclick="() => ProposeBugAsync(r.Report.Id)"
+                                                disabled="@(busy || actionBusy)"
+                                                aria-label="Propose the report from @r.HouseholdName as fixed for the reporter to confirm: @r.Report.Body">Propose resolved</button>
+                                        <button class="secondary" @onclick="() => ResolveBugAsync(r.Report.Id)"
+                                                disabled="@(busy || actionBusy)"
+                                                aria-label="Resolve the report from @r.HouseholdName: @r.Report.Body">Resolve</button>
+                                    }
+                                </td>
                             </tr>
                         }
                     </tbody>
@@ -465,6 +486,10 @@ else
     private Task ReopenErrorAsync(int id) => ActAsync(() => Actions.SetErrorResolvedAsync(id, null), "Reopened.");
     private Task ResolveBugAsync(int id) => ActAsync(() => Actions.SetBugResolvedAsync(id, DateTimeOffset.Now), "Resolved.");
     private Task ReopenBugAsync(int id) => ActAsync(() => Actions.SetBugResolvedAsync(id, null), "Reopened.");
+    // Propose hands it to the reporter to confirm on /bugs; Withdraw (reopen while still unresolved) takes
+    // the proposal back. Both route through the same cross-household service + ActAsync as the resolve.
+    private Task ProposeBugAsync(int id) => ActAsync(() => Actions.SetBugProposedAsync(id, DateTimeOffset.Now), "Proposed — the reporter can confirm it.");
+    private Task WithdrawBugAsync(int id) => ActAsync(() => Actions.SetBugResolvedAsync(id, null), "Withdrew the proposal — it's open again.");
 
     // Founder grant/revoke rides the same ActAsync as the resolve buttons: the write, then a refresh,
     // with the advice split by failure point and the roster re-read so the row's tier + button flip.

@@ -263,6 +263,9 @@ builder.Services.AddHostedService<ErrorLogWriter>();
 builder.Services.AddScoped<AdminReportReader>();
 // Its write sibling: resolve/reopen, the app's one cross-household write — see the class doc.
 builder.Services.AddScoped<ReportResolutionService>();
+// The reporter's own resolve/reopen of a report they filed — household-SCOPED (no IgnoreQueryFilters),
+// so it can only ever touch their own household's reports. See the class doc.
+builder.Services.AddScoped<ReporterReportService>();
 builder.Services.AddScoped<AdminHouseholdService>(); // the /admin household roster + the Founder grant
 
 // ---- Who's using the app: the admin "logins + who's online" view ----

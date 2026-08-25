@@ -24,8 +24,11 @@ public sealed class ReportResolutionService(
     IOptions<AdminOptions> admin,
     ErrorLogStore errors)
 {
-    /// <summary>Stamp (or, with null, reopen) a bug report, whichever household filed it. Returns
-    /// false when no such report exists any more (deleted with its household's data, say).
+    /// <summary>Stamp (or, with null, reopen) a bug report, whichever household filed it — the admin's
+    /// "resolve anyway" override and its reopen. Returns false when no such report exists any more
+    /// (deleted with its household's data, say). Reopening returns the report to fully OPEN: it clears
+    /// the admin's PROPOSAL too, or the report would read as "awaiting reporter" again. Resolving leaves
+    /// any proposal moot (ResolvedAt wins in the derived state), so it touches only the one column.
     /// ⚠️ No CancellationToken parameter, on purpose — item 38's write rule: a resolve is a
     /// one-shot write, and a caller threading a page token would let a navigate-away tear the
     /// stamp down mid-flight with no message and no retry surface. The signature is the pin.</summary>
@@ -36,12 +39,28 @@ public sealed class ReportResolutionService(
         // ⚠️ The app's one production cross-household WRITE, the mirror of the reader's one
         // IgnoreQueryFilters read: without it the query filter would scope the WHERE to the
         // admin's own household and every other household's report would answer "gone". The
-        // ExecuteUpdate is the point, not a convenience — it can only ever touch the column
-        // named on this line. Anything else wanting to write across households makes its own
-        // case at review; don't widen this.
+        // ExecuteUpdate is the point, not a convenience — it can only ever touch the columns
+        // named here. Anything else wanting to write across households makes its own case at
+        // review; don't widen this.
+        var q = db.BugReports.IgnoreQueryFilters().Where(b => b.Id == id);
+        return resolvedAt is null
+            ? await q.ExecuteUpdateAsync(s => s
+                .SetProperty(b => b.ResolvedAt, (DateTimeOffset?)null)
+                .SetProperty(b => b.ProposedResolvedAt, (DateTimeOffset?)null), CancellationToken.None) > 0
+            : await q.ExecuteUpdateAsync(s => s
+                .SetProperty(b => b.ResolvedAt, resolvedAt), CancellationToken.None) > 0;
+    }
+
+    /// <summary>PROPOSE a bug report as fixed (or, with null, withdraw the proposal), whichever household
+    /// filed it — handing it to the reporter to confirm on /bugs. Cross-household like the resolve, and
+    /// only ever touches the one proposal column. Uncancellable for the same reason as the resolve.</summary>
+    public async Task<bool> SetBugProposedAsync(int id, DateTimeOffset? proposedAt)
+    {
+        await RequireAdminAsync();
+        await using var db = await dbFactory.CreateDbContextAsync(CancellationToken.None);
         return await db.BugReports.IgnoreQueryFilters()
             .Where(b => b.Id == id)
-            .ExecuteUpdateAsync(s => s.SetProperty(b => b.ResolvedAt, resolvedAt), CancellationToken.None) > 0;
+            .ExecuteUpdateAsync(s => s.SetProperty(b => b.ProposedResolvedAt, proposedAt), CancellationToken.None) > 0;
     }
 
     /// <summary>Stamp (or, with null, reopen) an error-log row. Operator data — the gate here is

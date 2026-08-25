@@ -98,9 +98,9 @@ and **History (`/history`, added 8/20 — the household's activity log, newest f
 undo; see item 51)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1836 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **1925 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
-bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53 and 54).
+bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54 and 55).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -2893,6 +2893,43 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
        expiry; `ListAsync` returns a hash-free `ApiTokenSummary` so the fingerprint never enters the render tree.
    - **Pushed/merged: NO — the branch is gated-clean and Jordan's to push.** 8 commits (7 phases + the gate
      fix) on `feature/graphql-api`, unpushed.
+
+55. **Support-flow polish — receipt totals on the review screen, and reporter-side ticket resolution
+   (2026-08-25).** Two small features from one session, both surfaced by Jordan using the live app.
+   - **A — a receipt's printed totals now show on the Upload REVIEW screen, not only after confirming
+     (PR #29, MERGED, merge `b55c257`).** Extraction reads the printed subtotal/savings/tax/total (item
+     52), but only `/receipts` displayed them, so they couldn't be checked against the paper receipt
+     during review. The "From the receipt" box became a shared `ReceiptTotalsPanel` component that BOTH
+     `/receipts` and the Upload review screen render (the one-definition rule — `/receipts` was refactored
+     onto it, its existing tests unchanged, proving behaviour-preserving). Display-only (receipt-level
+     totals have no editor). Gate: both SHIP (security CLEAN — the receipt is already household-scoped on
+     both surfaces, no new query/write/endpoint, no raw HTML). +2 UI tests, mutation-checked. ⚠️ **This
+     was an enhancement, NOT the "totals wrong" bug's fix** — that was item 52 itself (already on master);
+     the wrong total was the pre-discount line-items sum vs the paid total, which reconciles once item 52's
+     tax/savings capture is published.
+   - **B — the reporter can resolve their own bug tickets; the admin can PROPOSE a fix for them to
+     confirm (branch `feature/reporter-resolve-tickets`).** Jordan's ask: close the support loop so the
+     person who reported it confirms the fix worked — with the admin keeping a **unilateral override**
+     ("I expect a lot of ghost customers"). Three states fall out of two timestamps on `BugReport`:
+     **Open** → **Proposed** (`ProposedResolvedAt`, admin-set) → **Resolved** (`ResolvedAt`);
+     `AwaitingReporter` = proposed-and-not-yet-resolved (get-only, `.Ignore()`d like `Resolved`).
+     - **Admin (`/admin`):** open bug → "Propose resolved" + "Resolve" (the unilateral override); proposed
+       → "Resolve" + "Withdraw" + an "awaiting the reporter" note; resolved → "Reopen". Cross-household via
+       the existing `ReportResolutionService` — extended so a reopen (or withdraw) clears the proposal too
+       (or it lingers as "awaiting reporter"), plus a new `SetBugProposedAsync`. Reopen is still the app's
+       one sanctioned cross-household write; it just names two resolution columns now, not one.
+     - **Reporter (`/bugs`, their OWN tickets):** open → "Mark fixed"; proposed → "Confirm fixed" / "Still
+       broken"; resolved → "Reopen". ⚠️ A NEW write path, but household-SCOPED — `ReporterReportService`
+       uses the ordinary `IHouseholdDbFactory` context with NO `IgnoreQueryFilters`, so the global query
+       filter scopes every write's WHERE to the caller's own household. It is structurally impossible to
+       touch another household's report — the exact inverse of the admin path (whose IgnoreQueryFilters is
+       what lets IT reach across). Pinned by `A_reporter_cannot_touch_another_households_report`,
+       mutation-checked (adding IgnoreQueryFilters fails exactly it). No notification system exists, so the
+       reporter sees a proposal on their next `/bugs` visit — fine at this scale.
+     - `ProposedResolvedAt` rides AdditiveSchema (pantry table) + a drop-COLUMN parity test (the
+       live-deployment ALTER path the drop-TABLE test never exercises — item 49's lesson). +~11 tests
+       across service / schema / page; the reopen-clears-proposal behaviour also mutation-checked.
+   - **1925 green, 0 warnings** (non-incremental Release; A merged, B on its branch pending its gate).
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
