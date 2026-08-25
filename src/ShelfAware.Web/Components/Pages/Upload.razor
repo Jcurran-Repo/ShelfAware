@@ -284,6 +284,10 @@ else if (phase == Phase.Review && receipt is not null)
             </tbody>
         </table>
         </div>
+        @* The totals the receipt itself PRINTED (subtotal/savings/tax/total), read at extraction — shown
+           here so they can be eyeballed against the paper receipt DURING review, not only after confirming
+           on /receipts. Same shared panel as that page; display-only (no editor for receipt-level totals). *@
+        <ReceiptTotalsPanel Receipt="receipt" />
         <datalist id="known-tags">
             @foreach (var t in allKnownTags)
             {

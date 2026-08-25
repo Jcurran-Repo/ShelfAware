@@ -189,6 +189,50 @@ public class UploadPageTests : PageTestContext
         return cut;
     }
 
+    private int SeedPendingWithTotals(Action<Receipt> configure)
+    {
+        using var db = Db.CreateDbContext();
+        var receipt = new Receipt
+        {
+            Merchant = "Costco",
+            PurchasedAt = Today.AddDays(-1),
+            Status = ReceiptStatus.PendingReview,
+            ImagePath = "no-copy",
+            Lines = [DbLine("ITEM", "Item")],
+        };
+        configure(receipt);
+        db.Receipts.Add(receipt);
+        db.SaveChanges();
+        return receipt.Id;
+    }
+
+    [Fact]
+    public void The_review_screen_shows_the_totals_the_receipt_printed()
+    {
+        // The whole point of reading a receipt's totals is to CHECK them against the paper — which you
+        // can't do if they only surface after confirming (over on /receipts). The review screen renders
+        // the same shared "From the receipt" panel, so the subtotal/savings/tax/total are visible here.
+        SeedPendingWithTotals(r => { r.Subtotal = 100.00m; r.Savings = 5.00m; r.Tax = 8.25m; r.Total = 108.25m; });
+
+        var totals = OpenReview().Find(".receipt-totals").TextContent;
+
+        Assert.Contains("From the receipt", totals);
+        Assert.Contains(100.00m.ToString("C"), totals);   // subtotal
+        Assert.Contains(5.00m.ToString("C"), totals);     // savings
+        Assert.Contains(8.25m.ToString("C"), totals);     // tax
+        Assert.Contains(108.25m.ToString("C"), totals);   // total (what you paid)
+    }
+
+    [Fact]
+    public void The_review_screen_omits_the_totals_box_when_the_receipt_printed_none()
+    {
+        // A receipt whose printed totals extraction didn't capture shows no box at all — no empty shell,
+        // no zeros pretending to be figures.
+        SeedPendingWithTotals(_ => { });
+
+        Assert.Empty(OpenReview().FindAll(".receipt-totals"));
+    }
+
     [Fact]
     public void Review_prefills_the_product_match_by_trust_order()
     {

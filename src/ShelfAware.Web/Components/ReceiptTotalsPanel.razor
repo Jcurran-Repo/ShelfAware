@@ -1,0 +1,31 @@
+@* The "From the receipt" box — subtotal / savings / tax / total exactly as PRINTED on the paper
+   receipt (what extraction read, when it captured them). Shared by the Receipts page and the Upload
+   review screen so the two can never drift about what they show (the one-definition rule). Display
+   only: there is no editor for receipt-level totals. Renders nothing when the receipt printed none. *@
+
+@if (Receipt.Subtotal is not null || Receipt.Tax is not null || Receipt.Total is not null || Receipt.Savings is not null)
+{
+    <div class="receipt-totals">
+        <div class="rt-caption">From the receipt</div>
+        @if (Receipt.Subtotal is { } sub)
+        {
+            <div class="rt-row"><span>Subtotal</span><span>@sub.ToString("C")</span></div>
+        }
+        @if (Receipt.Savings is { } sav && sav > 0)
+        {
+            <div class="rt-row rt-savings"><span>Savings</span><span>-@sav.ToString("C")</span></div>
+        }
+        @if (Receipt.Tax is { } tx)
+        {
+            <div class="rt-row"><span>Tax</span><span>@tx.ToString("C")</span></div>
+        }
+        @if (Receipt.Total is { } tot)
+        {
+            <div class="rt-row rt-final"><span>Total</span><span>@tot.ToString("C")</span></div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public Receipt Receipt { get; set; } = default!;
+}
