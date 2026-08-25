@@ -67,6 +67,44 @@ removes *all* mutants in that method. As of the first baseline that affects a sm
 covered by ordinary unit tests — they simply cannot be mutation-*tested* here. This is a Stryker
 limitation, recorded so the tracked score is honest about what it does and does not cover.
 
+## Scope-tuning outcome (2026-08-25): nothing honest to exclude
+
+Before the sweep, a per-file audit of the baseline (the JSON report) settled whether any Core files
+should be excluded from mutation as non-behavioral. The answer was **no**, and the reasoning is worth
+keeping because "exclude the boring files" is the easy way to fake a high score:
+
+- The pure EF **entity / DTO / enum** types (`Product`, `ReceiptLine`, `PurchaseEvent`, `InventorySignal`,
+  …) contribute **zero surviving mutants** — whatever they declare is already pinned by tests at its
+  point of use. Nothing to exclude, nothing gained by excluding.
+- The `I*.cs` "**interface**" files are **not** pure contracts: each houses its result-record DTOs
+  (`ChatResult`, `ExtractionResult`, `ShelfCensusResult`, `RecipeSuggestion`, …), and those carry real
+  computed logic — e.g. `RecipeSuggestion.ToGrab => Ingredients.Where(i => i.IsMain && !i.Have)` and
+  `SuggestedIngredient.Have => MatchedProduct is not null`. Excluding those files would **hide** a
+  genuine `&& !` decision from the audit. They stay and get tested.
+
+So **no `mutate` exclusions are configured.** The honest target is the full set — 601 survived + 45
+no-coverage ≈ **646 mutants** — each to be killed by a test or annotated equivalent with a reason.
+
+## Sweep worklist (worst first)
+
+Closed file-by-file; each file re-run scoped (`dotnet stryker --mutate "**/<File>.cs"`) until it reads
+100%, then a tracked row below. Top of the list as of the 2026-08-25 baseline (survived + no-coverage):
+
+| File | To close | Killed | File | To close | Killed |
+|------|----------|--------|------|----------|--------|
+| Speech/SpeechText | 142 | 131 | Reporting/ReportSpec | 18 | 61 |
+| Speech/CookAlongCommands | 86 | 59 | Speech/Utterance | 17 | 50 |
+| Recipes/IngredientMatcher | 69 | 45 | Reporting/PriceWatch | 13 | 28 |
+| Reporting/ReportEngine | 54 | 106 | Speech/ListeningSettings | 11 | 28 |
+| Prediction/ReplenishmentPredictor | 45 | 176 | Chat/ProductMatcher | 11 | 31 |
+| Tagging/TagVocabulary | 42 | 37 | Reporting/ReportSpecUrl | 7 | 45 |
+| Recipes/RecipeTagVocabulary | 28 | 3 | + a long tail of files with ≤ 4 each (ShoppingEstimator, ExpirationOutcomes, CensusPlan, AiPricing, SizeBucket, the result-DTO factories, …) |||
+| Onboarding/TourScript | 26 | 34 | | | |
+| Evaluation/ExtractionScorer | 25 | 53 | | | |
+
+The top 5 files hold ~400 of the ~646. This is a multi-session arc; the score-history table records
+each session's progress.
+
 ## How to run it
 
 Stryker.NET is a local dotnet tool, pinned in `.config/dotnet-tools.json` (so CI and any checkout use
