@@ -1,0 +1,12 @@
+{
+  "stryker-config": {
+    "project": "ShelfAware.Core.csproj",
+    "reporters": ["html", "progress", "cleartext"],
+    "thresholds": {
+      "high": 100,
+      "low": 100,
+      "break": 100
+    },
+    "mutation-level": "Standard"
+  }
+}
