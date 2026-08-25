@@ -618,6 +618,28 @@ public class HouseholdServiceTests : IDisposable
 
         Assert.NotNull(refused);
         Assert.Equal(household.Id, owner.HouseholdId);
+        // With housemates, the advice is the act that actually exists today: any of them can remove you.
+        // It must NOT point at the pantry wipe — that would invite a leaver to destroy the shared data.
+        Assert.Contains("ask another member", refused);
+        Assert.DoesNotContain("Delete all my data", refused);
+    }
+
+    [Fact]
+    public async Task A_sole_member_removing_themselves_is_pointed_at_the_data_wipe()
+    {
+        // Alone, "ask another member" would be false — and the wipe pointer becomes safe advice, because
+        // there is nobody else's data behind it. The nearest real act to a fresh start (no account
+        // deletion exists yet) is Settings' "Delete all my data".
+        var owner = await PersistedUser("solo@example.com");
+        var household = await _service.CreateForAsync("Home", owner);
+
+        var refused = await _service.RemoveMemberAsync(household.Id, owner.Id, actingUserId: owner.Id);
+
+        Assert.NotNull(refused);
+        Assert.Equal(household.Id, owner.HouseholdId);
+        Assert.Contains("only member", refused);
+        Assert.Contains("Delete all my data", refused);
+        Assert.DoesNotContain("ask another member", refused);
     }
 
     [Fact]
