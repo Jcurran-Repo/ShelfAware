@@ -3112,17 +3112,47 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
        size being a COUNT (`ct`/`pk`/`roll`/`eggs`/bare number), never a weight/volume, via
        `QuantityAnomaly.IsCountSize`. ⚠️ The SAME latent bug lived in the sibling `MissingUsualSize` tell
        (a measure-sized item bought in multiples with the size dropped is a legit multi-buy) — gated it
-       too (`UsuallyHasACountSize`). **Both gates mutation-checked**: disabling them fails 7 tests. Accepted
-       edge: a compound size carrying a measure token ("12 x 12 oz") reads as a measure, so a misread of
-       that rare format isn't flagged — soft flag, rarer than the false positive it prevents.
+       too (`UsuallyHasACountSize`, later replaced — see the Opus pass). **Both gates mutation-checked.**
      - [Low] The done-panel callout **persisted after ↩ Undo** removed the receipt it named — cleared
        `confirmConcerns` in `UndoConfirm`; regression-tested.
      - [Low/info] **Tied the surfaced concern to the STAMPED line** (moved the add inside the `dbLine`
        block) so the manual done-panel and the persisted-flag reads show provably the same set.
      - [efficiency, from the security review] `priorSizesByProduct` loaded EVERY household purchase per
        confirm — scoped it to the lines' resolved product ids (only a resolved product can have priors).
-   - **Core 642 / Web 701 / UI 490 green, 0 warnings** (non-incremental Release). Branch `fix/quantity-
-     misread-guards` is 4 commits, gated clean, UNPUSHED — pushing/merge is Jordan's call.
+   - **A SECOND independent gate on Opus 4.8** (Jordan's call — "catch everything we can"; the first ran on
+     fable-5). Security **PASS**, deeper than the first: traced each tenancy item to file:line, confirmed
+     no **ReDoS** on the new `[A-Za-z]+` regex (a single linear class on a bounded string), and checked the
+     adversarial case where a tampered `ProductId` names ANOTHER household's product — it doesn't resolve
+     against the scoped list, so it falls through to create-new and their sizes are never read. Code:
+     **SHIP**, no High/Med — the EF claim and the concern/stamp/persisted-flag "one set" property both
+     re-verified in a worktree. Two of five Low findings fixed (commit `2f98d7b`), plus one I closed while
+     reasoning before launching it:
+     - ⚠️ **The count/measure gate had a space-less hole I found myself** (`96cbb56`, pre-Opus): `IsCountSize`
+       split on separators, so `"12oz"`/`"5lb"` stayed one token and read as counts. Reads LETTER runs now
+       (regex), so a space-less measure is caught like `"12 oz"` (space-less sizes are real — `"24pk"`).
+     - ⚠️ **[Low, the valuable one] Compound multipack sizes escaped the flag entirely** — `"24 pk 12 fl oz"`,
+       `"12 x 12 oz"`, `"6 pack 16 oz"` read as measures under "any measure token → not a count", so a
+       **beverage/canned multipack** misread (a 24-pack read as qty 24) went unflagged. Those are the MOST
+       common packs and fully subject to the ~24× stretch the feature exists to catch — Opus rightly called
+       my "rare edge" doc dishonest. `IsCountSize` now treats a pack/count token ANYWHERE (`pk`/`ct`/`pack`/
+       `roll`/`x`/…, a `CountUnits` set) as making the leading number a pack count; only a PURE measure
+       (`"12 oz"`) isn't. Container words (bar/can/box/jar) are deliberately NOT count tokens — as often the
+       item's own vessel as a pack.
+     - **[Low] `MissingUsualSize` nagged a genuine stock-up** — four cartons of a usually-`"12 ct"` item with
+       the size dropped asked "is this one 4-pack?". `UsuallyHasACountSize` ("usually count-sized") became
+       `MatchesAUsualPackCount`: fire only when the quantity **equals a prior pack count** (a 12-roll pack
+       read as qty 12), which separates the leak from a real 4-buy. The one branch that could harass a bulk
+       buyer, now precise.
+     - **[Low, a11y] The `/receipts` "pack?" chip's explanation lived only in a hover `title`** — unreachable
+       by screen-reader/touch. Added an `aria-label` carrying the full `Describe` copy; it's the persistent
+       net, so its meaning must not need a mouse.
+     - Left documented/accepted (both reviewers): the **batch auto-confirm** done-panel shows no callout (the
+       `/receipts` chip is the net — a UX asymmetry, not a correctness gap), and rare non-grocery size tokens
+       (`"4 in"`, `"6 XL"`) lean-count and soft-flag. Both new detector rules mutation-checked (5 tests fail
+       when reverted).
+   - **Core 651 / Web 701 / UI 490 green, 0 warnings** (non-incremental Release). Branch `fix/quantity-
+     misread-guards` is **8 commits, gated clean by TWO independent passes (fable-5 + Opus 4.8), UNPUSHED** —
+     pushing/merge is Jordan's call.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
