@@ -225,4 +225,96 @@ public class CookAlongCommandsTests
     [InlineData("stop", false)]
     public void The_session_stop_grammar_is_unchanged(string t, bool expected) =>
         Assert.Equal(expected, VoiceCommands.IsStop(t));
+
+    // ---- Every phrase in every table, pinned. These grammars ARE the hands-free control surface; a
+    //      dropped phrase silently sends a "next" to the model, so the honest close is one InlineData
+    //      per entry. (Dead-once-normalized phrasings — "and then", "back now", "carry on now" — were
+    //      removed, since Utterance.Core strips their trailing/leading filler and no input can reach them.)
+
+    [Theory]
+    [InlineData("next")] [InlineData("next step")] [InlineData("next one")] [InlineData("up next")]
+    [InlineData("on to the next")] [InlineData("onto the next")] [InlineData("next up")]
+    [InlineData("go on")] [InlineData("go ahead")] [InlineData("continue")] [InlineData("keep going")]
+    [InlineData("carry on")] [InlineData("move on")] [InlineData("move along")] [InlineData("onward")]
+    [InlineData("then")] [InlineData("then what")] [InlineData("what's next")] [InlineData("what is next")]
+    [InlineData("whats next")] [InlineData("what do i do next")] [InlineData("what next")] [InlineData("done")]
+    [InlineData("got it")] [InlineData("did it")] [InlineData("that's done")] [InlineData("thats done")]
+    [InlineData("finished")] [InlineData("i'm done with that")] [InlineData("im done with that")]
+    public void Every_next_phrase_advances(string t) => Assert.Equal(CookAlongIntent.Next, Intent(t));
+
+    [Theory]
+    [InlineData("back")] [InlineData("go back")] [InlineData("back up")] [InlineData("step back")]
+    [InlineData("previous")] [InlineData("previous step")] [InlineData("last step")]
+    [InlineData("go back a step")] [InlineData("one step back")] [InlineData("before that")]
+    public void Every_back_phrase_goes_back(string t) => Assert.Equal(CookAlongIntent.Back, Intent(t));
+
+    [Theory]
+    [InlineData("repeat")] [InlineData("repeat that")] [InlineData("again")] [InlineData("say again")]
+    [InlineData("say that again")] [InlineData("read that again")] [InlineData("one more time")]
+    [InlineData("come again")] [InlineData("what was that")] [InlineData("what did you say")]
+    [InlineData("sorry what")]
+    public void Every_repeat_phrase_repeats(string t) => Assert.Equal(CookAlongIntent.Repeat, Intent(t));
+
+    [Theory]
+    [InlineData("hold on")] [InlineData("hold up")] [InlineData("wait")] [InlineData("wait a minute")]
+    [InlineData("wait a sec")] [InlineData("wait a second")] [InlineData("hang on")] [InlineData("one second")]
+    [InlineData("one sec")] [InlineData("just a second")] [InlineData("just a sec")]
+    [InlineData("give me a second")] [InlineData("give me a minute")] [InlineData("pause")]
+    [InlineData("stop for a second")] [InlineData("hold")]
+    public void Every_hold_phrase_holds(string t) => Assert.Equal(CookAlongIntent.Hold, Intent(t));
+
+    [Theory]
+    [InlineData("i'm back")] [InlineData("im back")] [InlineData("ready")] [InlineData("i'm ready")]
+    [InlineData("im ready")] [InlineData("resume")] [InlineData("let's go")] [InlineData("lets go")]
+    [InlineData("go")]
+    public void Every_resume_phrase_resumes(string t) => Assert.Equal(CookAlongIntent.Resume, Intent(t));
+
+    [Theory]
+    [InlineData("stop reading")] [InlineData("stop the recipe")] [InlineData("stop cooking")]
+    [InlineData("stop the cook along")] [InlineData("stop cook along")] [InlineData("close the recipe")]
+    [InlineData("i'm done cooking")] [InlineData("im done cooking")] [InlineData("never mind")]
+    [InlineData("nevermind")] [InlineData("cancel")]
+    public void Every_stop_phrase_ends_it(string t) => Assert.Equal(CookAlongIntent.Stop, Intent(t));
+
+    [Theory]
+    [InlineData("start over")] [InlineData("start again")] [InlineData("from the top")]
+    [InlineData("start from the beginning")] [InlineData("begin again")] [InlineData("back to the start")]
+    [InlineData("back to the beginning")]
+    public void Every_start_over_phrase_jumps_to_the_intro(string t) =>
+        Assert.Equal(new CookAlongCommand(CookAlongIntent.GoToStep, 0), CookAlongCommands.Match(t));
+
+    [Theory]
+    [InlineData("first step")]
+    [InlineData("the first step")]
+    public void Every_first_step_phrase_jumps_to_one(string t) =>
+        Assert.Equal(new CookAlongCommand(CookAlongIntent.GoToStep, 1), CookAlongCommands.Match(t));
+
+    // Speech-to-text may hand back "step 3" or "step three": every number word 0–20 resolves to its index.
+    [Theory]
+    [InlineData("zero", 0)] [InlineData("one", 1)] [InlineData("two", 2)] [InlineData("three", 3)]
+    [InlineData("four", 4)] [InlineData("five", 5)] [InlineData("six", 6)] [InlineData("seven", 7)]
+    [InlineData("eight", 8)] [InlineData("nine", 9)] [InlineData("ten", 10)] [InlineData("eleven", 11)]
+    [InlineData("twelve", 12)] [InlineData("thirteen", 13)] [InlineData("fourteen", 14)]
+    [InlineData("fifteen", 15)] [InlineData("sixteen", 16)] [InlineData("seventeen", 17)]
+    [InlineData("eighteen", 18)] [InlineData("nineteen", 19)] [InlineData("twenty", 20)]
+    public void A_step_number_word_resolves_to_its_index(string word, int expected) =>
+        Assert.Equal(new CookAlongCommand(CookAlongIntent.GoToStep, expected), CookAlongCommands.Match($"step {word}"));
+
+    // The digit path: "step 0" is a real target (the intro), and it must not be floored away to null.
+    [Theory]
+    [InlineData("step 0", 0)]
+    [InlineData("step 7", 7)]
+    public void A_step_digit_resolves_including_zero(string t, int expected) =>
+        Assert.Equal(new CookAlongCommand(CookAlongIntent.GoToStep, expected), CookAlongCommands.Match(t));
+
+    // "step <not-a-number>" matches the shape but resolves no number, so it is NOT a jump — it falls
+    // through the grammar (here to Back, via the "step back" phrase) rather than jumping to a bogus index.
+    [Fact]
+    public void A_step_target_with_no_number_is_not_a_jump() =>
+        Assert.Equal(CookAlongIntent.Back, Intent("step back"));
+
+    // The two-word floor is inclusive: exactly two real words is worth waking the brain.
+    [Fact]
+    public void Exactly_two_words_is_worth_asking() =>
+        Assert.True(CookAlongCommands.IsWorthAsking("add salt"));
 }
