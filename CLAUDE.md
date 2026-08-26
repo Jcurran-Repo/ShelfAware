@@ -3150,9 +3150,11 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
        `/receipts` chip is the net — a UX asymmetry, not a correctness gap), and rare non-grocery size tokens
        (`"4 in"`, `"6 XL"`) lean-count and soft-flag. Both new detector rules mutation-checked (5 tests fail
        when reverted).
-   - **Core 651 / Web 701 / UI 490 green, 0 warnings** (non-incremental Release). Branch `fix/quantity-
-     misread-guards` is **8 commits, gated clean by TWO independent passes (fable-5 + Opus 4.8), UNPUSHED** —
-     pushing/merge is Jordan's call.
+   - **Core 651 / Web 701 / UI 490 green, 0 warnings** (non-incremental Release). ✅ **MERGED to master via
+     PR #32 (merge `c420a6b`), master CI green** (2026-08-26) — gated clean by TWO independent passes
+     (fable-5 + Opus 4.8) before merge, and live-verified end to end (the compound multipack flags; the
+     `/receipts` chip aria-label present). ⚠️ GitHub Actions lagged repo-wide that day, so the authoritative
+     proof is the post-merge master run, not a pre-merge PR run (none queued in time).
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
