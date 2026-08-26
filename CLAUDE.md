@@ -3059,6 +3059,47 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      non-overlap, guard) — except the actual `rclone --backup-dir` move, reasoned from rclone docs
      (rclone isn't installed here). Both branches still UNMERGED, UNPUSHED — pushing is Jordan's call.
 
+58. **Pack-count misread as quantity — the soft guard (2026-08-26, branch `fix/quantity-misread-guards`,
+   unmerged, gate pending).** A real family-box bug Jordan hit: a normally-bought 12-pack of toilet
+   paper was extracted as **quantity 12** (the pack size read into the quantity field), and the
+   predictor faithfully stretched the due date ~12× — ~200 days, so the reminder never came. ⚠️ **The
+   predictor is doing the RIGHT thing with a wrong number** — a real 12× stock-up wants exactly that
+   projection (why the stock-up factor is uncapped, item 19), and capping it would have masked this
+   rather than caught it (Jordan's call). So the fix is at the SOURCE and the CONFIRM GATE, never the
+   predictor; the mutation-sweep tests pinning the uncapped 12× stretch stay correct.
+   - **Extraction prompt (rule 5):** a pack/count printed as part of the item ("12 ROLL", "12 CT",
+     "6 MEGA ROLL", "18 EGGS", "2=1") is the package SIZE; quantity is 1 (the number of packages) unless
+     "N @ price" or warehouse per-unit repeats. Reduces the misread at the source — but extraction is
+     probabilistic, so it's not the whole fix (Jordan's instinct, correct).
+   - ⚠️ **`QuantityAnomaly` (Core/Ingest) is a DETERMINISTIC confidence signal, chosen over asking the
+     model to self-rate its own quantity** (Jordan: high-quality deterministic confidence over a model
+     reasserting a number — models are bad at self-rating). It flags a line ONLY when the SIZE evidence
+     says the count came from a pack: the size's own count equals the quantity ("12 ct" + qty 12), or a
+     count-shaped quantity with no size on a product that USUALLY carries one (Jordan's "no pack size and
+     there tends to be" tell). **Deliberately NOT a raw "quantity >> usual" test** — that cannot tell a
+     misread from a genuine stock-up and would harass every bulk buyer (the same reason the predictor
+     isn't capped). A fractional quantity (a weight, 2.31 lb) is never flagged; small counts (< 4) never.
+   - **SOFT, never blocks** (Jordan's vision: flag but let them bulk-approve). `ReceiptConfirmationService`
+     (the ONE confirm path) computes the flag against the FINAL, review-corrected quantity — a fixed 12→1
+     clears it — stamps it on the confirmed `ReceiptLine.QuantityFlag` (new column, AdditiveSchema +
+     drop-column parity test), and returns the flagged lines. `ReceiptAutoConfirmer` carries the confirm
+     out WITHOUT blocking — deliberately unlike `ReceiptDuplicateDetector` (which breaks Auto): a wrong
+     quantity is one-tap recoverable and the due date recomputes live, so a bulk buyer is never stopped.
+   - **Surfaced two ways, from the ONE persisted flag:** a soft "pack?" chip on /receipts (the safety net —
+     an auto-confirm blown past on the done-panel is still catchable there — Jordan's "persist yes"), and a
+     soft amber callout on the Upload done-panel naming each flagged line (manual path takes the concerns
+     from the confirm result; auto path reads them back from the persisted flag — same set either way).
+     `QuantityAnomaly.Describe` is THE wording (one definition), a question not an accusation. `.callout` is
+     a new theme-aware soft-heads-up box reusing the duesoon amber tokens (defined, not an undefined class —
+     the `.linkish`/`.field`/`.small` lesson).
+   - Two commits (data+prompt `fe97037`, UI `636c973`). Core 630 green, Web 701, UI 489 (+33 across the
+     detector, Describe, confirm-stamping, AdditiveSchema, and the two page surfaces). **Live-verified end
+     to end** (dev sandbox, /dev/login): set the eggs line to qty 12 + size "12 ct", confirmed (recorded,
+     NOT blocked — the done-panel appeared), saw the amber callout ("did you buy one pack, not 12?"), and
+     /receipts then showed the persisted "pack?" chip with the same copy in theme-aware amber. Zero console
+     or server errors. ⚠️ Deliberately NOT built: a review-grid LIVE badge (Review-mode users already see
+     the quantity/size columns; lowest value) — could be added if wanted.
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active
