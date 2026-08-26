@@ -46,9 +46,11 @@ public static class TagVocabulary
     {
         var tag = candidate.Trim();
         if (tag.Length == 0) return null;
-        var canonical = vocabulary.FirstOrDefault(v => string.Equals(v, tag, StringComparison.OrdinalIgnoreCase))
-            ?? FindNearDuplicate(tag, vocabulary)
-            ?? tag;
+        // Resolve against the vocabulary in order: an exact (case-insensitive) match, then a near-dup of
+        // a known tag, then the candidate itself when it is genuinely new.
+        var canonical = vocabulary.FirstOrDefault(v => string.Equals(v, tag, StringComparison.OrdinalIgnoreCase));
+        canonical ??= FindNearDuplicate(tag, vocabulary);
+        canonical ??= tag;
         if (existing.Any(v => string.Equals(v, canonical, StringComparison.OrdinalIgnoreCase))) return null;
         if (FindNearDuplicate(canonical, existing) is not null) return null;
         return canonical;
@@ -79,14 +81,25 @@ public static class TagVocabulary
         return collapsed.EndsWith('s') && collapsed.Length > 3 ? collapsed[..^1] : collapsed;
     }
 
-    // True when a and b differ by at most one single-character edit (insert/delete/substitute).
+    // True when a and b differ by at most one single-character edit (insert/delete/substitute). The one
+    // caller (FindNearDuplicate) has already returned on an exact match, so a and b are never equal here;
+    // the loop handles a == b correctly anyway (zero edits), so no separate base case is needed.
     private static bool LevenshteinAtMost1(string a, string b)
     {
-        if (a == b) return true;
+        // Stryker disable once Equality: `<=` → `<` is unobservable — at equal lengths either assignment
+        // gives a valid (shorter, longer) pair and the loop is symmetric, so the result is unchanged. The
+        // category also suppresses `>`, which IS killable (it puts the longer string in `shorter`, breaking
+        // the insertion branch) — pinned by the shorter-candidate case in FindNearDuplicate_catches_a_single_edit.
         var (shorter, longer) = a.Length <= b.Length ? (a, b) : (b, a);
+        // Stryker disable once Boolean: this `return false` is unreachable — the sole caller only invokes us
+        // with |a.Length - b.Length| <= 1, so `> 1` is never true. Kept as defense-in-depth for the loop
+        // below, which assumes the length gap is at most one.
         if (longer.Length - shorter.Length > 1) return false;
         int i = 0, j = 0, edits = 0;
-        while (i < shorter.Length && j < longer.Length)
+        // Only `i` needs bounding: with the length gap capped at one (guaranteed above), `j` runs at most
+        // one ahead of `i`, so `j` reaches `longer.Length` exactly as `i` reaches `shorter.Length` and the
+        // loop has already exited — a `j < longer.Length` guard here would be redundant (and untestable).
+        while (i < shorter.Length)
         {
             if (shorter[i] == longer[j]) { i++; j++; continue; }
             if (++edits > 1) return false;
