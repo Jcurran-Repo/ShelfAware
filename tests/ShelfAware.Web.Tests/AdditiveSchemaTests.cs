@@ -46,6 +46,22 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Adds_the_quantity_flag_column_to_a_pre_pack_misread_db()
+    {
+        await using var db = _db.CreateDbContext();
+        // Simulate a pre-2026-08-26 DB (built before the pack-misread flag). This exercises the ALTER
+        // path a live deployment actually takes — the drop-TABLE parity tests rebuild with the column
+        // present and never run the EnsureColumn branch (item 49's lesson).
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE ReceiptLines DROP COLUMN QuantityFlag;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        // EF queries through the column again; pre-existing rows read as None (0) — not re-judged.
+        Assert.Empty(await db.ReceiptLines.Where(l => l.QuantityFlag != QuantityFlag.None).ToListAsync());
+    }
+
+    [Fact]
     public async Task Creates_the_MealEvents_table_on_a_pre_meal_log_db_with_the_fresh_schema()
     {
         await using var db = _db.CreateDbContext();

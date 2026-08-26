@@ -22,6 +22,11 @@ public class ReceiptLine : IHouseholdOwned
     /// receipt keeps the date through review. Never extracted — receipts don't print it.</summary>
     public DateOnly? ExpirationDate { get; set; }
     public decimal Quantity { get; set; } = 1;
+    /// <summary>A soft "this quantity looks like a misread pack count" signal, stamped at confirm time
+    /// (<see cref="Ingest.QuantityAnomaly"/>): the deterministic version of "how confident are we in this
+    /// quantity". None unless a pack count leaked into <see cref="Quantity"/> — surfaced on /receipts so a
+    /// silent auto-confirm of "one 12-pack read as 12" is catchable after the fact. Never blocks anything.</summary>
+    public QuantityFlag QuantityFlag { get; set; }
     public decimal? UnitPrice { get; set; }
     public Category Category { get; set; }
     public decimal Confidence { get; set; }
