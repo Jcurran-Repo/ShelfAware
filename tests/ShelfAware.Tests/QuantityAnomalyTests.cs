@@ -79,6 +79,21 @@ public class QuantityAnomalyTests
         Assert.Equal(QuantityFlag.None, QuantityAnomaly.Check(12.5m, "12 oz", ["12 oz"]));
     }
 
+    [Fact]
+    public void Describe_words_each_flag_as_a_soft_question_and_says_nothing_for_None()
+    {
+        var sizeMatch = QuantityAnomaly.Describe(QuantityFlag.SizeMatchesQuantity, 12, "12 ct");
+        Assert.Contains("12", sizeMatch);
+        Assert.Contains("12 ct", sizeMatch);
+        Assert.EndsWith("?", sizeMatch); // a question, not an accusation
+
+        var missing = QuantityAnomaly.Describe(QuantityFlag.MissingUsualSize, 12, null);
+        Assert.Contains("12-pack", missing);
+        Assert.EndsWith("?", missing);
+
+        Assert.Equal("", QuantityAnomaly.Describe(QuantityFlag.None, 12, "12 ct"));
+    }
+
     [Theory]
     [InlineData("12 ct", 12)]
     [InlineData("6 Mega Roll", 6)]

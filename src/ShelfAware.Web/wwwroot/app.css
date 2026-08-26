@@ -1268,6 +1268,20 @@ button.mic-speaking {
 
 .chip-overdue { background: var(--overdue-bg); color: var(--overdue-ink); }
 .chip-duesoon { background: var(--duesoon-bg); color: var(--duesoon-ink); }
+
+/* A soft, friendly heads-up box — amber, not alarm (the Upload done-panel's pack-misread nudge).
+   Reuses the theme-aware duesoon tokens so it reads correctly in light and dark. */
+.callout {
+    background: var(--duesoon-bg);
+    color: var(--duesoon-ink);
+    border: 1px solid var(--duesoon-line);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem;
+    margin: 0.75rem 0;
+}
+.callout > p:first-child { margin-top: 0; }
+.callout > p:last-child { margin-bottom: 0; }
+.callout .muted { color: inherit; opacity: 0.85; } /* keep the amber ink; don't fall back to grey on amber */
 .chip-stocked { background: var(--stocked-bg); color: var(--stocked-ink); }
 .chip-unknown { background: var(--unknown-bg); color: var(--unknown-ink); }
 

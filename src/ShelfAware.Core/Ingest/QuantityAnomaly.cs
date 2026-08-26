@@ -45,6 +45,22 @@ public static class QuantityAnomaly
         return QuantityFlag.None;
     }
 
+    /// <summary>THE user-facing wording for a flag — one definition, so /receipts and the Upload
+    /// done-panel can't phrase the same concern differently. Deliberately a question, not an accusation:
+    /// it's a soft "we might have oopsied", and the human decides.</summary>
+    public static string Describe(QuantityFlag flag, decimal quantity, string? size)
+    {
+        var q = quantity.ToString("0.##");
+        return flag switch
+        {
+            QuantityFlag.SizeMatchesQuantity =>
+                $"Recorded as a quantity of {q}, but the size “{size}” is that same count — did you buy one pack, not {q}?",
+            QuantityFlag.MissingUsualSize =>
+                $"Recorded as a quantity of {q} with no pack size, though this item usually has one — is this one {q}-pack?",
+            _ => "",
+        };
+    }
+
     /// <summary>The leading run of digits of a size string as a whole number ("12 ct" → 12,
     /// "6 Mega Roll" → 6, "1 gal" → 1), or null when it doesn't start with digits ("lb", "").</summary>
     public static decimal? LeadingCount(string? size)

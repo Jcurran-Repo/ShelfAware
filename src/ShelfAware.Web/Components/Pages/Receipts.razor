@@ -1,5 +1,6 @@
 @page "/receipts"
 @using ShelfAware.Core.Evaluation
+@using ShelfAware.Core.Ingest
 @using ShelfAware.Core.Shopping
 @implements IAsyncDisposable
 @inject IHouseholdDbFactory DbFactory
@@ -113,7 +114,13 @@ else
                                         <span class="muted"> · @brand</span>
                                     }
                                 </td>
-                                <td>@line.Quantity.ToString("0.##")</td>
+                                <td>
+                                    @line.Quantity.ToString("0.##")
+                                    @if (line.QuantityFlag != QuantityFlag.None)
+                                    {
+                                        <span class="chip chip-duesoon" title="@QuantityAnomaly.Describe(line.QuantityFlag, line.Quantity, line.Size)">pack?</span>
+                                    }
+                                </td>
                                 <td>@(SizeFormat.Normalize(line.Size) is { Length: > 0 } size ? size : "—")</td>
                                 <td>@(line.UnitPrice is { } up ? up.ToString("C") : "—")</td>
                                 <td>@(ReceiptTotals.LineTotal(line) is { } lt ? lt.ToString("C") : "—")</td>

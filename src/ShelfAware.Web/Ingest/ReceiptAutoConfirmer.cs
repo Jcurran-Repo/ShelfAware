@@ -31,8 +31,7 @@ public sealed class ReceiptAutoConfirmer(
     /// pending for review (all-zero counts). <paramref name="Duplicate"/> names the confirmed
     /// receipt this one looks like when THAT is why it queued.</summary>
     public sealed record Outcome(bool Confirmed, int Purchases, int NewProducts, int Retracked,
-        ReceiptDuplicateDetector.Match? Duplicate = null,
-        IReadOnlyList<ReceiptConfirmationService.QuantityConcern>? QuantityConcerns = null)
+        ReceiptDuplicateDetector.Match? Duplicate = null)
     {
         public static readonly Outcome Queued = new(false, 0, 0, 0);
     }
@@ -171,11 +170,10 @@ public sealed class ReceiptAutoConfirmer(
             cancellationToken: cancellationToken);
         logger.LogInformation("Auto-confirmed uploaded receipt {ReceiptId}: {Purchases} purchase(s), {NewProducts} new product(s) ({Mode} mode).",
             receipt.Id, outcome.Purchases, outcome.NewProducts, mode);
-        // A pack-misread concern does NOT block the auto-confirm (a bulk buyer must not be stopped, and
-        // one tap fixes it) — it rides out on the Outcome so the done-panel can surface it, and it's
-        // persisted on the line for /receipts. This is deliberately unlike the duplicate case above,
-        // which DOES block: a wrong quantity is recoverable in a tap; a silent double-record isn't.
-        return new Outcome(true, outcome.Purchases, outcome.NewProducts, outcome.Retracked,
-            QuantityConcerns: outcome.QuantityConcerns);
+        // A pack-misread concern does NOT block the auto-confirm — deliberately unlike the duplicate case
+        // above, which DOES block. A wrong quantity is recoverable in one tap and the due date recomputes
+        // live, so a bulk buyer is never stopped; the concern is persisted on the line (QuantityFlag,
+        // stamped by the confirm service) and read back from there by the done-panel and /receipts.
+        return new Outcome(true, outcome.Purchases, outcome.NewProducts, outcome.Retracked);
     }
 }

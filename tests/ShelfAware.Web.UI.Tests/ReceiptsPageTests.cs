@@ -335,4 +335,35 @@ public class ReceiptsPageTests : PageTestContext
         db.Receipts.Single(r => r.Id == receiptId).ImagePath = imagePath;
         db.SaveChanges();
     }
+
+    // ---- the pack-misread safety net ----
+
+    [Fact]
+    public void A_pack_misread_line_shows_a_soft_pack_chip_with_the_explanation()
+    {
+        // The persisted-flag safety net (why this whole feature exists): a line auto-confirmed with a
+        // misread quantity carries a soft "pack?" chip here, so a "one 12-pack read as 12" is catchable
+        // after the fact even if the done-panel was blown past.
+        SeedReceipt(r => r.Lines =
+        [
+            new ReceiptLine
+            {
+                RawText = "CHARMIN 12 ROLL", NormalizedName = "Toilet Paper", Quantity = 12m,
+                QuantityFlag = QuantityFlag.MissingUsualSize,
+            },
+        ]);
+
+        var cut = RenderReceipts();
+
+        var chip = cut.FindAll(".chip-duesoon").Single(c => c.TextContent.Trim() == "pack?");
+        Assert.Contains("12-pack", chip.GetAttribute("title")!); // the one-definition Describe copy
+    }
+
+    [Fact]
+    public void An_ordinary_line_shows_no_pack_chip()
+    {
+        SeedReceipt(); // default lines, QuantityFlag None
+        var cut = RenderReceipts();
+        Assert.DoesNotContain("pack?", cut.Markup);
+    }
 }
