@@ -3099,6 +3099,30 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      /receipts then showed the persisted "pack?" chip with the same copy in theme-aware amber. Zero console
      or server errors. ⚠️ Deliberately NOT built: a review-grid LIVE badge (Review-mode users already see
      the quantity/size columns; lowest value) — could be added if wanted.
+   - **The `/pre-push` gate (2026-08-26; two independent agents reading by SHA per the isolation lesson).
+     Security PASS**, probe-free but fully traced: no cross-household read/write path, both new DB reads
+     (`LoadConcernsAsync`, the confirm's `priorSizesByProduct`) go through `IHouseholdDbFactory`, no new
+     `IgnoreQueryFilters`/endpoint/settings-key/disk-write, the copy/name/size render as encoded text
+     nodes (no XSS), and — the key item — `ReceiptLine.QuantityFlag` is a COLUMN on an already-covered
+     table, so export / delete-my-data / CountAll reach it automatically (verified in `UserDataService`;
+     it even confirmed the GraphQL surface doesn't select the column). **Code review: no High. Four
+     findings, all fixed (commit `5a16cf8`):**
+     - ⚠️ **[Med] `SizeMatchesQuantity` false-positived on measure-sized multi-buys** — the size's number
+       equalling the quantity flagged twelve 12-oz cans / six 6-oz yogurts as a misread. Now gated on the
+       size being a COUNT (`ct`/`pk`/`roll`/`eggs`/bare number), never a weight/volume, via
+       `QuantityAnomaly.IsCountSize`. ⚠️ The SAME latent bug lived in the sibling `MissingUsualSize` tell
+       (a measure-sized item bought in multiples with the size dropped is a legit multi-buy) — gated it
+       too (`UsuallyHasACountSize`). **Both gates mutation-checked**: disabling them fails 7 tests. Accepted
+       edge: a compound size carrying a measure token ("12 x 12 oz") reads as a measure, so a misread of
+       that rare format isn't flagged — soft flag, rarer than the false positive it prevents.
+     - [Low] The done-panel callout **persisted after ↩ Undo** removed the receipt it named — cleared
+       `confirmConcerns` in `UndoConfirm`; regression-tested.
+     - [Low/info] **Tied the surfaced concern to the STAMPED line** (moved the add inside the `dbLine`
+       block) so the manual done-panel and the persisted-flag reads show provably the same set.
+     - [efficiency, from the security review] `priorSizesByProduct` loaded EVERY household purchase per
+       confirm — scoped it to the lines' resolved product ids (only a resolved product can have priors).
+   - **Core 642 / Web 701 / UI 490 green, 0 warnings** (non-incremental Release). Branch `fix/quantity-
+     misread-guards` is 4 commits, gated clean, UNPUSHED — pushing/merge is Jordan's call.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
