@@ -206,3 +206,35 @@ row is called done.
 | Date | Score | Killed | Survived | Compile-error (excluded) | Notes |
 |------|-------|--------|----------|--------------------------|-------|
 | 2026-08-25 | 64.72% | 1214 | 611 | 453 | First baseline (+8 timeout, ~55 no-coverage). ~666 to close to 100%. Untuned scope — includes interfaces/DTOs. |
+
+## Resume state (2026-08-26 handoff)
+
+Where the sweep stands, for the next session picking this up on `feature/mutation-testing`:
+
+- **Closed to 100% (committed):** `Chat/ProductMatcher`, `Recipes/IngredientMatcher`,
+  `Prediction/ReplenishmentPredictor` — see the "Files closed" table above. The first two also went
+  through the adversarial review (which refuted one false equivalence claim — the rules it set are
+  binding on everything below).
+- ⚠️ **OWED before this branch merges: the adversarial attack on `ReplenishmentPredictor`'s 7
+  equivalence annotations (commit `01990d5`).** Rule 3 above makes an adversarial pass on every
+  equivalence annotation *mandatory* — author reasoning alone ran a 20% false-proof rate. That agent
+  was launched but **died on the session limit**, so the predictor's annotations shipped without it.
+  Re-run it: strip each annotation, hand-apply the mutation, hunt a killing input; if one exists the
+  annotation becomes a test. This is the single most important open item — a 100% resting on an
+  un-attacked annotation is exactly the dishonest number this doc exists to prevent.
+- **In progress: `Reporting/ReportEngine`** (was 65.62%). WIP tests are committed at **`9a64ec9`**
+  (`tests/ShelfAware.Tests/ReportEngineTests.cs`, ~20 tests) but **DO NOT compile yet** — the branch
+  HEAD is deliberately non-building. On resume: fix the compile error, run the Core suite green, then
+  `dotnet stryker --mutate "**/ReportEngine.cs"` to confirm the kills and close any survivors.
+- **Next, by the worklist (worst first):** after ReportEngine, `Speech/SpeechText` (142, the biggest
+  single file), then `Speech/CookAlongCommands` (86), `Tagging/TagVocabulary` (42),
+  `Recipes/RecipeTagVocabulary` (28), `Onboarding/TourScript` (26), `Evaluation/ExtractionScorer`
+  (25), and down the table.
+- ⚠️ **The branch is ~10 commits behind master** (forked at `91d48f7`, before the pack-misread merge
+  PR #32). It does **not** have master's newer Core code — notably `Core/Ingest/QuantityAnomaly`,
+  which is new Core logic that will itself need mutation coverage. **Rebase onto current master before
+  continuing** (or at least before merge): it refreshes the mutation baseline to the real Core surface,
+  and keeps the eventual merge clean.
+- **Per the gate posture above**, this branch also still needs its `/pre-push` gate before merge (it
+  is test-only + a Stryker config + a CI workflow, so the security surface is minimal, but the rule
+  stands).
