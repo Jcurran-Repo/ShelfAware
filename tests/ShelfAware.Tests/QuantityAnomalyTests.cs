@@ -41,6 +41,43 @@ public class QuantityAnomalyTests
             QuantityAnomaly.Check(6, "16 oz", ["16 oz", "16 oz"])); // 6 packages of a 16 oz item
     }
 
+    [Theory]
+    [InlineData(6, "6 oz")]        // six 6-oz yogurts — the number matches, but oz is a MEASURE
+    [InlineData(12, "12 oz")]      // twelve 12-oz cans
+    [InlineData(5, "5.3 oz")]      // five 5.3-oz cups (leading count 5 = quantity 5)
+    [InlineData(5, "5 lb")]        // five 5-lb flour bags
+    [InlineData(12, "12 fl oz")]   // "fl oz" — both tokens are measures
+    [InlineData(16, "16 g")]
+    public void A_measure_size_whose_number_matches_the_quantity_is_NOT_flagged(int quantity, string size)
+    {
+        // The false positive the review caught: buying N of a per-unit weight/volume item whose size
+        // number happens to equal N is an ordinary multi-buy, not a pack-count misread. Only a COUNT
+        // size (ct/pk/roll/eggs/bare number) matching the quantity points to the leak.
+        Assert.Equal(QuantityFlag.None, QuantityAnomaly.Check(quantity, size, []));
+    }
+
+    [Theory]
+    [InlineData(12, "12 ct")]
+    [InlineData(24, "24 pk")]
+    [InlineData(18, "18 eggs")]
+    [InlineData(6, "6 Mega Roll")]
+    [InlineData(12, "12")]         // a bare number is a count, not a measure
+    public void A_count_size_matching_the_quantity_still_flags(int quantity, string size)
+    {
+        // Guard the gating didn't over-reach: the real pack-count shapes must still fire.
+        Assert.Equal(QuantityFlag.SizeMatchesQuantity, QuantityAnomaly.Check(quantity, size, []));
+    }
+
+    [Fact]
+    public void A_measure_sized_product_bought_in_multiples_with_the_size_dropped_is_NOT_flagged()
+    {
+        // The same class in the missing-size tell: an item that USUALLY carries a MEASURE size (16 oz),
+        // bought several times with the size not captured this once, is a legit multi-buy — not a pack
+        // whose count leaked. Only a product that usually carries a COUNT size raises the flag.
+        Assert.Equal(QuantityFlag.None,
+            QuantityAnomaly.Check(6, null, ["16 oz", "16 oz", "16 oz"]));
+    }
+
     [Fact]
     public void A_missing_size_is_NOT_flagged_when_the_product_never_has_a_size()
     {

@@ -1036,6 +1036,7 @@ else if (phase == Phase.Done)
                     (outcome.ProductsKept > 0 ? $" ({outcome.ProductsKept} product{(outcome.ProductsKept == 1 ? "" : "s")} kept — they have other history.)" : "");
                 confirmedReceiptId = null;
                 autoConfirmed = false;
+                confirmConcerns = []; // the flagged lines are gone with the receipt — don't keep nagging about them
                 await LoadPendingAsync();
             }
             else

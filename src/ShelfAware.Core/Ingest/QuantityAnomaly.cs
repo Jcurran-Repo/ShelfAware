@@ -36,13 +36,36 @@ public static class QuantityAnomaly
         if (quantity < MinSuspiciousQuantity || quantity != decimal.Truncate(quantity))
             return QuantityFlag.None;
 
-        if (LeadingCount(lineSize) == quantity)
+        // The size's own COUNT equals the quantity ("12 ct" + qty 12). ⚠️ Gated on the size being a
+        // COUNT, not a weight/volume: a MEASURE size whose number happens to equal the quantity is an
+        // ordinary multi-buy — twelve 12-oz cans, six 6-oz yogurts — not a misread. (Found by review.)
+        if (LeadingCount(lineSize) == quantity && IsCountSize(lineSize))
             return QuantityFlag.SizeMatchesQuantity;
 
-        if (string.IsNullOrWhiteSpace(lineSize) && UsuallyHasASize(priorSizes))
+        // A count-shaped quantity with NO size, on a product that usually carries a COUNT size — the pack
+        // count leaked into quantity. ⚠️ "Usually a COUNT size", not merely "usually sized": a
+        // measure-sized item (16 oz) bought several times with the size dropped is a legit multi-buy.
+        if (string.IsNullOrWhiteSpace(lineSize) && UsuallyHasACountSize(priorSizes))
             return QuantityFlag.MissingUsualSize;
 
         return QuantityFlag.None;
+    }
+
+    // Weight/volume units — a size carrying one is a per-unit MEASURE, not a pack count.
+    private static readonly HashSet<string> MeasureUnits = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "oz", "ounce", "ounces", "lb", "lbs", "pound", "pounds", "g", "gram", "grams", "kg", "mg",
+        "ml", "l", "liter", "liters", "litre", "litres", "gal", "gallon", "gallons",
+        "qt", "quart", "quarts", "pt", "pint", "pints", "fl", "cup", "cups", "tbsp", "tsp",
+    };
+
+    // A size that denotes a COUNT / pack ("12 ct", "6 Mega Roll", "18 eggs", a bare "12") rather than a
+    // weight or volume — the only kind whose number matching the quantity points to a pack-count misread.
+    private static bool IsCountSize(string? size)
+    {
+        if (LeadingCount(size) is null) return false; // must start with a number to be a count at all
+        var tokens = size!.Split([' ', '-', '/', '.'], StringSplitOptions.RemoveEmptyEntries);
+        return !tokens.Any(MeasureUnits.Contains);
     }
 
     /// <summary>THE user-facing wording for a flag — one definition, so /receipts and the Upload
@@ -70,11 +93,13 @@ public static class QuantityAnomaly
         return decimal.TryParse(digits, out var n) ? n : null;
     }
 
-    // "Usually" = more than half of the existing prior purchases carried a non-blank size.
-    private static bool UsuallyHasASize(IReadOnlyCollection<string?> priorSizes)
+    // "Usually a count size" = more than half of the existing prior purchases carried a COUNT size (a
+    // pack, not a weight/volume). A measure-sized item bought several times with the size dropped once is
+    // an ordinary multi-buy, not a pack whose count leaked — so a measure history must not raise the flag.
+    private static bool UsuallyHasACountSize(IReadOnlyCollection<string?> priorSizes)
     {
         if (priorSizes.Count == 0) return false;
-        var sized = priorSizes.Count(s => !string.IsNullOrWhiteSpace(s));
-        return sized * 2 > priorSizes.Count;
+        var countSized = priorSizes.Count(IsCountSize);
+        return countSized * 2 > priorSizes.Count;
     }
 }

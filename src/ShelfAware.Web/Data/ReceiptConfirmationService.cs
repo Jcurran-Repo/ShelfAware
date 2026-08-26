@@ -89,10 +89,14 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory, IActivity
         var retracked = new HashSet<Product>(); // distinct — two lines of one item re-track it once
         int purchases = 0, created = 0;
 
-        // Each existing product's PRIOR purchase sizes, for the pack-misread check. This receipt's own
-        // purchases don't exist yet (they're created in the loop below), so everything loaded here is
-        // genuinely prior — no need to exclude self. A product created in THIS confirm has no priors.
+        // Each RESOLVED product's PRIOR purchase sizes, for the pack-misread check. Only a line already
+        // resolved to an existing product can have priors — a new product (or a within-receipt roll-up)
+        // has none — so load just those, not the whole household's purchase history. This receipt's own
+        // purchases don't exist yet (created in the loop below), so everything loaded is genuinely prior —
+        // no need to exclude self.
+        var resolvedIds = lines.Where(l => l.ProductId > 0).Select(l => l.ProductId).Distinct().ToList();
         var priorSizesByProduct = (await db.PurchaseEvents
+                .Where(p => resolvedIds.Contains(p.ProductId))
                 .Select(p => new { p.ProductId, p.Size })
                 .ToListAsync(cancellationToken))
             .GroupBy(x => x.ProductId)
@@ -175,8 +179,6 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory, IActivity
             // size-matches-quantity tell can fire for it.
             var priorSizes = priorSizesByProduct.GetValueOrDefault(product.Id) ?? [];
             var quantityFlag = QuantityAnomaly.Check(quantity, size, priorSizes);
-            if (quantityFlag != QuantityFlag.None)
-                concerns.Add(new QuantityConcern(name, quantity, size, quantityFlag));
 
             var dbLine = unmatchedLines.FirstOrDefault(l => l.RawText == line.RawText);
             if (dbLine is not null)
@@ -192,6 +194,11 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory, IActivity
                 dbLine.Product = product;
                 dbLine.TagsJson = SerializeTags(line.Tags);
                 dbLine.QuantityFlag = quantityFlag;
+                // Tie the surfaced concern to the STAMPED line, so the manual done-panel (these concerns)
+                // and the persisted-flag reads (/receipts, the auto done-panel) reflect exactly the same
+                // set — a line with no matching stored row gets neither a flag nor a concern.
+                if (quantityFlag != QuantityFlag.None)
+                    concerns.Add(new QuantityConcern(name, quantity, size, quantityFlag));
             }
 
             if (aliasesByRaw is not null)

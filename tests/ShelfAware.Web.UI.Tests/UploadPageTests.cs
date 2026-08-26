@@ -827,4 +827,26 @@ public class UploadPageTests : PageTestContext
 
         Assert.Empty(cut.FindAll(".callout"));
     }
+
+    [Fact]
+    public void Undoing_a_flagged_confirm_clears_the_heads_up()
+    {
+        // The heads-up names a line of THIS receipt; undoing removes the receipt and that line, so the
+        // callout must go with it — leaving it up nags about a purchase that no longer exists.
+        SeedPending("Walmart", Today.AddDays(-1), new ReceiptLine
+        {
+            RawText = "CHARMIN 12 ROLL", NormalizedName = "Toilet Paper", Size = "12 ct",
+            Quantity = 12m, Category = Category.Household,
+        });
+
+        var cut = OpenReview();
+        cut.FindAll(".review-actions button").Single(b => b.TextContent.Trim() == "Confirm all").Click();
+        cut.WaitForState(() => cut.Markup.Contains("Undo — remove this receipt"));
+        Assert.NotEmpty(cut.FindAll(".callout")); // the flag fired (size "12 ct" == quantity 12)
+
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Undo — remove this receipt")).Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("Undone", cut.Markup));
+        Assert.Empty(cut.FindAll(".callout")); // gone with the receipt
+    }
 }
