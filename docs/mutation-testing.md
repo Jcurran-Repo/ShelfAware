@@ -151,6 +151,41 @@ for domain reachability, re-derive the math. What it found is why this pass is n
    an expression into it alongside their uncompilable siblings; after changing annotations or nearby
    code, re-check that bucket before trusting the score.
 
+### The adversarial review of ReplenishmentPredictor's 7 annotations (2026-08-26) — the OWED pass
+
+Rule 3 makes an adversarial attack on every equivalence annotation mandatory; the predictor's shipped
+without one (the agent died on the session limit). Re-run here: each annotation's equivalent mutant
+hand-applied and the full suite run (a stronger check than Stryker's coverage-filtered per-mutant run),
+then each mutant reasoned about for a killing input the suite lacks.
+
+- **All 7 equivalence claims are SOUND** — every equivalent mutant survived, and reasoning found no
+  killing input (median is provably ≥ 1, so `median >= 0` and the trim's `>= 0` can't differ from `> 0`;
+  `labelStatus >= status` is a no-op self-assign; the `||`→`&&` early-out yields `[]` by the loop in both
+  single-empty cases; `First()`→`FirstOrDefault()` is guarded to ≥ 1 group; `Median`'s `OrderBy` is
+  sort-invariant, odd and even). **0/7 false, versus the 20% false-proof rate the first review measured.**
+- **One over-broad scope FIXED (the same class the first review caught).** `DominantSize`'s
+  `disable once Linq` sat above the whole multi-line `return purchases…First()` statement, so it silently
+  suppressed the entire chain's Linq mutants — `OrderByDescending(Count)→OrderBy`, `ThenByDescending`,
+  `Max→Min`, the inner `FirstOrDefault` — while the comment CLAIMED "inner mutants live on their own lines
+  and stay live". Hand-applying `OrderByDescending(x => x.Count)→OrderBy` proved them killable (2 tests
+  red). Fixed by extracting the chain to a local so the annotation covers only the isolated
+  `return byDominance.First();`; the freed mutants are now Killed (176 → 208), 100% held.
+- **One mis-cited test FIXED.** The `labelStatus > status` annotation named `TheCap_NeverCalmsAWarningDown`
+  as pinning its killable `<` sibling — but that test sets the label BEYOND the rhythm's due date, so the
+  cap branch is skipped and L245 never runs; it can't pin the mutant. The sibling is genuinely killed (by
+  7 other cap-window tests); the citation now names `TheLabel_HardCaps_ACadenceDueDate` (a verified
+  Stocked→DueSoon escalation the `<` mutant breaks). **Lesson: verify a cited test actually executes the
+  annotated line — a plausible name is not coverage.**
+- **The bundled-Equality residual, stated.** Four annotations (`median > 0`, `labelStatus > status`,
+  `trimmed.Count > 0`, the `StockUpFactor` compound guard) each disable one operator whose Equality
+  mutants are BOTH an equivalent (`>=`/`<`) AND a killable inversion — Stryker.NET cannot disable a single
+  replacement, and separating them would mean deleting genuine divide-by-zero / empty-list defensive
+  guards. So the killable sibling is Ignored (not Killed) rather than freed. Every one was hand-verified
+  killed by its NAMED test, so the residual is honest — but it is a residual: the weekly Stryker gate does
+  not protect those siblings' coverage the way it protects a Killed mutant (the ordinary suite still does).
+  Unlike `DominantSize` (a multi-line statement, cleanly separable) these are single inseparable operators,
+  so the bundle is kept per the doc-blessed pattern above, with citations verified.
+
 ### Files closed to 100% (scoped `--mutate`)
 
 | Date | File | Mutants closed | How |
@@ -211,17 +246,16 @@ row is called done.
 
 Where the sweep stands, for the next session picking this up on `feature/mutation-testing`:
 
-- **Closed to 100% (committed):** `Chat/ProductMatcher`, `Recipes/IngredientMatcher`,
-  `Prediction/ReplenishmentPredictor` — see the "Files closed" table above. The first two also went
-  through the adversarial review (which refuted one false equivalence claim — the rules it set are
-  binding on everything below).
-- ⚠️ **OWED before this branch merges: the adversarial attack on `ReplenishmentPredictor`'s 7
-  equivalence annotations (commit `01990d5`).** Rule 3 above makes an adversarial pass on every
-  equivalence annotation *mandatory* — author reasoning alone ran a 20% false-proof rate. That agent
-  was launched but **died on the session limit**, so the predictor's annotations shipped without it.
-  Re-run it: strip each annotation, hand-apply the mutation, hunt a killing input; if one exists the
-  annotation becomes a test. This is the single most important open item — a 100% resting on an
-  un-attacked annotation is exactly the dishonest number this doc exists to prevent.
+- **Closed to 100% AND adversarially reviewed (committed):** `Chat/ProductMatcher`,
+  `Recipes/IngredientMatcher`, `Prediction/ReplenishmentPredictor` — see the "Files closed" table above.
+  All three went through the adversarial review; the first two refuted one false equivalence claim, and
+  the predictor's pass (2026-08-26) found no false equivalence but fixed one over-broad Linq scope and one
+  mis-cited test (see "The adversarial review of ReplenishmentPredictor's 7 annotations" above). The rules
+  those reviews set are binding on everything below.
+- ✅ **DONE — the OWED adversarial attack on `ReplenishmentPredictor`'s 7 equivalence annotations**
+  (was the single most important open item; the prior agent died on the session limit). All 7 equivalence
+  claims survived (0/7 false); `DominantSize`'s over-broad `disable once Linq` was restructured so its
+  killable chain mutants are Killed (176 → 208), and one mis-cited test was corrected. 100% re-confirmed.
 - **In progress: `Reporting/ReportEngine`** (was 65.62%). WIP tests are committed at **`9a64ec9`**
   (`tests/ShelfAware.Tests/ReportEngineTests.cs`, ~20 tests) but **DO NOT compile yet** — the branch
   HEAD is deliberately non-building. On resume: fix the compile error, run the Core suite green, then

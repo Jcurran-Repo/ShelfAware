@@ -241,7 +241,8 @@ public static class ReplenishmentPredictor
                     // Stryker disable once Equality: `>=` assigns an EQUAL status over itself — a no-op
                     // for every input, so it is unobservable. The category also suppresses `<`
                     // (downgrade-only, the exact inversion of escalate-only), which IS killable and is
-                    // pinned by TheCap_NeverCalmsAWarningDown (a future label may not calm an Overdue).
+                    // pinned by TheLabel_HardCaps_ACadenceDueDate (the label window must LIFT a Stocked
+                    // item to DueSoon here — `<` refuses that escalation and would calm a live warning).
                     if (labelStatus > status) status = labelStatus; // escalate-only (lifts Unknown too)
                 }
             }
@@ -504,12 +505,7 @@ public static class ReplenishmentPredictor
     private static string? DominantSize(IReadOnlyCollection<PurchaseEvent> purchases)
     {
         if (purchases.Count == 0) return null;
-        // Stryker disable once Linq: `First()` → `FirstOrDefault()` is unobservable — the guard above
-        // means at least one purchase exists, so GroupBy yields at least one group and First never
-        // throws; on a non-empty sequence the two are the same call. (Scoped to the mutants STARTING on
-        // this statement's first line; the chain's inner ordering/aggregate mutants live on their own
-        // lines and stay live — verified by the recency and tie-break tests killing them.)
-        return purchases
+        var byDominance = purchases
             .GroupBy(p => SizeBucket.Key(p.Size))
             .Select(g => new
             {
@@ -521,8 +517,13 @@ public static class ReplenishmentPredictor
             })
             .OrderByDescending(x => x.Count)
             .ThenByDescending(x => x.Latest)
-            .Select(x => x.Display)
-            .First();
+            .Select(x => x.Display);
+        // Stryker disable once Linq: `First()` → `FirstOrDefault()` is unobservable — the guard above
+        // means at least one purchase exists, so GroupBy yields at least one group and First never
+        // throws; on a non-empty sequence the two are the same call. Scoped to this line ALONE so the
+        // chain above (recency, count/recency tie-break, aggregates) is fully mutation-tested — an
+        // earlier version annotated the whole statement, which silently suppressed those killable mutants.
+        return byDominance.First();
     }
 
     private static double Median(IReadOnlyList<int> values)
