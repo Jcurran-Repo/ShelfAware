@@ -338,6 +338,18 @@ public class ReportEngineTests
         Assert.Contains("quantity", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Several_problems_join_into_one_space_separated_message()
+    {
+        // Two violations at once — the range runs backwards AND quantity has no product. The message
+        // joins the problems with a space so the operator reads a sentence stream; a "" separator would
+        // jam them into "...starts.Quantity...".
+        var spec = Spec(ReportMetric.Quantity) with { From = Jul31, To = Jun1 };
+        var ex = Assert.Throws<ArgumentException>(() => ReportEngine.Run(spec, [], []));
+
+        Assert.Contains("starts. Quantity only means", ex.Message);
+    }
+
     // ---- The window's exact edges ---------------------------------------------------------------
 
     [Fact]
@@ -361,6 +373,29 @@ public class ReportEngineTests
 
         var one = ReportEngine.Run(Spec(ReportMetric.MealsCooked) with { RecipeId = 2 }, [], meals);
         Assert.Equal(1m, one.Total); // the recipe filter is equality, not exclusion
+    }
+
+    [Fact]
+    public void Purchases_outside_the_window_form_no_series()
+    {
+        // The date filter is an AND — in range on BOTH edges. Splitting an in-window product against two
+        // out-of-window ones yields ONE series; mutating the && to || would pull the outsiders in as ghost
+        // series (all-zero across the buckets, but present). The bucketed Total can't catch this — an
+        // out-of-window fact maps to no bucket and adds nothing to it — so the series list is the observable.
+        var result = ReportEngine.Run(Spec(ReportMetric.PurchaseCount, ReportSplit.ByProduct),
+            [Buy(15), Buy(15, month: 5, productId: 2, name: "Before"), Buy(15, month: 8, productId: 3, name: "After")], []);
+
+        Assert.Equal(["Whole Milk"], result.Series.Select(s => s.Label));
+    }
+
+    [Fact]
+    public void Meals_outside_the_window_form_no_series()
+    {
+        // The meal date filter is the same AND; the same ghost-series test, on the recipe split.
+        var result = ReportEngine.Run(Spec(ReportMetric.MealsCooked, ReportSplit.ByRecipe), [],
+            [Meal(15), Meal(15, month: 5, recipeId: 2, name: "Before"), Meal(15, month: 8, recipeId: 3, name: "After")]);
+
+        Assert.Equal(["Tacos"], result.Series.Select(s => s.Label));
     }
 
     [Fact]
@@ -449,22 +484,17 @@ public class ReportEngineTests
     }
 
     [Fact]
-    public void A_quantity_by_category_report_discloses_rather_than_pools()
+    public void Quantity_by_category_is_refused_because_units_differ_across_categories()
     {
-        // Quantities never pool (mixed units make a pooled sum a lie), so the remainder is disclosed
-        // — with the CATEGORY noun, since that's what the series are.
+        // Quantity needs one product (or a by-product split). A by-CATEGORY split still sums mixed
+        // units across products (9 milks + 1 bread + 1 soap isn't 11 of anything), so ByCategory does
+        // NOT satisfy the rule's "or split by product" escape and the spec is refused — the engine
+        // never even reaches the disclose/pool step. (The valid case, where quantity DOES disclose
+        // its remainder rather than pool, is Quantity_split_by_product_neither_pools_nor_totals_but_discloses.)
         var spec = Spec(ReportMetric.Quantity, ReportSplit.ByCategory) with { TopN = 1 };
-        var facts = new[]
-        {
-            Buy(1, category: Category.Dairy, qty: 9),
-            Buy(2, productId: 2, name: "Bread", category: Category.Bakery, qty: 1),
-            Buy(3, productId: 3, name: "Soap", category: Category.Household, qty: 1),
-        };
 
-        var result = ReportEngine.Run(spec, facts, []);
-
-        Assert.Equal("2 more categories aren't shown (below the top 1).", result.Note);
-        Assert.DoesNotContain(result.Series, s => s.Label == "Everything else");
+        Assert.NotEmpty(ReportSpecRules.Check(spec));
+        Assert.Throws<ArgumentException>(() => ReportEngine.Run(spec, [], []));
     }
 
     [Fact]

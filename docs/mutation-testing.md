@@ -193,6 +193,7 @@ then each mutant reasoned about for a killing input the suite lacks.
 | 2026-08-25 | Chat/ProductMatcher | 11 (9 survived + 2 no-coverage) | 4 targeted tests + 2 equivalent-mutant annotations. The tests pin the IDF-weighted scorer's exact behaviour: `IdentityKey(null)`, the inclusive 0.5 threshold + first-wins tie, `max(qWeight,pWeight)` as the denominator (a diluted overlap stays below the line), and an absent token counting at full `MaxIdf` weight. Both annotation CORES survived adversarial attack (the `\|\|`→`&&` the downstream guards absorb; the empty-name `continue` that only skips a guaranteed-zero score) — but both were originally scoped `disable once all`, which also suppressed 5 killable mutants the reasons never argued; narrowed to `Logical`/`Statement` after the adversarial review, the freed mutants now Killed (33 → 40). |
 | 2026-08-25 | Prediction/ReplenishmentPredictor | 45 (79.64% → 100%) | 21 targeted tests + 7 annotations, written under the adversarial-review rules. The tests close real doctrine gaps: §6.6's same-day tie in `BurnCycles` (strict `>`) was comment-only — now engine-pinned; the newest-active-signal rule and the same-instant OutNow tie-break had no tests; the `Basis` wording ("lasts" vs "every") was unpinned; the trim's exactly-3-intervals and exactly-3×-median boundaries, the even-count IQR halves, the label window's 20%/spread/minus-one arithmetic, an equal-to-due label NOT reporting as a cap, the count's boundary days (run-out day inclusive; day 91 trips the age fallback; a fresh zero believed and projection-less), and the purchase-less-product-with-expirations-on crash guard. Several survivors existed because earlier fixtures were non-discriminating: every stock-up test used typical-trip 1 (where × and ÷ coincide), the size tie-break fixture won under Max AND Min — the new fixtures discriminate. Annotations each name their suppressed category siblings and the covering test. |
 | 2026-08-25 | Recipes/IngredientMatcher | 69 (46% → 100%) | ~44 killed by one comprehensive test over the whole `Trivial` modifier set; the rest by targeted tests for the `Singular` suffix rules (ies/oes/ses/xes/ches/shes/plain-s + the length boundaries), the digit-token filter (`v8` kept, pure numbers stripped), punctuation splitting, the mutual-coverage `&&`, the trivial-plural collision guards, and the blank-grounded-name guard (fixture: the creatable junk name `"!!"`, not an impossible empty-named product). ONE equivalent-mutant annotation stands (the plain-s length guard — survived an exhaustive 16,200-token adversarial probe). A second annotation on `IsSameFood`'s non-empty guards was **REFUTED** by the adversarial review — see below — and became the collision tests (104 → 113 killed). |
+| 2026-08-26 | Reporting/ReportEngine | 12 (65.62% → 100%) | First fixed the WIP compile error (`Category.Bakery`, which doesn't exist → `Pantry`) and a WIP test that asserted an **invalid** spec — quantity-by-category, which the rules refuse — so it could never have passed; repurposed it to pin that refusal. 3 targeted tests: the two date-window `&&`→`||` mutants (an out-of-window fact forms a ghost *series*, since the bucketed Total can't see it — an out-of-window date maps to no bucket — which is exactly why the existing edge test, which only asserted Total, missed them), and the multi-problem message join separator. 8 annotations: two `g.First()` on guaranteed-non-empty GroupBy groups; an equivalent `continue` (its trailing `foreach` iterates zero times); the `groups.Count <= 1` boundary (a direct return equals the ranking path for one group, with `>= 1` the covered killable sibling); the quarter `- 1` (Label only ever gets a quarter-start month); and **three UNREACHABLE** branches — the `"categories"`/`"recipes"` disclosure nouns (both splits always pool, never disclose) and the defensive `default` throw in `PurchaseValue` (only purchase metrics reach it). 3 behaviour-preserving refactors isolate the annotations cleanly: extract `ByProductGroups`/`Quarter`, and drop the redundant `spec.Split == None ||` (a None split always yields exactly one group, so `groups.Count <= 1` subsumes it). ⚠️ A `disable once` placed **mid-fluent-chain does NOT attach** — Stryker binds the directive to the enclosing statement, so the `ByProduct` `First()` had to move into a single-statement helper before its annotation took. |
 
 ## How to run it
 
@@ -256,19 +257,16 @@ Where the sweep stands, for the next session picking this up on `feature/mutatio
   (was the single most important open item; the prior agent died on the session limit). All 7 equivalence
   claims survived (0/7 false); `DominantSize`'s over-broad `disable once Linq` was restructured so its
   killable chain mutants are Killed (176 → 208), and one mis-cited test was corrected. 100% re-confirmed.
-- **In progress: `Reporting/ReportEngine`** (was 65.62%). WIP tests are committed at **`9a64ec9`**
-  (`tests/ShelfAware.Tests/ReportEngineTests.cs`, ~20 tests) but **DO NOT compile yet** — the branch
-  HEAD is deliberately non-building. On resume: fix the compile error, run the Core suite green, then
-  `dotnet stryker --mutate "**/ReportEngine.cs"` to confirm the kills and close any survivors.
-- **Next, by the worklist (worst first):** after ReportEngine, `Speech/SpeechText` (142, the biggest
-  single file), then `Speech/CookAlongCommands` (86), `Tagging/TagVocabulary` (42),
-  `Recipes/RecipeTagVocabulary` (28), `Onboarding/TourScript` (26), `Evaluation/ExtractionScorer`
-  (25), and down the table.
-- ⚠️ **The branch is ~10 commits behind master** (forked at `91d48f7`, before the pack-misread merge
-  PR #32). It does **not** have master's newer Core code — notably `Core/Ingest/QuantityAnomaly`,
-  which is new Core logic that will itself need mutation coverage. **Rebase onto current master before
-  continuing** (or at least before merge): it refreshes the mutation baseline to the real Core surface,
-  and keeps the eventual merge clean.
+- ✅ **DONE — `Reporting/ReportEngine` closed to 100%** (65.62% → 100%; the WIP `ReportEngineTests.cs`
+  compiled + verified). Fixed the compile error and a WIP test that asserted an invalid spec; 3 tests +
+  8 annotations + 3 behaviour-preserving refactors. See the "Files closed" row above.
+- **Next, by the worklist (worst first):** `Speech/SpeechText` (142, the biggest single file), then
+  `Speech/CookAlongCommands` (86), `Tagging/TagVocabulary` (42), `Recipes/RecipeTagVocabulary` (28),
+  `Onboarding/TourScript` (26), `Evaluation/ExtractionScorer` (25), and down the table. Also still owed:
+  `Core/Ingest/QuantityAnomaly` (new Core from master's PR #32, now on the branch after the rebase) needs
+  its own mutation coverage.
+- ✅ **DONE — rebased onto current master** (2026-08-26; was ~10 behind, forked at `91d48f7`). The branch
+  now carries master's newer Core, including `Core/Ingest/QuantityAnomaly` (listed above as still owed).
 - **Per the gate posture above**, this branch also still needs its `/pre-push` gate before merge (it
   is test-only + a Stryker config + a CI workflow, so the security surface is minimal, but the rule
   stands).
