@@ -41,6 +41,10 @@ public static class ExtractionScorer
         var missExpected = new List<string>();
         foreach (var exp in expected)
         {
+            // Stryker disable once Unary: `-1` → `+1` is unobservable — `best` is only ever used as an
+            // index inside `if (best >= 0 && bestSim >= 0.6)`, and reaching bestSim >= 0.6 means a found
+            // line scored above the 0 floor and updated `best` to its real index, so the sentinel value is
+            // never the one indexed with.
             var best = -1;
             var bestSim = 0.0;
             for (var i = 0; i < found.Count; i++)
