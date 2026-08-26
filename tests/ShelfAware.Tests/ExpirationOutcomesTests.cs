@@ -39,6 +39,30 @@ public class ExpirationOutcomesTests
             Judge(Milk(boughtDay: 1, labelDay: 10), signals: [(new DateOnly(2026, 7, 9), SignalKind.OutNow)]));
     }
 
+    // The supersede window is (PurchasedAt, Label]: STRICTLY after the purchase (the purchase's own date
+    // isn't a rebuy), through the label day inclusive.
+    [Fact]
+    public void The_purchases_own_date_does_not_count_as_a_rebuy() =>
+        Assert.Equal(LabelOutcome.PassedQuietly,
+            Judge(Milk(boughtDay: 1, labelDay: 10), purchases: [new DateOnly(2026, 7, 1)]));
+
+    [Fact]
+    public void A_rebuy_on_the_label_day_still_supersedes() =>
+        Assert.Equal(LabelOutcome.Superseded,
+            Judge(Milk(boughtDay: 1, labelDay: 10), purchases: [new DateOnly(2026, 7, 10)]));
+
+    // The OutNow window is [PurchasedAt, Label]: inclusive at BOTH ends — an outage on the purchase day
+    // or the label day still means it was finished.
+    [Fact]
+    public void An_OutNow_on_the_purchase_day_still_counts() =>
+        Assert.Equal(LabelOutcome.MarkedOut,
+            Judge(Milk(boughtDay: 1, labelDay: 10), signals: [(new DateOnly(2026, 7, 1), SignalKind.OutNow)]));
+
+    [Fact]
+    public void An_OutNow_on_the_label_day_still_counts() =>
+        Assert.Equal(LabelOutcome.MarkedOut,
+            Judge(Milk(boughtDay: 1, labelDay: 10), signals: [(new DateOnly(2026, 7, 10), SignalKind.OutNow)]));
+
     [Fact]
     public void Only_a_restock_after_the_label_is_an_override()
     {
