@@ -1552,6 +1552,8 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      mutations, each killing exactly its tests. ⚠️ Not re-verified in a browser since these changes — the
      HEIC path in particular can only be settled on a real iOS device, and the fix is reasoned from
      Blazor's `InputFile.ts` plus WebKit's documented transcode behaviour, not observed.
+     **[SETTLED 2026-08-25: the household's iPhone user (a Founder) confirmed image upload works on a
+     real device — see item 57.]**
 
 40. **The re-gate, and the end of the patch cycle (2026-08-02).** The gate over item 39's own fix commit
    found seven more — five of them regressions that commit had introduced. Three rounds in a row had now
@@ -1604,7 +1606,7 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      of the rule the same commit shipped); and a page test hard-coded loader copy the product no longer
      produces — the wording is pinned on both sides now.
    - **1339 tests green, 0 warnings** on a non-incremental Release build. ⚠️ Still not browser-verified
-     since item 39: the HEIC path needs a real iOS device.
+     since item 39: the HEIC path needs a real iOS device. **[Settled 2026-08-25 — item 57.]**
    - **The gate over the revert found no behaviour regressions — the first round of five that didn't.**
      What it did find was the revert's blind spot: deleting the withholding also deleted its tests, and
      the replacements went onto the census path only. Mutation-proven twice by independent reviewers —
@@ -2330,7 +2332,9 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      included) on both pages, append + ✕ removal, a text file refused instantly by name beside a
      surviving good photo, dark mode, zero console errors. ⚠️ NOT yet verified on a real iPhone —
      the capture attribute and the same-name re-snap are exactly what only her device can prove;
-     first thing to check after the next family publish.
+     first thing to check after the next family publish. **[VERIFIED 2026-08-25: the household's
+     iPhone user (a Founder) confirmed image upload works on a real device — see item 57. The
+     same-name re-snap wasn't itemized separately, but multi-photo flows are in ordinary use.]**
    - **The pre-merge max-effort `/code-review` (2026-08-15): two findings, both fixed.** The two
      refusal paths in each page's OnFilesSelected (the >Max single-selection catch and the
      append-cap check) returned before the finally, so the refused pick stayed as the input
@@ -2982,6 +2986,173 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      grocery list's visible text); a direct `/bugs` visit showed no panel. Server logged zero errors.
    - **1957 tests green, 0 warnings** on a non-incremental Release build (+32 over master's 1925). Every
      load-bearing test mutation-checked. Six commits; branch pushed to origin, PR not yet opened.
+     **[MERGED to master via PR #31, 2026-08-25.]**
+
+57. **Pre-launch readiness pass — iPhone verified, launch ops logged, family backups built, the
+   self-removal ghost fixed (2026-08-25).** Jordan asked what stands between finishing the payments
+   branch and charging money. The answer: nothing blocks *finishing the branch*; the plan's own §9
+   launch gate already names the legal set, and the readiness gaps it missed are now logged in
+   `docs/subscription-plan.md` §9 as the **ops launch gate** (transactional email provider,
+   pay-to-play backups + uptime/error alerting, pre-auth support contact) — all deliberately
+   deferred until promised customers exist (Jordan's call: "I can't justify a real email provider
+   or a real deployment with backups until I have promised customers"). Done NOW instead:
+   - **The iPhone photo path is VERIFIED on a real device** — the household's iPhone user (a
+     Founder) confirmed image upload works, closing the ⚠️ items 39/40/48 carried since 2026-08-02.
+     The HEIC/capture reasoning was sound all along; it just had never been observed.
+   - **`deploy/` gained the nightly family-box backup kit** (branch `feature/family-backup-kit`,
+     unmerged) — built on the family box as the deliberate dry run for the future pay-to-play box's
+     backup provision. `deploy/sqlite-snapshot/` (⚠️ NOT named `backup/`: .gitignore's VS-template
+     `Backup*/` pattern is case-insensitive on Windows and silently swallowed the whole folder —
+     found because `git status` showed only the scripts) is a tiny console tool: **`VACUUM INTO`
+     from a READ-ONLY connection** snapshots a LIVE database consistently (WAL readers never block
+     the app; a plain file copy of a live .db is the torn-backup mistake), then
+     `PRAGMA integrity_check` runs against the COPY — a backup nobody has opened is a hope.
+     `backup-family.ps1`: per-stamp `db-*` snapshot folders (retention prunes by the date IN THE
+     FOLDER NAME — deterministic, rehearsed with a planted `db-2026-01-01-000000`), a rolling
+     robocopy `/MIR` of receipts/recipe-images/keys/tts-cache into dedicated subfolders ONLY (the
+     publish-family `/MIR` lesson), `-DryRun` rehearses everything, and one log line per run,
+     success or FAILURE. `install-family-backup.ps1` publishes tool + script to a stable folder
+     OUTSIDE the repo and points the daily 03:30 task at that COPY — ⚠️ the 3am task must not
+     depend on which branch the working tree is on. S4U + StartWhenAvailable. **Verified against
+     the LIVE server with the app up** (integrity ok, mirror counts exact, second run idempotent,
+     installed copy run with the task's exact argument line). ⚠️ Task registration needs
+     ELEVATION (same class as publish-family.ps1) — Jordan runs `install-family-backup.ps1` once
+     elevated; everything else is proven. **Offsite is `rclone`, not a sync client** (Jordan's
+     call: not OneDrive; also the right design): `-Dest` is a plain LOCAL staging folder, and the
+     nightly task ENDS with `rclone sync -Dest -RcloneRemote` when a remote is configured —
+     because any per-user sync client (OneDrive, Google Drive for desktop) only syncs while its
+     owner is signed in, and the family box serves HEADLESS after a reboot, exactly when a backup
+     matters most. rclone is provider-agnostic (Google Drive, B2, S3…), needs no sign-in, and is
+     the same shape the pay-to-play droplet uses on cron. One-time operator step: install rclone +
+     `rclone config` (interactive OAuth), then re-run the installer with `-RcloneRemote` to bake it
+     into the task. Without `-RcloneRemote` the backup is same-disk only, and both script headers
+     say exactly that. Sync runs AFTER retention (mirrors the pruned state); a sync failure leaves
+     the LOCAL backup intact and the log line names which half failed.
+   - **The self-removal refusal stopped naming a feature that doesn't exist** (branch
+     `fix/self-removal-copy`, unmerged). `RemoveMemberAsync` told a self-remover to "Use 'Delete
+     my account' instead" — no such flow exists (item 54; it's launch-gated with credit-balance
+     disposition). Jordan proposed pointing at "Delete my data" instead; **the advice now branches,
+     because his pointer is only safe for a SOLE member**: "Delete all my data" wipes the
+     household's SHARED pantry, so offering it to a leaver in a multi-member household invites
+     destroying everyone else's data. With housemates → "ask another member to remove you" (the
+     act that exists; the Settings UI already hides Remove on your own row, so this is the
+     authorization boundary's copy). Alone → the wipe pointer, where there's nobody else's data
+     behind it. The membership check moved before the self check (one actor load serves both; the
+     housemate probe counts only the caller's own verified household, so wording can't leak
+     another household's size). Both branches pinned Contains + DoesNotContain, mutation-checked
+     (flipping the branch fails exactly the two wording tests); Web.Tests 697 + UI.Tests 485 green.
+   - **The `/pre-push` gate RAN on both branches (2026-08-25).** Local `/code-review` is
+     model-invocation-disabled (item 42), so each branch got an independent code + security review as
+     a `general-purpose` agent. ⚠️ **The `isolation: worktree` option did NOT give each agent a
+     separate tree** — the agents' `git checkout` commands raced in the shared repo and dragged the
+     MAIN working tree's HEAD to the backup-kit commit; one security reviewer caught it live and
+     re-pinned to its blob, and I restored master. Item 40's isolation hazard, live. **Fix for next
+     time: review agents must read by EXPLICIT SHA (`git show <sha>:<path>`, `git diff <base>..<sha>`)
+     and never `git checkout` / never rely on HEAD** — the re-run code reviewers were told exactly
+     that and came back clean. Outcome: **`fix/self-removal-copy` — SHIP (code) + PASS (security),
+     no changes.** **`feature/family-backup-kit` — PASS (security) + FINDINGS (code): one MEDIUM
+     durability call + three fail-safe LOWs, ALL FIXED** (Jordan: fix all, the family box is the
+     pay-for box's dry run) in commit `869900c`: offsite `rclone sync` now runs `--backup-dir` so a
+     bad local night can't erase good offsite blobs (dated sibling archive); retention survives a
+     malformed stamp folder via `TryParseExact`; the installer validates `-KeepDays`; the log-write
+     catch is no longer empty. Verified end-to-end (retention proof, installer ValidateRange, archive
+     non-overlap, guard) — except the actual `rclone --backup-dir` move, reasoned from rclone docs
+     (rclone isn't installed here). Both branches still UNMERGED, UNPUSHED — pushing is Jordan's call.
+
+58. **Pack-count misread as quantity — the soft guard (2026-08-26, branch `fix/quantity-misread-guards`,
+   unmerged, gate pending).** A real family-box bug Jordan hit: a normally-bought 12-pack of toilet
+   paper was extracted as **quantity 12** (the pack size read into the quantity field), and the
+   predictor faithfully stretched the due date ~12× — ~200 days, so the reminder never came. ⚠️ **The
+   predictor is doing the RIGHT thing with a wrong number** — a real 12× stock-up wants exactly that
+   projection (why the stock-up factor is uncapped, item 19), and capping it would have masked this
+   rather than caught it (Jordan's call). So the fix is at the SOURCE and the CONFIRM GATE, never the
+   predictor; the mutation-sweep tests pinning the uncapped 12× stretch stay correct.
+   - **Extraction prompt (rule 5):** a pack/count printed as part of the item ("12 ROLL", "12 CT",
+     "6 MEGA ROLL", "18 EGGS", "2=1") is the package SIZE; quantity is 1 (the number of packages) unless
+     "N @ price" or warehouse per-unit repeats. Reduces the misread at the source — but extraction is
+     probabilistic, so it's not the whole fix (Jordan's instinct, correct).
+   - ⚠️ **`QuantityAnomaly` (Core/Ingest) is a DETERMINISTIC confidence signal, chosen over asking the
+     model to self-rate its own quantity** (Jordan: high-quality deterministic confidence over a model
+     reasserting a number — models are bad at self-rating). It flags a line ONLY when the SIZE evidence
+     says the count came from a pack: the size's own count equals the quantity ("12 ct" + qty 12), or a
+     count-shaped quantity with no size on a product that USUALLY carries one (Jordan's "no pack size and
+     there tends to be" tell). **Deliberately NOT a raw "quantity >> usual" test** — that cannot tell a
+     misread from a genuine stock-up and would harass every bulk buyer (the same reason the predictor
+     isn't capped). A fractional quantity (a weight, 2.31 lb) is never flagged; small counts (< 4) never.
+   - **SOFT, never blocks** (Jordan's vision: flag but let them bulk-approve). `ReceiptConfirmationService`
+     (the ONE confirm path) computes the flag against the FINAL, review-corrected quantity — a fixed 12→1
+     clears it — stamps it on the confirmed `ReceiptLine.QuantityFlag` (new column, AdditiveSchema +
+     drop-column parity test), and returns the flagged lines. `ReceiptAutoConfirmer` carries the confirm
+     out WITHOUT blocking — deliberately unlike `ReceiptDuplicateDetector` (which breaks Auto): a wrong
+     quantity is one-tap recoverable and the due date recomputes live, so a bulk buyer is never stopped.
+   - **Surfaced two ways, from the ONE persisted flag:** a soft "pack?" chip on /receipts (the safety net —
+     an auto-confirm blown past on the done-panel is still catchable there — Jordan's "persist yes"), and a
+     soft amber callout on the Upload done-panel naming each flagged line (manual path takes the concerns
+     from the confirm result; auto path reads them back from the persisted flag — same set either way).
+     `QuantityAnomaly.Describe` is THE wording (one definition), a question not an accusation. `.callout` is
+     a new theme-aware soft-heads-up box reusing the duesoon amber tokens (defined, not an undefined class —
+     the `.linkish`/`.field`/`.small` lesson).
+   - Two commits (data+prompt `fe97037`, UI `636c973`). Core 630 green, Web 701, UI 489 (+33 across the
+     detector, Describe, confirm-stamping, AdditiveSchema, and the two page surfaces). **Live-verified end
+     to end** (dev sandbox, /dev/login): set the eggs line to qty 12 + size "12 ct", confirmed (recorded,
+     NOT blocked — the done-panel appeared), saw the amber callout ("did you buy one pack, not 12?"), and
+     /receipts then showed the persisted "pack?" chip with the same copy in theme-aware amber. Zero console
+     or server errors. ⚠️ Deliberately NOT built: a review-grid LIVE badge (Review-mode users already see
+     the quantity/size columns; lowest value) — could be added if wanted.
+   - **The `/pre-push` gate (2026-08-26; two independent agents reading by SHA per the isolation lesson).
+     Security PASS**, probe-free but fully traced: no cross-household read/write path, both new DB reads
+     (`LoadConcernsAsync`, the confirm's `priorSizesByProduct`) go through `IHouseholdDbFactory`, no new
+     `IgnoreQueryFilters`/endpoint/settings-key/disk-write, the copy/name/size render as encoded text
+     nodes (no XSS), and — the key item — `ReceiptLine.QuantityFlag` is a COLUMN on an already-covered
+     table, so export / delete-my-data / CountAll reach it automatically (verified in `UserDataService`;
+     it even confirmed the GraphQL surface doesn't select the column). **Code review: no High. Four
+     findings, all fixed (commit `5a16cf8`):**
+     - ⚠️ **[Med] `SizeMatchesQuantity` false-positived on measure-sized multi-buys** — the size's number
+       equalling the quantity flagged twelve 12-oz cans / six 6-oz yogurts as a misread. Now gated on the
+       size being a COUNT (`ct`/`pk`/`roll`/`eggs`/bare number), never a weight/volume, via
+       `QuantityAnomaly.IsCountSize`. ⚠️ The SAME latent bug lived in the sibling `MissingUsualSize` tell
+       (a measure-sized item bought in multiples with the size dropped is a legit multi-buy) — gated it
+       too (`UsuallyHasACountSize`, later replaced — see the Opus pass). **Both gates mutation-checked.**
+     - [Low] The done-panel callout **persisted after ↩ Undo** removed the receipt it named — cleared
+       `confirmConcerns` in `UndoConfirm`; regression-tested.
+     - [Low/info] **Tied the surfaced concern to the STAMPED line** (moved the add inside the `dbLine`
+       block) so the manual done-panel and the persisted-flag reads show provably the same set.
+     - [efficiency, from the security review] `priorSizesByProduct` loaded EVERY household purchase per
+       confirm — scoped it to the lines' resolved product ids (only a resolved product can have priors).
+   - **A SECOND independent gate on Opus 4.8** (Jordan's call — "catch everything we can"; the first ran on
+     fable-5). Security **PASS**, deeper than the first: traced each tenancy item to file:line, confirmed
+     no **ReDoS** on the new `[A-Za-z]+` regex (a single linear class on a bounded string), and checked the
+     adversarial case where a tampered `ProductId` names ANOTHER household's product — it doesn't resolve
+     against the scoped list, so it falls through to create-new and their sizes are never read. Code:
+     **SHIP**, no High/Med — the EF claim and the concern/stamp/persisted-flag "one set" property both
+     re-verified in a worktree. Two of five Low findings fixed (commit `2f98d7b`), plus one I closed while
+     reasoning before launching it:
+     - ⚠️ **The count/measure gate had a space-less hole I found myself** (`96cbb56`, pre-Opus): `IsCountSize`
+       split on separators, so `"12oz"`/`"5lb"` stayed one token and read as counts. Reads LETTER runs now
+       (regex), so a space-less measure is caught like `"12 oz"` (space-less sizes are real — `"24pk"`).
+     - ⚠️ **[Low, the valuable one] Compound multipack sizes escaped the flag entirely** — `"24 pk 12 fl oz"`,
+       `"12 x 12 oz"`, `"6 pack 16 oz"` read as measures under "any measure token → not a count", so a
+       **beverage/canned multipack** misread (a 24-pack read as qty 24) went unflagged. Those are the MOST
+       common packs and fully subject to the ~24× stretch the feature exists to catch — Opus rightly called
+       my "rare edge" doc dishonest. `IsCountSize` now treats a pack/count token ANYWHERE (`pk`/`ct`/`pack`/
+       `roll`/`x`/…, a `CountUnits` set) as making the leading number a pack count; only a PURE measure
+       (`"12 oz"`) isn't. Container words (bar/can/box/jar) are deliberately NOT count tokens — as often the
+       item's own vessel as a pack.
+     - **[Low] `MissingUsualSize` nagged a genuine stock-up** — four cartons of a usually-`"12 ct"` item with
+       the size dropped asked "is this one 4-pack?". `UsuallyHasACountSize` ("usually count-sized") became
+       `MatchesAUsualPackCount`: fire only when the quantity **equals a prior pack count** (a 12-roll pack
+       read as qty 12), which separates the leak from a real 4-buy. The one branch that could harass a bulk
+       buyer, now precise.
+     - **[Low, a11y] The `/receipts` "pack?" chip's explanation lived only in a hover `title`** — unreachable
+       by screen-reader/touch. Added an `aria-label` carrying the full `Describe` copy; it's the persistent
+       net, so its meaning must not need a mouse.
+     - Left documented/accepted (both reviewers): the **batch auto-confirm** done-panel shows no callout (the
+       `/receipts` chip is the net — a UX asymmetry, not a correctness gap), and rare non-grocery size tokens
+       (`"4 in"`, `"6 XL"`) lean-count and soft-flag. Both new detector rules mutation-checked (5 tests fail
+       when reverted).
+   - **Core 651 / Web 701 / UI 490 green, 0 warnings** (non-incremental Release). Branch `fix/quantity-
+     misread-guards` is **8 commits, gated clean by TWO independent passes (fable-5 + Opus 4.8), UNPUSHED** —
+     pushing/merge is Jordan's call.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

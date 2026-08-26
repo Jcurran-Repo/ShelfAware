@@ -317,4 +317,86 @@ public class ReceiptConfirmationServiceTests : IDisposable
         Assert.NotNull(await db.Products.SingleOrDefaultAsync(p => p.Name == "!!"));
         Assert.NotNull(await db.Products.SingleOrDefaultAsync(p => p.Name == "--"));
     }
+
+    // --- pack-misread quantity flag (soft, never blocking) -------------------
+
+    private async Task<Product> SeedProductWithSizedHistory(string name, string priorSize, int count = 3)
+    {
+        await using var db = _db.CreateDbContext();
+        var product = new Product
+        {
+            Name = name,
+            Purchases = [.. Enumerable.Range(0, count).Select(i => new PurchaseEvent
+            {
+                PurchasedAt = new DateOnly(2026, 1, 1).AddDays(i * 30), Quantity = 1, Size = priorSize,
+            })],
+        };
+        db.Products.Add(product);
+        await db.SaveChangesAsync();
+        return product;
+    }
+
+    [Fact]
+    public async Task A_pack_count_read_as_quantity_is_flagged_on_the_line_and_in_the_outcome_but_still_recorded()
+    {
+        // The family-box bug: toilet paper always bought as one 12-pack (size "12 rolls"), but this
+        // receipt read the pack count as quantity 12 and lost the size. The flag is stamped and
+        // surfaced — yet the purchase is STILL recorded. Soft, never blocking.
+        var tp = await SeedProductWithSizedHistory("Toilet Paper", "12 rolls");
+        var receipt = await SeedPending("Walmart", L("CHARMIN 12 ROLL", "Toilet Paper"));
+
+        var outcome = await _service.ConfirmAsync(receipt.Id, new DateOnly(2026, 7, 1),
+            [C("CHARMIN 12 ROLL", "Toilet Paper", tp.Id, qty: 12)], writeAliases: false);
+
+        Assert.Equal(1, outcome.Purchases); // recorded, not blocked
+        var concern = Assert.Single(outcome.QuantityConcerns!);
+        Assert.Equal("Toilet Paper", concern.ProductName);
+        Assert.Equal(12m, concern.Quantity);
+        Assert.Equal(QuantityFlag.MissingUsualSize, concern.Flag);
+
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(QuantityFlag.MissingUsualSize, (await db.ReceiptLines.SingleAsync()).QuantityFlag);
+    }
+
+    [Fact]
+    public async Task The_size_matching_the_quantity_is_flagged_even_on_a_brand_new_product()
+    {
+        // The count sits in BOTH fields — size "12 ct" AND quantity 12 — so no history is needed.
+        var receipt = await SeedPending("Walmart", L("SODA 12 CT", "Soda"));
+
+        var outcome = await _service.ConfirmAsync(receipt.Id, new DateOnly(2026, 7, 1),
+            [C("SODA 12 CT", "Soda", qty: 12, size: "12 ct", category: Category.Beverage)], writeAliases: false);
+
+        Assert.Equal(QuantityFlag.SizeMatchesQuantity, Assert.Single(outcome.QuantityConcerns!).Flag);
+    }
+
+    [Fact]
+    public async Task A_genuine_stock_up_is_not_flagged()
+    {
+        // Twelve individual yogurts, size unchanged from history — a real stock-up the engine honours.
+        // The size is present and doesn't equal 12, so neither tell fires.
+        var yogurt = await SeedProductWithSizedHistory("Yogurt", "5.3 oz");
+        var receipt = await SeedPending("Walmart", L("YOGURT", "Yogurt"));
+
+        var outcome = await _service.ConfirmAsync(receipt.Id, new DateOnly(2026, 7, 1),
+            [C("YOGURT", "Yogurt", yogurt.Id, qty: 12, size: "5.3 oz")], writeAliases: false);
+
+        Assert.Null(outcome.QuantityConcerns);
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(QuantityFlag.None, (await db.ReceiptLines.SingleAsync()).QuantityFlag);
+    }
+
+    [Fact]
+    public async Task A_review_corrected_quantity_clears_the_flag()
+    {
+        // The reviewer saw the badge and fixed 12 → 1: the flag is computed on the FINAL, corrected
+        // quantity, so a fixed line comes out clean (and the badge won't haunt it on /receipts).
+        var tp = await SeedProductWithSizedHistory("Toilet Paper", "12 rolls");
+        var receipt = await SeedPending("Walmart", L("CHARMIN 12 ROLL", "Toilet Paper"));
+
+        var outcome = await _service.ConfirmAsync(receipt.Id, new DateOnly(2026, 7, 1),
+            [C("CHARMIN 12 ROLL", "Toilet Paper", tp.Id, qty: 1, size: "12 rolls")], writeAliases: false);
+
+        Assert.Null(outcome.QuantityConcerns);
+    }
 }

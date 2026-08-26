@@ -170,6 +170,10 @@ public sealed class ReceiptAutoConfirmer(
             cancellationToken: cancellationToken);
         logger.LogInformation("Auto-confirmed uploaded receipt {ReceiptId}: {Purchases} purchase(s), {NewProducts} new product(s) ({Mode} mode).",
             receipt.Id, outcome.Purchases, outcome.NewProducts, mode);
+        // A pack-misread concern does NOT block the auto-confirm — deliberately unlike the duplicate case
+        // above, which DOES block. A wrong quantity is recoverable in one tap and the due date recomputes
+        // live, so a bulk buyer is never stopped; the concern is persisted on the line (QuantityFlag,
+        // stamped by the confirm service) and read back from there by the done-panel and /receipts.
         return new Outcome(true, outcome.Purchases, outcome.NewProducts, outcome.Retracked);
     }
 }

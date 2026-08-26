@@ -325,6 +325,23 @@ else if (phase == Phase.Done)
                 <a href="/settings">Settings</a>.
             </p>
         }
+        @if (confirmConcerns.Count > 0)
+        {
+            <div class="callout" role="status">
+                <p>
+                    Quick check — @(confirmConcerns.Count == 1 ? "one line looks" : $"{confirmConcerns.Count} lines look")
+                    like a pack size may have been read as the quantity. It's recorded either way; fixing it is one
+                    tap and the reminder date updates itself.
+                </p>
+                <ul class="muted">
+                    @foreach (var concern in confirmConcerns)
+                    {
+                        <li><strong>@concern.ProductName</strong> — @QuantityAnomaly.Describe(concern.Flag, concern.Quantity, concern.Size)</li>
+                    }
+                </ul>
+                <p class="muted">Correct the count on the item's page, or see these on the <a href="/receipts">Receipts</a> page.</p>
+            </div>
+        }
         <div class="review-actions">
             <button @onclick="Reset">Upload another</button>
             @if (confirmedReceiptId is not null)
@@ -511,6 +528,7 @@ else if (phase == Phase.Done)
                 outcome.Merchant, outcome.PurchasedAt ?? DateOnly.FromDateTime(DateTime.Today));
             autoConfirmed = true;
             confirmedReceiptId = outcome.ReceiptId;
+            confirmConcerns = await LoadConcernsAsync(outcome.ReceiptId);
             await LoadPendingAsync();
             phase = Phase.Done;
             return;
@@ -564,6 +582,10 @@ else if (phase == Phase.Done)
     private string? confirmError;
     private bool confirming;
     private bool autoConfirmed;                    // the Done panel explains an automatic confirm
+    // Confirmed lines whose quantity looked like a misread pack count — the soft done-panel heads-up.
+    // The manual path takes them from the confirm result; the auto path reads them back from the
+    // persisted QuantityFlag. Same set either way — and the same the /receipts page shows.
+    private IReadOnlyList<ReceiptConfirmationService.QuantityConcern> confirmConcerns = [];
     private ImportMode uploadMode = ImportMode.Review; // the household's active mode, shown pre-upload
     // The receipt the Done panel is ABOUT — what its Undo removes. Null when there's nothing
     // coherent to undo (an AlreadyConfirmed re-confirm, or after an undo ran).
@@ -649,6 +671,20 @@ else if (phase == Phase.Done)
         trackExpirations = await SettingsStore.GetTrackExpirationDatesAsync();
         uploadMode = await AutoConfirmer.ModeAsync();
         await LoadPendingAsync();
+    }
+
+    // The pack-misread concerns of a just-confirmed receipt, read back from the persisted QuantityFlag.
+    // Used by the AUTO path's done-panel (the manual path already has them from the confirm result) —
+    // one source of truth (the stamped line), so the done-panel and /receipts can't disagree.
+    private async Task<IReadOnlyList<ReceiptConfirmationService.QuantityConcern>> LoadConcernsAsync(int receiptId)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        return await db.ReceiptLines
+            .Where(l => l.ReceiptId == receiptId && l.QuantityFlag != QuantityFlag.None)
+            .OrderBy(l => l.Id)
+            .Select(l => new ReceiptConfirmationService.QuantityConcern(
+                l.NormalizedName, l.Quantity, l.Size, l.QuantityFlag))
+            .ToListAsync();
     }
 
     // Everything PendingReview: receipts the importer queued (Smart/Review mode), abandoned manual
@@ -889,6 +925,7 @@ else if (phase == Phase.Done)
             // Undo is offered only for the confirm that just happened — re-confirming an already-
             // confirmed receipt records nothing, so there's nothing coherent for Undo to mean.
             confirmedReceiptId = outcome.AlreadyConfirmed ? null : receipt.Id;
+            confirmConcerns = outcome.QuantityConcerns ?? [];
             await LoadPendingAsync(); // a queued receipt just left the pending list
             phase = Phase.Done;
         }
@@ -999,6 +1036,7 @@ else if (phase == Phase.Done)
                     (outcome.ProductsKept > 0 ? $" ({outcome.ProductsKept} product{(outcome.ProductsKept == 1 ? "" : "s")} kept — they have other history.)" : "");
                 confirmedReceiptId = null;
                 autoConfirmed = false;
+                confirmConcerns = []; // the flagged lines are gone with the receipt — don't keep nagging about them
                 await LoadPendingAsync();
             }
             else
@@ -1030,6 +1068,7 @@ else if (phase == Phase.Done)
         confirmError = null;
         autoConfirmed = false;
         confirmedReceiptId = null;
+        confirmConcerns = [];
         undoError = null;
         duplicateOf = null;
     }
