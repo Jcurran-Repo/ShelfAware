@@ -256,12 +256,15 @@ public class IngredientMatcherTests
     }
 
     [Fact]
-    public void An_empty_matched_product_does_not_ground_match_an_empty_named_product()
+    public void A_blank_matched_product_does_not_ground_match_a_junk_named_product()
     {
         // The `matchedProduct is { Length: > 0 }` guard: a blank grounded name must NOT enter the
-        // grounded leg (where its empty identity key would match an empty-named product). It falls to
-        // the core-word rule instead, which an empty-named product cannot satisfy.
-        Assert.Empty(IngredientMatcher.Covering("chicken breast", matchedProduct: "", [P("")]));
+        // grounded leg, where its empty identity key would match any product whose junk name ("!!")
+        // ALSO folds to the empty key. A junk-named product is a reachable pantry (the add form only
+        // refuses trimmed-blank names) — the adversarial review swapped this fixture from the
+        // impossible P("") to the creatable P("!!"). The blank link falls to the core-word rule,
+        // which a junk name cannot satisfy.
+        Assert.Empty(IngredientMatcher.Covering("chicken breast", matchedProduct: "", [P("!!")]));
     }
 
     [Fact]
@@ -273,6 +276,19 @@ public class IngredientMatcherTests
         Assert.False(IngredientMatcher.IsSameFood("chicken breast", "chicken"));
     }
 
+    [Fact]
+    public void A_trivial_only_phrase_is_never_the_same_food_as_anything_even_its_own_plural()
+    {
+        // "pack" is a Trivial modifier (no core words); "packs" is not in the set, and the pair
+        // collides through Singular. Covers() of an EMPTY need is vacuously true and the reverse side
+        // still matches ("packs" singularizes onto the raw-tokenized "pack"), so the two non-empty
+        // guards are the ONLY thing standing between a bare unit word and a false merge. Found by the
+        // adversarial review as a killing input for loosening either guard — with the whole suite
+        // staying green, which is why this pin exists.
+        Assert.False(IngredientMatcher.IsSameFood("pack", "packs"));
+        Assert.False(IngredientMatcher.IsSameFood("packs", "pack"));
+    }
+
     [Theory]
     [InlineData("ie", "ies")]   // a bare 3-letter "ies" uses the plain-s drop, not the ies->y rule
     [InlineData("oe", "oes")]   // a bare 3-letter "oes" likewise falls to plain-s (the -es chain needs length > 3)
@@ -280,6 +296,12 @@ public class IngredientMatcherTests
     {
         // The `Length > 3` guards keep the multi-letter -es rules off the bare three-letter suffixes,
         // which fall through to the plain-s drop instead. Pins those boundaries.
+        //
+        // These tokens are deliberately NON-food: no food phrase contains a bare 3-letter suffix, so
+        // no domain input reaches this boundary — a test is still the honest close (the project
+        // rejects "domain-equivalent" annotations: unreachability claims have been proven wrong here
+        // before). They pin the CRUDE singularizer's edge; if Singular() is ever replaced wholesale,
+        // delete these two rows in that commit rather than contorting the replacement to match them.
         Assert.True(IngredientMatcher.IsSameFood(singular, plural));
     }
 }

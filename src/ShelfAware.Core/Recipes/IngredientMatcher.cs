@@ -101,12 +101,10 @@ public static class IngredientMatcher
     {
         var ta = CoreTokens(a);
         var tb = CoreTokens(b);
-        // Stryker disable once Equality: the comparison mutants on these two non-empty guards are all
-        // non-defects, because a token count is never negative. `>= 0` is a constant-true no-op — with
-        // one side empty the OTHER guard still yields false (both-empty is the only case the pair
-        // guards, and it needs exactly one of them), so `> 0` and `>= 0` agree everywhere. `< 0` is
-        // impossible for a count and would make the guard constant-false; every IsSameFood-true test
-        // already forbids that. Neither is a reachable behaviour change.
+        // No Stryker annotation here, deliberately: an earlier "equivalent" claim on these guards was
+        // REFUTED by adversarial review — Covers() of an EMPTY need is vacuously true, and a Trivial
+        // word's non-Trivial plural collides through Singular ("pack"/"packs"), so loosening either
+        // non-empty guard is a real behaviour change. The collision test pins both directions.
         return ta.Count > 0 && tb.Count > 0 && Covers(ta, b) && Covers(tb, a);
     }
 

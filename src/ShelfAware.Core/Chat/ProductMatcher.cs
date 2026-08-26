@@ -52,9 +52,11 @@ public static class ProductMatcher
     /// a product's stored count, and picking a twin arbitrarily replaces the wrong household number).</summary>
     public static IReadOnlyList<Product> ExactMatches(string? query, IReadOnlyList<Product> products)
     {
-        // Stryker disable once all: equivalent — swapping || for && changes nothing observable. A
+        // Stryker disable once Logical: equivalent — swapping || for && changes nothing observable. A
         // whitespace query normalizes to "" and is caught by the q.Length == 0 guard below; empty
         // products make the Where empty; so both operators return [] in every combination of inputs.
+        // Scoped to Logical ONLY (adversarial-review fix): the original `all` also suppressed killable
+        // mutants this reason never argued — those stay live for the tests to kill.
         if (string.IsNullOrWhiteSpace(query) || products.Count == 0) return [];
         var q = IdentityKey(query);
         if (q.Length == 0) return [];
@@ -98,9 +100,12 @@ public static class ProductMatcher
         foreach (var p in products)
         {
             var pTokens = Tokens(Normalize(p.Name));
-            // Stryker disable once all: equivalent — an empty-name product shares 0 weight and has
-            // pWeight 0, so score is 0 / max(qWeight>0, 0) = 0 and it can never beat bestScore (≥ 0);
-            // dropping the continue changes no result. A pure optimization, not a decision.
+            // Stryker disable once Statement: equivalent — an empty-name product shares 0 weight and
+            // has pWeight 0, so score is 0 / max(qWeight, 0) = 0 (qWeight is strictly positive: every
+            // idf weight is ln((N+1)/(df+0.5)) > 0 and the q.Length guard guarantees a token, so no
+            // 0/0 NaN) and 0 can never beat bestScore (≥ 0); dropping the continue changes no result.
+            // Scoped to Statement ONLY (adversarial-review fix): the original `all` also suppressed a
+            // killable Equality mutant the existing token-overlap test kills.
             if (pTokens.Count == 0) continue;
             var sharedWeight = qTokens.Where(pTokens.Contains).Sum(Weight);
             var pWeight = pTokens.Sum(Weight);

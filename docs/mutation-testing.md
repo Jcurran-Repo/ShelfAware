@@ -67,6 +67,11 @@ removes *all* mutants in that method. As of the first baseline that affects a sm
 covered by ordinary unit tests — they simply cannot be mutation-*tested* here. This is a Stryker
 limitation, recorded so the tracked score is honest about what it does and does not cover.
 
+⚠️ One sharper consequence, found by the adversarial review below: the rollback can also sweep a
+**compilable** mutant into the CompileError bucket alongside its genuinely-uncompilable siblings in
+the same expression — and such a mutant can be a live SURVIVOR the score silently excludes. See rule
+4 of the adversarial-review rules.
+
 ## Scope-tuning outcome (2026-08-25): nothing honest to exclude
 
 Before the sweep, a per-file audit of the baseline (the JSON report) settled whether any Core files
@@ -105,12 +110,53 @@ Closed file-by-file; each file re-run scoped (`dotnet stryker --mutate "**/<File
 The top 5 files hold ~400 of the ~646. This is a multi-session arc; the score-history table records
 each session's progress.
 
+### The adversarial review of the first two closed files (2026-08-25) — and the rules it set
+
+An independent reviewer was briefed to REFUTE the first two files' 100%: strip every annotation and
+re-run Stryker, hand-apply each "equivalent" mutation and hunt a killing input, judge every new test
+for domain reachability, re-derive the math. What it found is why this pass is now mandatory:
+
+- **A false equivalence claim hiding two uncovered killable mutants (HIGH).** The author's annotation
+  on `IsSameFood`'s non-empty guards claimed `> 0`/`>= 0` "agree everywhere", with a proof that was
+  factually wrong. The killing input: `IsSameFood("pack", "packs")` — a `Trivial` word colliding with
+  its non-Trivial plural through `Singular`, where `Covers()` of an empty need is vacuously true. With
+  either guard loosened the FULL 632-test suite stayed green. The annotation is gone; the collision
+  tests pin both directions.
+- **A live survivor hidden in the CompileError bucket (HIGH).** An `&&`→`\|\|` mutant on the same line
+  compiled fine but was swept into `CompileError` by Stryker's rollback of genuinely-uncompilable
+  siblings in the same expression — so the committed "100%" silently excluded a real surviving mutant.
+  The collision tests kill it too.
+- **Both `disable once all` scopes were over-broad (MED).** Each suppressed the whole line, but the
+  written reasons argued ONE mutation each; 5 killable mutants rode along unexamined. Narrowed to the
+  argued categories, the freed mutants are now Killed.
+- **What survived attack** (a survived attack is the evidence an annotation is sound): both
+  ProductMatcher equivalence cores, the plain-s length-guard annotation (exhaustive 16,200-token
+  probe found zero observable difference), and the exact-0.5 threshold test's arithmetic (bit-exact
+  in IEEE doubles, no earlier rule short-circuiting).
+
+**Rules adopted from this, binding on the rest of the sweep:**
+
+1. **`Stryker disable once all` is banned.** An annotation names the NARROWEST mutator list its
+   reason actually argues (`Logical`, `Statement`, `Equality`, …) — anything broader suppresses
+   mutants nobody examined.
+2. **"Domain-equivalent" annotations are rejected.** A mutant killable only by inputs the domain
+   "never produces" still gets a test, not an annotation: a test is self-verifying, an annotation is
+   trusted prose — and this very review refuted one "the domain never produces X" claim, on a
+   codebase where a prior "unreachable" (junk product names) had already been proven reachable.
+   Such tests carry a comment naming what they pin and when to delete them.
+3. **Every equivalence annotation gets adversarially attacked before it ships.** Author reasoning
+   alone produced one false proof out of five claims — a 20% error rate on exactly the claims no
+   test checks.
+4. **The CompileError bucket is not purely "cannot exist".** Rollback can sweep COMPILABLE mutants of
+   an expression into it alongside their uncompilable siblings; after changing annotations or nearby
+   code, re-check that bucket before trusting the score.
+
 ### Files closed to 100% (scoped `--mutate`)
 
 | Date | File | Mutants closed | How |
 |------|------|----------------|-----|
-| 2026-08-25 | Chat/ProductMatcher | 11 (9 survived + 2 no-coverage) | 4 targeted tests + 2 equivalent-mutant annotations. The tests pin the IDF-weighted scorer's exact behaviour: `IdentityKey(null)`, the inclusive 0.5 threshold + first-wins tie, `max(qWeight,pWeight)` as the denominator (a diluted overlap stays below the line), and an absent token counting at full `MaxIdf` weight. The two annotations are genuine equivalents (a `\|\|`→`&&` the downstream guards absorb; an empty-name `continue` that only skips a guaranteed-zero score). |
-| 2026-08-25 | Recipes/IngredientMatcher | 69 (46% → 100%) | ~44 killed by one comprehensive test over the whole `Trivial` modifier set; the rest by targeted tests for the `Singular` suffix rules (ies/oes/ses/xes/ches/shes/plain-s + the length boundaries), the digit-token filter (`v8` kept, pure numbers stripped), punctuation splitting, the mutual-coverage `&&`, and the blank-grounded-name guard. 3 equivalent-mutant annotations (the two `Count`/`Length` non-empty guards, whose `>=`/`<` mutants are non-defects because a count is never negative). |
+| 2026-08-25 | Chat/ProductMatcher | 11 (9 survived + 2 no-coverage) | 4 targeted tests + 2 equivalent-mutant annotations. The tests pin the IDF-weighted scorer's exact behaviour: `IdentityKey(null)`, the inclusive 0.5 threshold + first-wins tie, `max(qWeight,pWeight)` as the denominator (a diluted overlap stays below the line), and an absent token counting at full `MaxIdf` weight. Both annotation CORES survived adversarial attack (the `\|\|`→`&&` the downstream guards absorb; the empty-name `continue` that only skips a guaranteed-zero score) — but both were originally scoped `disable once all`, which also suppressed 5 killable mutants the reasons never argued; narrowed to `Logical`/`Statement` after the adversarial review, the freed mutants now Killed (33 → 40). |
+| 2026-08-25 | Recipes/IngredientMatcher | 69 (46% → 100%) | ~44 killed by one comprehensive test over the whole `Trivial` modifier set; the rest by targeted tests for the `Singular` suffix rules (ies/oes/ses/xes/ches/shes/plain-s + the length boundaries), the digit-token filter (`v8` kept, pure numbers stripped), punctuation splitting, the mutual-coverage `&&`, the trivial-plural collision guards, and the blank-grounded-name guard (fixture: the creatable junk name `"!!"`, not an impossible empty-named product). ONE equivalent-mutant annotation stands (the plain-s length guard — survived an exhaustive 16,200-token adversarial probe). A second annotation on `IsSameFood`'s non-empty guards was **REFUTED** by the adversarial review — see below — and became the collision tests (104 → 113 killed). |
 
 ## How to run it
 
