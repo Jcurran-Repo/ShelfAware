@@ -350,6 +350,54 @@ public class ReportEngineTests
         Assert.Contains("starts. Quantity only means", ex.Message);
     }
 
+    // Each rule states WHY, and the builder UI shows exactly that reason — so pin the distinctive phrase
+    // of each refusal (the "whether it fires" is already covered by Unsound_specs_are_refused above).
+    [Fact]
+    public void Each_rule_explains_itself()
+    {
+        void RuleSays(ReportSpec spec, string phrase) =>
+            Assert.Contains(ReportSpecRules.Check(spec), m => m.Contains(phrase, StringComparison.OrdinalIgnoreCase));
+
+        RuleSays(Spec() with { To = Jun1.AddDays(-1) }, "ends before it starts");
+        RuleSays(Spec(ReportMetric.Quantity), "Quantity only means");
+        RuleSays(Spec(ReportMetric.UnitPrice), "per item");
+        RuleSays(Spec(ReportMetric.UnitPrice, ReportSplit.ByCategory) with { ProductId = 1 }, "doesn't split");
+        RuleSays(Spec(ReportMetric.MealsCooked, ReportSplit.ByProduct), "split by recipe, or not at all");
+        RuleSays(Spec(split: ReportSplit.ByRecipe), "Splitting by recipe only applies");
+        RuleSays(Spec(ReportMetric.MealsCooked) with { Category = Category.Dairy }, "filters don't apply");
+        RuleSays(Spec(ReportMetric.Spend) with { RecipeId = 3 }, "recipe filter only applies");
+        RuleSays(Spec(split: ReportSplit.ByProduct) with { TopN = 0 }, "at least one series");
+        RuleSays(Spec(split: ReportSplit.ByProduct) with { TopN = 9 }, "at most");
+    }
+
+    [Fact]
+    public void A_single_day_window_is_allowed()
+    {
+        // The range check is To < From, exclusive: a report over one day (To == From) is fine.
+        Assert.Empty(ReportSpecRules.Check(Spec() with { To = Jun1 }));
+    }
+
+    [Fact]
+    public void A_meal_metric_refuses_a_lone_pantry_filter()
+    {
+        // The filter guard is an OR across category/product/tag — a category filter alone (no product,
+        // no tag) is still refused. (An AND would let a lone category slip through.)
+        Assert.NotEmpty(ReportSpecRules.Check(Spec(ReportMetric.MealsCooked) with { Category = Category.Dairy }));
+        Assert.NotEmpty(ReportSpecRules.Check(Spec(ReportMetric.MealsCooked) with { ProductId = 5 }));
+    }
+
+    [Fact]
+    public void Stacking_a_non_partitioning_split_names_the_right_reason()
+    {
+        // A tag stack double-counts; any other non-partitioning split (here None) just doesn't partition —
+        // two different refusals, and the message must match the split.
+        var tag = ReportSpecRules.Check(Spec(split: ReportSplit.ByTag) with { Chart = ReportChart.StackedBars });
+        Assert.Contains(tag, m => m.Contains("double-count"));
+
+        var none = ReportSpecRules.Check(Spec() with { Chart = ReportChart.StackedBars });
+        Assert.Contains(none, m => m.Contains("partitions the data"));
+    }
+
     // ---- The window's exact edges ---------------------------------------------------------------
 
     [Fact]
