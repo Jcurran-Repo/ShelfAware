@@ -48,6 +48,9 @@ public class QuantityAnomalyTests
     [InlineData(5, "5 lb")]        // five 5-lb flour bags
     [InlineData(12, "12 fl oz")]   // "fl oz" — both tokens are measures
     [InlineData(16, "16 g")]
+    [InlineData(12, "12oz")]       // no space — the letter run "oz" is still a measure
+    [InlineData(5, "5lb")]
+    [InlineData(12, "12floz")]
     public void A_measure_size_whose_number_matches_the_quantity_is_NOT_flagged(int quantity, string size)
     {
         // The false positive the review caught: buying N of a per-unit weight/volume item whose size
@@ -62,6 +65,7 @@ public class QuantityAnomalyTests
     [InlineData(18, "18 eggs")]
     [InlineData(6, "6 Mega Roll")]
     [InlineData(12, "12")]         // a bare number is a count, not a measure
+    [InlineData(24, "24pk")]       // no space — still a count
     public void A_count_size_matching_the_quantity_still_flags(int quantity, string size)
     {
         // Guard the gating didn't over-reach: the real pack-count shapes must still fire.

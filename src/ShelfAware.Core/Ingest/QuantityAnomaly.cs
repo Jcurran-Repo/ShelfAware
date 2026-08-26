@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using ShelfAware.Core.Domain;
 
 namespace ShelfAware.Core.Ingest;
@@ -51,21 +52,24 @@ public static class QuantityAnomaly
         return QuantityFlag.None;
     }
 
-    // Weight/volume units — a size carrying one is a per-unit MEASURE, not a pack count.
+    // Weight/volume units — a size carrying one is a per-unit MEASURE, not a pack count. A closed set
+    // for the grocery domain (length units like "in"/"ft" essentially never size a grocery item).
     private static readonly HashSet<string> MeasureUnits = new(StringComparer.OrdinalIgnoreCase)
     {
-        "oz", "ounce", "ounces", "lb", "lbs", "pound", "pounds", "g", "gram", "grams", "kg", "mg",
-        "ml", "l", "liter", "liters", "litre", "litres", "gal", "gallon", "gallons",
-        "qt", "quart", "quarts", "pt", "pint", "pints", "fl", "cup", "cups", "tbsp", "tsp",
+        "oz", "ounce", "ounces", "lb", "lbs", "pound", "pounds", "g", "gr", "gram", "grams", "kg", "mg",
+        "ml", "cl", "dl", "l", "liter", "liters", "litre", "litres", "gal", "gallon", "gallons",
+        "qt", "quart", "quarts", "pt", "pint", "pints", "floz", "fl", "cup", "cups", "tbsp", "tbs", "tsp", "cc",
     };
 
-    // A size that denotes a COUNT / pack ("12 ct", "6 Mega Roll", "18 eggs", a bare "12") rather than a
-    // weight or volume — the only kind whose number matching the quantity points to a pack-count misread.
+    // A size that denotes a COUNT / pack ("12 ct", "6 Mega Roll", "18 eggs", "24pk", a bare "12") rather
+    // than a weight or volume — the only kind whose number matching the quantity points to a pack-count
+    // misread. Reads the LETTER runs, so "12oz"/"5lb" with no space are caught as measures too, not just
+    // "12 oz" (regex ignores digits and separators); any measure unit among them disqualifies it.
     private static bool IsCountSize(string? size)
     {
         if (LeadingCount(size) is null) return false; // must start with a number to be a count at all
-        var tokens = size!.Split([' ', '-', '/', '.'], StringSplitOptions.RemoveEmptyEntries);
-        return !tokens.Any(MeasureUnits.Contains);
+        var units = Regex.Matches(size!, "[A-Za-z]+").Select(m => m.Value);
+        return !units.Any(MeasureUnits.Contains);
     }
 
     /// <summary>THE user-facing wording for a flag — one definition, so /receipts and the Upload
