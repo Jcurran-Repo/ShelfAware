@@ -11,6 +11,31 @@ public class RecipeTagVocabularyTests
     private static Recipe Recipe(params string[] existingTags) =>
         new() { Name = "Test", Tags = [.. existingTags.Select(t => new RecipeTag { Value = t })] };
 
+    // The seed vocabulary is public API — these are the recipe cloud's default tags, so pin the exact set.
+    [Fact]
+    public void The_seed_vocabulary_is_the_expected_set() =>
+        Assert.Equal(
+            new[]
+            {
+                "Breakfast", "Lunch", "Dinner", "Dessert", "Snack", "Side", "Drink",
+                "Italian", "Mexican", "Asian", "Indian", "Mediterranean", "American",
+                "Vegetarian", "Vegan", "Gluten-Free", "Dairy-Free", "Low-Carb", "High-Protein",
+                "Quick", "One-Pot", "Slow Cooker", "Grill", "Baking", "Soup", "Salad", "Pasta",
+            },
+            RecipeTagVocabulary.Seed);
+
+    [Fact]
+    public void ApplyTags_teaches_a_newly_coined_tag_to_the_vocabulary()
+    {
+        var recipe = Recipe();
+        var vocab = new List<string>();
+
+        RecipeTagVocabulary.ApplyTags(recipe, ["Weeknight"], vocab);
+
+        Assert.Equal(["Weeknight"], recipe.Tags.Select(t => t.Value));
+        Assert.Contains("Weeknight", vocab); // a coined tag joins the vocabulary so later tags dedup against it
+    }
+
     [Fact]
     public void ApplyTags_adds_genuinely_new_tags()
     {
