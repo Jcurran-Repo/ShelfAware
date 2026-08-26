@@ -110,6 +110,9 @@ Closed file-by-file; each file re-run scoped (`dotnet stryker --mutate "**/<File
 The top 5 files hold ~400 of the ~646. This is a multi-session arc; the score-history table records
 each session's progress.
 
+✅ **All closed as of 2026-08-26** — the worklist above is fully worked off, every file has a "Files
+closed" row below, and a full run reads 100.00%. The list is kept as the historical starting point.
+
 ### The adversarial review of the first two closed files (2026-08-25) — and the rules it set
 
 An independent reviewer was briefed to REFUTE the first two files' 100%: strip every annotation and
@@ -205,6 +208,13 @@ then each mutant reasoned about for a killing input the suite lacks.
 | 2026-08-26 | Speech/CookAlongCommands | 78 (46.21% → 100%) | Same shape as SpeechText — the bulk was untested COMMAND-PHRASE strings (Next/Back/Repeat/Hold/Resume/Stop/StartOver/FirstStep), each of which IS a hands-free control, so an exhaustive one-InlineData-per-entry sweep plus the number-word 0–20 and step-digit paths. ⚠️ Three entries were **dead once normalized** and got removed (behaviour-preserving): `Utterance.Core` strips trailing/leading filler, so `"and then"`→`"then"` (still Next, harmless), `"back now"`→`"back"` (→Back) and `"carry on now"`→`"carry on"` (→Next) — no input can reach those strings, so no test can kill their mutants, and they share lines with live entries (can't annotate one without over-suppressing). Two defensive-dead `≥ 0` guards in `StepNumberIn` were simplified away (`\w+` can't capture a sign), removing their equivalent Conditional/Equality mutants; the surviving word-lookup guard is pinned by "step back" (word not found → falls through) and "step zero" (index 0). ONE equivalent annotation: the `Compiled \| CultureInvariant` bitwise on the step regex — `& → None` is inert (no IgnoreCase, so CultureInvariant does nothing; Compiled is speed only). The 7 timeouts are killed mutants (a regex mutation that backtracks catastrophically). |
 | 2026-08-26 | Speech/SpeechText | 140 (48.54% → 100%) | The bulk was untested DICTIONARY string-values — these strings ARE what the TTS reader says, so the honest close is an exhaustive sweep over each table: every `Units` entry (singular at "1", plural at "3"), every `Fractions` entry (alone + before-a-unit), every `MixedFractions`, every `UnicodeFractions` glyph, and every `SmallNumbers` word (via a mixed number 0–20, plus 21 to pin the `n < Length` boundary — one InlineData table per dictionary). Plus tests for the bare mixed number (`MixedBare`), and a unicode fraction glued to a whole number ("1½" must split to "1 1/2", pinning the decoded-fraction space prefix). ONE equivalent annotation: the `OrderByDescending` on `UnitPattern` — **proven** unobservable by the whole unit sweep passing identically under both orderings (the `\b` after every unit group makes a shorter prefix-unit fail and backtrack, so order can't change the match). ⚠️ `IntegerWord`'s compound `&&`-chain (with `out var n`, reached through a compiled-regex `MatchEvaluator`) was a Stryker **coverage false-survivor** — a `&&`→`\|\|` mutant it marked Survived that a real n=21 test kills (throws `SmallNumbers[21]`), proven by hand-applying it; the two identical mutants split Killed/Survived, the tell. Rewrote `IntegerWord` to explicit `if`s (behaviour-identical, clearer, defensive checks kept) and Stryker then killed it. |
 | 2026-08-26 | Reporting/ReportEngine | 12 (65.62% → 100%) | First fixed the WIP compile error (`Category.Bakery`, which doesn't exist → `Pantry`) and a WIP test that asserted an **invalid** spec — quantity-by-category, which the rules refuse — so it could never have passed; repurposed it to pin that refusal. 3 targeted tests: the two date-window `&&`→`||` mutants (an out-of-window fact forms a ghost *series*, since the bucketed Total can't see it — an out-of-window date maps to no bucket — which is exactly why the existing edge test, which only asserted Total, missed them), and the multi-problem message join separator. 8 annotations: two `g.First()` on guaranteed-non-empty GroupBy groups; an equivalent `continue` (its trailing `foreach` iterates zero times); the `groups.Count <= 1` boundary (a direct return equals the ranking path for one group, with `>= 1` the covered killable sibling); the quarter `- 1` (Label only ever gets a quarter-start month); and **three UNREACHABLE** branches — the `"categories"`/`"recipes"` disclosure nouns (both splits always pool, never disclose) and the defensive `default` throw in `PurchaseValue` (only purchase metrics reach it). 3 behaviour-preserving refactors isolate the annotations cleanly: extract `ByProductGroups`/`Quarter`, and drop the redundant `spec.Split == None ||` (a None split always yields exactly one group, so `groups.Count <= 1` subsumes it). ⚠️ A `disable once` placed **mid-fluent-chain does NOT attach** — Stryker binds the directive to the enclosing statement, so the `ByProduct` `First()` had to move into a single-statement helper before its annotation took. |
+| 2026-08-26 | Reporting/ReportSpecUrl | 7 (→ 100%) | Serialization gaps the existing round-trip missed: the parsed window must WIN over the fallback (the round-trip and garbage tests both landed ON the fallback window, so neither distinguished "use the parsed date" from "always fallback" — a distinct-from-fallback date pins both `?? fallbackFrom/To`); TopN's 1–50 bounds (both inclusive edges + below/above/garbage); a whitespace-only value reads as absent (Text()'s `IsNullOrWhiteSpace`, the half a non-blank round-trip can't reach); and RecipeId added to the full round-trip (its `recipe=` emit and parse key were otherwise unexercised). Test-only. |
+| 2026-08-26 | Domain/SizeBucket | 2 (→ 100%) | ⚠️ **A static readonly collection defeats Stryker's runtime mutation toggle.** The each-family spellings lived in a `static readonly HashSet`, whose string literals initialise ONCE and cache — Stryker's per-mutant toggle can never re-run a cached static initializer, so those literals were unkillable as written (the same shape as AiPricing below, but a static field can't be fixed by a fresh `new()`). Moved the spellings into the method body (a case-folded `s is "…" or …` pattern, behaviour-preserving) so each is a live per-call mutant, pinned by an exhaustive per-spelling theory. ⚠️ `"each"` is deliberately NOT in the pattern: it equals `EachKey`, so an input of "each" returns "each" through the `: s` fallback anyway — listing it is a mutation-equivalent no-op, and Stryker can't narrowly suppress one literal inside a multi-alternative pattern (a `disable` binds to the whole statement). A strong comment forbids re-adding it. |
+| 2026-08-26 | Billing/AiPricing | 2 (→ 100%) | ⚠️ The same static-caching trap, milder: the seeded model-rate keys survived because the test read a **shared `static Defaults`** — its instance-field dictionary initializer runs once for that static and caches the pre-mutation keys, so a mutated key literal is never observed. Fixed by pricing through a FRESH `new BillingOptions()` per theory row (an instance initializer re-runs each construction), with a fallback distinct from every seeded rate — opus's own rate EQUALS the default fallback, so a missed opus key is only observable against a different fallback. Test-only. |
+| 2026-08-26 | Shopping/SpendForecast · ShoppingEstimator · PriceSeries | 3 (→ 100%) | SpendForecast: `day > today` is strict — a landing exactly on today is a purchase announced NOW, not a future cost, so it isn't billed (the existing window-edge tests never put a step on today). ShoppingEstimator: the `CountNote` ternary's empty arm (suppressed, but no count date → "You have 3" with no ", counted …" tail — every existing test set a date). PriceSeries: a 2-points-per-bucket tie-break (equal counts → newest bucket wins, pinning `ThenByDescending`→`ThenBy` AND `Max`→`Min`) plus a differing-count case; ONE equivalent (`First()` after the non-empty `Count == 0` guard, isolated on its own line so the ordering/aggregate mutants above stay tested). |
+| 2026-08-26 | Prediction/PredictionBacktest · PredictionResult | 3 (→ 100%) | `ProductScore.HitRate`'s `Samples == 0 → 0` guard is unreachable through `Run` (a score is emitted only once it has samples), so a direct construction pins it (without the guard it divides by zero → NaN); `PerProduct` ordering (most-sampled first, name tiebreak) had no order assertion; `PredictionResult.RunsOutEarly`'s 3-day threshold (inclusive, and null-gap never fires). ONE equivalent: `Median`'s `OrderBy` (sort-direction invariant — odd: the same middle; even: the same two middles averaged). |
+| 2026-08-26 | Census/CatalogIndex · CensusPlan · Domain/TypicalPackage | 1 (→ 100%) | CatalogIndex: dropped a redundant `key.Length > 0` guard in `ExactMatches` (the ctor never indexes an empty key, so `TryGetValue("")` is false anyway) — removing a bundled-Equality residual rather than annotating it; TWO equivalents kept (the ctor's empty-key `continue`, the resolve-memo's null-name cache key). ⚠️ CensusPlan: a **coverage FALSE-survivor** — `Prefill`'s multi-line `resolved is not null && kind == ExactName && ExactMatches.Count > 1` read Survived, but hand-applying the `&&`→`||` mutant failed 4 tests (Stryker mis-traces a multi-line short-circuit). Simplified to `ExactMatches.Count > 1` alone (>1 identity matches IMPLIES the first two conjuncts — same normalization guarantees an ExactName resolve), which is behaviour-preserving and removes the chain; ONE equivalent stands (`CreateReason`'s fuzzy-kind `&&`, reached only when there is NO exact-identity match). TypicalPackage: ONE equivalent (median `OrderBy`); its `q > 0` filter's relational mutants are killed by an existing `[0, -1, 1.5]→1.5` case. |
+| 2026-08-26 | Result-factory DTOs + Domain defaults | ~20 (→ 100%) | One `ResultDtoTests` file for the Ok/Fail success booleans and default strings across `ChatResult`, `ExtractionResult`, `SpeechToTextResult`, `TextToSpeechResult`, `RecipeImportResult`, `ShelfCensusResult`, plus `RecipeSuggestion.ToGrab` / `SuggestedIngredient.Have`, `AppSetting` (the null→"" household setter) / `BugReport` (`Resolved`, `AwaitingReporter`) / `Receipt` / `EvalResults` defaults, and `IAppSettings.GetTrackExpirationDatesAsync`. Incl. bare-construction for the two `RawModelJson` initializers the factories always override, and a KEYED `IAppSettings` fake so both the `"true"` literal and the setting KEY are observable (they share the `SettingKeys` const, so the fake keys on the literal string, not the const). Plus `ExpirationOutcomes` boundary + `ImportMode` theory rows. Test-only. |
 
 ## How to run it
 
@@ -253,31 +263,34 @@ row is called done.
 | Date | Score | Killed | Survived | Compile-error (excluded) | Notes |
 |------|-------|--------|----------|--------------------------|-------|
 | 2026-08-25 | 64.72% | 1214 | 611 | 453 | First baseline (+8 timeout, ~55 no-coverage). ~666 to close to 100%. Untuned scope — includes interfaces/DTOs. |
+| 2026-08-26 | **100.00%** | 1901 | 0 | 452 | **Sweep complete** — every mutant killed or annotated equivalent. +11 timeout (killed by catastrophic backtracking), 170 ignored (the reasoned equivalents, each adversarially attacked per rule 3). 1170 Core tests, 0 warnings on a `--no-incremental` Release build. Two closing findings: a `static readonly` collection defeats Stryker's runtime toggle (restructure into the method body), and a multi-line `&&` chain can read as a coverage false-survivor (simplify the chain — hand-apply to confirm before trusting "Survived"). |
 
-## Resume state (2026-08-26 handoff)
+## Resume state (2026-08-26 — sweep COMPLETE)
 
-Where the sweep stands, for the next session picking this up on `feature/mutation-testing`:
+**The Core mutation-testing sweep is finished: a full `dotnet stryker` run reads 100.00%** — 1901 killed,
+**0 survived, 0 no-coverage**, 11 timeout, 170 ignored (the reasoned equivalents), 452 compile-error
+(excluded). 1170 Core tests, 0 warnings on a `--no-incremental` Release build. Every Core file that
+carried a survivor is in the "Files closed" table; the score-history table records the 64.72% → 100% arc.
 
-- **Closed to 100% AND adversarially reviewed (committed):** `Chat/ProductMatcher`,
-  `Recipes/IngredientMatcher`, `Prediction/ReplenishmentPredictor` — see the "Files closed" table above.
-  All three went through the adversarial review; the first two refuted one false equivalence claim, and
-  the predictor's pass (2026-08-26) found no false equivalence but fixed one over-broad Linq scope and one
-  mis-cited test (see "The adversarial review of ReplenishmentPredictor's 7 annotations" above). The rules
-  those reviews set are binding on everything below.
-- ✅ **DONE — the OWED adversarial attack on `ReplenishmentPredictor`'s 7 equivalence annotations**
-  (was the single most important open item; the prior agent died on the session limit). All 7 equivalence
-  claims survived (0/7 false); `DominantSize`'s over-broad `disable once Linq` was restructured so its
-  killable chain mutants are Killed (176 → 208), and one mis-cited test was corrected. 100% re-confirmed.
-- ✅ **DONE — `Reporting/ReportEngine` closed to 100%** (65.62% → 100%; the WIP `ReportEngineTests.cs`
-  compiled + verified). Fixed the compile error and a WIP test that asserted an invalid spec; 3 tests +
-  8 annotations + 3 behaviour-preserving refactors. See the "Files closed" row above.
-- **Next, by the worklist (worst first):** `Speech/SpeechText` (142, the biggest single file), then
-  `Speech/CookAlongCommands` (86), `Tagging/TagVocabulary` (42), `Recipes/RecipeTagVocabulary` (28),
-  `Onboarding/TourScript` (26), `Evaluation/ExtractionScorer` (25), and down the table. Also still owed:
-  `Core/Ingest/QuantityAnomaly` (new Core from master's PR #32, now on the branch after the rebase) needs
-  its own mutation coverage.
-- ✅ **DONE — rebased onto current master** (2026-08-26; was ~10 behind, forked at `91d48f7`). The branch
-  now carries master's newer Core, including `Core/Ingest/QuantityAnomaly` (listed above as still owed).
-- **Per the gate posture above**, this branch also still needs its `/pre-push` gate before merge (it
-  is test-only + a Stryker config + a CI workflow, so the security surface is minimal, but the rule
-  stands).
+- **Adversarially reviewed (rule 3), all sound:** every equivalence annotation shipped this sweep has had
+  its equivalent mutant hand-attacked for a killing input. The documented refutations — `IngredientMatcher`'s
+  `IsSameFood` (false proof, HIGH) and `ProductMatcher`'s over-broad scopes — are why the rules exist. The
+  tail annotations (TypicalPackage, PriceSeries, CatalogIndex ×2, CensusPlan, PredictionBacktest medians)
+  were each attacked and survived; `CensusPlan`'s L282 soundness was traced through `ProductMatcher` (its
+  `ExactName` ⟺ `IdentityKey` equality, so a `CreateReason` call — reached only with `identity.Count == 0` —
+  can never see `ExactName`).
+- **Two closing lessons worth carrying to any future project:** (1) a `static readonly` collection's string
+  literals are initialised once and CACHED, so Stryker's runtime per-mutant toggle can never re-run them —
+  those mutants read as Survived/NoCoverage no matter the tests; restructure the literals into the method
+  body (SizeBucket) or, for an instance-field initializer, exercise a FRESH instance (AiPricing). (2) A
+  multi-line `&&`/`??` short-circuit can read as a coverage FALSE-survivor — hand-apply the mutant and run
+  the one test before trusting "Survived"; the fix is to simplify the chain into explicit statements
+  (CensusPlan, and the earlier SpeechText/TagVocabulary cases).
+- ⏭️ **The one thing still OWED: the `/pre-push` gate before merge.** The branch is test-only + a Stryker
+  config + a CI workflow, so the security surface is minimal (no new DbContext, endpoint, settings key, or
+  disk write), but the rule stands — and the gate's independent reviewers should read by explicit SHA and
+  re-attack a sample of the equivalence annotations. **Pushing/merging is Jordan's call.**
+- **Deferred (unchanged): expanding automated mutation to `Llm`/`Web`/`Web.UI`** — much slower per run
+  (real SQLite, bUnit); those keep the manual per-change discipline. A decision for later.
+- The weekly full-Core `mutation.yml` gate (break = 100) now holds the line: any future change that lets a
+  killed mutant survive goes red within a week.
