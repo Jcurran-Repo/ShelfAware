@@ -64,11 +64,17 @@ public class QuantityAnomalyTests
     [InlineData(24, "24 pk")]
     [InlineData(18, "18 eggs")]
     [InlineData(6, "6 Mega Roll")]
-    [InlineData(12, "12")]         // a bare number is a count, not a measure
-    [InlineData(24, "24pk")]       // no space — still a count
+    [InlineData(12, "12")]                 // a bare number is a count, not a measure
+    [InlineData(24, "24pk")]               // no space — still a count
+    [InlineData(24, "24 pk 12 fl oz")]     // COMPOUND multipack: a pack token wins over the trailing measure
+    [InlineData(12, "12 pk 16.9 oz")]      // a case of water
+    [InlineData(6, "6 pack 16 oz")]        // a 6-pack of cans
+    [InlineData(12, "12 x 12 oz")]         // "12 x ..." — the leading number is the pack count
     public void A_count_size_matching_the_quantity_still_flags(int quantity, string size)
     {
-        // Guard the gating didn't over-reach: the real pack-count shapes must still fire.
+        // Guard the gating didn't over-reach: the real pack-count shapes must still fire — including the
+        // compound beverage/canned multipacks (the most common packs, and the ones a naive "measure token
+        // anywhere → not a count" rule wrongly let slip past the flag).
         Assert.Equal(QuantityFlag.SizeMatchesQuantity, QuantityAnomaly.Check(quantity, size, []));
     }
 
@@ -80,6 +86,19 @@ public class QuantityAnomalyTests
         // whose count leaked. Only a product that usually carries a COUNT size raises the flag.
         Assert.Equal(QuantityFlag.None,
             QuantityAnomaly.Check(6, null, ["16 oz", "16 oz", "16 oz"]));
+    }
+
+    [Fact]
+    public void A_stock_up_of_a_pack_item_is_NOT_flagged_when_the_quantity_is_not_a_usual_pack_count()
+    {
+        // FOUR cartons of a usually-"12 ct" product, the size not captured this time — a genuine stock-up,
+        // not a "4-pack". The quantity (4) matches no pack count this product is sold in (12), so the
+        // missing-size tell must stay quiet: it fires only when the quantity IS a usual pack count.
+        Assert.Equal(QuantityFlag.None,
+            QuantityAnomaly.Check(4, null, ["12 ct", "12 ct", "12 ct"]));
+        // …but the same shape at the usual pack count (12) IS the leak, and fires.
+        Assert.Equal(QuantityFlag.MissingUsualSize,
+            QuantityAnomaly.Check(12, null, ["12 ct", "12 ct", "12 ct"]));
     }
 
     [Fact]

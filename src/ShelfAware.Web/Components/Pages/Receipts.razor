@@ -118,7 +118,11 @@ else
                                     @line.Quantity.ToString("0.##")
                                     @if (line.QuantityFlag != QuantityFlag.None)
                                     {
-                                        <span class="chip chip-duesoon" title="@QuantityAnomaly.Describe(line.QuantityFlag, line.Quantity, line.Size)">pack?</span>
+                                        // aria-label carries the full explanation (not just "pack?") so screen-reader and
+                                        // touch users — who can't hover for the title — get the reason too. This is the
+                                        // persistent safety net, so its meaning must be reachable without a mouse.
+                                        var packNote = QuantityAnomaly.Describe(line.QuantityFlag, line.Quantity, line.Size);
+                                        <span class="chip chip-duesoon" title="@packNote" aria-label="Possible pack-size misread. @packNote">pack?</span>
                                     }
                                 </td>
                                 <td>@(SizeFormat.Normalize(line.Size) is { Length: > 0 } size ? size : "—")</td>

@@ -357,6 +357,8 @@ public class ReceiptsPageTests : PageTestContext
 
         var chip = cut.FindAll(".chip-duesoon").Single(c => c.TextContent.Trim() == "pack?");
         Assert.Contains("12-pack", chip.GetAttribute("title")!); // the one-definition Describe copy
+        // The explanation must reach non-mouse users too, not only the hover title.
+        Assert.Contains("12-pack", chip.GetAttribute("aria-label")!);
     }
 
     [Fact]
