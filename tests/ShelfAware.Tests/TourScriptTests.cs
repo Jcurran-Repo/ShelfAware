@@ -91,6 +91,49 @@ public class TourScriptTests
         Assert.Contains("without an API key", settings.BodyFor(managed: false), StringComparison.OrdinalIgnoreCase);
     }
 
+    // Each body is a two-part concatenation split for source readability; emptying ONE part leaves the
+    // other, so the "not blank" check above can't see a dropped half. These pin a distinctive phrase from
+    // each part — a step that loses half its copy is caught — while staying robust to ordinary rewording
+    // (unlike an exact-string golden, which would break on every copy tweak and pin the emoji/curly quotes).
+    [Theory]
+    [InlineData(0, "running low, most urgent first")]
+    [InlineData(0, "works the rhythm out from your receipts")]
+    [InlineData(1, "Type it the way")]
+    [InlineData(1, "keeps listening as you move around")]
+    [InlineData(2, "usual brand and size")]
+    [InlineData(2, "how many you have on hand")]
+    [InlineData(3, "the order you walk the store")]
+    [InlineData(3, "under Extras")]
+    [InlineData(4, "actually on your shelves")]
+    [InlineData(4, "hands-free cook-along")]
+    [InlineData(5, "Photograph or upload a grocery receipt")]
+    [InlineData(5, "review before anything is recorded")]
+    [InlineData(6, "line by line")]
+    [InlineData(6, "any receipt can be removed")]
+    [InlineData(7, "cost over time")]
+    [InlineData(7, "a big shop is something you see coming")]
+    [InlineData(8, "build your own")]
+    [InlineData(8, "chart and the table beneath it")]
+    [InlineData(9, "The honest scorecard")]
+    [InlineData(9, "measured, not claimed")]
+    [InlineData(10, "works without an API key")]
+    [InlineData(10, "receipt reading and recipe ideas")]
+    [InlineData(10, "export or delete everything from this page")]
+    public void Every_step_body_names_what_its_page_is_for(int step, string phrase) =>
+        Assert.Contains(phrase, TourScript.Steps[step].Body, StringComparison.Ordinal);
+
+    [Fact]
+    public void The_managed_settings_step_reads_in_its_own_voice()
+    {
+        // On a managed deployment the last step swaps to its variant: a different title and a body about
+        // exporting/deleting rather than a key. Pins that TitleFor/BodyFor actually return the variant.
+        var settings = TourScript.Steps[^1];
+
+        Assert.Equal("Your data", settings.TitleFor(managed: true));
+        Assert.Contains("run on the keys whoever set this up", settings.BodyFor(managed: true), StringComparison.Ordinal);
+        Assert.Contains("export everything you've got, or delete the lot", settings.BodyFor(managed: true), StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(-5, 0)]
     [InlineData(-1, 0)]
