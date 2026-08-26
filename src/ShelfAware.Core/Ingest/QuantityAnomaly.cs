@@ -82,6 +82,10 @@ public static class QuantityAnomaly
     // a space-less "12oz"/"24pk" is classed the same as "12 oz"/"24 pk".
     private static bool IsCountSize(string? size)
     {
+        // Stryker disable once Boolean: `return false` → `return true` is unobservable — both callers pair
+        // IsCountSize with `LeadingCount(...) == quantity` (Check short-circuits on it first; MatchesAUsualPackCount
+        // ANDs it), and a null LeadingCount can never equal a quantity, so a size with no leading number never
+        // changes the outcome whatever this returns.
         if (LeadingCount(size) is null) return false; // must start with a number to be a count at all
         var units = Regex.Matches(size!, "[A-Za-z]+").Select(m => m.Value).ToList();
         if (units.Any(CountUnits.Contains)) return true;    // a pack token → the leading number is a count

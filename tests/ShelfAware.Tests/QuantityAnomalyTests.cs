@@ -167,4 +167,58 @@ public class QuantityAnomalyTests
     {
         Assert.Equal(expected, QuantityAnomaly.LeadingCount(size));
     }
+
+    // Every MEASURE unit: a size carrying one is a per-unit weight/volume, so "12 <unit>" whose number
+    // equals the quantity is an ordinary multi-buy, NOT a pack misread. (Drop the unit from the set and
+    // it falls through to the count fallback and wrongly flags — which is what each of these pins.)
+    [Theory]
+    [InlineData("oz")] [InlineData("ounce")] [InlineData("ounces")] [InlineData("lb")] [InlineData("lbs")]
+    [InlineData("pound")] [InlineData("pounds")] [InlineData("g")] [InlineData("gr")] [InlineData("gram")]
+    [InlineData("grams")] [InlineData("kg")] [InlineData("mg")] [InlineData("ml")] [InlineData("cl")]
+    [InlineData("dl")] [InlineData("l")] [InlineData("liter")] [InlineData("liters")] [InlineData("litre")]
+    [InlineData("litres")] [InlineData("gal")] [InlineData("gallon")] [InlineData("gallons")] [InlineData("qt")]
+    [InlineData("quart")] [InlineData("quarts")] [InlineData("pt")] [InlineData("pint")] [InlineData("pints")]
+    [InlineData("floz")] [InlineData("fl")] [InlineData("cup")] [InlineData("cups")] [InlineData("tbsp")]
+    [InlineData("tbs")] [InlineData("tsp")] [InlineData("cc")]
+    public void A_measure_unit_size_is_never_a_pack_misread(string unit) =>
+        Assert.Equal(QuantityFlag.None, QuantityAnomaly.Check(12, $"12 {unit}", []));
+
+    // Every COUNT unit: a pack/count token anywhere means the leading number is a pack count, even in a
+    // compound multipack with a trailing measure ("12 <unit> 6 oz" — a 12-count of 6-oz items). Drop the
+    // token and the trailing "oz" reclassifies the whole thing as a measure, so it stops flagging — which
+    // is exactly what each of these pins (a plain "12 <unit>" wouldn't, since the count FALLBACK masks it).
+    [Theory]
+    [InlineData("ct")] [InlineData("count")] [InlineData("cnt")] [InlineData("pk")] [InlineData("pack")]
+    [InlineData("packs")] [InlineData("pkg")] [InlineData("pkgs")] [InlineData("x")] [InlineData("roll")]
+    [InlineData("rolls")] [InlineData("eggs")] [InlineData("dozen")] [InlineData("doz")] [InlineData("ea")]
+    [InlineData("each")] [InlineData("pod")] [InlineData("pods")] [InlineData("sheet")] [InlineData("sheets")]
+    [InlineData("load")] [InlineData("loads")] [InlineData("wipe")] [InlineData("wipes")] [InlineData("tablet")]
+    [InlineData("tablets")] [InlineData("capsule")] [InlineData("capsules")]
+    public void A_count_token_makes_a_compound_size_a_pack_count(string unit) =>
+        Assert.Equal(QuantityFlag.SizeMatchesQuantity, QuantityAnomaly.Check(12, $"12 {unit} 6 oz", []));
+
+    [Fact]
+    public void The_minimum_suspicious_quantity_is_inclusive()
+    {
+        // Four is the floor (6/8/12/24 packs start around here): a quantity of exactly 4 still flags.
+        Assert.Equal(QuantityFlag.SizeMatchesQuantity, QuantityAnomaly.Check(4, "4 ct", []));
+        Assert.Equal(QuantityFlag.None, QuantityAnomaly.Check(3, "3 ct", [])); // three is below the floor
+    }
+
+    [Fact]
+    public void An_empty_string_size_counts_as_missing()
+    {
+        // "" is blank, not "a size" — a count-shaped quantity with an empty size and a usual pack count
+        // is the missing-size case, same as null.
+        Assert.Equal(QuantityFlag.MissingUsualSize, QuantityAnomaly.Check(12, "", ["12 ct"]));
+    }
+
+    [Fact]
+    public void The_wording_trims_trailing_zeros_from_the_quantity()
+    {
+        // A whole-number decimal can still carry scale (12.00): the "0.##" format speaks "12", not "12.00".
+        var message = QuantityAnomaly.Describe(QuantityFlag.SizeMatchesQuantity, 12.00m, "12 ct");
+        Assert.Contains("quantity of 12", message);
+        Assert.DoesNotContain("12.00", message);
+    }
 }
