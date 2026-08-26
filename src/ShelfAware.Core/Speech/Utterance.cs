@@ -62,6 +62,9 @@ internal static class Utterance
                 {
                     if (tokens[i] == tokens[r * unit + i]) continue;
                     isRepetition = false;
+                    // Stryker disable once Statement: dropping this `break` is unobservable — the extra
+                    // iterations only re-set isRepetition to false (never back to true) and index within
+                    // bounds, and the OUTER loop's `&& isRepetition` stops it after this r either way.
                     break;
                 }
             }
@@ -78,11 +81,10 @@ internal static class Utterance
     /// "um uh" is two tokens of nobody saying anything, and "mm mm" is one grunt said twice. All three
     /// used to clear a two-word bar.
     /// </summary>
-    public static int WordCount(string? transcript)
-    {
-        var core = Core(transcript);
-        return core.Length == 0 ? 0 : core.Split(' ').Length;
-    }
+    public static int WordCount(string? transcript) =>
+        // RemoveEmptyEntries makes an all-filler / all-annotation utterance (whose Core is "") count as
+        // zero words with no separate empty-string guard — a bare split would read "" as one word.
+        Core(transcript).Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
 
     /// <summary>
     /// Transcriber annotations, e.g. "(coughing)", "(laughter)", "[door closes]". Nobody SPEAKS a
@@ -94,6 +96,8 @@ internal static class Utterance
     /// cheap, and a matcher that can be derailed by a cough shouldn't depend on one provider's flag.
     /// </summary>
     private static readonly Regex Annotations =
+        // Stryker disable once Bitwise: | → & (RegexOptions.None) is unobservable — the pattern has no
+        // IgnoreCase so CultureInvariant is inert, and Compiled only affects speed.
         new(@"\([^)]*\)|\[[^\]]*\]", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static List<string> Tokenize(string s) =>

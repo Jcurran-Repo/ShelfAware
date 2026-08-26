@@ -317,4 +317,32 @@ public class CookAlongCommandsTests
     [Fact]
     public void Exactly_two_words_is_worth_asking() =>
         Assert.True(CookAlongCommands.IsWorthAsking("add salt"));
+
+    // ---- Utterance normalization (internal; exercised through Match) --------------------------------
+
+    // Every filler word is stripped from either end, so a command wrapped in it still matches.
+    [Theory]
+    [InlineData("ok")] [InlineData("okay")] [InlineData("alright")] [InlineData("please")] [InlineData("now")]
+    [InlineData("thanks")] [InlineData("thank")] [InlineData("you")] [InlineData("and")] [InlineData("um")]
+    [InlineData("uh")] [InlineData("er")] [InlineData("hey")] [InlineData("hi")] [InlineData("so")]
+    public void Filler_words_are_stripped_from_a_command(string filler) =>
+        Assert.Equal(CookAlongIntent.Next, Intent($"{filler} next"));
+
+    // Repetition collapse only fires for a unit that DIVIDES the token count: a 5-token phrase whose
+    // first two tokens happen to be a command must not be truncated to that command.
+    [Fact]
+    public void A_non_dividing_repeat_unit_does_not_truncate() =>
+        Assert.Equal(CookAlongIntent.None, Intent("next step next step twice"));
+
+    // Repetition matches token i against token r*unit+i (forward), so a genuine end-to-end repeat of a
+    // multi-word command collapses to it — a sign flip there would compare the wrong positions and miss it.
+    [Fact]
+    public void A_repeat_of_a_multi_word_command_collapses_to_it() =>
+        Assert.Equal(CookAlongIntent.Next, Intent("i'm done with that i'm done with that"));
+
+    // An annotation between two glued words becomes a SEPARATOR, not nothing: "go(coughing)back" is
+    // "go back" (Back), not the non-word "goback".
+    [Fact]
+    public void An_annotation_separates_the_words_it_sits_between() =>
+        Assert.Equal(CookAlongIntent.Back, Intent("go(coughing)back"));
 }
