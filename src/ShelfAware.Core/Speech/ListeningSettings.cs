@@ -80,9 +80,10 @@ public sealed record ListeningSettings(
         FloorMultiple: Clamp(FloorMultiple, 1.5, 15.0),
         MinThreshold: Clamp(MinThreshold, 0.002, 0.2));
 
-    private static int Clamp(int v, int lo, int hi) => v < lo ? lo : v > hi ? hi : v;
+    private static int Clamp(int v, int lo, int hi) => Math.Clamp(v, lo, hi);
+    // NaN first — Math.Clamp(NaN, …) returns NaN, and a hand-edited setting could be NaN.
     private static double Clamp(double v, double lo, double hi) =>
-        double.IsNaN(v) ? lo : v < lo ? lo : v > hi ? hi : v;
+        double.IsNaN(v) ? lo : Math.Clamp(v, lo, hi);
 }
 
 /// <summary>
@@ -104,7 +105,8 @@ public sealed record CalibrationSample(
     /// <summary>Whether this run heard an actual person. False when the mic caught nothing louder than
     /// the room, or caught only a blip too short to be speech.</summary>
     public bool IsUsable =>
-        SpeechPeak > 0
-        && LongestUtteranceMs >= 200
+        // A separate "SpeechPeak > 0" would be redundant: the speech-to-noise check below already
+        // requires SpeechPeak above a positive floor (Max(NoiseFloor, 1e-6) * 1.5 > 0).
+        LongestUtteranceMs >= 200
         && SpeechPeak > Math.Max(NoiseFloor, 1e-6) * 1.5;
 }
