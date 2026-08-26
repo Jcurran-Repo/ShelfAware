@@ -124,6 +124,12 @@ public static class ReplenishmentPredictor
             // "last buy was ~N× the usual — due date pushed out to match", and once the bound above can
             // bite, those two stop being the same number: a 500× misread that projects 730 days would
             // otherwise claim a 500× stretch the engine never made.
+            // Stryker disable once Equality: `>` vs `>=` differ only at median == 0, which cannot occur —
+            // every interval is a day-gap between DISTINCT ascending dates (≥ 1), and a burn cycle is
+            // strictly-after arithmetic (≥ 1), so any median here is ≥ 1; the guard is belt-and-braces
+            // against a zero divide. The category also suppresses `<` (guard never fires → the RAW ratio
+            // is reported), which IS killable where the projection bound bites — that behaviour is pinned
+            // by AnAbsurdQuantity_CannotProjectAnItemOutOfSightOrOverflowTheDate's 73.0 assertion.
             if (median > 0) stockUp = projected / median;
             var interval = Floor(projected);
             dueDate = anchor.AddDays(interval);
@@ -232,6 +238,10 @@ public static class ReplenishmentPredictor
                     var labelStatus = today >= label.AddDays(-labelThreshold)
                         ? PredictionStatus.DueSoon
                         : PredictionStatus.Stocked;
+                    // Stryker disable once Equality: `>=` assigns an EQUAL status over itself — a no-op
+                    // for every input, so it is unobservable. The category also suppresses `<`
+                    // (downgrade-only, the exact inversion of escalate-only), which IS killable and is
+                    // pinned by TheCap_NeverCalmsAWarningDown (a future label may not calm an Overdue).
                     if (labelStatus > status) status = labelStatus; // escalate-only (lifts Unknown too)
                 }
             }
@@ -391,6 +401,10 @@ public static class ReplenishmentPredictor
     /// ascending, as <see cref="Predict"/> and <see cref="Reporting.BacklogSignals"/> both prepare them.</summary>
     public static IReadOnlyList<int> BurnCycles(IReadOnlyList<DateOnly> purchaseDates, IReadOnlyList<DateOnly> outageDates)
     {
+        // Stryker disable once Logical: `||` → `&&` is unobservable — this guard is a pure early-out.
+        // With no purchases the loop below runs zero iterations; with no outages every window's
+        // FirstOrDefault is null and nothing is added; either way the result is the same empty list
+        // the guard returns.
         if (purchaseDates.Count == 0 || outageDates.Count == 0) return [];
 
         var cycles = new List<int>();
@@ -422,6 +436,11 @@ public static class ReplenishmentPredictor
         if (intervals.Count >= 3) // ≥3 data points → robust enough to drop a stock-up/vacation outlier
         {
             var trimmed = intervals.Where(d => d <= 3 * median).ToList();
+            // Stryker disable once Equality: `>` vs `>=` differ only when trimmed is EMPTY, which cannot
+            // occur — the median sits within the list, every value ≤ the median is ≤ 3× the median
+            // (median ≥ 1 here), and at least half the values are ≤ the median. The category also
+            // suppresses `<` (constant-false → the trim never re-takes the median), which IS killable
+            // and is pinned by TheTrim_AppliesAtExactlyThreeIntervals (median 7, not the untrimmed 10).
             if (trimmed.Count > 0)
             {
                 median = Median(trimmed);
@@ -459,6 +478,13 @@ public static class ReplenishmentPredictor
         IReadOnlyDictionary<DateOnly, decimal> tripTotals, decimal typicalTrip, DateOnly anchor)
     {
         if (!tripTotals.TryGetValue(anchor, out var lastQty)) return 1.0; // anchor is a restock, not a buy
+        // Stryker disable once Equality: both boundary mutants are unobservable. `typicalTrip <= 0` vs
+        // `< 0`: when this line is reached tripTotals is non-empty (the TryGetValue above early-returns
+        // otherwise), so typicalTrip is a median of strictly-positive quantities — never 0. And
+        // `lastQty <= typicalTrip` vs `<`: at equality the fall-through returns lastQty/typicalTrip,
+        // which is exactly 1.0 — the same value the guard returns. The category also suppresses the `>`
+        // inversions (which would kill every real stretch); those are pinned by
+        // StockUp_ExtendsTheDueDate_ByTheQuantityRatio and TheStockUpRatio_IsThisBuyOverTheTypicalTrip.
         if (typicalTrip <= 0 || lastQty <= typicalTrip) return 1.0;
         return (double)(lastQty / typicalTrip);
     }
@@ -478,6 +504,11 @@ public static class ReplenishmentPredictor
     private static string? DominantSize(IReadOnlyCollection<PurchaseEvent> purchases)
     {
         if (purchases.Count == 0) return null;
+        // Stryker disable once Linq: `First()` → `FirstOrDefault()` is unobservable — the guard above
+        // means at least one purchase exists, so GroupBy yields at least one group and First never
+        // throws; on a non-empty sequence the two are the same call. (Scoped to the mutants STARTING on
+        // this statement's first line; the chain's inner ordering/aggregate mutants live on their own
+        // lines and stay live — verified by the recency and tie-break tests killing them.)
         return purchases
             .GroupBy(p => SizeBucket.Key(p.Size))
             .Select(g => new
@@ -496,6 +527,9 @@ public static class ReplenishmentPredictor
 
     private static double Median(IReadOnlyList<int> values)
     {
+        // Stryker disable once Linq: `OrderBy` → `OrderByDescending` is unobservable — a median is
+        // sort-direction invariant. Odd count: desc[mid] == asc[count-1-mid] and count-1-mid == mid.
+        // Even count: the two middles swap places and their mean is unchanged.
         var sorted = values.OrderBy(v => v).ToList();
         var mid = sorted.Count / 2;
         return sorted.Count % 2 == 1
