@@ -84,4 +84,18 @@ public class PriceSeriesTests
     {
         Assert.Null(PriceSeries.Dominant([]));
     }
+
+    [Fact]
+    public void A_tie_in_bucket_count_goes_to_the_most_recently_seen_size()
+    {
+        // Two buckets, two points each — a count tie. The tie-break is the bucket with the LATEST point
+        // (Max date), not the earliest: gallon's day-30 point beats 64 oz's day-20 one.
+        var points = new List<PricePoint>
+        {
+            new("1 gal", D(1), 3.00m), new("1 gal", D(30), 3.50m),
+            new("64 oz", D(10), 2.00m), new("64 oz", D(20), 2.20m),
+        };
+
+        Assert.Equal(SizeBucket.Key("1 gal"), PriceSeries.Dominant(points)!.SizeKey);
+    }
 }

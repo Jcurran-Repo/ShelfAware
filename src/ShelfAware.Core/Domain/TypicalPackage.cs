@@ -29,6 +29,8 @@ public static class TypicalPackage
         // Median rather than mode: continuous weights rarely repeat exactly (1.24 vs 1.26 is the same
         // pack in practice), so "most common" isn't well defined for them, and the app is median-based
         // throughout. Non-positive quantities are noise, not packages.
+        // Stryker disable once Linq: OrderBy → OrderByDescending is unobservable — a median is
+        // sort-direction invariant (odd: the same middle; even: the same two middles averaged).
         var sorted = purchaseQuantities.Where(q => q > 0).OrderBy(q => q).ToList();
         if (sorted.Count == 0) return 1m;
 

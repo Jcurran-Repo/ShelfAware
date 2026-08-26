@@ -111,4 +111,28 @@ public class PredictionBacktestTests
         Assert.Equal(0.75, summary.HitRate);
         Assert.Equal(0, summary.MedianAbsErrorDays); // {0,0,0,5} → 0
     }
+
+    [Fact]
+    public void PerProduct_is_ordered_by_sample_count_then_name()
+    {
+        // Run never emits a zero-sample ProductScore, so the ordering is only observable with products
+        // that differ in sample count — and a name tiebreak for the two that match. Most-sampled first,
+        // then A→Z.
+        var summary = PredictionBacktest.Run([
+            ProductWith(1, "Milk", 0, 10, 20),           // 1 sample
+            ProductWith(2, "Coffee", 0, 10, 20, 30, 40), // 3 samples — most, sorts first
+            ProductWith(3, "Bread", 0, 10, 20),          // 1 sample — ties Milk, "Bread" < "Milk"
+        ]);
+
+        Assert.Equal(["Coffee", "Bread", "Milk"], summary.PerProduct.Select(p => p.Name));
+    }
+
+    [Fact]
+    public void ProductScore_HitRate_is_zero_for_zero_samples_never_NaN()
+    {
+        // The Samples == 0 guard is unreachable through Run (a score is only added once it has samples),
+        // so it needs a direct construction — without the guard this divides by zero.
+        Assert.Equal(0, new PredictionBacktest.ProductScore(1, "x", Samples: 0, MedianAbsErrorDays: 0, WithinTwoDays: 0).HitRate);
+        Assert.Equal(0.75, new PredictionBacktest.ProductScore(1, "x", Samples: 4, MedianAbsErrorDays: 0, WithinTwoDays: 3).HitRate);
+    }
 }

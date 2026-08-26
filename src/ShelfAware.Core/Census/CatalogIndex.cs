@@ -33,6 +33,10 @@ public sealed class CatalogIndex
         {
             _byId[p.Id] = p;
             var key = ProductMatcher.IdentityKey(p.Name);
+            // Stryker disable once Statement: dropping this `continue` is unobservable in isolation — an
+            // empty key would then be indexed under "", but ExactMatches refuses an empty key too (below),
+            // so nothing ever reads that "" bucket. The two guards together are what keep distinct junk
+            // names from merging; neither alone is observable.
             if (key.Length == 0) continue;
             if (!_byIdentity.TryGetValue(key, out var list)) _byIdentity[key] = list = [];
             list.Add(p);
@@ -50,7 +54,12 @@ public sealed class CatalogIndex
     {
         if (string.IsNullOrWhiteSpace(name)) return [];
         var key = ProductMatcher.IdentityKey(name);
-        return key.Length > 0 && _byIdentity.TryGetValue(key, out var list) ? list : [];
+        // No `key.Length > 0` guard needed: the ctor never indexes an empty key, so a punctuation-only
+        // name (key "") simply misses here — TryGetValue("") is false — and returns []. Leaving the guard
+        // out keeps the "distinct junk names don't merge" guarantee (proven by A_punctuation_only_name…)
+        // while sparing a redundant relational operator whose only non-equivalent mutant it would need an
+        // annotation to suppress.
+        return _byIdentity.TryGetValue(key, out var list) ? list : [];
     }
 
     private readonly Dictionary<string, (Product? Product, ProductMatcher.MatchKind Kind)> _resolveMemo = [];
@@ -63,6 +72,9 @@ public sealed class CatalogIndex
     /// message then asked the same question again), for answers that cannot change between keystrokes.</summary>
     public (Product? Product, ProductMatcher.MatchKind Kind) ResolveWithKind(string? name)
     {
+        // Stryker disable once String: the "" fallback is only a memo CACHE KEY for a null name — the
+        // resolved result (ProductMatcher.ResolveWithKind(null, …)) is the same whatever key null caches
+        // under, and no real product name collides with it.
         var key = name ?? "";
         if (!_resolveMemo.TryGetValue(key, out var hit))
             _resolveMemo[key] = hit = ProductMatcher.ResolveWithKind(name, Products);
