@@ -359,6 +359,19 @@ body {
     max-width: 72rem;
 }
 
+/* The receipt-review grid (Upload.razor) is the WIDEST table in the app — ~11 input columns: item, brand,
+   size, variety, expiry, qty, category, tags, product match… — so it earns a wider column still than the
+   general wide-grid tier above. At 56rem it measured ~1857px crammed into an ~857px box, scrolling ~1000px
+   of itself out of view on a 1920px monitor; `--xwide` lets the whole grid show on a large screen and fill
+   the content column on a laptop, with any remainder still scrolling inside the box. Bounded at roughly the
+   grid's own natural width so an ultra-wide monitor gets a grid-sized panel, not an edge-to-edge sprawl.
+   Only RAISES the cap, so viewports already narrower than it (mobile / the ≤1100px drawer) are unaffected.
+   The census review grid (PantryPhoto.razor) is a sibling but has only 7 columns — the same scale as the
+   Products grid — so it opts into `--wide` (72rem) above, not this, to avoid a wide empty band beside it. */
+.site-main:has(.table-scroll--xwide) {
+    max-width: 120rem;
+}
+
 h1 {
     font-size: 1.6rem;
     letter-spacing: -0.02em;

@@ -167,7 +167,10 @@ else if (phase == Phase.Review && receipt is not null)
         {
             <p class="error">No purchasable items were found — this may not be a receipt. You can discard it below.</p>
         }
-        <div class="table-scroll table-scroll--capped">
+        @* --xwide: the app's widest grid (~11 input columns) gets a fuller column than the general
+           wide-grid tier, so a large monitor shows most/all of it instead of scrolling it out of view
+           (see app.css). --capped keeps the height cap + sticky header. *@
+        <div class="table-scroll table-scroll--capped table-scroll--xwide">
         <table>
             <thead>
                 <tr>
