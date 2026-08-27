@@ -242,15 +242,16 @@ dotnet stryker --since:master
 
 Reconciling "target 100%" with "don't wall off feature work":
 
-- **Weekly full Core run** in GitHub Actions, break threshold = 100 — the intended no-regression
-  guard: the build goes **red on any drop** below 100%, so if a change ever lets a previously-killed
-  mutant survive, it surfaces within a week and gets fixed (a new test or a justified annotation).
-  ⚠️ **NOT yet wired up** — as of this branch there is no `.github/workflows/mutation.yml`; the only
-  CI workflow is `ci.yml` (restore + build + the four test suites, which does NOT run Stryker). Until
-  the weekly workflow is added, the line is held by running `dotnet stryker` locally before a merge.
-  Adding it is a small follow-up (checkout · setup-dotnet · `dotnet tool restore` · `dotnet stryker`
-  on a `schedule:` cron), and per CLAUDE.md item 35 a workflow can only be PROVEN by its run on
-  `master`, not on a branch.
+- **Weekly full Core run** in GitHub Actions (`.github/workflows/mutation.yml`), break threshold = 100
+  — the no-regression guard: the build goes **red on any drop** below 100%, so if a change ever lets a
+  previously-killed mutant survive, it surfaces within a week and gets fixed (a new test or a justified
+  annotation). It runs on a weekly `schedule:` plus on-demand via the Actions "Run workflow" button
+  (`workflow_dispatch`), restores the pinned Stryker tool (`dotnet tool restore`), runs `dotnet stryker`
+  UN-piped so its break-threshold exit code fails the job, and uploads the report as an artifact.
+  ⚠️ **Unproven until it runs on `master`** — per CLAUDE.md item 35 a workflow's behaviour can only be
+  confirmed by its own run on the default branch (schedule fires only there; a branch push runs
+  nothing). So after this branch merges, trigger it once via "Run workflow" to prove it green; until
+  that first master run, the line is still held by running `dotnet stryker` locally before a merge.
 - **Pre-push diff run** (`--since:master`, changed Core files only) **reports** new survivors so they
   are visible at push time, but does not hard-block a merge. For a basically-done project where Core
   changes are rare, weekly-enforced-100% is the robust line; the pre-push report is the early warning.
@@ -302,6 +303,7 @@ which removed one false-equivalence annotation the gate found).
   re-attack a sample of the equivalence annotations. **Pushing/merging is Jordan's call.**
 - **Deferred (unchanged): expanding automated mutation to `Llm`/`Web`/`Web.UI`** — much slower per run
   (real SQLite, bUnit); those keep the manual per-change discipline. A decision for later.
-- ⏭️ **Still to wire: the weekly full-Core CI gate** (break = 100) — see "Gate posture" above. It is NOT
-  added yet (no `.github/workflows/mutation.yml`); once it is, any future change that lets a killed mutant
-  survive goes red within a week. Until then the line is held by a local `dotnet stryker` before merge.
+- ✅ **The weekly full-Core CI gate is wired** (`.github/workflows/mutation.yml`, break = 100) — see "Gate
+  posture" above. ⏭️ **Prove it once on `master`** after this branch merges: open Actions → Mutation → "Run
+  workflow" (it can't be proven from a branch — item 35). Until that first green master run, the line is
+  still held by a local `dotnet stryker` before merge.
