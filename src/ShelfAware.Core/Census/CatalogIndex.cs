@@ -33,10 +33,10 @@ public sealed class CatalogIndex
         {
             _byId[p.Id] = p;
             var key = ProductMatcher.IdentityKey(p.Name);
-            // Stryker disable once Statement: dropping this `continue` is unobservable in isolation — an
-            // empty key would then be indexed under "", but ExactMatches refuses an empty key too (below),
-            // so nothing ever reads that "" bucket. The two guards together are what keep distinct junk
-            // names from merging; neither alone is observable.
+            // This `continue` is the ONE guard that keeps a punctuation-only name (empty identity key) out
+            // of the index — without it, every such junk name would collide under "" and merge. ExactMatches
+            // no longer double-guards (it relies on this skip), so the mutant that drops this `continue` is
+            // killable, and A_punctuation_only_name_is_never_indexed_or_matched kills it. No annotation.
             if (key.Length == 0) continue;
             if (!_byIdentity.TryGetValue(key, out var list)) _byIdentity[key] = list = [];
             list.Add(p);

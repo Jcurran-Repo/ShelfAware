@@ -242,10 +242,15 @@ dotnet stryker --since:master
 
 Reconciling "target 100%" with "don't wall off feature work":
 
-- **Weekly full Core run** in GitHub Actions (`.github/workflows/mutation.yml`), break threshold =
-  100. The build goes **red on any drop** below 100% — that is the no-regression guard: if a change
-  ever lets a previously-killed mutant survive, it surfaces within a week and gets fixed (a new test
-  or a justified annotation).
+- **Weekly full Core run** in GitHub Actions, break threshold = 100 — the intended no-regression
+  guard: the build goes **red on any drop** below 100%, so if a change ever lets a previously-killed
+  mutant survive, it surfaces within a week and gets fixed (a new test or a justified annotation).
+  ⚠️ **NOT yet wired up** — as of this branch there is no `.github/workflows/mutation.yml`; the only
+  CI workflow is `ci.yml` (restore + build + the four test suites, which does NOT run Stryker). Until
+  the weekly workflow is added, the line is held by running `dotnet stryker` locally before a merge.
+  Adding it is a small follow-up (checkout · setup-dotnet · `dotnet tool restore` · `dotnet stryker`
+  on a `schedule:` cron), and per CLAUDE.md item 35 a workflow can only be PROVEN by its run on
+  `master`, not on a branch.
 - **Pre-push diff run** (`--since:master`, changed Core files only) **reports** new survivors so they
   are visible at push time, but does not hard-block a merge. For a basically-done project where Core
   changes are rare, weekly-enforced-100% is the robust line; the pre-push report is the early warning.
@@ -263,14 +268,19 @@ row is called done.
 | Date | Score | Killed | Survived | Compile-error (excluded) | Notes |
 |------|-------|--------|----------|--------------------------|-------|
 | 2026-08-25 | 64.72% | 1214 | 611 | 453 | First baseline (+8 timeout, ~55 no-coverage). ~666 to close to 100%. Untuned scope — includes interfaces/DTOs. |
-| 2026-08-26 | **100.00%** | 1901 | 0 | 452 | **Sweep complete** — every mutant killed or annotated equivalent. +11 timeout (killed by catastrophic backtracking), 170 ignored (the reasoned equivalents, each adversarially attacked per rule 3). 1170 Core tests, 0 warnings on a `--no-incremental` Release build. Two closing findings: a `static readonly` collection defeats Stryker's runtime toggle (restructure into the method body), and a multi-line `&&` chain can read as a coverage false-survivor (simplify the chain — hand-apply to confirm before trusting "Survived"). |
+| 2026-08-26 | **100.00%** | 1901 | 0 | 452 | **Sweep complete** — every mutant killed or annotated equivalent. +11 timeout, 170 ignored — of which **44 are reasoned source annotations** (each adversarially attacked per rule 3) and **126 are Stryker's own "block already covered" de-dup** (a whole-method-body removal is redundant when every statement inside it is separately mutated — not a hand exclusion). 1170 Core tests, 0 warnings on a `--no-incremental` Release build. Two closing findings: a `static readonly` collection defeats Stryker's runtime toggle (restructure into the method body), and a multi-line `&&` chain can read as a coverage false-survivor (simplify the chain — hand-apply to confirm before trusting "Survived"). |
+| 2026-08-27 | **100.00%** | 1897 | 0 | 452 | **Pre-merge gate re-run.** The gate's code review found ONE false-equivalence annotation: CatalogIndex's ctor `continue` was annotated equivalent, but this same branch had removed the second guard (`ExactMatches`'s `key.Length > 0`) that made it so — leaving the `continue` the sole guard, its mutant killable and killed by `A_punctuation_only_name_is_never_indexed_or_matched`. Removed the annotation → the mutant is now honestly **Killed, not Ignored** (169 ignored: 43 annotations + 126 block-filter). +16 timeout; the killed/timeout split shifts run-to-run with machine load, so read the stable facts — **0 survived, 0 no-coverage**; detected (killed+timeout) = 1913. |
 
 ## Resume state (2026-08-26 — sweep COMPLETE)
 
-**The Core mutation-testing sweep is finished: a full `dotnet stryker` run reads 100.00%** — 1901 killed,
-**0 survived, 0 no-coverage**, 11 timeout, 170 ignored (the reasoned equivalents), 452 compile-error
-(excluded). 1170 Core tests, 0 warnings on a `--no-incremental` Release build. Every Core file that
-carried a survivor is in the "Files closed" table; the score-history table records the 64.72% → 100% arc.
+**The Core mutation-testing sweep is finished: a full `dotnet stryker` run reads 100.00%** — the stable
+facts are **0 survived, 0 no-coverage**; detected (killed + timeout) ≈ 1913; 169 ignored (43 reasoned
+source annotations, each adversarially attacked per rule 3, + 126 that are Stryker's built-in "block
+already covered" de-dup); 452 compile-error (excluded). The killed-vs-timeout split shifts run-to-run
+with machine load, so it is not a stable headline number — 0 survived is. 1170 Core tests, 0 warnings on
+a `--no-incremental` Release build. Every Core file that carried a survivor is in the "Files closed"
+table; the score-history table records the 64.72% → 100% arc (incl. the 2026-08-27 pre-merge-gate re-run,
+which removed one false-equivalence annotation the gate found).
 
 - **Adversarially reviewed (rule 3), all sound:** every equivalence annotation shipped this sweep has had
   its equivalent mutant hand-attacked for a killing input. The documented refutations — `IngredientMatcher`'s
@@ -292,5 +302,6 @@ carried a survivor is in the "Files closed" table; the score-history table recor
   re-attack a sample of the equivalence annotations. **Pushing/merging is Jordan's call.**
 - **Deferred (unchanged): expanding automated mutation to `Llm`/`Web`/`Web.UI`** — much slower per run
   (real SQLite, bUnit); those keep the manual per-change discipline. A decision for later.
-- The weekly full-Core `mutation.yml` gate (break = 100) now holds the line: any future change that lets a
-  killed mutant survive goes red within a week.
+- ⏭️ **Still to wire: the weekly full-Core CI gate** (break = 100) — see "Gate posture" above. It is NOT
+  added yet (no `.github/workflows/mutation.yml`); once it is, any future change that lets a killed mutant
+  survive goes red within a week. Until then the line is held by a local `dotnet stryker` before merge.
