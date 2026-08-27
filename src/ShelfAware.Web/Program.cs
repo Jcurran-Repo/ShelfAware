@@ -271,6 +271,19 @@ builder.Services.AddScoped<AdminHouseholdService>(); // the /admin household ros
 // admin-gated + AsNoTracking + aggregate-only. See the class doc.
 builder.Services.AddScoped<AdminAiSpendReader>();
 
+// ---- Admin dashboard: live GitHub Actions CI status ----
+// A singleton with a short cache so every admin shares one fetch and we stay far under GitHub's
+// unauthenticated rate limit; it degrades to an error state (never throws) if GitHub can't be reached.
+builder.Services.AddOptions<GitHubOptions>().Bind(builder.Configuration.GetSection(GitHubOptions.SectionName));
+builder.Services.AddHttpClient("github", c =>
+{
+    c.BaseAddress = new Uri("https://api.github.com/");
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("ShelfAware-Admin"); // GitHub requires a User-Agent
+    c.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+    c.Timeout = TimeSpan.FromSeconds(8);
+});
+builder.Services.AddSingleton<ICiStatusProvider, GitHubCiStatus>();
+
 // ---- Who's using the app: the admin "logins + who's online" view ----
 // LoginAudit persists per-account login counts (auth.db operator data, like the error log; read through
 // AdminReportReader's gate). OnlinePresence is the live half — a singleton fed by a per-circuit

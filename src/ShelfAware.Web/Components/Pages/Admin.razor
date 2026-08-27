@@ -10,6 +10,7 @@
 @inject ReportResolutionService Actions
 @inject AdminHouseholdService HouseholdAdmin
 @inject AdminAiSpendReader AiSpend
+@inject ICiStatusProvider Ci
 @inject IOptions<AdminOptions> AdminConfig
 @inject ErrorLogSink Sink
 @inject OnlinePresence Presence
@@ -81,6 +82,42 @@ else
             </div>
         </div>
     </section>
+    @if (Ci.Enabled)
+    {
+        <section class="panel">
+            <h2>Continuous integration</h2>
+            <p class="muted">The latest run of each GitHub Actions workflow — fetched after the page loads and
+                cached a few minutes. Open a run for its full log.</p>
+            @if (ciStatus is null)
+            {
+                <p>Loading…</p>
+            }
+            else if (ciStatus.Error is not null)
+            {
+                <p class="muted">Couldn't reach GitHub just now (@ciStatus.Error) — it'll retry on the next load.</p>
+            }
+            else if (ciStatus.Runs.Count == 0)
+            {
+                <p class="muted">No workflow runs found.</p>
+            }
+            else
+            {
+                <div class="portfolio">
+                    @foreach (var run in ciStatus.Runs)
+                    {
+                        <div class="@CiTileClass(run.Outcome)">
+                            <div class="stat-value">@CiOutcomeLabel(run.Outcome)</div>
+                            <div class="stat-label">
+                                @run.Workflow · @(string.IsNullOrEmpty(run.Branch) ? "—" : run.Branch) ·
+                                <a href="@run.Url" target="_blank" rel="noopener noreferrer">@run.ShortSha</a> ·
+                                @run.UpdatedAt.ToLocalTime().ToString("MMM d, HH:mm")
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </section>
+    }
     <section class="panel">
         <h2>Households</h2>
         <p class="muted">Every household on this deployment, its members, and its tier. Grant
@@ -440,6 +477,8 @@ else
     private IReadOnlyList<UserLoginStat>? loginStats;
     private IReadOnlyList<AdminHousehold>? households;
     private AiSpendReport? aiSpend;
+    private CiStatus? ciStatus;
+    private bool ciLoaded;
     private bool refused;
     private bool subscribed;
     private bool busy;
@@ -461,6 +500,24 @@ else
         Presence.Changed += OnPresenceChanged;
         subscribed = true;
         await RefreshAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // CI status is fetched from GitHub after the first paint, so a slow (or unreachable) GitHub never
+        // blocks the admin page from rendering. The provider never throws — it returns an Error status — so
+        // the only thing to guard is the teardown race (the admin navigated away mid-fetch).
+        if (!firstRender || refused || ciLoaded || !Ci.Enabled) return;
+        ciLoaded = true;
+        try
+        {
+            ciStatus = await Ci.GetAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex) when (ex is ObjectDisposedException or OperationCanceledException)
+        {
+            // The circuit went away between the fetch and the re-render.
+        }
     }
 
     // Fired from the CHANGING circuit's thread (the user who just connected/left), so marshal to THIS
@@ -584,4 +641,22 @@ else
             actionBusy = false;
         }
     }
+
+    // The CI card's outcome → tile styling (.stat.pass/.fail reuse the accuracy page's green/red) and a
+    // short label. The load-bearing status→outcome mapping lives on CiRun.Outcome (unit-tested); these are
+    // just its presentation.
+    private static string CiTileClass(CiOutcome outcome) => outcome switch
+    {
+        CiOutcome.Passed => "stat pass",
+        CiOutcome.Failed => "stat fail",
+        _ => "stat",
+    };
+
+    private static string CiOutcomeLabel(CiOutcome outcome) => outcome switch
+    {
+        CiOutcome.Passed => "✓ Passed",
+        CiOutcome.Failed => "✗ Failed",
+        CiOutcome.Running => "● Running",
+        _ => "—",
+    };
 }

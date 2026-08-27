@@ -24,6 +24,16 @@ public class AdminPageTests : PageTestContext
     private ErrorLogSink sink = null!;
     private OnlinePresence presence = null!;
 
+    private sealed class FakeCiStatus : ICiStatusProvider
+    {
+        public bool Enabled => true;
+        public Task<CiStatus> GetAsync(CancellationToken ct = default) => Task.FromResult(new CiStatus(
+        [
+            new CiRun("CI", "completed", "success", "master", "abc1234def", "green build", DateTimeOffset.Now, "https://gh/runs/1"),
+            new CiRun("Mutation", "completed", "failure", "master", "abc1234def", "mutants survived", DateTimeOffset.Now, "https://gh/runs/2"),
+        ], DateTimeOffset.Now, null));
+    }
+
     protected override void RegisterAdditionalServices()
     {
         auth = this.AddAuthorization();
@@ -40,6 +50,7 @@ public class AdminPageTests : PageTestContext
         Services.AddScoped<ReportResolutionService>();
         Services.AddScoped<AdminHouseholdService>();
         Services.AddScoped<AdminAiSpendReader>();
+        Services.AddSingleton<ICiStatusProvider>(new FakeCiStatus());
     }
 
     protected override void Dispose(bool disposing)
@@ -89,6 +100,21 @@ public class AdminPageTests : PageTestContext
             // symbol varies by the host's locale, per the deploy notes).
             Assert.Contains("5 call", cut.Markup);   // today's calls: hh-a (3) + hh-b (2)
             Assert.Contains("2 active", cut.Markup);  // both households used AI this month
+        });
+    }
+
+    [Fact]
+    public void The_ci_card_shows_the_latest_run_of_each_workflow()
+    {
+        // The CI status loads after first render (OnAfterRenderAsync) from the fake provider.
+        var cut = Render<Components.Pages.Admin>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("Continuous integration", cut.Markup);
+            Assert.Contains("✓ Passed", cut.Markup);   // CI succeeded → green tile
+            Assert.Contains("✗ Failed", cut.Markup);    // Mutation failed → red tile
+            Assert.Contains("stat fail", cut.Markup);    // the fail styling is applied
         });
     }
 
