@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Domain;
+using ShelfAware.Core.Evaluation;
 using ShelfAware.Web.Auth;
 using ShelfAware.Web.Components.Pages;
 using ShelfAware.Web.Data;
@@ -24,6 +25,28 @@ public class AdminPageTests : PageTestContext
     private ErrorLogSink sink = null!;
     private OnlinePresence presence = null!;
 
+    private sealed class FakeCiStatus : ICiStatusProvider
+    {
+        public bool Enabled => true;
+        public Task<CiStatus> GetAsync(CancellationToken ct = default) => Task.FromResult(new CiStatus(
+        [
+            new CiRun("CI", "completed", "success", "master", "abc1234def", DateTimeOffset.Now, "https://gh/runs/1"),
+            new CiRun("Mutation", "completed", "failure", "master", "abc1234def", DateTimeOffset.Now, "https://gh/runs/2"),
+        ], DateTimeOffset.Now, null));
+    }
+
+    private sealed class FakeTestStatus : ITestStatusProvider
+    {
+        public TestStatusReport? Report { get; set; } = new()
+        {
+            GeneratedAt = DateTimeOffset.Now,
+            CommitSha = "abcdef1234567",
+            Branch = "master",
+            Projects = [new TestProjectResult("Engine", 10, 10, 0, 0), new TestProjectResult("Pages", 5, 5, 0, 0)],
+        };
+        public TestStatusReport? Read() => Report;
+    }
+
     protected override void RegisterAdditionalServices()
     {
         auth = this.AddAuthorization();
@@ -39,6 +62,9 @@ public class AdminPageTests : PageTestContext
         Services.AddScoped<AdminReportReader>();
         Services.AddScoped<ReportResolutionService>();
         Services.AddScoped<AdminHouseholdService>();
+        Services.AddScoped<AdminAiSpendReader>();
+        Services.AddSingleton<ICiStatusProvider>(new FakeCiStatus());
+        Services.AddSingleton<ITestStatusProvider>(new FakeTestStatus());
     }
 
     protected override void Dispose(bool disposing)
@@ -54,6 +80,70 @@ public class AdminPageTests : PageTestContext
         db.BugReports.Add(new BugReport { Body = body, CreatedAt = DateTimeOffset.Now });
         db.SaveChanges();
         Db.HouseholdId = "hh-test";
+    }
+
+    private void SeedUsage(string household, DateOnly day, int calls, long cost)
+    {
+        Db.HouseholdId = household;
+        using var db = Db.CreateDbContext();
+        db.AiUsages.Add(new AiUsage { Day = day, Calls = calls, CostMicros = cost });
+        db.SaveChanges();
+        Db.HouseholdId = "hh-test";
+    }
+
+    [Fact]
+    public void The_glance_strip_sums_ai_spend_across_every_household()
+    {
+        using (var db = authDb.CreateDbContext())
+        {
+            db.Households.Add(new Household { Id = "hh-a", Name = "The Currans" });
+            db.Households.Add(new Household { Id = "hh-b", Name = "The Neighbours" });
+            db.SaveChanges();
+        }
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        SeedUsage("hh-a", today, calls: 3, cost: 1_500_000);
+        SeedUsage("hh-b", today, calls: 2, cost: 500_000);
+
+        var cut = Render<Components.Pages.Admin>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("At a glance", cut.Markup);
+            // The strip sums BOTH households (the cross-household read), not just the admin's own scope —
+            // a scoped read would show 2 calls / 1 active. Asserted culture-independently (the currency
+            // symbol varies by the host's locale, per the deploy notes).
+            Assert.Contains("5 call", cut.Markup);   // today's calls: hh-a (3) + hh-b (2)
+            Assert.Contains("2 active", cut.Markup);  // both households used AI this month
+        });
+    }
+
+    [Fact]
+    public void The_ci_card_shows_the_latest_run_of_each_workflow()
+    {
+        // The CI status loads after first render (OnAfterRenderAsync) from the fake provider.
+        var cut = Render<Components.Pages.Admin>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("Continuous integration", cut.Markup);
+            Assert.Contains("✓ Passed", cut.Markup);   // CI succeeded → green tile
+            Assert.Contains("✗ Failed", cut.Markup);    // Mutation failed → red tile
+            Assert.Contains("stat fail", cut.Markup);    // the fail styling is applied
+        });
+    }
+
+    [Fact]
+    public void The_tests_and_quality_card_shows_the_committed_snapshot()
+    {
+        var cut = Render<Components.Pages.Admin>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("quality", cut.Markup);
+            Assert.Contains("15 / 15", cut.Markup);   // TotalPassed / TotalTests across both projects
+            Assert.Contains("Engine", cut.Markup);     // the per-project table
+            Assert.Contains("Pages", cut.Markup);
+        });
     }
 
     [Fact]
