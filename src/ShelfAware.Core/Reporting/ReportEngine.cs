@@ -99,10 +99,7 @@ public static class ReportEngine
                 .GroupBy(f => f.Category)
                 .Select(g => (Label: g.Key.ToString(), Facts: g.ToList()))
                 .ToList(),
-            ReportSplit.ByProduct => facts
-                .GroupBy(f => f.ProductId)
-                .Select(g => (Label: g.First().ProductName, Facts: g.ToList()))
-                .ToList(),
+            ReportSplit.ByProduct => ByProductGroups(facts),
             ReportSplit.ByTag => TagGroups(facts),
             _ => [(Label: SingleSeriesLabel(spec, facts), Facts: facts)],
         };
@@ -119,10 +116,20 @@ public static class ReportEngine
             remainderNoun: spec.Split switch
             {
                 ReportSplit.ByTag => "tags",
+                // Stryker disable once String: unreachable. remainderNoun is read ONLY on the disclosure
+                // path (poolRemainder == false), and a category split never discloses — it always pools
+                // (categories partition, so "Everything else" is honest) and quantity-by-category is
+                // refused outright (Quantity_by_category_is_refused). Kept for symmetry with the switch.
                 ReportSplit.ByCategory => "categories",
                 _ => "products",
             });
     }
+
+    // One series per product, labelled by the product's name (every fact in a ProductId group shares it).
+    // Stryker disable once Linq: g.First() → g.FirstOrDefault() is unobservable — GroupBy only ever yields
+    // non-empty groups, so First cannot throw and returns the same element.
+    private static List<(string Label, List<PurchaseFact> Facts)> ByProductGroups(List<PurchaseFact> facts) =>
+        facts.GroupBy(f => f.ProductId).Select(g => (Label: g.First().ProductName, Facts: g.ToList())).ToList();
 
     /// <summary>One series per tag, top-N by total later. A purchase carrying two tags appears in
     /// both series — the overlap is the feature (compare "snacks" against "kids" even though goldfish
@@ -135,6 +142,9 @@ public static class ReportEngine
             if (fact.Tags.Count == 0)
             {
                 Bucket(UntaggedLabel).Add(fact);
+                // Stryker disable once Statement: removing this `continue` is unobservable — control would
+                // fall into the `foreach (var tag in fact.Tags)` below, which iterates zero times here
+                // (Tags.Count is 0), so the fact lands only in the untagged bucket either way.
                 continue;
             }
             foreach (var tag in fact.Tags) Bucket(tag).Add(fact);
@@ -162,6 +172,10 @@ public static class ReportEngine
                     .ToList();
                 return paid.Count > 0 ? Math.Round(paid.Average(), 2) : null;
             default:
+                // Stryker disable once String: unreachable — PurchaseValue is only ever called for the
+                // purchase metrics handled above; the meal metrics route through MealSeries and never
+                // reach here. The throw guards a future metric added without a case; its message is never
+                // rendered, so it cannot be pinned by a test.
                 throw new ArgumentOutOfRangeException(nameof(metric), metric, "Not a purchase metric.");
         }
     }
@@ -189,6 +203,8 @@ public static class ReportEngine
                 notes.Add($"{unknown} {(unknown == 1 ? "meal has" : "meals have")} no calorie estimate and aren't counted.");
         }
 
+        // Stryker disable once Linq: g.First() → g.FirstOrDefault() is unobservable — GroupBy only ever
+        // yields non-empty groups, so First cannot throw and returns the same element.
         List<(string Label, List<MealFact> Facts)> groups = spec.Split == ReportSplit.ByRecipe
             ? facts.GroupBy(m => m.RecipeId).Select(g => (Label: g.First().RecipeName, Facts: g.ToList())).ToList()
             : [(Label: spec.Metric == ReportMetric.Calories ? "Calories" : "Meals", Facts: facts)];
@@ -199,6 +215,10 @@ public static class ReportEngine
                 : bucketFacts.Count,
             dateOf: m => m.Date,
             poolRemainder: spec.Split == ReportSplit.ByRecipe,
+            // Stryker disable once String: unreachable. A meal report never DISCLOSES a remainder — a
+            // recipe split always pools it (Recipe_split_pools_the_remainder) and the only other meal
+            // split is None (a single series, nothing to rank). So this noun is never rendered; it names
+            // what a disclosure WOULD say for symmetry with the purchase path.
             remainderNoun: "recipes");
     }
 
@@ -231,7 +251,14 @@ public static class ReportEngine
                 .ToList();
         }
 
-        if (spec.Split == ReportSplit.None || groups.Count <= 1)
+        // Nothing to rank or pool when there is at most one series. A None split always yields exactly
+        // one group, so this subsumes the "no split" case (the old `spec.Split == None ||` was redundant).
+        // Stryker disable once Equality: `<= 1` → `< 1` is unobservable — at exactly one group the direct
+        // return and the ranking path below produce the identical single series (kept = that one group,
+        // remainder empty, no note). The category also suppresses `>= 1`, which IS killable (it would
+        // early-return a multi-group split without any top-N pooling) — pinned by
+        // Category_split_beyond_top_N_pools_so_the_stack_and_total_stay_complete.
+        if (groups.Count <= 1)
             return groups.Select(g => new ReportSeries(g.Label, Walk(g.Facts))).ToList();
 
         var ranked = groups
@@ -299,8 +326,20 @@ public static class ReportEngine
         {
             ReportGrain.Weekly => start.ToString("MMM d", CultureInfo.InvariantCulture),
             ReportGrain.Monthly => start.ToString("MMM", CultureInfo.InvariantCulture),
-            _ => $"Q{(start.Month - 1) / 3 + 1}",
+            _ => $"Q{Quarter(start.Month)}",
         };
         return withYear ? $"{label} '{start.Year % 100:00}" : label;
+    }
+
+    // The calendar quarter (1–4) a month falls in. Label only ever passes a quarter-start month
+    // (Jan/Apr/Jul/Oct, from BucketStart), but the general formula is kept — correct for any month.
+    private static int Quarter(int month)
+    {
+        // Stryker disable once Arithmetic: `- 1` → `+ 1` is unobservable — `month` is always a quarter
+        // start (1/4/7/10), where (m-1)/3 and (m+1)/3 are equal under integer division. The `/ 3` and
+        // outer `+ 1` stay live (they are wrong for any month), killed by
+        // Quarter_labels_number_the_calendar_quarters.
+        var zeroBasedMonth = month - 1;
+        return zeroBasedMonth / 3 + 1;
     }
 }

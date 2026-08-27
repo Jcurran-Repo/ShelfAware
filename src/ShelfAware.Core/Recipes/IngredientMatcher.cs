@@ -101,6 +101,10 @@ public static class IngredientMatcher
     {
         var ta = CoreTokens(a);
         var tb = CoreTokens(b);
+        // No Stryker annotation here, deliberately: an earlier "equivalent" claim on these guards was
+        // REFUTED by adversarial review — Covers() of an EMPTY need is vacuously true, and a Trivial
+        // word's non-Trivial plural collides through Singular ("pack"/"packs"), so loosening either
+        // non-empty guard is a real behaviour change. The collision test pins both directions.
         return ta.Count > 0 && tb.Count > 0 && Covers(ta, b) && Covers(tb, a);
     }
 
@@ -117,6 +121,11 @@ public static class IngredientMatcher
         if (t.Length > 3 && (t.EndsWith("oes") || t.EndsWith("ses") || t.EndsWith("xes") ||
                              t.EndsWith("zes") || t.EndsWith("ches") || t.EndsWith("shes")))
             return t[..^2];
+        // Stryker disable once Equality: the comparison mutants on this length guard are non-defects.
+        // `>= 1` differs from `> 1` only for a length-1 token, i.e. a bare "s", and Singular("s") going
+        // from "s" to "" changes no match (an "s" token still matches an "s" token) — so they agree for
+        // every input. `< 1` is impossible for a non-empty token (Tokenize drops empties) and would
+        // switch off the plural-s rule, which A_plural_matches_its_singular already forbids.
         if (t.Length > 1 && t.EndsWith("s") && !t.EndsWith("ss")) return t[..^1];
         return t;
     }

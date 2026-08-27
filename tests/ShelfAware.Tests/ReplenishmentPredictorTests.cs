@@ -1309,4 +1309,365 @@ public class ReplenishmentPredictorTests
         Assert.Equal(plain.BurnRateDays, dated.BurnRateDays);
         Assert.Equal(plain.MedianIntervalDays, dated.MedianIntervalDays);
     }
+
+    // --- Basis: the sentence every surface shows (and chat speaks) for "how do you know" ---------
+
+    [Fact]
+    public void Basis_SaysLasts_WhenTheBurnRateDrives()
+    {
+        // The wording IS the meaning: a burn-driven number answers "one lasts ~N days", a rebuy-driven
+        // one answers "you buy it ~every N days". Swapping them tells the household the wrong fact in
+        // every card, panel, and spoken reply.
+        var product = ProductWith(
+            [D(0), D(30), D(60)],
+            [Signal(SignalKind.OutNow, D(10)), Signal(SignalKind.OutNow, D(40))]);
+
+        Assert.Equal("bought 3×, lasts ~10 days", ReplenishmentPredictor.Predict(product, D(65)).Basis);
+    }
+
+    [Fact]
+    public void Basis_SaysEvery_WhenTheRebuyRhythmDrives()
+    {
+        Assert.Equal("bought 2×, ~every 20 days",
+            ReplenishmentPredictor.Predict(ProductWith([D(0), D(20)]), D(21)).Basis);
+    }
+
+    [Fact]
+    public void Basis_ForNoPurchases_AndForStillLearning()
+    {
+        Assert.Equal("no purchases yet", ReplenishmentPredictor.Predict(ProductWith(), D(1)).Basis);
+        Assert.Equal("bought 1×, still learning", ReplenishmentPredictor.Predict(ProductWith([D(0)]), D(1)).Basis);
+    }
+
+    // --- §6.6: WHICH active signal wins — newest first, OutNow on a same-instant tie -------------
+
+    [Fact]
+    public void TheNewestActiveSignal_Wins_InBothDirections()
+    {
+        // Low on Tuesday, out on Thursday: the newest statement governs, so the item pins. And the
+        // mirror — out on Tuesday, merely low on Thursday — must NOT stay pinned: the household
+        // downgraded their own claim, and the engine follows the newer, milder one.
+        var outLast = ProductWith([D(0), D(20)],
+            [Signal(SignalKind.RunningLow, D(22)), Signal(SignalKind.OutNow, D(24))]);
+        var lowLast = ProductWith([D(0), D(20)],
+            [Signal(SignalKind.OutNow, D(22)), Signal(SignalKind.RunningLow, D(24))]);
+
+        var pinned = ReplenishmentPredictor.Predict(outLast, D(25));
+        Assert.True(pinned.Pinned);
+        Assert.Equal(PredictionStatus.Overdue, pinned.Status);
+
+        var softened = ReplenishmentPredictor.Predict(lowLast, D(25));
+        Assert.False(softened.Pinned);
+        Assert.Equal(PredictionStatus.DueSoon, softened.Status);
+        Assert.Equal("Marked running low", softened.SignalNote);
+    }
+
+    [Fact]
+    public void OutNow_WinsASameInstantTie_AgainstRunningLow()
+    {
+        // Both taps land on the same instant (dates carry no time): the graver statement governs —
+        // "out" and "low" at the same moment means you're out. The tie-break comment in the engine
+        // ("OutNow wins a same-instant tie") is this test's subject; it had never been pinned.
+        var product = ProductWith([D(0), D(20)],
+            [Signal(SignalKind.RunningLow, D(24)), Signal(SignalKind.OutNow, D(24))]);
+
+        var r = ReplenishmentPredictor.Predict(product, D(25));
+
+        Assert.True(r.Pinned);
+        Assert.Equal(PredictionStatus.Overdue, r.Status);
+        Assert.Equal("Marked out of stock", r.SignalNote);
+    }
+
+    // --- BurnCycles: the public one-definition of a completed cycle -------------------------------
+
+    [Fact]
+    public void BurnCycles_ASameDayOutage_PairsWithNoPurchase()
+    {
+        // §6.6's tie at the cycle level: an outage dated the same day as a purchase is ambiguous at
+        // date granularity and deliberately closes NO cycle — the strict `>` that keeps §6.6's dead
+        // same-day rows out of the burn rhythm (item 41's rule). This is the doctrine's engine-level
+        // pin; it existed only as a comment before.
+        Assert.Empty(ReplenishmentPredictor.BurnCycles([D(0)], [D(0)]));
+    }
+
+    [Fact]
+    public void BurnCycles_AnOutageAfterTheNextPurchase_BelongsToThatPurchaseAlone()
+    {
+        // P1's window closes at P2: an outage after P2 is P2's cycle only. Unbounded windows would
+        // hand the same outage to BOTH purchases — a phantom long cycle corrupting the median.
+        Assert.Equal([5], ReplenishmentPredictor.BurnCycles([D(0), D(10)], [D(15)]));
+    }
+
+    // --- Median internals: the trim's exact boundaries --------------------------------------------
+
+    [Fact]
+    public void TheTrim_AppliesAtExactlyThreeIntervals()
+    {
+        // Gaps {4, 10, 40}: three intervals is the documented "robust enough" floor, so the 40 is
+        // dropped (3× median 10 = 30) and the median re-takes to (4+10)/2 = 7. One interval fewer
+        // and the trim must NOT apply — Median_IgnoresVacationOutlier pins that side.
+        var r = ReplenishmentPredictor.Predict(ProductWith([D(0), D(4), D(14), D(54)]), D(55));
+
+        Assert.Equal(7, r.MedianIntervalDays);
+    }
+
+    [Fact]
+    public void AnIntervalAtExactlyThreeTimesTheMedian_IsKept()
+    {
+        // Gaps {2, 10, 30}: 30 is exactly 3× the median — inclusive, so it survives the trim and the
+        // median stays 10. Dropping the boundary case would re-take the median over {2, 10} → 6 and
+        // silently tighten every such rhythm.
+        var r = ReplenishmentPredictor.Predict(ProductWith([D(0), D(2), D(12), D(42)]), D(43));
+
+        Assert.Equal(10, r.MedianIntervalDays);
+    }
+
+    [Fact]
+    public void TheSpread_UsesTheMedianOfHalves_OnAnEvenSampleCount()
+    {
+        // Gaps {10, 12, 30, 40} (median 21, 3× = 63 → nothing trims): halves {10,12} and {30,40} →
+        // IQR = 35 − 11 = 24. The even-count split takes BOTH middle elements into their halves; a
+        // one-off-by-one split reads 29 and miswidths every noisy item's warning window.
+        var r = ReplenishmentPredictor.Predict(ProductWith([D(0), D(10), D(22), D(52), D(92)]), D(93));
+
+        Assert.Equal(24, r.IntervalSpreadDays);
+    }
+
+    // --- The label's warning window: its own arithmetic, pinned -----------------------------------
+
+    [Fact]
+    public void ALabelEqualToTheRhythmsDueDate_IsNotACap()
+    {
+        // The cap is only a cap when it pulls the date EARLIER. A label landing exactly on the
+        // rhythm's own due date changes nothing — reporting it as a cap would have Product Detail
+        // explain a constraint that never bound.
+        var product = Expiring((D(0), null), (D(10), null), (D(20), D(30)));
+
+        var r = ReplenishmentPredictor.Predict(product, D(21), honorExpirations: true);
+
+        Assert.Equal(D(30), r.DueDate);
+        Assert.False(r.DueCappedByExpiration);
+        Assert.Equal(D(30), r.ExpiresOn);
+    }
+
+    [Fact]
+    public void TheLabelsWindow_UsesTheCadences20PercentRule()
+    {
+        // Rhythm 20 days (gaps {20, 20}, spread null) capped by a D(50) label: the window is
+        // max(3, 20% of 20) = 4, so DueSoon starts at D(46) — the label borrows the cadence's own
+        // "how twitchy is this item" arithmetic rather than a flat 3.
+        var product = Expiring((D(0), null), (D(20), null), (D(40), D(50)));
+
+        Assert.Equal(PredictionStatus.Stocked,
+            ReplenishmentPredictor.Predict(product, D(45), honorExpirations: true).Status);
+        var inWindow = ReplenishmentPredictor.Predict(product, D(46), honorExpirations: true);
+        Assert.Equal(PredictionStatus.DueSoon, inWindow.Status);
+        Assert.True(inWindow.DueCappedByExpiration);
+        Assert.Equal(D(50), inWindow.DueDate);
+    }
+
+    [Fact]
+    public void TheLabelsWindow_EarnsWidthFromTheSpread_LikeTheCadenceDoes()
+    {
+        // Gaps {10, 12, 14, 40}: the 40 trims out (3× median 13 = 39), leaving median 12 with spread
+        // IQR({10,12,14}) = 4 — so a D(82) label's window is max(3, max(2.4, 4)) = 4 and DueSoon
+        // starts D(78). A window that ignored the spread (or took the smaller of the two rules)
+        // would open a day later on exactly the noisy rhythms that earn the wider warning.
+        var product = Expiring((D(0), null), (D(10), null), (D(22), null), (D(36), null), (D(76), D(82)));
+
+        Assert.Equal(PredictionStatus.Stocked,
+            ReplenishmentPredictor.Predict(product, D(77), honorExpirations: true).Status);
+        Assert.Equal(PredictionStatus.DueSoon,
+            ReplenishmentPredictor.Predict(product, D(78), honorExpirations: true).Status);
+    }
+
+    [Fact]
+    public void ALabelTwoDaysAfterTheOnlyPurchase_DoesNotStartLifeDueSoon()
+    {
+        // The interval-minus-one guard on the label window: bought today, dies the day after
+        // tomorrow — the flat 3-day window would open BEFORE the purchase, so the item would be born
+        // DueSoon. Clamped to the label−anchor gap minus one, the buy day itself stays Stocked and
+        // the warning opens the next day.
+        var product = Expiring((D(0), D(2)));
+
+        var bought = ReplenishmentPredictor.Predict(product, D(0), honorExpirations: true);
+        Assert.Equal(PredictionStatus.Stocked, bought.Status);
+        Assert.True(bought.DueCappedByExpiration);
+        Assert.Equal(D(2), bought.DueDate);
+
+        Assert.Equal(PredictionStatus.DueSoon,
+            ReplenishmentPredictor.Predict(product, D(1), honorExpirations: true).Status);
+    }
+
+    [Fact]
+    public void TheDormantToggle_ReportsNoExpirationFlags()
+    {
+        // Off means DORMANT everywhere on the result: no state flag may leak from a feature the
+        // household turned off — a stray true here and a surface explains an override that never ran.
+        var r = ReplenishmentPredictor.Predict(Expiring((D(0), D(5))), D(10));
+
+        Assert.False(r.ExpirationOverridden);
+        Assert.False(r.DueCappedByExpiration);
+    }
+
+    [Fact]
+    public void TheToggleOnAPurchaselessProduct_IsANoOp_NotACrash()
+    {
+        // The census shape with expirations enabled: a counted product that has never been bought has
+        // no purchases to read a label from. The purchase-count guard is load-bearing — without it
+        // this is Max() over an empty list, and every page that predicts throws for that household.
+        var product = CountedWithoutARhythm(12m, countedOnDay: 0);
+
+        var r = ReplenishmentPredictor.Predict(product, D(10), honorExpirations: true, honorQuantity: true);
+
+        Assert.Null(r.ExpiresOn);
+        Assert.False(r.Expired);
+    }
+
+    // --- The count's exact boundaries ------------------------------------------------------------
+
+    [Fact]
+    public void AFreshZeroCount_IsBelieved_AndProjectsNothing()
+    {
+        // A zero has no exhaustion to project (there is nothing left to run out), so it can never be
+        // "Spent" — it goes stale by AGE alone. A projection from zero would land ON the attestation
+        // day and instantly disbelieve every fresh "we have none".
+        var r = ReplenishmentPredictor.Predict(CountedAndOverdue(0, countedOnDay: 44), D(45), honorQuantity: true);
+
+        Assert.Equal(CountConfidence.Counted, r.CountConfidence);
+        Assert.Null(r.CountRunsOutOn);
+        Assert.False(r.CountLooksStale);
+    }
+
+    [Fact]
+    public void OnTheProjectedRunOutDay_TheCountIsStillBelieved()
+    {
+        // Same convention as the due date and the best-by label: the boundary day itself is not past.
+        // Three counted on D(0) at ~10/package run out on D(30) — ON D(30) the count still suppresses;
+        // D(31) is the first disbelieved day.
+        var onTheDay = ReplenishmentPredictor.Predict(CountedAndOverdue(3, countedOnDay: 0), D(30), honorQuantity: true);
+        Assert.Equal(CountConfidence.Counted, onTheDay.CountConfidence);
+        Assert.True(onTheDay.SuppressedByCount);
+        Assert.Equal(D(30), onTheDay.CountRunsOutOn);
+
+        Assert.Equal(CountConfidence.Spent,
+            ReplenishmentPredictor.Predict(CountedAndOverdue(3, countedOnDay: 0), D(31), honorQuantity: true).CountConfidence);
+    }
+
+    [Fact]
+    public void TheAgeFallback_TripsTheDayAfterNinety_NotOnIt()
+    {
+        // Day 90 exactly is the last believed day; 91 is the first asked-about one. The same
+        // boundary-day convention as everywhere else in the engine.
+        Assert.Equal(CountConfidence.Counted,
+            ReplenishmentPredictor.Predict(CountedWithoutARhythm(12m, countedOnDay: 0), D(90), honorQuantity: true).CountConfidence);
+        Assert.Equal(CountConfidence.Aging,
+            ReplenishmentPredictor.Predict(CountedWithoutARhythm(12m, countedOnDay: 0), D(91), honorQuantity: true).CountConfidence);
+    }
+
+    // --- Stock-up arithmetic: the ratio, and the medians under it ---------------------------------
+
+    [Fact]
+    public void TheStockUpRatio_IsThisBuyOverTheTypicalTrip()
+    {
+        // Typical trip 2, last buy 6 → factor 3 and a tripled projection. Every earlier stock-up test
+        // used a typical trip of ONE, where multiply and divide coincide — this fixture is the one
+        // that tells them apart.
+        var product = ProductWithQuantities((0, 2), (10, 2), (20, 6));
+
+        var r = ReplenishmentPredictor.Predict(product, D(25));
+
+        Assert.Equal(3.0, r.StockUpFactor);
+        Assert.Equal(D(50), r.DueDate); // D(20) + floor(10 × 3)
+    }
+
+    [Fact]
+    public void TheTypicalTrip_IsTheMedianOfSortedTotals_NotArrivalOrder()
+    {
+        // Trips of 5, 1, and 9 in that arrival order: the median is 5 (sorted), never 1 (the middle
+        // of the unsorted list). Factor = 9/5 = 1.8; an unsorted "median" would read 9/1 = 9 and
+        // stretch the projection five times too far.
+        var product = ProductWithQuantities((0, 5), (10, 1), (20, 9));
+
+        var r = ReplenishmentPredictor.Predict(product, D(25));
+
+        Assert.Equal(1.8, r.StockUpFactor);
+        Assert.Equal(D(38), r.DueDate); // D(20) + floor(10 × 1.8)
+    }
+
+    [Fact]
+    public void AZeroQuantityRow_FeedsNoTrip()
+    {
+        // Every write path clamps quantity upward from zero today, so this pins the engine's own
+        // defense (the comment beside the filter says exactly that): a zero-quantity row must not
+        // mint a zero-total TRIP, because a phantom 0 in the trip medians drags the typical trip
+        // down and inflates every stock-up ratio. Here the D(10) row is qty 0: trips are {2, 4}
+        // (typical 3, factor 4/3) — with the phantom they'd be {2, 0, 4} (typical 2, factor 2).
+        // The zero-qty row still counts as a purchase DATE for the rhythm, deliberately.
+        var product = ProductWithQuantities((0, 2), (10, 0), (20, 4));
+
+        var r = ReplenishmentPredictor.Predict(product, D(22));
+
+        Assert.Equal((double)(4m / 3m), r.StockUpFactor);
+        Assert.Equal(D(33), r.DueDate); // D(20) + floor(10 × 4/3)
+        Assert.Equal(10, r.MedianIntervalDays); // three dates, gaps {10, 10}
+    }
+
+    [Fact]
+    public void AnEvenTripCount_TakesTheMeanOfTheMiddleTwo()
+    {
+        // Totals {2, 4} → typical trip 3, so the 4-unit buy is a modest 4/3 stock-up. The even-count
+        // median must be the mean of both middles: taking the upper middle (4) reads "nothing
+        // unusual" and drops the stretch entirely.
+        var product = ProductWithQuantities((0, 2), (10, 4));
+
+        var r = ReplenishmentPredictor.Predict(product, D(12));
+
+        Assert.Equal((double)(4m / 3m), r.StockUpFactor);
+        Assert.Equal(D(23), r.DueDate); // D(10) + floor(10 × 4/3)
+    }
+
+    // --- Dominant size: the display spelling and the tie-break's recency --------------------------
+
+    [Fact]
+    public void TheRecommendedSpelling_IsTheMostRecentNonBlank_InTheWinningBucket()
+    {
+        // One each-family bucket spelled two ways over time: the hint shows the NEWER spelling
+        // ("Each"), not the oldest — the shelf label follows what the store prints now.
+        var product = new Product
+        {
+            Id = 1,
+            Name = "Limes",
+            Purchases =
+            [
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(0), Size = "1 ct" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(10), Size = "Each" },
+            ],
+        };
+
+        Assert.Equal("Each", ReplenishmentPredictor.Predict(product, D(12)).RecommendedSize);
+    }
+
+    [Fact]
+    public void TheTieBreak_ComparesEachBucketsLATESTBuy_NotItsEarliest()
+    {
+        // Gallons bought first AND most recently (D0, D20); half-gallons in between (D5, D10). Counts
+        // tie 2–2, so recency decides — and it must be each bucket's LATEST date: by latest the
+        // gallon (D20) wins, by earliest the half-gallon (D5 vs D0) would. The existing tie-break
+        // test couldn't tell those apart; this interleaved fixture can.
+        var product = new Product
+        {
+            Id = 1,
+            Name = "Whole Milk",
+            Purchases =
+            [
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(0), Size = "1 gal" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(5), Size = "1/2 gal" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(10), Size = "1/2 gal" },
+                new PurchaseEvent { ProductId = 1, PurchasedAt = D(20), Size = "1 gal" },
+            ],
+        };
+
+        Assert.Equal("1 gal", ReplenishmentPredictor.Predict(product, D(25)).RecommendedSize);
+    }
 }

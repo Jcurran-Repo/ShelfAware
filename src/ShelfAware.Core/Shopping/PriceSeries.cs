@@ -26,10 +26,13 @@ public static class PriceSeries
     {
         if (points.Count == 0) return null;
         var groups = points.GroupBy(p => SizeBucket.Key(p.Size)).ToList();
-        var dominant = groups
+        var ranked = groups
             .OrderByDescending(g => g.Count())
-            .ThenByDescending(g => g.Max(p => p.Date ?? DateOnly.MinValue))
-            .First();
+            .ThenByDescending(g => g.Max(p => p.Date ?? DateOnly.MinValue));
+        // Stryker disable once Linq: First() → FirstOrDefault() is unobservable — the guard above means
+        // points is non-empty, so GroupBy yields at least one group and First cannot throw. Isolated on
+        // its own line so the ordering/aggregate mutants in the chain above stay mutation-tested.
+        var dominant = ranked.First();
         return new DominantSeries(
             dominant.Key,
             dominant.OrderBy(p => p.Date ?? DateOnly.MinValue).ToList(),

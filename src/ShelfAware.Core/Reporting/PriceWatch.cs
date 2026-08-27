@@ -46,6 +46,8 @@ public static class PriceWatch
 
             movers.Add(new PriceMover(
                 product.Key,
+                // Stryker disable once Linq: First() → FirstOrDefault() is unobservable — this is a
+                // GroupBy group, which is never empty, so First cannot throw and returns the same element.
                 product.First().ProductName,
                 Math.Round(early.Average(), 2),
                 Math.Round(late.Average(), 2),

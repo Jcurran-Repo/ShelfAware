@@ -159,13 +159,15 @@ public static class CensusPlan
         // Ask the matcher WHICH rule fired rather than re-deriving it from the strings: it normalizes
         // punctuation away before its exact rule, so a raw compare would call a rule-1 identity a guess.
         var (resolved, kind) = catalog.ResolveWithKind(item.NormalizedName);
-        if (resolved is not null && kind == ProductMatcher.MatchKind.ExactName
-            && catalog.ExactMatches(item.NormalizedName).Count > 1)
-        {
-            // Rule 1 found an identity that isn't one product — the ambiguous name IS the row's own, so it
-            // pre-fills nothing and AmbiguousName states it live.
+        // More than one product shares this identity: rule 1 found an identity that isn't ONE product — the
+        // ambiguous name IS the row's own, so it pre-fills nothing and AmbiguousName states it live. Testing
+        // the count alone is exact: >1 identity matches guarantees ResolveWithKind returned an ExactName hit
+        // (same normalization), so the earlier "resolved is not null && kind == ExactName" conjuncts are
+        // implied — dropping them removes a multi-line short-circuit Stryker mis-traces without changing
+        // behaviour.
+        if (catalog.ExactMatches(item.NormalizedName).Count > 1)
             return new(0, false, null);
-        }
+
         var bySimilarity = kind is ProductMatcher.MatchKind.Substring or ProductMatcher.MatchKind.TokenOverlap;
         return new(resolved?.Id ?? 0, bySimilarity, null);
     }
@@ -279,6 +281,11 @@ public static class CensusPlan
         // The standing duplicate guard where a name is TYPED rather than read: a fuzzy resemblance is named (the
         // household decides) but never resolved here — resolving would attach a count to a guessed product.
         var (resolved, kind) = catalog.ResolveWithKind(name);
+        // Stryker disable once Logical: `&&` → `||` is unobservable here — CreateReason is only reached for
+        // a name with NO exact-identity match (Classify returns WillLandOnExisting when identity.Count == 1
+        // and AmbiguousName/NameTaken when > 1), so ResolveWithKind can never return ExactName; a non-null
+        // resolve is ALWAYS Substring/TokenOverlap, making "resolved is not null" and the fuzzy-kind test the
+        // same condition. Both `A && B` and `A || B` collapse to it.
         if (resolved is not null && kind is ProductMatcher.MatchKind.Substring or ProductMatcher.MatchKind.TokenOverlap)
             return CensusReason.ResemblesExisting;
         return CensusReason.CreatesProduct;

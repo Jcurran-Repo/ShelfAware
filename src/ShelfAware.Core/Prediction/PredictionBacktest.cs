@@ -74,6 +74,10 @@ public static class PredictionBacktest
 
     private static double Median(IReadOnlyList<int> values)
     {
+        // Stryker disable once Linq: OrderBy -> OrderByDescending is a true equivalent here. The median
+        // reads the middle element(s): for an odd count that element is the same regardless of sort
+        // direction, and for an even count the two middle values are the same pair (merely swapped) and
+        // are averaged, which commutes. No input distinguishes the two orderings.
         var sorted = values.OrderBy(v => v).ToList();
         var mid = sorted.Count / 2;
         return sorted.Count % 2 == 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2.0;

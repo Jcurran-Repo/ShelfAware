@@ -1,0 +1,60 @@
+name: Mutation
+
+# Weekly full-Core mutation-testing gate (Stryker.NET). The break threshold is 100
+# (tests/ShelfAware.Tests/stryker-config.json), so this job goes RED the moment any
+# ShelfAware.Core mutant survives that isn't killed by a test or annotated equivalent
+# with a reason. That is the no-regression guard described in docs/mutation-testing.md:
+# if a change ever lets a previously-killed mutant survive, it surfaces here.
+#
+# Deliberately NOT on push/PR: a full Core run is minutes-long and Core changes are
+# rare, so it runs weekly — plus on demand via the "Run workflow" button
+# (workflow_dispatch), which is also how to PROVE it after it first lands on master
+# (a workflow can only be proven by its own run on the default branch — CLAUDE.md item 35).
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # Mondays 06:00 UTC
+  workflow_dispatch:
+
+# Least privilege: this job only reads the repo and uploads an artifact (the latter
+# uses the Actions runtime token, not GITHUB_TOKEN scopes), so read-only is enough.
+permissions:
+  contents: read
+
+jobs:
+  mutation:
+    name: Core mutation score
+    runs-on: ubuntu-latest
+    # Generous headroom for a first, unmeasured full run on a 2-core hosted runner —
+    # an over-run fails RED (never a silent pass); tune down once master runs show the
+    # real duration.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore ShelfAware.slnx
+
+      - name: Restore local tools (Stryker)
+        run: dotnet tool restore
+
+      # No pipe: Stryker's own exit code propagates, so a score under the break
+      # threshold (100) fails the job. Run from the test project so Stryker finds
+      # its stryker-config.json.
+      - name: Mutation test — ShelfAware.Core
+        working-directory: tests/ShelfAware.Tests
+        run: dotnet stryker
+
+      # The HTML/JSON report names every surviving mutant with its file + line, so
+      # keep it (pass or fail) to diagnose a red run.
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: tests/ShelfAware.Tests/StrykerOutput/**/reports/
+          if-no-files-found: ignore

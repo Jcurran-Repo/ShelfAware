@@ -7,6 +7,7 @@ public class ImportModeTests
     [Theory]
     [InlineData("Review", null, ImportMode.Review)]
     [InlineData("smart", null, ImportMode.Smart)]     // case-insensitive
+    [InlineData("review", null, ImportMode.Review)]   // lowercase, non-default — pins the case-insensitive parse
     [InlineData("Auto", "false", ImportMode.Auto)]     // explicit mode beats the legacy bool
     [InlineData(null, "true", ImportMode.Auto)]        // legacy auto-confirm on → Auto
     [InlineData(null, "false", ImportMode.Review)]     // legacy auto-confirm off → Review
