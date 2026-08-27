@@ -47,4 +47,21 @@ public class TrxSummaryTests
         Assert.Equal(0, result.Total);  // "oops" → 0, not a throw
         Assert.Equal(5, result.Passed);
     }
+
+    [Fact]
+    public void Parse_folds_error_timeout_and_aborted_into_failed()
+    {
+        // A green "Tests & quality" card must not hide a test that errored or timed out rather than failing
+        // an assertion — Failed sums all non-passing completed outcomes. Distinct values so dropping any one
+        // is caught.
+        var result = TrxSummary.Parse("X", """
+        <TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+          <ResultSummary><Counters total="28" passed="10" failed="2" error="3" timeout="5" aborted="7" notExecuted="1" /></ResultSummary>
+        </TestRun>
+        """);
+
+        Assert.Equal(2 + 3 + 5 + 7, result.Failed); // failed + error + timeout + aborted = 17
+        Assert.Equal(10, result.Passed);
+        Assert.Equal(1, result.Skipped);
+    }
 }

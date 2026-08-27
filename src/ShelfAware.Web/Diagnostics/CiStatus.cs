@@ -19,7 +19,6 @@ public sealed record CiRun(
     string? Conclusion,
     string Branch,
     string Sha,
-    string Title,
     DateTimeOffset UpdatedAt,
     string Url)
 {

@@ -55,6 +55,22 @@ public class AiSpendRollupTests
     }
 
     [Fact]
+    public void A_future_dated_row_is_not_counted_in_the_month()
+    {
+        // Usage rows are never future-dated in practice (the meter stamps today), but the rollup is the
+        // window authority, so a stray future row must not inflate the month figure.
+        var report = AiSpendRollup.Summarize(
+        [
+            Row("hh-a", Today, calls: 3, cost: 1_000_000),
+            Row("hh-b", new DateOnly(2026, 3, 20), calls: 9, cost: 9_000_000), // this month, but AFTER today (the 15th)
+        ], Today);
+
+        Assert.Equal(3, report.Month.Calls);                  // the future row is excluded
+        Assert.Equal(1_000_000, report.Month.CostMicros);
+        Assert.Equal(1, report.ActiveHouseholdsThisMonth);    // hh-b's only row is future → not active
+    }
+
+    [Fact]
     public void Tokens_are_input_plus_output()
     {
         // Distinct input/output so a dropped operand (100 or 40) or a swap-to-minus (60) is caught.

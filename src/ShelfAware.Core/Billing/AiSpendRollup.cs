@@ -21,14 +21,14 @@ public sealed record AiSpendReport(AiSpendSummary Today, AiSpendSummary Month, i
 public static class AiSpendRollup
 {
     /// <summary>Window <paramref name="rows"/> against <paramref name="today"/>: "this month" is the 1st
-    /// of today's month onward, "today" is exactly that day. The month filter here is the authority — a
-    /// caller that passes a wider set than one month still gets a correct month figure — so the reader's
-    /// own WHERE is only a load bound, not the source of truth. "Active this month" is the count of
-    /// distinct households with any row in the month.</summary>
+    /// of today's month through today (month-to-date), "today" is exactly that day. Both ends are the
+    /// authority here — a caller that passes a wider set (earlier months, or a stray future-dated row) still
+    /// gets a correct month figure — so the reader's own WHERE is only a load bound. "Active this month" is
+    /// the count of distinct households with any row in the month.</summary>
     public static AiSpendReport Summarize(IEnumerable<AiUsage> rows, DateOnly today)
     {
         var monthStart = new DateOnly(today.Year, today.Month, 1);
-        var monthRows = rows.Where(r => r.Day >= monthStart).ToList();
+        var monthRows = rows.Where(r => r.Day >= monthStart && r.Day <= today).ToList();
         var todayRows = monthRows.Where(r => r.Day == today).ToList();
         var activeHouseholds = monthRows.Select(r => r.HouseholdId).Distinct().Count();
         return new AiSpendReport(Sum(todayRows), Sum(monthRows), activeHouseholds);

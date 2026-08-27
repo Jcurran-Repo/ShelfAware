@@ -67,6 +67,18 @@ public class GitHubCiStatusTests
     }
 
     [Fact]
+    public async Task A_timeout_becomes_an_error_state_not_an_exception()
+    {
+        // An HttpClient TIMEOUT throws TaskCanceledException (an OperationCanceledException) with the
+        // caller's token NOT cancelled. It must degrade to an Error status, not propagate — otherwise the
+        // CI card, loaded off OnAfterRenderAsync, hangs on "Loading…" forever.
+        var status = await Service(new StubHandler(_ => throw new TaskCanceledException())).GetAsync();
+
+        Assert.NotNull(status.Error);
+        Assert.Empty(status.Runs);
+    }
+
+    [Fact]
     public async Task A_success_is_cached_so_a_second_call_does_not_refetch()
     {
         var handler = new StubHandler(_ => Json(HttpStatusCode.OK, RunsJson));

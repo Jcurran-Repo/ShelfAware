@@ -30,7 +30,7 @@ string? runUrl = server.Length > 0 && repo.Length > 0 && runId.Length > 0
     ? $"{server}/{repo}/actions/runs/{runId}"
     : null;
 
-int? warnings = int.TryParse(Env("BUILD_WARNINGS"), out var w) ? w : null;
+int? warnings = int.TryParse(Env("BUILD_WARNINGS"), CultureInfo.InvariantCulture, out var w) ? w : null;
 double? mutation = double.TryParse(Env("MUTATION_SCORE"), CultureInfo.InvariantCulture, out var m) ? m : null;
 
 var report = new TestStatusReport

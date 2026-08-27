@@ -47,7 +47,6 @@ public class CiStatusTests
         Assert.Equal("success", run.Conclusion);
         Assert.Equal("master", run.Branch);
         Assert.Equal("abcdef1234567", run.Sha);
-        Assert.Equal("green", run.Title);
         Assert.Equal(new DateTimeOffset(2026, 3, 2, 9, 30, 0, TimeSpan.Zero), run.UpdatedAt);
         Assert.Equal("https://gh/runs/9", run.Url);
     }
@@ -71,14 +70,14 @@ public class CiStatusTests
     [InlineData("something_odd", null, CiOutcome.Other)]
     public void Outcome_collapses_status_and_conclusion(string status, string? conclusion, CiOutcome expected)
     {
-        var run = new CiRun("CI", status, conclusion, "master", "abc1234", "t", DateTimeOffset.Now, "u");
+        var run = new CiRun("CI", status, conclusion, "master", "abc1234", DateTimeOffset.Now, "u");
         Assert.Equal(expected, run.Outcome);
     }
 
     [Fact]
     public void ShortSha_is_the_first_seven_or_the_whole_thing_when_shorter()
     {
-        Assert.Equal("abcdef1", new CiRun("CI", "completed", "success", "m", "abcdef1234567890", "t", DateTimeOffset.Now, "u").ShortSha);
-        Assert.Equal("abc", new CiRun("CI", "completed", "success", "m", "abc", "t", DateTimeOffset.Now, "u").ShortSha);
+        Assert.Equal("abcdef1", new CiRun("CI", "completed", "success", "m", "abcdef1234567890", DateTimeOffset.Now, "u").ShortSha);
+        Assert.Equal("abc", new CiRun("CI", "completed", "success", "m", "abc", DateTimeOffset.Now, "u").ShortSha);
     }
 }

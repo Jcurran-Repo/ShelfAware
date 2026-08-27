@@ -78,9 +78,13 @@ public sealed class GitHubCiStatus(
             var json = await resp.Content.ReadAsStringAsync(ct);
             return new CiStatus(CiStatusParser.Parse(json), DateTimeOffset.Now, null);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            throw; // the caller's own cancellation — teardown, not a GitHub failure
+            // The CALLER's own cancellation (teardown) — not a GitHub failure. ⚠️ An HttpClient TIMEOUT
+            // also throws OperationCanceledException (a TaskCanceledException), but with the caller's token
+            // NOT cancelled — that must fall through to the error state below, or the card hangs on
+            // "Loading…" forever (defeating this class's never-throws contract).
+            throw;
         }
         catch (Exception ex)
         {

@@ -29,7 +29,6 @@ public static class CiStatusParser
                 Conclusion: Str(r, "conclusion"),
                 Branch: Str(r, "head_branch") ?? "",
                 Sha: Str(r, "head_sha") ?? "",
-                Title: Str(r, "display_title") ?? "",
                 UpdatedAt: Time(r, "updated_at"),
                 Url: Str(r, "html_url") ?? ""));
         }
@@ -48,5 +47,6 @@ public static class CiStatusParser
 
     private static DateTimeOffset Time(JsonElement e, string prop) =>
         e.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.String
-            && DateTimeOffset.TryParse(v.GetString(), out var t) ? t : default;
+            && DateTimeOffset.TryParse(v.GetString(), System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.RoundtripKind, out var t) ? t : default;
 }

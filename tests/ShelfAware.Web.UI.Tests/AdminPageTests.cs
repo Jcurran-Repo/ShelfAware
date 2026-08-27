@@ -30,8 +30,8 @@ public class AdminPageTests : PageTestContext
         public bool Enabled => true;
         public Task<CiStatus> GetAsync(CancellationToken ct = default) => Task.FromResult(new CiStatus(
         [
-            new CiRun("CI", "completed", "success", "master", "abc1234def", "green build", DateTimeOffset.Now, "https://gh/runs/1"),
-            new CiRun("Mutation", "completed", "failure", "master", "abc1234def", "mutants survived", DateTimeOffset.Now, "https://gh/runs/2"),
+            new CiRun("CI", "completed", "success", "master", "abc1234def", DateTimeOffset.Now, "https://gh/runs/1"),
+            new CiRun("Mutation", "completed", "failure", "master", "abc1234def", DateTimeOffset.Now, "https://gh/runs/2"),
         ], DateTimeOffset.Now, null));
     }
 
