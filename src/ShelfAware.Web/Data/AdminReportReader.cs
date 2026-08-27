@@ -36,12 +36,13 @@ public sealed class AdminReportReader(
         await RequireAdminAsync();
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
-        // ⚠️ One of exactly TWO production IgnoreQueryFilters — the write mirror is
-        // ReportResolutionService (its doc carries the shape and the same warning). Deliberate and
-        // narrow: bug reports are addressed TO the admin, this service is their only reader, the
+        // ⚠️ One of the app's THREE production IgnoreQueryFilters — its write mirror is
+        // ReportResolutionService, and AdminAiSpendReader's cross-household usage aggregate is the third
+        // (each admin-gated + AsNoTracking; their docs carry the shape and the same warning). Deliberate
+        // and narrow: bug reports are addressed TO the admin, this service is their only reader, the
         // read is AsNoTracking so no write can ride on it, and RequireAdminAsync just refused
         // everyone else. Anything else wanting cross-household data must make its own case at
-        // review — not reuse either of these.
+        // review — not reuse any of these.
         var reports = await db.BugReports.IgnoreQueryFilters().AsNoTracking()
             // Open FIRST, then newest: the cap must never be spent on resolved rows while open
             // ones — the to-do list this surface exists for — fall off the far end. A null check

@@ -39,6 +39,7 @@ public class AdminPageTests : PageTestContext
         Services.AddScoped<AdminReportReader>();
         Services.AddScoped<ReportResolutionService>();
         Services.AddScoped<AdminHouseholdService>();
+        Services.AddScoped<AdminAiSpendReader>();
     }
 
     protected override void Dispose(bool disposing)
@@ -54,6 +55,41 @@ public class AdminPageTests : PageTestContext
         db.BugReports.Add(new BugReport { Body = body, CreatedAt = DateTimeOffset.Now });
         db.SaveChanges();
         Db.HouseholdId = "hh-test";
+    }
+
+    private void SeedUsage(string household, DateOnly day, int calls, long cost)
+    {
+        Db.HouseholdId = household;
+        using var db = Db.CreateDbContext();
+        db.AiUsages.Add(new AiUsage { Day = day, Calls = calls, CostMicros = cost });
+        db.SaveChanges();
+        Db.HouseholdId = "hh-test";
+    }
+
+    [Fact]
+    public void The_glance_strip_sums_ai_spend_across_every_household()
+    {
+        using (var db = authDb.CreateDbContext())
+        {
+            db.Households.Add(new Household { Id = "hh-a", Name = "The Currans" });
+            db.Households.Add(new Household { Id = "hh-b", Name = "The Neighbours" });
+            db.SaveChanges();
+        }
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        SeedUsage("hh-a", today, calls: 3, cost: 1_500_000);
+        SeedUsage("hh-b", today, calls: 2, cost: 500_000);
+
+        var cut = Render<Components.Pages.Admin>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("At a glance", cut.Markup);
+            // The strip sums BOTH households (the cross-household read), not just the admin's own scope —
+            // a scoped read would show 2 calls / 1 active. Asserted culture-independently (the currency
+            // symbol varies by the host's locale, per the deploy notes).
+            Assert.Contains("5 call", cut.Markup);   // today's calls: hh-a (3) + hh-b (2)
+            Assert.Contains("2 active", cut.Markup);  // both households used AI this month
+        });
     }
 
     [Fact]

@@ -267,6 +267,9 @@ builder.Services.AddScoped<ReportResolutionService>();
 // so it can only ever touch their own household's reports. See the class doc.
 builder.Services.AddScoped<ReporterReportService>();
 builder.Services.AddScoped<AdminHouseholdService>(); // the /admin household roster + the Founder grant
+// The operations "at a glance" AI spend across every household — the app's THIRD IgnoreQueryFilters,
+// admin-gated + AsNoTracking + aggregate-only. See the class doc.
+builder.Services.AddScoped<AdminAiSpendReader>();
 
 // ---- Who's using the app: the admin "logins + who's online" view ----
 // LoginAudit persists per-account login counts (auth.db operator data, like the error log; read through

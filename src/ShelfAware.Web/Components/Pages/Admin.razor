@@ -3,11 +3,13 @@
 @using Microsoft.Extensions.Options
 @using ShelfAware.Web.Auth
 @using ShelfAware.Web.Diagnostics
+@using ShelfAware.Core.Billing
 @attribute [Authorize(Policy = AdminOptions.PolicyName)]
 @implements IDisposable
 @inject AdminReportReader Reader
 @inject ReportResolutionService Actions
 @inject AdminHouseholdService HouseholdAdmin
+@inject AdminAiSpendReader AiSpend
 @inject IOptions<AdminOptions> AdminConfig
 @inject ErrorLogSink Sink
 @inject OnlinePresence Presence
@@ -37,6 +39,48 @@ else
     {
         <p class="error" role="alert">@actionError</p>
     }
+    <section class="panel">
+        <h2>At a glance</h2>
+        @{
+            // One presence snapshot for the whole page — this tile and the "Online now" section below both
+            // read this `online` (declared here, in the shared else-block scope). Reading presence more than
+            // once could show numbers that disagree for a frame, since it's mutated from other circuits'
+            // threads.
+            var online = Presence.Snapshot();
+            var founderCount = households?.Count(h => h.Tier == HouseholdTier.Founder) ?? 0;
+            int? openBugCount = bugReports?.Count(r => !r.Report.Resolved);
+            int? openErrorCount = errors?.Count(e => !e.Resolved);
+        }
+        <p class="muted">A live snapshot across every household on this deployment. AI cost is what's been
+            recorded this period across all key modes (the host's own keys and any brought in Settings) —
+            the detail is in the panels below.</p>
+        <div class="portfolio">
+            <div class="stat">
+                <div class="stat-value">@(households?.Count.ToString() ?? "…")</div>
+                <div class="stat-label">Household@(households is { Count: 1 } ? "" : "s")@(founderCount > 0 ? $" · {founderCount} Founder" : "")</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">@online.Count</div>
+                <div class="stat-label">Online now</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">@(aiSpend is null ? "…" : AiPricing.FormatMicros(aiSpend.Today.CostMicros))</div>
+                <div class="stat-label">AI today@(aiSpend is null ? "" : $" · {aiSpend.Today.Calls} call{(aiSpend.Today.Calls == 1 ? "" : "s")}")</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">@(aiSpend is null ? "…" : AiPricing.FormatMicros(aiSpend.Month.CostMicros))</div>
+                <div class="stat-label">This month@(aiSpend is null ? "" : $" · {aiSpend.Month.Calls} call{(aiSpend.Month.Calls == 1 ? "" : "s")} · {aiSpend.ActiveHouseholdsThisMonth} active")</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">@(openBugCount?.ToString() ?? "…")</div>
+                <div class="stat-label">Open bug@(openBugCount == 1 ? "" : "s")</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">@(openErrorCount?.ToString() ?? "…")</div>
+                <div class="stat-label">Open error@(openErrorCount == 1 ? "" : "s")</div>
+            </div>
+        </div>
+    </section>
     <section class="panel">
         <h2>Households</h2>
         <p class="muted">Every household on this deployment, its members, and its tier. Grant
@@ -87,12 +131,9 @@ else
     </section>
 
     <section class="panel">
-        @* One snapshot per render, used for BOTH the header count and the list below — reading presence
-           twice could show a header number that disagrees with the rows for a frame (it's mutated from
-           other circuits' threads). Snapshot's Count is the distinct-account count. *@
-        @{
-            var online = Presence.Snapshot();
-        }
+        @* `online` is the single snapshot taken at the top of the block (shared with the glance strip) —
+           reading presence more than once could show a header number that disagrees with the rows for a
+           frame, since it's mutated from other circuits' threads. Count is the distinct-account count. *@
         <h2>Online now (@online.Count)</h2>
         <p class="muted">Accounts with the app open and connected right this moment — this updates live
             as people arrive and leave. Several tabs from one person count as one.</p>
@@ -398,6 +439,7 @@ else
     private IReadOnlyList<AdminBugReport>? bugReports;
     private IReadOnlyList<UserLoginStat>? loginStats;
     private IReadOnlyList<AdminHousehold>? households;
+    private AiSpendReport? aiSpend;
     private bool refused;
     private bool subscribed;
     private bool busy;
@@ -462,6 +504,7 @@ else
             errors = await Reader.ListErrorsAsync();
             bugReports = await Reader.ListBugReportsAsync();
             loginStats = await Reader.ListLoginStatsAsync();
+            aiSpend = await AiSpend.GetAsync();
             return true;
         }
         catch (OperationCanceledException) { throw; }
