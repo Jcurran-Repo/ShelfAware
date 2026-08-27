@@ -15,11 +15,19 @@ on:
     - cron: '0 6 * * 1'   # Mondays 06:00 UTC
   workflow_dispatch:
 
+# Least privilege: this job only reads the repo and uploads an artifact (the latter
+# uses the Actions runtime token, not GITHUB_TOKEN scopes), so read-only is enough.
+permissions:
+  contents: read
+
 jobs:
   mutation:
     name: Core mutation score
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Generous headroom for a first, unmeasured full run on a 2-core hosted runner —
+    # an over-run fails RED (never a silent pass); tune down once master runs show the
+    # real duration.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
 
