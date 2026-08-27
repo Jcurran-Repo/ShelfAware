@@ -4,6 +4,7 @@
 @using ShelfAware.Web.Auth
 @using ShelfAware.Web.Diagnostics
 @using ShelfAware.Core.Billing
+@using ShelfAware.Core.Evaluation
 @attribute [Authorize(Policy = AdminOptions.PolicyName)]
 @implements IDisposable
 @inject AdminReportReader Reader
@@ -11,6 +12,7 @@
 @inject AdminHouseholdService HouseholdAdmin
 @inject AdminAiSpendReader AiSpend
 @inject ICiStatusProvider Ci
+@inject ITestStatusProvider TestStatus
 @inject IOptions<AdminOptions> AdminConfig
 @inject ErrorLogSink Sink
 @inject OnlinePresence Presence
@@ -118,6 +120,76 @@ else
             }
         </section>
     }
+    <section class="panel">
+        <h2>Tests &amp; quality</h2>
+        @if (testStatus is null)
+        {
+            <p class="muted">No test snapshot yet. CI writes <code>test-status.json</code> from a real run; it's
+                committed and served like the accuracy figures, so it appears here after the next deploy.</p>
+        }
+        else
+        {
+            <p class="muted">
+                @if (!string.IsNullOrEmpty(testStatus.CommitSha))
+                {
+                    <text>From the run on <code>@testStatus.ShortSha</code>@(string.IsNullOrEmpty(testStatus.Branch) ? "" : $" ({testStatus.Branch})"), </text>
+                }
+                generated @testStatus.GeneratedAt.ToLocalTime().ToString("MMM d, yyyy HH:mm").
+                @if (testStatus.RunUrl is not null)
+                {
+                    <a href="@testStatus.RunUrl" target="_blank" rel="noopener noreferrer">View run</a>
+                }
+            </p>
+            <div class="portfolio">
+                <div class="@(testStatus.AllPassed ? "stat pass" : (testStatus.TotalFailed > 0 ? "stat fail" : "stat"))">
+                    <div class="stat-value">@testStatus.TotalPassed / @testStatus.TotalTests</div>
+                    <div class="stat-label">Tests passing</div>
+                </div>
+                @if (testStatus.TotalFailed > 0)
+                {
+                    <div class="stat fail">
+                        <div class="stat-value">@testStatus.TotalFailed</div>
+                        <div class="stat-label">Failing</div>
+                    </div>
+                }
+                @if (testStatus.Warnings is { } warns)
+                {
+                    <div class="@(warns == 0 ? "stat pass" : "stat")">
+                        <div class="stat-value">@warns</div>
+                        <div class="stat-label">Build warning@(warns == 1 ? "" : "s")</div>
+                    </div>
+                }
+                @if (testStatus.MutationScore is { } mut)
+                {
+                    <div class="@(mut >= 100 ? "stat pass" : "stat")">
+                        <div class="stat-value">@mut.ToString("0.##")%</div>
+                        <div class="stat-label">Core mutation score</div>
+                    </div>
+                }
+            </div>
+            @if (testStatus.Projects.Count > 0)
+            {
+                <table>
+                    <caption class="visually-hidden">Test counts per project</caption>
+                    <thead>
+                        <tr><th>Project</th><th>Passed</th><th>Failed</th><th>Skipped</th><th>Total</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in testStatus.Projects)
+                        {
+                            <tr @key="p.Name">
+                                <td>@p.Name</td>
+                                <td>@p.Passed</td>
+                                <td>@p.Failed</td>
+                                <td>@p.Skipped</td>
+                                <td>@p.Total</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        }
+    </section>
     <section class="panel">
         <h2>Households</h2>
         <p class="muted">Every household on this deployment, its members, and its tier. Grant
@@ -479,6 +551,7 @@ else
     private AiSpendReport? aiSpend;
     private CiStatus? ciStatus;
     private bool ciLoaded;
+    private TestStatusReport? testStatus;
     private bool refused;
     private bool subscribed;
     private bool busy;
@@ -562,6 +635,7 @@ else
             bugReports = await Reader.ListBugReportsAsync();
             loginStats = await Reader.ListLoginStatsAsync();
             aiSpend = await AiSpend.GetAsync();
+            testStatus = TestStatus.Read();
             return true;
         }
         catch (OperationCanceledException) { throw; }

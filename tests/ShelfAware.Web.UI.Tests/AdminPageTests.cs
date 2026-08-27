@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Domain;
+using ShelfAware.Core.Evaluation;
 using ShelfAware.Web.Auth;
 using ShelfAware.Web.Components.Pages;
 using ShelfAware.Web.Data;
@@ -34,6 +35,18 @@ public class AdminPageTests : PageTestContext
         ], DateTimeOffset.Now, null));
     }
 
+    private sealed class FakeTestStatus : ITestStatusProvider
+    {
+        public TestStatusReport? Report { get; set; } = new()
+        {
+            GeneratedAt = DateTimeOffset.Now,
+            CommitSha = "abcdef1234567",
+            Branch = "master",
+            Projects = [new TestProjectResult("Engine", 10, 10, 0, 0), new TestProjectResult("Pages", 5, 5, 0, 0)],
+        };
+        public TestStatusReport? Read() => Report;
+    }
+
     protected override void RegisterAdditionalServices()
     {
         auth = this.AddAuthorization();
@@ -51,6 +64,7 @@ public class AdminPageTests : PageTestContext
         Services.AddScoped<AdminHouseholdService>();
         Services.AddScoped<AdminAiSpendReader>();
         Services.AddSingleton<ICiStatusProvider>(new FakeCiStatus());
+        Services.AddSingleton<ITestStatusProvider>(new FakeTestStatus());
     }
 
     protected override void Dispose(bool disposing)
@@ -115,6 +129,20 @@ public class AdminPageTests : PageTestContext
             Assert.Contains("✓ Passed", cut.Markup);   // CI succeeded → green tile
             Assert.Contains("✗ Failed", cut.Markup);    // Mutation failed → red tile
             Assert.Contains("stat fail", cut.Markup);    // the fail styling is applied
+        });
+    }
+
+    [Fact]
+    public void The_tests_and_quality_card_shows_the_committed_snapshot()
+    {
+        var cut = Render<Components.Pages.Admin>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("quality", cut.Markup);
+            Assert.Contains("15 / 15", cut.Markup);   // TotalPassed / TotalTests across both projects
+            Assert.Contains("Engine", cut.Markup);     // the per-project table
+            Assert.Contains("Pages", cut.Markup);
         });
     }
 

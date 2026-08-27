@@ -1,0 +1,36 @@
+{
+  "GeneratedAt": "2026-08-27T20:37:59.7258949+00:00",
+  "CommitSha": "d23e62e5ad2c368a8eb054ac4249953a3fd4f8f7",
+  "Branch": "feature/admin-dashboard",
+  "Warnings": 0,
+  "Projects": [
+    {
+      "Name": "AI",
+      "Total": 164,
+      "Passed": 164,
+      "Failed": 0,
+      "Skipped": 0
+    },
+    {
+      "Name": "Engine",
+      "Total": 1182,
+      "Passed": 1182,
+      "Failed": 0,
+      "Skipped": 0
+    },
+    {
+      "Name": "Pages",
+      "Total": 493,
+      "Passed": 493,
+      "Failed": 0,
+      "Skipped": 0
+    },
+    {
+      "Name": "Persistence",
+      "Total": 726,
+      "Passed": 726,
+      "Failed": 0,
+      "Skipped": 0
+    }
+  ]
+}

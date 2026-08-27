@@ -11,4 +11,7 @@
     <Project Path="tests/ShelfAware.Web.Tests/ShelfAware.Web.Tests.csproj" />
     <Project Path="tests/ShelfAware.Web.UI.Tests/ShelfAware.Web.UI.Tests.csproj" />
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/TestStatusGen/TestStatusGen.csproj" />
+  </Folder>
 </Solution>

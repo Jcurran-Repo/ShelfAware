@@ -284,6 +284,9 @@ builder.Services.AddHttpClient("github", c =>
 });
 builder.Services.AddSingleton<ICiStatusProvider, GitHubCiStatus>();
 
+// The "Tests & quality" card reads the CI-written test-status.json (committed + served like eval-results.json).
+builder.Services.AddSingleton<ITestStatusProvider, TestStatusReader>();
+
 // ---- Who's using the app: the admin "logins + who's online" view ----
 // LoginAudit persists per-account login counts (auth.db operator data, like the error log; read through
 // AdminReportReader's gate). OnlinePresence is the live half — a singleton fed by a per-circuit
