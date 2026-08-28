@@ -303,10 +303,15 @@ else
             .ToList();
 
         // "Coming up this week" — Stocked and predicted due within the horizon, so a slower-moving item
-        // surfaces before it hits the (deliberately tight) DueSoon window. NOT the count-suppressed ones:
-        // they're Stocked because a count says you have plenty, and a heads-up would contradict that (§13.5).
+        // surfaces before it hits the (deliberately tight) DueSoon window. NOT fresh-counted items
+        // (CountConfidence.Counted): you told the app how many you have, so a rhythm-based heads-up would
+        // bother you about exactly what you're managing by count (item 28, "don't bother me while I track
+        // quantity"). This is stronger than excluding only SuppressedByCount: suppression fires ONLY when
+        // the rhythm would already ask (Overdue/DueSoon), so a fresh-counted item that's Stocked BY RHYTHM
+        // isn't suppressed and would otherwise leak in. A STALE count (Aging/Spent) is NOT excluded — it's
+        // no longer trusted, so it correctly defers to the rhythm and can appear here like any other item.
         comingUp = products
-            .Where(p => predictions[p.Id] is { Status: PredictionStatus.Stocked, SuppressedByCount: false, DueDate: { } due }
+            .Where(p => predictions[p.Id] is { Status: PredictionStatus.Stocked, CountConfidence: not CountConfidence.Counted, DueDate: { } due }
                         && due > today && due <= today.AddDays(ComingUpHorizonDays))
             .OrderBy(p => predictions[p.Id].DueDate!.Value)
             .ThenBy(p => p.Name)

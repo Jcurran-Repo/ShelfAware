@@ -493,6 +493,32 @@ public class HomeCardsTests : PageTestContext
     }
 
     [Fact]
+    public void A_fresh_counted_item_is_not_a_coming_up_heads_up_even_when_the_rhythm_alone_would_show_it()
+    {
+        // ~14-day rhythm, last bought 10 days ago → due in 4 → Stocked BY RHYTHM, so the count does NOT
+        // suppress (suppression fires only when the rhythm would ask). But you counted 5 today — you're
+        // managing this by count, so a proactive "Coming up" nudge would bother you about exactly that
+        // (item 28). Excluding CountConfidence.Counted (not just SuppressedByCount) is what covers it.
+        Seed("Canned Beans", p =>
+        {
+            p.Purchases =
+            [
+                new PurchaseEvent { PurchasedAt = Today.AddDays(-38), Quantity = 1m },
+                new PurchaseEvent { PurchasedAt = Today.AddDays(-24), Quantity = 1m },
+                new PurchaseEvent { PurchasedAt = Today.AddDays(-10), Quantity = 1m },
+            ];
+            p.TrackQuantity = true;
+            p.QuantityOnHand = 5m;
+            p.QuantityCountedAt = DateTimeOffset.Now;
+        });
+        var cut = RenderHome();
+
+        cut.WaitForState(() => cut.FindAll(".quick-update").Count > 0);
+        Assert.Empty(cut.FindAll(".cards li"));  // not Running Low (Stocked)…
+        Assert.Empty(cut.FindAll(".coming-up")); // …and a fresh count keeps it out of Coming up too
+    }
+
+    [Fact]
     public void Learning_hints_count_purchases_only_because_restocks_never_taught_a_rhythm()
     {
         Seed("Brand New", p => p.Signals =
