@@ -3226,6 +3226,15 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      `IgnoreQueryFilters` → 5→2), the admin gate, the month boundary + `Distinct`, the CI cache +
      latest-per-workflow, the TRX mapping, and the three fix-pass rules. Tiers show Free/Founder (the two in
      code today), forward-compatible.
+   - ⚠️ **Hand mutation-checks are NOT the Stryker 100% gate — a scoped `dotnet stryker` on the new Core files
+     (before triggering the weekly mutation run) found FOUR survivors the by-hand checks missed** (`fix/
+     core-mutation-coverage`, PR #36): the default `""` on `CommitSha`/`Branch` (no test asserted the default),
+     `TotalFailed`'s `Sum→Max` (the fixture had a zero-valued Failed, so max == sum), and `ShortSha`'s
+     `>= 7`↔`> 7` (a genuine EQUIVALENT mutant — `[..7]` of a 7-char string IS the whole string). Fixed
+     pre-emptively: tests for the first two; `ShortSha` restructured to `[..Math.Min(7, Length)]` (no boundary
+     to mutate → no annotation). Core scoped-Stryker back to 100%. The lesson mirrors "green tests aren't a
+     review": by-hand mutation-checks catch the BEHAVIOURAL mutants; only the exhaustive gate catches the
+     default/equivalent/degenerate ones — run scoped Stryker on any new Core file before relying on it.
    - **PR #35 (same day): `actions/upload-artifact@v4 → v7`** in both `ci.yml` and `mutation.yml`, clearing the
      Node-20 deprecation annotation the #34 master run surfaced (v7 declares `using: node24` and keeps the
      name/path/if-no-files-found inputs — verified against its `action.yml`, item-35 posture: current major,
