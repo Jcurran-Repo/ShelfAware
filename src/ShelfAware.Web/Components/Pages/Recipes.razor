@@ -344,10 +344,25 @@
                         @foreach (var i in r.MainIngredients)
                         {
                             var have = Have(i);
-                            <li class="@(have ? "have" : "grab")">
+                            var confident = have && Confident(i);
+                            <li class="@(have ? (confident ? "have" : "have likely") : "grab")">
                                 <span class="ingredient-name">@(have ? "✓" : "🛒") @Qty(i.Quantity, i.Name)</span>
+                                @* Part A — honesty: a ✓ backed only by the rhythm (no fresh count) reads "likely",
+                                   not a confident tick. Asserting the guess is the false positive that erodes trust. *@
+                                @if (have && !confident)
+                                {
+                                    <span class="likely-note" title="You haven't counted this — Shelf Aware is going by your usual buying rhythm. Tap &quot;I'm out&quot; if you don't actually have it.">likely</span>
+                                }
                                 <button type="button" class="alt-swap" @onclick="() => ToggleAlternatives(i)"
                                         aria-label="Swap @i.Name for something else" title="Swap this ingredient">⇄</button>
+                                @* Part B — the correction the feature was missing: the recipe said you have it, but
+                                   you don't. Files a real OutNow (sticks, undoable) and flips the row to Missing. *@
+                                @if (have)
+                                {
+                                    <button type="button" class="imout-btn" @onclick="() => ImOut(i)" disabled="@restockBusy"
+                                            title="Not actually got @i.Name? Mark it out — it moves to your grocery list and dashboard"
+                                            aria-label="Mark @i.Name out — you don't actually have it">I'm out</button>
+                                }
                                 @if (!have && MaybeHave(i.Name, i.MatchedProduct) is { } outItem)
                                 {
                                     @if (outItem.Untracked)
@@ -458,6 +473,10 @@
     private int? generatingAltFor; // RecipeIngredient.Id whose alternates are being generated
 
     private List<PantryProduct> onHand = [];
+    // The same in-stock products WITH their id and whether a FRESH COUNT backs each (vs the rhythm's mere
+    // not-overdue guess) — so a have-main knows which product(s) "I'm out" should mark out, and whether its
+    // ✓ is confident (counted) or only "likely" (predicted). onHand is derived from this, so one pass.
+    private List<(int Id, PantryProduct Product, bool CountBacked)> onHandDetail = [];
     // Every tracked edible product with its curated substitutes — the swap clouds draw stand-ins from
     // the whole matrix, including out-of-stock items (they render as "grab" bubbles).
     private List<PantryProduct> cloudProducts = [];
@@ -615,6 +634,27 @@
         return null;
     }
 
+    // The in-stock product(s) currently covering this ingredient — the ones its ✓ is ABOUT. Same matcher
+    // as the tick (IngredientMatcher.Covering, so they can't disagree), mapped back to the real products by
+    // identity so "I'm out" knows what to mark and Confident knows what backs it. A grounded main yields
+    // exactly one; a food-family match ("ground beef" → two cuts) can yield several — "I'm out" marks all,
+    // since the person said they don't have the ingredient (any it wrongly caught is one Restocked away).
+    private List<(int Id, bool CountBacked)> CoveringInStock(string? ingredientName, string? matchedProduct)
+    {
+        var keys = IngredientMatcher.Covering(ingredientName, matchedProduct, onHand)
+            .Select(pp => ProductMatcher.IdentityKey(pp.Name))
+            .ToHashSet();
+        return onHandDetail
+            .Where(x => keys.Contains(ProductMatcher.IdentityKey(x.Product.Name)))
+            .Select(x => (x.Id, x.CountBacked))
+            .ToList();
+    }
+
+    // A have-main is CONFIDENT (a solid ✓) only when a FRESH COUNT backs a covering product; otherwise
+    // it's LIKELY — the rhythm's guess, rendered less certain, because asserting a guess as "you have it"
+    // is exactly the false positive that drove people off the feature. Counted evidence earns the ✓.
+    private bool Confident(RecipeIngredient i) => CoveringInStock(i.Name, i.MatchedProduct).Any(c => c.CountBacked);
+
     // Same status-only write as the dashboard/grocery-list Restocked (§6 two-stream model: it clears
     // the run-out and re-anchors the due date, never feeds the cadence). Reload flips the row green.
     private async Task Restocked(int productId)
@@ -624,6 +664,25 @@
         try
         {
             await Store.RecordSignalAsync(productId, SignalKind.Restocked);
+            await LoadAsync();
+        }
+        finally { restockBusy = false; }
+    }
+
+    // "The recipe says I have this, but I don't" — the have-side correction, symmetric to Restocked on the
+    // grab side. Files an OutNow on the covering in-stock product(s): the honest signal that STICKS (the
+    // dashboard and grocery list see it too, and it's undoable via History), not a display-only mark. The
+    // reload flips the row to Missing, where the existing "you may still have X" hint offers the reverse.
+    private async Task ImOut(RecipeIngredient i)
+    {
+        if (restockBusy) return;
+        restockBusy = true;
+        try
+        {
+            foreach (var (id, _) in CoveringInStock(i.Name, i.MatchedProduct))
+            {
+                await Store.RecordSignalAsync(id, SignalKind.OutNow);
+            }
             await LoadAsync();
         }
         finally { restockBusy = false; }
@@ -809,10 +868,11 @@
             .Include(p => p.Purchases).Include(p => p.Signals).Include(p => p.Substitutes).ToListAsync();
         var today = DateOnly.FromDateTime(DateTime.Today);
         var trackExpirations = await Settings.GetTrackExpirationDatesAsync();
-        onHand = PantryOnHand.EdibleInStock(products, today, trackExpirations)
-            .Select(p => new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList()))
-            .OrderBy(x => x.Name)
+        onHandDetail = PantryOnHand.EdibleInStockDetailed(products, today, trackExpirations)
+            .Select(d => (d.Product.Id, Product: new PantryProduct(d.Product.Name, d.Product.Substitutes.Select(s => s.Value).ToList()), d.CountBacked))
+            .OrderBy(x => x.Product.Name)
             .ToList();
+        onHand = onHandDetail.Select(x => x.Product).ToList(); // same in-stock set, for the matcher
         cloudProducts = products
             .Where(p => p.IsTracked && p.Category.IsEdible())
             .Select(p => new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList()))

@@ -302,6 +302,74 @@ public class RecipesSuggestAndAdaptTests : PageTestContext
     }
 
     [Fact]
+    public void A_counted_main_reads_a_confident_check_not_likely()
+    {
+        // A FRESH count is real evidence — the ✓ is earned, no "likely" hedge.
+        SeedProduct("Chicken Breast", p =>
+        {
+            p.Purchases =
+            [
+                new PurchaseEvent { PurchasedAt = Today.AddDays(-16), Quantity = 1m },
+                new PurchaseEvent { PurchasedAt = Today.AddDays(-1), Quantity = 1m },
+            ];
+            p.TrackQuantity = true;
+            p.QuantityOnHand = 3m;
+            p.QuantityCountedAt = DateTimeOffset.Now;
+        });
+        SeedRecipe("Chicken Dinner", new RecipeIngredient { Name = "chicken breast", IsMain = true, MatchedProduct = "Chicken Breast" });
+        var cut = RenderRecipes();
+
+        cut.WaitForAssertion(() =>
+        {
+            var row = cut.Find(".saved-recipes .ingredient-list li");
+            var cls = row.GetAttribute("class");
+            Assert.Contains("have", cls);            // on hand
+            Assert.DoesNotContain("likely", cls);    // and CONFIDENT — a fresh count backs it
+            Assert.Empty(row.QuerySelectorAll(".likely-note"));
+        });
+    }
+
+    [Fact]
+    public void A_predicted_only_main_reads_likely_because_no_count_backs_it()
+    {
+        // In stock by the RHYTHM, never counted — the honest render is "likely", not a confident ✓. This
+        // is the fix for "the recipe said I had it but I didn't": the guess is shown as a guess.
+        SeedStocked("Chicken Breast");
+        SeedRecipe("Chicken Dinner", new RecipeIngredient { Name = "chicken breast", IsMain = true, MatchedProduct = "Chicken Breast" });
+        var cut = RenderRecipes();
+
+        cut.WaitForAssertion(() =>
+        {
+            var row = cut.Find(".saved-recipes .ingredient-list li");
+            var cls = row.GetAttribute("class");
+            Assert.Contains("have", cls);
+            Assert.Contains("likely", cls);
+            Assert.Single(row.QuerySelectorAll(".likely-note"));
+        });
+    }
+
+    [Fact]
+    public async Task Im_out_on_a_have_main_files_an_outnow_and_the_row_goes_missing()
+    {
+        var id = SeedStocked("Chicken Breast");
+        SeedRecipe("Chicken Dinner", new RecipeIngredient { Name = "chicken breast", IsMain = true, MatchedProduct = "Chicken Breast" });
+        var cut = RenderRecipes();
+        cut.WaitForAssertion(() =>
+            Assert.Contains("have", cut.Find(".saved-recipes .ingredient-list li").GetAttribute("class")));
+
+        // "The recipe said I have this, but I don't" — the have-side correction the feature was missing.
+        cut.Find("button[aria-label^='Mark chicken breast out']").Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains("grab", cut.Find(".saved-recipes .ingredient-list li").GetAttribute("class")));
+        // A REAL OutNow was filed — it STICKS (dashboard + grocery see it, undoable via History), not a
+        // display-only mark that evaporates on reload.
+        await using var raw = Db.CreateUnscopedContext();
+        var signal = Assert.Single(await raw.InventorySignals.IgnoreQueryFilters().Where(s => s.ProductId == id).ToListAsync());
+        Assert.Equal(SignalKind.OutNow, signal.Kind);
+    }
+
+    [Fact]
     public async Task A_red_row_covered_by_an_untracked_product_offers_track_it()
     {
         var riceId = SeedProduct("Basmati Rice", p => { p.Category = Category.Pantry; p.IsTracked = false; });
