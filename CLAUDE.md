@@ -3160,6 +3160,78 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      `/receipts` chip aria-label present). ⚠️ GitHub Actions lagged repo-wide that day, so the authoritative
      proof is the post-merge master run, not a pre-merge PR run (none queued in time).
 
+59. **The admin dashboard — operational health, live CI status, and a test/quality snapshot (2026-08-27,
+   branch `feature/admin-dashboard` — ✅ MERGED via PR #34, master CI green; the upload-artifact bump followed
+   as PR #35).** Jordan's ask: a test dashboard, "maybe an admin tab" — sharpened in discussion to three cards
+   layered onto the existing `/admin` page (which already had FIVE detail panels, so the dashboard is an
+   at-a-glance OVERVIEW at the top, not a duplicate). All three reuse the existing `.stat`/`.portfolio`
+   design-system tiles (`.stat.pass`/`.fail` = the accuracy page's green/red), so no new CSS.
+   - **At a glance** — a KPI strip: household + Founder counts, online now, open bugs/errors (all reused from
+     data the page already loads), plus the genuinely new data — **AI calls/cost today and this calendar month,
+     summed across ALL households.**
+   - ⚠️ **`AdminAiSpendReader` is the app's THIRD production `IgnoreQueryFilters`** (Jordan's explicit call over
+     the no-bypass alternative of `CreditLedger`-only, which excludes BYOK and is retail-not-cost). `AiUsage.
+     CostMicros` is recorded in EVERY key mode precisely so an operator cost number can exist, and no
+     per-household surface answers "spend across all households." Built to mirror `AdminReportReader` exactly:
+     `RequireAdminAsync` refuses everyone else BEFORE any DbContext is created, `AsNoTracking`, **aggregate-only**
+     (household ids are counted via `Distinct().Count()`, never returned), reached via `IHouseholdDbFactory`,
+     same `AdminOptions.IsAdmin` predicate. The `AdminReportReader` "exactly TWO" comment was updated to "THREE"
+     to keep the count honest. **`AiSpendRollup` (Core, pure) owns the windowing/sums** so they're unit-tested
+     (Core is 100% mutation-gated): today vs month-to-date (`>= monthStart && <= today`), distinct active
+     households.
+   - **Continuous integration** — the latest run per workflow (CI, Mutation) from the GitHub Actions API:
+     conclusion (green pass / red fail / running), branch, short sha (linked), time. `GitHubCiStatus` behind an
+     `ICiStatusProvider` seam (page tested against a fake, service against a stubbed HTTP handler) — a cached
+     singleton over `IHttpClientFactory`, **unauthenticated** (public run metadata needs no token; a
+     `GitHub:Token` only raises the rate limit), that **NEVER throws to the page** (a non-2xx, network error,
+     malformed JSON, or timeout all become a `CiStatus` with `Error` set), caches only successes, and loads off
+     `OnAfterRenderAsync` so a slow/unreachable GitHub can't block the render. Config
+     `GitHub:{Enabled,Owner,Repo,Token,CacheMinutes}`; the outbound call is SERVER-side so the browser CSP is
+     untouched.
+   - **Tests & quality** — passing/total, per-project counts, build warnings, (optional) mutation %. Reads a
+     CI-written `wwwroot/test-status.json` exactly like `/accuracy` reads `eval-results.json` — honest numbers
+     from a real run, not typed into the page (the number-in-the-page rot this repo's history is full of); the
+     report's own commit sha + generated-at make staleness visible. `TestStatusReport`/`TrxSummary` (Core,
+     shared by the app reader AND the CI generator = ONE definition of the shape) + `TestStatusReader`
+     (`ITestStatusProvider` seam) + **`tools/TestStatusGen`** (a build-time console, added to the solution, that
+     folds the run's `.trx` files into the json). ⚠️ **The seed is refreshed manually + committed like
+     `eval-results.json`** — `ci.yml` emits the `.trx` and publishes `test-status.json` as an ARTIFACT but does
+     NOT commit it back (keeps master's history clean + least-privilege `contents: read`); a `GITHUB_TOKEN`
+     commit-back — which does NOT re-trigger CI — is the documented one-step opt-in if auto-refresh is ever
+     wanted.
+   - **The `/pre-push` gate ran** (both reviews as independent agents reading by SHA/diff, item 56's isolation
+     lesson). **Security: PASS, no findings** — the third `IgnoreQueryFilters` traced clean (gated-first,
+     AsNoTracking, aggregate-only, the only new bypass), no new endpoints/settings-keys/per-household disk
+     writes, `GitHubOptions` is config not household data, `test-status.json` is non-household build data,
+     `ci.yml` is injection-free. **Code review: 1 MEDIUM + LOWs, all fixed + mutation-checked (`45d96d3`):**
+     - ⚠️ **[MEDIUM] the CI card could hang on "Loading…" forever** — an HttpClient TIMEOUT throws
+       `TaskCanceledException` (a subclass of `OperationCanceledException`), which `catch (OperationCanceledException)
+       { throw; }` rethrew as if it were the caller's cancellation → it propagated to `OnAfterRenderAsync`'s
+       teardown catch and the card never left "Loading…", defeating the "never throws" contract. The exact
+       item-38/39 exception-derivation class, and untested (only `HttpRequestException` was covered). Fixed: only
+       `when (ct.IsCancellationRequested)` rethrows; a timeout falls through to the error state. New timeout test.
+     - [LOW] `TrxSummary` now sums failed + error + timed-out + aborted (a green card can't hide an errored
+       test); `AiSpendRollup`'s month window bounds `<= today` (a stray future row can't inflate it);
+       invariant-culture timestamp/int parsing; removed the unused `CiRun.Title` field (dead code — and not
+       rendering fork-PR-controllable text was the security review's own note).
+   - ⚠️ **The drive-test caught what green tests couldn't** (the repo's own rule, proven again): the quality
+     card was showing **2565** because the committed seed predated the fix-pass's +3 tests — a stale DATA file
+     no test notices. Regenerated the seed from a real run at the tip (**2568**), committed, re-verified the
+     card reads 2568. Live-verified end to end (signed in as the sandbox admin via `/dev/login`): all three
+     cards render with real data — the AI aggregate across **5 households**, real GitHub CI status (both
+     workflows green), 2568/2568 — no console/CSP errors (the SignalR reconnect noise was restart-transient,
+     timestamps confirmed).
+   - **2568 tests, 0 failing, 0 warnings** (non-incremental Release; Engine 1184 · AI 164 · Persistence 727 ·
+     Pages 493). Every load-bearing rule mutation-checked by hand — the cross-household sum (drop
+     `IgnoreQueryFilters` → 5→2), the admin gate, the month boundary + `Distinct`, the CI cache +
+     latest-per-workflow, the TRX mapping, and the three fix-pass rules. Tiers show Free/Founder (the two in
+     code today), forward-compatible.
+   - **PR #35 (same day): `actions/upload-artifact@v4 → v7`** in both `ci.yml` and `mutation.yml`, clearing the
+     Node-20 deprecation annotation the #34 master run surfaced (v7 declares `using: node24` and keeps the
+     name/path/if-no-files-found inputs — verified against its `action.yml`, item-35 posture: current major,
+     pinned bare). Master CI green AND annotation-clean; `mutation.yml` is fixed but confirms on its next
+     weekly/dispatch run (identical action+inputs to the ci.yml upload the PR proved).
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active
