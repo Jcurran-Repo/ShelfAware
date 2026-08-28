@@ -183,6 +183,31 @@ public class AdminReportReaderTests : IDisposable
     }
 
     [Fact]
+    public async Task An_undone_action_is_flagged_so_the_operator_does_not_read_a_reversed_action_as_live()
+    {
+        _db.HouseholdId = "hh-a";
+        using (var db = _db.CreateDbContext())
+        {
+            db.ActivityEntries.Add(new ActivityEntry
+            {
+                Summary = "Bought Milk", OccurredAt = DateTimeOffset.Now, Kind = ActivityKind.SignalRecorded,
+                Reversibility = Reversibility.Reversible, PayloadJson = "{}", UndoneAt = DateTimeOffset.Now, // reversed
+            });
+            db.ActivityEntries.Add(new ActivityEntry
+            {
+                Summary = "Marked Eggs out", OccurredAt = DateTimeOffset.Now, Kind = ActivityKind.SignalRecorded,
+                Reversibility = Reversibility.Reversible, PayloadJson = "{}", // still stands
+            });
+            db.SaveChanges();
+        }
+
+        var rows = await Reader().ListRecentActivityAsync();
+
+        Assert.True(rows.Single(r => r.Summary == "Bought Milk").Undone);
+        Assert.False(rows.Single(r => r.Summary == "Marked Eggs out").Undone);
+    }
+
+    [Fact]
     public async Task The_admin_reads_the_error_log_through_the_same_gate()
     {
         var store = new ErrorLogStore(_authDb);

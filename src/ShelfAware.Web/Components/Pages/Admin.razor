@@ -461,10 +461,10 @@ else
                     <tbody>
                         @foreach (var a in activity)
                         {
-                            <tr>
+                            <tr class="@(a.Undone ? "muted" : null)">
                                 <td class="muted">@a.When.LocalDateTime.ToString("MMM d, HH:mm:ss")</td>
                                 <td>@a.HouseholdName</td>
-                                <td>@a.Summary</td>
+                                <td>@a.Summary@if (a.Undone) {<span class="muted"> (undone)</span>}</td>
                                 <td class="muted">@(a.Source ?? "—")</td>
                             </tr>
                         }

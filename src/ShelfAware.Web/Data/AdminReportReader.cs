@@ -15,7 +15,7 @@ public sealed record AdminBugReport(BugReport Report, string HouseholdName);
 /// line, plus the household name, projected read-only (the operator only ever LOOKS at it). This is
 /// the "link" between the activity log and the error log: an operator seeing an error can scan what
 /// households were doing around that time.</summary>
-public sealed record AdminActivityRow(DateTimeOffset When, string HouseholdName, string Summary, string? Source);
+public sealed record AdminActivityRow(DateTimeOffset When, string HouseholdName, string Summary, string? Source, bool Undone);
 
 /// <summary>The admin page's data, and the ONE place in the app that reads across households.
 /// Every list re-verifies the caller against <see cref="AdminOptions.IsAdmin"/> before touching
@@ -94,7 +94,7 @@ public sealed class AdminReportReader(
         var rows = await db.ActivityEntries.IgnoreQueryFilters().AsNoTracking()
             .OrderByDescending(e => e.Id)
             .Take(MaxActivity)
-            .Select(e => new { e.OccurredAt, e.HouseholdId, e.Summary, e.Source })
+            .Select(e => new { e.OccurredAt, e.HouseholdId, e.Summary, e.Source, e.UndoneAt })
             .ToListAsync(ct);
 
         await using var authContext = await authDb.CreateDbContextAsync(ct);
@@ -106,7 +106,8 @@ public sealed class AdminReportReader(
                 r.OccurredAt,
                 r.HouseholdId is { } hh && names.TryGetValue(hh, out var name) ? name : "(household gone)",
                 r.Summary,
-                r.Source))
+                r.Source,
+                r.UndoneAt is not null)) // the household reversed it — the correlation view must say so, not show it as a live action
             .ToList();
     }
 
