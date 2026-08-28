@@ -1786,10 +1786,12 @@ button.tag-chip {
     color: var(--ink);
 }
 
-/* "Already have it" — a Restocked signal (status-only: clears an OutNow and re-anchors the due date;
-   it never feeds the cadence, §6 two-stream model). Green because it IS an "I'm stocked" statement,
-   unlike Untrack's neutral chip beside it. */
-.restock-btn {
+/* "I have it" — the green row actions, unlike Untrack's neutral chip beside them: Restocked (a fresh
+   supply → re-anchors the due date) and Still in stock (the reminder was early → the engine snoozes it).
+   Both are status-only signals that never feed the cadence (§6 two-stream model); one definition, two
+   selectors so the tests can tell the buttons apart. */
+.restock-btn,
+.stillstock-btn {
     font-size: 0.7rem;
     font-weight: 600;
     color: var(--stocked-ink);
@@ -1802,7 +1804,8 @@ button.tag-chip {
     white-space: nowrap;
 }
 
-.restock-btn:hover:not(:disabled) {
+.restock-btn:hover:not(:disabled),
+.stillstock-btn:hover:not(:disabled) {
     box-shadow: inset 0 0 0 1px var(--stocked-line);
 }
 
@@ -3061,6 +3064,7 @@ tfoot td {
     .info-btn,
     .untrack-btn,
     .restock-btn,
+    .stillstock-btn,
     .report-presets,
     .report-print-btn,
     .report-builder,

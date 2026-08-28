@@ -164,6 +164,35 @@ public class HomeCardsTests : PageTestContext
     }
 
     [Fact]
+    public async Task Still_in_stock_snoozes_the_card_off_running_low_without_writing_a_purchase()
+    {
+        // The honest alternative to Restocked: "the prediction was early — I never ran out". A status-only
+        // signal that the engine snoozes (not a fresh-supply re-anchor), so the card stands down.
+        var id = Seed("Whole Milk", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-45), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-30), Quantity = 1m },
+        ]);
+        var cut = RenderHome();
+        cut.WaitForState(() => cut.FindAll(".cards li").Count == 1);
+
+        // "Still in stock" is the split button's SECOND alternate action, beneath Restocked.
+        cut.Find(".cards .split-caret").Click();
+        cut.WaitForState(() => cut.FindAll(".split-menu").Count == 1);
+        cut.FindAll(".split-menu button").Single(b => b.TextContent.Trim() == "Still in stock").Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains("Marked Whole Milk still in stock", cut.Find(".inline-confirm").TextContent));
+        Assert.Empty(cut.FindAll(".cards li")); // snoozed off Running Low
+
+        // Status-only: a StillInStock signal, NOT a purchase — it must never feed the cadence.
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Equal(2, await raw.PurchaseEvents.IgnoreQueryFilters().CountAsync(x => x.ProductId == id));
+        var signal = Assert.Single(await raw.InventorySignals.IgnoreQueryFilters().ToListAsync());
+        Assert.Equal(SignalKind.StillInStock, signal.Kind);
+    }
+
+    [Fact]
     public async Task Bought_today_offers_an_inline_undo_that_reverses_the_purchase()
     {
         var id = Seed("Whole Milk", p => p.Purchases =
