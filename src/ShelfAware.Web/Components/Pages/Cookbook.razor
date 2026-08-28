@@ -39,14 +39,20 @@
             {
                 <label class="field cookbook-product-filter">
                     <span>Recipes that use…</span>
-                    <select value="@(filterProductId?.ToString() ?? "")" @onchange="OnProductFilterChanged"
-                            aria-label="Filter recipes by a product they use">
-                        <option value="">Any product</option>
-                        @foreach (var (id, name) in productOptions)
+                    @* Type-and-guess: a datalist of the products some recipe is grounded to. Typing (or
+                       picking) a NAME resolves to the product id the ?uses deep link needs, and
+                       CommitProductFilter navigates there — exactly what the old dropdown did, so every
+                       filter is still a shareable URL that combines with the tag chips. *@
+                    <input class="cookbook-product-input" list="cookbook-product-filter-options" type="search"
+                           autocomplete="off" @bind="productFilterText" @bind:after="CommitProductFilter"
+                           placeholder="Type a product… (blank shows all)"
+                           aria-label="Filter recipes by a product they use — type to search" />
+                    <datalist id="cookbook-product-filter-options">
+                        @foreach (var (_, name) in productOptions)
                         {
-                            <option value="@id">@name</option>
+                            <option value="@name"></option>
                         }
-                    </select>
+                    </datalist>
                 </label>
             }
             @{ var untaggedCount = allRecipes.Count(r => r.Tags.Count == 0); }
@@ -349,6 +355,7 @@ else
     private List<Recipe> filtered = [];
     private int index;                 // position within `filtered` (0-based)
     private string? filterProductName; // resolved from ?uses, shown in the banner
+    private string productFilterText = ""; // the type-and-guess box's text; kept in step with the active filter
     private string? activeTag;         // resolved from ?tag
     private Recipe? readingRecipe;     // the recipe whose read-aloud panel is open (null = none)
 
@@ -463,6 +470,7 @@ else
     private void ApplyFilters()
     {
         filterProductName = UsesProductId is { } pid && productNamesById.TryGetValue(pid, out var name) ? name : null;
+        productFilterText = filterProductName ?? ""; // the box always shows the filter that's actually applied
         activeTag = Tag is { Length: > 0 } ? Tag : null;
 
         IEnumerable<Recipe> q = allRecipes;
@@ -494,8 +502,6 @@ else
         (null, { } t) => $"No recipes tagged “{t}” yet.",
         ({ } p, { } t) => $"No recipes tagged “{t}” that use {p}.",
     };
-
-    private int? filterProductId => UsesProductId;
 
     // Paging by keyboard or by clicking a preview. Each moves the centre by setting `index`, asks the shelf
     // to scroll the new centre into view (applied after the render, once the module has loaded), and closes
@@ -553,10 +559,41 @@ else
         readingRecipe = null;
     }
 
-    private void OnProductFilterChanged(ChangeEventArgs e)
+    // The product filter box committed (a suggestion picked, or free text entered). Resolve it to a product
+    // and navigate to that ?uses deep link — the SAME URL the old dropdown produced, so a filter stays
+    // shareable and still combines with the tag chips.
+    //   • empty  → clear the filter (back to all)
+    //   • a match → navigate to that product
+    //   • no match → leave the current filter be; the typed text stays so it can be corrected (a search box
+    //                doesn't erase what you typed), and the banner keeps showing the filter actually applied.
+    private void CommitProductFilter()
     {
-        var picked = int.TryParse(e.Value?.ToString(), out var id) ? id : (int?)null;
-        Nav.NavigateTo(FilterUri(picked, activeTag));
+        var typed = productFilterText.Trim();
+        if (typed.Length == 0)
+        {
+            if (UsesProductId is not null) Nav.NavigateTo(FilterUri(null, activeTag));
+            return;
+        }
+        if (ResolveProduct(typed) is { } id && id != UsesProductId)
+        {
+            Nav.NavigateTo(FilterUri(id, activeTag));
+        }
+    }
+
+    // Resolve typed text to one of the OFFERED products (the datalist set): an exact name (what picking a
+    // suggestion yields), else a UNIQUE case-insensitive partial so a half-typed "chick" still lands. Null
+    // when nothing — or more than one thing — matches, so an ambiguous or unknown entry changes no filter.
+    private int? ResolveProduct(string query)
+    {
+        foreach (var (id, name) in productOptions)
+        {
+            if (string.Equals(name, query, StringComparison.CurrentCultureIgnoreCase)) return id;
+        }
+        var partial = productOptions
+            .Where(o => o.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase))
+            .Take(2)
+            .ToList();
+        return partial.Count == 1 ? partial[0].Id : null;
     }
 
     private void ToggleTag(string tag)

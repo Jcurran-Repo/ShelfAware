@@ -1,3 +1,4 @@
+using Bunit.TestDoubles;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.AspNetCore.Components.Web;
@@ -104,7 +105,7 @@ public class CookbookPageTests : PageTestContext
         return cut;
     }
 
-    private NavigationManager Nav => Services.GetRequiredService<NavigationManager>();
+    private BunitNavigationManager Nav => (BunitNavigationManager)Services.GetRequiredService<NavigationManager>();
 
     // The previews in deck (alphabetical) order — one <button> per recipe in `filtered`.
     private static IReadOnlyList<AngleSharp.Dom.IElement> Previews(IRenderedComponent<Cookbook> cut) =>
@@ -331,15 +332,90 @@ public class CookbookPageTests : PageTestContext
     }
 
     [Fact]
-    public void Choosing_a_product_in_the_filter_navigates_to_that_filter()
+    public void Typing_a_products_name_in_the_filter_navigates_to_that_filter()
     {
         var chickenId = SeedProduct("Chicken Breast");
         SeedRecipe("Chicken Dinner", [("Chicken Breast", true, "Chicken Breast", null)], "Cook it.");
 
         var cut = RenderCookbook();
-        cut.Find(".cookbook-product-filter select").Change(chickenId.ToString());
+        // A datalist-backed type-and-guess box: committing an exact product name resolves it to the ?uses id.
+        cut.Find(".cookbook-product-input").Change("Chicken Breast");
 
         Assert.EndsWith($"/cookbook?uses={chickenId}", Nav.Uri);
+    }
+
+    [Fact]
+    public void A_half_typed_product_name_resolves_to_the_unique_match()
+    {
+        var chickenId = SeedProduct("Chicken Breast");
+        SeedRecipe("Chicken Dinner", [("Chicken Breast", true, "Chicken Breast", null)], "Cook it.");
+
+        var cut = RenderCookbook();
+        // Typing a partial and committing (Enter without picking a suggestion) still lands, when it's unambiguous.
+        cut.Find(".cookbook-product-input").Change("chick");
+
+        Assert.EndsWith($"/cookbook?uses={chickenId}", Nav.Uri);
+    }
+
+    [Fact]
+    public void An_exact_name_wins_even_when_it_is_a_substring_of_another_product()
+    {
+        var chickenId = SeedProduct("Chicken");
+        SeedProduct("Chicken Breast");
+        SeedRecipe("Roast Chicken", [("Chicken", true, "Chicken", null)], "Cook it.");
+        SeedRecipe("Breast Dinner", [("Chicken Breast", true, "Chicken Breast", null)], "Cook it.");
+
+        var cut = RenderCookbook();
+        // "Chicken" is a substring of "Chicken Breast", so a partial match is ambiguous — but the EXACT
+        // name must still resolve to the "Chicken" product (exact is checked before partial).
+        cut.Find(".cookbook-product-input").Change("Chicken");
+
+        Assert.EndsWith($"/cookbook?uses={chickenId}", Nav.Uri);
+    }
+
+    [Fact]
+    public void An_ambiguous_partial_matches_nothing_and_changes_no_filter()
+    {
+        SeedProduct("Chicken Breast");
+        SeedProduct("Chicken Thighs");
+        SeedRecipe("Roast Breast", [("Chicken Breast", true, "Chicken Breast", null)], "Cook it.");
+        SeedRecipe("Braised Thighs", [("Chicken Thighs", true, "Chicken Thighs", null)], "Cook it.");
+
+        var cut = RenderCookbook();
+        var before = Nav.History.Count;
+        cut.Find(".cookbook-product-input").Change("chicken"); // matches BOTH offered products — ambiguous
+
+        Assert.Equal(before, Nav.History.Count); // no product chosen, so no navigation
+    }
+
+    [Fact]
+    public void An_unrecognised_entry_changes_no_filter()
+    {
+        SeedProduct("Chicken Breast");
+        SeedRecipe("Chicken Dinner", [("Chicken Breast", true, "Chicken Breast", null)], "Cook it.");
+
+        var cut = RenderCookbook();
+        var before = Nav.History.Count;
+        cut.Find(".cookbook-product-input").Change("nothing like this");
+
+        Assert.Equal(before, Nav.History.Count);
+    }
+
+    [Fact]
+    public void Clearing_the_filter_box_shows_all_recipes_again()
+    {
+        var chickenId = SeedProduct("Chicken Breast");
+        SeedRecipe("Chicken Dinner", [("Chicken Breast", true, "Chicken Breast", null)], "Cook it.");
+        SeedRecipe("Veggie Stir Fry", [("Broccoli", true, "Broccoli", null)], "Cook it.");
+
+        Nav.NavigateTo($"/cookbook?uses={chickenId}");
+        var cut = RenderCookbook();
+        Assert.Single(Previews(cut)); // scoped to the one chicken recipe
+
+        cut.Find(".cookbook-product-input").Change(""); // clear the box → back to all
+
+        Assert.DoesNotContain("uses=", Nav.Uri);
+        Assert.Equal(2, Previews(cut).Count);
     }
 
     // ------------------------------------------------------------------ print + audio wiring
