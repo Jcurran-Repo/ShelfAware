@@ -677,8 +677,10 @@ input:focus, select:focus {
 .card.accent-overdue { border-left-color: var(--overdue-line); }
 .card.accent-duesoon { border-left-color: var(--duesoon-line); }
 
-/* "You keep running out of these" — the burn-rate-≪-rebuy habit insight promoted from Product Detail. */
-.runs-out-early .habit-list {
+/* Compact name + note rows — shared by "You keep running out of these" (the burn-rate-≪-rebuy habit
+   insight promoted from Product Detail) and "Coming up this week" (the near-term run-out heads-up). One
+   definition so the two dashboard lists can't drift. */
+.habit-list {
     list-style: none;
     padding: 0;
     margin: 0.5rem 0 0;
@@ -686,7 +688,7 @@ input:focus, select:focus {
     flex-direction: column;
     gap: 0.5rem;
 }
-.runs-out-early .habit-list li {
+.habit-list li {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
