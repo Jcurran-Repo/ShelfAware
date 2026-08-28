@@ -7,19 +7,33 @@ public class TestStatusReportTests
     [Fact]
     public void Totals_sum_across_projects()
     {
+        // Every metric has DISTINCT per-project values so each Total is a genuine SUM, not the max of one
+        // project — otherwise a Sum→Max mutation survives (max == sum when one project's value is 0).
         var report = new TestStatusReport
         {
             Projects =
             [
-                new TestProjectResult("A", Total: 10, Passed: 8, Failed: 1, Skipped: 1),
-                new TestProjectResult("B", Total: 20, Passed: 19, Failed: 0, Skipped: 1),
+                new TestProjectResult("A", Total: 10, Passed: 5, Failed: 3, Skipped: 2),
+                new TestProjectResult("B", Total: 20, Passed: 14, Failed: 5, Skipped: 1),
             ],
         };
 
         Assert.Equal(30, report.TotalTests);
-        Assert.Equal(27, report.TotalPassed);
-        Assert.Equal(1, report.TotalFailed);
-        Assert.Equal(2, report.TotalSkipped);
+        Assert.Equal(19, report.TotalPassed);
+        Assert.Equal(8, report.TotalFailed);
+        Assert.Equal(3, report.TotalSkipped);
+    }
+
+    [Fact]
+    public void An_unset_report_has_empty_commit_and_branch()
+    {
+        // The defaults are "" — the card hides the "From the run on…" line on an empty sha, so a non-empty
+        // default would show a bogus one. (Also pins the empty ShortSha path.)
+        var report = new TestStatusReport();
+
+        Assert.Equal("", report.CommitSha);
+        Assert.Equal("", report.Branch);
+        Assert.Equal("", report.ShortSha);
     }
 
     [Fact]

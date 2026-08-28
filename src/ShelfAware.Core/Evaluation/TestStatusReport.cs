@@ -37,5 +37,8 @@ public sealed record TestStatusReport
     /// <summary>A green suite: at least one test ran and none failed.</summary>
     [JsonIgnore] public bool AllPassed => TotalTests > 0 && TotalFailed == 0;
 
-    [JsonIgnore] public string ShortSha => CommitSha.Length >= 7 ? CommitSha[..7] : CommitSha;
+    // Math.Min rather than a `Length >= 7 ? [..7] : whole` conditional: the [..7] of a 7-char string IS the
+    // whole string, so `>=` and `>` would be behaviourally identical there (an equivalent mutant). This form
+    // has no boundary comparison to mutate.
+    [JsonIgnore] public string ShortSha => CommitSha[..Math.Min(7, CommitSha.Length)];
 }
