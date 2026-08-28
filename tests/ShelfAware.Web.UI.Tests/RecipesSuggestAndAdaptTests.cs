@@ -370,6 +370,52 @@ public class RecipesSuggestAndAdaptTests : PageTestContext
     }
 
     [Fact]
+    public void After_im_out_the_row_says_you_marked_it_out_not_that_it_just_looks_run_out()
+    {
+        // Gate B-1: after you DECLARE it out, the row must not blame a soft prediction ("it just looks
+        // run-out") — that contradicts your own tap (one prediction, one story).
+        SeedStocked("Chicken Breast");
+        SeedRecipe("Chicken Dinner", new RecipeIngredient { Name = "chicken breast", IsMain = true, MatchedProduct = "Chicken Breast" });
+        var cut = RenderRecipes();
+        cut.WaitForAssertion(() =>
+            Assert.Contains("have", cut.Find(".saved-recipes .ingredient-list li").GetAttribute("class")));
+
+        cut.Find("button[aria-label^='Mark chicken breast out']").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            var saved = cut.Find(".saved-recipes").TextContent;
+            Assert.Contains("you marked Chicken Breast out", saved);
+            Assert.DoesNotContain("it just looks run-out", saved);
+        });
+    }
+
+    [Fact]
+    public void Im_out_on_a_bought_today_item_is_inert_and_says_why_rather_than_doing_nothing()
+    {
+        // Gate B-2: bought TODAY → Stocked, shows ✓ + "I'm out". But an OutNow dated today is inert
+        // (§6.6 same-day tie), so nothing changes — the tap must not be a SILENT no-op.
+        SeedProduct("Chicken Breast", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-14), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today, Quantity = 1m }, // bought today → same-day tie
+        ]);
+        SeedRecipe("Chicken Dinner", new RecipeIngredient { Name = "chicken breast", IsMain = true, MatchedProduct = "Chicken Breast" });
+        var cut = RenderRecipes();
+        cut.WaitForAssertion(() =>
+            Assert.Contains("have", cut.Find(".saved-recipes .ingredient-list li").GetAttribute("class")));
+
+        cut.Find("button[aria-label^='Mark chicken breast out']").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("won't take effect until tomorrow", cut.Markup);
+            // …and the row is honest that nothing changed — it stays on hand (the inert OutNow didn't fire).
+            Assert.Contains("have", cut.Find(".saved-recipes .ingredient-list li").GetAttribute("class"));
+        });
+    }
+
+    [Fact]
     public async Task A_red_row_covered_by_an_untracked_product_offers_track_it()
     {
         var riceId = SeedProduct("Basmati Rice", p => { p.Category = Category.Pantry; p.IsTracked = false; });

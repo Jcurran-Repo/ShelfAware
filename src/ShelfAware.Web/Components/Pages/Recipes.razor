@@ -184,6 +184,10 @@
     {
         <p class="chat-reply" role="status">@adaptNote</p>
     }
+    @if (imOutNote is not null)
+    {
+        <p class="muted" role="status">@imOutNote</p>
+    }
     @if (displayed.Count == 0)
     {
         <p class="muted">
@@ -343,8 +347,11 @@
                     <ul class="ingredient-list">
                         @foreach (var i in r.MainIngredients)
                         {
-                            var have = Have(i);
-                            var confident = have && Confident(i);
+                            @* Covering products computed ONCE per main (both the tick and the confidence read
+                               them — the same matcher, so they can't disagree). *@
+                            var coverage = CoveringInStock(i.Name, i.MatchedProduct);
+                            var have = coverage.Count > 0;
+                            var confident = coverage.Any(c => c.CountBacked);
                             <li class="@(have ? (confident ? "have" : "have likely") : "grab")">
                                 <span class="ingredient-name">@(have ? "✓" : "🛒") @Qty(i.Quantity, i.Name)</span>
                                 @* Part A — honesty: a ✓ backed only by the rhythm (no fresh count) reads "likely",
@@ -375,10 +382,21 @@
                                     }
                                     else
                                     {
-                                        <span class="maybe-have">you may still have <strong>@outItem.Name</strong> — it just looks run-out</span>
+                                        @* If you JUST tapped "I'm out" on this, it's a DECLARED out — don't say "it just
+                                           looks run-out" (that would contradict your own tap: one prediction, one story).
+                                           The predicted-run-out copy still serves a row the engine merely inferred. Either
+                                           way Restocked is the one-tap reverse. *@
+                                        @if (justMarkedOut.Contains(outItem.Id))
+                                        {
+                                            <span class="maybe-have">you marked <strong>@outItem.Name</strong> out</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="maybe-have">you may still have <strong>@outItem.Name</strong> — it just looks run-out</span>
+                                        }
                                         <button type="button" class="restock-btn" @onclick="() => Restocked(outItem.Id)"
                                                 disabled="@restockBusy"
-                                                title="Still have @outItem.Name at home — clears the run-out and this goes green"
+                                                title="Have @outItem.Name after all? Restocked clears it and this goes green"
                                                 aria-label="Mark @outItem.Name restocked — you still have it">Restocked</button>
                                     }
                                 }
@@ -488,6 +506,13 @@
     // with a one-tap Track-it; used for the hint only, never for on-hand or the swap clouds.
     private List<(int Id, PantryProduct Product)> untrackedEdible = [];
     private bool restockBusy;
+    // Products the user just declared out via "I'm out" this session — so the run-out hint reads "you
+    // marked X out" rather than falsely blaming a soft prediction ("it just looks run-out"). Per-circuit,
+    // so it resets on a full navigation (a stale OutNow then reads as the ordinary run-out it now is).
+    private readonly HashSet<int> justMarkedOut = [];
+    // A one-line note after "I'm out" when the OutNow was inert (bought too recently — §6.6), so the tap
+    // isn't a silent no-op.
+    private string? imOutNote;
 
     private Recipe? picked;
     private string? extraNote;
@@ -650,11 +675,6 @@
             .ToList();
     }
 
-    // A have-main is CONFIDENT (a solid ✓) only when a FRESH COUNT backs a covering product; otherwise
-    // it's LIKELY — the rhythm's guess, rendered less certain, because asserting a guess as "you have it"
-    // is exactly the false positive that drove people off the feature. Counted evidence earns the ✓.
-    private bool Confident(RecipeIngredient i) => CoveringInStock(i.Name, i.MatchedProduct).Any(c => c.CountBacked);
-
     // Same status-only write as the dashboard/grocery-list Restocked (§6 two-stream model: it clears
     // the run-out and re-anchors the due date, never feeds the cadence). Reload flips the row green.
     private async Task Restocked(int productId)
@@ -677,13 +697,22 @@
     {
         if (restockBusy) return;
         restockBusy = true;
+        imOutNote = null;
         try
         {
             foreach (var (id, _) in CoveringInStock(i.Name, i.MatchedProduct))
             {
+                justMarkedOut.Add(id); // so the row's hint reads "you marked X out", not "it just looks run-out"
                 await Store.RecordSignalAsync(id, SignalKind.OutNow);
             }
             await LoadAsync();
+            // §6.6: an OutNow filed the same day as a stock-back (e.g. you bought this THIS MORNING) is inert —
+            // the row stays "have" and nothing visibly changes. Say why, or the tap looks silently ignored.
+            // This is the SignalTodayWouldBeInert class every other OutNow-inviting surface consults.
+            if (Have(i))
+            {
+                imOutNote = $"You bought {i.Name} very recently, so marking it out won't take effect until tomorrow.";
+            }
         }
         finally { restockBusy = false; }
     }
