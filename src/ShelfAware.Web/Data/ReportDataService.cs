@@ -78,11 +78,13 @@ public sealed class ReportDataService(IHouseholdDbFactory dbFactory)
         var byReceiptProduct = lineData
             .GroupBy(x => (x.ReceiptId, x.ProductId))
             .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
+        // Dominant returns null when a product has no positively-priced line (every line was $0 — a
+        // coupon/void/misread), so those products are simply absent here rather than a null in the map.
         var dominantByProduct = lineData
             .GroupBy(x => x.ProductId)
-            .ToDictionary(
-                g => g.Key,
-                g => PriceSeries.Dominant(g.Select(x => new PricePoint(x.Size, x.Date, x.Price)).ToList())!);
+            .Select(g => (g.Key, Series: PriceSeries.Dominant(g.Select(x => new PricePoint(x.Size, x.Date, x.Price)).ToList())))
+            .Where(x => x.Series is not null)
+            .ToDictionary(x => x.Key, x => x.Series!);
 
         var purchases = await db.PurchaseEvents.AsNoTracking().ToListAsync(ct);
         var purchaseFacts = new List<PurchaseFact>(purchases.Count);

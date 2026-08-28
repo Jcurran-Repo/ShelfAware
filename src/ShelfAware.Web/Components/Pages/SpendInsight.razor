@@ -105,11 +105,13 @@ else
         // The ticker compares like with like: only the DOMINANT size bucket's prices form the series
         // ($/bag never sits next to $/lime — that read as a 3,100% "price increase"). Loose/"each"
         // purchases share one bucket regardless of how many were bought (PriceSeries.Bucket).
+        // Dominant returns null when a product has no positively-priced line (every line was $0 — a
+        // coupon/void/misread), so those products get no ticker rather than a null in the dictionary.
         var dominantByProduct = lineData
             .GroupBy(x => x.ProductId)
-            .ToDictionary(
-                g => g.Key,
-                g => PriceSeries.Dominant(g.Select(x => new PricePoint(x.Size, x.Date, x.Price)).ToList())!);
+            .Select(g => (g.Key, Series: PriceSeries.Dominant(g.Select(x => new PricePoint(x.Size, x.Date, x.Price)).ToList())))
+            .Where(x => x.Series is not null)
+            .ToDictionary(x => x.Key, x => x.Series!);
 
         // Per size bucket with an all-sizes fallback, for valuing a purchase of a KNOWN size and for
         // pricing the forecast's recommended size — an $8 bag purchase shouldn't be valued at the
