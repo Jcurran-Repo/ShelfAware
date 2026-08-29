@@ -53,6 +53,10 @@
                             <option value="@name"></option>
                         }
                     </datalist>
+                    @if (filterHint is not null)
+                    {
+                        <span class="muted small" role="status">@filterHint</span>
+                    }
                 </label>
             }
             @{ var untaggedCount = allRecipes.Count(r => r.Tags.Count == 0); }
@@ -356,6 +360,7 @@ else
     private int index;                 // position within `filtered` (0-based)
     private string? filterProductName; // resolved from ?uses, shown in the banner
     private string productFilterText = ""; // the type-and-guess box's text; kept in step with the active filter
+    private string? filterHint; // shown when a typed entry resolves to nothing/many, so a commit is never a silent no-op
     private string? activeTag;         // resolved from ?tag
     private Recipe? readingRecipe;     // the recipe whose read-aloud panel is open (null = none)
 
@@ -471,6 +476,7 @@ else
     {
         filterProductName = UsesProductId is { } pid && productNamesById.TryGetValue(pid, out var name) ? name : null;
         productFilterText = filterProductName ?? ""; // the box always shows the filter that's actually applied
+        filterHint = null; // any navigation lands on a real filter, so a stale "no match" note must not linger
         activeTag = Tag is { Length: > 0 } ? Tag : null;
 
         IEnumerable<Recipe> q = allRecipes;
@@ -569,14 +575,21 @@ else
     private void CommitProductFilter()
     {
         var typed = productFilterText.Trim();
+        filterHint = null;
         if (typed.Length == 0)
         {
             if (UsesProductId is not null) Nav.NavigateTo(FilterUri(null, activeTag));
             return;
         }
-        if (ResolveProduct(typed) is { } id && id != UsesProductId)
+        if (ResolveProduct(typed) is { } id)
         {
-            Nav.NavigateTo(FilterUri(id, activeTag));
+            if (id != UsesProductId) Nav.NavigateTo(FilterUri(id, activeTag));
+        }
+        else
+        {
+            // Free text can resolve to nothing (a typo) or to several products (an ambiguous partial) —
+            // neither navigates. The old dropdown couldn't do that; say so, or the box looks broken.
+            filterHint = $"No single product matches “{typed}” — pick one from the list.";
         }
     }
 

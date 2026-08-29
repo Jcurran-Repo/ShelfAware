@@ -402,6 +402,43 @@ public class CookbookPageTests : PageTestContext
     }
 
     [Fact]
+    public void A_committed_entry_that_matches_nothing_says_so_instead_of_silently_ignoring_it()
+    {
+        SeedProduct("Chicken Breast");
+        SeedProduct("Chicken Thighs");
+        SeedRecipe("Roast Breast", [("Chicken Breast", true, "Chicken Breast", null)], "Cook.");
+        SeedRecipe("Braised Thighs", [("Chicken Thighs", true, "Chicken Thighs", null)], "Cook.");
+
+        var cut = RenderCookbook();
+        var before = Nav.History.Count;
+        // "chicken" matches BOTH offered products → resolves to nothing. The old <select> couldn't leave
+        // you with no response; the type-and-guess box can, so it must say why, not silently ignore it.
+        cut.Find(".cookbook-product-input").Change("chicken");
+
+        Assert.Equal(before, Nav.History.Count); // still no navigation…
+        Assert.Contains("No single product matches", cut.Find(".cookbook-product-filter").TextContent); // …but explained
+    }
+
+    [Fact]
+    public void The_no_match_note_does_not_linger_after_the_filter_changes_by_another_route()
+    {
+        var chickenId = SeedProduct("Chicken Breast");
+        SeedProduct("Chicken Thighs");
+        SeedRecipe("Roast Breast", [("Chicken Breast", true, "Chicken Breast", null)], "Cook.");
+        SeedRecipe("Braised Thighs", [("Chicken Thighs", true, "Chicken Thighs", null)], "Cook.");
+
+        var cut = RenderCookbook();
+        cut.Find(".cookbook-product-input").Change("chicken"); // ambiguous → the note appears
+        Assert.Contains("No single product matches", cut.Find(".cookbook-product-filter").TextContent);
+
+        // A navigation that doesn't pass through the product box (a shared ?uses link, a tag chip) reloads
+        // onto a real filter — the stale note must clear, not sit contradicting the box's reset text.
+        Nav.NavigateTo($"/cookbook?uses={chickenId}");
+
+        Assert.DoesNotContain("No single product matches", cut.Find(".cookbook-product-filter").TextContent);
+    }
+
+    [Fact]
     public void Clearing_the_filter_box_shows_all_recipes_again()
     {
         var chickenId = SeedProduct("Chicken Breast");
