@@ -241,8 +241,12 @@ else
                                 <td class="row-actions">
                                     <button type="button" class="restock-btn" @onclick="() => Restocked(e)"
                                             disabled="@actionBusy"
-                                            title="Already have @e.Name at home — clears the reminder and re-anchors its next due date"
-                                            aria-label="Mark @e.Name restocked — you already have it">Restocked</button>
+                                            title="Just bought or got more @e.Name — a FRESH supply, so its next due date re-anchors a full cycle out"
+                                            aria-label="Mark @e.Name restocked — a fresh supply">Restocked</button>
+                                    <button type="button" class="stillstock-btn" @onclick="() => StillInStock(e)"
+                                            disabled="@actionBusy"
+                                            title="Still have some @e.Name — the reminder was early. Snoozes it a few days rather than assuming a fresh supply"
+                                            aria-label="Mark @e.Name still in stock — you were early, snooze it">Still in stock</button>
                                     <button type="button" class="untrack-btn" @onclick="() => Untrack(e)"
                                             disabled="@actionBusy"
                                             title="Don't want @e.Name for a while — stops suggesting it until you buy it again (history kept)"
@@ -267,14 +271,15 @@ else
 
     private bool actionBusy;
 
-    // Two row actions with genuinely different meanings, both real while staring at the list:
-    // • Restocked = "I actually have some" — a status-only signal that clears an OutNow and re-anchors
-    //   the due date (§6 two-stream model: it never feeds the cadence), so the item settles into
-    //   "Coming up" instead of nagging. Same write as the dashboard's Restocked, via IPantryStore.
-    // • Untrack = "don't want it for a while" — stops tracking, so the item leaves the list and
-    //   dashboard until a purchase brings it back (any recorded purchase — receipt confirm or
-    //   chat/voice — re-tracks automatically; the Products checkbox and set_tracking tool also work).
-    //   A restock-based snooze would just re-nag next cycle, hence untrack. History is kept.
+    // Three row actions with genuinely different meanings, all real while staring at the list:
+    // • Restocked = "I just bought/got more" — a FRESH supply, so it re-anchors the due date a full cycle
+    //   out (status-only: §6 two-stream model, it never feeds the cadence). Same write as the dashboard's.
+    // • Still in stock = "I never ran out — you were early" — the OLD stock, not a fresh supply, so the
+    //   engine snoozes a modest slice of the cadence instead of re-anchoring (which would go silent while
+    //   the leftovers run out). The honest half of what "Restocked" used to be asked to cover.
+    // • Untrack = "don't want it for a while" — stops tracking, so the item leaves the list and dashboard
+    //   until a purchase brings it back (any recorded purchase re-tracks automatically; the Products
+    //   checkbox and set_tracking tool also work). History is kept.
     private async Task Restocked(ProductEstimate e)
     {
         if (actionBusy) return;
@@ -283,6 +288,19 @@ else
         {
             copyStatus = null; // the copied list is now stale
             await Store.RecordSignalAsync(e.ProductId, SignalKind.Restocked);
+            await LoadAsync();
+        }
+        finally { actionBusy = false; }
+    }
+
+    private async Task StillInStock(ProductEstimate e)
+    {
+        if (actionBusy) return;
+        actionBusy = true;
+        try
+        {
+            copyStatus = null; // the copied list is now stale
+            await Store.RecordSignalAsync(e.ProductId, SignalKind.StillInStock);
             await LoadAsync();
         }
         finally { actionBusy = false; }

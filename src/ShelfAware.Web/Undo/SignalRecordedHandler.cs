@@ -22,6 +22,7 @@ public sealed class SignalRecordedHandler : UndoHandler<SignalRecordedPayload>
         SignalKind.Restocked => $"Restocked {p.ProductName}",
         SignalKind.OutNow => $"Marked {p.ProductName} out",
         SignalKind.RunningLow => $"Marked {p.ProductName} running low",
+        SignalKind.StillInStock => $"Marked {p.ProductName} still in stock",
         _ => $"Signalled {p.ProductName}",
     };
 

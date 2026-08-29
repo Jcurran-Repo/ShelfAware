@@ -7,7 +7,8 @@ namespace ShelfAware.Web.UI.Tests;
 
 /// <summary>
 /// The grocery list beyond "Used one": the manual Extras section, the row actions with genuinely
-/// different meanings (Restocked = "I have some" vs Untrack = "don't want it for a while"), the
+/// different meanings (Restocked = a fresh supply, Still in stock = the reminder was early so snooze it,
+/// Untrack = "don't want it for a while"), the
 /// copy/download text the household actually shops from, and the aisle-then-urgency ordering that
 /// makes the page read as one walk through the store.
 /// </summary>
@@ -143,6 +144,30 @@ public class GroceryListPageTests : PageTestContext
         Assert.Equal(id, signal.ProductId);
         // The two-stream rule: a restock never becomes a purchase.
         Assert.Equal(2, await raw.PurchaseEvents.IgnoreQueryFilters().CountAsync());
+    }
+
+    [Fact]
+    public async Task Still_in_stock_snoozes_the_row_off_buy_now_as_a_status_only_signal()
+    {
+        // The honest half of what Restocked was asked to cover: "I never ran out — you were early". A
+        // StillInStock signal (the engine snoozes rather than re-anchoring), so the row leaves Buy now.
+        var id = SeedOverdue("Whole Milk");
+        var cut = RenderList();
+        cut.WaitForState(() => cut.FindAll(".stillstock-btn").Count == 1);
+
+        cut.Find(".stillstock-btn").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("Coming up", cut.Markup);        // snoozed into Coming up…
+            Assert.Empty(cut.FindAll(".stillstock-btn"));    // …and out of Buy now
+        });
+
+        await using var raw = Db.CreateUnscopedContext();
+        var signal = Assert.Single(await raw.InventorySignals.IgnoreQueryFilters().ToListAsync());
+        Assert.Equal(SignalKind.StillInStock, signal.Kind);
+        Assert.Equal(id, signal.ProductId);
+        Assert.Equal(2, await raw.PurchaseEvents.IgnoreQueryFilters().CountAsync()); // never a purchase
     }
 
     [Fact]
