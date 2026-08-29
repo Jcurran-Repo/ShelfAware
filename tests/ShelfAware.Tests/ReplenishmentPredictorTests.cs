@@ -330,6 +330,106 @@ public class ReplenishmentPredictorTests
         Assert.False(r.Pinned);
     }
 
+    // --- "Still in stock": the honest cousin of Restocked — snooze, don't re-anchor a full cadence ----
+
+    [Fact]
+    public void StillInStock_SnoozesAnOverdueItem_WithoutReAnchoringAFullCadence()
+    {
+        // ~20-day rhythm, due D(40); today D(45) → overdue by rhythm. "Still in stock" says you never ran
+        // out but have the OLD stock, so it snoozes ~a quarter of the cadence (max(4, 5) = 5 days) → D(50),
+        // reads Stocked, and is NOT pinned. It must NOT re-anchor to D(65) (today + a full cadence).
+        var product = ProductWith([D(0), D(20)], [Signal(SignalKind.StillInStock, D(45))]);
+
+        var r = ReplenishmentPredictor.Predict(product, D(45));
+
+        Assert.Equal(PredictionStatus.Stocked, r.Status);
+        Assert.Equal(D(50), r.DueDate);
+        Assert.Equal("You said you still had some", r.SignalNote);
+        Assert.False(r.Pinned);
+    }
+
+    [Fact]
+    public void StillInStock_ProjectsMuchLessThanRestocked()
+    {
+        // The whole point: Restocked assumes a fresh full supply (re-anchors a full cadence → D(65)),
+        // "still in stock" is the old partial stock (a short snooze → D(50)). The difference is the fix.
+        var restocked = ReplenishmentPredictor.Predict(
+            ProductWith([D(0), D(20)], [Signal(SignalKind.Restocked, D(45))]), D(45));
+        var stillHave = ReplenishmentPredictor.Predict(
+            ProductWith([D(0), D(20)], [Signal(SignalKind.StillInStock, D(45))]), D(45));
+
+        Assert.Equal(D(65), restocked.DueDate); // fresh supply → full cadence out
+        Assert.Equal(D(50), stillHave.DueDate); // still-have → a modest snooze
+        Assert.True(stillHave.DueDate < restocked.DueDate);
+    }
+
+    [Fact]
+    public void StillInStock_ClearsAnEarlierOutNow()
+    {
+        // "I'm out" on D(43), then "actually I still have some" on D(45): the later statement wins, so the
+        // OutNow pin is cleared and the item snoozes to Stocked rather than staying pinned Overdue.
+        var product = ProductWith([D(0), D(20)],
+        [
+            Signal(SignalKind.OutNow, D(43)),
+            Signal(SignalKind.StillInStock, D(45)),
+        ]);
+
+        var r = ReplenishmentPredictor.Predict(product, D(45));
+
+        Assert.Equal(PredictionStatus.Stocked, r.Status);
+        Assert.False(r.Pinned);
+    }
+
+    [Fact]
+    public void OnTheSameDay_AnOutNow_BeatsStillInStock_AndPins()
+    {
+        // Both statements on the SAME day — "still have some" AND "we're out". Recency can't separate
+        // them, so the tie must go to the OutNow (being out is the stronger, safer claim): the item pins
+        // Overdue rather than snoozing. Same-day (not D43/D45) so this actually exercises the tie-break
+        // WITH StillInStock present — a different-day pair would pick the later OutNow whether or not the
+        // engine handles StillInStock at all.
+        var product = ProductWith([D(0), D(20)],
+        [
+            Signal(SignalKind.StillInStock, D(45)),
+            Signal(SignalKind.OutNow, D(45)),
+        ]);
+
+        var r = ReplenishmentPredictor.Predict(product, D(45));
+
+        Assert.Equal(PredictionStatus.Overdue, r.Status);
+        Assert.True(r.Pinned);
+        Assert.Equal(D(45), r.DueDate);
+    }
+
+    [Fact]
+    public void StillInStock_OnlyExtends_NeverShortensANotYetDueItem()
+    {
+        // ~40-day rhythm, due D(80) — comfortably Stocked today. A "still in stock" tap snoozes to
+        // D(55), which is EARLIER than the rhythm's own due date, so it changes nothing: the button can
+        // only ever push a due date OUT, never pull one in.
+        var product = ProductWith([D(0), D(40)], [Signal(SignalKind.StillInStock, D(45))]);
+
+        var r = ReplenishmentPredictor.Predict(product, D(45));
+
+        Assert.Equal(PredictionStatus.Stocked, r.Status);
+        Assert.Equal(D(80), r.DueDate); // the rhythm's projection, untouched
+    }
+
+    [Fact]
+    public void StillInStock_DoesNotDismissAnExpiredLabel()
+    {
+        // "Still in stock" says you have LEFTOVERS — not that they're still good (that's the
+        // Restocked-after-label override, "I froze it"). So an expired label still wins: the snooze is
+        // overridden and the item stays pinned Overdue/expired. (Contrast RestockedAfterTheLabel_Overrides.)
+        var product = Expiring((D(0), D(5)));
+        product.Signals = [Signal(SignalKind.StillInStock, D(7))];
+
+        var r = ReplenishmentPredictor.Predict(product, D(8), honorExpirations: true);
+
+        Assert.Equal(PredictionStatus.Overdue, r.Status);
+        Assert.True(r.Expired);
+    }
+
     // --- Interval spread: the DueSoon window earns its width from real variance ----
 
     [Fact]

@@ -440,4 +440,47 @@ public class ProductDetailEditFlowsTests : PageTestContext
         var substitutes = (await LoadAsync(id)).Substitutes.Select(s => s.Value).OrderBy(v => v).ToList();
         Assert.Equal(["chicken breast", "chicken cutlet"], substitutes);
     }
+
+    // -------------------------------------------------------------------------------- price chart
+
+    /// <summary>Seeds ONE receipt carrying several lines for the same product+size, with a purchase
+    /// event per line — the "listed multiple times" shape (a pre-quantity-fix duplicate, or two produce
+    /// weigh-ins). Exactly the Dentastix / Dog Pads data.</summary>
+    private int SeedOneReceiptManyLines(string name, DateOnly date, string size, params decimal[] linePrices)
+    {
+        using var db = Db.CreateDbContext();
+        var product = new Product { Name = name, Category = Category.PetCare };
+        db.Products.Add(product);
+        db.SaveChanges();
+        var receipt = new Receipt
+        {
+            Merchant = "Store", PurchasedAt = date, Status = ReceiptStatus.Confirmed, ImagePath = "n/a",
+            Lines = [.. linePrices.Select(price => new ReceiptLine
+            {
+                RawText = name, NormalizedName = name, Quantity = 1m, UnitPrice = price, Size = size, ProductId = product.Id,
+            })],
+        };
+        db.Receipts.Add(receipt);
+        db.SaveChanges();
+        foreach (var _ in linePrices)
+            db.PurchaseEvents.Add(new PurchaseEvent { ProductId = product.Id, PurchasedAt = date, Quantity = 1m, ReceiptId = receipt.Id, Size = size });
+        db.SaveChanges();
+        return product.Id;
+    }
+
+    [Fact]
+    public void A_receipt_that_lists_this_item_twice_is_one_trip_so_there_is_no_price_trend_to_chart()
+    {
+        // The other half of the Dentastix bug: the product page charted "2 price points" (the receipt
+        // averaged, then plotted per purchase event) while Trends showed a phantom ▲33%. Both now read
+        // the SAME raw receipt lines through PriceSeries.Dominant — one receipt's duplicate lines are ONE
+        // trip — so there is nothing to chart here, and no trend to disagree with the screen beside it.
+        var id = SeedOneReceiptManyLines("Dog Treats", Today.AddDays(-3), "16 oz", 36.19m, 48.26m);
+        var cut = RenderDetail(id);
+
+        // One trip → one point → the Price history chart (which needs ≥2) never renders, and the page
+        // never claims "2 price points". Before the fix it plotted two.
+        Assert.DoesNotContain("Price history", cut.Markup);
+        Assert.DoesNotContain("price points", cut.Markup);
+    }
 }

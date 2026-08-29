@@ -101,6 +101,19 @@ public static class ReplenishmentPredictor
             .ToDictionary(g => g.Key, g => g.Sum(p => p.Quantity));
         var typicalTrip = tripTotals.Count > 0 ? MedianDecimal([.. tripTotals.Values]) : 0m;
 
+        // The status a due date implies, from the cadence-aware warning window: a noisy rhythm (IQR above
+        // the flat max(3, 20%) rule) warns earlier; a metronomic one stays tight; and the window never spans
+        // the WHOLE cycle (capped at interval-1, so a fresh stock-back always earns a "stocked" day before
+        // the countdown restarts — else a short-cadence item could never leave Running Low). ONE definition,
+        // so the statistical base and the "still in stock" snooze below can't disagree about "due soon".
+        PredictionStatus StatusFor(DateOnly due, int interval)
+        {
+            var window = Round(Math.Max(3.0, Math.Max(0.2 * (drivingMedian ?? 0), spread ?? 0)));
+            window = Math.Min(window, Math.Max(0, interval - 1));
+            if (today > due) return PredictionStatus.Overdue;
+            return today >= due.AddDays(-window) ? PredictionStatus.DueSoon : PredictionStatus.Stocked;
+        }
+
         // 5. Statistical base: project the driving rhythm from the last time we had stock.
         PredictionStatus status;
         DateOnly? dueDate = null;
@@ -133,19 +146,7 @@ public static class ReplenishmentPredictor
             if (median > 0) stockUp = projected / median;
             var interval = Floor(projected);
             dueDate = anchor.AddDays(interval);
-            // The DueSoon window earns its width from the cadence's real variance: a noisy rhythm
-            // (IQR above the flat max(3, 20%) rule) warns earlier; a metronomic one stays tight. But it
-            // must never span the WHOLE cycle: for a short-cadence item (milk bought ~every 3 days) the
-            // flat 3-day floor would drop it straight back into "due soon" the instant you restock it, so
-            // it could never leave Running Low. Cap the window at one day inside the interval — a fresh
-            // restock always earns at least one "stocked" day before the countdown starts again.
-            var threshold = Round(Math.Max(3.0, Math.Max(0.2 * median, spread ?? 0)));
-            threshold = Math.Min(threshold, Math.Max(0, interval - 1));
-            var dueSoonStart = dueDate.Value.AddDays(-threshold);
-
-            if (today > dueDate.Value) status = PredictionStatus.Overdue;
-            else if (today >= dueSoonStart) status = PredictionStatus.DueSoon;
-            else status = PredictionStatus.Stocked;
+            status = StatusFor(dueDate.Value, interval);
         }
         else
         {
@@ -162,8 +163,11 @@ public static class ReplenishmentPredictor
         //    the stock-back, which is why SignalTodayWouldBeInert exists — a surface inviting "say
         //    you're out" or "say you're low" must not promise an act this filter will disregard. Both
         //    kinds, because this one predicate discards both. Pinned by a unit test.
+        // StillInStock rides the SAME strictly-later filter: a "still in stock" tap the same day as a
+        // purchase/restock is discarded too (you bought it today — no need to also say you have some),
+        // which is the right no-op. It competes with out/low by recency, so the most recent statement wins.
         var activeSignal = product.Signals
-            .Where(s => s.Kind is SignalKind.OutNow or SignalKind.RunningLow)
+            .Where(s => s.Kind is SignalKind.OutNow or SignalKind.RunningLow or SignalKind.StillInStock)
             .Where(s => lastStockBack is null || SignalDate.Of(s.SignaledAt) > lastStockBack)
             .OrderByDescending(s => s.SignaledAt)
             .ThenByDescending(s => s.Kind == SignalKind.OutNow) // OutNow wins a same-instant tie
@@ -179,6 +183,23 @@ public static class ReplenishmentPredictor
         else if (activeSignal?.Kind == SignalKind.RunningLow && status is PredictionStatus.Stocked or PredictionStatus.Unknown)
         {
             status = PredictionStatus.DueSoon; // "at least DueSoon"
+        }
+        else if (activeSignal?.Kind == SignalKind.StillInStock)
+        {
+            // "Still in stock" — the honest cousin of Restocked. You never ran out; the prediction was
+            // early, and you have the OLD stock, not a fresh supply. So DON'T re-anchor a full cadence
+            // (that would go quiet while the leftovers run out — the very over-prediction this button
+            // exists to fix). Snooze a modest slice of the cadence (~a quarter, floored so a fast mover
+            // still gets a real breather) and re-ask. Only ever push the due date OUT, never pull a later
+            // one in — so tapping it on a not-yet-due item can't shorten its rhythm. Not a pin: it leaves
+            // Running Low now and graduates back through Coming up → Due soon as today catches the snooze.
+            var snoozeDays = Math.Max(4, (int)Math.Round(0.25 * (drivingMedian ?? 16)));
+            var snoozed = SignalDate.Of(activeSignal.SignaledAt).AddDays(snoozeDays);
+            if (dueDate is not { } dd || snoozed > dd)
+            {
+                dueDate = snoozed;
+                status = StatusFor(snoozed, snoozeDays);
+            }
         }
 
         // 7. Expiration on top of everything: a dated label is a FACT the two rhythms can't see — milk
@@ -556,6 +577,7 @@ public static class ReplenishmentPredictor
     {
         SignalKind.OutNow => "Marked out of stock",
         SignalKind.RunningLow => "Marked running low",
+        SignalKind.StillInStock => "You said you still had some",
         _ => null,
     };
 }
