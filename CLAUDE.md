@@ -102,9 +102,9 @@ and **History (`/history`, added 8/20 — the household's activity log, newest f
 undo; see item 51)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1957 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **2612 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
-bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55 and 56).
+bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56 and 60).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -3241,6 +3241,70 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      pinned bare). Master CI green AND annotation-clean; `mutation.yml` is fixed but confirms on its next
      weekly/dispatch run (identical action+inputs to the ci.yml upload the PR proved).
 
+60. **The "seven ideas" batch — six features gated and merged (2026-08-28/29, PRs #37–#42; all ✅ MERGED to
+   master, master CI green after each).** Jordan brought seven ideas/problems; six became features (the
+   seventh, #7's product-selector, WAS #6), each built on its own branch, independently gated (code +
+   security review as SHA-reading agents — the local `/code-review` is model-invocation-disabled, item 42),
+   fixed until it "passed reasonably", then PR'd and merged one at a time. **2612 green, 0 warnings** on
+   merged master. Every gate fix mutation-checked. The per-feature decisions and lessons worth keeping:
+   - ⚠️ **#4 — a price trend is a shopping TRIP, not a receipt line (PR #37, `PriceSeries.Dominant`).**
+     Dentastix showed a price INCREASE on Trends but not on Product Detail. The real data had it listed
+     TWICE on one receipt ($36.19 + $48.26): Trends read one point per LINE (phantom ▲33%) while Product
+     Detail averaged the receipt (no change) — two surfaces, their own arithmetic over one fact, the "one
+     story" fault. Fixed in the ONE shared definition all three price-trend surfaces (Trends, Product Detail,
+     Reports) call: (1) a trend point is a TRIP — same size + same day collapse to their average, ranked by
+     TRIP count not line count; (2) a $0.00 line isn't a price (coupon/void/misread), dropped. Product
+     Detail's chart now feeds the SAME raw receipt lines the other two do, so they agree by construction, not
+     coincidence. ⚠️ **Self-review caught the regression the fix itself introduced:** the $0 filter makes
+     `Dominant` return null for an all-$0 product, and `SpendInsight`/`ReportDataService` used `!` then
+     dereferenced → NRE/500. Both filter the null now, regression-tested at each site. **Apples legitimately
+     has two same-receipt lines** (two produce weigh-ins), which is why the fix is display-side, NEVER a data
+     migration. Live-verified against the real data (injected into a throwaway DB): the row reads "—", not ▲.
+   - **#6 — Cookbook product filter is type-and-guess (PR #38).** `<select>` → datalist-backed `<input>`;
+     typed text resolves exact→unique-partial→id and navigates to `?uses=`; `Recipe.Uses` stays the one
+     shared "recipes that use X" definition. Gate Low, fixed: an ambiguous/unknown commit was a silent
+     no-op (the old dropdown couldn't be) — now a `role="status"` hint, cleared on the next commit and any nav.
+   - ⚠️ **#3 — "Coming up this week" dashboard panel (PR #40).** Stocked items whose rhythm due date lands
+     within 7 days, so an item due soon surfaces before the tight DueSoon window. Excludes
+     `CountConfidence.Counted`, NOT `SuppressedByCount`: suppression only fires when the rhythm would ALSO
+     ask, so a fresh-counted-but-Stocked-by-rhythm item leaked in and nagged about count-managed stock
+     (item 28). SHIP, no other findings.
+   - ⚠️ **#5 — "Recent activity" panel on /admin links the audit log to the error log (PR #39).** The app's
+     FOURTH production `IgnoreQueryFilters` (`AdminReportReader.ListRecentActivityAsync` — admin-gated as its
+     FIRST statement + AsNoTracking + projection-only, the exact clone of the three existing reads), plus an
+     `Undone` flag so a reversed action isn't read as live. Security PASS, probe-verified (a non-admin is
+     refused before any read). Gate Low, fixed: `AdminAiSpendReader`'s cross-reference comment still said
+     "THIRD … the other two are", under-counting — the multiply-referenced count-drift class (items 21/39);
+     these counts are a security-audit aid, keep them in sync.
+   - ⚠️ **#1 — "Still in stock": a snooze, not a re-anchor (PR #41).** New `SignalKind.StillInStock` that
+     EXTENDS the due date (~max(4, 25% of the median), extend-only, loses to an OutNow on recency + a
+     same-instant tie-break, never overrides an expiration cap) — vs Restocked, which re-anchors it. Buttons
+     on dashboard + grocery list; the snooze lives only in the predictor. Gate Lows, fixed: a tie test was
+     VACUOUS (signals on different days, so the OutNow won regardless of StillInStock — now a same-DAY tie
+     that exercises the tie-break); and adding the enum value made `StillInStock` `Enum.IsDefined`-valid, so
+     chat's `record_signal` would accept-and-SPEAK it without the inert caveat though it's UI-only — the
+     guard is an ALLOWLIST of the three chat kinds now (still refuses numeric smuggling).
+   - ⚠️ **#2 — honest makeability + a one-tap "I'm out" (PR #42).** "recipes say I have it, but I don't, so
+     I've kind of stopped using recipes." A ✓ backed only by the rhythm reads "likely", not a confident
+     tick; "I'm out" files a real OutNow on the covering product(s) that STICKS (dashboard/grocery see it,
+     undoable). **The Medium, and the lesson:** the inert note inferred "won't take effect" from `if (Have(i))`
+     after reload — but Have(i) staying true means EITHER the OutNow was inert OR a second same-food product
+     still covers the ingredient. With a "Chicken Breast"-grounded main and BOTH Chicken Breast + Chicken
+     Breast Tenderloins on hand, "I'm out" fired the OutNow (Chicken Breast went out) while the row stayed
+     green on the tenderloins, and the note LIED. It now reads the engine's own `SignalTodayWouldBeInert` per
+     marked product (captured, not re-derived); when the tap fires but an alternative covers, it names the
+     alternative instead of claiming inertness. Also (Low): `imOutNote` is a page-level status line, so
+     Restocked/TrackIt clear it.
+   - **The process, worth keeping:** every branch gated by INDEPENDENT SHA-reading agents (never `git
+     checkout` in the shared tree — items 40/56); the admin (4th cross-household read) and recipes (the
+     Medium) reviewers PROBED rather than reasoned. Merged disjoint-first (cookbook, admin), then the three
+     sharing `Home.razor`/`app.css`/`HomeCardsTests` — git auto-merged all but one `app.css` conflict
+     (recipes' `.imout-btn` vs still-in-stock's widened `.restock-btn,.stillstock-btn`, resolved by keeping
+     both). ⚠️ Every overlapping merge was built + full-suite tested locally BEFORE its PR (item 50), then PR
+     CI and post-merge master CI confirmed each (item 35). The #4 "Dentastix price" report is resolved by PR
+     #37; the remaining backlog (#4's neighbours) — a per-size Trends price chart, the corrected-display-name
+     learning, the CSV importer — are untouched by this batch and stay open.
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active
@@ -3271,9 +3335,11 @@ opaque abbreviations like "HONEST COW" pre-fill as "Cottage Cheese" instead of r
 (Shipped since this note: the double-scroll fix; the **two-stream cadence model** — rebuy rhythm +
 burn rate, hybrid, restock is status-only (§6); the whole **production-hardening pass** —
 logging, the SQLite CVE patch, the `IChatClient` migration, and faked-client tests; the **left sidebar
-nav rail** that retired the ~768–1400px header overflow (PR #21, 2026-08-22); and **download a receipt's
+nav rail** that retired the ~768–1400px header overflow (PR #21, 2026-08-22); **download a receipt's
 saved image copy** — a household-scoped `/api/receipt-image/{id}` (mirrors the recipe-image tenancy
-shape) plus a Download link on /receipts, both merged 2026-08-22 (PR #22).)
+shape) plus a Download link on /receipts, both merged 2026-08-22 (PR #22); and the **"seven ideas" batch**
+(PRs #37–#42, 2026-08-28/29 — the #4 Dentastix price-trend fix, the Cookbook typeahead, the dashboard
+"Coming up" panel, the /admin activity panel, "Still in stock", and honest recipe makeability — see item 60).)
 
 ## Voice: the built-in cook-along (v3.3, branch `feature/voice-engine`)
 
