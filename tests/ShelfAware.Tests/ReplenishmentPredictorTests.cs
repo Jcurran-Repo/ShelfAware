@@ -381,13 +381,16 @@ public class ReplenishmentPredictorTests
     }
 
     [Fact]
-    public void AnOutNowAfterStillInStock_StillPins()
+    public void OnTheSameDay_AnOutNow_BeatsStillInStock_AndPins()
     {
-        // The reverse order: "still have some" on D(43), then "we're out" on D(45). The most recent
-        // statement is the OutNow, so it pins Overdue — recency decides, not the kind.
+        // Both statements on the SAME day — "still have some" AND "we're out". Recency can't separate
+        // them, so the tie must go to the OutNow (being out is the stronger, safer claim): the item pins
+        // Overdue rather than snoozing. Same-day (not D43/D45) so this actually exercises the tie-break
+        // WITH StillInStock present — a different-day pair would pick the later OutNow whether or not the
+        // engine handles StillInStock at all.
         var product = ProductWith([D(0), D(20)],
         [
-            Signal(SignalKind.StillInStock, D(43)),
+            Signal(SignalKind.StillInStock, D(45)),
             Signal(SignalKind.OutNow, D(45)),
         ]);
 
