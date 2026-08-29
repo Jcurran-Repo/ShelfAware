@@ -144,6 +144,28 @@ else
         </ul>
     }
 
+    @if (comingUp.Count > 0)
+    {
+        @* A gentle pre-warning: Stocked items whose predicted run-out is within the next week, so a
+           slower-moving item surfaces before it crosses into the (deliberately tight) Due-soon window
+           and lands in Running Low. The grocery list's "Coming up" lists EVERY stocked item; this is the
+           dashboard-sized near-term slice of the same idea. *@
+        <section class="panel coming-up">
+            <h2>Coming up this week</h2>
+            <p class="muted">Not low yet, but likely due within the next week — here so a slower-moving item doesn't sneak up on you between trips.</p>
+            <ul class="habit-list">
+                @foreach (var p in comingUp)
+                {
+                    var r = predictions[p.Id];
+                    <li>
+                        <a href="/product/@p.Id" class="habit-name">@p.Name</a>
+                        <span class="habit-note">@Urgency(r)</span>
+                    </li>
+                }
+            </ul>
+        </section>
+    }
+
     @if (runsOutEarly.Count > 0)
     {
         <section class="panel runs-out-early">
@@ -219,8 +241,13 @@ else
     private List<Product>? products;
     private Dictionary<int, PredictionResult> predictions = [];
     private List<Product> runningLow = [];
+    private List<Product> comingUp = [];
     private List<Product> everythingElse = [];
     private List<Product> runsOutEarly = [];
+
+    // "Coming up this week": Stocked items whose predicted run-out is within this many days — the
+    // dashboard's near-term slice of the grocery list's full "Coming up" (which lists every stocked item).
+    private const int ComingUpHorizonDays = 7;
 
     private DateOnly today;
 
@@ -279,8 +306,27 @@ else
             .ThenBy(p => p.Name)
             .ToList();
 
+        // "Coming up this week" — Stocked and predicted due within the horizon, so a slower-moving item
+        // surfaces before it hits the (deliberately tight) DueSoon window. NOT fresh-counted items
+        // (CountConfidence.Counted): you told the app how many you have, so a rhythm-based heads-up would
+        // bother you about exactly what you're managing by count (item 28, "don't bother me while I track
+        // quantity"). This is stronger than excluding only SuppressedByCount: suppression fires ONLY when
+        // the rhythm would already ask (Overdue/DueSoon), so a fresh-counted item that's Stocked BY RHYTHM
+        // isn't suppressed and would otherwise leak in. A STALE count (Aging/Spent) is NOT excluded — it's
+        // no longer trusted, so it correctly defers to the rhythm and can appear here like any other item.
+        comingUp = products
+            .Where(p => predictions[p.Id] is { Status: PredictionStatus.Stocked, CountConfidence: not CountConfidence.Counted, DueDate: { } due }
+                        && due > today && due <= today.AddDays(ComingUpHorizonDays))
+            .OrderBy(p => predictions[p.Id].DueDate!.Value)
+            .ThenBy(p => p.Name)
+            .ToList();
+
+        // Everything else: the remaining tracked items (Stocked or still-learning), minus the ones already
+        // called out under "Coming up" — one item, one section.
+        var comingUpIds = comingUp.Select(p => p.Id).ToHashSet();
         everythingElse = products
             .Where(p => predictions[p.Id].Status is PredictionStatus.Stocked or PredictionStatus.Unknown)
+            .Where(p => !comingUpIds.Contains(p.Id))
             .ToList();
 
         // Habit insight, independent of due status: items you burn through faster than you rebuy them.

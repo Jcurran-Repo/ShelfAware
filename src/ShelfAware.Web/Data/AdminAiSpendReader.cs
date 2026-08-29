@@ -12,8 +12,9 @@ namespace ShelfAware.Web.Data;
 /// surface that reads a pantry table across households, and it is admin-gated exactly as
 /// <see cref="AdminReportReader"/> is.
 ///
-/// ⚠️ This carries the app's THIRD production IgnoreQueryFilters — the other two are AdminReportReader's
-/// bug-report read and its ReportResolutionService write mirror. It is a DELIBERATE new case, made at
+/// ⚠️ This carries one of the app's FOUR production IgnoreQueryFilters — the others are AdminReportReader's
+/// bug-report read, its ListRecentActivityAsync audit-trail read, and the ReportResolutionService write
+/// mirror. It is a DELIBERATE new case, made at
 /// review, NOT a reuse of those: the operator legitimately needs the total AI cost across households
 /// (<see cref="Core.Domain.AiUsage.CostMicros"/> is recorded in every key mode precisely so this number can
 /// exist), and no per-household surface answers it. It is safe the same way the report reader is —
@@ -35,7 +36,7 @@ public sealed class AdminAiSpendReader(
         var today = DateOnly.FromDateTime(DateTime.Today);
         var monthStart = new DateOnly(today.Year, today.Month, 1);
 
-        // ⚠️ Third production IgnoreQueryFilters — see the class doc. dbFactory pre-set the context to the
+        // ⚠️ One of the app's four production IgnoreQueryFilters — see the class doc. dbFactory pre-set the context to the
         // admin's OWN household; IgnoreQueryFilters is what lets this sum every household's rows instead of
         // just theirs. The WHERE bounds the materialized set to the current month (a load bound — the
         // AiSpendRollup re-applies the window and is the correctness authority); one row per (household,

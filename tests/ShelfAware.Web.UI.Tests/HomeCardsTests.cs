@@ -426,6 +426,127 @@ public class HomeCardsTests : PageTestContext
         });
     }
 
+    // ------------------------------------------------------------------ "Coming up this week"
+
+    [Fact]
+    public void A_stocked_item_due_within_the_week_shows_under_coming_up()
+    {
+        // ~14-day rhythm, last bought 10 days ago → due in 4 days. The Due-soon window is only 3 days,
+        // so it reads Stocked and never reaches Running Low — exactly the slow-mover that used to hide.
+        Seed("Chicken Breast", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-38), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-24), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-10), Quantity = 1m },
+        ]);
+        var cut = RenderHome();
+
+        cut.WaitForAssertion(() =>
+        {
+            var panel = cut.Find(".coming-up");
+            Assert.Contains("Chicken Breast", panel.TextContent);
+            Assert.Contains("Due in 4 days", panel.TextContent);
+        });
+        Assert.Empty(cut.FindAll(".cards li"));  // not Running Low — it's a heads-up, not a nag
+        // One item, one section: a coming-up item is pulled OUT of the Everything-else catch-all.
+        Assert.DoesNotContain("Chicken Breast", cut.Find("details.everything-else").TextContent);
+    }
+
+    [Fact]
+    public void A_stocked_item_due_beyond_the_week_stays_in_everything_else()
+    {
+        // ~30-day rhythm, last bought 10 days ago → due in 20 days: stocked, but too far off to be a
+        // "this week" heads-up. It belongs in the collapsed Everything-else list, not Coming up.
+        Seed("Paper Towels", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-70), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-40), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-10), Quantity = 1m },
+        ]);
+        var cut = RenderHome();
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains("Paper Towels", cut.Find("details.everything-else").TextContent));
+        Assert.Empty(cut.FindAll(".coming-up")); // no coming-up section at all
+    }
+
+    [Fact]
+    public void Coming_up_and_running_low_are_separate_lists()
+    {
+        // Due in ~2 days → DueSoon → Running Low. Its due date is WITHIN the week, so only the
+        // Stocked-status filter keeps it out of Coming up (it's already a nag, not a heads-up).
+        Seed("Due Soon Item", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-26), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-12), Quantity = 1m },
+        ]);
+        Seed("Soon-ish Item", p => p.Purchases =        // ~14-day rhythm, last bought 10 days ago → due in 4, Stocked
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-38), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-24), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-10), Quantity = 1m },
+        ]);
+        var cut = RenderHome();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("Due Soon Item", cut.Find(".cards").TextContent);
+            Assert.Contains("Soon-ish Item", cut.Find(".coming-up").TextContent);
+        });
+        Assert.DoesNotContain("Soon-ish Item", cut.Find(".cards").TextContent);
+        Assert.DoesNotContain("Due Soon Item", cut.Find(".coming-up").TextContent);
+    }
+
+    [Fact]
+    public void A_count_suppressed_item_is_not_a_coming_up_heads_up()
+    {
+        // Due in ~2 days by rhythm, but a fresh count of plenty holds the buy back (§13.5) → Stocked,
+        // SuppressedByCount. A "you'll need this soon" nudge would contradict the count you just took,
+        // so it is excluded — and (Assert.Empty on .cards) the suppression really did fire.
+        Seed("Canned Beans", p =>
+        {
+            p.Purchases =
+            [
+                new PurchaseEvent { PurchasedAt = Today.AddDays(-26), Quantity = 1m },
+                new PurchaseEvent { PurchasedAt = Today.AddDays(-12), Quantity = 1m },
+            ];
+            p.TrackQuantity = true;
+            p.QuantityOnHand = 5m;
+            p.QuantityCountedAt = DateTimeOffset.Now;
+        });
+        var cut = RenderHome();
+
+        cut.WaitForState(() => cut.FindAll(".quick-update").Count > 0);
+        Assert.Empty(cut.FindAll(".cards li"));  // the count suppressed the buy → not Running Low
+        Assert.Empty(cut.FindAll(".coming-up")); // …and it must not resurface as a "coming up" nudge either
+    }
+
+    [Fact]
+    public void A_fresh_counted_item_is_not_a_coming_up_heads_up_even_when_the_rhythm_alone_would_show_it()
+    {
+        // ~14-day rhythm, last bought 10 days ago → due in 4 → Stocked BY RHYTHM, so the count does NOT
+        // suppress (suppression fires only when the rhythm would ask). But you counted 5 today — you're
+        // managing this by count, so a proactive "Coming up" nudge would bother you about exactly that
+        // (item 28). Excluding CountConfidence.Counted (not just SuppressedByCount) is what covers it.
+        Seed("Canned Beans", p =>
+        {
+            p.Purchases =
+            [
+                new PurchaseEvent { PurchasedAt = Today.AddDays(-38), Quantity = 1m },
+                new PurchaseEvent { PurchasedAt = Today.AddDays(-24), Quantity = 1m },
+                new PurchaseEvent { PurchasedAt = Today.AddDays(-10), Quantity = 1m },
+            ];
+            p.TrackQuantity = true;
+            p.QuantityOnHand = 5m;
+            p.QuantityCountedAt = DateTimeOffset.Now;
+        });
+        var cut = RenderHome();
+
+        cut.WaitForState(() => cut.FindAll(".quick-update").Count > 0);
+        Assert.Empty(cut.FindAll(".cards li"));  // not Running Low (Stocked)…
+        Assert.Empty(cut.FindAll(".coming-up")); // …and a fresh count keeps it out of Coming up too
+    }
+
     [Fact]
     public void Learning_hints_count_purchases_only_because_restocks_never_taught_a_rhythm()
     {

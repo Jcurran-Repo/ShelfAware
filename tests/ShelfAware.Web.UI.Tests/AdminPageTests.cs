@@ -91,6 +91,41 @@ public class AdminPageTests : PageTestContext
         Db.HouseholdId = "hh-test";
     }
 
+    private void SeedActivity(string household, string summary)
+    {
+        Db.HouseholdId = household;
+        using var db = Db.CreateDbContext();
+        db.ActivityEntries.Add(new ActivityEntry
+        {
+            Summary = summary, OccurredAt = DateTimeOffset.Now, Kind = ActivityKind.SignalRecorded,
+            Reversibility = Reversibility.Reversible, PayloadJson = "{}",
+        });
+        db.SaveChanges();
+        Db.HouseholdId = "hh-test";
+    }
+
+    [Fact]
+    public void The_recent_activity_panel_shows_the_audit_trail_across_households()
+    {
+        using (var db = authDb.CreateDbContext())
+        {
+            db.Households.Add(new Household { Id = "hh-a", Name = "The Currans" });
+            db.SaveChanges();
+        }
+        SeedActivity("hh-a", "Bought Whole Milk");
+
+        var cut = Render<Components.Pages.Admin>();
+
+        // The audit trail from /history, surfaced on the admin/error page — another household's action,
+        // named, so an operator can correlate it with the errors above.
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("Recent activity", cut.Markup);
+            Assert.Contains("Bought Whole Milk", cut.Markup);
+            Assert.Contains("The Currans", cut.Markup);
+        });
+    }
+
     [Fact]
     public void The_glance_strip_sums_ai_spend_across_every_household()
     {

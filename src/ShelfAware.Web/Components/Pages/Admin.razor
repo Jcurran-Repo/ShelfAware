@@ -433,6 +433,51 @@ else
         }
     </section>
 
+    @* The "link" between the audit log and the error log: the household activity trail sits right below
+       the errors, so an operator can see what people were doing around the time an error fired. Read-only
+       (AdminReportReader.ListRecentActivityAsync — admin-gated cross-household). A precise per-error
+       breadcrumb would need to TAG each error with its household + capture the trail at error time, which
+       the singleton logger can't do reliably mid-circuit — a documented follow-up. *@
+    <section class="panel">
+        <h2>Recent activity</h2>
+        <p class="muted">The latest actions across every household — the audit trail from each household's
+            History page, here so you can see what was happening around the time an error fired. Times are
+            this server's local time.</p>
+        @if (activity is null)
+        {
+            <p class="muted">Loading…</p>
+        }
+        else if (activity.Count == 0)
+        {
+            <p class="muted">No recorded activity yet.</p>
+        }
+        else
+        {
+            <div class="table-scroll">
+                <table>
+                    <thead>
+                        <tr><th>When</th><th>Household</th><th>Action</th><th>Where</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var a in activity)
+                        {
+                            <tr class="@(a.Undone ? "muted" : null)">
+                                <td class="muted">@a.When.LocalDateTime.ToString("MMM d, HH:mm:ss")</td>
+                                <td>@a.HouseholdName</td>
+                                <td>@a.Summary@if (a.Undone) {<span class="muted"> (undone)</span>}</td>
+                                <td class="muted">@(a.Source ?? "—")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            @if (activity.Count >= AdminReportReader.MaxActivity)
+            {
+                <p class="muted small">Showing the most recent @AdminReportReader.MaxActivity — older activity is on each household's History page.</p>
+            }
+        }
+    </section>
+
     <section class="panel">
         <h2>Bug reports from households</h2>
         @if (bugReports is { Count: AdminReportReader.MaxReports })
@@ -545,6 +590,7 @@ else
     [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
 
     private IReadOnlyList<ErrorLogEntry>? errors;
+    private IReadOnlyList<AdminActivityRow>? activity;
     private IReadOnlyList<AdminBugReport>? bugReports;
     private IReadOnlyList<UserLoginStat>? loginStats;
     private IReadOnlyList<AdminHousehold>? households;
@@ -632,6 +678,7 @@ else
         {
             households = await HouseholdAdmin.ListAsync();
             errors = await Reader.ListErrorsAsync();
+            activity = await Reader.ListRecentActivityAsync();
             bugReports = await Reader.ListBugReportsAsync();
             loginStats = await Reader.ListLoginStatsAsync();
             aiSpend = await AiSpend.GetAsync();

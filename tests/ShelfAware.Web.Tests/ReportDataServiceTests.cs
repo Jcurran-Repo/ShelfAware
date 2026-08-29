@@ -408,6 +408,22 @@ public class ReportDataServiceTests
     }
 
     [Fact]
+    public async Task A_product_priced_only_at_zero_loads_without_crashing_and_has_no_current_price()
+    {
+        // A $0.00 line is a coupon/void/misread, not a price — PriceSeries.Dominant returns null for a
+        // product with no positive line. LoadAsync must skip it, not leave a null in the price map that
+        // the current-price join and the inDominant check then dereference (both threw on a null series).
+        using var db = new TestDb();
+        await SeedProductAsync(db, "Free Sample", [(10, 1)], unitPrice: 0m);
+        await SeedProductAsync(db, "Real Yogurt", [(20, 1), (5, 1)], unitPrice: 4m);
+
+        var source = await new ReportDataService(db).LoadAsync(); // a null series threw building this
+
+        Assert.Contains("Real Yogurt", source.CurrentPriceByProductName.Keys);      // the priced product is priced
+        Assert.DoesNotContain("Free Sample", source.CurrentPriceByProductName.Keys); // the $0-only product is skipped
+    }
+
+    [Fact]
     public async Task No_dated_purchases_is_an_empty_list_not_a_query_over_everything()
     {
         using var db = new TestDb();
