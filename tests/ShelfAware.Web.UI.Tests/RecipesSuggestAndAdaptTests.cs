@@ -416,6 +416,55 @@ public class RecipesSuggestAndAdaptTests : PageTestContext
     }
 
     [Fact]
+    public void Im_out_with_a_second_same_food_product_names_the_alternative_not_a_false_inert_note()
+    {
+        // Gate Medium: a main grounded to "Chicken Breast", with BOTH "Chicken Breast" and a second
+        // same-food product ("Chicken Breast Tenderloins") on hand. "I'm out" marks only the grounded
+        // product (its ✓ is about that one); the tenderloins still cover the ingredient, so the row stays
+        // green. The note must tell the TRUTH — the OutNow fired, you have an alternative — not the false
+        // "won't take effect until tomorrow" it used to infer from the row merely staying green.
+        SeedStocked("Chicken Breast");
+        SeedStocked("Chicken Breast Tenderloins");
+        SeedRecipe("Chicken Dinner", new RecipeIngredient { Name = "chicken breast", IsMain = true, MatchedProduct = "Chicken Breast" });
+        var cut = RenderRecipes();
+        cut.WaitForAssertion(() =>
+            Assert.Contains("have", cut.Find(".saved-recipes .ingredient-list li").GetAttribute("class")));
+
+        cut.Find("button[aria-label^='Mark chicken breast out']").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.DoesNotContain("won't take effect", cut.Markup);               // the false inert note is gone
+            Assert.Contains("still have Chicken Breast Tenderloins", cut.Markup);  // the honest one names the alternative
+            Assert.Contains("have", cut.Find(".saved-recipes .ingredient-list li").GetAttribute("class")); // row stays green
+        });
+    }
+
+    [Fact]
+    public void The_im_out_note_clears_when_another_row_is_restocked()
+    {
+        // imOutNote is a page-level status line; once "I'm out" sets it, an unrelated Restocked on a
+        // different row must not leave the stale note contradicting that new act.
+        SeedProduct("Chicken Breast", p => p.Purchases =
+        [
+            new PurchaseEvent { PurchasedAt = Today.AddDays(-14), Quantity = 1m },
+            new PurchaseEvent { PurchasedAt = Today, Quantity = 1m }, // bought today → "I'm out" is inert → a note
+        ]);
+        SeedRunOut("Rice"); // run-out → its row offers a Restocked button
+        SeedRecipe("Chicken and Rice",
+            new RecipeIngredient { Name = "chicken breast", IsMain = true, MatchedProduct = "Chicken Breast" },
+            new RecipeIngredient { Name = "rice", IsMain = true, MatchedProduct = "Rice" });
+        var cut = RenderRecipes();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("button[aria-label^='Mark chicken breast out']")));
+
+        cut.Find("button[aria-label^='Mark chicken breast out']").Click();
+        cut.WaitForAssertion(() => Assert.Contains("won't take effect", cut.Markup)); // the note is up
+
+        cut.Find("button[aria-label^='Mark Rice restocked']").Click();
+        cut.WaitForAssertion(() => Assert.DoesNotContain("won't take effect", cut.Markup)); // …cleared by the Restocked
+    }
+
+    [Fact]
     public async Task A_red_row_covered_by_an_untracked_product_offers_track_it()
     {
         var riceId = SeedProduct("Basmati Rice", p => { p.Category = Category.Pantry; p.IsTracked = false; });

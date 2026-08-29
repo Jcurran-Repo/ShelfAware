@@ -513,6 +513,11 @@
     // A one-line note after "I'm out" when the OutNow was inert (bought too recently — §6.6), so the tap
     // isn't a silent no-op.
     private string? imOutNote;
+    // Per product: would an OutNow filed TODAY be inert (§6.6 same-day tie)? The engine's own
+    // SignalTodayWouldBeInert, read (not re-derived) so the "I'm out" note reflects what actually
+    // happened to the marked product — NOT whether the row stayed green, which a second same-food
+    // product also does while the OutNow really fired.
+    private Dictionary<int, bool> signalInertById = [];
 
     private Recipe? picked;
     private string? extraNote;
@@ -681,6 +686,7 @@
     {
         if (restockBusy) return;
         restockBusy = true;
+        imOutNote = null; // a prior "I'm out" note is about a different act — don't leave it stale over this one
         try
         {
             await Store.RecordSignalAsync(productId, SignalKind.Restocked);
@@ -700,19 +706,35 @@
         imOutNote = null;
         try
         {
-            foreach (var (id, _) in CoveringInStock(i.Name, i.MatchedProduct))
+            var covering = CoveringInStock(i.Name, i.MatchedProduct);
+            // Was the tap a genuine no-op? ONLY when every product it marks would treat today's OutNow as
+            // inert — §6.6's same-day tie — read from the engine's SignalTodayWouldBeInert, captured before
+            // the write. NOT inferred from the row staying green: a second same-food product on hand keeps
+            // it green while the OutNow really fired (the bug this replaced).
+            var wasInert = covering.Count > 0 && covering.All(c => signalInertById.GetValueOrDefault(c.Id));
+            foreach (var (id, _) in covering)
             {
                 justMarkedOut.Add(id); // so the row's hint reads "you marked X out", not "it just looks run-out"
                 await Store.RecordSignalAsync(id, SignalKind.OutNow);
             }
             await LoadAsync();
-            // §6.6: an OutNow filed the same day as a stock-back (e.g. you bought this THIS MORNING) is inert —
-            // the row stays "have" and nothing visibly changes. Say why, or the tap looks silently ignored.
-            // This is the SignalTodayWouldBeInert class every other OutNow-inviting surface consults.
-            if (Have(i))
+            if (wasInert)
             {
+                // Bought this morning, so the OutNow can't take effect today — nothing visibly changed.
+                // Say why, or the tap looks silently ignored.
                 imOutNote = $"You bought {i.Name} very recently, so marking it out won't take effect until tomorrow.";
             }
+            else if (Have(i))
+            {
+                // The OutNow DID fire, but the row stays green because a DIFFERENT on-hand product also
+                // covers this ingredient (food family). Name it, so a still-checked row after "I'm out"
+                // reads as "you have an alternative", not "the tap was ignored".
+                var stillId = CoveringInStock(i.Name, i.MatchedProduct).FirstOrDefault().Id;
+                imOutNote = productNamesById.GetValueOrDefault(stillId) is { } stillName
+                    ? $"Marked out — but you still have {stillName}, which also covers {i.Name} here."
+                    : "Marked out.";
+            }
+            // else: the row went to Missing — its own "you marked X out" hint explains it; no page note.
         }
         finally { restockBusy = false; }
     }
@@ -724,6 +746,7 @@
     {
         if (restockBusy) return;
         restockBusy = true;
+        imOutNote = null; // a prior "I'm out" note is about a different act — don't leave it stale over this one
         try
         {
             await Store.SetTrackingAsync(productId, tracked: true);
@@ -897,6 +920,11 @@
             .Include(p => p.Purchases).Include(p => p.Signals).Include(p => p.Substitutes).ToListAsync();
         var today = DateOnly.FromDateTime(DateTime.Today);
         var trackExpirations = await Settings.GetTrackExpirationDatesAsync();
+        // Whether an OutNow filed today would be inert, per product — asked of the engine so the "I'm out"
+        // note tells the truth about the signal, not about the row's colour. (Flag-independent: it's
+        // lastStockBack >= today; the flags just match the on-hand pass beside it.)
+        signalInertById = products.ToDictionary(p => p.Id,
+            p => ReplenishmentPredictor.Predict(p, today, trackExpirations, honorQuantity: true).SignalTodayWouldBeInert);
         onHandDetail = PantryOnHand.EdibleInStockDetailed(products, today, trackExpirations)
             .Select(d => (d.Product.Id, Product: new PantryProduct(d.Product.Name, d.Product.Substitutes.Select(s => s.Value).ToList()), d.CountBacked))
             .OrderBy(x => x.Product.Name)
