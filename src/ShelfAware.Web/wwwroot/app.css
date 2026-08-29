@@ -1767,10 +1767,11 @@ button.tag-chip {
     background: var(--overdue-bg);
 }
 
-/* Grocery-list row action — "don't want it for a while": untracks until the next purchase. A quiet
-   neutral chip: borderless with a soft fill (an outline in --line was too faint on dark and read as a
-   broken border), not a green "I'm stocked" statement. */
-.untrack-btn {
+/* Quiet neutral chip: borderless with a soft fill (an outline in --line was too faint on dark and read
+   as a broken border), not a green "I'm stocked" statement. Shared by the grocery list's "don't want it
+   for a while" Untrack and the recipe row's "I'm out" correction — one definition, two consumers. */
+.untrack-btn,
+.imout-btn {
     font-size: 0.7rem;
     font-weight: 600;
     color: var(--ink-soft);
@@ -1786,6 +1787,12 @@ button.tag-chip {
 .untrack-btn:hover:not(:disabled) {
     background: var(--line);
     color: var(--ink);
+}
+
+/* "I'm out" hints toward the run-out red on hover — it's a correction that marks the item out. */
+.imout-btn:hover:not(:disabled) {
+    background: var(--line);
+    color: var(--overdue-ink);
 }
 
 /* "I have it" — the green row actions, unlike Untrack's neutral chip beside them: Restocked (a fresh
@@ -1900,6 +1907,19 @@ button.tag-chip {
 
 .ingredient-list li.have {
     color: var(--stocked-ink);
+}
+
+/* A ✓ backed only by the buying rhythm, not a fresh count: honest but LESS certain, so it reads in the
+   normal ink rather than the confident "stocked" green, with a "likely" chip to say why. This is the
+   visible half of the fix for "the recipe said I had it but I didn't". */
+.ingredient-list li.have.likely {
+    color: var(--ink);
+}
+
+.likely-note {
+    color: var(--ink-soft);
+    font-size: 0.8rem;
+    font-style: italic;
 }
 
 /* Ingredient row with its swap control + bubble cloud. */

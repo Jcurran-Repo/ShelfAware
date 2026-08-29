@@ -51,6 +51,58 @@ public class PantryOnHandTests
     }
 
     [Fact]
+    public void Detailed_flags_a_fresh_count_as_count_backed_and_a_prediction_as_not()
+    {
+        // Counted 3 today, on a rhythm → in stock AND count-backed: real evidence earns the confident ✓.
+        var counted = new Product
+        {
+            Name = "Chicken Breast", Category = Category.Meat, IsTracked = true,
+            TrackQuantity = true, QuantityOnHand = 3m, QuantityCountedAt = DateTimeOffset.Now,
+            Purchases =
+            [
+                new PurchaseEvent { PurchasedAt = Today.AddDays(-16) },
+                new PurchaseEvent { PurchasedAt = Today.AddDays(-1) },
+            ],
+        };
+        // Bought recently, never counted → in stock by the RHYTHM only → NOT count-backed (a "likely" ✓).
+        var predicted = new Product
+        {
+            Name = "Ground Beef", Category = Category.Meat, IsTracked = true,
+            Purchases =
+            [
+                new PurchaseEvent { PurchasedAt = Today.AddDays(-16) },
+                new PurchaseEvent { PurchasedAt = Today.AddDays(-1) },
+            ],
+        };
+
+        var detailed = PantryOnHand.EdibleInStockDetailed([counted, predicted], Today);
+
+        Assert.True(detailed.Single(d => d.Product.Name == "Chicken Breast").CountBacked);
+        Assert.False(detailed.Single(d => d.Product.Name == "Ground Beef").CountBacked);
+    }
+
+    [Fact]
+    public void Detailed_does_not_count_back_a_stale_count()
+    {
+        // Counted 5 long ago on a ~15-day rhythm → the count is long spent, so it defers to the rhythm
+        // (which, bought a day ago, still reads stocked) and is NOT count-backed: a number nobody has
+        // vouched for in months is not evidence any more (§13.5).
+        var stale = new Product
+        {
+            Name = "White Rice", Category = Category.Pantry, IsTracked = true,
+            TrackQuantity = true, QuantityOnHand = 5m, QuantityCountedAt = DateTimeOffset.Now.AddDays(-120),
+            Purchases =
+            [
+                new PurchaseEvent { PurchasedAt = Today.AddDays(-16) },
+                new PurchaseEvent { PurchasedAt = Today.AddDays(-1) },
+            ],
+        };
+
+        var row = Assert.Single(PantryOnHand.EdibleInStockDetailed([stale], Today));
+        Assert.False(row.CountBacked);
+    }
+
+    [Fact]
     public void Out_of_stock_is_the_exact_complement_for_edible_tracked_items()
     {
         // Long-overdue coffee (the EdibleInStock drop case) is exactly what EdibleOutOfStock surfaces —
