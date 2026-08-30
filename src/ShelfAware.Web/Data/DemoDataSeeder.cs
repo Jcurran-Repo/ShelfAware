@@ -88,6 +88,7 @@ public sealed class DemoDataSeeder(
         db.SavedReports.AddRange(BuildSavedReports(today));
         StampProductOrigins(products, receipts);
         db.Receipts.Add(await BuildPendingReceiptAsync(ct));
+        db.Receipts.Add(BuildBrandMemoryPendingReceipt(today));
         await db.SaveChangesAsync(ct);
 
         var purchases = products.Sum(p => p.Purchases.Count);
@@ -191,6 +192,14 @@ public sealed class DemoDataSeeder(
                 [(8, 1), (34, 1), (62, 1), (88, 1)],
                 Signals: [(20, SignalKind.OutNow), (46, SignalKind.OutNow), (74, SignalKind.OutNow)],
                 Labels: [(34, -15)]),
+
+            // BRAND MEMORY hero (item 61): a real tracked product whose merchant abbreviation the
+            // extraction gets wrong. Its brand IS "Dently's", and the seeded alias + pending receipt below
+            // (BrandMemoryMerchant) demonstrate the review pre-filling that learned brand over the misread —
+            // and a DIFFERENT-brand line on the same receipt keeping its own. Ordinary history here; the
+            // demonstration is the alias's LearnedBrand and the brand-memory pending receipt.
+            new("Bully Chews", Category.PetCare, BrandMemoryLearnedBrand, "16 oz", 12.48m, ["Dog", "Treat"],
+                [(9, 1), (31, 1), (55, 1)]),
 
             // Stock-up: the last trip bought 3× the usual, so StockUpFactor stretches the due date out
             // instead of nagging on the one-pack cadence.
@@ -580,7 +589,61 @@ public sealed class DemoDataSeeder(
             trip.Savings = savings > 0 ? savings : null;
         }
 
-        return (products, [.. trips.Values.OrderBy(r => r.PurchasedAt)]);
+        // The BRAND-MEMORY teacher (item 61): a real confirmed warehouse trip whose opaque line the household
+        // once corrected to Bully Chews and its true brand. That confirm is what taught the alias its
+        // LearnedBrand, so seeding it (rather than a teacher-less alias) keeps the "every alias names the
+        // confirm that taught it" invariant and makes the story whole — corrected here, remembered on the
+        // pending warehouse receipt. Not a date-keyed trip, so it's built bespoke and appended.
+        var bully = products.FirstOrDefault(p => p.Name == "Bully Chews")
+            ?? throw new InvalidOperationException(
+                "The demo catalog no longer seeds 'Bully Chews', which the brand-memory teacher receipt needs.");
+        var teacher = BuildBrandMemoryTeacherReceipt(bully, today);
+
+        return (products, [.. trips.Values.Append(teacher).OrderBy(r => r.PurchasedAt)]);
+    }
+
+    /// <summary>The confirm behind the brand-memory alias: a warehouse trip whose opaque line
+    /// (<see cref="BrandMemoryLearnedRaw"/>) the household corrected to Bully Chews and its real brand
+    /// "Dently's" — exactly what a human confirm of that line writes, and what teaches the alias its
+    /// LearnedBrand. Confirmed and priced like any trip; a separate warehouse purchase for the product,
+    /// which is coherent (bought there once, at the corner stores otherwise).</summary>
+    private static Receipt BuildBrandMemoryTeacherReceipt(Product bully, DateOnly today)
+    {
+        var when = today.AddDays(-40);
+        var receipt = new Receipt
+        {
+            Merchant = BrandMemoryMerchant,
+            PurchasedAt = when,
+            ImagePath = "demo/no-image",
+            Status = ReceiptStatus.Confirmed,
+            ConfirmedAt = new DateTimeOffset(when.ToDateTime(new TimeOnly(18, 30))),
+        };
+        receipt.Lines.Add(new ReceiptLine
+        {
+            RawText = BrandMemoryLearnedRaw,   // the opaque warehouse line...
+            NormalizedName = bully.Name,       // ...corrected on confirm to Bully Chews...
+            Brand = BrandMemoryLearnedBrand,   // ...and to its real brand — what taught the alias's LearnedBrand
+            Size = "16 oz",
+            Quantity = 1m,
+            UnitPrice = 12.48m,
+            Category = Category.PetCare,
+            Confidence = 1,
+            Product = bully,
+        });
+        bully.Purchases.Add(new PurchaseEvent
+        {
+            PurchasedAt = when,
+            Quantity = 1m,
+            Brand = BrandMemoryLearnedBrand,
+            Size = "16 oz",
+            Source = PurchaseSource.Receipt,
+            Receipt = receipt,
+        });
+        var gross = ReceiptTotals.Summarize(receipt.Lines).Total;
+        receipt.Subtotal = gross;
+        receipt.Tax = Math.Round(gross * 0.0825m, 2);
+        receipt.Total = gross + receipt.Tax.Value;
+        return receipt;
     }
 
     // ---- The one receipt nobody has reviewed yet ----------------------------
@@ -637,6 +700,37 @@ public sealed class DemoDataSeeder(
             ],
         };
     }
+
+    /// <summary>The BRAND-MEMORY hero's review screen (item 61): a second PendingReview receipt — no image,
+    /// because keyless review works on the extracted lines alone and this one's point is the pre-fill, not a
+    /// re-extract. It comes from the warehouse whose shorthand this household already corrected. Its FIRST
+    /// line re-reads the taught line (<see cref="BrandMemoryLearnedRaw"/>) MIS-branded — the model guesses a
+    /// familiar "Dentastix" — so the alias resolves it to Bully Chews and the learned "Dently's" pre-fills
+    /// over the guess. Its SECOND line is a DIFFERENT brand on the same receipt, never taught here, so with no
+    /// alias to override it the review keeps its own "Kirkland". One screen shows the fix both ways.</summary>
+    private static Receipt BuildBrandMemoryPendingReceipt(DateOnly today) => new()
+    {
+        Merchant = BrandMemoryMerchant,
+        PurchasedAt = today.AddDays(-2),
+        ImagePath = "demo/no-image",
+        Status = ReceiptStatus.PendingReview,
+        RawModelJson = BrandMemoryRawJson,
+        Lines =
+        [
+            PendingLine(BrandMemoryLearnedRaw, "Dentastix", "Dentastix", "16 oz", 1m, 12.48m,
+                Category.PetCare, 0.71m, ["Dog", "Treat"]),
+            PendingLine(BrandMemoryOtherRaw, "Dog Dental Sticks", "Kirkland", "24 ct", 1m, 15.99m,
+                Category.PetCare, 0.86m, ["Dog", "Treat"]),
+        ],
+    };
+
+    /// <summary>The model output the brand-memory pending receipt was built from, kept for audit like the
+    /// shipped one. purchase_date is null — a warehouse receipt whose date the model read separately.</summary>
+    private const string BrandMemoryRawJson = """
+        {"merchant":"Warehouse Club","purchase_date":null,"lines":[
+        {"raw_text":"DENTLYS BULLY 16OZ","normalized_name":"Dentastix","brand":"Dentastix","size":"16 oz","quantity":1,"unit_price":12.48,"category":"PetCare","tags":["Dog","Treat"],"confidence":0.71,"existing_product":"Dentastix"},
+        {"raw_text":"KRK DENTAL CHEW 24CT","normalized_name":"Dog Dental Sticks","brand":"Kirkland","size":"24 ct","quantity":1,"unit_price":15.99,"category":"PetCare","tags":["Dog","Treat"],"confidence":0.86,"existing_product":"Dog Dental Sticks"}]}
+        """;
 
     /// <summary>Writes the shipped receipt image into this household's receipt store and returns the
     /// ImagePath to file it under. A failure here costs the audit copy, not the catalog: the row still
@@ -729,7 +823,38 @@ public sealed class DemoDataSeeder(
                 TaughtByReceiptId = teacher.Id,
             };
         }
+
+        // The BRAND-MEMORY hero (item 61): the household once corrected this warehouse's opaque line to
+        // Bully Chews and its real brand, so the alias carries that learned brand (LearnedBrand). The
+        // pending receipt below re-reads the same opaque line MIS-branded, and the review pre-fills the
+        // learned brand over it. Taught by a REAL confirmed warehouse trip (below), so it names the confirm
+        // that taught it like every other alias — the complete story: corrected once, remembered next time.
+        var bully = products.FirstOrDefault(p => p.Name == "Bully Chews")
+            ?? throw new InvalidOperationException(
+                "The demo catalog no longer seeds 'Bully Chews', which the brand-memory alias points at.");
+        var bullyTeacher = receipts.FirstOrDefault(
+            r => r.Merchant == BrandMemoryMerchant && r.Status == ReceiptStatus.Confirmed)
+            ?? throw new InvalidOperationException(
+                "The brand-memory teacher receipt is missing, so its alias would have no confirm behind it.");
+        yield return new ProductAlias
+        {
+            Merchant = BrandMemoryMerchant,
+            RawText = BrandMemoryLearnedRaw,
+            ProductId = bully.Id,
+            LearnedBrand = BrandMemoryLearnedBrand,
+            TaughtByReceiptId = bullyTeacher.Id,
+        };
     }
+
+    // The brand-memory hero's warehouse merchant + the two raw texts its pending receipt carries — shared
+    // by the alias above and the pending receipt below so the taught line and the re-read line can't drift.
+    private const string BrandMemoryMerchant = "Warehouse Club";
+    private const string BrandMemoryLearnedRaw = "DENTLYS BULLY 16OZ"; // taught → Bully Chews, brand "Dently's"
+    private const string BrandMemoryOtherRaw = "KRK DENTAL CHEW 24CT"; // a different brand, never taught
+    // The corrected brand the whole hero turns on: Bully Chews' real brand, what the teacher confirm
+    // taught, and what the alias learned. ONE definition so the product's usual brand and the learned
+    // brand can't drift apart at one of the four sites that state it.
+    private const string BrandMemoryLearnedBrand = "Dently's";
 
     /// <summary>Two reports the household kept. The query is a <see cref="ReportSpecUrl"/> string —
     /// the same serialization a shared link uses — so a saved row is readable in the DB and survives a
