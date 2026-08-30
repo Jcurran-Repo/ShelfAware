@@ -42,14 +42,18 @@ public class DemoDataSeederTests : IDisposable
         await using var read = db.CreateDbContext();
         // Cost surfaces (grocery-list estimates, Trends, price history) price from confirmed receipt
         // lines — a catalog of bare purchases renders $0 everywhere, which is the bug this pins.
-        // Every TRIP is confirmed (and so hidden from Upload's review queue); the one deliberate
-        // exception is the sample receipt that is meant to be sitting there waiting to be reviewed.
-        var pending = Assert.Single(read.Receipts.Where(r => r.Status == ReceiptStatus.PendingReview).ToList());
-        Assert.Equal("Walmart Supercenter", pending.Merchant);
-        Assert.All(read.Receipts.Where(r => r.Id != pending.Id).ToList(),
+        // Every TRIP is confirmed (and so hidden from Upload's review queue); the two deliberate
+        // exceptions are the receipts waiting to be reviewed — the shipped-image one and the
+        // brand-memory warehouse receipt (item 61).
+        var pending = read.Receipts.Where(r => r.Status == ReceiptStatus.PendingReview).ToList();
+        Assert.Equal(
+            ["Walmart Supercenter", "Warehouse Club"],
+            pending.Select(r => r.Merchant!).OrderBy(m => m).ToArray());
+        var pendingIds = pending.Select(r => r.Id).ToHashSet();
+        Assert.All(read.Receipts.Where(r => !pendingIds.Contains(r.Id)).ToList(),
             r => Assert.Equal(ReceiptStatus.Confirmed, r.Status));
         var pricedProducts = read.ReceiptLines
-            .Where(l => l.ReceiptId != pending.Id) // nothing is priced FROM a receipt nobody has confirmed
+            .Where(l => !pendingIds.Contains(l.ReceiptId)) // nothing is priced FROM a receipt nobody has confirmed
             .Where(l => l.UnitPrice > 0 && l.ProductId != null)
             .Select(l => l.ProductId!.Value).Distinct().ToHashSet();
 
@@ -480,8 +484,10 @@ public class DemoDataSeederTests : IDisposable
         await _seeding.Seeder(db).SeedAsync();
         await using var read = db.CreateDbContext();
 
+        // The shipped-image one specifically — the brand-memory warehouse receipt (item 61) is also
+        // pending, but it has no image, which is its own test below.
         var pending = Assert.Single(read.Receipts.Include(r => r.Lines)
-            .Where(r => r.Status == ReceiptStatus.PendingReview).ToList());
+            .Where(r => r.Status == ReceiptStatus.PendingReview && r.Merchant == "Walmart Supercenter").ToList());
 
         // The audit copy is really on disk, which is what "Retry" re-reads and what /receipts links to.
         Assert.True(_seeding.Storage.HasPages(pending.ImagePath));
@@ -529,11 +535,55 @@ public class DemoDataSeederTests : IDisposable
             Assert.Contains(a.TaughtByReceiptId!.Value, confirmed);
         });
 
-        // …and deliberately NONE of them matches the receipt waiting in the queue: it's the household's
-        // first from that merchant, so the pre-fill falls through to the model's suggestion and
-        // confirming it is what teaches the aliases — visibly.
-        var pending = read.Receipts.Include(r => r.Lines).Single(r => r.Status == ReceiptStatus.PendingReview);
-        Assert.DoesNotContain(aliases, a => a.Merchant == pending.Merchant);
+        // …and deliberately the shipped-image receipt has NO alias: it's the household's first from that
+        // merchant, so the pre-fill falls through to the model's suggestion and confirming it is what
+        // teaches the aliases — visibly. (The brand-memory warehouse receipt is the opposite demo, item 61:
+        // it DOES hit an alias — covered by the brand-memory test below.)
+        var walmart = read.Receipts.Include(r => r.Lines)
+            .Single(r => r.Status == ReceiptStatus.PendingReview && r.Merchant == "Walmart Supercenter");
+        Assert.DoesNotContain(aliases, a => a.Merchant == walmart.Merchant);
+    }
+
+    [Fact]
+    public async Task Seeds_a_brand_memory_hero_so_a_learned_brand_pre_fills_over_a_misread()
+    {
+        // item 61: correcting a merchant's opaque line teaches the app the product AND its brand, so the
+        // next receipt from that merchant pre-fills the learned brand over the model's fresh misread — and
+        // a DIFFERENT brand on the same receipt, never taught, keeps its own. Neither was visible in the
+        // demo until this hero, so both cases are seeded onto one review screen. The pre-fill BEHAVIOUR is
+        // pinned in UploadPageTests; this pins that the seeded DATA is shaped to trigger it.
+        using var db = new TestDb();
+        await _seeding.Seeder(db).SeedAsync();
+        await using var read = db.CreateDbContext();
+
+        // The alias the household taught: the opaque warehouse line → Bully Chews, carrying its real brand.
+        // Exactly one alias carries a learned brand — the derived staple aliases correct no brand.
+        var alias = Assert.Single(read.ProductAliases.ToList(), a => a.LearnedBrand != null);
+        Assert.Equal("Warehouse Club", alias.Merchant);
+        Assert.Equal("DENTLYS BULLY 16OZ", alias.RawText);
+        Assert.Equal("Dently's", alias.LearnedBrand);
+        var bully = read.Products.Single(p => p.Name == "Bully Chews");
+        Assert.Equal(bully.Id, alias.ProductId);
+
+        // It names the confirm that taught it (a real warehouse trip), like every alias — so removing that
+        // receipt un-teaches it, and it isn't an orphaned pairing that can never be undone.
+        var teacher = read.Receipts.Include(r => r.Lines).Single(r => r.Id == alias.TaughtByReceiptId);
+        Assert.Equal(ReceiptStatus.Confirmed, teacher.Status);
+        Assert.Equal("Warehouse Club", teacher.Merchant);
+        var taughtLine = Assert.Single(teacher.Lines);
+        Assert.Equal("DENTLYS BULLY 16OZ", taughtLine.RawText); // the opaque line...
+        Assert.Equal("Dently's", taughtLine.Brand);             // ...corrected to the real brand on confirm
+
+        // The pending receipt that re-reads it: line 1 hits the alias (its misread brand is what the
+        // learned "Dently's" pre-fills over); line 2 is a different brand with no alias, so it keeps its own.
+        var pending = read.Receipts.Include(r => r.Lines)
+            .Single(r => r.Status == ReceiptStatus.PendingReview && r.Merchant == "Warehouse Club");
+        var learned = Assert.Single(pending.Lines, l => l.RawText == alias.RawText);
+        Assert.Equal("Dentastix", learned.Brand); // the fresh misread the alias corrects
+        var other = Assert.Single(pending.Lines, l => l.RawText != alias.RawText);
+        Assert.Equal("Kirkland", other.Brand);
+        Assert.DoesNotContain(read.ProductAliases.ToList(),
+            a => a.Merchant == pending.Merchant && a.RawText == other.RawText); // never taught → keeps its own brand
     }
 
     [Fact]
