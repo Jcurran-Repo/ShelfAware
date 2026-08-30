@@ -10,21 +10,25 @@
 @inject BugReportContext BugContext
 @inject ILogger<SiteFooter> Logger
 
-@if (Admin.Value.Configured)
-{
-    @* Gated on "an admin exists" — a report form on a deployment where nobody reads reports would
-       be an invitation to shout into a void, so the whole entry point stands down (the same
-       posture as the sign-in page's forgot-password link under EmailOptions.IsConfigured). *@
-    <footer class="site-footer">
-        @* An anchor, so it still works when JS is off or the click is a middle/modified one (a plain nav
-           to /bugs, snapshot-less). A left click is intercepted to capture the page snapshot HERE — on the
-           page the reporter is still looking at — before navigating; after /bugs loads, that page is gone. *@
+<footer class="site-footer">
+    @* Always present: /about is a public page every visitor should be able to reach. *@
+    <a href="/about">About &amp; music</a>
+    @if (Admin.Value.Configured)
+    {
+        @* The bug-report + admin links are gated on "an admin exists" — a report form on a deployment
+           where nobody reads reports would be an invitation to shout into a void, so this entry point
+           stands down (the same posture as the sign-in page's forgot-password link under
+           EmailOptions.IsConfigured).
+           An anchor, so Report a bug still works when JS is off or the click is a middle/modified one (a
+           plain nav to /bugs, snapshot-less). A left click is intercepted to capture the page snapshot
+           HERE — on the page the reporter is still looking at — before navigating; after /bugs loads,
+           that page is gone. *@
         <a href="@BugsHref" @onclick="ReportAsync" @onclick:preventDefault>🐞 Report a bug</a>
         <AuthorizeView Policy="@AdminOptions.PolicyName">
             <a href="/admin">Admin</a>
         </AuthorizeView>
-    </footer>
-}
+    }
+</footer>
 
 @code {
     // The link carries where the visitor currently IS, so the form can pre-fill "where it

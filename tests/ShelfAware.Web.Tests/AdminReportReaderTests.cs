@@ -6,6 +6,7 @@ using ShelfAware.Core.Domain;
 using ShelfAware.Web.Auth;
 using ShelfAware.Web.Data;
 using ShelfAware.Web.Diagnostics;
+using ShelfAware.Web.Wishlist;
 
 namespace ShelfAware.Web.Tests;
 
@@ -40,7 +41,8 @@ public class AdminReportReaderTests : IDisposable
         new FakeAuthState(SignedIn(signedInAs)),
         Options.Create(new AdminOptions { Emails = [AdminEmail] }),
         new ErrorLogStore(_authDb),
-        new LoginAudit(_authDb, NullLogger<LoginAudit>.Instance));
+        new LoginAudit(_authDb, NullLogger<LoginAudit>.Instance),
+        new WishlistStore(_authDb));
 
     private void SeedReport(string household, string body)
     {
@@ -99,6 +101,9 @@ public class AdminReportReaderTests : IDisposable
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => reader.ListLoginStatsAsync());
         // The audit trail across households is the sharpest cross-household read — gated like the rest.
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => reader.ListRecentActivityAsync());
+        // The wishlist reserve list carries people's emails — a non-admin must never read it.
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => reader.GetWishlistSummaryAsync());
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => reader.ListWishlistContactsAsync());
     }
 
     [Fact]
@@ -219,5 +224,20 @@ public class AdminReportReaderTests : IDisposable
 
         var row = Assert.Single(errors);
         Assert.Equal("It broke", row.LastMessage);
+    }
+
+    [Fact]
+    public async Task The_admin_reads_the_wishlist_through_the_same_gate()
+    {
+        var store = new WishlistStore(_authDb);
+        await store.RecordAsync("aware", "jordan@example.com", DateTimeOffset.Now);
+        await store.RecordAsync("shelf", null, DateTimeOffset.Now); // an anonymous interest click
+
+        var summary = await Reader().GetWishlistSummaryAsync();
+        Assert.Equal(2, summary.Total);           // both submissions
+        Assert.Equal(1, summary.DistinctEmails);  // one gave an address
+
+        var contacts = await Reader().ListWishlistContactsAsync();
+        Assert.Equal("jordan@example.com", Assert.Single(contacts).Email);
     }
 }

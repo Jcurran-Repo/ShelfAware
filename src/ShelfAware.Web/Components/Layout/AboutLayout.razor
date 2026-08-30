@@ -1,0 +1,25 @@
+@inherits LayoutComponentBase
+
+@* The public /about page's own static layout. Deliberately NOT the /demo PublicLayout (whose chrome and
+   scoped CSS are tuned for the tour — sharing it would silently change /demo), and NOT MainLayout (whose
+   persistent VoiceAgent + AiSettingsLoader islands would open a Blazor circuit on this anonymous, static
+   page). Full-width with a footer, because /about is the story + the music + the wishlist. *@
+
+<div class="about-shell">
+    <header class="about-head">
+        <a class="brand" href="/">Shelf Aware</a>
+        <nav class="about-nav">
+            <a href="Account/Login">Sign in</a>
+        </nav>
+    </header>
+    <main class="about-main">
+        @Body
+    </main>
+    <footer class="about-foot">
+        <a href="https://github.com/Jcurran-Repo/ShelfAware">GitHub</a>
+        <span aria-hidden="true">·</span>
+        <a href="Account/Login">Sign in</a>
+        <span aria-hidden="true">·</span>
+        <span class="muted">A home pantry that thinks ahead.</span>
+    </footer>
+</div>

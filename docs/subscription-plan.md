@@ -24,9 +24,16 @@ throughout is now LS's real subscription rate (5.5% + 50¢ — §6).
 | Tier | Display name | Price | Managed AI | Granted by |
 |---|---|---|---|---|
 | Free | **Shelf** | $0 | None past the welcome grant (§1/§2) — the full manual app | default |
-| AI | **Aware** | **$2.99/mo · $27.99/yr** | On, on the host's keys; includes **~$1.00/mo of AI at cost** | subscription (Lemon Squeezy — §6) |
-| Voice (future add) | **Sous Chef** | ~$4.99/mo · ~$47.99/yr (sketch) | Aware plus voice included | a later ADDED tier — never a raise (§1) |
+| AI | **Aware** | **$2.99/mo · $27.99/yr** | On, on the host's keys, **incl. conversational voice** (chat back-and-forth); includes **~$1.00/mo of AI at cost** | subscription (Lemon Squeezy — §6) |
+| Voice (future add) | **Sous Chef** | ~$4.99/mo · ~$47.99/yr (sketch) | Aware plus the hands-free **cook-along agent** | a later ADDED tier — never a raise (§1) |
 | Founder | **Founder** | $0 | **Unlimited**, usage still recorded | admin toggle (the thank-you tier for early helpers) |
+
+**Voice split revised (2026-08-30, Jordan's call):** the *conversational* voice — talking with it back
+and forth — is cheap enough to sit in **Aware**. **Sous Chef** is specifically the premium hands-free
+**cook-along agent** (the realtime agent that reads the recipe and talks you through cooking). Earlier
+drafts lumped all voice into Sous Chef; that's superseded. Founder stays an admin-granted GIFT — never a
+selectable/purchasable tier (so it's absent from the /about reserve picker; the paid early-supporter
+funnel there is a generic "back it early" link, not "become a Founder").
 
 **Names decided (2026-08-23, "set A" — Jordan: "it's fun"):** the free→paid upgrade reassembles the
 app's name — *your Shelf becomes Aware* — and the voice tier is the cook-along made literal. The doc

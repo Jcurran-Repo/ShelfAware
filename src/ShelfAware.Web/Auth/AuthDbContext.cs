@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using ShelfAware.Web.Diagnostics;
+using ShelfAware.Web.Wishlist;
 
 namespace ShelfAware.Web.Auth;
 
@@ -19,6 +20,11 @@ public class AuthDbContext(DbContextOptions<AuthDbContext> options) : IdentityDb
     public DbSet<ApiToken> ApiTokens => Set<ApiToken>();
     public DbSet<UserLoginStat> UserLoginStats => Set<UserLoginStat>();
     public DbSet<CreditLedgerEntry> CreditLedger => Set<CreditLedgerEntry>();
+
+    /// <summary>Pre-launch demand for a HOSTED Shelf Aware — operator data, same rationale as the error
+    /// log above. No index: like ErrorLog, the table is bounded and ordered/deduped client-side (SQLite
+    /// can't ORDER BY a DateTimeOffset in SQL), so an index would serve nothing.</summary>
+    public DbSet<WishlistEntry> Wishlist => Set<WishlistEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

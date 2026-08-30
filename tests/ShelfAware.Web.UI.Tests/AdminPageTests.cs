@@ -58,6 +58,7 @@ public class AdminPageTests : PageTestContext
         Services.AddSingleton(presence);
         Services.AddSingleton<IDbContextFactory<AuthDbContext>>(authDb);
         Services.AddSingleton(new ErrorLogStore(authDb));
+        Services.AddSingleton(new ShelfAware.Web.Wishlist.WishlistStore(authDb));
         Services.AddSingleton<LoginAudit>();
         Services.AddScoped<AdminReportReader>();
         Services.AddScoped<ReportResolutionService>();
@@ -123,6 +124,23 @@ public class AdminPageTests : PageTestContext
             Assert.Contains("Recent activity", cut.Markup);
             Assert.Contains("Bought Whole Milk", cut.Markup);
             Assert.Contains("The Currans", cut.Markup);
+        });
+    }
+
+    [Fact]
+    public async Task The_wishlist_panel_shows_the_reserve_list_and_the_distinct_email_count()
+    {
+        var store = new ShelfAware.Web.Wishlist.WishlistStore(authDb);
+        await store.RecordAsync("aware", "jordan@example.com", DateTimeOffset.Now);
+        await store.RecordAsync("shelf", null, DateTimeOffset.Now); // an anonymous interest click — counted, no contact
+
+        var cut = Render<Components.Pages.Admin>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("Hosted wishlist", cut.Markup);
+            Assert.Contains("jordan@example.com", cut.Markup); // the notify contact, from the admin-gated read
+            Assert.Contains("Reserved email", cut.Markup);     // the distinct-email stat (1 → singular label)
         });
     }
 
