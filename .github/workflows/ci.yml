@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ master ]
 
+permissions:
+  contents: read
+
 jobs:
   build-test:
     name: Build & test
@@ -28,14 +31,35 @@ jobs:
       # tests that drive the tool loop / extractor retry through a faked IChatClient
       # (no key). Only the extraction eval harness (tests/ShelfAware.Evals) needs a
       # live API key and is run manually.
+      #
+      # Each emits a .trx into TestResults; the "Test status snapshot" step below folds
+      # those into test-status.json (the admin dashboard's Tests & quality card). The
+      # LogFileName is the friendly project label the card shows.
       - name: Test — engine
-        run: dotnet test tests/ShelfAware.Tests/ShelfAware.Tests.csproj --configuration Release --no-build
+        run: dotnet test tests/ShelfAware.Tests/ShelfAware.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=Engine.trx" --results-directory TestResults
 
       - name: Test — AI layer (faked client)
-        run: dotnet test tests/ShelfAware.Llm.Tests/ShelfAware.Llm.Tests.csproj --configuration Release --no-build
+        run: dotnet test tests/ShelfAware.Llm.Tests/ShelfAware.Llm.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=AI.trx" --results-directory TestResults
 
       - name: Test — persistence (in-memory SQLite)
-        run: dotnet test tests/ShelfAware.Web.Tests/ShelfAware.Web.Tests.csproj --configuration Release --no-build
+        run: dotnet test tests/ShelfAware.Web.Tests/ShelfAware.Web.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=Persistence.trx" --results-directory TestResults
 
       - name: Test — page components (bUnit)
-        run: dotnet test tests/ShelfAware.Web.UI.Tests/ShelfAware.Web.UI.Tests.csproj --configuration Release --no-build
+        run: dotnet test tests/ShelfAware.Web.UI.Tests/ShelfAware.Web.UI.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=Pages.trx" --results-directory TestResults
+
+      # Fold the .trx files into the snapshot the admin dashboard reads, and publish it as an artifact.
+      # always() so a run that had a failing test still produces a (partial) snapshot. This does NOT commit
+      # the file back to the repo — the served copy in wwwroot/test-status.json is refreshed by regenerating
+      # + committing (same model as eval-results.json). To make the card auto-refresh instead, a commit-back
+      # step here (contents: write + a GITHUB_TOKEN commit, which does not re-trigger CI) is the opt-in.
+      - name: Test status snapshot
+        if: always()
+        run: dotnet run --project tools/TestStatusGen --configuration Release --no-build -- TestResults artifacts/test-status.json
+
+      - name: Upload test status
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-status
+          path: artifacts/test-status.json
+          if-no-files-found: warn

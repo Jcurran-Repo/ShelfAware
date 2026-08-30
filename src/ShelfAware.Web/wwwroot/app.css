@@ -359,6 +359,19 @@ body {
     max-width: 72rem;
 }
 
+/* The receipt-review grid (Upload.razor) is the WIDEST table in the app — ~11 input columns: item, brand,
+   size, variety, expiry, qty, category, tags, product match… — so it earns a wider column still than the
+   general wide-grid tier above. At 56rem it measured ~1857px crammed into an ~857px box, scrolling ~1000px
+   of itself out of view on a 1920px monitor; `--xwide` lets the whole grid show on a large screen and fill
+   the content column on a laptop, with any remainder still scrolling inside the box. Bounded at roughly the
+   grid's own natural width so an ultra-wide monitor gets a grid-sized panel, not an edge-to-edge sprawl.
+   Only RAISES the cap, so viewports already narrower than it (mobile / the ≤1100px drawer) are unaffected.
+   The census review grid (PantryPhoto.razor) is a sibling but has only 7 columns — the same scale as the
+   Products grid — so it opts into `--wide` (72rem) above, not this, to avoid a wide empty band beside it. */
+.site-main:has(.table-scroll--xwide) {
+    max-width: 120rem;
+}
+
 h1 {
     font-size: 1.6rem;
     letter-spacing: -0.02em;
@@ -664,8 +677,10 @@ input:focus, select:focus {
 .card.accent-overdue { border-left-color: var(--overdue-line); }
 .card.accent-duesoon { border-left-color: var(--duesoon-line); }
 
-/* "You keep running out of these" — the burn-rate-≪-rebuy habit insight promoted from Product Detail. */
-.runs-out-early .habit-list {
+/* Compact name + note rows — shared by "You keep running out of these" (the burn-rate-≪-rebuy habit
+   insight promoted from Product Detail) and "Coming up this week" (the near-term run-out heads-up). One
+   definition so the two dashboard lists can't drift. */
+.habit-list {
     list-style: none;
     padding: 0;
     margin: 0.5rem 0 0;
@@ -673,7 +688,7 @@ input:focus, select:focus {
     flex-direction: column;
     gap: 0.5rem;
 }
-.runs-out-early .habit-list li {
+.habit-list li {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
@@ -1268,6 +1283,20 @@ button.mic-speaking {
 
 .chip-overdue { background: var(--overdue-bg); color: var(--overdue-ink); }
 .chip-duesoon { background: var(--duesoon-bg); color: var(--duesoon-ink); }
+
+/* A soft, friendly heads-up box — amber, not alarm (the Upload done-panel's pack-misread nudge).
+   Reuses the theme-aware duesoon tokens so it reads correctly in light and dark. */
+.callout {
+    background: var(--duesoon-bg);
+    color: var(--duesoon-ink);
+    border: 1px solid var(--duesoon-line);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem;
+    margin: 0.75rem 0;
+}
+.callout > p:first-child { margin-top: 0; }
+.callout > p:last-child { margin-bottom: 0; }
+.callout .muted { color: inherit; opacity: 0.85; } /* keep the amber ink; don't fall back to grey on amber */
 .chip-stocked { background: var(--stocked-bg); color: var(--stocked-ink); }
 .chip-unknown { background: var(--unknown-bg); color: var(--unknown-ink); }
 
@@ -1738,10 +1767,11 @@ button.tag-chip {
     background: var(--overdue-bg);
 }
 
-/* Grocery-list row action — "don't want it for a while": untracks until the next purchase. A quiet
-   neutral chip: borderless with a soft fill (an outline in --line was too faint on dark and read as a
-   broken border), not a green "I'm stocked" statement. */
-.untrack-btn {
+/* Quiet neutral chip: borderless with a soft fill (an outline in --line was too faint on dark and read
+   as a broken border), not a green "I'm stocked" statement. Shared by the grocery list's "don't want it
+   for a while" Untrack and the recipe row's "I'm out" correction — one definition, two consumers. */
+.untrack-btn,
+.imout-btn {
     font-size: 0.7rem;
     font-weight: 600;
     color: var(--ink-soft);
@@ -1759,10 +1789,18 @@ button.tag-chip {
     color: var(--ink);
 }
 
-/* "Already have it" — a Restocked signal (status-only: clears an OutNow and re-anchors the due date;
-   it never feeds the cadence, §6 two-stream model). Green because it IS an "I'm stocked" statement,
-   unlike Untrack's neutral chip beside it. */
-.restock-btn {
+/* "I'm out" hints toward the run-out red on hover — it's a correction that marks the item out. */
+.imout-btn:hover:not(:disabled) {
+    background: var(--line);
+    color: var(--overdue-ink);
+}
+
+/* "I have it" — the green row actions, unlike Untrack's neutral chip beside them: Restocked (a fresh
+   supply → re-anchors the due date) and Still in stock (the reminder was early → the engine snoozes it).
+   Both are status-only signals that never feed the cadence (§6 two-stream model); one definition, two
+   selectors so the tests can tell the buttons apart. */
+.restock-btn,
+.stillstock-btn {
     font-size: 0.7rem;
     font-weight: 600;
     color: var(--stocked-ink);
@@ -1775,7 +1813,8 @@ button.tag-chip {
     white-space: nowrap;
 }
 
-.restock-btn:hover:not(:disabled) {
+.restock-btn:hover:not(:disabled),
+.stillstock-btn:hover:not(:disabled) {
     box-shadow: inset 0 0 0 1px var(--stocked-line);
 }
 
@@ -1868,6 +1907,19 @@ button.tag-chip {
 
 .ingredient-list li.have {
     color: var(--stocked-ink);
+}
+
+/* A ✓ backed only by the buying rhythm, not a fresh count: honest but LESS certain, so it reads in the
+   normal ink rather than the confident "stocked" green, with a "likely" chip to say why. This is the
+   visible half of the fix for "the recipe said I had it but I didn't". */
+.ingredient-list li.have.likely {
+    color: var(--ink);
+}
+
+.likely-note {
+    color: var(--ink-soft);
+    font-size: 0.8rem;
+    font-style: italic;
 }
 
 /* Ingredient row with its swap control + bubble cloud. */
@@ -3034,6 +3086,7 @@ tfoot td {
     .info-btn,
     .untrack-btn,
     .restock-btn,
+    .stillstock-btn,
     .report-presets,
     .report-print-btn,
     .report-builder,

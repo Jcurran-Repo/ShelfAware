@@ -101,6 +101,19 @@ public static class ReplenishmentPredictor
             .ToDictionary(g => g.Key, g => g.Sum(p => p.Quantity));
         var typicalTrip = tripTotals.Count > 0 ? MedianDecimal([.. tripTotals.Values]) : 0m;
 
+        // The status a due date implies, from the cadence-aware warning window: a noisy rhythm (IQR above
+        // the flat max(3, 20%) rule) warns earlier; a metronomic one stays tight; and the window never spans
+        // the WHOLE cycle (capped at interval-1, so a fresh stock-back always earns a "stocked" day before
+        // the countdown restarts — else a short-cadence item could never leave Running Low). ONE definition,
+        // so the statistical base and the "still in stock" snooze below can't disagree about "due soon".
+        PredictionStatus StatusFor(DateOnly due, int interval)
+        {
+            var window = Round(Math.Max(3.0, Math.Max(0.2 * (drivingMedian ?? 0), spread ?? 0)));
+            window = Math.Min(window, Math.Max(0, interval - 1));
+            if (today > due) return PredictionStatus.Overdue;
+            return today >= due.AddDays(-window) ? PredictionStatus.DueSoon : PredictionStatus.Stocked;
+        }
+
         // 5. Statistical base: project the driving rhythm from the last time we had stock.
         PredictionStatus status;
         DateOnly? dueDate = null;
@@ -124,22 +137,16 @@ public static class ReplenishmentPredictor
             // "last buy was ~N× the usual — due date pushed out to match", and once the bound above can
             // bite, those two stop being the same number: a 500× misread that projects 730 days would
             // otherwise claim a 500× stretch the engine never made.
+            // Stryker disable once Equality: `>` vs `>=` differ only at median == 0, which cannot occur —
+            // every interval is a day-gap between DISTINCT ascending dates (≥ 1), and a burn cycle is
+            // strictly-after arithmetic (≥ 1), so any median here is ≥ 1; the guard is belt-and-braces
+            // against a zero divide. The category also suppresses `<` (guard never fires → the RAW ratio
+            // is reported), which IS killable where the projection bound bites — that behaviour is pinned
+            // by AnAbsurdQuantity_CannotProjectAnItemOutOfSightOrOverflowTheDate's 73.0 assertion.
             if (median > 0) stockUp = projected / median;
             var interval = Floor(projected);
             dueDate = anchor.AddDays(interval);
-            // The DueSoon window earns its width from the cadence's real variance: a noisy rhythm
-            // (IQR above the flat max(3, 20%) rule) warns earlier; a metronomic one stays tight. But it
-            // must never span the WHOLE cycle: for a short-cadence item (milk bought ~every 3 days) the
-            // flat 3-day floor would drop it straight back into "due soon" the instant you restock it, so
-            // it could never leave Running Low. Cap the window at one day inside the interval — a fresh
-            // restock always earns at least one "stocked" day before the countdown starts again.
-            var threshold = Round(Math.Max(3.0, Math.Max(0.2 * median, spread ?? 0)));
-            threshold = Math.Min(threshold, Math.Max(0, interval - 1));
-            var dueSoonStart = dueDate.Value.AddDays(-threshold);
-
-            if (today > dueDate.Value) status = PredictionStatus.Overdue;
-            else if (today >= dueSoonStart) status = PredictionStatus.DueSoon;
-            else status = PredictionStatus.Stocked;
+            status = StatusFor(dueDate.Value, interval);
         }
         else
         {
@@ -156,8 +163,11 @@ public static class ReplenishmentPredictor
         //    the stock-back, which is why SignalTodayWouldBeInert exists — a surface inviting "say
         //    you're out" or "say you're low" must not promise an act this filter will disregard. Both
         //    kinds, because this one predicate discards both. Pinned by a unit test.
+        // StillInStock rides the SAME strictly-later filter: a "still in stock" tap the same day as a
+        // purchase/restock is discarded too (you bought it today — no need to also say you have some),
+        // which is the right no-op. It competes with out/low by recency, so the most recent statement wins.
         var activeSignal = product.Signals
-            .Where(s => s.Kind is SignalKind.OutNow or SignalKind.RunningLow)
+            .Where(s => s.Kind is SignalKind.OutNow or SignalKind.RunningLow or SignalKind.StillInStock)
             .Where(s => lastStockBack is null || SignalDate.Of(s.SignaledAt) > lastStockBack)
             .OrderByDescending(s => s.SignaledAt)
             .ThenByDescending(s => s.Kind == SignalKind.OutNow) // OutNow wins a same-instant tie
@@ -173,6 +183,23 @@ public static class ReplenishmentPredictor
         else if (activeSignal?.Kind == SignalKind.RunningLow && status is PredictionStatus.Stocked or PredictionStatus.Unknown)
         {
             status = PredictionStatus.DueSoon; // "at least DueSoon"
+        }
+        else if (activeSignal?.Kind == SignalKind.StillInStock)
+        {
+            // "Still in stock" — the honest cousin of Restocked. You never ran out; the prediction was
+            // early, and you have the OLD stock, not a fresh supply. So DON'T re-anchor a full cadence
+            // (that would go quiet while the leftovers run out — the very over-prediction this button
+            // exists to fix). Snooze a modest slice of the cadence (~a quarter, floored so a fast mover
+            // still gets a real breather) and re-ask. Only ever push the due date OUT, never pull a later
+            // one in — so tapping it on a not-yet-due item can't shorten its rhythm. Not a pin: it leaves
+            // Running Low now and graduates back through Coming up → Due soon as today catches the snooze.
+            var snoozeDays = Math.Max(4, (int)Math.Round(0.25 * (drivingMedian ?? 16)));
+            var snoozed = SignalDate.Of(activeSignal.SignaledAt).AddDays(snoozeDays);
+            if (dueDate is not { } dd || snoozed > dd)
+            {
+                dueDate = snoozed;
+                status = StatusFor(snoozed, snoozeDays);
+            }
         }
 
         // 7. Expiration on top of everything: a dated label is a FACT the two rhythms can't see — milk
@@ -232,6 +259,11 @@ public static class ReplenishmentPredictor
                     var labelStatus = today >= label.AddDays(-labelThreshold)
                         ? PredictionStatus.DueSoon
                         : PredictionStatus.Stocked;
+                    // Stryker disable once Equality: `>=` assigns an EQUAL status over itself — a no-op
+                    // for every input, so it is unobservable. The category also suppresses `<`
+                    // (downgrade-only, the exact inversion of escalate-only), which IS killable and is
+                    // pinned by TheLabel_HardCaps_ACadenceDueDate (the label window must LIFT a Stocked
+                    // item to DueSoon here — `<` refuses that escalation and would calm a live warning).
                     if (labelStatus > status) status = labelStatus; // escalate-only (lifts Unknown too)
                 }
             }
@@ -391,6 +423,10 @@ public static class ReplenishmentPredictor
     /// ascending, as <see cref="Predict"/> and <see cref="Reporting.BacklogSignals"/> both prepare them.</summary>
     public static IReadOnlyList<int> BurnCycles(IReadOnlyList<DateOnly> purchaseDates, IReadOnlyList<DateOnly> outageDates)
     {
+        // Stryker disable once Logical: `||` → `&&` is unobservable — this guard is a pure early-out.
+        // With no purchases the loop below runs zero iterations; with no outages every window's
+        // FirstOrDefault is null and nothing is added; either way the result is the same empty list
+        // the guard returns.
         if (purchaseDates.Count == 0 || outageDates.Count == 0) return [];
 
         var cycles = new List<int>();
@@ -422,6 +458,11 @@ public static class ReplenishmentPredictor
         if (intervals.Count >= 3) // ≥3 data points → robust enough to drop a stock-up/vacation outlier
         {
             var trimmed = intervals.Where(d => d <= 3 * median).ToList();
+            // Stryker disable once Equality: `>` vs `>=` differ only when trimmed is EMPTY, which cannot
+            // occur — the median sits within the list, every value ≤ the median is ≤ 3× the median
+            // (median ≥ 1 here), and at least half the values are ≤ the median. The category also
+            // suppresses `<` (constant-false → the trim never re-takes the median), which IS killable
+            // and is pinned by TheTrim_AppliesAtExactlyThreeIntervals (median 7, not the untrimmed 10).
             if (trimmed.Count > 0)
             {
                 median = Median(trimmed);
@@ -459,6 +500,13 @@ public static class ReplenishmentPredictor
         IReadOnlyDictionary<DateOnly, decimal> tripTotals, decimal typicalTrip, DateOnly anchor)
     {
         if (!tripTotals.TryGetValue(anchor, out var lastQty)) return 1.0; // anchor is a restock, not a buy
+        // Stryker disable once Equality: both boundary mutants are unobservable. `typicalTrip <= 0` vs
+        // `< 0`: when this line is reached tripTotals is non-empty (the TryGetValue above early-returns
+        // otherwise), so typicalTrip is a median of strictly-positive quantities — never 0. And
+        // `lastQty <= typicalTrip` vs `<`: at equality the fall-through returns lastQty/typicalTrip,
+        // which is exactly 1.0 — the same value the guard returns. The category also suppresses the `>`
+        // inversions (which would kill every real stretch); those are pinned by
+        // StockUp_ExtendsTheDueDate_ByTheQuantityRatio and TheStockUpRatio_IsThisBuyOverTheTypicalTrip.
         if (typicalTrip <= 0 || lastQty <= typicalTrip) return 1.0;
         return (double)(lastQty / typicalTrip);
     }
@@ -478,7 +526,7 @@ public static class ReplenishmentPredictor
     private static string? DominantSize(IReadOnlyCollection<PurchaseEvent> purchases)
     {
         if (purchases.Count == 0) return null;
-        return purchases
+        var byDominance = purchases
             .GroupBy(p => SizeBucket.Key(p.Size))
             .Select(g => new
             {
@@ -490,12 +538,20 @@ public static class ReplenishmentPredictor
             })
             .OrderByDescending(x => x.Count)
             .ThenByDescending(x => x.Latest)
-            .Select(x => x.Display)
-            .First();
+            .Select(x => x.Display);
+        // Stryker disable once Linq: `First()` → `FirstOrDefault()` is unobservable — the guard above
+        // means at least one purchase exists, so GroupBy yields at least one group and First never
+        // throws; on a non-empty sequence the two are the same call. Scoped to this line ALONE so the
+        // chain above (recency, count/recency tie-break, aggregates) is fully mutation-tested — an
+        // earlier version annotated the whole statement, which silently suppressed those killable mutants.
+        return byDominance.First();
     }
 
     private static double Median(IReadOnlyList<int> values)
     {
+        // Stryker disable once Linq: `OrderBy` → `OrderByDescending` is unobservable — a median is
+        // sort-direction invariant. Odd count: desc[mid] == asc[count-1-mid] and count-1-mid == mid.
+        // Even count: the two middles swap places and their mean is unchanged.
         var sorted = values.OrderBy(v => v).ToList();
         var mid = sorted.Count / 2;
         return sorted.Count % 2 == 1
@@ -521,6 +577,7 @@ public static class ReplenishmentPredictor
     {
         SignalKind.OutNow => "Marked out of stock",
         SignalKind.RunningLow => "Marked running low",
+        SignalKind.StillInStock => "You said you still had some",
         _ => null,
     };
 }

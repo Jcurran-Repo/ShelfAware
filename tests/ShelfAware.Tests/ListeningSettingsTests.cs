@@ -117,4 +117,44 @@ public class ListeningSettingsTests
     [Fact]
     public void The_defaults_are_self_consistent() =>
         Assert.Equal(ListeningSettings.Default, ListeningSettings.Default.Clamped());
+
+    [Fact]
+    public void The_utterance_cap_is_the_longest_utterance_times_the_headroom()
+    {
+        // 5000 ms × 1.6 = 8000, comfortably inside the clamp (a brisk pause keeps the floor at 5000).
+        ListeningSettings.TryFromCalibration(Typical with { LongestUtteranceMs = 5000 }, out var s);
+        Assert.Equal(8000, s.MaxMs);
+    }
+
+    [Fact]
+    public void The_minimum_threshold_is_a_fraction_of_the_speech_peak()
+    {
+        // 0.25 × 0.06 = 0.015, inside the [0.002, 0.2] clamp.
+        ListeningSettings.TryFromCalibration(Typical, out var s);
+        Assert.Equal(0.015, s.MinThreshold, precision: 5);
+    }
+
+    [Fact]
+    public void The_utterance_cap_floor_is_three_times_the_silence_window()
+    {
+        // A long thinker (pause 2000 -> silence 2350) with a short utterance: the cap can't drop below
+        // 3 × the silence window (7050), not the flat 5000 floor.
+        ListeningSettings.TryFromCalibration(
+            Typical with { LongestPauseMs = 2000, LongestUtteranceMs = 300 }, out var s);
+        Assert.Equal(7050, s.MaxMs);
+    }
+
+    [Fact]
+    public void An_utterance_of_exactly_the_minimum_length_is_speech()
+    {
+        // The blip floor is inclusive at 200 ms.
+        Assert.True(ListeningSettings.TryFromCalibration(Typical with { LongestUtteranceMs = 200 }, out _));
+    }
+
+    [Fact]
+    public void Speech_exactly_at_the_ratio_floor_is_not_enough()
+    {
+        // The gate needs speech to EXCEED 1.5× the room, not merely meet it: 0.75 == 0.5 × 1.5 fails.
+        Assert.False(ListeningSettings.TryFromCalibration(new(0.5, 0.75, 400, 2200), out _));
+    }
 }

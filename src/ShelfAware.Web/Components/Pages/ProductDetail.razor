@@ -803,13 +803,15 @@ else
             return;
         }
 
-        // Per-receipt unit price for this product, so each purchase can show what it cost. Size rides
-        // along so the est. cost/buy can price the recommended size, not a blend across sizes.
-        var priceByReceipt = await db.ReceiptLines
+        // Every priced line for this product, with its receipt date and size. Two derived views:
+        // priceLookup (per-receipt average) prices each purchase in the table below and rides into the
+        // est. cost/buy; the chart series (further down) is built from these same raw lines so it matches
+        // Trends and Reports line-for-line.
+        var pricedLines = await db.ReceiptLines
             .Where(l => l.ProductId == Id && l.UnitPrice != null && l.ReceiptId != 0)
-            .Select(l => new { l.ReceiptId, l.Size, Price = l.UnitPrice!.Value })
+            .Select(l => new { l.ReceiptId, l.Size, Price = l.UnitPrice!.Value, Date = l.Receipt!.PurchasedAt })
             .ToListAsync();
-        var priceLookup = priceByReceipt
+        var priceLookup = pricedLines
             .GroupBy(x => x.ReceiptId)
             .ToDictionary(g => g.Key, g => g.Average(x => x.Price));
 
@@ -826,7 +828,7 @@ else
         // Price the recommended (dominant) size specifically; fall back to the overall average.
         // ProductPriceIndex folds the loose/"each" spellings together, so per-each produce
         // prices match a null recommended size.
-        var sizePrices = new ProductPriceIndex(priceByReceipt.Select(x => (Id, x.Size, x.Price)));
+        var sizePrices = new ProductPriceIndex(pricedLines.Select(x => (Id, x.Size, x.Price)));
         var freshEstimate = ShoppingEstimator.For(loaded, freshPrediction, today, sizePrices.PriceFor(Id, freshPrediction.RecommendedSize));
 
         product = loaded;
@@ -849,21 +851,23 @@ else
         priceSeries.Clear();
         chartSizeLabel = null;
 
-        var pricePoints = new List<PricePoint>();
         var ordered = loaded.Purchases.OrderBy(p => p.PurchasedAt).ToList();
         for (var i = 0; i < ordered.Count; i++)
         {
             var pe = ordered[i];
             int? gap = i > 0 ? pe.PurchasedAt.DayNumber - ordered[i - 1].PurchasedAt.DayNumber : null;
             decimal? price = pe.ReceiptId is { } rid && priceLookup.TryGetValue(rid, out var pr) ? pr : null;
-            if (price is { } pv) pricePoints.Add(new PricePoint(pe.Size, pe.PurchasedAt, pv));
             history.Add(new PurchaseRow(pe.Id, pe.PurchasedAt, gap, pe.Quantity, pe.Size, pe.Variety, pe.Brand, price));
         }
         history.Reverse(); // most recent first
 
         // The chart plots ONE size's prices (the dominant bucket) so it shows a real trend — $/bag next
-        // to $/each is a cliff, not a price move. The purchase table below still shows every size's
-        // actual price; the caption names the charted size when the product mixes sizes.
+        // to $/each is a cliff, not a price move. Built from the SAME raw receipt lines Trends and Reports
+        // use and routed through the SAME PriceSeries.Dominant, so the three can never disagree about a
+        // trend: it collapses each shopping trip to one point (a line listed twice on one receipt is not a
+        // price move) and drops $0 lines. The purchase table below still shows every purchase's own price;
+        // the caption names the charted size when the product mixes sizes.
+        var pricePoints = pricedLines.Select(x => new PricePoint(x.Size, x.Date, x.Price)).ToList();
         if (PriceSeries.Dominant(pricePoints) is { } series)
         {
             priceSeries.AddRange(series.Points.Select(pt => pt.UnitPrice));

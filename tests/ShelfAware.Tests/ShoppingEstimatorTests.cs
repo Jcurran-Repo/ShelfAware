@@ -325,4 +325,71 @@ public class ShoppingEstimatorTests
 
         Assert.Equal("Acme +1", ShoppingEstimator.UsualBrandOf(purchases));
     }
+
+    [Fact]
+    public void Basis_defaults_to_empty() =>
+        Assert.Equal("", new ProductEstimate
+        {
+            ProductId = 1, Name = "x", Category = Category.Pantry, Status = PredictionStatus.Unknown,
+        }.Basis);
+
+    [Fact]
+    public void CountNote_names_the_count_and_when_it_was_taken()
+    {
+        var estimate = new ProductEstimate
+        {
+            ProductId = 1, Name = "x", Category = Category.Pantry, Status = PredictionStatus.Stocked,
+            SuppressedByCount = true, CountOnHand = 3m, CountedOn = new DateOnly(2026, 3, 12),
+        };
+
+        Assert.Contains("You have", estimate.CountNote);
+        Assert.Contains(", counted Mar 12", estimate.CountNote); // the dated suffix, not just the count
+    }
+
+    [Fact]
+    public void CountNote_omits_the_dated_suffix_when_no_count_date_is_known()
+    {
+        // The other arm of the ternary: suppressed, but with no count date, the note is just "You have 3"
+        // — no ", counted …" tail. Pins the empty-string branch the dated tests never reach.
+        var estimate = new ProductEstimate
+        {
+            ProductId = 1, Name = "x", Category = Category.Pantry, Status = PredictionStatus.Stocked,
+            SuppressedByCount = true, CountOnHand = 3m, CountedOn = null,
+        };
+
+        Assert.Equal("You have 3", estimate.CountNote);
+    }
+
+    [Fact]
+    public void A_zero_quantity_purchase_is_not_a_trip()
+    {
+        // The trip total filters quantity > 0: a 0-quantity line (a misread or a comp) isn't a purchase
+        // of anything, so it never enters the typical-buy median.
+        var e = ShoppingEstimator.For(
+            ProductWith((0, 0m), (10, 2m)), Prediction(PredictionStatus.Stocked, null), D(30), null);
+
+        Assert.Equal(2m, e.TypicalQuantity); // the lone real trip of 2, not the mean of 0 and 2
+    }
+
+    [Fact]
+    public void A_mixed_whole_and_fractional_history_stays_fractional()
+    {
+        // allWhole must be ALL, not ANY: one fractional trip means the item is weight-priced, so the
+        // buy quantity stays precise rather than being rounded up.
+        var e = ShoppingEstimator.For(
+            ProductWith((0, 1m), (10, 1.5m)), Prediction(PredictionStatus.Stocked, null), D(30), null);
+
+        Assert.Equal(1.25m, e.RecommendedQuantity); // median(1, 1.5), NOT ceil'd to 2
+    }
+
+    [Fact]
+    public void The_typical_quantity_is_the_median_of_sorted_trips()
+    {
+        // Trips arrive in purchase order [3, 1, 2]; the median needs them sorted (-> 2), not the raw
+        // middle element (1).
+        var e = ShoppingEstimator.For(
+            ProductWith((0, 3m), (10, 1m), (20, 2m)), Prediction(PredictionStatus.Stocked, null), D(30), null);
+
+        Assert.Equal(2m, e.TypicalQuantity);
+    }
 }

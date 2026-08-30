@@ -495,3 +495,7 @@ tests/ShelfAware.Evals/fixtures/*.gif
 
 # Claude Code review-agent worktrees (session scratch, never part of the repo)
 .claude/worktrees/
+
+# Stryker.NET mutation-testing output (HTML reports + logs, regenerated per run).
+# The score history is tracked in docs/mutation-testing.md, not by committing these.
+**/StrykerOutput/

@@ -52,7 +52,7 @@ public static class CookAlongCommands
     [
         "next", "next step", "next one", "up next", "on to the next", "onto the next", "next up",
         "go on", "go ahead", "continue", "keep going", "carry on", "move on", "move along", "onward",
-        "then", "then what", "and then", "what's next", "what is next", "whats next",
+        "then", "then what", "what's next", "what is next", "whats next",
         "what do i do next", "what next", "done", "got it", "did it", "that's done", "thats done",
         "finished", "i'm done with that", "im done with that",
     ];
@@ -76,9 +76,13 @@ public static class CookAlongCommands
         "pause", "stop for a second", "hold",
     ];
 
+    // NOTE: entries here must survive Utterance.Core — a trailing "now" is filler and gets stripped, so
+    // "back now" would reduce to "back" (→ Back) and "carry on now" to "carry on" (→ Next). Both were
+    // dead as written and were removed; if a "…now" resume phrase is ever wanted, it needs its stripped
+    // form to be unambiguous or the intent won't be Resume.
     private static readonly string[] Resume =
     [
-        "i'm back", "im back", "back now", "ready", "i'm ready", "im ready", "resume", "carry on now",
+        "i'm back", "im back", "ready", "i'm ready", "im ready", "resume",
         "let's go", "lets go", "go",
     ];
 
@@ -103,6 +107,9 @@ public static class CookAlongCommands
     // Anchored, because the whole utterance must be the command: "what goes in at step 3" is a question.
     private static readonly Regex StepTarget = new(
         @"^(?:(?:go|jump|skip|move|take me|read me|read|start)\s+)?(?:(?:back|over)\s+)?(?:(?:to|at|from|on)\s+)?step\s+(?<n>\w+)$",
+        // Stryker disable once Bitwise: | → & (which yields RegexOptions.None) is unobservable here — the
+        // pattern has no IgnoreCase, so CultureInvariant is inert, and Compiled only affects speed. The
+        // step sweep passes identically either way.
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     // Speech-to-text may hand back either "step 3" or "step three" for the same words.
@@ -144,7 +151,9 @@ public static class CookAlongCommands
         if (!m.Success) return null;
 
         var n = m.Groups["n"].Value;
-        if (int.TryParse(n, out var digits)) return digits >= 0 ? digits : null;
+        // The captured number is \w+, so it never carries a sign — a parsed value is always ≥ 0 and needs
+        // no floor. (An overflowing "step 99999999999999" fails TryParse and falls through to the words.)
+        if (int.TryParse(n, out var digits)) return digits;
 
         var word = Array.IndexOf(NumberWords, n);
         return word >= 0 ? word : null;

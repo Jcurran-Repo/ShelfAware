@@ -1,5 +1,6 @@
 @page "/receipts"
 @using ShelfAware.Core.Evaluation
+@using ShelfAware.Core.Ingest
 @using ShelfAware.Core.Shopping
 @implements IAsyncDisposable
 @inject IHouseholdDbFactory DbFactory
@@ -113,7 +114,17 @@ else
                                         <span class="muted"> · @brand</span>
                                     }
                                 </td>
-                                <td>@line.Quantity.ToString("0.##")</td>
+                                <td>
+                                    @line.Quantity.ToString("0.##")
+                                    @if (line.QuantityFlag != QuantityFlag.None)
+                                    {
+                                        // aria-label carries the full explanation (not just "pack?") so screen-reader and
+                                        // touch users — who can't hover for the title — get the reason too. This is the
+                                        // persistent safety net, so its meaning must be reachable without a mouse.
+                                        var packNote = QuantityAnomaly.Describe(line.QuantityFlag, line.Quantity, line.Size);
+                                        <span class="chip chip-duesoon" title="@packNote" aria-label="Possible pack-size misread. @packNote">pack?</span>
+                                    }
+                                </td>
                                 <td>@(SizeFormat.Normalize(line.Size) is { Length: > 0 } size ? size : "—")</td>
                                 <td>@(line.UnitPrice is { } up ? up.ToString("C") : "—")</td>
                                 <td>@(ReceiptTotals.LineTotal(line) is { } lt ? lt.ToString("C") : "—")</td>

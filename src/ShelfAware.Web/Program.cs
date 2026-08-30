@@ -267,6 +267,25 @@ builder.Services.AddScoped<ReportResolutionService>();
 // so it can only ever touch their own household's reports. See the class doc.
 builder.Services.AddScoped<ReporterReportService>();
 builder.Services.AddScoped<AdminHouseholdService>(); // the /admin household roster + the Founder grant
+// The operations "at a glance" AI spend across every household — the app's THIRD IgnoreQueryFilters,
+// admin-gated + AsNoTracking + aggregate-only. See the class doc.
+builder.Services.AddScoped<AdminAiSpendReader>();
+
+// ---- Admin dashboard: live GitHub Actions CI status ----
+// A singleton with a short cache so every admin shares one fetch and we stay far under GitHub's
+// unauthenticated rate limit; it degrades to an error state (never throws) if GitHub can't be reached.
+builder.Services.AddOptions<GitHubOptions>().Bind(builder.Configuration.GetSection(GitHubOptions.SectionName));
+builder.Services.AddHttpClient("github", c =>
+{
+    c.BaseAddress = new Uri("https://api.github.com/");
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("ShelfAware-Admin"); // GitHub requires a User-Agent
+    c.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+    c.Timeout = TimeSpan.FromSeconds(8);
+});
+builder.Services.AddSingleton<ICiStatusProvider, GitHubCiStatus>();
+
+// The "Tests & quality" card reads the CI-written test-status.json (committed + served like eval-results.json).
+builder.Services.AddSingleton<ITestStatusProvider, TestStatusReader>();
 
 // ---- Who's using the app: the admin "logins + who's online" view ----
 // LoginAudit persists per-account login counts (auth.db operator data, like the error log; read through

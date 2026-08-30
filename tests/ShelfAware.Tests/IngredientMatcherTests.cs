@@ -182,4 +182,126 @@ public class IngredientMatcherTests
         // Used by the adapt guard to confirm the model actually used the chosen swap.
         Assert.Equal(expected, IngredientMatcher.IsMentionedIn(form, names));
     }
+
+    [Fact]
+    public void IsMentionedIn_of_a_blank_form_is_false()
+    {
+        // A form with no core words can't be "mentioned" in anything — the need.Count > 0 guard.
+        Assert.False(IngredientMatcher.IsMentionedIn("  ", ["chicken thighs"]));
+        Assert.False(IngredientMatcher.IsMentionedIn("of the", ["chicken thighs"])); // all-trivial words
+    }
+
+    [Fact]
+    public void Every_trivial_modifier_reduces_out()
+    {
+        // The Trivial set is the documented tuning knob: each entry must drop so "<modifier> chicken" is
+        // the same food as "chicken". Pins every word individually — a dropped entry would leave its
+        // modifier as a core token and break the equality.
+        string[] trivial =
+        [
+            "fresh", "frozen", "canned", "jarred", "dried", "dry", "raw", "cooked", "boneless", "skinless",
+            "organic", "natural", "ripe", "unsalted", "salted", "extra", "virgin", "large", "small", "medium",
+            "jumbo", "baby", "mini", "sliced", "diced", "chopped", "minced", "shredded", "grated", "crushed",
+            "cubed", "oz", "ounce", "ounces", "lb", "lbs", "pound", "pounds", "cup", "cups", "clove", "cloves",
+            "can", "cans", "package", "packages", "pack", "and", "of", "with", "in", "a", "an", "the", "or",
+        ];
+
+        foreach (var word in trivial)
+            Assert.True(
+                IngredientMatcher.IsSameFood("chicken", $"{word} chicken"),
+                $"trivial modifier '{word}' should reduce out");
+    }
+
+    [Theory]
+    [InlineData("berry", "berries")]      // ies -> y
+    [InlineData("tomato", "tomatoes")]    // oes -> o
+    [InlineData("glass", "glasses")]      // ses -> s(s)
+    [InlineData("box", "boxes")]          // xes -> x
+    [InlineData("peach", "peaches")]      // ches -> ch
+    [InlineData("dish", "dishes")]        // shes -> sh
+    [InlineData("pepper", "peppers")]     // plain s -> (drop)
+    public void A_plural_matches_its_singular(string singular, string plural)
+    {
+        // The Singular() suffix rules: each plural form names the same food as its singular. Pins the
+        // suffix strings and the branches of the ||-chain — a broken rule leaves the plural unmatched.
+        Assert.True(IngredientMatcher.IsSameFood(singular, plural));
+        Assert.True(IngredientMatcher.IsSameFood(plural, singular)); // and symmetrically
+    }
+
+    [Fact]
+    public void A_double_s_word_is_not_singularized_into_a_different_word()
+    {
+        // The !EndsWith("ss") guard: "glass" must stay "glass" (not "glas"), so a glass of something is
+        // not confused with a "glas" of anything. Pins that the plain-s rule spares "ss" endings.
+        Assert.False(IngredientMatcher.IsSameFood("glass", "gla")); // sanity: unrelated
+        Assert.True(IngredientMatcher.IsSameFood("glass noodles", "glass noodle")); // noodle(s) matches; glass stays glass
+    }
+
+    [Fact]
+    public void A_mixed_letter_and_digit_token_is_kept_not_stripped_as_a_number()
+    {
+        // Only PURE numbers are stripped (the !t.All(char.IsDigit) filter), so "v8" stays a core word
+        // and a V8-juice product covers a "v8" ingredient. Mutating All->Any would drop any token with
+        // a digit and lose it.
+        Assert.True(IngredientMatcher.IsSatisfied("v8", matchedProduct: null, [P("v8 juice")]));
+    }
+
+    [Fact]
+    public void Punctuation_between_words_separates_them_into_tokens()
+    {
+        // Tokenize turns every non-alphanumeric run into a space, so "mac & cheese" is {mac, cheese} —
+        // the same food as "mac cheese". If punctuation were kept (the conditional-always-true mutant),
+        // "&" would survive as a spurious core token and the two would no longer match.
+        Assert.True(IngredientMatcher.IsSameFood("mac cheese", "mac & cheese"));
+    }
+
+    [Fact]
+    public void A_blank_matched_product_does_not_ground_match_a_junk_named_product()
+    {
+        // The `matchedProduct is { Length: > 0 }` guard: a blank grounded name must NOT enter the
+        // grounded leg, where its empty identity key would match any product whose junk name ("!!")
+        // ALSO folds to the empty key. A junk-named product is a reachable pantry (the add form only
+        // refuses trimmed-blank names) — the adversarial review swapped this fixture from the
+        // impossible P("") to the creatable P("!!"). The blank link falls to the core-word rule,
+        // which a junk name cannot satisfy.
+        Assert.Empty(IngredientMatcher.Covering("chicken breast", matchedProduct: "", [P("!!")]));
+    }
+
+    [Fact]
+    public void IsSameFood_needs_coverage_in_BOTH_directions()
+    {
+        // A more specific candidate covers the ingredient one way but not back, so it is NOT the same
+        // food. Pins the AND between the two Covers checks — an OR would call these equal.
+        Assert.False(IngredientMatcher.IsSameFood("chicken", "chicken breast"));
+        Assert.False(IngredientMatcher.IsSameFood("chicken breast", "chicken"));
+    }
+
+    [Fact]
+    public void A_trivial_only_phrase_is_never_the_same_food_as_anything_even_its_own_plural()
+    {
+        // "pack" is a Trivial modifier (no core words); "packs" is not in the set, and the pair
+        // collides through Singular. Covers() of an EMPTY need is vacuously true and the reverse side
+        // still matches ("packs" singularizes onto the raw-tokenized "pack"), so the two non-empty
+        // guards are the ONLY thing standing between a bare unit word and a false merge. Found by the
+        // adversarial review as a killing input for loosening either guard — with the whole suite
+        // staying green, which is why this pin exists.
+        Assert.False(IngredientMatcher.IsSameFood("pack", "packs"));
+        Assert.False(IngredientMatcher.IsSameFood("packs", "pack"));
+    }
+
+    [Theory]
+    [InlineData("ie", "ies")]   // a bare 3-letter "ies" uses the plain-s drop, not the ies->y rule
+    [InlineData("oe", "oes")]   // a bare 3-letter "oes" likewise falls to plain-s (the -es chain needs length > 3)
+    public void The_multi_letter_es_rules_apply_only_above_the_length_boundary(string singular, string plural)
+    {
+        // The `Length > 3` guards keep the multi-letter -es rules off the bare three-letter suffixes,
+        // which fall through to the plain-s drop instead. Pins those boundaries.
+        //
+        // These tokens are deliberately NON-food: no food phrase contains a bare 3-letter suffix, so
+        // no domain input reaches this boundary — a test is still the honest close (the project
+        // rejects "domain-equivalent" annotations: unreachability claims have been proven wrong here
+        // before). They pin the CRUDE singularizer's edge; if Singular() is ever replaced wholesale,
+        // delete these two rows in that commit rather than contorting the replacement to match them.
+        Assert.True(IngredientMatcher.IsSameFood(singular, plural));
+    }
 }

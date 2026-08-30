@@ -102,4 +102,37 @@ public class SpendForecastTests
 
         Assert.Equal(3m, total); // D(0), D(1), D(2)
     }
+
+    [Fact]
+    public void InWindow_ChargesALandingExactlyOnTheWindowStart()
+    {
+        // The charge test is `day >= windowStart`, inclusive: a buy that lands on the first window day
+        // (and is still in the future) counts.
+        var total = SpendForecast.InWindow(
+            D(10), intervalDays: 100, today: D(9), windowStart: D(10), windowEnd: D(11), costPerBuy: 5m);
+
+        Assert.Equal(5m, total); // the single D(10) landing
+    }
+
+    [Fact]
+    public void InWindow_DoesNotChargeALandingExactlyOnToday()
+    {
+        // The charge test is strictly `day > today`: a purchase falling on today itself is one the app
+        // is telling the household about NOW, not a future cost, so it isn't billed to the window.
+        var total = SpendForecast.InWindow(
+            D(10), intervalDays: 100, today: D(10), windowStart: D(0), windowEnd: D(11), costPerBuy: 5m);
+
+        Assert.Equal(0m, total); // the only landing, D(10), is today -> excluded
+    }
+
+    [Fact]
+    public void InWindow_IsBoundedByTheBackstopAgainstAnAbsurdWindow()
+    {
+        // The loop is normally bounded by the window; the steps < 4000 backstop caps a pathological
+        // wide window with a 1-day step at 4000 charges rather than walking the whole 5000-day span.
+        var total = SpendForecast.InWindow(
+            D(1), intervalDays: 1, today: D(0), windowStart: D(1), windowEnd: D(5000), costPerBuy: 1m);
+
+        Assert.Equal(4000m, total);
+    }
 }

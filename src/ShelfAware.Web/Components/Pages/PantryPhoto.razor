@@ -101,7 +101,11 @@ else if (phase == Phase.Review)
                 <button type="button" class="secondary" @onclick="() => SetAll(true)" disabled="@confirming">Tick all</button>
                 <button type="button" class="secondary" @onclick="() => SetAll(false)" disabled="@confirming">Untick all</button>
             </div>
-            <div class="table-scroll table-scroll--capped">
+            @* --wide (72rem, the same tier the Products grid uses): this 7-column review grid is wider
+               than the reading column but far narrower than the receipt grid, so it takes the moderate
+               wide tier rather than the receipt grid's --xwide (see app.css). --capped keeps the height
+               cap + sticky header. *@
+            <div class="table-scroll table-scroll--capped table-scroll--wide">
             <table>
                 <caption class="visually-hidden">Items found in your photos, to review before counting</caption>
                 <thead>

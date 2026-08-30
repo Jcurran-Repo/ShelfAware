@@ -10,16 +10,24 @@ namespace ShelfAware.Core.Domain;
 /// </summary>
 public static class SizeBucket
 {
-    private static readonly HashSet<string> EachSizes =
-        new(StringComparer.OrdinalIgnoreCase) { "", "each", "ea", "ea.", "per each", "1 each", "1 ct", "1ct", "loose", "single" };
-
     public const string EachKey = "each";
 
     /// <summary>The each-family collapses to <see cref="EachKey"/>; anything else groups by its
-    /// trimmed, lowercased text.</summary>
+    /// trimmed, lowercased text. The spellings are matched in the method body (not held in a static
+    /// set) deliberately: a static readonly collection's string literals are initialised once and
+    /// cached, so mutation testing can never toggle them — inline, each spelling is a live, killable
+    /// mutant pinned by a test. Case is folded to lowercase first, so the ordinal patterns below are
+    /// exhaustive (every spelling is already lowercase).
+    /// <para>⚠️ The literal "each" is deliberately NOT in the pattern: it already equals
+    /// <see cref="EachKey"/>, so an input of "each" returns "each" through the <c>: s</c> fallback
+    /// anyway. Listing it would add a mutation-equivalent no-op (Stryker can't narrowly suppress one
+    /// literal in a multi-alternative pattern). Do not "restore" it. If <see cref="EachKey"/> ever
+    /// stops being "each", this method must be revisited.</para></summary>
     public static string Key(string? size)
     {
-        var s = (size ?? "").Trim();
-        return EachSizes.Contains(s) ? EachKey : s.ToLowerInvariant();
+        var s = (size ?? "").Trim().ToLowerInvariant();
+        return s is "" or "ea" or "ea." or "per each" or "1 each" or "1 ct" or "1ct" or "loose" or "single"
+            ? EachKey
+            : s;
     }
 }

@@ -3,11 +3,16 @@
 @using Microsoft.Extensions.Options
 @using ShelfAware.Web.Auth
 @using ShelfAware.Web.Diagnostics
+@using ShelfAware.Core.Billing
+@using ShelfAware.Core.Evaluation
 @attribute [Authorize(Policy = AdminOptions.PolicyName)]
 @implements IDisposable
 @inject AdminReportReader Reader
 @inject ReportResolutionService Actions
 @inject AdminHouseholdService HouseholdAdmin
+@inject AdminAiSpendReader AiSpend
+@inject ICiStatusProvider Ci
+@inject ITestStatusProvider TestStatus
 @inject IOptions<AdminOptions> AdminConfig
 @inject ErrorLogSink Sink
 @inject OnlinePresence Presence
@@ -37,6 +42,154 @@ else
     {
         <p class="error" role="alert">@actionError</p>
     }
+    <section class="panel">
+        <h2>At a glance</h2>
+        @{
+            // One presence snapshot for the whole page — this tile and the "Online now" section below both
+            // read this `online` (declared here, in the shared else-block scope). Reading presence more than
+            // once could show numbers that disagree for a frame, since it's mutated from other circuits'
+            // threads.
+            var online = Presence.Snapshot();
+            var founderCount = households?.Count(h => h.Tier == HouseholdTier.Founder) ?? 0;
+            int? openBugCount = bugReports?.Count(r => !r.Report.Resolved);
+            int? openErrorCount = errors?.Count(e => !e.Resolved);
+        }
+        <p class="muted">A live snapshot across every household on this deployment. AI cost is what's been
+            recorded this period across all key modes (the host's own keys and any brought in Settings) —
+            the detail is in the panels below.</p>
+        <div class="portfolio">
+            <div class="stat">
+                <div class="stat-value">@(households?.Count.ToString() ?? "…")</div>
+                <div class="stat-label">Household@(households is { Count: 1 } ? "" : "s")@(founderCount > 0 ? $" · {founderCount} Founder" : "")</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">@online.Count</div>
+                <div class="stat-label">Online now</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">@(aiSpend is null ? "…" : AiPricing.FormatMicros(aiSpend.Today.CostMicros))</div>
+                <div class="stat-label">AI today@(aiSpend is null ? "" : $" · {aiSpend.Today.Calls} call{(aiSpend.Today.Calls == 1 ? "" : "s")}")</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">@(aiSpend is null ? "…" : AiPricing.FormatMicros(aiSpend.Month.CostMicros))</div>
+                <div class="stat-label">This month@(aiSpend is null ? "" : $" · {aiSpend.Month.Calls} call{(aiSpend.Month.Calls == 1 ? "" : "s")} · {aiSpend.ActiveHouseholdsThisMonth} active")</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">@(openBugCount?.ToString() ?? "…")</div>
+                <div class="stat-label">Open bug@(openBugCount == 1 ? "" : "s")</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">@(openErrorCount?.ToString() ?? "…")</div>
+                <div class="stat-label">Open error@(openErrorCount == 1 ? "" : "s")</div>
+            </div>
+        </div>
+    </section>
+    @if (Ci.Enabled)
+    {
+        <section class="panel">
+            <h2>Continuous integration</h2>
+            <p class="muted">The latest run of each GitHub Actions workflow — fetched after the page loads and
+                cached a few minutes. Open a run for its full log.</p>
+            @if (ciStatus is null)
+            {
+                <p>Loading…</p>
+            }
+            else if (ciStatus.Error is not null)
+            {
+                <p class="muted">Couldn't reach GitHub just now (@ciStatus.Error) — it'll retry on the next load.</p>
+            }
+            else if (ciStatus.Runs.Count == 0)
+            {
+                <p class="muted">No workflow runs found.</p>
+            }
+            else
+            {
+                <div class="portfolio">
+                    @foreach (var run in ciStatus.Runs)
+                    {
+                        <div class="@CiTileClass(run.Outcome)">
+                            <div class="stat-value">@CiOutcomeLabel(run.Outcome)</div>
+                            <div class="stat-label">
+                                @run.Workflow · @(string.IsNullOrEmpty(run.Branch) ? "—" : run.Branch) ·
+                                <a href="@run.Url" target="_blank" rel="noopener noreferrer">@run.ShortSha</a> ·
+                                @run.UpdatedAt.ToLocalTime().ToString("MMM d, HH:mm")
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </section>
+    }
+    <section class="panel">
+        <h2>Tests &amp; quality</h2>
+        @if (testStatus is null)
+        {
+            <p class="muted">No test snapshot yet. CI writes <code>test-status.json</code> from a real run; it's
+                committed and served like the accuracy figures, so it appears here after the next deploy.</p>
+        }
+        else
+        {
+            <p class="muted">
+                @if (!string.IsNullOrEmpty(testStatus.CommitSha))
+                {
+                    <text>From the run on <code>@testStatus.ShortSha</code>@(string.IsNullOrEmpty(testStatus.Branch) ? "" : $" ({testStatus.Branch})"), </text>
+                }
+                generated @testStatus.GeneratedAt.ToLocalTime().ToString("MMM d, yyyy HH:mm").
+                @if (testStatus.RunUrl is not null)
+                {
+                    <a href="@testStatus.RunUrl" target="_blank" rel="noopener noreferrer">View run</a>
+                }
+            </p>
+            <div class="portfolio">
+                <div class="@(testStatus.AllPassed ? "stat pass" : (testStatus.TotalFailed > 0 ? "stat fail" : "stat"))">
+                    <div class="stat-value">@testStatus.TotalPassed / @testStatus.TotalTests</div>
+                    <div class="stat-label">Tests passing</div>
+                </div>
+                @if (testStatus.TotalFailed > 0)
+                {
+                    <div class="stat fail">
+                        <div class="stat-value">@testStatus.TotalFailed</div>
+                        <div class="stat-label">Failing</div>
+                    </div>
+                }
+                @if (testStatus.Warnings is { } warns)
+                {
+                    <div class="@(warns == 0 ? "stat pass" : "stat")">
+                        <div class="stat-value">@warns</div>
+                        <div class="stat-label">Build warning@(warns == 1 ? "" : "s")</div>
+                    </div>
+                }
+                @if (testStatus.MutationScore is { } mut)
+                {
+                    <div class="@(mut >= 100 ? "stat pass" : "stat")">
+                        <div class="stat-value">@mut.ToString("0.##")%</div>
+                        <div class="stat-label">Core mutation score</div>
+                    </div>
+                }
+            </div>
+            @if (testStatus.Projects.Count > 0)
+            {
+                <table>
+                    <caption class="visually-hidden">Test counts per project</caption>
+                    <thead>
+                        <tr><th>Project</th><th>Passed</th><th>Failed</th><th>Skipped</th><th>Total</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in testStatus.Projects)
+                        {
+                            <tr @key="p.Name">
+                                <td>@p.Name</td>
+                                <td>@p.Passed</td>
+                                <td>@p.Failed</td>
+                                <td>@p.Skipped</td>
+                                <td>@p.Total</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        }
+    </section>
     <section class="panel">
         <h2>Households</h2>
         <p class="muted">Every household on this deployment, its members, and its tier. Grant
@@ -87,12 +240,9 @@ else
     </section>
 
     <section class="panel">
-        @* One snapshot per render, used for BOTH the header count and the list below — reading presence
-           twice could show a header number that disagrees with the rows for a frame (it's mutated from
-           other circuits' threads). Snapshot's Count is the distinct-account count. *@
-        @{
-            var online = Presence.Snapshot();
-        }
+        @* `online` is the single snapshot taken at the top of the block (shared with the glance strip) —
+           reading presence more than once could show a header number that disagrees with the rows for a
+           frame, since it's mutated from other circuits' threads. Count is the distinct-account count. *@
         <h2>Online now (@online.Count)</h2>
         <p class="muted">Accounts with the app open and connected right this moment — this updates live
             as people arrive and leave. Several tabs from one person count as one.</p>
@@ -283,6 +433,51 @@ else
         }
     </section>
 
+    @* The "link" between the audit log and the error log: the household activity trail sits right below
+       the errors, so an operator can see what people were doing around the time an error fired. Read-only
+       (AdminReportReader.ListRecentActivityAsync — admin-gated cross-household). A precise per-error
+       breadcrumb would need to TAG each error with its household + capture the trail at error time, which
+       the singleton logger can't do reliably mid-circuit — a documented follow-up. *@
+    <section class="panel">
+        <h2>Recent activity</h2>
+        <p class="muted">The latest actions across every household — the audit trail from each household's
+            History page, here so you can see what was happening around the time an error fired. Times are
+            this server's local time.</p>
+        @if (activity is null)
+        {
+            <p class="muted">Loading…</p>
+        }
+        else if (activity.Count == 0)
+        {
+            <p class="muted">No recorded activity yet.</p>
+        }
+        else
+        {
+            <div class="table-scroll">
+                <table>
+                    <thead>
+                        <tr><th>When</th><th>Household</th><th>Action</th><th>Where</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var a in activity)
+                        {
+                            <tr class="@(a.Undone ? "muted" : null)">
+                                <td class="muted">@a.When.LocalDateTime.ToString("MMM d, HH:mm:ss")</td>
+                                <td>@a.HouseholdName</td>
+                                <td>@a.Summary@if (a.Undone) {<span class="muted"> (undone)</span>}</td>
+                                <td class="muted">@(a.Source ?? "—")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            @if (activity.Count >= AdminReportReader.MaxActivity)
+            {
+                <p class="muted small">Showing the most recent @AdminReportReader.MaxActivity — older activity is on each household's History page.</p>
+            }
+        }
+    </section>
+
     <section class="panel">
         <h2>Bug reports from households</h2>
         @if (bugReports is { Count: AdminReportReader.MaxReports })
@@ -395,9 +590,14 @@ else
     [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
 
     private IReadOnlyList<ErrorLogEntry>? errors;
+    private IReadOnlyList<AdminActivityRow>? activity;
     private IReadOnlyList<AdminBugReport>? bugReports;
     private IReadOnlyList<UserLoginStat>? loginStats;
     private IReadOnlyList<AdminHousehold>? households;
+    private AiSpendReport? aiSpend;
+    private CiStatus? ciStatus;
+    private bool ciLoaded;
+    private TestStatusReport? testStatus;
     private bool refused;
     private bool subscribed;
     private bool busy;
@@ -419,6 +619,24 @@ else
         Presence.Changed += OnPresenceChanged;
         subscribed = true;
         await RefreshAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // CI status is fetched from GitHub after the first paint, so a slow (or unreachable) GitHub never
+        // blocks the admin page from rendering. The provider never throws — it returns an Error status — so
+        // the only thing to guard is the teardown race (the admin navigated away mid-fetch).
+        if (!firstRender || refused || ciLoaded || !Ci.Enabled) return;
+        ciLoaded = true;
+        try
+        {
+            ciStatus = await Ci.GetAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex) when (ex is ObjectDisposedException or OperationCanceledException)
+        {
+            // The circuit went away between the fetch and the re-render.
+        }
     }
 
     // Fired from the CHANGING circuit's thread (the user who just connected/left), so marshal to THIS
@@ -460,8 +678,11 @@ else
         {
             households = await HouseholdAdmin.ListAsync();
             errors = await Reader.ListErrorsAsync();
+            activity = await Reader.ListRecentActivityAsync();
             bugReports = await Reader.ListBugReportsAsync();
             loginStats = await Reader.ListLoginStatsAsync();
+            aiSpend = await AiSpend.GetAsync();
+            testStatus = TestStatus.Read();
             return true;
         }
         catch (OperationCanceledException) { throw; }
@@ -541,4 +762,22 @@ else
             actionBusy = false;
         }
     }
+
+    // The CI card's outcome → tile styling (.stat.pass/.fail reuse the accuracy page's green/red) and a
+    // short label. The load-bearing status→outcome mapping lives on CiRun.Outcome (unit-tested); these are
+    // just its presentation.
+    private static string CiTileClass(CiOutcome outcome) => outcome switch
+    {
+        CiOutcome.Passed => "stat pass",
+        CiOutcome.Failed => "stat fail",
+        _ => "stat",
+    };
+
+    private static string CiOutcomeLabel(CiOutcome outcome) => outcome switch
+    {
+        CiOutcome.Passed => "✓ Passed",
+        CiOutcome.Failed => "✗ Failed",
+        CiOutcome.Running => "● Running",
+        _ => "—",
+    };
 }
