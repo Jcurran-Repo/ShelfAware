@@ -260,6 +260,9 @@ builder.Logging.AddProvider(new ErrorLogCaptureProvider(errorSink));
 builder.Services.AddSingleton(errorSink);
 builder.Services.AddSingleton<ErrorLogStore>();
 builder.Services.AddHostedService<ErrorLogWriter>();
+// The /about wishlist store — operator data in auth.db beside the error log, admin-only to read. Same
+// shape (an IDbContextFactory-backed store, no per-request state), so a singleton like ErrorLogStore.
+builder.Services.AddSingleton<ShelfAware.Web.Wishlist.WishlistStore>();
 builder.Services.AddScoped<AdminReportReader>();
 // Its write sibling: resolve/reopen, the app's one cross-household write — see the class doc.
 builder.Services.AddScoped<ReportResolutionService>();
@@ -318,6 +321,10 @@ builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection(LlmOptio
 // BillingOptions), so pricing can be retuned in appsettings without a rebuild.
 builder.Services.Configure<ShelfAware.Core.Billing.BillingOptions>(
     builder.Configuration.GetSection(ShelfAware.Core.Billing.BillingOptions.SectionName));
+// The /about wishlist: only FounderPaymentUrl matters, and only to reveal the (config-gated) Founder
+// pre-order button. Absent section = the reserve's tier picker + email still work; no pre-order button.
+builder.Services.Configure<ShelfAware.Web.Wishlist.WishlistOptions>(
+    builder.Configuration.GetSection(ShelfAware.Web.Wishlist.WishlistOptions.SectionName));
 
 // The provider seam: the AI services depend only on IChatClient, so the provider is a swap and the logic
 // stays fakeable in tests. Under BYOK each circuit gets its own IChatClient built from that visitor's
@@ -458,11 +465,19 @@ builder.Services.AddRateLimiter(o =>
     // Razor-component form posts aren't attachable endpoints for a named policy, so the global
     // limiter matches them by path; everything else passes through unlimited.
     o.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(ctx =>
-        HttpMethods.IsPost(ctx.Request.Method) && ctx.Request.Path.StartsWithSegments("/Account")
-            ? RateLimitPartition.GetFixedWindowLimiter(
-                "account:" + (ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown"),
-                _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 })
-            : RateLimitPartition.GetNoLimiter("unlimited"));
+    {
+        var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        if (HttpMethods.IsPost(ctx.Request.Method) && ctx.Request.Path.StartsWithSegments("/Account"))
+            return RateLimitPartition.GetFixedWindowLimiter("account:" + ip,
+                _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 });
+        // The public /about wishlist POST is a public write — a per-IP brake on top of the page's
+        // localStorage flag + honeypot. Generous enough for honest retries (a person reserves once),
+        // tight enough that a hammering script can't meaningfully inflate the soft interest count.
+        if (HttpMethods.IsPost(ctx.Request.Method) && ctx.Request.Path.StartsWithSegments("/about"))
+            return RateLimitPartition.GetFixedWindowLimiter("about:" + ip,
+                _ => new FixedWindowRateLimiterOptions { PermitLimit = 5, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 });
+        return RateLimitPartition.GetNoLimiter("unlimited");
+    });
 });
 
 var app = builder.Build();

@@ -3,6 +3,7 @@ using ShelfAware.Core.Domain;
 using ShelfAware.Web.Auth;
 using ShelfAware.Web.Data;
 using ShelfAware.Web.Diagnostics;
+using ShelfAware.Web.Wishlist;
 
 namespace ShelfAware.Web.Tests;
 
@@ -365,6 +366,29 @@ public class AdditiveSchemaTests : IDisposable
         var granted = await db.Households.AsNoTracking().SingleAsync(h => h.Id == household.Id);
         Assert.Equal(HouseholdTier.Founder, granted.Tier);
         Assert.Equal(new DateTimeOffset(2026, 8, 24, 9, 0, 0, TimeSpan.FromHours(-5)), granted.FounderSince);
+    }
+
+    [Fact]
+    public async Task Creates_the_Wishlist_table_on_an_older_auth_db_with_the_fresh_schema()
+    {
+        // The auth-side twin: the /about wishlist is operator data (like the error log), so it lives in
+        // auth.db, and a live deployment's auth file predates it (added 2026-08-30).
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await TableSchemaAsync(db, "Wishlist");
+        Assert.NotEmpty(fresh);
+
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE Wishlist;");
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // second boot — a no-op, not a table-exists error
+
+        // Byte-identical to a fresh file's — the pin on EnsureTable's premise (DDL from EF's create
+        // script, no second schema copy).
+        Assert.Equal(fresh, await TableSchemaAsync(db, "Wishlist"));
+
+        db.Wishlist.Add(new WishlistEntry { Tier = "aware", Email = "jordan@example.com", CreatedAt = DateTimeOffset.Now });
+        await db.SaveChangesAsync();
+        Assert.Single(await db.Wishlist.ToListAsync());
     }
 
     [Fact]

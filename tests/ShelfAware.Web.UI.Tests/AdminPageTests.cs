@@ -58,6 +58,7 @@ public class AdminPageTests : PageTestContext
         Services.AddSingleton(presence);
         Services.AddSingleton<IDbContextFactory<AuthDbContext>>(authDb);
         Services.AddSingleton(new ErrorLogStore(authDb));
+        Services.AddSingleton(new ShelfAware.Web.Wishlist.WishlistStore(authDb));
         Services.AddSingleton<LoginAudit>();
         Services.AddScoped<AdminReportReader>();
         Services.AddScoped<ReportResolutionService>();

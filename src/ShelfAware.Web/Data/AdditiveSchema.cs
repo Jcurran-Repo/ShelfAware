@@ -149,6 +149,11 @@ public static class AdditiveSchema
         // FounderSince, which behaves exactly as a pre-tier household did.
         EnsureColumn(db, table: "Households", column: "Tier", definition: "INTEGER NOT NULL DEFAULT 0");
         EnsureColumn(db, table: "Households", column: "FounderSince", definition: "TEXT NULL");
+
+        // 2026-08-30: the /about wishlist — pre-launch demand for a hosted Shelf Aware. Operator data,
+        // like the error log, so it lives here rather than in any household's pantry. A new table —
+        // existing rows unaffected.
+        EnsureTable(db, table: "Wishlist");
     }
 
     /// <summary>Create <paramref name="table"/> (and its indexes) on a DB built before it existed. The

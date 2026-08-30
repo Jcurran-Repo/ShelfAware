@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using ShelfAware.Core.Domain;
 using ShelfAware.Web.Auth;
 using ShelfAware.Web.Diagnostics;
+using ShelfAware.Web.Wishlist;
 
 namespace ShelfAware.Web.Data;
 
@@ -29,7 +30,8 @@ public sealed class AdminReportReader(
     AuthenticationStateProvider auth,
     IOptions<AdminOptions> admin,
     ErrorLogStore errors,
-    LoginAudit logins)
+    LoginAudit logins,
+    WishlistStore wishlist)
 {
     /// <summary>The admin page loads at most this many reports (open ones first, newest within
     /// each half — ListBugReportsAsync's ordering) — the same bounded posture as the error log's
@@ -118,6 +120,26 @@ public sealed class AdminReportReader(
     {
         await RequireAdminAsync();
         return await logins.ListAsync(ct);
+    }
+
+    /// <summary>The /about wishlist overview (auth.db operator data) — the soft interest total, the
+    /// trusted distinct-email count, and the tier breakdown. Admin-gated like every read here; the
+    /// reserve list is never served to anyone but the admin. No IgnoreQueryFilters: this is auth.db
+    /// operator data with no query filter, so there is no tenancy bypass to guard, only the email
+    /// exposure — which the gate covers.</summary>
+    public async Task<WishlistSummary> GetWishlistSummaryAsync(CancellationToken ct = default)
+    {
+        await RequireAdminAsync();
+        return await wishlist.SummarizeAsync(ct);
+    }
+
+    /// <summary>The wishlist notify list — one row per distinct email with its latest chosen tier — for
+    /// the admin to export and mail when hosting is ready. Admin-gated: these are the addresses people
+    /// trusted us with.</summary>
+    public async Task<IReadOnlyList<WishlistContact>> ListWishlistContactsAsync(CancellationToken ct = default)
+    {
+        await RequireAdminAsync();
+        return await wishlist.ContactsAsync(ct);
     }
 
     private async Task RequireAdminAsync()

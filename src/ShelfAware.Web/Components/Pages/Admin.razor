@@ -5,8 +5,11 @@
 @using ShelfAware.Web.Diagnostics
 @using ShelfAware.Core.Billing
 @using ShelfAware.Core.Evaluation
+@using ShelfAware.Web.Services
+@using ShelfAware.Web.Wishlist
 @attribute [Authorize(Policy = AdminOptions.PolicyName)]
 @implements IDisposable
+@inject IJSRuntime JS
 @inject AdminReportReader Reader
 @inject ReportResolutionService Actions
 @inject AdminHouseholdService HouseholdAdmin
@@ -236,6 +239,68 @@ else
                     }
                 </tbody>
             </table>
+        }
+    </section>
+
+    <section class="panel">
+        <h2>Hosted wishlist</h2>
+        <p class="muted">Pre-launch demand for a HOSTED Shelf Aware, from the <a href="/about">/about</a> page.
+            The interest total is soft (a public one-click counter can't be made fraud-proof); the distinct
+            emails are the signal worth acting on — and your launch list. Bounded at @WishlistStore.MaxRows rows.</p>
+        @if (wishlistSummary is null)
+        {
+            <p>Loading…</p>
+        }
+        else
+        {
+            <div class="portfolio">
+                <div class="stat">
+                    <div class="stat-value">@wishlistSummary.Total</div>
+                    <div class="stat-label">Interest (soft)</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value">@wishlistSummary.DistinctEmails</div>
+                    <div class="stat-label">Reserved email@(wishlistSummary.DistinctEmails == 1 ? "" : "s")</div>
+                </div>
+                @foreach (var t in WishlistTiers.All)
+                {
+                    <div class="stat">
+                        <div class="stat-value">@(wishlistSummary.ByTier.TryGetValue(t.Key, out var n) ? n : 0)</div>
+                        <div class="stat-label">@t.Name</div>
+                    </div>
+                }
+            </div>
+            @if (wishlistContacts is { Count: > 0 })
+            {
+                <p>
+                    <button class="secondary" @onclick="CopyWishlistEmailsAsync" disabled="@(busy || actionBusy)">
+                        Copy @wishlistContacts.Count email@(wishlistContacts.Count == 1 ? "" : "s")
+                    </button>
+                </p>
+                @* Persistent announcer (the copy-name precedent): a live region inserted WITH its text
+                   isn't reliably announced, so the slot exists before the copy fills it. *@
+                <div class="visually-hidden" role="status" aria-live="polite">@wishlistCopyStatus</div>
+                <table>
+                    <caption class="visually-hidden">Wishlist notify list — one row per email, its latest tier</caption>
+                    <thead>
+                        <tr><th>Email</th><th>Tier</th><th>When</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var c in wishlistContacts)
+                        {
+                            <tr @key="c.Email">
+                                <td>@c.Email</td>
+                                <td>@(WishlistTiers.ByKey(c.Tier)?.Name ?? c.Tier)</td>
+                                <td>@c.SignedUpAt.ToString("MMM d, yyyy")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            else
+            {
+                <p class="muted">No emails yet — any anonymous interest is counted above.</p>
+            }
         }
     </section>
 
@@ -594,6 +659,9 @@ else
     private IReadOnlyList<AdminBugReport>? bugReports;
     private IReadOnlyList<UserLoginStat>? loginStats;
     private IReadOnlyList<AdminHousehold>? households;
+    private WishlistSummary? wishlistSummary;
+    private IReadOnlyList<WishlistContact>? wishlistContacts;
+    private string? wishlistCopyStatus;
     private AiSpendReport? aiSpend;
     private CiStatus? ciStatus;
     private bool ciLoaded;
@@ -681,6 +749,8 @@ else
             activity = await Reader.ListRecentActivityAsync();
             bugReports = await Reader.ListBugReportsAsync();
             loginStats = await Reader.ListLoginStatsAsync();
+            wishlistSummary = await Reader.GetWishlistSummaryAsync();
+            wishlistContacts = await Reader.ListWishlistContactsAsync();
             aiSpend = await AiSpend.GetAsync();
             testStatus = TestStatus.Read();
             return true;
@@ -761,6 +831,19 @@ else
         {
             actionBusy = false;
         }
+    }
+
+    /// <summary>Export the notify list to the clipboard — newline-separated addresses, ready to paste into
+    /// a mail tool's BCC. Reuses the app's clipboard posture (ClipboardCopy.TryWriteAsync — catches a
+    /// refused clipboard so a denial can't tear the circuit down) and reports through the announcer.</summary>
+    private async Task CopyWishlistEmailsAsync()
+    {
+        if (wishlistContacts is null or { Count: 0 }) return;
+        var text = string.Join("\n", wishlistContacts.Select(c => c.Email));
+        var ok = await ClipboardCopy.TryWriteAsync(JS, Logger, text);
+        wishlistCopyStatus = ok
+            ? $"Copied {wishlistContacts.Count} email address{(wishlistContacts.Count == 1 ? "" : "es")}."
+            : "Couldn't copy — select the list and copy it manually.";
     }
 
     // The CI card's outcome → tile styling (.stat.pass/.fail reuse the accuracy page's green/red) and a

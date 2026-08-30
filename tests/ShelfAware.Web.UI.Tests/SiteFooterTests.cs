@@ -9,9 +9,10 @@ using ShelfAware.Web.Diagnostics;
 
 namespace ShelfAware.Web.UI.Tests;
 
-/// <summary>The problem-reporting entry points: the footer exists only where an admin exists, the
-/// report link carries where the visitor currently is, and the Admin link shows only to the
-/// configured admin (via the Admin policy).</summary>
+/// <summary>The footer entry points: it ALWAYS renders the public /about link (a page every visitor
+/// should reach), while the problem-reporting + Admin links stand down where no admin exists. The
+/// report link carries where the visitor currently is, and the Admin link shows only to the configured
+/// admin (via the Admin policy).</summary>
 public class SiteFooterTests : PageTestContext
 {
     private readonly AdminOptions adminOptions = new() { Emails = ["jordan@test.local"] };
@@ -61,12 +62,23 @@ public class SiteFooterTests : PageTestContext
     }
 
     [Fact]
-    public void Without_a_configured_admin_the_footer_does_not_exist()
+    public void Without_a_configured_admin_the_footer_keeps_about_but_drops_the_bug_and_admin_links()
     {
         adminOptions.Emails = [];
         var cut = Render<SiteFooter>();
-        Assert.Empty(cut.FindAll("footer"));
-        Assert.Empty(cut.FindAll("a"));
+        // The footer always renders — /about is a public page every visitor should be able to reach.
+        Assert.Contains(cut.FindAll("a"), a => a.GetAttribute("href") == "/about");
+        // …but the problem-reporting + Admin entry points stand down with no admin to read them.
+        Assert.DoesNotContain(cut.FindAll("a"), a => a.TextContent.Contains("Report a bug"));
+        Assert.DoesNotContain(cut.FindAll("a"), a => a.TextContent.Trim() == "Admin");
+    }
+
+    [Fact]
+    public void The_about_link_is_present_even_with_an_admin_configured()
+    {
+        // The public /about link coexists with the gated bug/admin links, never replaced by them.
+        var cut = Render<SiteFooter>();
+        Assert.Contains(cut.FindAll("a"), a => a.GetAttribute("href") == "/about");
     }
 
     [Fact]

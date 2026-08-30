@@ -1,0 +1,232 @@
+@page "/about"
+@attribute [AllowAnonymous]
+@attribute [ExcludeFromInteractiveRouting]
+@layout AboutLayout
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.Extensions.Options
+@using ShelfAware.Web.Wishlist
+@inject WishlistStore Wishlist
+@inject IOptions<WishlistOptions> Options
+@inject ILogger<About> Logger
+
+@* The app's one PUBLIC page (no auth): the story, the music, self-host, and the pre-launch wishlist.
+   Static SSR ([ExcludeFromInteractiveRouting] + PublicLayout) like the Account pages — no circuit for
+   anonymous visitors, and the reserve form is a plain static-SSR POST. The wishlist POST is braked
+   per-IP by the global rate limiter (Program.cs, /about path) on top of the honeypot + localStorage. *@
+
+<PageTitle>About Shelf Aware</PageTitle>
+
+<article class="about">
+    <section class="about-hero">
+        <h1>Shelf Aware</h1>
+        <p class="about-tagline">A home pantry that learns what you buy, notices what's running low, and has the
+            list ready before you do.</p>
+    </section>
+
+    <section class="about-story">
+        <h2>The story</h2>
+        <p>Shelf Aware started at our own kitchen counter — tired of buying a third bottle of soy sauce
+            while genuinely out of the one thing we needed. So it reads your receipts, learns how fast your
+            household actually goes through things, and quietly keeps the shopping list ready before you run
+            out. No barcodes to scan, no inventory to babysit.</p>
+    </section>
+
+    <section class="about-music">
+        <h2>Listen</h2>
+        <p>We got a little carried away: there's a jingle, a full song, and — yes — a lyric video.</p>
+        <div class="about-media">
+            <figure>
+                <figcaption>Jingle</figcaption>
+                <audio controls preload="none" src="media/jingle.mp3">
+                    Your browser can't play audio — <a href="media/jingle.mp3">download the jingle</a>.
+                </audio>
+            </figure>
+            <figure>
+                <figcaption>Full song</figcaption>
+                <audio controls preload="none" src="media/song.mp3">
+                    Your browser can't play audio — <a href="media/song.mp3">download the song</a>.
+                </audio>
+            </figure>
+            <figure class="about-video">
+                <figcaption>Lyric video</figcaption>
+                <video controls preload="none" playsinline src="media/lyric-video.mp4">
+                    Your browser can't play video — <a href="media/lyric-video.mp4">download the lyric video</a>.
+                </video>
+            </figure>
+        </div>
+    </section>
+
+    <section class="about-selfhost">
+        <h2>Run it yourself, free</h2>
+        <p>Shelf Aware is open source (noncommercial) — self-host it, fork it, tinker. Bring your own AI key
+            and it's yours:</p>
+        <pre class="about-snippet"><code>git clone https://github.com/Jcurran-Repo/ShelfAware && cd ShelfAware
+dotnet user-secrets --project src/ShelfAware.Web set "Llm:ApiKey" "sk-ant-..."
+dotnet run --project src/ShelfAware.Web</code></pre>
+        <p><a href="https://github.com/Jcurran-Repo/ShelfAware">See the source on GitHub &rarr;</a></p>
+    </section>
+
+    <section class="about-reserve" id="reserve">
+        <h2>Or get it hosted — zero setup</h2>
+        <p>
+            Rather not run a server? Tell us you'd use a hosted Shelf Aware and we'll build it once enough
+            people are in.
+            @if (interestCount > 0)
+            {
+                <span>So far, <strong>@interestCount</strong> @(interestCount == 1 ? "person is" : "people are") in.</span>
+            }
+        </p>
+
+        @if (reserved)
+        {
+            <div class="callout" role="status" data-wishlist-submitted>
+                Thanks — you're on the list. We'll email you (if you left an address) when hosting is ready.
+                No spam, ever.
+            </div>
+        }
+        else
+        {
+            @* Revealed by wishlist.js for a browser that has already reserved — the static-SSR server can't
+               know (there's no account), so localStorage is the only memory. JS-off visitors just see the
+               form again, which the soft counter tolerates. *@
+            <div class="callout" data-wishlist-done hidden>
+                You're on the list — thanks! We'll let you know when hosting is ready.
+            </div>
+
+            <div data-wishlist-form>
+                <EditForm Model="Input" method="post" OnValidSubmit="ReserveAsync" FormName="reserve">
+                    <DataAnnotationsValidator />
+                    @if (errorMessage is not null)
+                    {
+                        <div class="error" role="alert">@errorMessage</div>
+                    }
+
+                    <fieldset class="about-tiers">
+                        <legend>Which plan would you want?</legend>
+                        <InputRadioGroup @bind-Value="Input.Tier">
+                            @foreach (var t in WishlistTiers.All)
+                            {
+                                <label class="about-tier">
+                                    <InputRadio Value="@t.Key" />
+                                    <span class="about-tier-head">
+                                        <span class="about-tier-name">@t.Name</span>
+                                        <span class="about-tier-price">@t.Price</span>
+                                    </span>
+                                    <span class="about-tier-blurb">@t.Blurb</span>
+                                </label>
+                            }
+                        </InputRadioGroup>
+                        <ValidationMessage For="() => Input.Tier" />
+                    </fieldset>
+
+                    <div class="about-field">
+                        <label for="wl-email">Email <span class="muted">(optional — only to tell you when it's ready)</span></label>
+                        <InputText @bind-Value="Input.Email" id="wl-email" type="email" autocomplete="email"
+                                   placeholder="you@example.com" />
+                        <ValidationMessage For="() => Input.Email" />
+                    </div>
+
+                    @* Honeypot: hidden from people (CSS off-screen + aria-hidden + tabindex -1), a lure for
+                       bots. A filled one is silently dropped in ReserveAsync. Deliberately unvalidated — it
+                       must never block a real submit. *@
+                    <div class="about-hp" aria-hidden="true">
+                        <label for="wl-website">Leave this field empty</label>
+                        <InputText @bind-Value="Input.Website" id="wl-website" tabindex="-1" autocomplete="off" />
+                    </div>
+
+                    <button type="submit" class="about-submit">Count me in</button>
+                    <p class="muted about-fineprint">One tap, no account. We store your choice (and email, if
+                        you give one) to gauge interest — nothing else, never shared.</p>
+                </EditForm>
+            </div>
+        }
+
+        @if (Options.Value.FounderPreorderConfigured)
+        {
+            @* Config-gated (WishlistOptions.FounderPreorderConfigured): built, but invisible until a real
+               https payment link is set — a button that can't charge is worse than none. Links OUT to a
+               hosted checkout (Stripe / Lemon Squeezy); no money ever touches the app. *@
+            <div class="about-founder">
+                <h3>Back it as a Founder</h3>
+                <p>Want to make it happen faster? Reserve a founding spot and lock in the early-supporter rate.</p>
+                <a class="about-founder-btn" href="@Options.Value.FounderPaymentUrl"
+                   target="_blank" rel="noopener noreferrer">Reserve a Founder spot &rarr;</a>
+            </div>
+        }
+    </section>
+</article>
+
+@code {
+    private int interestCount;
+    private bool reserved;
+    private string? errorMessage;
+
+    [SupplyParameterFromForm]
+    private ReserveInput Input { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Form binding runs before OnInitialized: a POST arrives bound, a GET gets a fresh model.
+        Input ??= new();
+        interestCount = await SafeCountAsync();
+    }
+
+    private async Task ReserveAsync()
+    {
+        // Honeypot: a real person never sees or fills this. A filled one is a bot — pretend success and
+        // record nothing (never tell it it was caught).
+        if (!string.IsNullOrWhiteSpace(Input.Website))
+        {
+            reserved = true;
+            return;
+        }
+
+        // Defense in depth over [Required]: the tier must be a real catalog key, never an arbitrary posted
+        // string. A tampered value is refused, not stored.
+        if (!WishlistTiers.IsValidKey(Input.Tier))
+        {
+            errorMessage = "Please pick one of the plans above.";
+            return;
+        }
+
+        try
+        {
+            await Wishlist.RecordAsync(Input.Tier!, Input.Email, DateTimeOffset.Now);
+            reserved = true;
+            interestCount = await SafeCountAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogError(ex, "Failed to record a wishlist reservation.");
+            errorMessage = "Something went wrong saving that — please try again.";
+        }
+    }
+
+    // The count is decoration (soft social proof); a read failure must never break the page or block a
+    // reservation, so it degrades to hiding the number rather than erroring.
+    private async Task<int> SafeCountAsync()
+    {
+        try
+        {
+            return await Wishlist.InterestCountAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogWarning(ex, "Couldn't read the wishlist count for /about.");
+            return 0;
+        }
+    }
+
+    private sealed class ReserveInput
+    {
+        [Required(ErrorMessage = "Pick which plan you'd want.")]
+        public string? Tier { get; set; }
+
+        [StringLength(200)]
+        [EmailAddress(ErrorMessage = "That doesn't look like an email address.")]
+        public string? Email { get; set; }
+
+        // Honeypot — see ReserveAsync. Deliberately unvalidated.
+        public string? Website { get; set; }
+    }
+}
