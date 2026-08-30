@@ -78,4 +78,35 @@ public class AiPricingTests
         // 100 in × 2 + 50 out × 10 = 200 + 500 = 700 micros, not the default 350.
         Assert.Equal(700, AiPricing.CostMicros(o, "claude-haiku-4-5", 100, 50));
     }
+
+    // The seeded rates for the larger tiers, so a mistyped key or price is caught.
+    // A FRESH BillingOptions per call, deliberately: the seed dictionary is an instance-field
+    // initializer, so a shared static instance is built once and would cache the pre-mutation keys —
+    // a mutated key literal is only observed when the initializer re-runs. The fallback is set to a
+    // rate distinct from every seeded one so a key that fails to match is caught even for opus, whose
+    // own rate equals the DEFAULT fallback (a matched key returns the seed rate; a missed key returns
+    // this fallback — 99 — and the two are then distinguishable).
+    [Theory]
+    [InlineData("claude-haiku-4-5", 1.00, 5.00)]
+    [InlineData("claude-haiku-4-5-20251001", 1.00, 5.00)]
+    [InlineData("claude-sonnet-4-6", 3.00, 15.00)]
+    [InlineData("claude-opus-4-8", 5.00, 25.00)]
+    public void The_seeded_model_rates_are_the_published_figures(string model, double input, double output)
+    {
+        var o = new BillingOptions { FallbackRate = new ModelRate { InputPerMTok = 99m, OutputPerMTok = 99m } };
+
+        var rate = AiPricing.RateFor(o, model);
+
+        Assert.Equal((decimal)input, rate.InputPerMTok);
+        Assert.Equal((decimal)output, rate.OutputPerMTok);
+    }
+
+    [Fact]
+    public void Micros_format_as_rounded_dollars()
+    {
+        // 1,234,500 micros = $1.2345 -> rounded to two decimals, and divided (not multiplied) by 1e6.
+        var formatted = AiPricing.FormatMicros(1_234_500);
+        Assert.Contains("1.23", formatted);       // × instead of ÷ would explode the number away from 1.23
+        Assert.DoesNotContain("2345", formatted); // "C2" rounds to cents; a general format would keep 1.2345
+    }
 }

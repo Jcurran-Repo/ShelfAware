@@ -123,7 +123,13 @@ public static class SpeechText
          "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen",
          "nineteen", "twenty"];
 
-    // Longest-first so "tbsp" is preferred over "tbs" and "mins" over "min" at the same position.
+    // Longest-first: a performance nicety, not a correctness requirement. Every unit-matching regex
+    // ends the unit group with `\b`, so a shorter unit that prefixes a longer one (tbs⊂tbsp, min⊂mins)
+    // fails the `\b` inside the longer word and the engine backtracks to the longer alternative anyway —
+    // longest-first just reaches it with fewer backtracks.
+    // Stryker disable once Linq: OrderByDescending → OrderBy is unobservable for exactly that reason —
+    // proven by the whole unit sweep (Every_unit_speaks_singular_at_one_and_plural_above) passing
+    // identically under both orderings, prefix-pairs included.
     private static readonly string UnitPattern =
         string.Join("|", Units.Keys.OrderByDescending(k => k.Length).Select(Regex.Escape));
 
@@ -198,6 +204,10 @@ public static class SpeechText
         decimal.TryParse(quantity, System.Globalization.NumberStyles.Number,
             System.Globalization.CultureInfo.InvariantCulture, out var n) && n == 1m;
 
-    private static string IntegerWord(string digits) =>
-        int.TryParse(digits, out var n) && n >= 0 && n < SmallNumbers.Length ? SmallNumbers[n] : digits;
+    private static string IntegerWord(string digits)
+    {
+        if (!int.TryParse(digits, out var n)) return digits;
+        if (n < 0 || n >= SmallNumbers.Length) return digits; // n < 0 is defensive — callers pass \d+
+        return SmallNumbers[n];
+    }
 }

@@ -326,4 +326,296 @@ public class ReportEngineTests
         Assert.Empty(ReportSpecRules.Check(Spec(ReportMetric.Quantity, ReportSplit.ByProduct)));
         Assert.Empty(ReportSpecRules.Check(Spec(split: ReportSplit.ByCategory) with { Chart = ReportChart.StackedBars }));
     }
+
+    [Fact]
+    public void The_refusal_names_itself_and_carries_the_problems()
+    {
+        // The exception is operator-facing (a saved spec the engine refuses greets a visitor with an
+        // error page whose log line is this message) — it must say WHAT failed, not throw bare.
+        var ex = Assert.Throws<ArgumentException>(() => ReportEngine.Run(Spec(ReportMetric.Quantity), [], []));
+
+        Assert.Contains("The report spec is not sound:", ex.Message);
+        Assert.Contains("quantity", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Several_problems_join_into_one_space_separated_message()
+    {
+        // Two violations at once — the range runs backwards AND quantity has no product. The message
+        // joins the problems with a space so the operator reads a sentence stream; a "" separator would
+        // jam them into "...starts.Quantity...".
+        var spec = Spec(ReportMetric.Quantity) with { From = Jul31, To = Jun1 };
+        var ex = Assert.Throws<ArgumentException>(() => ReportEngine.Run(spec, [], []));
+
+        Assert.Contains("starts. Quantity only means", ex.Message);
+    }
+
+    // Each rule states WHY, and the builder UI shows exactly that reason — so pin the distinctive phrase
+    // of each refusal (the "whether it fires" is already covered by Unsound_specs_are_refused above).
+    [Fact]
+    public void Each_rule_explains_itself()
+    {
+        void RuleSays(ReportSpec spec, string phrase) =>
+            Assert.Contains(ReportSpecRules.Check(spec), m => m.Contains(phrase, StringComparison.OrdinalIgnoreCase));
+
+        RuleSays(Spec() with { To = Jun1.AddDays(-1) }, "ends before it starts");
+        RuleSays(Spec(ReportMetric.Quantity), "Quantity only means");
+        RuleSays(Spec(ReportMetric.UnitPrice), "per item");
+        RuleSays(Spec(ReportMetric.UnitPrice, ReportSplit.ByCategory) with { ProductId = 1 }, "doesn't split");
+        RuleSays(Spec(ReportMetric.MealsCooked, ReportSplit.ByProduct), "split by recipe, or not at all");
+        RuleSays(Spec(split: ReportSplit.ByRecipe), "Splitting by recipe only applies");
+        RuleSays(Spec(ReportMetric.MealsCooked) with { Category = Category.Dairy }, "filters don't apply");
+        RuleSays(Spec(ReportMetric.Spend) with { RecipeId = 3 }, "recipe filter only applies");
+        RuleSays(Spec(split: ReportSplit.ByProduct) with { TopN = 0 }, "at least one series");
+        RuleSays(Spec(split: ReportSplit.ByProduct) with { TopN = 9 }, "at most");
+    }
+
+    [Fact]
+    public void A_single_day_window_is_allowed()
+    {
+        // The range check is To < From, exclusive: a report over one day (To == From) is fine.
+        Assert.Empty(ReportSpecRules.Check(Spec() with { To = Jun1 }));
+    }
+
+    [Fact]
+    public void A_meal_metric_refuses_a_lone_pantry_filter()
+    {
+        // The filter guard is an OR across category/product/tag — a category filter alone (no product,
+        // no tag) is still refused. (An AND would let a lone category slip through.)
+        Assert.NotEmpty(ReportSpecRules.Check(Spec(ReportMetric.MealsCooked) with { Category = Category.Dairy }));
+        Assert.NotEmpty(ReportSpecRules.Check(Spec(ReportMetric.MealsCooked) with { ProductId = 5 }));
+    }
+
+    [Fact]
+    public void Stacking_a_non_partitioning_split_names_the_right_reason()
+    {
+        // A tag stack double-counts; any other non-partitioning split (here None) just doesn't partition —
+        // two different refusals, and the message must match the split.
+        var tag = ReportSpecRules.Check(Spec(split: ReportSplit.ByTag) with { Chart = ReportChart.StackedBars });
+        Assert.Contains(tag, m => m.Contains("double-count"));
+
+        var none = ReportSpecRules.Check(Spec() with { Chart = ReportChart.StackedBars });
+        Assert.Contains(none, m => m.Contains("partitions the data"));
+    }
+
+    // ---- The window's exact edges ---------------------------------------------------------------
+
+    [Fact]
+    public void The_purchase_window_includes_both_edge_days_and_nothing_outside()
+    {
+        // From and To are both INCLUSIVE — a purchase on either edge day counts; one a day outside
+        // either edge never does. The window is the report's most basic honesty claim.
+        var result = ReportEngine.Run(Spec(),
+            [Buy(31, month: 5), Buy(1), Buy(31, month: 7), Buy(1, month: 8)], []);
+
+        Assert.Equal(7.00m, result.Total); // exactly the Jun 1 + Jul 31 facts
+    }
+
+    [Fact]
+    public void The_meal_window_includes_both_edge_days_and_filters_by_recipe()
+    {
+        var meals = new[] { Meal(31, month: 5), Meal(1), Meal(31, month: 7), Meal(1, month: 8), Meal(15, recipeId: 2, name: "Stew") };
+
+        var all = ReportEngine.Run(Spec(ReportMetric.MealsCooked), [], meals);
+        Assert.Equal(3m, all.Total); // Jun 1 + Jul 31 + the stew; edges in, outside out
+
+        var one = ReportEngine.Run(Spec(ReportMetric.MealsCooked) with { RecipeId = 2 }, [], meals);
+        Assert.Equal(1m, one.Total); // the recipe filter is equality, not exclusion
+    }
+
+    [Fact]
+    public void Purchases_outside_the_window_form_no_series()
+    {
+        // The date filter is an AND — in range on BOTH edges. Splitting an in-window product against two
+        // out-of-window ones yields ONE series; mutating the && to || would pull the outsiders in as ghost
+        // series (all-zero across the buckets, but present). The bucketed Total can't catch this — an
+        // out-of-window fact maps to no bucket and adds nothing to it — so the series list is the observable.
+        var result = ReportEngine.Run(Spec(ReportMetric.PurchaseCount, ReportSplit.ByProduct),
+            [Buy(15), Buy(15, month: 5, productId: 2, name: "Before"), Buy(15, month: 8, productId: 3, name: "After")], []);
+
+        Assert.Equal(["Whole Milk"], result.Series.Select(s => s.Label));
+    }
+
+    [Fact]
+    public void Meals_outside_the_window_form_no_series()
+    {
+        // The meal date filter is the same AND; the same ghost-series test, on the recipe split.
+        var result = ReportEngine.Run(Spec(ReportMetric.MealsCooked, ReportSplit.ByRecipe), [],
+            [Meal(15), Meal(15, month: 5, recipeId: 2, name: "Before"), Meal(15, month: 8, recipeId: 3, name: "After")]);
+
+        Assert.Equal(["Tacos"], result.Series.Select(s => s.Label));
+    }
+
+    [Fact]
+    public void A_window_ending_on_a_bucket_start_still_gets_that_bucket()
+    {
+        // To = Aug 1 is exactly August's bucket start: the loop's boundary is inclusive, so August
+        // exists (and an Aug 1 purchase lands in it instead of vanishing off the axis).
+        var result = ReportEngine.Run(
+            Spec() with { To = new DateOnly(2026, 8, 1) }, [Buy(1, month: 8)], []);
+
+        Assert.Equal(["Jun", "Jul", "Aug"], result.Buckets.Select(b => b.Label));
+        Assert.Equal(3.50m, result.Series.Single().Values[2]);
+    }
+
+    [Fact]
+    public void Quarter_labels_number_the_calendar_quarters()
+    {
+        var result = ReportEngine.Run(
+            Spec() with { Grain = ReportGrain.Quarterly, From = new DateOnly(2026, 1, 1), To = new DateOnly(2026, 12, 31) },
+            [], []);
+
+        Assert.Equal(["Q1", "Q2", "Q3", "Q4"], result.Buckets.Select(b => b.Label));
+    }
+
+    // ---- Compare-previous: the mirrored window's exact arithmetic --------------------------------
+
+    [Fact]
+    public void The_previous_window_is_the_same_length_ending_the_day_before_From()
+    {
+        // June (30 days) compares against May 2 – May 31: same length, ending the day before June
+        // starts. A fact on May 2 is the previous window's FIRST day (an off-by-one shorter window
+        // loses it); a fact on Jun 1 belongs to the CURRENT window only (a To that leaned forward
+        // would double-count it into both).
+        var spec = Spec() with { To = new DateOnly(2026, 6, 30), ComparePrevious = true };
+
+        var result = ReportEngine.Run(spec, [Buy(2, month: 5), Buy(1)], []);
+
+        Assert.Equal(3.50m, result.Total);
+        Assert.Equal(3.50m, result.PreviousTotal);
+    }
+
+    // ---- Disclosure notes: the exact sentences --------------------------------------------------
+
+    [Fact]
+    public void The_unpriced_note_counts_and_conjugates()
+    {
+        var one = ReportEngine.Run(Spec(), [Buy(5), Buy(6, price: null)], []);
+        Assert.Equal("1 unpriced purchase is not in the spend.", one.Note);
+
+        var two = ReportEngine.Run(Spec(), [Buy(5), Buy(6, price: null), Buy(7, price: null)], []);
+        Assert.Equal("2 unpriced purchases are not in the spend.", two.Note);
+
+        Assert.Null(ReportEngine.Run(Spec(), [Buy(5)], []).Note); // nothing unpriced → no note
+    }
+
+    [Fact]
+    public void The_calorie_note_counts_only_the_unknowns_and_conjugates()
+    {
+        // Two unknowns beside one known: the count must be of the NULLS (2), not the knowns (1) —
+        // a flipped predicate reads "1 meal has" here and the sentence lies by omission.
+        var meals = new[] { Meal(5), Meal(6, kcal: null), Meal(7, kcal: null) };
+        var two = ReportEngine.Run(Spec(ReportMetric.Calories), [], meals);
+        Assert.Equal("2 meals have no calorie estimate and aren't counted.", two.Note);
+
+        var one = ReportEngine.Run(Spec(ReportMetric.Calories), [], [Meal(5), Meal(6, kcal: null)]);
+        Assert.Equal("1 meal has no calorie estimate and aren't counted.", one.Note);
+
+        Assert.Null(ReportEngine.Run(Spec(ReportMetric.Calories), [], [Meal(5)]).Note);
+    }
+
+    [Fact]
+    public void The_topN_disclosure_conjugates_and_names_the_split()
+    {
+        // Tag series never pool (overlap), so beyond-TopN tags are DISCLOSED. Singular trims the
+        // noun ("tag", "isn't"); plural keeps it. The exact sentence is the user-facing honesty
+        // claim — "N more X aren't shown" — and both halves must agree with the count.
+        PurchaseFact Tagged(int day, string tag, decimal price) => Buy(day, price: price, tags: [tag]);
+        var spec = Spec(split: ReportSplit.ByTag) with { TopN = 2 };
+
+        var one = ReportEngine.Run(spec, [Tagged(1, "a", 9), Tagged(2, "b", 8), Tagged(3, "c", 1)], []);
+        Assert.Equal("1 more tag isn't shown (below the top 2).", one.Note);
+
+        var two = ReportEngine.Run(spec,
+            [Tagged(1, "a", 9), Tagged(2, "b", 8), Tagged(3, "c", 1), Tagged(4, "d", 1)], []);
+        Assert.Equal("2 more tags aren't shown (below the top 2).", two.Note);
+    }
+
+    [Fact]
+    public void Quantity_by_category_is_refused_because_units_differ_across_categories()
+    {
+        // Quantity needs one product (or a by-product split). A by-CATEGORY split still sums mixed
+        // units across products (9 milks + 1 bread + 1 soap isn't 11 of anything), so ByCategory does
+        // NOT satisfy the rule's "or split by product" escape and the spec is refused — the engine
+        // never even reaches the disclose/pool step. (The valid case, where quantity DOES disclose
+        // its remainder rather than pool, is Quantity_split_by_product_neither_pools_nor_totals_but_discloses.)
+        var spec = Spec(ReportMetric.Quantity, ReportSplit.ByCategory) with { TopN = 1 };
+
+        Assert.NotEmpty(ReportSpecRules.Check(spec));
+        Assert.Throws<ArgumentException>(() => ReportEngine.Run(spec, [], []));
+    }
+
+    [Fact]
+    public void Two_notes_join_into_one_sentence_stream()
+    {
+        // Both disclosures at once: the Note is the sentences joined with a space — a UI renders one
+        // paragraph, not a mashed "spend.2 more".
+        var spec = Spec(split: ReportSplit.ByTag) with { TopN = 1 };
+        var result = ReportEngine.Run(spec,
+            [Buy(1, price: null, tags: ["a"]), Buy(2, price: 9, tags: ["b"]), Buy(3, price: 1, tags: ["c"])], []);
+
+        Assert.Equal(
+            "1 unpriced purchase is not in the spend. 2 more tags aren't shown (below the top 1).",
+            result.Note);
+    }
+
+    // ---- Series labels and flags ----------------------------------------------------------------
+
+    [Fact]
+    public void The_single_series_label_names_the_filter_it_wears()
+    {
+        var facts = new[] { Buy(5, tags: ["snacks"]) };
+
+        Assert.Equal("Whole Milk",
+            ReportEngine.Run(Spec() with { ProductId = 1 }, facts, []).Series.Single().Label);
+        Assert.Equal("snacks",
+            ReportEngine.Run(Spec() with { Tag = "snacks" }, facts, []).Series.Single().Label);
+        Assert.Equal("All items", ReportEngine.Run(Spec(), facts, []).Series.Single().Label);
+    }
+
+    [Fact]
+    public void A_product_filter_matching_nothing_labels_safely()
+    {
+        // ProductId set but no facts survived the filters: there is no facts[0] to name the series
+        // after, and reaching for it would throw — the label falls back instead.
+        var result = ReportEngine.Run(Spec() with { ProductId = 99 }, [Buy(5)], []);
+
+        Assert.Equal("All items", result.Series.Single().Label);
+    }
+
+    [Fact]
+    public void Meal_series_without_a_split_stay_one_series_named_for_the_metric()
+    {
+        // Two distinct recipes, NO split: one series, named "Meals" (or "Calories" for that metric)
+        // — an accidental by-recipe grouping here would leak a split nobody asked for.
+        var meals = new[] { Meal(5), Meal(6, recipeId: 2, name: "Stew") };
+
+        var count = ReportEngine.Run(Spec(ReportMetric.MealsCooked), [], meals);
+        Assert.Equal("Meals", count.Series.Single().Label);
+
+        var kcal = ReportEngine.Run(Spec(ReportMetric.Calories), [], meals);
+        Assert.Equal("Calories", kcal.Series.Single().Label);
+    }
+
+    [Fact]
+    public void A_single_series_is_never_called_stackable()
+    {
+        // Stackable is the chart's permission to stack: one series has nothing to stack with, even
+        // under a split that WOULD stack were there more (one category bought → one series).
+        var result = ReportEngine.Run(Spec(split: ReportSplit.ByCategory), [Buy(5)], []);
+
+        Assert.False(result.Stackable);
+    }
+
+    [Fact]
+    public void A_bucket_with_facts_but_no_paid_prices_is_a_gap_not_a_crash()
+    {
+        // UnitPrice averages PAID prices only. A bucket whose facts are all price-index estimates
+        // has an empty paid list — that's the documented gap (null), and averaging it would throw.
+        var spec = Spec(ReportMetric.UnitPrice) with { ProductId = 1 };
+
+        var result = ReportEngine.Run(spec, [Buy(5, estimateOnly: true)], []);
+
+        Assert.Null(result.Series.Single().Values[0]);
+    }
 }

@@ -781,4 +781,72 @@ public class UploadPageTests : PageTestContext
         Assert.Null(inputs[0].GetAttribute("accept"));  // unfiltered, so HEIC + PDF both come through
         Assert.Null(inputs[0].GetAttribute("capture")); // no capture — it dropped the circuit on Android
     }
+
+    // ---- pack-misread done-panel heads-up (soft, never blocking) ----
+
+    [Fact]
+    public void A_pack_misread_shows_a_soft_heads_up_after_confirm_but_does_not_block_it()
+    {
+        // Toilet paper with sized history; this receipt's line reads quantity 12 with NO size — the
+        // family-box misread. Confirming records it (the Done panel appears — not blocked) AND shows a
+        // soft heads-up naming the line, so it's catchable without going to /receipts.
+        using (var db = Db.CreateDbContext())
+        {
+            db.Products.Add(new Product
+            {
+                Name = "Toilet Paper", Category = Category.Household,
+                Purchases = [.. Enumerable.Range(1, 3).Select(i => new PurchaseEvent
+                {
+                    PurchasedAt = Today.AddDays(-30 * i), Quantity = 1, Size = "12 rolls",
+                })],
+            });
+            db.SaveChanges();
+        }
+        SeedPending("Walmart", Today.AddDays(-1), new ReceiptLine
+        {
+            RawText = "CHARMIN 12 ROLL", NormalizedName = "Toilet Paper", Quantity = 12m, Category = Category.Household,
+        });
+
+        var cut = OpenReview();
+        cut.FindAll(".review-actions button").Single(b => b.TextContent.Trim() == "Confirm all").Click();
+        cut.WaitForState(() => cut.FindAll(".review-actions button").Any(b => b.TextContent.Contains("Upload another")));
+
+        var callout = cut.Find(".callout");
+        Assert.Contains("Toilet Paper", callout.TextContent);
+        Assert.Contains("12-pack", callout.TextContent); // the one-definition Describe copy
+    }
+
+    [Fact]
+    public void An_ordinary_confirm_shows_no_heads_up()
+    {
+        SeedPending("Walmart", Today.AddDays(-1), DbLine("GV MILK", "Whole Milk"));
+
+        var cut = OpenReview();
+        cut.FindAll(".review-actions button").Single(b => b.TextContent.Trim() == "Confirm all").Click();
+        cut.WaitForState(() => cut.FindAll(".review-actions button").Any(b => b.TextContent.Contains("Upload another")));
+
+        Assert.Empty(cut.FindAll(".callout"));
+    }
+
+    [Fact]
+    public void Undoing_a_flagged_confirm_clears_the_heads_up()
+    {
+        // The heads-up names a line of THIS receipt; undoing removes the receipt and that line, so the
+        // callout must go with it — leaving it up nags about a purchase that no longer exists.
+        SeedPending("Walmart", Today.AddDays(-1), new ReceiptLine
+        {
+            RawText = "CHARMIN 12 ROLL", NormalizedName = "Toilet Paper", Size = "12 ct",
+            Quantity = 12m, Category = Category.Household,
+        });
+
+        var cut = OpenReview();
+        cut.FindAll(".review-actions button").Single(b => b.TextContent.Trim() == "Confirm all").Click();
+        cut.WaitForState(() => cut.Markup.Contains("Undo — remove this receipt"));
+        Assert.NotEmpty(cut.FindAll(".callout")); // the flag fired (size "12 ct" == quantity 12)
+
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Undo — remove this receipt")).Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("Undone", cut.Markup));
+        Assert.Empty(cut.FindAll(".callout")); // gone with the receipt
+    }
 }

@@ -74,6 +74,21 @@ public class CensusPlanTests
     }
 
     [Fact]
+    public void Prefill_pre_selects_a_fuzzy_resolve_flagged_as_a_similarity_guess()
+    {
+        // No reader suggestion and no identity match, but the matcher resolves the name to a product by
+        // SIMILARITY (substring/token overlap). That product pre-fills — flagged BySimilarity so it stays
+        // off the auto-tick list. Distinct from the ambiguous-identity branch, which pre-fills nothing:
+        // the two are separated by `resolved is not null AND kind == ExactName AND >1 match`, so an `&&`
+        // slipping to `||` would wrongly send this similarity hit down the pre-fill-nothing path.
+        var catalog = Cat(P(1, "Whole Milk"));
+        var prefill = CensusPlan.Prefill(Read("Milk"), catalog);
+        Assert.Equal(1, prefill.ProductId);
+        Assert.True(prefill.BySimilarity);
+        Assert.Null(prefill.AmbiguousSuggestion);
+    }
+
+    [Fact]
     public void An_ambiguous_suggestion_that_IS_the_rows_own_name_carries_no_name()
     {
         // AmbiguousName states it live off the row's name, so carrying it too would put two sentences on one row.
@@ -436,5 +451,25 @@ public class CensusPlanTests
     public void An_empty_census_plans_nothing()
     {
         Assert.Empty(CensusPlan.Plan([], Cat(P(1, "Whole Milk"))));
+    }
+
+    [Fact]
+    public void Prefill_pre_selects_a_lone_exact_match_of_the_read_name()
+    {
+        // No suggestion: the read name itself resolves to exactly one product (not an ambiguous identity),
+        // so the dropdown pre-selects it rather than leaving it blank.
+        var prefill = CensusPlan.Prefill(Read("Whole Milk"), Cat(P(1, "Whole Milk")));
+        Assert.Equal(new CensusPlan.CensusPrefill(1, false, null), prefill);
+    }
+
+    [Fact]
+    public void A_zero_on_a_novel_create_row_is_refused_and_earns_a_look()
+    {
+        // Nothing to create and nothing to count: a zero on a name no sibling brings into existence is
+        // refused, and it needs a human look (a count of zero on a new product would pin it Overdue forever).
+        var plan = Plan1(Row("Brand New Thing", count: 0m, createNew: true), Cat());
+        Assert.Equal(Action.Refuse, plan.Action);
+        Assert.Equal(Reason.ZeroOnNewProduct, plan.Reason);
+        Assert.True(plan.NeedsAHumanLook);
     }
 }

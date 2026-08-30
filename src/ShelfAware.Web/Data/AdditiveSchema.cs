@@ -101,6 +101,12 @@ public static class AdditiveSchema
         // PANTRY table (IHouseholdOwned), so this belongs here, not in the auth overload. Existing rows
         // land on 0 (their cost was never captured); new calls accumulate it. Display-only.
         EnsureColumn(db, table: "AiUsages", column: "CostMicros", definition: "INTEGER NOT NULL DEFAULT 0");
+
+        // 2026-08-26: a soft "this quantity looks like a misread pack count" flag on a confirmed line
+        // (a 12-pack read as quantity 12). Stamped at confirm time, surfaced on /receipts. Existing rows
+        // land on 0 (None) — they were confirmed before the check existed and are not re-judged. Enum →
+        // INTEGER, matching EnsureCreated's mapping and the QuantityFlag.None = 0 default.
+        EnsureColumn(db, table: "ReceiptLines", column: "QuantityFlag", definition: "INTEGER NOT NULL DEFAULT 0");
     }
 
     public static void Apply(AuthDbContext db)

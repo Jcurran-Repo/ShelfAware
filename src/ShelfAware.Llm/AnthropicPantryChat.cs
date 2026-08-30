@@ -187,9 +187,12 @@ public class AnthropicPantryChat : IPantryChat
             case "record_signal":
             {
                 var name = Str("product_name");
-                // IsDefined because Enum.TryParse SUCCEEDS on a numeric string, so "7" would sail past this
-                // refusal and write an undefined SignalKind that no reader in the app has a branch for.
-                if (!Enum.TryParse<SignalKind>(Str("kind"), ignoreCase: true, out var kind) || !Enum.IsDefined(kind))
+                // Allowlist the three CHAT-settable kinds, not merely Enum.IsDefined: Enum.TryParse succeeds
+                // on a numeric string ("7" → an undefined kind), AND StillInStock is a UI-only signal (the
+                // snooze button) that chat must not set — accepting it would record and SPEAK about it with
+                // no inert-signal caveat (the gate below covers only OutNow/RunningLow). Both are refused here.
+                if (!Enum.TryParse<SignalKind>(Str("kind"), ignoreCase: true, out var kind)
+                    || kind is not (SignalKind.OutNow or SignalKind.RunningLow or SignalKind.Restocked))
                     return ("Invalid 'kind' — use OutNow, RunningLow, or Restocked.", true);
                 var product = ProductMatcher.Resolve(name, products);
                 if (product is null)

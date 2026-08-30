@@ -626,6 +626,24 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task A_UI_only_signal_kind_is_refused_not_written()
+    {
+        // StillInStock is a defined SignalKind now (the dashboard/grocery snooze button), so Enum.IsDefined
+        // would ACCEPT it — but it is UI-only, and recording it in chat would SPEAK "Recorded StillInStock"
+        // with none of the inert-signal caveat OutNow/RunningLow get. The allowlist refuses any kind but the
+        // three the refusal message names, so it never reaches the recording path.
+        var store = new FakePantryStore(P(1, "Coffee", Category.Beverage));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("record_signal", ("product_name", "coffee"), ("kind", "StillInStock"))),
+            () => Responses.Text("Sorry — that didn't work."));
+
+        var result = await Chat(client, store).HandleAsync("still have coffee");
+
+        Assert.True(result.Success);
+        Assert.Empty(store.Signals);
+    }
+
+    [Fact]
     public async Task A_numeric_category_on_create_falls_back_to_Other()
     {
         // The same smuggling shape as above, but this site's guard DEFAULTS rather than refuses —

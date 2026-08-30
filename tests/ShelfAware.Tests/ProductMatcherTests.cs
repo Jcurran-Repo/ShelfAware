@@ -138,4 +138,70 @@ public class ProductMatcherTests
         Assert.Equal(ProductMatcher.MatchKind.None,
             ProductMatcher.ResolveWithKind("wholly unrelated widget", Pantry).Kind);
     }
+
+    [Fact]
+    public void IdentityKey_of_null_is_empty()
+    {
+        // The `?? ""` fallback: a null name keys to empty, never a sentinel, so it can't collide with
+        // a real product's identity key.
+        Assert.Equal("", ProductMatcher.IdentityKey(null));
+    }
+
+    [Fact]
+    public void Resolve_matches_at_exactly_the_half_weight_threshold_keeping_the_first()
+    {
+        // Two products each sharing exactly one of the query's two equally-rare tokens: the overlap is
+        // half the query weight, so the score lands EXACTLY on the 0.5 boundary. The threshold is
+        // inclusive (>= 0.5), so it must MATCH rather than reject; and on the resulting tie the
+        // FIRST-listed product must win (the scan keeps the earlier best on an equal score).
+        //   With this catalog of two products: idf(alpha)=log(3/2.5), idf(bravo)=idf(charlie)=log(3/1.5),
+        //   so for "Alpha Bravo" the score is w(bravo) / (w(bravo)+w(charlie)) = 0.5 exactly.
+        IReadOnlyList<Product> pantry =
+        [
+            new() { Id = 1, Name = "Alpha Bravo", Category = Category.Pantry },
+            new() { Id = 2, Name = "Alpha Charlie", Category = Category.Pantry },
+        ];
+
+        var (product, kind) = ProductMatcher.ResolveWithKind("bravo charlie", pantry);
+
+        Assert.Equal(ProductMatcher.MatchKind.TokenOverlap, kind);
+        Assert.Equal(1, product!.Id);
+    }
+
+    [Fact]
+    public void Resolve_uses_the_LARGER_side_as_the_denominator_so_a_diluted_overlap_stays_below_threshold()
+    {
+        // A reordered query (no substring) that shares two common tokens with a product but adds a third
+        // rare one: the shared weight is just under half the query weight, so it must NOT match. This
+        // pins that the denominator is the SUM of the LARGER side (max(qWeight, pWeight)) — shrinking
+        // either side (Sum→Max on q or p) or taking the smaller side (Max→Min) would inflate the score
+        // over the line and wrongly merge these.
+        IReadOnlyList<Product> pantry =
+        [
+            new() { Id = 1, Name = "Alpha Bravo", Category = Category.Pantry },
+            new() { Id = 2, Name = "Alpha Bravo Delta", Category = Category.Pantry },
+            new() { Id = 3, Name = "Charlie Echo Foxtrot Golf Hotel", Category = Category.Pantry },
+        ];
+
+        Assert.Equal(ProductMatcher.MatchKind.None,
+            ProductMatcher.ResolveWithKind("alpha charlie bravo", pantry).Kind);
+    }
+
+    [Fact]
+    public void Resolve_counts_an_absent_query_token_at_full_weight_so_it_can_never_be_matched()
+    {
+        // "sardines zzabsent": one distinctive token the catalog has, one token no product contains. The
+        // absent token weighs the MAXIMUM idf (BuildIdf's floor, MaxIdf) so it fully counts against the
+        // denominator and drags the score below 0.5 — an absent word can never be "matched away". This
+        // pins both the idf denominator (df + 0.5) and MaxIdf's exact value: making either smaller would
+        // let the absent token weigh too little and cross the threshold into a false match.
+        IReadOnlyList<Product> pantry =
+        [
+            new() { Id = 1, Name = "Sardines Kale", Category = Category.Pantry },
+            new() { Id = 2, Name = "Quinoa Lentils", Category = Category.Pantry },
+        ];
+
+        Assert.Equal(ProductMatcher.MatchKind.None,
+            ProductMatcher.ResolveWithKind("sardines zzabsent", pantry).Kind);
+    }
 }

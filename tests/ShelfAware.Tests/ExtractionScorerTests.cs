@@ -73,6 +73,143 @@ public class ExtractionScorerTests
     }
 
     [Fact]
+    public void Expected_line_defaults_are_a_blank_name_and_the_other_category()
+    {
+        var e = new ExpectedLine();
+        Assert.Equal("", e.NormalizedName);
+        Assert.Equal("Other", e.Category);
+    }
+
+    [Fact]
+    public void A_tie_in_similarity_takes_the_first_found_line()
+    {
+        // Two found lines match equally well; the greedy matcher takes the FIRST, so the first line's
+        // quantity is the one scored (not the second's).
+        var detail = ExtractionScorer.Score(
+            [E("Milk", qty: 1, category: "Dairy")],
+            [F("Milk", qty: 1, category: Category.Dairy), F("Milk", qty: 2, category: Category.Dairy)]);
+
+        Assert.Equal(1, detail.Matched);
+        Assert.Equal(1, detail.FieldHits); // the first (qty 1) matched — a last-wins tie-break would miss
+    }
+
+    [Fact]
+    public void A_sub_threshold_overlap_is_a_miss_not_a_match()
+    {
+        // "Whole Milk" vs "Milk Chocolate Bar" share only "milk": containment 1/2 = 0.5, below 0.6.
+        var detail = ExtractionScorer.Score([E("Whole Milk")], [F("Milk Chocolate Bar")]);
+
+        Assert.Equal(0, detail.Matched);
+        Assert.Equal(["Whole Milk"], detail.MissingExpected);
+    }
+
+    [Fact]
+    public void Exactly_the_threshold_matches()
+    {
+        // Containment exactly 0.6 (3 shared of min 5) must match — the threshold is inclusive.
+        var detail = ExtractionScorer.Score(
+            [E("All Natural Lean Ground Beef", category: "Meat")],
+            [F("Lean Ground Beef Value Pack", category: Category.Meat)]);
+
+        Assert.Equal(1, detail.Matched); // lean, ground, beef shared of 5 tokens each = 0.6
+    }
+
+    [Fact]
+    public void A_quantity_within_the_hundredth_tolerance_is_a_field_hit()
+    {
+        // The quantity tolerance is <= 0.01 (weight rounding), inclusive at the boundary.
+        var detail = ExtractionScorer.Score(
+            [E("Ground Beef", qty: 1.00m, category: "Meat")],
+            [F("Ground Beef", qty: 1.01m, category: Category.Meat)]);
+
+        Assert.Equal(1, detail.FieldHits);
+    }
+
+    [Fact]
+    public void A_fully_correct_match_carries_no_field_flags()
+    {
+        var detail = ExtractionScorer.Score(
+            [E("Whole Milk", qty: 1, category: "Dairy")],
+            [F("Whole Milk", qty: 1, category: Category.Dairy)]);
+
+        Assert.Equal(1, detail.FieldHits);
+        Assert.DoesNotContain("[qty]", detail.Pairs[0]);
+        Assert.DoesNotContain("[cat", detail.Pairs[0]);
+        // The diagnostic pair reads "<expected>  ↔  <found>" with no stray prefix/suffix — pins both ends.
+        Assert.StartsWith("Whole Milk", detail.Pairs[0]);
+        Assert.EndsWith("Whole Milk", detail.Pairs[0]);
+    }
+
+    [Theory]
+    // expected, found, matched, hits → recall, precision, fieldAccuracy — the empty-denominator corners.
+    [InlineData(0, 0, 0, 0, 1.0, 1.0, 0.0)]  // nothing expected AND nothing found: vacuously perfect recall+precision
+    [InlineData(0, 2, 0, 0, 1.0, 0.0, 0.0)]  // nothing expected but things found: precision 0
+    [InlineData(2, 0, 0, 0, 0.0, 0.0, 0.0)]  // things expected but nothing found: both 0
+    [InlineData(2, 2, 0, 0, 0.0, 0.0, 0.0)]  // matched 0: field accuracy 0, not a divide-by-zero
+    public void Fixture_score_handles_the_empty_denominators(
+        int exp, int found, int matched, int hits, double recall, double precision, double field)
+    {
+        var s = ExtractionScorer.ToFixtureScore("x", exp, found, new ScoreDetail(matched, hits, [], [], []));
+
+        Assert.Equal(recall, s.Recall);
+        Assert.Equal(precision, s.Precision);
+        Assert.Equal(field, s.FieldAccuracy);
+    }
+
+    [Fact]
+    public void Aggregate_of_no_scorable_fixtures_is_zero()
+    {
+        var agg = ExtractionScorer.Aggregate([new FixtureScore { Name = "e", Error = "boom" }]);
+
+        Assert.Equal(0, agg.Recall);
+        Assert.Equal(0, agg.Precision);
+        Assert.Equal(0, agg.FieldAccuracy);
+    }
+
+    [Fact]
+    public void Aggregate_takes_the_mean_of_the_scorable_fixtures_not_the_minimum()
+    {
+        var a = ExtractionScorer.ToFixtureScore("a", 2, 2, new ScoreDetail(2, 2, [], [], [])); // recall/precision/field = 1
+        var b = ExtractionScorer.ToFixtureScore("b", 2, 2, new ScoreDetail(1, 0, [], [], [])); // recall/precision 0.5, field 0
+
+        var agg = ExtractionScorer.Aggregate([a, b]);
+
+        Assert.Equal(0.75, agg.Recall);       // mean(1, 0.5), not min 0.5
+        Assert.Equal(0.75, agg.Precision);
+        Assert.Equal(0.5, agg.FieldAccuracy); // mean(1, 0), not min 0
+    }
+
+    [Fact]
+    public void An_empty_name_has_zero_similarity_to_anything()
+    {
+        // An empty token set short-circuits to 0 — otherwise the containment would divide by min(0, n) = 0.
+        Assert.Equal(0, ExtractionScorer.TokenSimilarity("", "Whole Milk"));
+        Assert.Equal(0, ExtractionScorer.TokenSimilarity("Whole Milk", ""));
+    }
+
+    [Fact]
+    public void Punctuation_is_a_separator_before_tokenizing()
+    {
+        // "Ground-Beef," and "Ground Beef" tokenize identically — non-alphanumerics become separators.
+        var detail = ExtractionScorer.Score(
+            [E("Ground Beef", category: "Meat")],
+            [F("Ground-Beef,", category: Category.Meat)]);
+
+        Assert.Equal(1, detail.Matched);
+    }
+
+    [Fact]
+    public void A_four_letter_plural_still_folds()
+    {
+        // The plural fold applies from length 4 inclusive: "Cans" -> "can" matches "Can".
+        var detail = ExtractionScorer.Score(
+            [E("Can", category: "Pantry")],
+            [F("Cans", category: Category.Pantry)]);
+
+        Assert.Equal(1, detail.Matched);
+    }
+
+    [Fact]
     public void Fixture_score_and_aggregate_compute_the_published_ratios()
     {
         // 3 expected, 4 found, 2 matched, 1 field hit → recall 2/3, precision 2/4, field 1/2.

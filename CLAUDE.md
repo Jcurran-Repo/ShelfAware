@@ -19,15 +19,19 @@ as overkill "because it's single-user."
   build what you think is best, and don't silently implement something you believe is
   wrong — surface the trade-off, reason it out together, decide jointly, then code.
 
-- **Never push or merge to `master` without a code review AND a security review.** Run
-  **`/pre-push`** (`.claude/commands/pre-push.md`), which drives `/code-review` + `/security-review`
-  over the whole branch diff and spells out what "security" means in this repo (the tenancy boundary,
-  new settings keys, anything written to disk per household, new endpoints). This is a hard gate, not
-  a suggestion, and it applies to a one-line fix as much as an arc. **Reviewing after the merge is
-  worth much less than before it** — the voice-engine arc's pre-merge review found five real bugs
-  including an open microphone, and the 7/15 no-household 500 shipped past a fully green test suite
-  and was only caught by running the app. Green tests are not a review. Report the findings and then
-  **stop: pushing is Jordan's call, always.**
+- **Never MERGE to `master` without a code review AND a security review.** The gate is a *pre-merge*
+  gate: it protects what lands on `master`, not every push. **Pushing a topic branch to origin is
+  fine and encouraged** — as a backup, to open a PR, or to run CI — and needs no review; a
+  feature-branch push is not code landing on `master`. Run the gate when the branch is about to
+  become part of `master` (a merge, or a direct push to `master`). Run **`/pre-push`**
+  (`.claude/commands/pre-push.md` — the name is historical; it is the pre-merge gate), which drives
+  `/code-review` + `/security-review` over the whole branch diff and spells out what "security" means
+  in this repo (the tenancy boundary, new settings keys, anything written to disk per household, new
+  endpoints). This is a hard gate, not a suggestion, and it applies to a one-line fix as much as an
+  arc. **Reviewing after the merge is worth much less than before it** — the voice-engine arc's
+  pre-merge review found five real bugs including an open microphone, and the 7/15 no-household 500
+  shipped past a fully green test suite and was only caught by running the app. Green tests are not a
+  review. Report the findings and then **stop: merging is Jordan's call, always.**
 
 - **One prediction, one story — never let a screen state something the engine didn't do.** Anything a
   surface says *about* a prediction must come from the same `PredictionResult` that produced the due
@@ -98,9 +102,9 @@ and **History (`/history`, added 8/20 — the household's activity log, newest f
 undo; see item 51)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **1957 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **2612 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
-bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55 and 56).
+bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56 and 60).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -3041,8 +3045,265 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      housemate probe counts only the caller's own verified household, so wording can't leak
      another household's size). Both branches pinned Contains + DoesNotContain, mutation-checked
      (flipping the branch fails exactly the two wording tests); Web.Tests 697 + UI.Tests 485 green.
-   - Both branches await the `/pre-push` gate before merge, per the house rule; pushing is
-     Jordan's call.
+   - **The `/pre-push` gate RAN on both branches (2026-08-25).** Local `/code-review` is
+     model-invocation-disabled (item 42), so each branch got an independent code + security review as
+     a `general-purpose` agent. ⚠️ **The `isolation: worktree` option did NOT give each agent a
+     separate tree** — the agents' `git checkout` commands raced in the shared repo and dragged the
+     MAIN working tree's HEAD to the backup-kit commit; one security reviewer caught it live and
+     re-pinned to its blob, and I restored master. Item 40's isolation hazard, live. **Fix for next
+     time: review agents must read by EXPLICIT SHA (`git show <sha>:<path>`, `git diff <base>..<sha>`)
+     and never `git checkout` / never rely on HEAD** — the re-run code reviewers were told exactly
+     that and came back clean. Outcome: **`fix/self-removal-copy` — SHIP (code) + PASS (security),
+     no changes.** **`feature/family-backup-kit` — PASS (security) + FINDINGS (code): one MEDIUM
+     durability call + three fail-safe LOWs, ALL FIXED** (Jordan: fix all, the family box is the
+     pay-for box's dry run) in commit `869900c`: offsite `rclone sync` now runs `--backup-dir` so a
+     bad local night can't erase good offsite blobs (dated sibling archive); retention survives a
+     malformed stamp folder via `TryParseExact`; the installer validates `-KeepDays`; the log-write
+     catch is no longer empty. Verified end-to-end (retention proof, installer ValidateRange, archive
+     non-overlap, guard) — except the actual `rclone --backup-dir` move, reasoned from rclone docs
+     (rclone isn't installed here). Both branches still UNMERGED, UNPUSHED — pushing is Jordan's call.
+
+58. **Pack-count misread as quantity — the soft guard (2026-08-26, branch `fix/quantity-misread-guards`,
+   unmerged, gate pending).** A real family-box bug Jordan hit: a normally-bought 12-pack of toilet
+   paper was extracted as **quantity 12** (the pack size read into the quantity field), and the
+   predictor faithfully stretched the due date ~12× — ~200 days, so the reminder never came. ⚠️ **The
+   predictor is doing the RIGHT thing with a wrong number** — a real 12× stock-up wants exactly that
+   projection (why the stock-up factor is uncapped, item 19), and capping it would have masked this
+   rather than caught it (Jordan's call). So the fix is at the SOURCE and the CONFIRM GATE, never the
+   predictor; the mutation-sweep tests pinning the uncapped 12× stretch stay correct.
+   - **Extraction prompt (rule 5):** a pack/count printed as part of the item ("12 ROLL", "12 CT",
+     "6 MEGA ROLL", "18 EGGS", "2=1") is the package SIZE; quantity is 1 (the number of packages) unless
+     "N @ price" or warehouse per-unit repeats. Reduces the misread at the source — but extraction is
+     probabilistic, so it's not the whole fix (Jordan's instinct, correct).
+   - ⚠️ **`QuantityAnomaly` (Core/Ingest) is a DETERMINISTIC confidence signal, chosen over asking the
+     model to self-rate its own quantity** (Jordan: high-quality deterministic confidence over a model
+     reasserting a number — models are bad at self-rating). It flags a line ONLY when the SIZE evidence
+     says the count came from a pack: the size's own count equals the quantity ("12 ct" + qty 12), or a
+     count-shaped quantity with no size on a product that USUALLY carries one (Jordan's "no pack size and
+     there tends to be" tell). **Deliberately NOT a raw "quantity >> usual" test** — that cannot tell a
+     misread from a genuine stock-up and would harass every bulk buyer (the same reason the predictor
+     isn't capped). A fractional quantity (a weight, 2.31 lb) is never flagged; small counts (< 4) never.
+   - **SOFT, never blocks** (Jordan's vision: flag but let them bulk-approve). `ReceiptConfirmationService`
+     (the ONE confirm path) computes the flag against the FINAL, review-corrected quantity — a fixed 12→1
+     clears it — stamps it on the confirmed `ReceiptLine.QuantityFlag` (new column, AdditiveSchema +
+     drop-column parity test), and returns the flagged lines. `ReceiptAutoConfirmer` carries the confirm
+     out WITHOUT blocking — deliberately unlike `ReceiptDuplicateDetector` (which breaks Auto): a wrong
+     quantity is one-tap recoverable and the due date recomputes live, so a bulk buyer is never stopped.
+   - **Surfaced two ways, from the ONE persisted flag:** a soft "pack?" chip on /receipts (the safety net —
+     an auto-confirm blown past on the done-panel is still catchable there — Jordan's "persist yes"), and a
+     soft amber callout on the Upload done-panel naming each flagged line (manual path takes the concerns
+     from the confirm result; auto path reads them back from the persisted flag — same set either way).
+     `QuantityAnomaly.Describe` is THE wording (one definition), a question not an accusation. `.callout` is
+     a new theme-aware soft-heads-up box reusing the duesoon amber tokens (defined, not an undefined class —
+     the `.linkish`/`.field`/`.small` lesson).
+   - Two commits (data+prompt `fe97037`, UI `636c973`). Core 630 green, Web 701, UI 489 (+33 across the
+     detector, Describe, confirm-stamping, AdditiveSchema, and the two page surfaces). **Live-verified end
+     to end** (dev sandbox, /dev/login): set the eggs line to qty 12 + size "12 ct", confirmed (recorded,
+     NOT blocked — the done-panel appeared), saw the amber callout ("did you buy one pack, not 12?"), and
+     /receipts then showed the persisted "pack?" chip with the same copy in theme-aware amber. Zero console
+     or server errors. ⚠️ Deliberately NOT built: a review-grid LIVE badge (Review-mode users already see
+     the quantity/size columns; lowest value) — could be added if wanted.
+   - **The `/pre-push` gate (2026-08-26; two independent agents reading by SHA per the isolation lesson).
+     Security PASS**, probe-free but fully traced: no cross-household read/write path, both new DB reads
+     (`LoadConcernsAsync`, the confirm's `priorSizesByProduct`) go through `IHouseholdDbFactory`, no new
+     `IgnoreQueryFilters`/endpoint/settings-key/disk-write, the copy/name/size render as encoded text
+     nodes (no XSS), and — the key item — `ReceiptLine.QuantityFlag` is a COLUMN on an already-covered
+     table, so export / delete-my-data / CountAll reach it automatically (verified in `UserDataService`;
+     it even confirmed the GraphQL surface doesn't select the column). **Code review: no High. Four
+     findings, all fixed (commit `5a16cf8`):**
+     - ⚠️ **[Med] `SizeMatchesQuantity` false-positived on measure-sized multi-buys** — the size's number
+       equalling the quantity flagged twelve 12-oz cans / six 6-oz yogurts as a misread. Now gated on the
+       size being a COUNT (`ct`/`pk`/`roll`/`eggs`/bare number), never a weight/volume, via
+       `QuantityAnomaly.IsCountSize`. ⚠️ The SAME latent bug lived in the sibling `MissingUsualSize` tell
+       (a measure-sized item bought in multiples with the size dropped is a legit multi-buy) — gated it
+       too (`UsuallyHasACountSize`, later replaced — see the Opus pass). **Both gates mutation-checked.**
+     - [Low] The done-panel callout **persisted after ↩ Undo** removed the receipt it named — cleared
+       `confirmConcerns` in `UndoConfirm`; regression-tested.
+     - [Low/info] **Tied the surfaced concern to the STAMPED line** (moved the add inside the `dbLine`
+       block) so the manual done-panel and the persisted-flag reads show provably the same set.
+     - [efficiency, from the security review] `priorSizesByProduct` loaded EVERY household purchase per
+       confirm — scoped it to the lines' resolved product ids (only a resolved product can have priors).
+   - **A SECOND independent gate on Opus 4.8** (Jordan's call — "catch everything we can"; the first ran on
+     fable-5). Security **PASS**, deeper than the first: traced each tenancy item to file:line, confirmed
+     no **ReDoS** on the new `[A-Za-z]+` regex (a single linear class on a bounded string), and checked the
+     adversarial case where a tampered `ProductId` names ANOTHER household's product — it doesn't resolve
+     against the scoped list, so it falls through to create-new and their sizes are never read. Code:
+     **SHIP**, no High/Med — the EF claim and the concern/stamp/persisted-flag "one set" property both
+     re-verified in a worktree. Two of five Low findings fixed (commit `2f98d7b`), plus one I closed while
+     reasoning before launching it:
+     - ⚠️ **The count/measure gate had a space-less hole I found myself** (`96cbb56`, pre-Opus): `IsCountSize`
+       split on separators, so `"12oz"`/`"5lb"` stayed one token and read as counts. Reads LETTER runs now
+       (regex), so a space-less measure is caught like `"12 oz"` (space-less sizes are real — `"24pk"`).
+     - ⚠️ **[Low, the valuable one] Compound multipack sizes escaped the flag entirely** — `"24 pk 12 fl oz"`,
+       `"12 x 12 oz"`, `"6 pack 16 oz"` read as measures under "any measure token → not a count", so a
+       **beverage/canned multipack** misread (a 24-pack read as qty 24) went unflagged. Those are the MOST
+       common packs and fully subject to the ~24× stretch the feature exists to catch — Opus rightly called
+       my "rare edge" doc dishonest. `IsCountSize` now treats a pack/count token ANYWHERE (`pk`/`ct`/`pack`/
+       `roll`/`x`/…, a `CountUnits` set) as making the leading number a pack count; only a PURE measure
+       (`"12 oz"`) isn't. Container words (bar/can/box/jar) are deliberately NOT count tokens — as often the
+       item's own vessel as a pack.
+     - **[Low] `MissingUsualSize` nagged a genuine stock-up** — four cartons of a usually-`"12 ct"` item with
+       the size dropped asked "is this one 4-pack?". `UsuallyHasACountSize` ("usually count-sized") became
+       `MatchesAUsualPackCount`: fire only when the quantity **equals a prior pack count** (a 12-roll pack
+       read as qty 12), which separates the leak from a real 4-buy. The one branch that could harass a bulk
+       buyer, now precise.
+     - **[Low, a11y] The `/receipts` "pack?" chip's explanation lived only in a hover `title`** — unreachable
+       by screen-reader/touch. Added an `aria-label` carrying the full `Describe` copy; it's the persistent
+       net, so its meaning must not need a mouse.
+     - Left documented/accepted (both reviewers): the **batch auto-confirm** done-panel shows no callout (the
+       `/receipts` chip is the net — a UX asymmetry, not a correctness gap), and rare non-grocery size tokens
+       (`"4 in"`, `"6 XL"`) lean-count and soft-flag. Both new detector rules mutation-checked (5 tests fail
+       when reverted).
+   - **Core 651 / Web 701 / UI 490 green, 0 warnings** (non-incremental Release). ✅ **MERGED to master via
+     PR #32 (merge `c420a6b`), master CI green** (2026-08-26) — gated clean by TWO independent passes
+     (fable-5 + Opus 4.8) before merge, and live-verified end to end (the compound multipack flags; the
+     `/receipts` chip aria-label present). ⚠️ GitHub Actions lagged repo-wide that day, so the authoritative
+     proof is the post-merge master run, not a pre-merge PR run (none queued in time).
+
+59. **The admin dashboard — operational health, live CI status, and a test/quality snapshot (2026-08-27,
+   branch `feature/admin-dashboard` — ✅ MERGED via PR #34, master CI green; the upload-artifact bump followed
+   as PR #35).** Jordan's ask: a test dashboard, "maybe an admin tab" — sharpened in discussion to three cards
+   layered onto the existing `/admin` page (which already had FIVE detail panels, so the dashboard is an
+   at-a-glance OVERVIEW at the top, not a duplicate). All three reuse the existing `.stat`/`.portfolio`
+   design-system tiles (`.stat.pass`/`.fail` = the accuracy page's green/red), so no new CSS.
+   - **At a glance** — a KPI strip: household + Founder counts, online now, open bugs/errors (all reused from
+     data the page already loads), plus the genuinely new data — **AI calls/cost today and this calendar month,
+     summed across ALL households.**
+   - ⚠️ **`AdminAiSpendReader` is the app's THIRD production `IgnoreQueryFilters`** (Jordan's explicit call over
+     the no-bypass alternative of `CreditLedger`-only, which excludes BYOK and is retail-not-cost). `AiUsage.
+     CostMicros` is recorded in EVERY key mode precisely so an operator cost number can exist, and no
+     per-household surface answers "spend across all households." Built to mirror `AdminReportReader` exactly:
+     `RequireAdminAsync` refuses everyone else BEFORE any DbContext is created, `AsNoTracking`, **aggregate-only**
+     (household ids are counted via `Distinct().Count()`, never returned), reached via `IHouseholdDbFactory`,
+     same `AdminOptions.IsAdmin` predicate. The `AdminReportReader` "exactly TWO" comment was updated to "THREE"
+     to keep the count honest. **`AiSpendRollup` (Core, pure) owns the windowing/sums** so they're unit-tested
+     (Core is 100% mutation-gated): today vs month-to-date (`>= monthStart && <= today`), distinct active
+     households.
+   - **Continuous integration** — the latest run per workflow (CI, Mutation) from the GitHub Actions API:
+     conclusion (green pass / red fail / running), branch, short sha (linked), time. `GitHubCiStatus` behind an
+     `ICiStatusProvider` seam (page tested against a fake, service against a stubbed HTTP handler) — a cached
+     singleton over `IHttpClientFactory`, **unauthenticated** (public run metadata needs no token; a
+     `GitHub:Token` only raises the rate limit), that **NEVER throws to the page** (a non-2xx, network error,
+     malformed JSON, or timeout all become a `CiStatus` with `Error` set), caches only successes, and loads off
+     `OnAfterRenderAsync` so a slow/unreachable GitHub can't block the render. Config
+     `GitHub:{Enabled,Owner,Repo,Token,CacheMinutes}`; the outbound call is SERVER-side so the browser CSP is
+     untouched.
+   - **Tests & quality** — passing/total, per-project counts, build warnings, (optional) mutation %. Reads a
+     CI-written `wwwroot/test-status.json` exactly like `/accuracy` reads `eval-results.json` — honest numbers
+     from a real run, not typed into the page (the number-in-the-page rot this repo's history is full of); the
+     report's own commit sha + generated-at make staleness visible. `TestStatusReport`/`TrxSummary` (Core,
+     shared by the app reader AND the CI generator = ONE definition of the shape) + `TestStatusReader`
+     (`ITestStatusProvider` seam) + **`tools/TestStatusGen`** (a build-time console, added to the solution, that
+     folds the run's `.trx` files into the json). ⚠️ **The seed is refreshed manually + committed like
+     `eval-results.json`** — `ci.yml` emits the `.trx` and publishes `test-status.json` as an ARTIFACT but does
+     NOT commit it back (keeps master's history clean + least-privilege `contents: read`); a `GITHUB_TOKEN`
+     commit-back — which does NOT re-trigger CI — is the documented one-step opt-in if auto-refresh is ever
+     wanted.
+   - **The `/pre-push` gate ran** (both reviews as independent agents reading by SHA/diff, item 56's isolation
+     lesson). **Security: PASS, no findings** — the third `IgnoreQueryFilters` traced clean (gated-first,
+     AsNoTracking, aggregate-only, the only new bypass), no new endpoints/settings-keys/per-household disk
+     writes, `GitHubOptions` is config not household data, `test-status.json` is non-household build data,
+     `ci.yml` is injection-free. **Code review: 1 MEDIUM + LOWs, all fixed + mutation-checked (`45d96d3`):**
+     - ⚠️ **[MEDIUM] the CI card could hang on "Loading…" forever** — an HttpClient TIMEOUT throws
+       `TaskCanceledException` (a subclass of `OperationCanceledException`), which `catch (OperationCanceledException)
+       { throw; }` rethrew as if it were the caller's cancellation → it propagated to `OnAfterRenderAsync`'s
+       teardown catch and the card never left "Loading…", defeating the "never throws" contract. The exact
+       item-38/39 exception-derivation class, and untested (only `HttpRequestException` was covered). Fixed: only
+       `when (ct.IsCancellationRequested)` rethrows; a timeout falls through to the error state. New timeout test.
+     - [LOW] `TrxSummary` now sums failed + error + timed-out + aborted (a green card can't hide an errored
+       test); `AiSpendRollup`'s month window bounds `<= today` (a stray future row can't inflate it);
+       invariant-culture timestamp/int parsing; removed the unused `CiRun.Title` field (dead code — and not
+       rendering fork-PR-controllable text was the security review's own note).
+   - ⚠️ **The drive-test caught what green tests couldn't** (the repo's own rule, proven again): the quality
+     card was showing **2565** because the committed seed predated the fix-pass's +3 tests — a stale DATA file
+     no test notices. Regenerated the seed from a real run at the tip (**2568**), committed, re-verified the
+     card reads 2568. Live-verified end to end (signed in as the sandbox admin via `/dev/login`): all three
+     cards render with real data — the AI aggregate across **5 households**, real GitHub CI status (both
+     workflows green), 2568/2568 — no console/CSP errors (the SignalR reconnect noise was restart-transient,
+     timestamps confirmed).
+   - **2568 tests, 0 failing, 0 warnings** (non-incremental Release; Engine 1184 · AI 164 · Persistence 727 ·
+     Pages 493). Every load-bearing rule mutation-checked by hand — the cross-household sum (drop
+     `IgnoreQueryFilters` → 5→2), the admin gate, the month boundary + `Distinct`, the CI cache +
+     latest-per-workflow, the TRX mapping, and the three fix-pass rules. Tiers show Free/Founder (the two in
+     code today), forward-compatible.
+   - ⚠️ **Hand mutation-checks are NOT the Stryker 100% gate — a scoped `dotnet stryker` on the new Core files
+     (before triggering the weekly mutation run) found FOUR survivors the by-hand checks missed** (`fix/
+     core-mutation-coverage`, PR #36): the default `""` on `CommitSha`/`Branch` (no test asserted the default),
+     `TotalFailed`'s `Sum→Max` (the fixture had a zero-valued Failed, so max == sum), and `ShortSha`'s
+     `>= 7`↔`> 7` (a genuine EQUIVALENT mutant — `[..7]` of a 7-char string IS the whole string). Fixed
+     pre-emptively: tests for the first two; `ShortSha` restructured to `[..Math.Min(7, Length)]` (no boundary
+     to mutate → no annotation). Core scoped-Stryker back to 100%. The lesson mirrors "green tests aren't a
+     review": by-hand mutation-checks catch the BEHAVIOURAL mutants; only the exhaustive gate catches the
+     default/equivalent/degenerate ones — run scoped Stryker on any new Core file before relying on it.
+   - **PR #35 (same day): `actions/upload-artifact@v4 → v7`** in both `ci.yml` and `mutation.yml`, clearing the
+     Node-20 deprecation annotation the #34 master run surfaced (v7 declares `using: node24` and keeps the
+     name/path/if-no-files-found inputs — verified against its `action.yml`, item-35 posture: current major,
+     pinned bare). Master CI green AND annotation-clean; `mutation.yml` is fixed but confirms on its next
+     weekly/dispatch run (identical action+inputs to the ci.yml upload the PR proved).
+
+60. **The "seven ideas" batch — six features gated and merged (2026-08-28/29, PRs #37–#42; all ✅ MERGED to
+   master, master CI green after each).** Jordan brought seven ideas/problems; six became features (the
+   seventh, #7's product-selector, WAS #6), each built on its own branch, independently gated (code +
+   security review as SHA-reading agents — the local `/code-review` is model-invocation-disabled, item 42),
+   fixed until it "passed reasonably", then PR'd and merged one at a time. **2612 green, 0 warnings** on
+   merged master. Every gate fix mutation-checked. The per-feature decisions and lessons worth keeping:
+   - ⚠️ **#4 — a price trend is a shopping TRIP, not a receipt line (PR #37, `PriceSeries.Dominant`).**
+     Dentastix showed a price INCREASE on Trends but not on Product Detail. The real data had it listed
+     TWICE on one receipt ($36.19 + $48.26): Trends read one point per LINE (phantom ▲33%) while Product
+     Detail averaged the receipt (no change) — two surfaces, their own arithmetic over one fact, the "one
+     story" fault. Fixed in the ONE shared definition all three price-trend surfaces (Trends, Product Detail,
+     Reports) call: (1) a trend point is a TRIP — same size + same day collapse to their average, ranked by
+     TRIP count not line count; (2) a $0.00 line isn't a price (coupon/void/misread), dropped. Product
+     Detail's chart now feeds the SAME raw receipt lines the other two do, so they agree by construction, not
+     coincidence. ⚠️ **Self-review caught the regression the fix itself introduced:** the $0 filter makes
+     `Dominant` return null for an all-$0 product, and `SpendInsight`/`ReportDataService` used `!` then
+     dereferenced → NRE/500. Both filter the null now, regression-tested at each site. **Apples legitimately
+     has two same-receipt lines** (two produce weigh-ins), which is why the fix is display-side, NEVER a data
+     migration. Live-verified against the real data (injected into a throwaway DB): the row reads "—", not ▲.
+   - **#6 — Cookbook product filter is type-and-guess (PR #38).** `<select>` → datalist-backed `<input>`;
+     typed text resolves exact→unique-partial→id and navigates to `?uses=`; `Recipe.Uses` stays the one
+     shared "recipes that use X" definition. Gate Low, fixed: an ambiguous/unknown commit was a silent
+     no-op (the old dropdown couldn't be) — now a `role="status"` hint, cleared on the next commit and any nav.
+   - ⚠️ **#3 — "Coming up this week" dashboard panel (PR #40).** Stocked items whose rhythm due date lands
+     within 7 days, so an item due soon surfaces before the tight DueSoon window. Excludes
+     `CountConfidence.Counted`, NOT `SuppressedByCount`: suppression only fires when the rhythm would ALSO
+     ask, so a fresh-counted-but-Stocked-by-rhythm item leaked in and nagged about count-managed stock
+     (item 28). SHIP, no other findings.
+   - ⚠️ **#5 — "Recent activity" panel on /admin links the audit log to the error log (PR #39).** The app's
+     FOURTH production `IgnoreQueryFilters` (`AdminReportReader.ListRecentActivityAsync` — admin-gated as its
+     FIRST statement + AsNoTracking + projection-only, the exact clone of the three existing reads), plus an
+     `Undone` flag so a reversed action isn't read as live. Security PASS, probe-verified (a non-admin is
+     refused before any read). Gate Low, fixed: `AdminAiSpendReader`'s cross-reference comment still said
+     "THIRD … the other two are", under-counting — the multiply-referenced count-drift class (items 21/39);
+     these counts are a security-audit aid, keep them in sync.
+   - ⚠️ **#1 — "Still in stock": a snooze, not a re-anchor (PR #41).** New `SignalKind.StillInStock` that
+     EXTENDS the due date (~max(4, 25% of the median), extend-only, loses to an OutNow on recency + a
+     same-instant tie-break, never overrides an expiration cap) — vs Restocked, which re-anchors it. Buttons
+     on dashboard + grocery list; the snooze lives only in the predictor. Gate Lows, fixed: a tie test was
+     VACUOUS (signals on different days, so the OutNow won regardless of StillInStock — now a same-DAY tie
+     that exercises the tie-break); and adding the enum value made `StillInStock` `Enum.IsDefined`-valid, so
+     chat's `record_signal` would accept-and-SPEAK it without the inert caveat though it's UI-only — the
+     guard is an ALLOWLIST of the three chat kinds now (still refuses numeric smuggling).
+   - ⚠️ **#2 — honest makeability + a one-tap "I'm out" (PR #42).** "recipes say I have it, but I don't, so
+     I've kind of stopped using recipes." A ✓ backed only by the rhythm reads "likely", not a confident
+     tick; "I'm out" files a real OutNow on the covering product(s) that STICKS (dashboard/grocery see it,
+     undoable). **The Medium, and the lesson:** the inert note inferred "won't take effect" from `if (Have(i))`
+     after reload — but Have(i) staying true means EITHER the OutNow was inert OR a second same-food product
+     still covers the ingredient. With a "Chicken Breast"-grounded main and BOTH Chicken Breast + Chicken
+     Breast Tenderloins on hand, "I'm out" fired the OutNow (Chicken Breast went out) while the row stayed
+     green on the tenderloins, and the note LIED. It now reads the engine's own `SignalTodayWouldBeInert` per
+     marked product (captured, not re-derived); when the tap fires but an alternative covers, it names the
+     alternative instead of claiming inertness. Also (Low): `imOutNote` is a page-level status line, so
+     Restocked/TrackIt clear it.
+   - **The process, worth keeping:** every branch gated by INDEPENDENT SHA-reading agents (never `git
+     checkout` in the shared tree — items 40/56); the admin (4th cross-household read) and recipes (the
+     Medium) reviewers PROBED rather than reasoned. Merged disjoint-first (cookbook, admin), then the three
+     sharing `Home.razor`/`app.css`/`HomeCardsTests` — git auto-merged all but one `app.css` conflict
+     (recipes' `.imout-btn` vs still-in-stock's widened `.restock-btn,.stillstock-btn`, resolved by keeping
+     both). ⚠️ Every overlapping merge was built + full-suite tested locally BEFORE its PR (item 50), then PR
+     CI and post-merge master CI confirmed each (item 35). The #4 "Dentastix price" report is resolved by PR
+     #37; the remaining backlog (#4's neighbours) — a per-size Trends price chart, the corrected-display-name
+     learning, the CSV importer — are untouched by this batch and stay open.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
@@ -3074,9 +3335,11 @@ opaque abbreviations like "HONEST COW" pre-fill as "Cottage Cheese" instead of r
 (Shipped since this note: the double-scroll fix; the **two-stream cadence model** — rebuy rhythm +
 burn rate, hybrid, restock is status-only (§6); the whole **production-hardening pass** —
 logging, the SQLite CVE patch, the `IChatClient` migration, and faked-client tests; the **left sidebar
-nav rail** that retired the ~768–1400px header overflow (PR #21, 2026-08-22); and **download a receipt's
+nav rail** that retired the ~768–1400px header overflow (PR #21, 2026-08-22); **download a receipt's
 saved image copy** — a household-scoped `/api/receipt-image/{id}` (mirrors the recipe-image tenancy
-shape) plus a Download link on /receipts, both merged 2026-08-22 (PR #22).)
+shape) plus a Download link on /receipts, both merged 2026-08-22 (PR #22); and the **"seven ideas" batch**
+(PRs #37–#42, 2026-08-28/29 — the #4 Dentastix price-trend fix, the Cookbook typeahead, the dashboard
+"Coming up" panel, the /admin activity panel, "Still in stock", and honest recipe makeability — see item 60).)
 
 ## Voice: the built-in cook-along (v3.3, branch `feature/voice-engine`)
 

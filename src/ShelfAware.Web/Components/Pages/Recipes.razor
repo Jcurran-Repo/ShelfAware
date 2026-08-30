@@ -184,6 +184,10 @@
     {
         <p class="chat-reply" role="status">@adaptNote</p>
     }
+    @if (imOutNote is not null)
+    {
+        <p class="muted" role="status">@imOutNote</p>
+    }
     @if (displayed.Count == 0)
     {
         <p class="muted">
@@ -343,11 +347,29 @@
                     <ul class="ingredient-list">
                         @foreach (var i in r.MainIngredients)
                         {
-                            var have = Have(i);
-                            <li class="@(have ? "have" : "grab")">
+                            @* Covering products computed ONCE per main (both the tick and the confidence read
+                               them — the same matcher, so they can't disagree). *@
+                            var coverage = CoveringInStock(i.Name, i.MatchedProduct);
+                            var have = coverage.Count > 0;
+                            var confident = coverage.Any(c => c.CountBacked);
+                            <li class="@(have ? (confident ? "have" : "have likely") : "grab")">
                                 <span class="ingredient-name">@(have ? "✓" : "🛒") @Qty(i.Quantity, i.Name)</span>
+                                @* Part A — honesty: a ✓ backed only by the rhythm (no fresh count) reads "likely",
+                                   not a confident tick. Asserting the guess is the false positive that erodes trust. *@
+                                @if (have && !confident)
+                                {
+                                    <span class="likely-note" title="You haven't counted this — Shelf Aware is going by your usual buying rhythm. Tap &quot;I'm out&quot; if you don't actually have it.">likely</span>
+                                }
                                 <button type="button" class="alt-swap" @onclick="() => ToggleAlternatives(i)"
                                         aria-label="Swap @i.Name for something else" title="Swap this ingredient">⇄</button>
+                                @* Part B — the correction the feature was missing: the recipe said you have it, but
+                                   you don't. Files a real OutNow (sticks, undoable) and flips the row to Missing. *@
+                                @if (have)
+                                {
+                                    <button type="button" class="imout-btn" @onclick="() => ImOut(i)" disabled="@restockBusy"
+                                            title="Not actually got @i.Name? Mark it out — it moves to your grocery list and dashboard"
+                                            aria-label="Mark @i.Name out — you don't actually have it">I'm out</button>
+                                }
                                 @if (!have && MaybeHave(i.Name, i.MatchedProduct) is { } outItem)
                                 {
                                     @if (outItem.Untracked)
@@ -360,10 +382,21 @@
                                     }
                                     else
                                     {
-                                        <span class="maybe-have">you may still have <strong>@outItem.Name</strong> — it just looks run-out</span>
+                                        @* If you JUST tapped "I'm out" on this, it's a DECLARED out — don't say "it just
+                                           looks run-out" (that would contradict your own tap: one prediction, one story).
+                                           The predicted-run-out copy still serves a row the engine merely inferred. Either
+                                           way Restocked is the one-tap reverse. *@
+                                        @if (justMarkedOut.Contains(outItem.Id))
+                                        {
+                                            <span class="maybe-have">you marked <strong>@outItem.Name</strong> out</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="maybe-have">you may still have <strong>@outItem.Name</strong> — it just looks run-out</span>
+                                        }
                                         <button type="button" class="restock-btn" @onclick="() => Restocked(outItem.Id)"
                                                 disabled="@restockBusy"
-                                                title="Still have @outItem.Name at home — clears the run-out and this goes green"
+                                                title="Have @outItem.Name after all? Restocked clears it and this goes green"
                                                 aria-label="Mark @outItem.Name restocked — you still have it">Restocked</button>
                                     }
                                 }
@@ -458,6 +491,10 @@
     private int? generatingAltFor; // RecipeIngredient.Id whose alternates are being generated
 
     private List<PantryProduct> onHand = [];
+    // The same in-stock products WITH their id and whether a FRESH COUNT backs each (vs the rhythm's mere
+    // not-overdue guess) — so a have-main knows which product(s) "I'm out" should mark out, and whether its
+    // ✓ is confident (counted) or only "likely" (predicted). onHand is derived from this, so one pass.
+    private List<(int Id, PantryProduct Product, bool CountBacked)> onHandDetail = [];
     // Every tracked edible product with its curated substitutes — the swap clouds draw stand-ins from
     // the whole matrix, including out-of-stock items (they render as "grab" bubbles).
     private List<PantryProduct> cloudProducts = [];
@@ -469,6 +506,18 @@
     // with a one-tap Track-it; used for the hint only, never for on-hand or the swap clouds.
     private List<(int Id, PantryProduct Product)> untrackedEdible = [];
     private bool restockBusy;
+    // Products the user just declared out via "I'm out" this session — so the run-out hint reads "you
+    // marked X out" rather than falsely blaming a soft prediction ("it just looks run-out"). Per-circuit,
+    // so it resets on a full navigation (a stale OutNow then reads as the ordinary run-out it now is).
+    private readonly HashSet<int> justMarkedOut = [];
+    // A one-line note after "I'm out" when the OutNow was inert (bought too recently — §6.6), so the tap
+    // isn't a silent no-op.
+    private string? imOutNote;
+    // Per product: would an OutNow filed TODAY be inert (§6.6 same-day tie)? The engine's own
+    // SignalTodayWouldBeInert, read (not re-derived) so the "I'm out" note reflects what actually
+    // happened to the marked product — NOT whether the row stayed green, which a second same-food
+    // product also does while the OutNow really fired.
+    private Dictionary<int, bool> signalInertById = [];
 
     private Recipe? picked;
     private string? extraNote;
@@ -615,16 +664,77 @@
         return null;
     }
 
+    // The in-stock product(s) currently covering this ingredient — the ones its ✓ is ABOUT. Same matcher
+    // as the tick (IngredientMatcher.Covering, so they can't disagree), mapped back to the real products by
+    // identity so "I'm out" knows what to mark and Confident knows what backs it. A grounded main yields
+    // exactly one; a food-family match ("ground beef" → two cuts) can yield several — "I'm out" marks all,
+    // since the person said they don't have the ingredient (any it wrongly caught is one Restocked away).
+    private List<(int Id, bool CountBacked)> CoveringInStock(string? ingredientName, string? matchedProduct)
+    {
+        var keys = IngredientMatcher.Covering(ingredientName, matchedProduct, onHand)
+            .Select(pp => ProductMatcher.IdentityKey(pp.Name))
+            .ToHashSet();
+        return onHandDetail
+            .Where(x => keys.Contains(ProductMatcher.IdentityKey(x.Product.Name)))
+            .Select(x => (x.Id, x.CountBacked))
+            .ToList();
+    }
+
     // Same status-only write as the dashboard/grocery-list Restocked (§6 two-stream model: it clears
     // the run-out and re-anchors the due date, never feeds the cadence). Reload flips the row green.
     private async Task Restocked(int productId)
     {
         if (restockBusy) return;
         restockBusy = true;
+        imOutNote = null; // a prior "I'm out" note is about a different act — don't leave it stale over this one
         try
         {
             await Store.RecordSignalAsync(productId, SignalKind.Restocked);
             await LoadAsync();
+        }
+        finally { restockBusy = false; }
+    }
+
+    // "The recipe says I have this, but I don't" — the have-side correction, symmetric to Restocked on the
+    // grab side. Files an OutNow on the covering in-stock product(s): the honest signal that STICKS (the
+    // dashboard and grocery list see it too, and it's undoable via History), not a display-only mark. The
+    // reload flips the row to Missing, where the existing "you may still have X" hint offers the reverse.
+    private async Task ImOut(RecipeIngredient i)
+    {
+        if (restockBusy) return;
+        restockBusy = true;
+        imOutNote = null;
+        try
+        {
+            var covering = CoveringInStock(i.Name, i.MatchedProduct);
+            // Was the tap a genuine no-op? ONLY when every product it marks would treat today's OutNow as
+            // inert — §6.6's same-day tie — read from the engine's SignalTodayWouldBeInert, captured before
+            // the write. NOT inferred from the row staying green: a second same-food product on hand keeps
+            // it green while the OutNow really fired (the bug this replaced).
+            var wasInert = covering.Count > 0 && covering.All(c => signalInertById.GetValueOrDefault(c.Id));
+            foreach (var (id, _) in covering)
+            {
+                justMarkedOut.Add(id); // so the row's hint reads "you marked X out", not "it just looks run-out"
+                await Store.RecordSignalAsync(id, SignalKind.OutNow);
+            }
+            await LoadAsync();
+            if (wasInert)
+            {
+                // Bought this morning, so the OutNow can't take effect today — nothing visibly changed.
+                // Say why, or the tap looks silently ignored.
+                imOutNote = $"You bought {i.Name} very recently, so marking it out won't take effect until tomorrow.";
+            }
+            else if (Have(i))
+            {
+                // The OutNow DID fire, but the row stays green because a DIFFERENT on-hand product also
+                // covers this ingredient (food family). Name it, so a still-checked row after "I'm out"
+                // reads as "you have an alternative", not "the tap was ignored".
+                var stillId = CoveringInStock(i.Name, i.MatchedProduct).FirstOrDefault().Id;
+                imOutNote = productNamesById.GetValueOrDefault(stillId) is { } stillName
+                    ? $"Marked out — but you still have {stillName}, which also covers {i.Name} here."
+                    : "Marked out.";
+            }
+            // else: the row went to Missing — its own "you marked X out" hint explains it; no page note.
         }
         finally { restockBusy = false; }
     }
@@ -636,6 +746,7 @@
     {
         if (restockBusy) return;
         restockBusy = true;
+        imOutNote = null; // a prior "I'm out" note is about a different act — don't leave it stale over this one
         try
         {
             await Store.SetTrackingAsync(productId, tracked: true);
@@ -809,10 +920,16 @@
             .Include(p => p.Purchases).Include(p => p.Signals).Include(p => p.Substitutes).ToListAsync();
         var today = DateOnly.FromDateTime(DateTime.Today);
         var trackExpirations = await Settings.GetTrackExpirationDatesAsync();
-        onHand = PantryOnHand.EdibleInStock(products, today, trackExpirations)
-            .Select(p => new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList()))
-            .OrderBy(x => x.Name)
+        // Whether an OutNow filed today would be inert, per product — asked of the engine so the "I'm out"
+        // note tells the truth about the signal, not about the row's colour. (Flag-independent: it's
+        // lastStockBack >= today; the flags just match the on-hand pass beside it.)
+        signalInertById = products.ToDictionary(p => p.Id,
+            p => ReplenishmentPredictor.Predict(p, today, trackExpirations, honorQuantity: true).SignalTodayWouldBeInert);
+        onHandDetail = PantryOnHand.EdibleInStockDetailed(products, today, trackExpirations)
+            .Select(d => (d.Product.Id, Product: new PantryProduct(d.Product.Name, d.Product.Substitutes.Select(s => s.Value).ToList()), d.CountBacked))
+            .OrderBy(x => x.Product.Name)
             .ToList();
+        onHand = onHandDetail.Select(x => x.Product).ToList(); // same in-stock set, for the matcher
         cloudProducts = products
             .Where(p => p.IsTracked && p.Category.IsEdible())
             .Select(p => new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList()))

@@ -30,6 +30,7 @@ public class ReportSpecUrlTests
             Category = Category.Dairy,
             ProductId = 12,
             Tag = "kids snacks", // spaces must survive the trip
+            RecipeId = 34,       // emitted and re-parsed like any other filter
             Chart = ReportChart.Bars,
             ComparePrevious = true,
         };
@@ -65,5 +66,37 @@ public class ReportSpecUrlTests
         Assert.Equal(ReportSplit.ByTag, Parse("split=bytag").Split);
         // Enum.TryParse accepts raw integers; an undefined one must not become a phantom enum value.
         Assert.Equal(ReportSplit.None, Parse("split=99").Split);
+    }
+
+    [Fact]
+    public void A_parsed_window_wins_over_the_fallback()
+    {
+        // The round-trip and garbage tests both land on the fallback window (either because the query
+        // carries it or because it's unparseable), so neither distinguishes "use the parsed date" from
+        // "always use the fallback". Give a valid date that ISN'T the fallback and it must come through.
+        var spec = Parse("from=2026-03-15&to=2026-04-20");
+
+        Assert.Equal(new DateOnly(2026, 3, 15), spec.From);
+        Assert.Equal(new DateOnly(2026, 4, 20), spec.To);
+    }
+
+    [Theory]
+    [InlineData("top=1", 1)]    // lower bound, inclusive
+    [InlineData("top=50", 50)]  // upper bound, inclusive
+    [InlineData("top=0", 6)]    // below -> default
+    [InlineData("top=51", 6)]   // above -> default
+    [InlineData("top=x", 6)]    // unparseable -> default
+    public void TopN_is_bounded_to_1_through_50(string query, int expected)
+    {
+        Assert.Equal(expected, Parse(query).TopN);
+    }
+
+    [Fact]
+    public void A_whitespace_only_value_reads_as_absent()
+    {
+        // Text() guards IsNullOrWhiteSpace, so a present-but-blank value is null, not "   " — the half a
+        // non-blank round-trip can't reach.
+        Assert.Null(Parse("tag=%20%20").Tag);
+        Assert.Equal("beans", Parse("tag=beans").Tag);
     }
 }

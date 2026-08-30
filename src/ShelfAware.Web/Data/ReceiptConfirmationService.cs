@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
+using ShelfAware.Core.Ingest;
 using ShelfAware.Core.Tagging;
 using ShelfAware.Web.Undo;
 
@@ -23,9 +24,17 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory, IActivity
         decimal Quantity, Category Category, IReadOnlyList<string> Tags, int ProductId,
         DateOnly? ExpirationDate = null);
 
+    /// <summary>One confirmed line whose quantity looked like a misread pack count — surfaced on the
+    /// Upload done-panel so a silent auto-confirm of "one 12-pack read as 12" is catchable.</summary>
+    public record QuantityConcern(string ProductName, decimal Quantity, string? Size, QuantityFlag Flag);
+
     /// <param name="Retracked">How many untracked products this receipt turned back on — buying an
     /// item again ends its "don't want it for a while" (the grocery list's Ignore-for-now untracks).</param>
-    public record ConfirmOutcome(bool AlreadyConfirmed, int Purchases, int NewProducts, int Retracked = 0);
+    /// <param name="QuantityConcerns">Confirmed lines flagged as a possible pack-count misread (soft,
+    /// never blocking) — for the done-panel heads-up; the same flag is persisted on each line for /receipts.</param>
+    public record ConfirmOutcome(
+        bool AlreadyConfirmed, int Purchases, int NewProducts, int Retracked = 0,
+        IReadOnlyList<QuantityConcern>? QuantityConcerns = null);
 
     /// <summary>
     /// Record the reviewed lines as purchases and mark the receipt confirmed — one SaveChanges, one
@@ -79,6 +88,20 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory, IActivity
         var createdByName = new Dictionary<string, Product>();
         var retracked = new HashSet<Product>(); // distinct — two lines of one item re-track it once
         int purchases = 0, created = 0;
+
+        // Each RESOLVED product's PRIOR purchase sizes, for the pack-misread check. Only a line already
+        // resolved to an existing product can have priors — a new product (or a within-receipt roll-up)
+        // has none — so load just those, not the whole household's purchase history. This receipt's own
+        // purchases don't exist yet (created in the loop below), so everything loaded is genuinely prior —
+        // no need to exclude self.
+        var resolvedIds = lines.Where(l => l.ProductId > 0).Select(l => l.ProductId).Distinct().ToList();
+        var priorSizesByProduct = (await db.PurchaseEvents
+                .Where(p => resolvedIds.Contains(p.ProductId))
+                .Select(p => new { p.ProductId, p.Size })
+                .ToListAsync(cancellationToken))
+            .GroupBy(x => x.ProductId)
+            .ToDictionary(g => g.Key, g => (IReadOnlyCollection<string?>)g.Select(x => x.Size).ToList());
+        var concerns = new List<QuantityConcern>();
 
         foreach (var line in lines)
         {
@@ -149,6 +172,14 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory, IActivity
 
             TagVocabulary.ApplyTags(product, line.Tags, vocabulary);
 
+            // Soft pack-misread check against the FINAL (possibly review-corrected) quantity: if the
+            // reviewer fixed a "12" back to 1, the flag naturally clears. Deterministic, never blocking —
+            // it only stamps the line for a /receipts glance and feeds the done-panel heads-up. Priors
+            // are this product's earlier purchases; a brand-new product has none, so only the
+            // size-matches-quantity tell can fire for it.
+            var priorSizes = priorSizesByProduct.GetValueOrDefault(product.Id) ?? [];
+            var quantityFlag = QuantityAnomaly.Check(quantity, size, priorSizes);
+
             var dbLine = unmatchedLines.FirstOrDefault(l => l.RawText == line.RawText);
             if (dbLine is not null)
             {
@@ -162,6 +193,12 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory, IActivity
                 dbLine.Category = line.Category;
                 dbLine.Product = product;
                 dbLine.TagsJson = SerializeTags(line.Tags);
+                dbLine.QuantityFlag = quantityFlag;
+                // Tie the surfaced concern to the STAMPED line, so the manual done-panel (these concerns)
+                // and the persisted-flag reads (/receipts, the auto done-panel) reflect exactly the same
+                // set — a line with no matching stored row gets neither a flag nor a concern.
+                if (quantityFlag != QuantityFlag.None)
+                    concerns.Add(new QuantityConcern(name, quantity, size, quantityFlag));
             }
 
             if (aliasesByRaw is not null)
@@ -210,7 +247,8 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory, IActivity
 
         await db.SaveChangesAsync(cancellationToken);
         await activityLog.TrimAsync(cancellationToken); // retention: best-effort, after the commit
-        return new(AlreadyConfirmed: false, purchases, created, retracked.Count);
+        return new(AlreadyConfirmed: false, purchases, created, retracked.Count,
+            concerns.Count > 0 ? concerns : null);
     }
 
     /// <summary>Tags ride on <see cref="ReceiptLine.TagsJson"/> as a JSON array (null when empty).</summary>

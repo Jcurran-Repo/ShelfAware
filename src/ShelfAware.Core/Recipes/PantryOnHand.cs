@@ -48,6 +48,24 @@ public static class PantryOnHand
     public static IEnumerable<Product> EdibleInStock(IEnumerable<Product> products, DateOnly today, bool honorExpirations = false) =>
         Classify(products, today, honorExpirations).Where(x => x.InStock).Select(x => x.Product);
 
+    /// <summary>The on-hand set, each flagged with whether a FRESH COUNT backs it (real evidence, §13.5)
+    /// versus only the rhythm's not-overdue guess. Recipes read the flag to say "you have this" for a
+    /// counted item but "likely" for a predicted one — the count is the difference between KNOWING and
+    /// INFERRING, and a recipe that asserts the inference is the false-positive that erodes trust in the
+    /// whole feature. One pass, so a caller gets both without re-Predicting what a bare
+    /// <see cref="EdibleInStock"/> call already computed. <c>CountBacked</c> is exactly the first branch of
+    /// <see cref="InStock"/> — an in-stock item is count-backed iff a fresh count (not the rhythm) put it
+    /// there; a stale count or a pinned item never reads count-backed.</summary>
+    public static IReadOnlyList<(Product Product, bool CountBacked)> EdibleInStockDetailed(
+        IEnumerable<Product> products, DateOnly today, bool honorExpirations = false) =>
+        products
+            .Where(p => p.IsTracked && p.Category.IsEdible())
+            .Select(p => (Product: p, Prediction: ReplenishmentPredictor.Predict(p, today, honorExpirations, honorQuantity: true)))
+            .Where(x => InStock(x.Product, x.Prediction))
+            .Select(x => (x.Product, CountBacked:
+                x.Product is { TrackQuantity: true, QuantityOnHand: > 0 } && !x.Prediction.CountLooksStale && !x.Prediction.Pinned))
+            .ToList();
+
     /// <summary>The other side of the same rule: tracked, edible products the engine thinks you've RUN OUT
     /// of. These are exactly the items <see cref="EdibleInStock"/> silently drops — surfaced so a recipe
     /// row can say "you may still have this, it's just due for a re-buy" instead of a bare red mark.
