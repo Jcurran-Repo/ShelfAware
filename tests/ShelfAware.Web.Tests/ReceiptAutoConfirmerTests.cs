@@ -33,14 +33,18 @@ public class ReceiptAutoConfirmerTests : IDisposable
         return product.Id;
     }
 
-    private async Task SeedAlias(string rawText, int productId)
+    private async Task SeedAlias(string rawText, int productId, string? learnedBrand = null)
     {
         await using var db = _db.CreateDbContext();
-        db.ProductAliases.Add(new ProductAlias { Merchant = "Walmart", RawText = rawText, ProductId = productId });
+        db.ProductAliases.Add(new ProductAlias
+        {
+            Merchant = "Walmart", RawText = rawText, ProductId = productId, LearnedBrand = learnedBrand,
+        });
         await db.SaveChangesAsync();
     }
 
-    private record SeedLine(string Raw, string Name, decimal Confidence, string? Suggested = null, string[]? Tags = null);
+    private record SeedLine(
+        string Raw, string Name, decimal Confidence, string? Suggested = null, string[]? Tags = null, string? Brand = null);
 
     /// <summary>A receipt exactly as either upload path persists it: PendingReview, lines carrying
     /// tags + the model's suggestion.</summary>
@@ -58,6 +62,7 @@ public class ReceiptAutoConfirmerTests : IDisposable
                 NormalizedName = l.Name,
                 Quantity = 1,
                 Confidence = l.Confidence,
+                Brand = l.Brand,
                 SuggestedProduct = l.Suggested,
                 TagsJson = ReceiptConfirmationService.SerializeTags(l.Tags ?? []),
             }).ToList(),
@@ -130,6 +135,23 @@ public class ReceiptAutoConfirmerTests : IDisposable
         Assert.True(outcome.Confirmed); // a human taught this pairing — that vouches for the line
         await using var db = _db.CreateDbContext();
         Assert.Equal(productId, (await db.PurchaseEvents.SingleAsync()).ProductId);
+    }
+
+    [Fact]
+    public async Task Smart_applies_the_learned_brand_from_the_alias_not_the_misread()
+    {
+        // The bully-chews case on the AUTO path: the print's brand is a misread ("Dentastix"), but the
+        // household taught this raw text's brand is "Dently's". A Smart auto-confirm must record the LEARNED
+        // brand — the same alias-hit correction the review pre-fill applies — not re-extract the misread.
+        var productId = await SeedProduct("Bully Chews");
+        await SeedAlias("DENTLYS BULLY", productId, learnedBrand: "Dently's");
+        var id = await SeedReceipt(Dated, new SeedLine("DENTLYS BULLY", "Bully Chews", 0.4m, Brand: "Dentastix"));
+
+        var outcome = await Confirmer().TryConfirmAsync(id);
+
+        Assert.True(outcome.Confirmed); // the alias vouches for it
+        await using var db = _db.CreateDbContext();
+        Assert.Equal("Dently's", (await db.PurchaseEvents.SingleAsync()).Brand);
     }
 
     [Fact]

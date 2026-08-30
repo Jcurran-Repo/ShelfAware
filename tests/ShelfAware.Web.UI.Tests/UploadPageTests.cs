@@ -275,6 +275,34 @@ public class UploadPageTests : PageTestContext
     }
 
     [Fact]
+    public void Review_prefills_the_learned_brand_on_an_alias_hit()
+    {
+        // The bully-chews case: a Costco line the extraction mis-brands ("Dentastix") but the household
+        // once corrected to "Dently's". The alias carries the learned brand, so the Brand column pre-fills
+        // it — while a line with no alias keeps whatever the extraction read.
+        using (var db = Db.CreateDbContext())
+        {
+            var chews = new Product { Name = "Bully Chews", Category = Category.PetCare };
+            db.Products.Add(chews);
+            db.SaveChanges();
+            db.ProductAliases.Add(new ProductAlias
+            {
+                Merchant = "Costco", RawText = "DENTLYS BULLY", ProductId = chews.Id, LearnedBrand = "Dently's",
+            });
+            db.SaveChanges();
+        }
+        SeedPending("Costco", Today.AddDays(-1),
+            new ReceiptLine { RawText = "DENTLYS BULLY", NormalizedName = "Dentastix", Brand = "Dentastix", Quantity = 1m },
+            new ReceiptLine { RawText = "GV MILK", NormalizedName = "Milk", Brand = "Great Value", Quantity = 1m });
+
+        var cut = OpenReview();
+
+        var brands = cut.FindAll("input[aria-label^='Brand for']");
+        Assert.Equal("Dently's", brands[0].GetAttribute("value"));    // alias → learned brand overrides the misread
+        Assert.Equal("Great Value", brands[1].GetAttribute("value")); // no alias → extraction brand kept
+    }
+
+    [Fact]
     public async Task An_aliased_line_confirms_under_the_products_curated_name()
     {
         // The household once taught "HONEST COW" → their "Cottage Cheese" product; the model can't read

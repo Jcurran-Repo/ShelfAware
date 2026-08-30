@@ -203,29 +203,31 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory, IActivity
 
             if (aliasesByRaw is not null)
             {
-                if (aliasesByRaw.TryGetValue(line.RawText, out var alias))
+                if (!aliasesByRaw.TryGetValue(line.RawText, out var alias))
+                {
+                    alias = new ProductAlias
+                    {
+                        Merchant = merchant, RawText = line.RawText, Product = product,
+                        TaughtByReceiptId = receipt.Id,
+                    };
+                    db.ProductAliases.Add(alias);
+                    aliasesByRaw[line.RawText] = alias;
+                }
+                else if (alias.ProductId != product.Id)
                 {
                     // Re-POINTING is new teaching (stamp the teacher); re-walking the same pairing
                     // is not — a duplicate confirm must not inherit credit for an earlier receipt's
                     // lesson, or removing the dupe would un-teach what the original taught. A product
                     // created THIS confirm has Id 0 here, which never equals a stored alias's real
                     // ProductId — so pointing an alias at a new product always counts as teaching.
-                    if (alias.ProductId != product.Id)
-                    {
-                        alias.Product = product;
-                        alias.TaughtByReceiptId = receipt.Id;
-                    }
+                    alias.Product = product;
+                    alias.TaughtByReceiptId = receipt.Id;
                 }
-                else
-                {
-                    var newAlias = new ProductAlias
-                    {
-                        Merchant = merchant, RawText = line.RawText, Product = product,
-                        TaughtByReceiptId = receipt.Id,
-                    };
-                    db.ProductAliases.Add(newAlias);
-                    aliasesByRaw[line.RawText] = newAlias;
-                }
+                // Remember the human-corrected brand for this raw text (last positive write wins), so a
+                // merchant's opaque line read as one brand but actually another ("Dentastix" that's really
+                // "Dently's") pre-fills the corrected brand next time. A blank brand left in review never
+                // ERASES one learned earlier. writeAliases is the human-confirm trust boundary this rides.
+                if (brand is not null) alias.LearnedBrand = brand;
             }
         }
 

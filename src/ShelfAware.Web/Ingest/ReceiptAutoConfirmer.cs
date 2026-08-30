@@ -112,7 +112,8 @@ public sealed class ReceiptAutoConfirmer(
             }
 
             var alias = aliases.FirstOrDefault(a => a.RawText == line.RawText);
-            var resolved = alias is not null ? products.FirstOrDefault(p => p.Id == alias.ProductId) : null;
+            var aliasProduct = alias is not null ? products.FirstOrDefault(p => p.Id == alias.ProductId) : null;
+            var resolved = aliasProduct;
             // ⚠️ The model's suggestion names a NAME, and no unique index exists on product names — so a
             // FirstOrDefault(string.Equals) over TWINS silently picked one and committed a purchase to its
             // history. Resolve the suggestion by the matcher's rule-1 identity set instead (which also folds
@@ -143,8 +144,14 @@ public sealed class ReceiptAutoConfirmer(
             // that already exists. A brand-new product, a shaky line, or an ambiguous twin gets human eyes.
             allTrusted &= !ambiguous && (alias is not null || (resolved is not null && line.Confidence >= SmartConfidenceFloor));
 
+            // A taught alias also carries the household's corrected brand for this raw text — apply it
+            // (same alias-hit scope as the review pre-fill) so a Smart/Auto re-buy records the learned
+            // "Dently's", not the misread "Dentastix" it would otherwise re-extract. A fuzzy/suggestion
+            // match keeps the extraction's brand. This confirm writes no aliases, so it consumes the
+            // human-taught brand without re-teaching — the same read-not-write stance as the product.
+            var brand = aliasProduct is not null && alias?.LearnedBrand is { } learnedBrand ? learnedBrand : line.Brand;
             confirmLines.Add(new ReceiptConfirmationService.ConfirmLine(
-                line.RawText, name, line.Brand, line.Size, line.Variety, line.Quantity, line.Category,
+                line.RawText, name, brand, line.Size, line.Variety, line.Quantity, line.Category,
                 ReceiptConfirmationService.DeserializeTags(line.TagsJson), ambiguous ? 0 : resolved?.Id ?? 0));
         }
 

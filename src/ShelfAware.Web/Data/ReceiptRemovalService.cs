@@ -17,7 +17,8 @@ namespace ShelfAware.Web.Data;
 ///    attested count means the household has invested in the product, and it stays (with the
 ///    breadcrumb cleared).
 ///  - The merchant aliases it taught (<see cref="ProductAlias.TaughtByReceiptId"/>) — a later
-///    confirm that re-pointed one became its new teacher, so that newer lesson is kept.
+///    confirm that re-pointed one became its new teacher, so that newer lesson is kept. A learned
+///    brand (<see cref="ProductAlias.LearnedBrand"/>) rides that same alias row, so it goes with it.
 ///  - The receipt row, its lines, and its saved image.
 ///
 /// Deliberately NOT undone: re-tracking (visible state the user may have since endorsed, one tap to
