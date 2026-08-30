@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A tiny console helper for backup-family.ps1: takes a consistent snapshot of a LIVE SQLite
+       database. It exists because there is no correct way to do this from PowerShell 5.1 alone -
+       copying a .db while the app runs can tear the file mid-transaction (the -wal sidecar holds
+       committed data the .db doesn't), sqlite3.exe is not installed on the family box, and PS 5.1
+       cannot load the .NET 10 Microsoft.Data.Sqlite assemblies (the CLAUDE.md environment note).
+
+       Deliberately NOT in ShelfAware.slnx: CI restores/builds the solution file and each test
+       project by path, so this project is invisible to it - it is deploy tooling, not the app.
+       backup-family.ps1 publishes it on demand (framework-dependent; the family box is the dev
+       machine, so the SDK is always present). -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
+    <!-- Same override the app carries (see ShelfAware.Web.csproj): the 2.1.x SQLitePCLRaw bundle
+         pulled in transitively has a patched, API-compatible successor in the 3.x line. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
+  </ItemGroup>
+
+</Project>
