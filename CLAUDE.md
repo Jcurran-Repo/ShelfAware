@@ -98,13 +98,15 @@ receipt's own printed subtotal/tax/savings/total + a running "amount saved", 8/2
 **Count from a photo (`/pantry-photo`, added 8/2 — §13.8's shelf census; see item 37)**, and the
 **Cookbook (`/cookbook`, added 8/15 — browse/read-aloud/print saved recipes, AI tags + cloud filter,
 per-recipe photos, and a subtle-peek drag/swipe carousel; import at `/cookbook/import`; see item 50)**,
-and **History (`/history`, added 8/20 — the household's activity log, newest first, with per-action
-undo; see item 51)**.
+**History (`/history`, added 8/20 — the household's activity log, newest first, with per-action
+undo; see item 51)**, and the **public About page (`/about`, added 8/30 — the app's story, the Suno
+music (jingle · song · lyric video), a self-host pointer, and a pre-launch wishlist; the app's FIRST
+page outside the auth wall, on its own AboutLayout; see item 62)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **2618 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **2641 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
-bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 60 and 61).
+bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 60, 61 and 62).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -3337,6 +3339,61 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      mutation-checked (schema ALTER+round-trip, confirm-learns, blank-doesn't-erase, review pre-fill,
      auto-confirm pre-fill). **This closes item 52's backlog line**: the corrected NAME is remembered via the
      product alias (PR #19), the corrected BRAND via this. **2618 green, 0 warnings** (non-incremental Release).
+
+62. **v5.3 — the public /about page + hosted wishlist (2026-08-30, ✅ MERGED via PR #49, master CI green).**
+   The app's FIRST page reachable without signing in. (Count lineage this session: item 61 was 2618; the
+   **brand-memory demo hero** — PR #48, a seeded "Bully Chews" + a confirmed teacher receipt + a
+   `LearnedBrand` alias + a second pending receipt so item 61's feature is visible in the sample data —
+   took it to 2619; this took it to **2641**.)
+   - **`/about` is static SSR** (`[AllowAnonymous]` + `[ExcludeFromInteractiveRouting]`) on its **own
+     `AboutLayout`**, linked from the login page + the (now always-rendered) site footer. Sections: the
+     app's story, the Suno **music** (self-hosted `wwwroot/media/` mp3/mp4, ~12 MB, `preload=none`; the CSP
+     already had `media-src 'self'`), a **self-host** pointer (the real README quickstart + GitHub link),
+     and the **wishlist**.
+   - ⚠️ **`/demo` already had a shared `PublicLayout` (+ its scoped CSS), and reusing it silently changed
+     the tour.** Caught because the file showed as MODIFIED, not new; reverted `PublicLayout` to master
+     exactly and gave `/about` its own `AboutLayout` with `.about-*` classes (no collision with the
+     `.public-*` scoped ones). The "don't silently change a shared thing" rule — verify `/demo` is byte-
+     untouched. A layout for two marketing pages is not "one fact in two places"; two page-chromes are fine.
+   - **The wishlist is COUNTER + optional email, tiered.** Pick **Shelf / Aware / Sous Chef**; the raw
+     interest count is soft by design (a public one-click counter can't be made fraud-proof), the DISTINCT
+     EMAILS are the trusted signal + the launch list. ⚠️ **Founder is NOT selectable** — it's the operator's
+     free gift to grant (Jordan's call), so it's out of the picker AND `WishlistTiers.IsValidKey` refuses it.
+     **Voice split (Jordan's call):** the conversational voice folds into **Aware**; **Sous Chef** is the
+     hands-free **cook-along agent** specifically (`docs/subscription-plan.md` updated to match).
+   - **`WishlistEntry` is OPERATOR data in `auth.db`** (the ErrorLog recipe — no household owns it, never in
+     export / delete-my-data; DbSet on `AuthDbContext` + `AdditiveSchema.EnsureTable` + a schema-parity
+     test). Admin reads (the reserve list, with EMAILS) go through `AdminReportReader`'s admin gate like the
+     error-log/login reads — **no new `IgnoreQueryFilters`** (auth.db has no query filter, so there's no
+     tenancy bypass, only the email exposure the gate covers). `/admin` shows the count + tier breakdown +
+     contacts + a **Copy emails** export.
+   - **The app's FIRST public write endpoint, hardened like `/Account`:** the `/about` POST is braked
+     per-IP by the global rate limiter (a new `/about` partition, 5/min — the `/Account` 10/min brake is
+     preserved exactly), plus an off-screen honeypot, server-side tier (`IsValidKey`) + email
+     (`[EmailAddress]`+`[StringLength(200)]`) validation, antiforgery (EditForm), and a bounded table
+     (`MaxRows` 5000; the trim sheds anonymous rows before emailed ones). `WishlistStore.HasEmail` is the
+     ONE definition of "a usable email", applied at the write + every read.
+   - ⚠️ **`wishlist.js` MUST re-run on Blazor `enhancedload`.** The reserve POST is an ENHANCED fetch (DOM
+     morph, no full reload), so `DOMContentLoaded` never re-fires — without the hook the localStorage
+     "you're on the list" dedup is silently inert (its set-path never runs on submit, its read-path never
+     on an enhanced nav). Same hook `theme.js` uses for the same reason. **Found by the pre-push gate**,
+     fixed, live-verified (flag sets after an enhanced submit; a fresh return visit hides the form). Any
+     new client-JS enhancement on a Blazor-enhanced page has this exposure.
+   - **Founder pre-order → reframed as a config-gated "Back it early" supporter link**
+     (`WishlistOptions.SupporterPaymentUrl`, absolute-https-only, hidden until set — the Email/OAuth
+     posture). Deliberately NOT "Founder" (that's the gift); links OUT to a hosted checkout, no money
+     touches the app. You can still gift Founder to backers.
+   - **Gate: security CLEAN** (tenancy boundary + all six primary items + the public-write/PII/payment-link/
+     CSP/footer surfaces; three non-blocking notes — no double-opt-in email verification, no self-service
+     email deletion, the 429 empty body — all fine for the manual pre-launch flow). **Code: no correctness/
+     data-integrity defects**; five findings all fixed + re-verified (the `enhancedload` bug above; the one
+     `HasEmail` definition; a bUnit admin-panel render test; a stale `About.razor` comment; green
+     `.callout.ok` success notices instead of amber). **Accepted, not done:** ~12 MB of media committed to
+     git — Git-LFS is a repo-infra call, Jordan's.
+   - **2641 green, 0 warnings** (non-incremental Release). The static-SSR page + form + `wishlist.js` +
+     media are live-verified (no bUnit harness for static-SSR pages, same as the Account pages); the LOGIC
+     (store, tiers, the supporter-link gate, admin gating, schema parity) is unit/persistence-tested and
+     the load-bearing rules mutation-checked.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
