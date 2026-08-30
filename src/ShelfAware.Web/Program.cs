@@ -321,8 +321,8 @@ builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection(LlmOptio
 // BillingOptions), so pricing can be retuned in appsettings without a rebuild.
 builder.Services.Configure<ShelfAware.Core.Billing.BillingOptions>(
     builder.Configuration.GetSection(ShelfAware.Core.Billing.BillingOptions.SectionName));
-// The /about wishlist: only FounderPaymentUrl matters, and only to reveal the (config-gated) Founder
-// pre-order button. Absent section = the reserve's tier picker + email still work; no pre-order button.
+// The /about wishlist: only SupporterPaymentUrl matters, and only to reveal the (config-gated) "back it
+// early" supporter button. Absent section = the reserve's tier picker + email still work; no button.
 builder.Services.Configure<ShelfAware.Web.Wishlist.WishlistOptions>(
     builder.Configuration.GetSection(ShelfAware.Web.Wishlist.WishlistOptions.SectionName));
 

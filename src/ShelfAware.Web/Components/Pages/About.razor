@@ -141,16 +141,17 @@ dotnet run --project src/ShelfAware.Web</code></pre>
             </div>
         }
 
-        @if (Options.Value.FounderPreorderConfigured)
+        @if (Options.Value.SupporterLinkConfigured)
         {
-            @* Config-gated (WishlistOptions.FounderPreorderConfigured): built, but invisible until a real
+            @* Config-gated (WishlistOptions.SupporterLinkConfigured): built, but invisible until a real
                https payment link is set — a button that can't charge is worse than none. Links OUT to a
-               hosted checkout (Stripe / Lemon Squeezy); no money ever touches the app. *@
-            <div class="about-founder">
-                <h3>Back it as a Founder</h3>
-                <p>Want to make it happen faster? Reserve a founding spot and lock in the early-supporter rate.</p>
-                <a class="about-founder-btn" href="@Options.Value.FounderPaymentUrl"
-                   target="_blank" rel="noopener noreferrer">Reserve a Founder spot &rarr;</a>
+               hosted checkout (Stripe / Lemon Squeezy); no money ever touches the app. Deliberately NOT
+               "Founder" — that tier is the operator's gift to grant, never bought here. *@
+            <div class="about-support">
+                <h3>Back it early</h3>
+                <p>Want to make hosting happen faster? Chip in as an early supporter and help fund the build.</p>
+                <a class="about-support-btn" href="@Options.Value.SupporterPaymentUrl"
+                   target="_blank" rel="noopener noreferrer">Back it early &rarr;</a>
             </div>
         }
     </section>

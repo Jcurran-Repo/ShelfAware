@@ -10,19 +10,20 @@ public sealed record ReserveTier(string Key, string Name, string Price, string B
 
 public static class WishlistTiers
 {
-    /// <summary>All four tiers, in ladder order. "founder" is the operator's free thank-you tier in the
-    /// plan; on the reserve it's the early-supporter intent, and its optional PAID pre-order button is
-    /// config-gated separately (<see cref="WishlistOptions.FounderPreorderConfigured"/>).</summary>
+    /// <summary>The selectable reserve tiers, in ladder order. Founder is deliberately NOT here — it's
+    /// the operator's free thank-you tier, granted by hand, never something a visitor picks (Jordan's
+    /// call, 2026-08-30). The separate "back it early" supporter link is config-gated on
+    /// <see cref="WishlistOptions.SupporterLinkConfigured"/>.
+    /// <para>Voice split (2026-08-30): the conversational voice — chatting with it, back and forth — is
+    /// cheap enough to sit in Aware; Sous Chef is the premium hands-free COOK-ALONG agent specifically.</para></summary>
     public static readonly IReadOnlyList<ReserveTier> All =
     [
         new("shelf", "Shelf", "Free",
             "The full app — track what you buy, predict what's running low, build your list. Self-host it free, forever."),
         new("aware", "Aware", "$2.99/mo · $27.99/yr",
-            "Managed AI on our keys: scan receipts, chat, recipe help, count from a shelf photo — nothing to set up."),
+            "Managed AI on our keys: scan receipts, count from a shelf photo, recipe help, and chat with it out loud, back and forth. Nothing to set up."),
         new("souschef", "Sous Chef", "~$4.99/mo (coming later)",
-            "Everything in Aware, plus the hands-free voice cook-along."),
-        new("founder", "Founder", "Early supporters",
-            "The thank-you tier for the people who back it early."),
+            "Everything in Aware, plus the hands-free cook-along agent — it reads the recipe and talks you through cooking, no hands needed."),
     ];
 
     /// <summary>THE gate a stored tier must pass — the /about handler validates the posted key against

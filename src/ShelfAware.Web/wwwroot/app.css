@@ -3774,7 +3774,7 @@ tfoot td {
     overflow: hidden;
 }
 
-.about-founder {
+.about-support {
     margin-top: 1.5rem;
     padding: 1rem 1.15rem;
     border: 1px solid var(--line);
@@ -3783,11 +3783,11 @@ tfoot td {
     border-radius: var(--radius);
 }
 
-.about-founder h3 {
+.about-support h3 {
     margin: 0 0 0.4rem;
 }
 
-.about-founder-btn {
+.about-support-btn {
     display: inline-block;
     margin-top: 0.5rem;
     padding: 0.55rem 1rem;
