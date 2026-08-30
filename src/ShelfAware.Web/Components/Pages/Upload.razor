@@ -778,11 +778,15 @@ else if (phase == Phase.Done)
             // renamed), and scoped to aliases: a fuzzy matcher / model-suggestion guess still shows the
             // model's read so the reviewer can verify it against the dropdown.
             var displayName = aliasedProduct?.Name ?? l.NormalizedName;
+            // Same alias-hit scope as the name: a taught pairing pre-fills the brand the household
+            // corrected for this raw text (a mis-branded opaque line — "Dentastix" that's really
+            // "Dently's" — comes back right), while a fuzzy/model guess keeps the extraction's brand.
+            var displayBrand = aliasedProduct is not null && alias?.LearnedBrand is { } lb ? lb : l.Brand;
             return new ReviewLine
             {
                 RawText = l.RawText,
                 NormalizedName = displayName,
-                Brand = l.Brand,
+                Brand = displayBrand,
                 Size = l.Size,
                 Variety = l.Variety,
                 ExpirationDate = l.ExpirationDate,

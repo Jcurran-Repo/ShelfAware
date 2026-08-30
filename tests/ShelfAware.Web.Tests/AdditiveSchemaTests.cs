@@ -62,6 +62,33 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Adds_the_learned_brand_column_to_a_pre_brand_memory_alias_table()
+    {
+        // ⚠️ The ALTER path a live deployment takes: its ProductAliases table predates 2026-08-30. The
+        // drop-TABLE parity tests rebuild with the column present and never run this branch (item 49's lesson).
+        await using var db = _db.CreateDbContext();
+        var fresh = await ColumnTypesAsync(db, "ProductAliases");
+
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE ProductAliases DROP COLUMN LearnedBrand;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "ProductAliases"));
+
+        // And a learned brand round-trips through the migrated column.
+        var product = new Product { Name = "Bully Chews", Category = Category.PetCare };
+        db.Products.Add(product);
+        await db.SaveChangesAsync();
+        var alias = new ProductAlias { Merchant = "Costco", RawText = "DENTLYS BULLY", Product = product };
+        db.ProductAliases.Add(alias);
+        await db.SaveChangesAsync();
+        alias.LearnedBrand = "Dently's";
+        await db.SaveChangesAsync();
+        Assert.Equal("Dently's", (await db.ProductAliases.AsNoTracking().SingleAsync()).LearnedBrand);
+    }
+
+    [Fact]
     public async Task Creates_the_MealEvents_table_on_a_pre_meal_log_db_with_the_fresh_schema()
     {
         await using var db = _db.CreateDbContext();

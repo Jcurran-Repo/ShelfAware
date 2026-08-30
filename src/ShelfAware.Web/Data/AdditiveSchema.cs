@@ -107,6 +107,11 @@ public static class AdditiveSchema
         // land on 0 (None) — they were confirmed before the check existed and are not re-judged. Enum →
         // INTEGER, matching EnsureCreated's mapping and the QuantityFlag.None = 0 default.
         EnsureColumn(db, table: "ReceiptLines", column: "QuantityFlag", definition: "INTEGER NOT NULL DEFAULT 0");
+
+        // 2026-08-30: the human-corrected brand remembered per (merchant, raw text), so an opaque line
+        // mis-branded by extraction pre-fills the right brand on the next receipt. Pre-existing aliases
+        // get NULL (nothing learned; the review falls back to the extraction's brand). Same additive shape.
+        EnsureColumn(db, table: "ProductAliases", column: "LearnedBrand", definition: "TEXT NULL");
     }
 
     public static void Apply(AuthDbContext db)

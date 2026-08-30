@@ -79,6 +79,43 @@ public class ReceiptConfirmationServiceTests : IDisposable
         Assert.All(await db.ReceiptLines.ToListAsync(), l => Assert.NotNull(l.ProductId));
     }
 
+    // --- brand memory: a corrected brand is remembered per (merchant, raw text) ---
+
+    [Fact]
+    public async Task A_human_confirm_learns_the_corrected_brand_for_the_merchants_raw_text()
+    {
+        // The bully-chews case: the print reads a brand ("Dentastix") that's really "Dently's". The
+        // human corrects it, and the alias remembers it so the next receipt pre-fills the right brand.
+        var chews = await SeedProduct("Bully Chews");
+        var receipt = await SeedPending("Costco", L("DENTLYS BULLY", "Dentastix"));
+
+        await _service.ConfirmAsync(receipt.Id, new DateOnly(2026, 7, 1),
+            [C("DENTLYS BULLY", "Bully Chews", chews.Id, brand: "Dently's")], writeAliases: true);
+
+        await using var db = _db.CreateDbContext();
+        var alias = await db.ProductAliases.SingleAsync(a => a.RawText == "DENTLYS BULLY");
+        Assert.Equal("Dently's", alias.LearnedBrand);
+    }
+
+    [Fact]
+    public async Task A_blank_brand_on_a_later_confirm_does_not_erase_a_learned_one()
+    {
+        // Last POSITIVE write wins: a reviewer who leaves the brand blank on a re-buy isn't saying
+        // "no brand" — so a learned "Dently's" must survive an un-branded confirm of the same line.
+        var chews = await SeedProduct("Bully Chews");
+        var first = await SeedPending("Costco", L("DENTLYS BULLY", "Dentastix"));
+        await _service.ConfirmAsync(first.Id, new DateOnly(2026, 7, 1),
+            [C("DENTLYS BULLY", "Bully Chews", chews.Id, brand: "Dently's")], writeAliases: true);
+
+        var second = await SeedPending("Costco", L("DENTLYS BULLY", "Dentastix"));
+        await _service.ConfirmAsync(second.Id, new DateOnly(2026, 7, 8),
+            [C("DENTLYS BULLY", "Bully Chews", chews.Id)], writeAliases: true); // no brand typed
+
+        await using var db = _db.CreateDbContext();
+        var alias = await db.ProductAliases.SingleAsync(a => a.RawText == "DENTLYS BULLY");
+        Assert.Equal("Dently's", alias.LearnedBrand);
+    }
+
     // --- variety mirrors brand + size onto both the purchase and the stored line ---
 
     [Fact]
