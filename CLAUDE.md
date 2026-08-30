@@ -102,9 +102,9 @@ and **History (`/history`, added 8/20 — the household's activity log, newest f
 undo; see item 51)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **2612 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **2618 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
-bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56 and 60).
+bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 60 and 61).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -3305,6 +3305,39 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      #37; the remaining backlog (#4's neighbours) — a per-size Trends price chart, the corrected-display-name
      learning, the CSV importer — are untouched by this batch and stay open.
 
+61. **Brand memory — the corrected brand is learned per (merchant, raw text) (2026-08-30, PR #46; ✅ MERGED to
+   master, master CI green).** Item 52's backlog, scoped to the REAL gap after reading the code. PR #19
+   (item 53) already remembers the corrected NAME by deriving it from the aliased product, so a separate
+   name-memory would only duplicate it AND reintroduce the rename-drift PR #19 deliberately avoided. BRAND
+   was the genuine gap: it's per-purchase and the product is brand-agnostic, so nothing derived it — every
+   receipt re-extracted it and a correction saved on that one purchase only. Jordan's case: dog "bully chews"
+   read as brand "Dentastix" but actually "Dently's", re-corrected every trip.
+   - **`ProductAlias.LearnedBrand` (nullable)** — the alias is ALREADY the (household, merchant, raw text)
+     memory, so the brand rides it; no new table. Stamped in `ReceiptConfirmationService` on HUMAN confirm
+     only (`writeAliases` — the same trust boundary as the pairing; machine auto-confirms teach nothing),
+     **last POSITIVE write wins** (`if (brand is not null)` — a blank brand left in review never erases a
+     learned one; ⚠️ a learned brand can only be OVERWRITTEN, not cleared by blanking — the accepted L2
+     tradeoff). The confirm's alias block was restructured (out-var scope) so the stamp runs for create +
+     re-point + re-walk while the re-point-vs-re-walk `TaughtByReceiptId` semantics stay exact.
+   - ⚠️ **BOTH consume paths apply it — the "one story" fix (gate L1).** The Upload review pre-fills the
+     Brand column from `LearnedBrand` on an ALIAS HIT (the same `aliasProduct` signal that drives
+     name+product+🔗), and — the finding the gate caught — `ReceiptAutoConfirmer` does too. The review path
+     had it; the auto path (Smart/Auto — **Smart is the DEFAULT**) still built its ConfirmLine with the
+     extraction's misread, so the feature would have silently not worked for default-mode households. The
+     auto path confirms `writeAliases: false`, so it CONSUMES the taught brand without re-teaching —
+     read-not-write, like the product mapping. Names stay derived-from-product (PR #19); this deliberately
+     does NOT store a name (drift).
+   - **Tenancy: automatic.** ProductAlias is an existing household-owned table, so export (`data.json`,
+     whole-entity), delete-my-data (`ExecuteDeleteAsync` on the table), and CountAll reach the new column
+     with no new wiring — verified. Removal deletes an alias by `TaughtByReceiptId`, taking its brand with
+     it (no stale); a non-teacher re-buy's brand hint lingers harmlessly (inherent to the teacher model).
+   - **Gate: security PASS** (traced: household-scoped write+read, a merchant-collision leak disproven by an
+     existing `HouseholdIsolationTests`, no new IgnoreQueryFilters/endpoint/settings-key/disk-write,
+     additive-only migration) **+ code SHIP** (L1 fixed, L3 removal-docstring note, L2 accepted). Five tests
+     mutation-checked (schema ALTER+round-trip, confirm-learns, blank-doesn't-erase, review pre-fill,
+     auto-confirm pre-fill). **This closes item 52's backlog line**: the corrected NAME is remembered via the
+     product alias (PR #19), the corrected BRAND via this. **2618 green, 0 warnings** (non-incremental Release).
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active
@@ -3328,18 +3361,19 @@ date and renders `¤3.99` (invariant culture; a systemd service starts with NO `
 the first live deploy). Set the droplet's timezone (`timedatectl set-timezone`, or `TZ` in the
 service env) and keep `LANG` in the env file — runbook step 2 covers both.
 Also backlog: **CSV history importer — PARKED** (Walmart won't export to Jordan's state; needs another
-itemized source); a per-size Trends price chart;
-**learn the corrected DISPLAY NAME from receipt review** (item 52 — aliases already reuse the
-product mapping per merchant; also remember the corrected normalized name per (merchant, raw text) so
-opaque abbreviations like "HONEST COW" pre-fill as "Cottage Cheese" instead of re-guessing).
+itemized source); a per-size Trends price chart. (**Learning corrected names/brands from receipt review is
+DONE** — the corrected product NAME via the alias's product (PR #19, item 53), the corrected BRAND per
+(merchant, raw text) via PR #46 / item 61 — so item 52's backlog line is closed.)
 (Shipped since this note: the double-scroll fix; the **two-stream cadence model** — rebuy rhythm +
 burn rate, hybrid, restock is status-only (§6); the whole **production-hardening pass** —
 logging, the SQLite CVE patch, the `IChatClient` migration, and faked-client tests; the **left sidebar
 nav rail** that retired the ~768–1400px header overflow (PR #21, 2026-08-22); **download a receipt's
 saved image copy** — a household-scoped `/api/receipt-image/{id}` (mirrors the recipe-image tenancy
-shape) plus a Download link on /receipts, both merged 2026-08-22 (PR #22); and the **"seven ideas" batch**
+shape) plus a Download link on /receipts, both merged 2026-08-22 (PR #22); the **"seven ideas" batch**
 (PRs #37–#42, 2026-08-28/29 — the #4 Dentastix price-trend fix, the Cookbook typeahead, the dashboard
-"Coming up" panel, the /admin activity panel, "Still in stock", and honest recipe makeability — see item 60).)
+"Coming up" panel, the /admin activity panel, "Still in stock", and honest recipe makeability — see item 60);
+and **brand memory** — the corrected brand learned per (merchant, raw text) from receipt review (PR #46,
+2026-08-30, see item 61).)
 
 ## Voice: the built-in cook-along (v3.3, branch `feature/voice-engine`)
 
