@@ -10,9 +10,11 @@
 @inject ILogger<About> Logger
 
 @* The app's one PUBLIC page (no auth): the story, the music, self-host, and the pre-launch wishlist.
-   Static SSR ([ExcludeFromInteractiveRouting] + PublicLayout) like the Account pages — no circuit for
-   anonymous visitors, and the reserve form is a plain static-SSR POST. The wishlist POST is braked
-   per-IP by the global rate limiter (Program.cs, /about path) on top of the honeypot + localStorage. *@
+   Static SSR ([ExcludeFromInteractiveRouting]) on its OWN AboutLayout — not the /demo PublicLayout
+   (sharing it would change the tour), not MainLayout (its islands would open a circuit here). No circuit
+   for anonymous visitors. The reserve form is a Blazor-ENHANCED (fetch) POST, not a full reload, which is
+   why wishlist.js re-runs on 'enhancedload'. The POST is braked per-IP by the global rate limiter
+   (Program.cs, /about path) on top of the honeypot + server-side validation. *@
 
 <PageTitle>About Shelf Aware</PageTitle>
 
@@ -79,7 +81,7 @@ dotnet run --project src/ShelfAware.Web</code></pre>
 
         @if (reserved)
         {
-            <div class="callout" role="status" data-wishlist-submitted>
+            <div class="callout ok" role="status" data-wishlist-submitted>
                 Thanks — you're on the list. We'll email you (if you left an address) when hosting is ready.
                 No spam, ever.
             </div>
@@ -89,7 +91,7 @@ dotnet run --project src/ShelfAware.Web</code></pre>
             @* Revealed by wishlist.js for a browser that has already reserved — the static-SSR server can't
                know (there's no account), so localStorage is the only memory. JS-off visitors just see the
                form again, which the soft counter tolerates. *@
-            <div class="callout" data-wishlist-done hidden>
+            <div class="callout ok" data-wishlist-done hidden>
                 You're on the list — thanks! We'll let you know when hosting is ready.
             </div>
 

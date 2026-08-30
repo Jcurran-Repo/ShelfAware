@@ -15,13 +15,19 @@ public sealed class WishlistStore(IDbContextFactory<AuthDbContext> dbFactory)
     /// clicks before it ever costs a real notify address — the emails are the point of the list.</summary>
     public const int MaxRows = 5000;
 
+    /// <summary>THE one definition of "this submission left a usable email" — a non-blank address.
+    /// Applied at the WRITE below (which stores the trimmed value or null), so every reader can then
+    /// treat a non-null Email as meaningful. One predicate so the count, the contacts list and the trim
+    /// can't drift apart on what counts as an email.</summary>
+    private static bool HasEmail(string? email) => !string.IsNullOrWhiteSpace(email);
+
     public async Task RecordAsync(string tier, string? email, DateTimeOffset at, CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         db.Wishlist.Add(new WishlistEntry
         {
             Tier = tier,
-            Email = string.IsNullOrWhiteSpace(email) ? null : email.Trim(),
+            Email = HasEmail(email) ? email!.Trim() : null,
             CreatedAt = at,
         });
         await db.SaveChangesAsync(ct);
@@ -47,7 +53,7 @@ public sealed class WishlistStore(IDbContextFactory<AuthDbContext> dbFactory)
     /// inserting <see cref="MaxRows"/>+1 rows.</summary>
     internal static List<int> DoomedIds(IEnumerable<TrimRow> rows, int over) =>
         [.. rows
-            .OrderBy(r => string.IsNullOrEmpty(r.Email) ? 0 : 1) // anonymous first
+            .OrderBy(r => HasEmail(r.Email) ? 1 : 0) // anonymous (no email) first
             .ThenBy(r => r.CreatedAt).ThenBy(r => r.Id)
             .Take(over).Select(r => r.Id)];
 
@@ -67,7 +73,7 @@ public sealed class WishlistStore(IDbContextFactory<AuthDbContext> dbFactory)
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var rows = await db.Wishlist.AsNoTracking().ToListAsync(ct);
         var distinctEmails = rows
-            .Where(r => !string.IsNullOrWhiteSpace(r.Email))
+            .Where(r => HasEmail(r.Email))
             .Select(r => r.Email!.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Count();
@@ -81,8 +87,9 @@ public sealed class WishlistStore(IDbContextFactory<AuthDbContext> dbFactory)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var rows = await db.Wishlist.AsNoTracking()
-            .Where(r => r.Email != null && r.Email != "").ToListAsync(ct);
+            .Where(r => r.Email != null).ToListAsync(ct); // coarse SQL prefilter; HasEmail is the real rule below
         return [.. rows
+            .Where(r => HasEmail(r.Email))
             .GroupBy(r => r.Email!.Trim(), StringComparer.OrdinalIgnoreCase)
             .Select(g => g.OrderByDescending(r => r.CreatedAt).First())
             .Select(r => new WishlistContact(r.Email!.Trim(), r.Tier, r.CreatedAt))

@@ -1297,6 +1297,12 @@ button.mic-speaking {
 .callout > p:first-child { margin-top: 0; }
 .callout > p:last-child { margin-bottom: 0; }
 .callout .muted { color: inherit; opacity: 0.85; } /* keep the amber ink; don't fall back to grey on amber */
+/* Positive confirmation (e.g. the /about "you're on the list" notices) — green, not caution amber. */
+.callout.ok {
+    background: var(--stocked-bg);
+    color: var(--stocked-ink);
+    border-color: var(--stocked-line);
+}
 .chip-stocked { background: var(--stocked-bg); color: var(--stocked-ink); }
 .chip-unknown { background: var(--unknown-bg); color: var(--unknown-ink); }
 
