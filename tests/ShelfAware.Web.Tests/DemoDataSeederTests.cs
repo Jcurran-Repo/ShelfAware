@@ -562,8 +562,13 @@ public class DemoDataSeederTests : IDisposable
         Assert.Equal("Warehouse Club", alias.Merchant);
         Assert.Equal("DENTLYS BULLY 16OZ", alias.RawText);
         Assert.Equal("Dently's", alias.LearnedBrand);
-        var bully = read.Products.Single(p => p.Name == "Bully Chews");
+        var bully = read.Products.Include(p => p.Purchases).Single(p => p.Name == "Bully Chews");
         Assert.Equal(bully.Id, alias.ProductId);
+        // The product's own brand and the learned brand are ONE fact: every Bully Chews purchase carries
+        // the brand the alias learned, so the product's usual brand and the pre-filled review brand can't
+        // disagree — the coherence the shared brand const protects (catches re-literalizing at one site).
+        Assert.NotEmpty(bully.Purchases);
+        Assert.All(bully.Purchases, p => Assert.Equal(alias.LearnedBrand, p.Brand));
 
         // It names the confirm that taught it (a real warehouse trip), like every alias — so removing that
         // receipt un-teaches it, and it isn't an orphaned pairing that can never be undone.

@@ -198,7 +198,7 @@ public sealed class DemoDataSeeder(
             // (BrandMemoryMerchant) demonstrate the review pre-filling that learned brand over the misread —
             // and a DIFFERENT-brand line on the same receipt keeping its own. Ordinary history here; the
             // demonstration is the alias's LearnedBrand and the brand-memory pending receipt.
-            new("Bully Chews", Category.PetCare, "Dently's", "16 oz", 12.48m, ["Dog", "Treat"],
+            new("Bully Chews", Category.PetCare, BrandMemoryLearnedBrand, "16 oz", 12.48m, ["Dog", "Treat"],
                 [(9, 1), (31, 1), (55, 1)]),
 
             // Stock-up: the last trip bought 3× the usual, so StockUpFactor stretches the due date out
@@ -594,7 +594,10 @@ public sealed class DemoDataSeeder(
         // LearnedBrand, so seeding it (rather than a teacher-less alias) keeps the "every alias names the
         // confirm that taught it" invariant and makes the story whole — corrected here, remembered on the
         // pending warehouse receipt. Not a date-keyed trip, so it's built bespoke and appended.
-        var teacher = BuildBrandMemoryTeacherReceipt(products.First(p => p.Name == "Bully Chews"), today);
+        var bully = products.FirstOrDefault(p => p.Name == "Bully Chews")
+            ?? throw new InvalidOperationException(
+                "The demo catalog no longer seeds 'Bully Chews', which the brand-memory teacher receipt needs.");
+        var teacher = BuildBrandMemoryTeacherReceipt(bully, today);
 
         return (products, [.. trips.Values.Append(teacher).OrderBy(r => r.PurchasedAt)]);
     }
@@ -617,9 +620,9 @@ public sealed class DemoDataSeeder(
         };
         receipt.Lines.Add(new ReceiptLine
         {
-            RawText = BrandMemoryLearnedRaw, // the opaque warehouse line...
-            NormalizedName = bully.Name,     // ...corrected on confirm to Bully Chews...
-            Brand = "Dently's",              // ...and to its real brand — what taught the alias's LearnedBrand
+            RawText = BrandMemoryLearnedRaw,   // the opaque warehouse line...
+            NormalizedName = bully.Name,       // ...corrected on confirm to Bully Chews...
+            Brand = BrandMemoryLearnedBrand,   // ...and to its real brand — what taught the alias's LearnedBrand
             Size = "16 oz",
             Quantity = 1m,
             UnitPrice = 12.48m,
@@ -631,7 +634,7 @@ public sealed class DemoDataSeeder(
         {
             PurchasedAt = when,
             Quantity = 1m,
-            Brand = "Dently's",
+            Brand = BrandMemoryLearnedBrand,
             Size = "16 oz",
             Source = PurchaseSource.Receipt,
             Receipt = receipt,
@@ -726,7 +729,7 @@ public sealed class DemoDataSeeder(
     private const string BrandMemoryRawJson = """
         {"merchant":"Warehouse Club","purchase_date":null,"lines":[
         {"raw_text":"DENTLYS BULLY 16OZ","normalized_name":"Dentastix","brand":"Dentastix","size":"16 oz","quantity":1,"unit_price":12.48,"category":"PetCare","tags":["Dog","Treat"],"confidence":0.71,"existing_product":"Dentastix"},
-        {"raw_text":"KRK DENTAL CHEW 24CT","normalized_name":"Dog Dental Sticks","brand":"Kirkland","size":"24 ct","quantity":1,"unit_price":15.99,"category":"PetCare","tags":["Dog","Treat"],"confidence":0.86,"existing_product":null}]}
+        {"raw_text":"KRK DENTAL CHEW 24CT","normalized_name":"Dog Dental Sticks","brand":"Kirkland","size":"24 ct","quantity":1,"unit_price":15.99,"category":"PetCare","tags":["Dog","Treat"],"confidence":0.86,"existing_product":"Dog Dental Sticks"}]}
         """;
 
     /// <summary>Writes the shipped receipt image into this household's receipt store and returns the
@@ -838,7 +841,7 @@ public sealed class DemoDataSeeder(
             Merchant = BrandMemoryMerchant,
             RawText = BrandMemoryLearnedRaw,
             ProductId = bully.Id,
-            LearnedBrand = "Dently's",
+            LearnedBrand = BrandMemoryLearnedBrand,
             TaughtByReceiptId = bullyTeacher.Id,
         };
     }
@@ -848,6 +851,10 @@ public sealed class DemoDataSeeder(
     private const string BrandMemoryMerchant = "Warehouse Club";
     private const string BrandMemoryLearnedRaw = "DENTLYS BULLY 16OZ"; // taught → Bully Chews, brand "Dently's"
     private const string BrandMemoryOtherRaw = "KRK DENTAL CHEW 24CT"; // a different brand, never taught
+    // The corrected brand the whole hero turns on: Bully Chews' real brand, what the teacher confirm
+    // taught, and what the alias learned. ONE definition so the product's usual brand and the learned
+    // brand can't drift apart at one of the four sites that state it.
+    private const string BrandMemoryLearnedBrand = "Dently's";
 
     /// <summary>Two reports the household kept. The query is a <see cref="ReportSpecUrl"/> string —
     /// the same serialization a shared link uses — so a saved row is readable in the DB and survives a
