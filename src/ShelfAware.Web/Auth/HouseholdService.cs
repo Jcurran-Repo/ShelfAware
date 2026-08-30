@@ -270,14 +270,25 @@ public sealed class HouseholdService(
     public async Task<string?> RemoveMemberAsync(
         string householdId, string userId, string actingUserId, CancellationToken ct = default)
     {
-        if (userId == actingUserId) return "You can't remove yourself. Use 'Delete my account' instead.";
-
         // You may only remove people from a household you are in yourself. Anyone in it may remove anyone
         // else — the app has no roles and says so ("everyone in your household shares this pantry") — but
         // "anyone" means a member, not anyone at all.
         var actor = await db.Users.SingleOrDefaultAsync(u => u.Id == actingUserId, ct);
         if (actor is null || actor.HouseholdId != householdId)
             return "You can only remove people from your own household.";
+
+        if (userId == actingUserId)
+        {
+            // The advice must be true for whoever reads it. With housemates, any of them can do the
+            // removing; alone, nothing can — no account deletion exists yet — so the nearest real act is
+            // the pantry wipe. That pointer is only safe advice when there is nobody else's data behind
+            // it: offered to a MULTI-member household, it would invite a leaver to destroy the shared pantry.
+            var hasHousemates = await db.Users.AnyAsync(
+                u => u.HouseholdId == householdId && u.Id != actingUserId, ct);
+            return hasHousemates
+                ? "You can't remove yourself — ask another member of your household to remove you."
+                : "You can't remove yourself — you're this household's only member. To start fresh instead, use 'Delete all my data' below.";
+        }
 
         var user = await db.Users.SingleOrDefaultAsync(u => u.Id == userId, ct);
         if (user is null || user.HouseholdId != householdId)
