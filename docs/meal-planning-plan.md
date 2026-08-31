@@ -356,8 +356,8 @@ Phasing (on branch `feature/meal-planning-phase0`; `/pre-push` gate before any m
    - **Recipe library (idea #1 foundation):** regenerating KEEPS every generated recipe (was: deleted);
      dedup by `RecipeSignature` (name + main ingredients); a Cookbook "My recipes / Meal-plan recipes"
      source toggle. 5 + 4 + 2 tests.
-2. **Calendar + reroll** (NEXT) — Jordan's ask: an actual 30-day calendar (meal titles in a month grid,
-   expandable / clickthrough cards — "see a small summary of their future"); plus per-slot reroll.
+2. **Calendar + reroll** — ◑ calendar ✅ DONE (a real Sun–Sat month grid, `MealCalendar` Core + a
+   click-to-expand selected-day detail; live-verified over a 14-day plan). **Per-slot reroll still to do.**
 3b-remaining. **Dashboard plan items** — surface plan items on Running Low / Coming up via the same
    `GroceryBoard` definition (the Core merge is ready; only Home.razor wiring remains).
 4. **Census expiration** (§7) — the `CountExpiration` model change + the review-grid column.
