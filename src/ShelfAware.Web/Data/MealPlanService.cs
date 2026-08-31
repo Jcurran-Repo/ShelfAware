@@ -56,7 +56,9 @@ public sealed class MealPlanService(
         return await db.MealPlans.AsNoTracking()
             .Include(p => p.Meals).ThenInclude(m => m.Recipe).ThenInclude(r => r!.Ingredients)
             .Include(p => p.Meals).ThenInclude(m => m.Recipe).ThenInclude(r => r!.Steps)
-            .OrderByDescending(p => p.CreatedAt)
+            // ⚠️ Order by Id, not CreatedAt: SQLite refuses a DateTimeOffset in ORDER BY (repo gotcha).
+            // Insert order is chronological, and there's one active plan anyway (regenerate replaces).
+            .OrderByDescending(p => p.Id)
             .FirstOrDefaultAsync(ct);
     }
 

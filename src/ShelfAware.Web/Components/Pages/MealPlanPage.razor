@@ -1,0 +1,210 @@
+@page "/meal-plan"
+@using ShelfAware.Core.Domain
+@using ShelfAware.Core.MealPlanning
+@using ShelfAware.Core.Recipes
+@inject MealPlanService Planner
+@inject ILogger<MealPlanPage> Logger
+
+<PageTitle>Meal Plan — Shelf Aware</PageTitle>
+
+<div class="page-head">
+    <h1>Meal Plan</h1>
+</div>
+
+<p class="recipe-disclaimer" role="note">
+    ⚠️ Ideas only — <strong>always check ingredient labels yourself</strong>. Calorie figures are rough AI
+    estimates for planning, not precise nutrition.
+</p>
+
+<section class="panel">
+    <h2>Set up your plan</h2>
+    <p class="muted">Everything's optional — leave it as-is for varied, home-cooked dinners built from your
+        pantry. Generating replaces your current plan.</p>
+
+    <div class="mealplan-setup">
+        <label class="field">
+            <span>Days</span>
+            <input type="number" min="1" max="31" @bind="days" aria-label="How many days to plan" />
+        </label>
+        <fieldset class="mealplan-slots">
+            <legend>Meals each day</legend>
+            <label class="checkbox-field"><input type="checkbox" @bind="breakfast" /> Breakfast</label>
+            <label class="checkbox-field"><input type="checkbox" @bind="lunch" /> Lunch</label>
+            <label class="checkbox-field"><input type="checkbox" @bind="dinner" /> Dinner</label>
+            <label class="checkbox-field"><input type="checkbox" @bind="snack" /> Snack</label>
+        </fieldset>
+        <label class="field">
+            <span>Calories per meal</span>
+            <input type="number" min="0" @bind="calories" placeholder="no target" aria-label="Calorie target per meal (optional)" />
+        </label>
+        <label class="field">
+            <span>Time &amp; effort</span>
+            <select @bind="effort" aria-label="How ambitious the meals should be">
+                <option value="@TimeEffort.Quick">Quick &amp; simple</option>
+                <option value="@TimeEffort.Standard">Standard</option>
+                <option value="@TimeEffort.Ambitious">Ambitious</option>
+            </select>
+        </label>
+        <label class="checkbox-field mealplan-invent">
+            <input type="checkbox" @bind="invent" />
+            Invent new meals <span class="muted">(otherwise: known dishes from what you buy)</span>
+        </label>
+    </div>
+
+    <button @onclick="Generate" disabled="@busy">
+        @(busy ? "Planning…" : plan is null ? "Generate my plan" : "Regenerate")
+    </button>
+    @if (error is not null)
+    {
+        <p class="error" role="alert">@error</p>
+    }
+    @if (note is not null)
+    {
+        <p class="chat-reply" role="status">@note</p>
+    }
+</section>
+
+@if (plan is { } p)
+{
+    <section class="panel">
+        <div class="page-head">
+            <h2>Your plan <span class="muted">— @p.Meals.Count meal@(p.Meals.Count == 1 ? "" : "s")</span></h2>
+        </div>
+        @foreach (var day in p.Meals.GroupBy(m => m.Date).OrderBy(g => g.Key))
+        {
+            <div class="mealplan-day">
+                <h3>@day.Key.ToString("ddd, MMM d")</h3>
+                @foreach (var meal in day.OrderBy(m => m.Slot))
+                {
+                    <article class="recipe-card mealplan-meal">
+                        <div class="recipe-card-top">
+                            <h4><span class="chip chip-stocked">@meal.Slot</span> @meal.Recipe!.Name</h4>
+                        </div>
+                        @if (meal.Recipe.Blurb is { Length: > 0 } blurb)
+                        {
+                            <p class="muted">@blurb</p>
+                        }
+                        @if (meal.Recipe.EstimatedCaloriesPerServing is { } cal)
+                        {
+                            <p class="recipe-cal">~@cal cal / serving <span class="muted">(est.)</span></p>
+                        }
+                        <ul class="ingredient-list">
+                            @foreach (var i in meal.Recipe.MainIngredients)
+                            {
+                                <li>@RecipeFormat.Line(i.Quantity, i.Name)</li>
+                            }
+                            @{ var seasonings = meal.Recipe.Seasonings.Select(i => i.Name).ToList(); }
+                            @if (seasonings.Count > 0)
+                            {
+                                <li class="muted">+ @string.Join(", ", seasonings)</li>
+                            }
+                        </ul>
+                        @if (meal.Recipe.Steps.Count > 0)
+                        {
+                            <details class="recipe-steps">
+                                <summary>Steps (@meal.Recipe.Steps.Count)</summary>
+                                <ol>
+                                    @foreach (var step in meal.Recipe.Steps.OrderBy(s => s.Order))
+                                    {
+                                        <li>@step.Text</li>
+                                    }
+                                </ol>
+                            </details>
+                        }
+                    </article>
+                }
+            </div>
+        }
+    </section>
+}
+else if (!busy)
+{
+    <section class="panel">
+        <p class="muted">No plan yet — set it up above and hit <strong>Generate my plan</strong>.</p>
+    </section>
+}
+
+@code {
+    // Mutable form state (MealPlanSettings is init-only, so the form binds to locals and builds it on submit).
+    private int days = 7;
+    private bool breakfast, lunch, dinner = true, snack;
+    private int? calories;
+    private TimeEffort effort = TimeEffort.Standard;
+    private bool invent;
+    // Preserved from the stored setup but not edited in this compact form (a fuller form is a later refinement).
+    private int? protein, carbs;
+    private IReadOnlyList<string> foodGroups = [];
+    private IReadOnlyList<string> appliances = [];
+
+    private MealPlan? plan;
+    private bool busy;
+    private string? error;
+    private string? note;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var setup = await Planner.LoadSettingsAsync();
+        days = setup.Days;
+        breakfast = setup.Slots.Contains(MealSlot.Breakfast);
+        lunch = setup.Slots.Contains(MealSlot.Lunch);
+        dinner = setup.Slots.Contains(MealSlot.Dinner);
+        snack = setup.Slots.Contains(MealSlot.Snack);
+        calories = setup.CaloriesPerMeal;
+        effort = setup.Effort;
+        invent = setup.Invent;
+        protein = setup.ProteinGramsPerDay;
+        carbs = setup.CarbGramsPerDay;
+        foodGroups = setup.FoodGroups;
+        appliances = setup.Appliances;
+
+        plan = await Planner.GetCurrentPlanAsync();
+    }
+
+    private async Task Generate()
+    {
+        if (busy) return;
+        busy = true;
+        error = null;
+        note = null;
+        try
+        {
+            var slots = new List<MealSlot>();
+            if (breakfast) slots.Add(MealSlot.Breakfast);
+            if (lunch) slots.Add(MealSlot.Lunch);
+            if (dinner) slots.Add(MealSlot.Dinner);
+            if (snack) slots.Add(MealSlot.Snack);
+
+            var setup = new MealPlanSettings
+            {
+                Days = days,
+                Slots = slots.Count > 0 ? slots : [MealSlot.Dinner],
+                CaloriesPerMeal = calories,
+                Effort = effort,
+                Invent = invent,
+                ProteinGramsPerDay = protein,
+                CarbGramsPerDay = carbs,
+                FoodGroups = foodGroups,
+                Appliances = appliances,
+            };
+            await Planner.SaveSettingsAsync(setup);
+
+            var result = await Planner.GenerateAsync();
+            if (result.Succeeded)
+            {
+                plan = await Planner.GetCurrentPlanAsync();
+                note = $"Planned {result.MealCount} meal{(result.MealCount == 1 ? "" : "s")}.";
+            }
+            else
+            {
+                error = result.Error;
+            }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Generating a meal plan failed.");
+            error = "Couldn't generate a plan just now — please try again.";
+        }
+        finally { busy = false; }
+    }
+}

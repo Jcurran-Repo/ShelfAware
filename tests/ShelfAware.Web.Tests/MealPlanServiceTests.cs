@@ -61,6 +61,28 @@ public class MealPlanServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Get_current_plan_returns_the_active_plan_with_its_meals_and_recipes()
+    {
+        // Exercises the real GetCurrentPlanAsync query (Include chain + order) on SQLite — the OrderBy must
+        // not use CreatedAt (a DateTimeOffset SQLite refuses in ORDER BY; the repo gotcha this pins).
+        var service = Service(new FakeMealPlanGenerator([Meal("Tacos"), Meal("Chili")]));
+        await SaveSettings(service, new MealPlanSettings { Days = 2, Slots = [MealSlot.Dinner] });
+        await service.GenerateAsync();
+
+        var current = await service.GetCurrentPlanAsync();
+
+        Assert.NotNull(current);
+        Assert.Equal(2, current.Meals.Count);
+        Assert.Contains(current.Meals, m => m.Recipe!.Name == "Tacos" && m.Recipe.Steps.Count > 0);
+    }
+
+    [Fact]
+    public async Task Get_current_plan_is_null_when_there_is_none()
+    {
+        Assert.Null(await Service(new FakeMealPlanGenerator()).GetCurrentPlanAsync());
+    }
+
+    [Fact]
     public async Task Generate_passes_the_on_hand_pantry_to_the_generator()
     {
         await using (var db = _db.CreateDbContext())

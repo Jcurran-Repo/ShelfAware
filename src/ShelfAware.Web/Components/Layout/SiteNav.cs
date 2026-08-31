@@ -14,6 +14,7 @@ public static class SiteNav
         new("Grocery List", "/list"),
         new("Recipes", "/recipes"),
         new("Cookbook", "/cookbook"),
+        new("Meal Plan", "/meal-plan"),
         new("Trends", "/trends"),
         new("Reports", "/reports"),
         new("Upload", "/receipt"),
