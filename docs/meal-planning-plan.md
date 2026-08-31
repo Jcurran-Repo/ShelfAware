@@ -319,14 +319,18 @@ field.
 
 ## 11. Suggested phasing & open questions
 
-Phasing (each its own gated branch, `/pre-push` before any merge to master):
-0. **Prereq — the substitution-method fix (§8).**
-1. **Data + generation** — tables, `IMealPlanGenerator` + prompt, the setup screen; generate a plan
-   (no pantry integration yet).
-2. **Calendar + reroll.**
+Phasing (on branch `feature/meal-planning-phase0`; `/pre-push` gate before any merge to master):
+0. ✅ **Prereq — the substitution-method fix (§8).** DONE + live-verified.
+1. ✅ **Data + generation** — DONE, live-verified: the data model (1a), the generator + prompt (1b-i),
+   the service (1b-ii), and the `/meal-plan` page — setup + generate + display (1c). A real 3-day plan
+   generated end to end (known dishes, pantry-grounded, method-correct). No pantry integration yet.
+2. **Calendar + reroll** — a nicer month view; per-slot regenerate.
 3. **Pantry projection + grocery-list provenance** (§5b/§6) — the shared-definition provenance in Core,
    earliest-card dedup, the third source on the list + dashboard.
 4. **Census expiration** (§7) — the `CountExpiration` model change + the review-grid column.
+
+⚠️ **Not yet gated for merge:** phases 0–1 are pushed to the branch but have NOT been through the
+`/pre-push` gate (independent code + security review). The whole arc gets gated before it merges.
 
 Open (settle during build):
 - Exact buy-before lead time (flat N days vs. tied to shopping cadence vs. per-perishability once we can
