@@ -825,10 +825,10 @@
     // ("recipes that use chicken" → "read the second one"), and a same-component navigation never
     // re-runs OnInitializedAsync, which is where this handling used to live (the auto-start silently
     // never fired).
-    protected override void OnParametersSet()
+    protected override async Task OnParametersSetAsync()
     {
         ApplyFilter();
-        ConsumeReadDeepLink();
+        await ConsumeReadDeepLinkAsync();
     }
 
     /// <summary>Deep link from the chat's read_recipe tool (/recipes?read={id}) — auto-starts a hands-free
@@ -839,13 +839,22 @@
     /// changes the query (null → id), and a refresh doesn't surprise-relaunch a mic session. Interactive
     /// only — during prerender there's no circuit to run a voice surface on, and navigating would turn
     /// into a redirect that eats the parameter before the interactive run could see it.</summary>
-    private void ConsumeReadDeepLink()
+    private async Task ConsumeReadDeepLinkAsync()
     {
         if (!RendererInfo.IsInteractive || ReadId is not { } id) return;
-        if (savedRecipes.FirstOrDefault(r => r.Id == id) is { Steps.Count: > 0 } target)
+        // Resolve from the browse list first; if it isn't there, fall back to the DB by id. read_recipe
+        // resolves across ALL recipes (GetRecipesAsync), so a read of a recipe this page doesn't LIST —
+        // a meal-plan recipe, filtered out of /recipes — must still read rather than dead-ending on the
+        // agent's "opening and reading it aloud".
+        var target = savedRecipes.FirstOrDefault(r => r.Id == id);
+        if (target is null)
         {
-            StartHandsFree(target);
+            await using var db = await DbFactory.CreateDbContextAsync();
+            target = await db.Recipes.AsNoTracking()
+                .Include(r => r.Ingredients).Include(r => r.Steps)
+                .FirstOrDefaultAsync(r => r.Id == id);
         }
+        if (target is { Steps.Count: > 0 }) StartHandsFree(target);
         Nav.NavigateTo(UsesProductId is { } u ? $"/recipes?uses={u}" : "/recipes", replace: true);
     }
 

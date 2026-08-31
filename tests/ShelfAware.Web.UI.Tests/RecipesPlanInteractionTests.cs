@@ -1,5 +1,8 @@
+using Microsoft.AspNetCore.Components;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using ShelfAware.Core.Domain;
+using ShelfAware.Web.Components;
 using ShelfAware.Web.Components.Pages;
 
 namespace ShelfAware.Web.UI.Tests;
@@ -20,6 +23,7 @@ public class RecipesPlanInteractionTests : PageTestContext
             SavedAt = DateTimeOffset.Now,
             PlanGenerated = planGenerated,
             Ingredients = [new RecipeIngredient { Name = "beef", IsMain = true }],
+            Steps = [new RecipeStep { Order = 1, Text = "Cook it." }], // needed for the read-aloud deep link
         };
         db.Recipes.Add(recipe);
         db.SaveChanges();
@@ -81,5 +85,24 @@ public class RecipesPlanInteractionTests : PageTestContext
         cut.WaitForAssertion(() => Assert.DoesNotContain("Disposable", cut.Markup));
         using var db = Db.CreateDbContext();
         Assert.Empty(db.Recipes.ToList());
+    }
+
+    [Fact]
+    public void Reading_a_plan_recipe_by_deep_link_still_starts_even_though_it_is_not_listed()
+    {
+        // read_recipe resolves across ALL recipes and navigates to /recipes?read={id}; a plan recipe is
+        // filtered out of the browse list, so the deep link must fall back to the DB or it dead-ends.
+        var planId = SeedRecipe("Plan Dinner", planGenerated: true);
+
+        var nav = Services.GetRequiredService<NavigationManager>();
+        nav.NavigateTo($"/recipes?read={planId}");
+        var cut = Render<Recipes>();
+
+        cut.WaitForAssertion(() =>
+        {
+            // The reader mounted (via the DB fallback) even though the recipe isn't in the browse list…
+            Assert.NotEmpty(cut.FindComponents<Bunit.TestDoubles.Stub<RecipeReadAloud>>());
+            Assert.EndsWith("/recipes", nav.Uri); // …and ?read was consumed (one-shot, not view state)
+        });
     }
 }
