@@ -69,10 +69,11 @@
             <label class="checkbox-field"><input type="checkbox" @bind="grill" /> Grill</label>
             <label class="checkbox-field"><input type="checkbox" @bind="pressureCooker" /> Pressure cooker</label>
             <label class="checkbox-field"><input type="checkbox" @bind="blender" /> Blender</label>
+            <label class="checkbox-field"><input type="checkbox" @bind="smoker" /> Smoker</label>
         </fieldset>
         <label class="checkbox-field mealplan-invent">
             <input type="checkbox" @bind="invent" />
-            Invent new meals <span class="muted">(otherwise: known dishes from what you buy)</span>
+            <span>Invent new meals <span class="muted">(otherwise: known dishes from what you buy)</span></span>
         </label>
     </div>
 
@@ -167,7 +168,7 @@ else if (!generating)
     private bool invent;
     private int? protein, carbs;
     private string foodGroupsText = "";
-    private bool slowCooker, airFryer, grill, pressureCooker, blender;
+    private bool slowCooker, airFryer, grill, pressureCooker, blender, smoker;
 
     private MealPlan? plan;
     private bool generating;
@@ -196,6 +197,7 @@ else if (!generating)
         grill = setup.Appliances.Contains("grill");
         pressureCooker = setup.Appliances.Contains("pressure cooker");
         blender = setup.Appliances.Contains("blender");
+        smoker = setup.Appliances.Contains("smoker");
 
         householdId = await Household.GetIdAsync();
         plan = await Planner.GetCurrentPlanAsync();
@@ -319,6 +321,7 @@ else if (!generating)
         if (grill) list.Add("grill");
         if (pressureCooker) list.Add("pressure cooker");
         if (blender) list.Add("blender");
+        if (smoker) list.Add("smoker");
         return list;
     }
 }
