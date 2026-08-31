@@ -30,6 +30,11 @@ public class Recipe : IHouseholdOwned
     /// use what's on hand); null for an original. Variants group under their parent on the Recipes page.</summary>
     public int? ParentRecipeId { get; set; }
 
+    /// <summary>True for a recipe the meal PLANNER generated (vs. one the user saved from an idea or
+    /// imported). The Cookbook hides plan-generated recipes until the user "keeps" one (clears this), so a
+    /// month of auto-generated meals doesn't flood the browse shelf.</summary>
+    public bool PlanGenerated { get; set; }
+
     // ── Behaviour ───────────────────────────────────────────────────────────────────────────────────
     // Ask the recipe about itself ("are you a variant?", "can I make you with this?") instead of poking
     // at raw fields from every caller. The fuzzy makeability rules stay in IngredientMatcher (the domain
@@ -48,13 +53,26 @@ public class Recipe : IHouseholdOwned
     /// <summary>The seasonings, spices, oils, and staples — suggestion-only, never part of the makeable check.</summary>
     public IEnumerable<RecipeIngredient> Seasonings => Ingredients.Where(i => !i.IsMain);
 
-    /// <summary>True when every MAIN ingredient is covered by something on hand (by food family, via each
-    /// product's substitute list — not exact name). A recipe with no mains is never makeable.</summary>
-    public bool IsMakeableWith(IReadOnlyCollection<PantryProduct> onHand)
+    /// <summary>How makeable this recipe is with what's on hand: <see cref="Makeability.Ready"/> (every main
+    /// is food you own), <see cref="Makeability.NeedsSwap"/> (every main is covered but ≥1 only by a declared
+    /// stand-in, so Adapt should rebuild the steps — "also works as" means you'll eat it, not that it cooks
+    /// the same), or <see cref="Makeability.Missing"/> (a main is uncovered, or the recipe has no mains).
+    /// <see cref="IsMakeableWith"/> is defined in terms of this, so the badge and the check can't disagree.</summary>
+    public Makeability MakeabilityWith(IReadOnlyCollection<PantryProduct> onHand)
     {
         var mains = MainIngredients.ToList();
-        return mains.Count > 0 && mains.All(i => i.IsSatisfiedBy(onHand));
+        if (mains.Count == 0) return Makeability.Missing;
+        var coverage = mains.Select(i => i.CoverageBy(onHand)).ToList();
+        if (coverage.Any(c => c == IngredientCoverage.None)) return Makeability.Missing;
+        return coverage.Any(c => c == IngredientCoverage.Substitute) ? Makeability.NeedsSwap : Makeability.Ready;
     }
+
+    /// <summary>True when every MAIN ingredient is covered by something on hand (by food family, via each
+    /// product's substitute list — not exact name), whether directly or by a stand-in. A recipe with no
+    /// mains is never makeable. For the three-way detail — including "makeable, but needs a swap" — use
+    /// <see cref="MakeabilityWith"/>.</summary>
+    public bool IsMakeableWith(IReadOnlyCollection<PantryProduct> onHand) =>
+        MakeabilityWith(onHand) != Makeability.Missing;
 
     /// <summary>The MAIN ingredients not currently covered by anything on hand — what you'd need to buy.</summary>
     public IEnumerable<RecipeIngredient> MissingMains(IReadOnlyCollection<PantryProduct> onHand) =>

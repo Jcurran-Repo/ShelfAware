@@ -188,6 +188,10 @@
     {
         <p class="muted" role="status">@imOutNote</p>
     }
+    @if (deleteNote is not null)
+    {
+        <p class="error" role="alert">@deleteNote</p>
+    }
     @if (displayed.Count == 0)
     {
         <p class="muted">
@@ -213,11 +217,11 @@
                     continue;
                 }
                 var isVariant = kind == RowKind.Variant;
-                var makeable = Makeable(r);
+                var makeability = r.MakeabilityWith(onHand);
                 <li id="recipe-@r.Id" class="@(isVariant ? "recipe-variant" : null)">
                     <div class="saved-top">
                         <strong>@r.Name</strong>
-                        <span class="chip chip-@(makeable ? "stocked" : "unknown")">@(makeable ? "Ready to make" : "Missing items")</span>
+                        <span class="@MakeabilityFormat.ChipClass(makeability)">@MakeabilityFormat.Label(makeability)</span>
                         @if (isVariant)
                         {
                             <span class="chip variant-chip" title="Adapted to use what you have">🔀 adapted</span>
@@ -246,7 +250,7 @@
                             }
                             <button class="secondary" @onclick="() => MarkEaten(r)" disabled="@eatBusy"
                                     aria-label="Mark @r.Name eaten">Ate it</button>
-                            @if (!makeable)
+                            @if (makeability == Makeability.Missing)
                             {
                                 <button class="secondary" @onclick="() => AddMissingToList(r)" aria-label="Add missing ingredients for @r.Name to the grocery list">Add missing to list</button>
                             }
@@ -255,6 +259,13 @@
                             <button class="icon-btn" @onclick="() => DeleteSaved(r)" aria-label="Delete @r.Name" title="Delete @r.Name"><span aria-hidden="true">🗑</span></button>
                         </span>
                     </div>
+                    @* "Makeable with a swap": every main is covered, but at least one only by a stand-in you
+                       own (chuck roast for steak). "Also works as" means you'll EAT it, not that it cooks the
+                       same — so point at Adapt to rebuild the steps, never imply "cook this as written". *@
+                    @if (makeability == Makeability.NeedsSwap)
+                    {
+                        <p class="muted small" role="note">Uses a stand-in you own — the steps are written for the original and can cook differently. <strong>🔀 Adapt to what I have</strong> rebuilds them for what you're actually using.</p>
+                    }
                     @* §13.3: tell, don't ask. The tap commits in one go; this notice then says exactly
                        what it took — the decrement is approximate by design (it can't parse "2 lbs"),
                        so it must never be silent — with Undo as the one-tap way back. *@
@@ -352,8 +363,18 @@
                             var coverage = CoveringInStock(i.Name, i.MatchedProduct);
                             var have = coverage.Count > 0;
                             var confident = coverage.Any(c => c.CountBacked);
+                            // Direct (you own the food) vs Substitute (only a declared stand-in covers it) —
+                            // same matcher as `have`, so they can't disagree about coverage.
+                            var cover = i.CoverageBy(onHand);
                             <li class="@(have ? (confident ? "have" : "have likely") : "grab")">
                                 <span class="ingredient-name">@(have ? "✓" : "🛒") @Qty(i.Quantity, i.Name)</span>
+                                @* A ✓ that comes only from a declared stand-in (chuck roast for steak) says so:
+                                   the steps are written for the original and may cook differently, so it points
+                                   at Adapt rather than reading as "cook this as written". *@
+                                @if (cover == IngredientCoverage.Substitute)
+                                {
+                                    <span class="swap-note" title="You don't have @i.Name, but a stand-in you own covers it. The steps are written for @i.Name and may cook differently — use 🔀 Adapt to rebuild them.">stand-in — Adapt for the right steps</span>
+                                }
                                 @* Part A — honesty: a ✓ backed only by the rhythm (no fresh count) reads "likely",
                                    not a confident tick. Asserting the guess is the false positive that erodes trust. *@
                                 @if (have && !confident)
@@ -521,6 +542,7 @@
 
     private Recipe? picked;
     private string? extraNote;
+    private string? deleteNote;   // why a delete was refused (recipe is in the meal plan)
     private Recipe? readingRecipe;
     private bool readingHandsFree; // ...with the mic open, listening between steps
     private Recipe? cookingRecipe; // the ElevenLabs realtime agent
@@ -803,10 +825,10 @@
     // ("recipes that use chicken" → "read the second one"), and a same-component navigation never
     // re-runs OnInitializedAsync, which is where this handling used to live (the auto-start silently
     // never fired).
-    protected override void OnParametersSet()
+    protected override async Task OnParametersSetAsync()
     {
         ApplyFilter();
-        ConsumeReadDeepLink();
+        await ConsumeReadDeepLinkAsync();
     }
 
     /// <summary>Deep link from the chat's read_recipe tool (/recipes?read={id}) — auto-starts a hands-free
@@ -817,13 +839,22 @@
     /// changes the query (null → id), and a refresh doesn't surprise-relaunch a mic session. Interactive
     /// only — during prerender there's no circuit to run a voice surface on, and navigating would turn
     /// into a redirect that eats the parameter before the interactive run could see it.</summary>
-    private void ConsumeReadDeepLink()
+    private async Task ConsumeReadDeepLinkAsync()
     {
         if (!RendererInfo.IsInteractive || ReadId is not { } id) return;
-        if (savedRecipes.FirstOrDefault(r => r.Id == id) is { Steps.Count: > 0 } target)
+        // Resolve from the browse list first; if it isn't there, fall back to the DB by id. read_recipe
+        // resolves across ALL recipes (GetRecipesAsync), so a read of a recipe this page doesn't LIST —
+        // a meal-plan recipe, filtered out of /recipes — must still read rather than dead-ending on the
+        // agent's "opening and reading it aloud".
+        var target = savedRecipes.FirstOrDefault(r => r.Id == id);
+        if (target is null)
         {
-            StartHandsFree(target);
+            await using var db = await DbFactory.CreateDbContextAsync();
+            target = await db.Recipes.AsNoTracking()
+                .Include(r => r.Ingredients).Include(r => r.Steps)
+                .FirstOrDefaultAsync(r => r.Id == id);
         }
+        if (target is { Steps.Count: > 0 }) StartHandsFree(target);
         Nav.NavigateTo(UsesProductId is { } u ? $"/recipes?uses={u}" : "/recipes", replace: true);
     }
 
@@ -904,8 +935,12 @@
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         excludedFoods = await db.ExcludedFoods.OrderBy(f => f.Value).ToListAsync();
-        // SQLite can't ORDER BY a DateTimeOffset column — sort client-side.
-        savedRecipes = (await db.Recipes.AsNoTracking().Include(r => r.Ingredients).Include(r => r.Steps).ToListAsync())
+        // SQLite can't ORDER BY a DateTimeOffset column — sort client-side. Exclude meal-plan-generated
+        // recipes: they're browsed/managed on the Cookbook's "Meal-plan recipes" tab, not here — otherwise a
+        // 30-day plan tops this list with auto-generated dishes, and deleting one from here would
+        // cascade-delete its calendar day (a recipe is a required FK parent of PlannedMeal).
+        savedRecipes = (await db.Recipes.AsNoTracking().Where(r => !r.PlanGenerated)
+                .Include(r => r.Ingredients).Include(r => r.Steps).ToListAsync())
             .OrderByDescending(r => r.SavedAt).ToList();
         savedNames = savedRecipes.Select(r => r.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         // Id → name for the ?uses filter (all products, tracked or not — a recipe may point at an
@@ -1279,7 +1314,15 @@
 
     private async Task DeleteSaved(Recipe r)
     {
+        deleteNote = null;
         await using var db = await DbFactory.CreateDbContextAsync();
+        // Refuse if the recipe is in the current meal plan: a recipe is a REQUIRED FK parent of PlannedMeal,
+        // so deleting it here would cascade-delete that calendar day silently. Send them to reroll it instead.
+        if (await db.PlannedMeals.AnyAsync(pm => pm.RecipeId == r.Id))
+        {
+            deleteNote = $"“{r.Name}” is in your meal plan — reroll or regenerate it there first, then delete it.";
+            return;
+        }
         // No fallback to the detached `r`: the lookup is household-filtered, so a miss means the recipe is
         // already gone (a double tap) or isn't ours — and removing `r` anyway would delete it keyed on the
         // id alone, with no household predicate. Nothing to delete is a no-op, not an error.

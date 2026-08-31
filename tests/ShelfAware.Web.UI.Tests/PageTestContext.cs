@@ -1,6 +1,7 @@
 using Bunit.TestDoubles;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using ShelfAware.Llm;
 using ShelfAware.Core.Chat;
@@ -100,6 +101,9 @@ public abstract class PageTestContext : BunitContext
         Services.AddSingleton(new CircuitAiSettings(Options.Create(new LlmOptions())));
         Services.AddSingleton(new ProductRenameService(Factory, ActivityLog));
         Services.AddSingleton(new ProductMergeService(Factory, ActivityLog));
+        // The grocery list + dashboard read the current meal plan (GetCurrentPlanAsync); they never
+        // generate, so a no-op generator suffices. A test needing generation registers its own over this.
+        Services.AddSingleton(new MealPlanService(Factory, new FakeMealPlanGenerator(), AppSettings, NullLogger<MealPlanService>.Instance));
         Services.AddLogging();
 
         JSInterop.Mode = JSRuntimeMode.Loose;

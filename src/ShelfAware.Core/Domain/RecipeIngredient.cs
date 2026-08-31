@@ -29,4 +29,10 @@ public class RecipeIngredient : IHouseholdOwned
     /// product of the same specific food, or a product that lists it as a substitute (IngredientMatcher).</summary>
     public bool IsSatisfiedBy(IReadOnlyCollection<PantryProduct> onHand) =>
         IngredientMatcher.IsSatisfied(Name, MatchedProduct, onHand);
+
+    /// <summary>How this ingredient is covered by what's on hand — None (grab it), Direct (you own the
+    /// food), or Substitute (only a declared stand-in covers it, so the steps may need rebuilding via
+    /// Adapt). <see cref="IngredientMatcher.CoverageOf"/>; <see cref="IsSatisfiedBy"/> is "not None".</summary>
+    public IngredientCoverage CoverageBy(IReadOnlyCollection<PantryProduct> onHand) =>
+        IngredientMatcher.CoverageOf(Name, MatchedProduct, onHand);
 }

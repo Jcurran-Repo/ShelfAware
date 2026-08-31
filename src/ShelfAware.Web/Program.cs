@@ -359,10 +359,13 @@ builder.Services.AddScoped<IPantryChat, AnthropicPantryChat>();
 builder.Services.AddScoped<ITagAdvisor, AnthropicTagAdvisor>();
 builder.Services.AddScoped<IRecipeTagAdvisor, AnthropicRecipeTagAdvisor>();
 builder.Services.AddScoped<IRecipeAdvisor, AnthropicRecipeAdvisor>();
+builder.Services.AddScoped<ShelfAware.Core.MealPlanning.IMealPlanGenerator, AnthropicMealPlanGenerator>(); // §meal-planning: generates a plan's meals
 builder.Services.AddScoped<IProductSubstituteAdvisor, AnthropicProductSubstituteAdvisor>();
 builder.Services.AddScoped<IIngredientAlternativesAdvisor, AnthropicIngredientAlternativesAdvisor>();
 builder.Services.AddScoped<IRecipeAdapter, RecipeAdapter>();
 builder.Services.AddScoped<RecipeTagService>(); // the one recipe-tag write path (cookbook + import)
+builder.Services.AddScoped<MealPlanService>(); // generates + stores the household's meal plan
+builder.Services.AddSingleton<IMealPlanJobs, MealPlanJobs>(); // runs generation detached so it survives navigating away
 
 // Receipts arrive by upload only (the folder inbox was retired 2026-07-22 — an arbitrary-path read the
 // box shouldn't carry once it's shared, and uploads had superseded it). The settings store backs the

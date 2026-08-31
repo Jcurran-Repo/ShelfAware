@@ -34,6 +34,22 @@
 @if (allRecipes.Count > 0)
 {
     <section class="panel cookbook-interactive">
+        @{ var planCount = allRecipes.Count(r => r.PlanGenerated); var mineCount = allRecipes.Count - planCount; }
+        @if (planCount > 0 && mineCount > 0)
+        {
+            @* Two libraries: your own kept recipes, and the meal-plan generated ones — kept apart so the
+               plan's output doesn't drown the recipes you chose to save. Only shown when both exist. *@
+            <div class="cookbook-source" role="group" aria-label="Which recipes to show">
+                <button type="button" class="secondary @(showPlanRecipes ? null : "active")"
+                        aria-pressed="@(showPlanRecipes ? "false" : "true")" @onclick="() => SetSource(plan: false)">
+                    My recipes <span class="tag-count">@mineCount</span>
+                </button>
+                <button type="button" class="secondary @(showPlanRecipes ? "active" : null)"
+                        aria-pressed="@(showPlanRecipes ? "true" : "false")" @onclick="() => SetSource(plan: true)">
+                    Meal-plan recipes <span class="tag-count">@planCount</span>
+                </button>
+            </div>
+        }
         <div class="cookbook-filters">
             @if (productOptions.Count > 0)
             {
@@ -206,9 +222,16 @@
                 <ul class="ingredient-list">
                     @foreach (var i in r.MainIngredients)
                     {
-                        var have = i.IsSatisfiedBy(onHand);
+                        var cover = i.CoverageBy(onHand);
+                        var have = cover != IngredientCoverage.None;
                         <li class="@(have ? "have" : "grab")">
                             <span class="ingredient-name">@(have ? "✓" : "🛒") @RecipeFormat.Line(i.Quantity, i.Name)</span>
+                            @* Covered only by a declared stand-in — the steps are written for the original and
+                               may cook differently. The Cookbook browses/reads; Adapt lives on the Recipes page. *@
+                            @if (cover == IngredientCoverage.Substitute)
+                            {
+                                <span class="swap-note" title="You don't have @i.Name, but a stand-in you own covers it — the steps are written for @i.Name and may cook differently. Adapt it on the Recipes page to rebuild them.">stand-in</span>
+                            }
                         </li>
                     }
                     @{ var extras = r.Seasonings.Select(i => RecipeFormat.Line(i.Quantity, i.Name)).ToList(); }
@@ -362,6 +385,7 @@ else
     private string productFilterText = ""; // the type-and-guess box's text; kept in step with the active filter
     private string? filterHint; // shown when a typed entry resolves to nothing/many, so a commit is never a silent no-op
     private string? activeTag;         // resolved from ?tag
+    private bool showPlanRecipes;      // false = your own kept recipes; true = the meal-plan library
     private Recipe? readingRecipe;     // the recipe whose read-aloud panel is open (null = none)
 
     // Tag editing (all through RecipeTagService — the one write path)
@@ -401,14 +425,12 @@ else
 
     private Recipe? Current => filtered.Count > 0 ? filtered[Math.Clamp(index, 0, filtered.Count - 1)] : null;
 
-    // Makeable when every MAIN ingredient is covered by something on hand — food-family match via
-    // IngredientMatcher, exactly as the Recipes page decides it. Seasonings/staples don't count.
-    private bool Makeable(Recipe r) => r.IsMakeableWith(onHand);
-
-    // The makeability chip is shown in TWO places now — the preview and the detail panel. Its class and its
-    // label get ONE definition each so the two surfaces can't drift (the state is already the shared Makeable).
-    private string MakeableChipClass(Recipe r) => Makeable(r) ? "chip chip-stocked" : "chip chip-unknown";
-    private string MakeableChipLabel(Recipe r) => Makeable(r) ? "Ready to make" : "Missing items";
+    // The makeability chip shows in THREE places — this page's preview and detail panel, and the Recipes
+    // page. Its class and label get ONE definition (MakeabilityFormat, in Core) so they can't drift — e.g.
+    // one surface reading "Ready to make" while another shows "Makeable with a swap" for the same recipe.
+    // Food-family makeability via IngredientMatcher, exactly as the Recipes page decides it; seasonings don't count.
+    private string MakeableChipClass(Recipe r) => MakeabilityFormat.ChipClass(r.MakeabilityWith(onHand));
+    private string MakeableChipLabel(Recipe r) => MakeabilityFormat.Label(r.MakeabilityWith(onHand));
 
     // A recipe's tags in display order — used by both the preview and the detail panel, so the sort lives in
     // one place. (The tag CLOUD sorts by count instead; that's a different order, kept separate on purpose.)
@@ -479,7 +501,9 @@ else
         filterHint = null; // any navigation lands on a real filter, so a stale "no match" note must not linger
         activeTag = Tag is { Length: > 0 } ? Tag : null;
 
-        IEnumerable<Recipe> q = allRecipes;
+        // Source first: your own kept recipes by default, or the meal-plan library when that tab is picked —
+        // so generated recipes accumulate as a browsable library without drowning your saved ones.
+        IEnumerable<Recipe> q = allRecipes.Where(r => showPlanRecipes ? r.PlanGenerated : !r.PlanGenerated);
         if (filterProductName is { } productName)
         {
             q = q.Where(r => r.Uses(productName));
@@ -491,6 +515,18 @@ else
 
         filtered = q.OrderBy(r => r.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
         if (index >= filtered.Count) index = Math.Max(0, filtered.Count - 1);
+    }
+
+    // Switch between your own recipes and the meal-plan library. Resets to the first card and closes any open
+    // reader (the deck it belonged to is changing out from under it).
+    private void SetSource(bool plan)
+    {
+        if (showPlanRecipes == plan) return;
+        showPlanRecipes = plan;
+        readingRecipe = null;
+        index = 0;
+        ApplyFilters();
+        _pendingScroll = 0;
     }
 
     private string FilterBannerText() => (filterProductName, activeTag) switch

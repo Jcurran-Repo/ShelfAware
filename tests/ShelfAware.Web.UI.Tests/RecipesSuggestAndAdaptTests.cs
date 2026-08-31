@@ -276,6 +276,36 @@ public class RecipesSuggestAndAdaptTests : PageTestContext
     }
 
     [Fact]
+    public void A_recipe_covered_only_by_a_stand_in_reads_makeable_with_a_swap_and_points_at_adapt()
+    {
+        // You don't own steak, but you own Chuck Roast and marked it "also works as" steak. Every main is
+        // covered, so the recipe IS makeable — but the steps are written for a seared steak, and chuck must
+        // be braised. So the badge is "Makeable with a swap", NOT "Ready to make"; the ingredient reads ✓
+        // but flagged a stand-in; and the row points at Adapt (which now rebuilds the method). This is the
+        // whole point of Jordan's "works as = same meal, not same method" — a stand-in never means
+        // "cook this as written".
+        var chuckId = SeedStocked("Chuck Roast");
+        using (var db = Db.CreateDbContext())
+        {
+            db.ProductSubstitutes.Add(new ProductSubstitute { ProductId = chuckId, Value = "steak" });
+            db.SaveChanges();
+        }
+        SeedRecipe("Steak Dinner", new RecipeIngredient { Name = "steak", IsMain = true });
+        var cut = RenderRecipes();
+
+        cut.WaitForAssertion(() =>
+        {
+            var row = cut.Find(".saved-recipes > li");
+            Assert.Contains("Makeable with a swap", row.TextContent);
+            Assert.DoesNotContain("Ready to make", row.TextContent);
+            var ingredient = row.QuerySelector(".ingredient-list li")!;
+            Assert.Contains("have", ingredient.GetAttribute("class"));   // it IS covered (✓) …
+            Assert.Single(ingredient.QuerySelectorAll(".swap-note"));     // … but flagged a stand-in
+            Assert.Contains("Adapt to what I have", row.TextContent);     // the fix is named
+        });
+    }
+
+    [Fact]
     public async Task A_red_row_covered_by_a_run_out_product_offers_restocked_and_recovers()
     {
         var milkId = SeedRunOut("Whole Milk");

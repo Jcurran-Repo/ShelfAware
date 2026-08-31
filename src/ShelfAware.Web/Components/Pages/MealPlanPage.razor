@@ -1,0 +1,507 @@
+@page "/meal-plan"
+@implements IDisposable
+@using ShelfAware.Core.Domain
+@using ShelfAware.Core.MealPlanning
+@using ShelfAware.Core.Recipes
+@using ShelfAware.Web.Data
+@inject MealPlanService Planner
+@inject IMealPlanJobs Jobs
+@inject ICurrentHousehold Household
+@inject ILogger<MealPlanPage> Logger
+
+<PageTitle>Meal Plan — Shelf Aware</PageTitle>
+
+<div class="page-head">
+    <h1>Meal Plan</h1>
+</div>
+
+<p class="recipe-disclaimer" role="note">
+    ⚠️ Ideas only — <strong>always check ingredient labels yourself</strong>. Calorie figures are rough AI
+    estimates for planning, not precise nutrition.
+</p>
+
+<section class="panel">
+    <h2>Set up your plan</h2>
+    <p class="muted">Everything's optional — leave it as-is for varied, home-cooked dinners built from your
+        pantry. Generating replaces your current plan.</p>
+
+    <div class="mealplan-setup">
+        <label class="field">
+            <span>Days</span>
+            <input type="number" min="1" max="31" @bind="days" aria-label="How many days to plan" />
+        </label>
+        <label class="field">
+            <span>Default calories / meal</span>
+            <input type="number" min="0" @bind="defaultCalories" placeholder="no target" aria-label="Default calorie target per meal (optional)" />
+        </label>
+        <label class="field">
+            <span>Protein / day (g)</span>
+            <input type="number" min="0" @bind="protein" placeholder="no target" aria-label="Daily protein target in grams (optional)" />
+        </label>
+        <label class="field">
+            <span>Carbs / day (g)</span>
+            <input type="number" min="0" @bind="carbs" placeholder="no target" aria-label="Daily carb target in grams (optional)" />
+        </label>
+        <label class="field mealplan-foodgroups">
+            <span>Food groups to balance</span>
+            <input type="text" @bind="foodGroupsText" placeholder="e.g. vegetables, whole grains, lean protein"
+                   aria-label="Food groups to cover, comma-separated (optional)" />
+        </label>
+        <label class="field">
+            <span>Default effort</span>
+            <select @bind="defaultEffort" aria-label="Default time and effort for meals">
+                <option value="@TimeEffort.Quick">Quick &amp; simple</option>
+                <option value="@TimeEffort.Standard">Standard</option>
+                <option value="@TimeEffort.Ambitious">Ambitious</option>
+            </select>
+        </label>
+        <fieldset class="mealplan-slots">
+            <legend>Appliances <span class="muted">(beyond oven &amp; stovetop)</span></legend>
+            <label class="checkbox-field"><input type="checkbox" @bind="slowCooker" /> Slow cooker</label>
+            <label class="checkbox-field"><input type="checkbox" @bind="airFryer" /> Air fryer</label>
+            <label class="checkbox-field"><input type="checkbox" @bind="grill" /> Grill</label>
+            <label class="checkbox-field"><input type="checkbox" @bind="pressureCooker" /> Pressure cooker</label>
+            <label class="checkbox-field"><input type="checkbox" @bind="blender" /> Blender</label>
+            <label class="checkbox-field"><input type="checkbox" @bind="smoker" /> Smoker</label>
+        </fieldset>
+        <label class="checkbox-field mealplan-invent">
+            <input type="checkbox" @bind="preferLeftovers" />
+            <span>Prefer leftovers <span class="muted">(cook once, eat twice — a dinner becomes the next lunch)</span></span>
+        </label>
+        <label class="checkbox-field mealplan-invent">
+            <input type="checkbox" @bind="invent" />
+            <span>Invent new meals <span class="muted">(otherwise: known dishes from what you buy)</span></span>
+        </label>
+    </div>
+
+    <div class="mealplan-meals">
+        <div class="mealplan-meals-head">
+            <span>Your meals each day</span>
+            <span class="muted">— repeated every day; blank calories/effort use the defaults above</span>
+        </div>
+        @for (var i = 0; i < meals.Count; i++)
+        {
+            var idx = i;
+            var meal = meals[idx];
+            <div class="mealplan-mealrow">
+                <select @bind="meal.Slot" aria-label="Meal type">
+                    @foreach (var s in Enum.GetValues<MealSlot>())
+                    {
+                        <option value="@s">@s</option>
+                    }
+                </select>
+                <input type="number" min="0" @bind="meal.Calories" placeholder="@CaloriePlaceholder"
+                       aria-label="Calories for this meal (blank uses the default)" />
+                <select value="@(meal.Effort?.ToString() ?? "")" @onchange="e => SetMealEffort(meal, e.Value?.ToString())"
+                        aria-label="Effort for this meal (blank uses the default)">
+                    <option value="">Default effort</option>
+                    <option value="@TimeEffort.Quick">Quick &amp; simple</option>
+                    <option value="@TimeEffort.Standard">Standard</option>
+                    <option value="@TimeEffort.Ambitious">Ambitious</option>
+                </select>
+                <button type="button" class="icon-btn" @onclick="() => RemoveMeal(idx)"
+                        disabled="@(meals.Count <= 1)" aria-label="Remove this meal">✕</button>
+            </div>
+        }
+        <button type="button" class="linkish mealplan-addmeal" @onclick="AddMeal"
+                disabled="@(meals.Count >= MealPlanSettings.MaxMealsPerDay)">+ Add a meal</button>
+    </div>
+
+    <button @onclick="Generate" disabled="@generating">
+        @(generating
+            ? (progressTotal > 0 ? $"Planning… ({progressDone} of {progressTotal})" : "Planning…")
+            : plan is null ? "Generate my plan" : "Regenerate")
+    </button>
+    @if (generating)
+    {
+        <p class="muted small" role="status">
+            Generating your plan — this can take a minute or two. Feel free to leave this page; it keeps
+            going and will be here when you come back.
+        </p>
+    }
+    @if (error is not null)
+    {
+        <p class="error" role="alert">@error</p>
+    }
+    @if (note is not null)
+    {
+        <p class="chat-reply" role="status">@note</p>
+    }
+</section>
+
+@if (plan is { } p)
+{
+    <section class="panel">
+        <div class="page-head">
+            <h2>Your plan <span class="muted">— @p.Days day@(p.Days == 1 ? "" : "s"), @p.Meals.Count meal@(p.Meals.Count == 1 ? "" : "s")</span></h2>
+        </div>
+
+        @* Month-at-a-glance: each day shows its meal titles (a summary of the week ahead); click a day to
+           expand its full recipes below. The week layout (Sun–Sat with padding) is MealCalendar. *@
+        <div class="mealcal" role="grid" aria-label="Meal plan calendar">
+            <div class="mealcal-weekhead" role="row">
+                @foreach (var wd in WeekdayLabels)
+                {
+                    <div role="columnheader">@wd</div>
+                }
+            </div>
+            @foreach (var week in MealCalendar.Weeks(p.StartDate, p.Days))
+            {
+                <div class="mealcal-week" role="row">
+                    @foreach (var cell in week)
+                    {
+                        @if (cell is { } date)
+                        {
+                            var dayMeals = mealsByDate.GetValueOrDefault(date, NoMeals);
+                            var dayClass = "mealcal-day"
+                                + (date == Today ? " today" : "")
+                                + (date == selectedDate ? " selected" : "");
+                            <button type="button" role="gridcell"
+                                    class="@dayClass"
+                                    @onclick="() => SelectDay(date)"
+                                    aria-pressed="@(date == selectedDate ? "true" : "false")"
+                                    aria-label="@DayAriaLabel(date, dayMeals)">
+                                <span class="mealcal-daynum">@date.Day</span>
+                                @foreach (var m in dayMeals)
+                                {
+                                    <span class="mealcal-meal slot-@m.Slot.ToString().ToLowerInvariant()"
+                                          title="@m.Slot: @m.Recipe!.Name">@m.Recipe!.Name</span>
+                                }
+                            </button>
+                        }
+                        else
+                        {
+                            <div class="mealcal-day mealcal-pad" role="gridcell" aria-hidden="true"></div>
+                        }
+                    }
+                </div>
+            }
+        </div>
+
+        @if (selectedDate is { } sel && mealsByDate.TryGetValue(sel, out var selectedMeals))
+        {
+            <div class="mealcal-detail">
+                <h3>@sel.ToString("dddd, MMM d")</h3>
+                @foreach (var meal in selectedMeals)
+                {
+                    @MealCard(meal)
+                }
+            </div>
+        }
+    </section>
+}
+else if (!generating)
+{
+    <section class="panel">
+        <p class="muted">No plan yet — set it up above and hit <strong>Generate my plan</strong>.</p>
+    </section>
+}
+
+@code {
+    // Mutable form state (MealPlanSettings is init-only, so the form binds to locals and builds it on submit).
+    private int days = 7;
+    private int? defaultCalories;
+    private TimeEffort defaultEffort = TimeEffort.Standard;
+    private bool invent, preferLeftovers;
+    private int? protein, carbs;
+    private string foodGroupsText = "";
+    private bool slowCooker, airFryer, grill, pressureCooker, blender, smoker;
+
+    // The per-meal line-up (repeated each day). Each row inherits the defaults above unless it overrides.
+    private readonly List<MealRow> meals = [new MealRow { Slot = MealSlot.Dinner }];
+
+    /// <summary>A mutable form row for one meal — the init-only <see cref="MealEntry"/> is built on submit.</summary>
+    private sealed class MealRow
+    {
+        public MealSlot Slot { get; set; } = MealSlot.Dinner;
+        public int? Calories { get; set; }
+        public TimeEffort? Effort { get; set; }
+    }
+
+    private string CaloriePlaceholder => defaultCalories is { } c ? $"{c} (default)" : "no target";
+
+    private MealPlan? plan;
+    private bool generating;
+    private int progressDone, progressTotal;
+    private string? householdId;
+    private CancellationTokenSource? pollCts;
+    private string? error;
+    private string? note;
+
+    // Calendar view: the plan's meals bucketed by day, and which day's detail is expanded below the grid.
+    // Computed per access (not cached at process start) so an always-on server's "today" highlight and
+    // default-open day don't stick to yesterday after midnight.
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+    private static readonly string[] WeekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    private static readonly List<PlannedMeal> NoMeals = [];
+    private Dictionary<DateOnly, List<PlannedMeal>> mealsByDate = [];
+    private DateOnly? selectedDate;
+
+    // Bucket the current plan's meals by day (each day's slots in order) and open a sensible day: today if the
+    // plan covers it, else the first planned day. Called whenever the plan is (re)loaded.
+    private void IndexPlan()
+    {
+        mealsByDate = plan?.Meals
+            .GroupBy(m => m.Date)
+            .ToDictionary(g => g.Key, g => g.OrderBy(m => m.Slot).ToList()) ?? [];
+        // Keep the open day if it's still in the plan (e.g. after a reroll reload); else default to today,
+        // or the first planned day.
+        if (selectedDate is { } current && mealsByDate.ContainsKey(current)) return;
+        selectedDate = mealsByDate.ContainsKey(Today)
+            ? Today
+            : mealsByDate.Keys.OrderBy(d => d).Cast<DateOnly?>().FirstOrDefault();
+    }
+
+    private void SelectDay(DateOnly date) => selectedDate = date;
+
+    // Per-slot reroll: regenerate just this meal (one AI call, inline), then reload the plan keeping the open
+    // day. The old recipe stays in the library. A guard blocks a second reroll while one is in flight.
+    private int? rerollingMealId;
+
+    private async Task Reroll(int plannedMealId)
+    {
+        if (rerollingMealId is not null || householdId is null) return;
+        rerollingMealId = plannedMealId;
+        error = null;
+        note = null;
+        try
+        {
+            var result = await Planner.RerollAsync(plannedMealId);
+            if (result.Succeeded)
+            {
+                plan = await Planner.GetCurrentPlanAsync();
+                IndexPlan();
+                note = $"Swapped in {result.RecipeName}.";
+            }
+            else
+            {
+                error = result.Error;
+            }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Rerolling a meal failed.");
+            error = "Couldn't swap that meal — please try again.";
+        }
+        finally { rerollingMealId = null; }
+    }
+
+    private static string DayAriaLabel(DateOnly date, List<PlannedMeal> dayMeals) =>
+        dayMeals.Count == 0
+            ? $"{date:MMM d}, no meals"
+            : $"{date:MMM d}: {string.Join(", ", dayMeals.Select(m => m.Recipe!.Name))}";
+
+    // One meal's full card — shown in the selected-day detail below the calendar grid.
+    private RenderFragment MealCard(PlannedMeal meal) => @<article class="recipe-card mealplan-meal">
+        <div class="recipe-card-top mealcal-cardtop">
+            <h4><span class="chip chip-stocked">@meal.Slot</span> @meal.Recipe!.Name</h4>
+            <button type="button" class="secondary mealcal-reroll" @onclick="() => Reroll(meal.Id)"
+                    disabled="@(rerollingMealId is not null)"
+                    title="Swap this meal for a different one — keeps the rest of your plan"
+                    aria-label="Reroll @meal.Recipe!.Name — swap it for a different meal">
+                @(rerollingMealId == meal.Id ? "Rerolling…" : "🔄 Reroll")
+            </button>
+        </div>
+        @if (meal.Recipe.Blurb is { Length: > 0 } blurb)
+        {
+            <p class="muted">@blurb</p>
+        }
+        @if (meal.Recipe.EstimatedCaloriesPerServing is { } cal)
+        {
+            <p class="recipe-cal">~@cal cal / serving <span class="muted">(est.)</span></p>
+        }
+        <ul class="ingredient-list">
+            @foreach (var i in meal.Recipe.MainIngredients)
+            {
+                <li>@RecipeFormat.Line(i.Quantity, i.Name)</li>
+            }
+            @{ var seasonings = meal.Recipe.Seasonings.Select(i => i.Name).ToList(); }
+            @if (seasonings.Count > 0)
+            {
+                <li class="muted">+ @string.Join(", ", seasonings)</li>
+            }
+        </ul>
+        @if (meal.Recipe.Steps.Count > 0)
+        {
+            <details class="recipe-steps">
+                <summary>Steps (@meal.Recipe.Steps.Count)</summary>
+                <ol>
+                    @foreach (var step in meal.Recipe.Steps.OrderBy(s => s.Order))
+                    {
+                        <li>@step.Text</li>
+                    }
+                </ol>
+            </details>
+        }
+    </article>;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var setup = await Planner.LoadSettingsAsync();
+        days = setup.Days;
+        defaultCalories = setup.DefaultCalories;
+        defaultEffort = setup.DefaultEffort;
+        invent = setup.Invent;
+        preferLeftovers = setup.PreferLeftovers;
+        protein = setup.ProteinGramsPerDay;
+        carbs = setup.CarbGramsPerDay;
+        foodGroupsText = string.Join(", ", setup.FoodGroups);
+        slowCooker = setup.Appliances.Contains("slow cooker");
+        airFryer = setup.Appliances.Contains("air fryer");
+        grill = setup.Appliances.Contains("grill");
+        pressureCooker = setup.Appliances.Contains("pressure cooker");
+        blender = setup.Appliances.Contains("blender");
+        smoker = setup.Appliances.Contains("smoker");
+        if (setup.Meals.Count > 0)
+        {
+            meals.Clear();
+            meals.AddRange(setup.Meals.Select(m => new MealRow { Slot = m.Slot, Calories = m.Calories, Effort = m.Effort }));
+        }
+
+        householdId = await Household.GetIdAsync();
+        plan = await Planner.GetCurrentPlanAsync();
+        IndexPlan();
+
+        // Resume showing an in-flight generation the user left and came back to.
+        if (householdId is not null && Jobs.Current(householdId) is { State: MealPlanJobState.Running })
+        {
+            generating = true;
+            StartPolling();
+        }
+    }
+
+    private async Task Generate()
+    {
+        if (generating || householdId is null) return;
+        error = null;
+        note = null;
+
+        var mealEntries = meals.Count > 0
+            ? meals.Select(m => new MealEntry { Slot = m.Slot, Calories = m.Calories, Effort = m.Effort }).ToList()
+            : [new MealEntry { Slot = MealSlot.Dinner }];
+
+        var setup = new MealPlanSettings
+        {
+            Days = days,
+            Meals = mealEntries,
+            DefaultCalories = defaultCalories,
+            DefaultEffort = defaultEffort,
+            Invent = invent,
+            PreferLeftovers = preferLeftovers,
+            ProteinGramsPerDay = protein,
+            CarbGramsPerDay = carbs,
+            FoodGroups = ParseCsv(foodGroupsText),
+            Appliances = SelectedAppliances(),
+        };
+        try
+        {
+            await Planner.SaveSettingsAsync(setup);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Saving the meal-plan setup failed.");
+            error = "Couldn't save your setup — please try again.";
+            return;
+        }
+
+        // Kick off a DETACHED background job and watch it: the generation survives navigating away, and the
+        // page just polls for the result (or re-attaches to it on return via OnInitialized).
+        generating = true;
+        progressDone = 0;
+        progressTotal = 0;
+        Jobs.Start(householdId);
+        StartPolling();
+    }
+
+    // Poll the background job until it finishes, then load the plan (or surface its error). A fresh poll
+    // cancels any previous one; Dispose cancels it when the user leaves (the JOB keeps running regardless).
+    private void StartPolling()
+    {
+        pollCts?.Cancel();
+        pollCts?.Dispose();
+        pollCts = new CancellationTokenSource();
+        _ = PollAsync(pollCts.Token);
+    }
+
+    private async Task PollAsync(CancellationToken token)
+    {
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                if (householdId is null) return;
+                var snap = Jobs.Current(householdId); // check FIRST — a finished job is picked up at once
+                if (snap is null) { generating = false; await InvokeAsync(StateHasChanged); return; }
+
+                if (snap.State != MealPlanJobState.Running)
+                {
+                    generating = false;
+                    if (snap.State == MealPlanJobState.Done)
+                    {
+                        plan = await Planner.GetCurrentPlanAsync();
+                        IndexPlan();
+                        note = $"Planned {snap.MealCount} meal{(snap.MealCount == 1 ? "" : "s")}.";
+                    }
+                    else
+                    {
+                        error = snap.Error ?? "Couldn't generate a plan just now — please try again.";
+                    }
+                    await InvokeAsync(StateHasChanged);
+                    return;
+                }
+
+                progressDone = snap.Done;
+                progressTotal = snap.Total;
+                await InvokeAsync(StateHasChanged);
+                await Task.Delay(2500, token);
+            }
+        }
+        catch (OperationCanceledException) { /* the page went away, or a newer poll replaced this one */ }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Watching the meal-plan job failed.");
+        }
+    }
+
+    public void Dispose()
+    {
+        pollCts?.Cancel();
+        pollCts?.Dispose();
+    }
+
+    // A new row starts from the plan defaults (blank overrides), defaulting its slot to something not already
+    // in the line-up where possible, else a snack — the common "add another snack" case.
+    private void AddMeal()
+    {
+        if (meals.Count >= MealPlanSettings.MaxMealsPerDay) return;
+        var missing = Enum.GetValues<MealSlot>().FirstOrDefault(s => meals.All(m => m.Slot != s), MealSlot.Snack);
+        meals.Add(new MealRow { Slot = missing });
+    }
+
+    private void RemoveMeal(int index)
+    {
+        if (meals.Count > 1 && index >= 0 && index < meals.Count) meals.RemoveAt(index);
+    }
+
+    // The effort <select> carries a "Default" option (empty value → inherit the plan default), so it binds
+    // through here rather than @bind (a nullable enum with a none-option).
+    private static void SetMealEffort(MealRow meal, string? value) =>
+        meal.Effort = string.IsNullOrEmpty(value) ? null : Enum.Parse<TimeEffort>(value);
+
+    private static IReadOnlyList<string> ParseCsv(string text) =>
+        [.. text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+
+    private IReadOnlyList<string> SelectedAppliances()
+    {
+        var list = new List<string>();
+        if (slowCooker) list.Add("slow cooker");
+        if (airFryer) list.Add("air fryer");
+        if (grill) list.Add("grill");
+        if (pressureCooker) list.Add("pressure cooker");
+        if (blender) list.Add("blender");
+        if (smoker) list.Add("smoker");
+        return list;
+    }
+}

@@ -48,6 +48,11 @@ public static class SettingKeys
     /// in). Off is DORMANT, not destructive: recorded dates are kept but never fire and never render.
     /// One definition of "on": <see cref="AppSettingsExtensions.GetTrackExpirationDatesAsync"/>.</summary>
     public const string TrackExpirationDates = "TrackExpirationDates";
+
+    /// <summary>JSON of the household's meal-plan setup (<c>MealPlanSettings</c>: days, slots, calorie/
+    /// protein/carb targets, food groups, effort, appliances, invent). Absent = the all-optional defaults.
+    /// A preference, so it's wiped by "delete my data" like every other settings row.</summary>
+    public const string MealPlanSettings = "MealPlanSettings";
 }
 
 public static class AppSettingsExtensions
