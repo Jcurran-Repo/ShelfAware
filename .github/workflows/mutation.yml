@@ -6,10 +6,12 @@ name: Mutation
 # with a reason. That is the no-regression guard described in docs/mutation-testing.md:
 # if a change ever lets a previously-killed mutant survive, it surfaces here.
 #
-# Deliberately NOT on push/PR: a full Core run is minutes-long and Core changes are
-# rare, so it runs weekly — plus on demand via the "Run workflow" button
-# (workflow_dispatch), which is also how to PROVE it after it first lands on master
-# (a workflow can only be proven by its own run on the default branch — CLAUDE.md item 35).
+# This FULL run is deliberately NOT on push/PR: re-testing all ~2600 mutants is minutes-long
+# and Core changes are rare, so it runs weekly — plus on demand via the "Run workflow" button
+# (workflow_dispatch), which is also how to PROVE it after it first lands on master (a workflow
+# can only be proven by its own run on the default branch — CLAUDE.md item 35). The per-PR gate
+# lives in mutation-pr.yml, which diff-scopes Stryker to just the files a PR changed; this full
+# run stays the backstop for a Core edit that makes a DIFFERENT, unchanged file's mutant survive.
 on:
   schedule:
     - cron: '0 6 * * 1'   # Mondays 06:00 UTC

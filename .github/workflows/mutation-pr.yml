@@ -1,0 +1,76 @@
+name: Mutation (PR)
+
+# Diff-scoped mutation-testing gate, on every PR to master. Where the weekly full-Core run
+# (mutation.yml) re-tests all ~2600 ShelfAware.Core mutants, this one mutates ONLY the Core files
+# the PR changed (Stryker's --since diff mode) at the same 100% break threshold — so it is
+# seconds-to-minutes, not the ~13-minute full run, and it catches a coverage regression BEFORE the
+# merge instead of days later on the next Monday (see .claude/commands/pre-push.md step 3).
+#
+# It runs on every PR (no path filter) so it can be a clean required status check with no
+# skipped-required-check deadlock; the "Did this PR touch Core?" step below makes it a fast no-op
+# when nothing under src/ShelfAware.Core touched, so a Web/UI-only PR pays only a checkout.
+#
+# The full weekly run stays the backstop for the one thing diff mode can't see: a Core edit that
+# makes a DIFFERENT, unchanged file's previously-killed mutant survive.
+on:
+  pull_request:
+    branches: [ master ]
+
+permissions:
+  contents: read
+
+jobs:
+  mutation-diff:
+    name: Core mutation (changed files)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # fetch-depth: 0 so Stryker's --since can diff the whole history back to the PR base.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Skip the expensive path entirely when the PR changes no Core source or Core tests — there is
+      # nothing to mutate, and the job still reports green so a required check never blocks on it.
+      - name: Did this PR touch Core?
+        id: scope
+        run: |
+          base='${{ github.event.pull_request.base.sha }}'
+          if git diff --name-only "$base" HEAD -- src/ShelfAware.Core/ tests/ShelfAware.Tests/ | grep -q .; then
+            echo "core=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "core=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No ShelfAware.Core or Core-test changes in this PR — mutation testing skipped."
+          fi
+
+      - name: Set up .NET
+        if: steps.scope.outputs.core == 'true'
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        if: steps.scope.outputs.core == 'true'
+        run: dotnet restore ShelfAware.slnx
+
+      - name: Restore local tools (Stryker)
+        if: steps.scope.outputs.core == 'true'
+        run: dotnet tool restore
+
+      # --since:<base sha> mutates only the files this PR changed vs master (and any whose covering
+      # tests changed). A survivor drops the score below the 100% break threshold and fails the job.
+      # Run from the test project so Stryker finds its stryker-config.json.
+      - name: Mutation test — changed Core files only
+        if: steps.scope.outputs.core == 'true'
+        working-directory: tests/ShelfAware.Tests
+        run: dotnet stryker --since:${{ github.event.pull_request.base.sha }}
+
+      # The report names every surviving mutant with its file + line — keep it (pass or fail) to
+      # diagnose a red run.
+      - name: Upload mutation report
+        if: always() && steps.scope.outputs.core == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-report-pr
+          path: tests/ShelfAware.Tests/StrykerOutput/**/reports/
+          if-no-files-found: ignore
