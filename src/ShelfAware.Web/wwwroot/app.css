@@ -2066,7 +2066,8 @@ button.tag-chip {
     font-weight: 600;
 }
 .mealcal-day.today .mealcal-daynum { color: var(--accent-ink); }
-/* A meal title chip in a day cell — truncated to one line; a coloured left edge marks the slot. */
+/* A meal title chip in a day cell — wraps to show the full name (the whole point of the at-a-glance
+   summary); a coloured left edge marks the slot. Cells grow to fit and the week row aligns to the tallest. */
 .mealcal-meal {
     font-size: 0.72rem;
     line-height: 1.2;
@@ -2074,9 +2075,8 @@ button.tag-chip {
     border-radius: 4px;
     background: var(--surface-alt);
     border-left: 3px solid var(--unknown-line);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: normal;
+    overflow-wrap: break-word;
 }
 .mealcal-meal.slot-breakfast { border-left-color: var(--duesoon-line); }
 .mealcal-meal.slot-lunch { border-left-color: var(--stocked-line); }
