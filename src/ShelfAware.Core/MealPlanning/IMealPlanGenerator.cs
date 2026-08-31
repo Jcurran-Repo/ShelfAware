@@ -18,8 +18,10 @@ public interface IMealPlanGenerator
     Task<IReadOnlyList<RecipeSuggestion>> GenerateAsync(MealPlanBatch batch, CancellationToken cancellationToken = default);
 }
 
-/// <summary>One eating occasion to fill: a day offset from the plan's start (0-based) and its slot.</summary>
-public record PlannedSlot(int Day, MealSlot Slot);
+/// <summary>One eating occasion to fill: a day offset from the plan's start (0-based), its slot, and the
+/// RESOLVED per-meal targets (the meal's own override, or the plan default) so the generator prompts each
+/// slot with its own calorie + effort — a snack asks for 150 cal / quick while dinner asks for 600.</summary>
+public record PlannedSlot(int Day, MealSlot Slot, int? Calories, TimeEffort Effort);
 
 /// <summary>Everything one generation call needs: the slots to fill (in order), the household's setup, and
 /// the pantry context for grounding + variety. Names only — the model reasons over names, not entities.</summary>

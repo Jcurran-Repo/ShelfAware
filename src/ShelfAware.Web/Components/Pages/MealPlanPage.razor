@@ -30,16 +30,9 @@
             <span>Days</span>
             <input type="number" min="1" max="31" @bind="days" aria-label="How many days to plan" />
         </label>
-        <fieldset class="mealplan-slots">
-            <legend>Meals each day</legend>
-            <label class="checkbox-field"><input type="checkbox" @bind="breakfast" /> Breakfast</label>
-            <label class="checkbox-field"><input type="checkbox" @bind="lunch" /> Lunch</label>
-            <label class="checkbox-field"><input type="checkbox" @bind="dinner" /> Dinner</label>
-            <label class="checkbox-field"><input type="checkbox" @bind="snack" /> Snack</label>
-        </fieldset>
         <label class="field">
-            <span>Calories per meal</span>
-            <input type="number" min="0" @bind="calories" placeholder="no target" aria-label="Calorie target per meal (optional)" />
+            <span>Default calories / meal</span>
+            <input type="number" min="0" @bind="defaultCalories" placeholder="no target" aria-label="Default calorie target per meal (optional)" />
         </label>
         <label class="field">
             <span>Protein / day (g)</span>
@@ -55,8 +48,8 @@
                    aria-label="Food groups to cover, comma-separated (optional)" />
         </label>
         <label class="field">
-            <span>Time &amp; effort</span>
-            <select @bind="effort" aria-label="How ambitious the meals should be">
+            <span>Default effort</span>
+            <select @bind="defaultEffort" aria-label="Default time and effort for meals">
                 <option value="@TimeEffort.Quick">Quick &amp; simple</option>
                 <option value="@TimeEffort.Standard">Standard</option>
                 <option value="@TimeEffort.Ambitious">Ambitious</option>
@@ -72,9 +65,46 @@
             <label class="checkbox-field"><input type="checkbox" @bind="smoker" /> Smoker</label>
         </fieldset>
         <label class="checkbox-field mealplan-invent">
+            <input type="checkbox" @bind="preferLeftovers" />
+            <span>Prefer leftovers <span class="muted">(cook once, eat twice — a dinner becomes the next lunch)</span></span>
+        </label>
+        <label class="checkbox-field mealplan-invent">
             <input type="checkbox" @bind="invent" />
             <span>Invent new meals <span class="muted">(otherwise: known dishes from what you buy)</span></span>
         </label>
+    </div>
+
+    <div class="mealplan-meals">
+        <div class="mealplan-meals-head">
+            <span>Your meals each day</span>
+            <span class="muted">— repeated every day; blank calories/effort use the defaults above</span>
+        </div>
+        @for (var i = 0; i < meals.Count; i++)
+        {
+            var idx = i;
+            var meal = meals[idx];
+            <div class="mealplan-mealrow">
+                <select @bind="meal.Slot" aria-label="Meal type">
+                    @foreach (var s in Enum.GetValues<MealSlot>())
+                    {
+                        <option value="@s">@s</option>
+                    }
+                </select>
+                <input type="number" min="0" @bind="meal.Calories" placeholder="@CaloriePlaceholder"
+                       aria-label="Calories for this meal (blank uses the default)" />
+                <select value="@(meal.Effort?.ToString() ?? "")" @onchange="e => SetMealEffort(meal, e.Value?.ToString())"
+                        aria-label="Effort for this meal (blank uses the default)">
+                    <option value="">Default effort</option>
+                    <option value="@TimeEffort.Quick">Quick &amp; simple</option>
+                    <option value="@TimeEffort.Standard">Standard</option>
+                    <option value="@TimeEffort.Ambitious">Ambitious</option>
+                </select>
+                <button type="button" class="icon-btn" @onclick="() => RemoveMeal(idx)"
+                        disabled="@(meals.Count <= 1)" aria-label="Remove this meal">✕</button>
+            </div>
+        }
+        <button type="button" class="linkish mealplan-addmeal" @onclick="AddMeal"
+                disabled="@(meals.Count >= MealPlanSettings.MaxMealsPerDay)">+ Add a meal</button>
     </div>
 
     <button @onclick="Generate" disabled="@generating">
@@ -162,13 +192,25 @@ else if (!generating)
 @code {
     // Mutable form state (MealPlanSettings is init-only, so the form binds to locals and builds it on submit).
     private int days = 7;
-    private bool breakfast, lunch, dinner = true, snack;
-    private int? calories;
-    private TimeEffort effort = TimeEffort.Standard;
-    private bool invent;
+    private int? defaultCalories;
+    private TimeEffort defaultEffort = TimeEffort.Standard;
+    private bool invent, preferLeftovers;
     private int? protein, carbs;
     private string foodGroupsText = "";
     private bool slowCooker, airFryer, grill, pressureCooker, blender, smoker;
+
+    // The per-meal line-up (repeated each day). Each row inherits the defaults above unless it overrides.
+    private readonly List<MealRow> meals = [new MealRow { Slot = MealSlot.Dinner }];
+
+    /// <summary>A mutable form row for one meal — the init-only <see cref="MealEntry"/> is built on submit.</summary>
+    private sealed class MealRow
+    {
+        public MealSlot Slot { get; set; } = MealSlot.Dinner;
+        public int? Calories { get; set; }
+        public TimeEffort? Effort { get; set; }
+    }
+
+    private string CaloriePlaceholder => defaultCalories is { } c ? $"{c} (default)" : "no target";
 
     private MealPlan? plan;
     private bool generating;
@@ -182,13 +224,10 @@ else if (!generating)
     {
         var setup = await Planner.LoadSettingsAsync();
         days = setup.Days;
-        breakfast = setup.Slots.Contains(MealSlot.Breakfast);
-        lunch = setup.Slots.Contains(MealSlot.Lunch);
-        dinner = setup.Slots.Contains(MealSlot.Dinner);
-        snack = setup.Slots.Contains(MealSlot.Snack);
-        calories = setup.CaloriesPerMeal;
-        effort = setup.Effort;
+        defaultCalories = setup.DefaultCalories;
+        defaultEffort = setup.DefaultEffort;
         invent = setup.Invent;
+        preferLeftovers = setup.PreferLeftovers;
         protein = setup.ProteinGramsPerDay;
         carbs = setup.CarbGramsPerDay;
         foodGroupsText = string.Join(", ", setup.FoodGroups);
@@ -198,6 +237,11 @@ else if (!generating)
         pressureCooker = setup.Appliances.Contains("pressure cooker");
         blender = setup.Appliances.Contains("blender");
         smoker = setup.Appliances.Contains("smoker");
+        if (setup.Meals.Count > 0)
+        {
+            meals.Clear();
+            meals.AddRange(setup.Meals.Select(m => new MealRow { Slot = m.Slot, Calories = m.Calories, Effort = m.Effort }));
+        }
 
         householdId = await Household.GetIdAsync();
         plan = await Planner.GetCurrentPlanAsync();
@@ -216,19 +260,18 @@ else if (!generating)
         error = null;
         note = null;
 
-        var slots = new List<MealSlot>();
-        if (breakfast) slots.Add(MealSlot.Breakfast);
-        if (lunch) slots.Add(MealSlot.Lunch);
-        if (dinner) slots.Add(MealSlot.Dinner);
-        if (snack) slots.Add(MealSlot.Snack);
+        var mealEntries = meals.Count > 0
+            ? meals.Select(m => new MealEntry { Slot = m.Slot, Calories = m.Calories, Effort = m.Effort }).ToList()
+            : [new MealEntry { Slot = MealSlot.Dinner }];
 
         var setup = new MealPlanSettings
         {
             Days = days,
-            Slots = slots.Count > 0 ? slots : [MealSlot.Dinner],
-            CaloriesPerMeal = calories,
-            Effort = effort,
+            Meals = mealEntries,
+            DefaultCalories = defaultCalories,
+            DefaultEffort = defaultEffort,
             Invent = invent,
+            PreferLeftovers = preferLeftovers,
             ProteinGramsPerDay = protein,
             CarbGramsPerDay = carbs,
             FoodGroups = ParseCsv(foodGroupsText),
@@ -309,6 +352,25 @@ else if (!generating)
         pollCts?.Cancel();
         pollCts?.Dispose();
     }
+
+    // A new row starts from the plan defaults (blank overrides), defaulting its slot to something not already
+    // in the line-up where possible, else a snack — the common "add another snack" case.
+    private void AddMeal()
+    {
+        if (meals.Count >= MealPlanSettings.MaxMealsPerDay) return;
+        var missing = Enum.GetValues<MealSlot>().FirstOrDefault(s => meals.All(m => m.Slot != s), MealSlot.Snack);
+        meals.Add(new MealRow { Slot = missing });
+    }
+
+    private void RemoveMeal(int index)
+    {
+        if (meals.Count > 1 && index >= 0 && index < meals.Count) meals.RemoveAt(index);
+    }
+
+    // The effort <select> carries a "Default" option (empty value → inherit the plan default), so it binds
+    // through here rather than @bind (a nullable enum with a none-option).
+    private static void SetMealEffort(MealRow meal, string? value) =>
+        meal.Effort = string.IsNullOrEmpty(value) ? null : Enum.Parse<TimeEffort>(value);
 
     private static IReadOnlyList<string> ParseCsv(string text) =>
         [.. text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];

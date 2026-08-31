@@ -80,13 +80,12 @@ public class AnthropicMealPlanGenerator : IMealPlanGenerator
         for (var i = 0; i < batch.Slots.Count; i++)
         {
             var slot = batch.Slots[i];
-            var cal = batch.Settings.CaloriesPerMeal is { } c ? $" (~{c} cal)" : "";
-            sb.AppendLine($"{i + 1}. Day {slot.Day + 1} {slot.Slot.ToString().ToLowerInvariant()}{cal}");
+            var cal = slot.Calories is { } c ? $", ~{c} cal" : "";
+            sb.AppendLine($"{i + 1}. Day {slot.Day + 1} {slot.Slot.ToString().ToLowerInvariant()} ({slot.Effort.ToString().ToLowerInvariant()} effort{cal})");
         }
         sb.AppendLine();
 
         sb.AppendLine("Preferences:");
-        sb.AppendLine($"- Effort: {batch.Settings.Effort.ToString().ToLowerInvariant()}");
         if (batch.Settings.Appliances.Count > 0)
             sb.AppendLine($"- Extra appliances (beyond oven + stovetop): {string.Join(", ", batch.Settings.Appliances)}");
         if (batch.Settings.ProteinGramsPerDay is { } protein)
@@ -95,6 +94,8 @@ public class AnthropicMealPlanGenerator : IMealPlanGenerator
             sb.AppendLine($"- Daily carb target: ~{carbs} g");
         if (batch.Settings.FoodGroups.Count > 0)
             sb.AppendLine($"- Food groups to cover / balance across the plan: {string.Join(", ", batch.Settings.FoodGroups)}");
+        if (batch.Settings.PreferLeftovers)
+            sb.AppendLine("- Prefer leftovers: yes — cook once, eat twice (see rule 13)");
         sb.AppendLine($"- Invent: {(batch.Settings.Invent ? "yes" : "no")}");
         sb.AppendLine();
 

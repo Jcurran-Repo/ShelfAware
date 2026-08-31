@@ -164,18 +164,19 @@ public sealed class MealPlanService(
         await db.SaveChangesAsync(ct);
     }
 
-    // Every (day, slot) to fill, day-major (day 0's slots, then day 1's…) so a BatchSize chunk spans roughly
-    // a week. Days is clamped to a sane range and the total is capped (see MaxSlots).
+    // Every meal to fill, day-major (day 0's meals, then day 1's…) so a BatchSize chunk spans roughly a week.
+    // Each meal resolves its own calorie + effort target (its override, or the plan default) so the generator
+    // prompts a snack as a snack and a dinner as a dinner. Days is clamped and the total is capped (MaxSlots).
     private static IReadOnlyList<PlannedSlot> SlotsFor(MealPlanSettings setup)
     {
         var days = Math.Clamp(setup.Days, 1, 31);
-        var slotKinds = setup.Slots.Count > 0 ? setup.Slots : [MealSlot.Dinner];
+        var meals = setup.Meals.Count > 0 ? setup.Meals : [new MealEntry { Slot = MealSlot.Dinner }];
         var slots = new List<PlannedSlot>();
         for (var day = 0; day < days; day++)
         {
-            foreach (var slot in slotKinds)
+            foreach (var meal in meals)
             {
-                slots.Add(new PlannedSlot(day, slot));
+                slots.Add(new PlannedSlot(day, meal.Slot, setup.CaloriesFor(meal), setup.EffortFor(meal)));
                 if (slots.Count >= MaxSlots) return slots;
             }
         }

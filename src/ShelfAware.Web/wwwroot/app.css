@@ -1966,6 +1966,33 @@ button.tag-chip {
     flex-basis: 100%;
     max-width: 34rem;
 }
+/* The per-meal line-up: one row per meal (slot · calories · effort · remove), repeated each day. */
+.mealplan-meals {
+    margin-bottom: 1rem;
+}
+.mealplan-meals-head {
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+    margin-bottom: 0.5rem;
+}
+.mealplan-mealrow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+.mealplan-mealrow select,
+.mealplan-mealrow input {
+    width: auto;
+    min-width: 7rem;
+}
+.mealplan-mealrow input[type="number"] {
+    max-width: 9rem;
+}
+.mealplan-addmeal {
+    margin-top: 0.2rem;
+}
 .mealplan-day {
     margin-top: 1.2rem;
 }

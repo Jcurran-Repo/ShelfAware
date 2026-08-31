@@ -29,8 +29,8 @@ public class MealPlanGeneratorTests
     ] }
     """;
 
-    private static MealPlanBatch Batch(MealPlanSettings? settings = null) => new(
-        Slots: [new PlannedSlot(0, MealSlot.Dinner), new PlannedSlot(1, MealSlot.Dinner)],
+    private static MealPlanBatch Batch(MealPlanSettings? settings = null, IReadOnlyList<PlannedSlot>? slots = null) => new(
+        Slots: slots ?? [new PlannedSlot(0, MealSlot.Dinner, null, TimeEffort.Standard), new PlannedSlot(1, MealSlot.Dinner, null, TimeEffort.Standard)],
         Settings: settings ?? new MealPlanSettings(),
         OnHand: ["Chicken Breast", "White Rice"],
         CommonlyBought: ["Ground Beef", "Bell Peppers"],
@@ -57,6 +57,7 @@ public class MealPlanGeneratorTests
         var user = UserPrompt(client);
         Assert.Contains("1. Day 1 dinner", user);          // slots listed IN ORDER, 1-based
         Assert.Contains("2. Day 2 dinner", user);
+        Assert.Contains("standard effort", user);           // each slot names its effort
         Assert.Contains("Chicken Breast", user);            // on hand
         Assert.Contains("Ground Beef", user);               // commonly buy — the familiar palette
         Assert.Contains("mushrooms", user);                 // won't eat
@@ -67,17 +68,35 @@ public class MealPlanGeneratorTests
     }
 
     [Fact]
-    public async Task The_calorie_target_effort_and_invent_flag_reach_the_prompt()
+    public async Task Each_slot_carries_its_own_calorie_and_effort_target()
     {
+        // The whole point of per-meal settings: a snack asks for 150 cal / quick while dinner asks for
+        // 600 cal / ambitious — on the SAME plan.
         var client = FakeChatClient.Returning(Responses.Text(TwoMeals));
-        var settings = new MealPlanSettings { CaloriesPerMeal = 500, Effort = TimeEffort.Quick, Invent = true };
+        var slots = new[]
+        {
+            new PlannedSlot(0, MealSlot.Snack, 150, TimeEffort.Quick),
+            new PlannedSlot(0, MealSlot.Dinner, 600, TimeEffort.Ambitious),
+        };
 
-        await Generator(client).GenerateAsync(Batch(settings));
+        await Generator(client).GenerateAsync(Batch(new MealPlanSettings { Invent = true }, slots));
 
         var user = UserPrompt(client);
-        Assert.Contains("(~500 cal)", user);   // the per-meal target rides on each slot line
-        Assert.Contains("Effort: quick", user);
+        Assert.Contains("snack (quick effort, ~150 cal)", user);
+        Assert.Contains("dinner (ambitious effort, ~600 cal)", user);
         Assert.Contains("Invent: yes", user);  // the escape hatch reaches the model
+    }
+
+    [Fact]
+    public async Task Prefer_leftovers_reaches_the_prompt_only_when_on()
+    {
+        var off = FakeChatClient.Returning(Responses.Text(TwoMeals));
+        await Generator(off).GenerateAsync(Batch());
+        Assert.DoesNotContain("Prefer leftovers", UserPrompt(off));
+
+        var on = FakeChatClient.Returning(Responses.Text(TwoMeals));
+        await Generator(on).GenerateAsync(Batch(new MealPlanSettings { PreferLeftovers = true }));
+        Assert.Contains("Prefer leftovers: yes", UserPrompt(on));
     }
 
     [Fact]

@@ -36,7 +36,7 @@ public class MealPlanServiceTests : IDisposable
         var gen = new FakeMealPlanGenerator([Meal("Tacos"), Meal("Chili")]);
         var settings = new FakeAppSettings();
         var service = Service(gen, settings);
-        await SaveSettings(service, new MealPlanSettings { Days = 2, Slots = [MealSlot.Dinner] });
+        await SaveSettings(service, new MealPlanSettings { Days = 2 });
 
         var result = await service.GenerateAsync();
 
@@ -66,7 +66,7 @@ public class MealPlanServiceTests : IDisposable
         // Exercises the real GetCurrentPlanAsync query (Include chain + order) on SQLite — the OrderBy must
         // not use CreatedAt (a DateTimeOffset SQLite refuses in ORDER BY; the repo gotcha this pins).
         var service = Service(new FakeMealPlanGenerator([Meal("Tacos"), Meal("Chili")]));
-        await SaveSettings(service, new MealPlanSettings { Days = 2, Slots = [MealSlot.Dinner] });
+        await SaveSettings(service, new MealPlanSettings { Days = 2 });
         await service.GenerateAsync();
 
         var current = await service.GetCurrentPlanAsync();
@@ -97,7 +97,7 @@ public class MealPlanServiceTests : IDisposable
         }
         var gen = new FakeMealPlanGenerator([Meal("Roast")]);
         var service = Service(gen, new FakeAppSettings());
-        await SaveSettings(service, new MealPlanSettings { Days = 1, Slots = [MealSlot.Dinner] });
+        await SaveSettings(service, new MealPlanSettings { Days = 1 });
 
         await service.GenerateAsync();
 
@@ -111,7 +111,7 @@ public class MealPlanServiceTests : IDisposable
     {
         var settings = new FakeAppSettings(); // one store, shared by both generate calls
         var service = Service(new FakeMealPlanGenerator([Meal("Old A"), Meal("Old B")]), settings);
-        await SaveSettings(service, new MealPlanSettings { Days = 2, Slots = [MealSlot.Dinner] });
+        await SaveSettings(service, new MealPlanSettings { Days = 2 });
         await service.GenerateAsync();
 
         // Regenerate with fresh meals.
@@ -129,7 +129,7 @@ public class MealPlanServiceTests : IDisposable
     {
         var settings = new FakeAppSettings();
         var service = Service(new FakeMealPlanGenerator([Meal("Keeper"), Meal("Throwaway")]), settings);
-        await SaveSettings(service, new MealPlanSettings { Days = 2, Slots = [MealSlot.Dinner] });
+        await SaveSettings(service, new MealPlanSettings { Days = 2 });
         await service.GenerateAsync();
 
         // Cook "Keeper" — a MealEvent now references its recipe, so regenerating must not erase that history.
@@ -159,7 +159,7 @@ public class MealPlanServiceTests : IDisposable
         var second = Enumerable.Range(8, 3).Select(i => Meal($"Meal {i}")).ToArray();
         var gen = new FakeMealPlanGenerator(first, second);
         var service = Service(gen);
-        await SaveSettings(service, new MealPlanSettings { Days = 10, Slots = [MealSlot.Dinner] });
+        await SaveSettings(service, new MealPlanSettings { Days = 10 });
 
         var result = await service.GenerateAsync();
 
@@ -174,7 +174,7 @@ public class MealPlanServiceTests : IDisposable
     public async Task Generate_with_no_meals_from_the_model_is_a_soft_failure_and_writes_nothing()
     {
         var service = Service(new FakeMealPlanGenerator([])); // the model came back empty
-        await SaveSettings(service, new MealPlanSettings { Days = 1, Slots = [MealSlot.Dinner] });
+        await SaveSettings(service, new MealPlanSettings { Days = 1 });
 
         var result = await service.GenerateAsync();
 
@@ -186,27 +186,64 @@ public class MealPlanServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Each_meal_row_expands_to_a_slot_carrying_its_resolved_calories_and_effort()
+    {
+        // The heart of per-meal settings: a snack row overrides to 150 cal / quick while the dinner row
+        // inherits the plan defaults — and each reaches the generator as its own slot.
+        var gen = new FakeMealPlanGenerator([Meal("Dinner dish"), Meal("Snack dish")]);
+        var service = Service(gen);
+        await SaveSettings(service, new MealPlanSettings
+        {
+            Days = 1,
+            DefaultCalories = 500,
+            DefaultEffort = TimeEffort.Standard,
+            Meals =
+            [
+                new MealEntry { Slot = MealSlot.Dinner },                                          // inherits
+                new MealEntry { Slot = MealSlot.Snack, Calories = 150, Effort = TimeEffort.Quick }, // overrides
+            ],
+        });
+
+        await service.GenerateAsync();
+
+        var slots = Assert.Single(gen.Calls).Slots;
+        Assert.Equal(2, slots.Count);                                     // 1 day × 2 meals
+        var dinner = slots.Single(s => s.Slot == MealSlot.Dinner);
+        Assert.Equal(500, dinner.Calories);                              // inherited default
+        Assert.Equal(TimeEffort.Standard, dinner.Effort);
+        var snack = slots.Single(s => s.Slot == MealSlot.Snack);
+        Assert.Equal(150, snack.Calories);                              // per-meal override
+        Assert.Equal(TimeEffort.Quick, snack.Effort);
+    }
+
+    [Fact]
     public async Task Settings_round_trip_through_the_store()
     {
         var service = Service(new FakeMealPlanGenerator());
         var saved = new MealPlanSettings
         {
-            Days = 14, Slots = [MealSlot.Breakfast, MealSlot.Dinner], CaloriesPerMeal = 550,
-            ProteinGramsPerDay = 120, Effort = TimeEffort.Quick,
-            FoodGroups = ["vegetables", "lean protein"], Appliances = ["slow cooker"], Invent = true,
+            Days = 14,
+            Meals = [new MealEntry { Slot = MealSlot.Breakfast }, new MealEntry { Slot = MealSlot.Snack, Calories = 150, Effort = TimeEffort.Quick }],
+            DefaultCalories = 550, DefaultEffort = TimeEffort.Quick, ProteinGramsPerDay = 120,
+            FoodGroups = ["vegetables", "lean protein"], Appliances = ["slow cooker"], Invent = true, PreferLeftovers = true,
         };
 
         await service.SaveSettingsAsync(saved);
         var loaded = await service.LoadSettingsAsync();
 
         Assert.Equal(14, loaded.Days);
-        Assert.Equal([MealSlot.Breakfast, MealSlot.Dinner], loaded.Slots);
-        Assert.Equal(550, loaded.CaloriesPerMeal);
+        Assert.Equal(2, loaded.Meals.Count);
+        Assert.Equal(MealSlot.Breakfast, loaded.Meals[0].Slot);
+        Assert.Equal(MealSlot.Snack, loaded.Meals[1].Slot);
+        Assert.Equal(150, loaded.Meals[1].Calories);                    // per-meal override survives
+        Assert.Equal(TimeEffort.Quick, loaded.Meals[1].Effort);
+        Assert.Equal(550, loaded.DefaultCalories);
         Assert.Equal(120, loaded.ProteinGramsPerDay);
-        Assert.Equal(TimeEffort.Quick, loaded.Effort);
+        Assert.Equal(TimeEffort.Quick, loaded.DefaultEffort);
         Assert.Equal(["vegetables", "lean protein"], loaded.FoodGroups);
         Assert.Equal(["slow cooker"], loaded.Appliances);
         Assert.True(loaded.Invent);
+        Assert.True(loaded.PreferLeftovers);
     }
 
     [Fact]
@@ -215,9 +252,10 @@ public class MealPlanServiceTests : IDisposable
         var loaded = await Service(new FakeMealPlanGenerator()).LoadSettingsAsync();
 
         Assert.Equal(7, loaded.Days);
-        Assert.Equal([MealSlot.Dinner], loaded.Slots);
+        Assert.Equal([MealSlot.Dinner], loaded.Meals.Select(m => m.Slot));
         Assert.False(loaded.Invent);
-        Assert.Null(loaded.CaloriesPerMeal);
+        Assert.False(loaded.PreferLeftovers);
+        Assert.Null(loaded.DefaultCalories);
     }
 }
 
