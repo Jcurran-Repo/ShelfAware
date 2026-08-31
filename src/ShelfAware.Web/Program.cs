@@ -364,6 +364,7 @@ builder.Services.AddScoped<IProductSubstituteAdvisor, AnthropicProductSubstitute
 builder.Services.AddScoped<IIngredientAlternativesAdvisor, AnthropicIngredientAlternativesAdvisor>();
 builder.Services.AddScoped<IRecipeAdapter, RecipeAdapter>();
 builder.Services.AddScoped<RecipeTagService>(); // the one recipe-tag write path (cookbook + import)
+builder.Services.AddScoped<MealPlanService>(); // generates + stores the household's meal plan
 
 // Receipts arrive by upload only (the folder inbox was retired 2026-07-22 — an arbitrary-path read the
 // box shouldn't carry once it's shared, and uploads had superseded it). The settings store backs the
