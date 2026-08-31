@@ -1962,6 +1962,10 @@ button.tag-chip {
 .mealplan-invent {
     flex-basis: 100%;
 }
+.mealplan-foodgroups {
+    flex-basis: 100%;
+    max-width: 34rem;
+}
 .mealplan-day {
     margin-top: 1.2rem;
 }

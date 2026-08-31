@@ -44,11 +44,32 @@ public class AnthropicMealPlanGenerator : IMealPlanGenerator
             ResponseFormat = ChatResponseFormat.ForJsonSchema(RecipeJson.Schema(), schemaName: "meal_plan"),
         };
 
-        var response = await _chat.GetResponseAsync(messages, options, cancellationToken);
-        var meals = RecipeJson.Parse(response.Text);
-        _logger.LogInformation("Meal-plan generator returned {Count} meal(s) for {Slots} requested slot(s).",
-            meals.Count, batch.Slots.Count);
-        return meals;
+        // Validate-and-retry-once (the extractor's discipline): a long structured response can come back
+        // TRUNCATED (a string cut off mid-JSON) or empty, which would otherwise throw and take the whole
+        // plan down. Retry once; if it still fails, return NOTHING for this batch — the service tolerates a
+        // short batch rather than crashing. Never throws except on cancellation.
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            try
+            {
+                var response = await _chat.GetResponseAsync(messages, options, cancellationToken);
+                var meals = RecipeJson.Parse(response.Text);
+                if (meals.Count > 0)
+                {
+                    _logger.LogInformation("Meal-plan generator returned {Count} meal(s) for {Slots} slot(s).",
+                        meals.Count, batch.Slots.Count);
+                    return meals;
+                }
+                _logger.LogWarning("Meal-plan batch returned no meals (attempt {Attempt} of 2).", attempt);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Meal-plan batch failed (attempt {Attempt} of 2) — {Action}.",
+                    attempt, attempt < 2 ? "retrying" : "giving up on this batch");
+            }
+        }
+        return [];
     }
 
     private static string BuildContent(MealPlanBatch batch)

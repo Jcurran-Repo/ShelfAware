@@ -62,24 +62,29 @@ public sealed class MealPlanService(
             .FirstOrDefaultAsync(ct);
     }
 
-    /// <summary>Generate a fresh plan from the current setup + pantry, replacing any existing plan. Throws
-    /// if the AI call fails (the caller surfaces it and the old plan is left intact, since nothing is
-    /// deleted until generation has fully succeeded).</summary>
-    public async Task<MealPlanResult> GenerateAsync(CancellationToken ct = default)
+    /// <summary>Generate a fresh plan from the current setup + pantry, replacing any existing plan. A bad
+    /// batch is retried by the generator and otherwise tolerated (a shorter plan, not a crash); a systematic
+    /// failure returns a soft <see cref="MealPlanResult"/> error with any existing plan left intact (nothing
+    /// is deleted until generation has produced meals). <paramref name="onProgress"/> reports (batches done,
+    /// total) for the background job's status.</summary>
+    public async Task<MealPlanResult> GenerateAsync(Action<int, int>? onProgress = null, CancellationToken ct = default)
     {
         var setup = await LoadSettingsAsync(ct);
         var slots = SlotsFor(setup); // always ≥ 1 — Days clamps to [1,31] and Slots defaults to dinner
+        var chunks = slots.Chunk(BatchSize).ToList();
         var context = await LoadContextAsync(setup, ct);
+        onProgress?.Invoke(0, chunks.Count);
 
-        // Generate a week at a time, telling each batch what's already planned so the plan stays varied.
+        // Generate a batch at a time, telling each batch what's already planned so the plan stays varied.
         var planned = new List<(PlannedSlot Slot, RecipeSuggestion Meal)>();
         var alreadyPlanned = new List<string>();
-        foreach (var chunk in slots.Chunk(BatchSize))
+        for (var b = 0; b < chunks.Count; b++)
         {
+            var chunk = chunks[b];
             var batch = new MealPlanBatch(
                 chunk, setup, context.OnHand, context.CommonlyBought, context.Expiring,
                 context.Excluded, context.SavedRecipes, [.. alreadyPlanned]); // snapshot — the list keeps growing
-            var meals = await generator.GenerateAsync(batch, ct);
+            var meals = await generator.GenerateAsync(batch, ct); // never throws except on cancellation
             for (var i = 0; i < chunk.Length && i < meals.Count; i++)
             {
                 planned.Add((chunk[i], meals[i]));
@@ -87,6 +92,12 @@ public sealed class MealPlanService(
             }
             if (meals.Count < chunk.Length)
                 logger.LogWarning("A meal-plan batch returned {Got} of {Asked} meals.", meals.Count, chunk.Length);
+
+            // Fast-fail a systematic problem (bad key, model unavailable): if the FIRST batch produced
+            // nothing, don't burn the rest of the calls — bail, leaving any existing plan intact.
+            if (b == 0 && planned.Count == 0)
+                return MealPlanResult.Failed("Couldn't generate any meals just now — please try again.");
+            onProgress?.Invoke(b + 1, chunks.Count);
         }
 
         if (planned.Count == 0)

@@ -1,8 +1,12 @@
 @page "/meal-plan"
+@implements IDisposable
 @using ShelfAware.Core.Domain
 @using ShelfAware.Core.MealPlanning
 @using ShelfAware.Core.Recipes
+@using ShelfAware.Web.Data
 @inject MealPlanService Planner
+@inject IMealPlanJobs Jobs
+@inject ICurrentHousehold Household
 @inject ILogger<MealPlanPage> Logger
 
 <PageTitle>Meal Plan — Shelf Aware</PageTitle>
@@ -38,6 +42,19 @@
             <input type="number" min="0" @bind="calories" placeholder="no target" aria-label="Calorie target per meal (optional)" />
         </label>
         <label class="field">
+            <span>Protein / day (g)</span>
+            <input type="number" min="0" @bind="protein" placeholder="no target" aria-label="Daily protein target in grams (optional)" />
+        </label>
+        <label class="field">
+            <span>Carbs / day (g)</span>
+            <input type="number" min="0" @bind="carbs" placeholder="no target" aria-label="Daily carb target in grams (optional)" />
+        </label>
+        <label class="field mealplan-foodgroups">
+            <span>Food groups to balance</span>
+            <input type="text" @bind="foodGroupsText" placeholder="e.g. vegetables, whole grains, lean protein"
+                   aria-label="Food groups to cover, comma-separated (optional)" />
+        </label>
+        <label class="field">
             <span>Time &amp; effort</span>
             <select @bind="effort" aria-label="How ambitious the meals should be">
                 <option value="@TimeEffort.Quick">Quick &amp; simple</option>
@@ -45,15 +62,32 @@
                 <option value="@TimeEffort.Ambitious">Ambitious</option>
             </select>
         </label>
+        <fieldset class="mealplan-slots">
+            <legend>Appliances <span class="muted">(beyond oven &amp; stovetop)</span></legend>
+            <label class="checkbox-field"><input type="checkbox" @bind="slowCooker" /> Slow cooker</label>
+            <label class="checkbox-field"><input type="checkbox" @bind="airFryer" /> Air fryer</label>
+            <label class="checkbox-field"><input type="checkbox" @bind="grill" /> Grill</label>
+            <label class="checkbox-field"><input type="checkbox" @bind="pressureCooker" /> Pressure cooker</label>
+            <label class="checkbox-field"><input type="checkbox" @bind="blender" /> Blender</label>
+        </fieldset>
         <label class="checkbox-field mealplan-invent">
             <input type="checkbox" @bind="invent" />
             Invent new meals <span class="muted">(otherwise: known dishes from what you buy)</span>
         </label>
     </div>
 
-    <button @onclick="Generate" disabled="@busy">
-        @(busy ? "Planning…" : plan is null ? "Generate my plan" : "Regenerate")
+    <button @onclick="Generate" disabled="@generating">
+        @(generating
+            ? (progressTotal > 0 ? $"Planning… ({progressDone} of {progressTotal})" : "Planning…")
+            : plan is null ? "Generate my plan" : "Regenerate")
     </button>
+    @if (generating)
+    {
+        <p class="muted small" role="status">
+            Generating your plan — this can take a minute or two. Feel free to leave this page; it keeps
+            going and will be here when you come back.
+        </p>
+    }
     @if (error is not null)
     {
         <p class="error" role="alert">@error</p>
@@ -117,7 +151,7 @@
         }
     </section>
 }
-else if (!busy)
+else if (!generating)
 {
     <section class="panel">
         <p class="muted">No plan yet — set it up above and hit <strong>Generate my plan</strong>.</p>
@@ -131,13 +165,15 @@ else if (!busy)
     private int? calories;
     private TimeEffort effort = TimeEffort.Standard;
     private bool invent;
-    // Preserved from the stored setup but not edited in this compact form (a fuller form is a later refinement).
     private int? protein, carbs;
-    private IReadOnlyList<string> foodGroups = [];
-    private IReadOnlyList<string> appliances = [];
+    private string foodGroupsText = "";
+    private bool slowCooker, airFryer, grill, pressureCooker, blender;
 
     private MealPlan? plan;
-    private bool busy;
+    private bool generating;
+    private int progressDone, progressTotal;
+    private string? householdId;
+    private CancellationTokenSource? pollCts;
     private string? error;
     private string? note;
 
@@ -154,57 +190,135 @@ else if (!busy)
         invent = setup.Invent;
         protein = setup.ProteinGramsPerDay;
         carbs = setup.CarbGramsPerDay;
-        foodGroups = setup.FoodGroups;
-        appliances = setup.Appliances;
+        foodGroupsText = string.Join(", ", setup.FoodGroups);
+        slowCooker = setup.Appliances.Contains("slow cooker");
+        airFryer = setup.Appliances.Contains("air fryer");
+        grill = setup.Appliances.Contains("grill");
+        pressureCooker = setup.Appliances.Contains("pressure cooker");
+        blender = setup.Appliances.Contains("blender");
 
+        householdId = await Household.GetIdAsync();
         plan = await Planner.GetCurrentPlanAsync();
+
+        // Resume showing an in-flight generation the user left and came back to.
+        if (householdId is not null && Jobs.Current(householdId) is { State: MealPlanJobState.Running })
+        {
+            generating = true;
+            StartPolling();
+        }
     }
 
     private async Task Generate()
     {
-        if (busy) return;
-        busy = true;
+        if (generating || householdId is null) return;
         error = null;
         note = null;
+
+        var slots = new List<MealSlot>();
+        if (breakfast) slots.Add(MealSlot.Breakfast);
+        if (lunch) slots.Add(MealSlot.Lunch);
+        if (dinner) slots.Add(MealSlot.Dinner);
+        if (snack) slots.Add(MealSlot.Snack);
+
+        var setup = new MealPlanSettings
+        {
+            Days = days,
+            Slots = slots.Count > 0 ? slots : [MealSlot.Dinner],
+            CaloriesPerMeal = calories,
+            Effort = effort,
+            Invent = invent,
+            ProteinGramsPerDay = protein,
+            CarbGramsPerDay = carbs,
+            FoodGroups = ParseCsv(foodGroupsText),
+            Appliances = SelectedAppliances(),
+        };
         try
         {
-            var slots = new List<MealSlot>();
-            if (breakfast) slots.Add(MealSlot.Breakfast);
-            if (lunch) slots.Add(MealSlot.Lunch);
-            if (dinner) slots.Add(MealSlot.Dinner);
-            if (snack) slots.Add(MealSlot.Snack);
-
-            var setup = new MealPlanSettings
-            {
-                Days = days,
-                Slots = slots.Count > 0 ? slots : [MealSlot.Dinner],
-                CaloriesPerMeal = calories,
-                Effort = effort,
-                Invent = invent,
-                ProteinGramsPerDay = protein,
-                CarbGramsPerDay = carbs,
-                FoodGroups = foodGroups,
-                Appliances = appliances,
-            };
             await Planner.SaveSettingsAsync(setup);
-
-            var result = await Planner.GenerateAsync();
-            if (result.Succeeded)
-            {
-                plan = await Planner.GetCurrentPlanAsync();
-                note = $"Planned {result.MealCount} meal{(result.MealCount == 1 ? "" : "s")}.";
-            }
-            else
-            {
-                error = result.Error;
-            }
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Generating a meal plan failed.");
-            error = "Couldn't generate a plan just now — please try again.";
+            Logger.LogError(ex, "Saving the meal-plan setup failed.");
+            error = "Couldn't save your setup — please try again.";
+            return;
         }
-        finally { busy = false; }
+
+        // Kick off a DETACHED background job and watch it: the generation survives navigating away, and the
+        // page just polls for the result (or re-attaches to it on return via OnInitialized).
+        generating = true;
+        progressDone = 0;
+        progressTotal = 0;
+        Jobs.Start(householdId);
+        StartPolling();
+    }
+
+    // Poll the background job until it finishes, then load the plan (or surface its error). A fresh poll
+    // cancels any previous one; Dispose cancels it when the user leaves (the JOB keeps running regardless).
+    private void StartPolling()
+    {
+        pollCts?.Cancel();
+        pollCts?.Dispose();
+        pollCts = new CancellationTokenSource();
+        _ = PollAsync(pollCts.Token);
+    }
+
+    private async Task PollAsync(CancellationToken token)
+    {
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                if (householdId is null) return;
+                var snap = Jobs.Current(householdId); // check FIRST — a finished job is picked up at once
+                if (snap is null) { generating = false; await InvokeAsync(StateHasChanged); return; }
+
+                if (snap.State != MealPlanJobState.Running)
+                {
+                    generating = false;
+                    if (snap.State == MealPlanJobState.Done)
+                    {
+                        plan = await Planner.GetCurrentPlanAsync();
+                        note = $"Planned {snap.MealCount} meal{(snap.MealCount == 1 ? "" : "s")}.";
+                    }
+                    else
+                    {
+                        error = snap.Error ?? "Couldn't generate a plan just now — please try again.";
+                    }
+                    await InvokeAsync(StateHasChanged);
+                    return;
+                }
+
+                progressDone = snap.Done;
+                progressTotal = snap.Total;
+                await InvokeAsync(StateHasChanged);
+                await Task.Delay(2500, token);
+            }
+        }
+        catch (OperationCanceledException) { /* the page went away, or a newer poll replaced this one */ }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Watching the meal-plan job failed.");
+        }
+    }
+
+    public void Dispose()
+    {
+        pollCts?.Cancel();
+        pollCts?.Dispose();
+    }
+
+    private static IReadOnlyList<string> ParseCsv(string text) =>
+        [.. text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+
+    private IReadOnlyList<string> SelectedAppliances()
+    {
+        var list = new List<string>();
+        if (slowCooker) list.Add("slow cooker");
+        if (airFryer) list.Add("air fryer");
+        if (grill) list.Add("grill");
+        if (pressureCooker) list.Add("pressure cooker");
+        if (blender) list.Add("blender");
+        return list;
     }
 }
