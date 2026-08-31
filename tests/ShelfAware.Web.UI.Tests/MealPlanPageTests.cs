@@ -132,6 +132,20 @@ public class MealPlanPageTests : PageTestContext
     }
 
     [Fact]
+    public void The_reroll_button_calls_the_service()
+    {
+        // The base fake generator returns nothing, so a reroll comes back a soft failure — enough to prove
+        // the button on a meal card is wired to RerollAsync (the swap logic itself is service-tested).
+        SeedPlan("Tacos");
+        var cut = RenderPage();
+
+        Assert.NotEmpty(cut.FindAll(".mealcal-reroll"));
+        cut.Find(".mealcal-reroll").Click();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("p.error")));
+    }
+
+    [Fact]
     public void A_failed_job_shows_an_error()
     {
         _jobs.Snapshot = Failed("Couldn't generate a plan just now — please try again.");

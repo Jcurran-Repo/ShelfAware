@@ -242,12 +242,48 @@ else if (!generating)
         mealsByDate = plan?.Meals
             .GroupBy(m => m.Date)
             .ToDictionary(g => g.Key, g => g.OrderBy(m => m.Slot).ToList()) ?? [];
+        // Keep the open day if it's still in the plan (e.g. after a reroll reload); else default to today,
+        // or the first planned day.
+        if (selectedDate is { } current && mealsByDate.ContainsKey(current)) return;
         selectedDate = mealsByDate.ContainsKey(Today)
             ? Today
             : mealsByDate.Keys.OrderBy(d => d).Cast<DateOnly?>().FirstOrDefault();
     }
 
     private void SelectDay(DateOnly date) => selectedDate = date;
+
+    // Per-slot reroll: regenerate just this meal (one AI call, inline), then reload the plan keeping the open
+    // day. The old recipe stays in the library. A guard blocks a second reroll while one is in flight.
+    private int? rerollingMealId;
+
+    private async Task Reroll(int plannedMealId)
+    {
+        if (rerollingMealId is not null || householdId is null) return;
+        rerollingMealId = plannedMealId;
+        error = null;
+        note = null;
+        try
+        {
+            var result = await Planner.RerollAsync(plannedMealId);
+            if (result.Succeeded)
+            {
+                plan = await Planner.GetCurrentPlanAsync();
+                IndexPlan();
+                note = $"Swapped in {result.RecipeName}.";
+            }
+            else
+            {
+                error = result.Error;
+            }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Rerolling a meal failed.");
+            error = "Couldn't swap that meal — please try again.";
+        }
+        finally { rerollingMealId = null; }
+    }
 
     private static string DayAriaLabel(DateOnly date, List<PlannedMeal> dayMeals) =>
         dayMeals.Count == 0
@@ -256,8 +292,14 @@ else if (!generating)
 
     // One meal's full card — shown in the selected-day detail below the calendar grid.
     private RenderFragment MealCard(PlannedMeal meal) => @<article class="recipe-card mealplan-meal">
-        <div class="recipe-card-top">
+        <div class="recipe-card-top mealcal-cardtop">
             <h4><span class="chip chip-stocked">@meal.Slot</span> @meal.Recipe!.Name</h4>
+            <button type="button" class="secondary mealcal-reroll" @onclick="() => Reroll(meal.Id)"
+                    disabled="@(rerollingMealId is not null)"
+                    title="Swap this meal for a different one — keeps the rest of your plan"
+                    aria-label="Reroll @meal.Recipe!.Name — swap it for a different meal">
+                @(rerollingMealId == meal.Id ? "Rerolling…" : "🔄 Reroll")
+            </button>
         </div>
         @if (meal.Recipe.Blurb is { Length: > 0 } blurb)
         {

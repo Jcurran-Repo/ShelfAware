@@ -187,6 +187,60 @@ public class MealPlanServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Reroll_swaps_one_meal_keeps_the_others_and_keeps_the_old_recipe()
+    {
+        var settings = new FakeAppSettings();
+        var service = Service(new FakeMealPlanGenerator([Meal("Old A"), Meal("Old B")]), settings);
+        await SaveSettings(service, new MealPlanSettings { Days = 2 });
+        await service.GenerateAsync();
+
+        int mealId;
+        await using (var db = _db.CreateDbContext())
+            mealId = (await db.PlannedMeals.OrderBy(m => m.Date).FirstAsync()).Id; // the day-0 meal ("Old A")
+
+        var result = await Service(new FakeMealPlanGenerator([Meal("New A")]), settings).RerollAsync(mealId);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("New A", result.RecipeName);
+        await using (var db = _db.CreateDbContext())
+        {
+            var meals = await db.PlannedMeals.Include(m => m.Recipe).OrderBy(m => m.Date).ToListAsync();
+            Assert.Equal("New A", meals[0].Recipe!.Name); // day 0 rerolled
+            Assert.Equal("Old B", meals[1].Recipe!.Name); // day 1 untouched
+            var names = await db.Recipes.Select(r => r.Name).OrderBy(n => n).ToListAsync();
+            Assert.Equal(["New A", "Old A", "Old B"], names); // the swapped-out "Old A" stays in the library
+        }
+    }
+
+    [Fact]
+    public async Task Reroll_tells_the_generator_the_other_plan_meals_to_avoid()
+    {
+        var settings = new FakeAppSettings();
+        var service = Service(new FakeMealPlanGenerator([Meal("Old A"), Meal("Old B")]), settings);
+        await SaveSettings(service, new MealPlanSettings { Days = 2 });
+        await service.GenerateAsync();
+        int mealId;
+        await using (var db = _db.CreateDbContext())
+            mealId = (await db.PlannedMeals.OrderBy(m => m.Date).FirstAsync()).Id;
+
+        var gen = new FakeMealPlanGenerator([Meal("New A")]);
+        await Service(gen, settings).RerollAsync(mealId);
+
+        var batch = Assert.Single(gen.Calls);
+        Assert.Single(batch.Slots);                 // just the one slot
+        Assert.Contains("Old A", batch.AvoidNames); // the reroll avoids the whole plan, so it differs
+        Assert.Contains("Old B", batch.AvoidNames);
+    }
+
+    [Fact]
+    public async Task Rerolling_a_missing_meal_is_a_soft_failure()
+    {
+        var result = await Service(new FakeMealPlanGenerator([Meal("X")])).RerollAsync(99999);
+        Assert.False(result.Succeeded);
+        Assert.NotNull(result.Error);
+    }
+
+    [Fact]
     public async Task Generate_batches_a_long_horizon_and_carries_the_already_planned_names_forward()
     {
         // 10 dinners > BatchSize (7) → two calls: 7 then 3. The second must be told the first batch's names.

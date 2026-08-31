@@ -122,20 +122,12 @@ public sealed class MealPlanService(
 
         await RemoveOldPlanAsync(db, ct);
 
-        // The library to dedup against: every existing recipe, by signature (earliest id wins). Reusing a
-        // recipe already on file — plan-generated or user-kept — means no twin and no duplicate ingredients.
-        var existing = await db.Recipes
-            .Select(r => new { r.Id, r.Name, Mains = r.Ingredients.Where(i => i.IsMain).Select(i => i.Name) })
-            .ToListAsync(ct);
-        var recipeIdBySignature = new Dictionary<string, int>();
-        foreach (var r in existing)
-            recipeIdBySignature.TryAdd(RecipeSignature.Of(r.Name, r.Mains), r.Id);
-
+        var recipeIdBySignature = await LoadLibraryBySignatureAsync(db, ct);
         var plan = new MealPlan { CreatedAt = DateTimeOffset.Now, StartDate = today, Days = setup.Days };
         var newBySignature = new Dictionary<string, Recipe>(); // dedup two same-signature meals in one plan
         foreach (var (slot, meal) in planned)
         {
-            var signature = RecipeSignature.Of(meal.Name, meal.Ingredients.Where(i => i.IsMain).Select(i => i.Name));
+            var signature = SignatureOf(meal);
             var plannedMeal = new PlannedMeal { Date = today.AddDays(slot.Day), Slot = slot.Slot };
             if (recipeIdBySignature.TryGetValue(signature, out var existingId))
             {
@@ -147,19 +139,7 @@ public sealed class MealPlanService(
             }
             else
             {
-                var recipe = new Recipe
-                {
-                    Name = meal.Name,
-                    Blurb = meal.Blurb,
-                    SavedAt = DateTimeOffset.Now,
-                    PlanGenerated = true,
-                    EstimatedCaloriesPerServing = meal.CaloriesPerServing,
-                    Ingredients = meal.Ingredients.Select(i => new RecipeIngredient
-                    {
-                        Name = i.Name, IsMain = i.IsMain, MatchedProduct = i.MatchedProduct, Quantity = i.Quantity,
-                    }).ToList(),
-                    Steps = meal.Steps.Select((t, idx) => new RecipeStep { Order = idx + 1, Text = t }).ToList(),
-                };
+                var recipe = BuildRecipe(meal);
                 newBySignature[signature] = recipe;
                 plannedMeal.Recipe = recipe;
             }
@@ -170,6 +150,81 @@ public sealed class MealPlanService(
         await tx.CommitAsync(ct);
         return plan.Id;
     }
+
+    /// <summary>Regenerate ONE meal in the current plan, keeping the rest — the calendar's per-slot reroll.
+    /// The single-slot generation is told every recipe already in the plan (so the swap is genuinely
+    /// different), the new dish reuses a library recipe when one matches (same <see cref="RecipeSignature"/>
+    /// dedup as generation) else creates one, and the meal is repointed in a transaction. The old recipe
+    /// stays in the library (nothing is deleted). One AI call, so it runs inline on the circuit.</summary>
+    public async Task<RerollResult> RerollAsync(int plannedMealId, CancellationToken ct = default)
+    {
+        var setup = await LoadSettingsAsync(ct);
+        var context = await LoadContextAsync(setup, ct);
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+
+        var meal = await db.PlannedMeals.Include(m => m.MealPlan)
+            .FirstOrDefaultAsync(m => m.Id == plannedMealId, ct);
+        if (meal?.MealPlan is null) return RerollResult.Failed("That meal is no longer in your plan.");
+
+        // This slot's targets: its meal-row override if the setup still has one for the slot, else defaults.
+        var entry = setup.Meals.FirstOrDefault(m => m.Slot == meal.Slot);
+        var calories = entry is not null ? setup.CaloriesFor(entry) : setup.DefaultCalories;
+        var effort = entry is not null ? setup.EffortFor(entry) : setup.DefaultEffort;
+        var dayOffset = meal.Date.DayNumber - meal.MealPlan.StartDate.DayNumber;
+        var slot = new PlannedSlot(dayOffset, meal.Slot, calories, effort);
+
+        // Avoid every recipe already in the plan (including the one being rerolled) so the swap differs.
+        var planNames = await db.PlannedMeals.Where(m => m.MealPlanId == meal.MealPlanId)
+            .Select(m => m.Recipe!.Name).ToListAsync(ct);
+        var batch = new MealPlanBatch([slot], setup, context.OnHand, context.CommonlyBought,
+            context.Expiring, context.Excluded, context.SavedRecipes, planNames);
+
+        var meals = await generator.GenerateAsync(batch, ct); // never throws except on cancellation
+        if (meals.Count == 0)
+            return RerollResult.Failed("Couldn't come up with a different meal just now — please try again.");
+        var suggestion = meals[0];
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var recipeIdBySignature = await LoadLibraryBySignatureAsync(db, ct);
+        if (recipeIdBySignature.TryGetValue(SignatureOf(suggestion), out var existingId))
+            meal.RecipeId = existingId;             // reuse a library recipe (incl. the swapped-out one if identical)
+        else
+            meal.Recipe = BuildRecipe(suggestion);  // a fresh recipe joins the library
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return RerollResult.Ok(suggestion.Name);
+    }
+
+    // The library by signature (earliest id wins) — every recipe on file, plan-generated or user-kept — so a
+    // dish already saved is reused rather than duplicated. Shared by generation and reroll.
+    private static async Task<Dictionary<string, int>> LoadLibraryBySignatureAsync(ShelfAwareDbContext db, CancellationToken ct)
+    {
+        var existing = await db.Recipes
+            .Select(r => new { r.Id, r.Name, Mains = r.Ingredients.Where(i => i.IsMain).Select(i => i.Name) })
+            .ToListAsync(ct);
+        var map = new Dictionary<string, int>();
+        foreach (var r in existing) map.TryAdd(RecipeSignature.Of(r.Name, r.Mains), r.Id);
+        return map;
+    }
+
+    private static string SignatureOf(RecipeSuggestion meal) =>
+        RecipeSignature.Of(meal.Name, meal.Ingredients.Where(i => i.IsMain).Select(i => i.Name));
+
+    // Build a plan-generated Recipe entity from a suggestion. Shared by generation and reroll so a planned
+    // meal reads back identically however it was produced.
+    private static Recipe BuildRecipe(RecipeSuggestion meal) => new()
+    {
+        Name = meal.Name,
+        Blurb = meal.Blurb,
+        SavedAt = DateTimeOffset.Now,
+        PlanGenerated = true,
+        EstimatedCaloriesPerServing = meal.CaloriesPerServing,
+        Ingredients = meal.Ingredients.Select(i => new RecipeIngredient
+        {
+            Name = i.Name, IsMain = i.IsMain, MatchedProduct = i.MatchedProduct, Quantity = i.Quantity,
+        }).ToList(),
+        Steps = meal.Steps.Select((t, idx) => new RecipeStep { Order = idx + 1, Text = t }).ToList(),
+    };
 
     // Replace the current plan's CALENDAR but KEEP every generated recipe as a reusable library (idea #1:
     // mix-and-match across months). Removing the MealPlan cascades its PlannedMeals; the recipes those
@@ -251,4 +306,12 @@ public sealed record MealPlanResult(int PlanId, int MealCount, string? Error)
     public bool Succeeded => Error is null;
     public static MealPlanResult Ok(int planId, int mealCount) => new(planId, mealCount, null);
     public static MealPlanResult Failed(string error) => new(0, 0, error);
+}
+
+/// <summary>The outcome of a per-slot reroll: the new meal's name, or a soft human-readable error.</summary>
+public sealed record RerollResult(string? RecipeName, string? Error)
+{
+    public bool Succeeded => Error is null;
+    public static RerollResult Ok(string recipeName) => new(recipeName, null);
+    public static RerollResult Failed(string error) => new(null, error);
 }

@@ -2087,6 +2087,19 @@ button.tag-chip {
     padding-top: 0.8rem;
 }
 .mealcal-detail > h3 { margin-top: 0; }
+/* Meal card header: title on the left, the per-slot reroll on the right. */
+.mealcal-cardtop {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.5rem;
+}
+.mealcal-reroll {
+    flex-shrink: 0;
+    font-size: 0.8rem;
+    padding: 0.25rem 0.6rem;
+    white-space: nowrap;
+}
 
 /* Ingredient row with its swap control + bubble cloud. */
 .ingredient-list li {
