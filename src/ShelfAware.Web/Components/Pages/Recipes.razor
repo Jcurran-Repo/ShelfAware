@@ -213,11 +213,11 @@
                     continue;
                 }
                 var isVariant = kind == RowKind.Variant;
-                var makeable = Makeable(r);
+                var makeability = r.MakeabilityWith(onHand);
                 <li id="recipe-@r.Id" class="@(isVariant ? "recipe-variant" : null)">
                     <div class="saved-top">
                         <strong>@r.Name</strong>
-                        <span class="chip chip-@(makeable ? "stocked" : "unknown")">@(makeable ? "Ready to make" : "Missing items")</span>
+                        <span class="@MakeabilityFormat.ChipClass(makeability)">@MakeabilityFormat.Label(makeability)</span>
                         @if (isVariant)
                         {
                             <span class="chip variant-chip" title="Adapted to use what you have">🔀 adapted</span>
@@ -246,7 +246,7 @@
                             }
                             <button class="secondary" @onclick="() => MarkEaten(r)" disabled="@eatBusy"
                                     aria-label="Mark @r.Name eaten">Ate it</button>
-                            @if (!makeable)
+                            @if (makeability == Makeability.Missing)
                             {
                                 <button class="secondary" @onclick="() => AddMissingToList(r)" aria-label="Add missing ingredients for @r.Name to the grocery list">Add missing to list</button>
                             }
@@ -255,6 +255,13 @@
                             <button class="icon-btn" @onclick="() => DeleteSaved(r)" aria-label="Delete @r.Name" title="Delete @r.Name"><span aria-hidden="true">🗑</span></button>
                         </span>
                     </div>
+                    @* "Makeable with a swap": every main is covered, but at least one only by a stand-in you
+                       own (chuck roast for steak). "Also works as" means you'll EAT it, not that it cooks the
+                       same — so point at Adapt to rebuild the steps, never imply "cook this as written". *@
+                    @if (makeability == Makeability.NeedsSwap)
+                    {
+                        <p class="muted small" role="note">Uses a stand-in you own — the steps are written for the original and can cook differently. <strong>🔀 Adapt to what I have</strong> rebuilds them for what you're actually using.</p>
+                    }
                     @* §13.3: tell, don't ask. The tap commits in one go; this notice then says exactly
                        what it took — the decrement is approximate by design (it can't parse "2 lbs"),
                        so it must never be silent — with Undo as the one-tap way back. *@
@@ -352,8 +359,18 @@
                             var coverage = CoveringInStock(i.Name, i.MatchedProduct);
                             var have = coverage.Count > 0;
                             var confident = coverage.Any(c => c.CountBacked);
+                            // Direct (you own the food) vs Substitute (only a declared stand-in covers it) —
+                            // same matcher as `have`, so they can't disagree about coverage.
+                            var cover = i.CoverageBy(onHand);
                             <li class="@(have ? (confident ? "have" : "have likely") : "grab")">
                                 <span class="ingredient-name">@(have ? "✓" : "🛒") @Qty(i.Quantity, i.Name)</span>
+                                @* A ✓ that comes only from a declared stand-in (chuck roast for steak) says so:
+                                   the steps are written for the original and may cook differently, so it points
+                                   at Adapt rather than reading as "cook this as written". *@
+                                @if (cover == IngredientCoverage.Substitute)
+                                {
+                                    <span class="swap-note" title="You don't have @i.Name, but a stand-in you own covers it. The steps are written for @i.Name and may cook differently — use 🔀 Adapt to rebuild them.">stand-in — Adapt for the right steps</span>
+                                }
                                 @* Part A — honesty: a ✓ backed only by the rhythm (no fresh count) reads "likely",
                                    not a confident tick. Asserting the guess is the false positive that erodes trust. *@
                                 @if (have && !confident)

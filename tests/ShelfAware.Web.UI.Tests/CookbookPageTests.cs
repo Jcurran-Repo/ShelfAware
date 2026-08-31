@@ -298,6 +298,27 @@ public class CookbookPageTests : PageTestContext
         Assert.Empty(cut.FindAll(".ingredient-list li.have"));
     }
 
+    [Fact]
+    public void A_recipe_covered_only_by_a_stand_in_reads_makeable_with_a_swap()
+    {
+        // You own Chuck Roast and marked it "also works as" steak, but not steak itself. The Cookbook badge
+        // must match the Recipes page via the shared MakeabilityFormat — "Makeable with a swap" (amber), not
+        // "Ready to make" — and the covered ingredient flags the stand-in.
+        var chuckId = SeedProduct("Chuck Roast");
+        using (var db = Db.CreateDbContext())
+        {
+            db.ProductSubstitutes.Add(new ProductSubstitute { ProductId = chuckId, Value = "steak" });
+            db.SaveChanges();
+        }
+        SeedRecipe("Steak Dinner", [("steak", true, null, null)], "Sear it.");
+
+        var cut = RenderCookbook();
+
+        Assert.Contains("Makeable with a swap", cut.Find(".cookbook-detail .chip-duesoon").TextContent);
+        Assert.Empty(cut.FindAll(".cookbook-detail .chip-stocked"));       // not "Ready to make"
+        Assert.Single(cut.FindAll(".ingredient-list li.have .swap-note")); // covered (✓) but flagged a stand-in
+    }
+
     // ------------------------------------------------------------------ product filter
 
     [Fact]

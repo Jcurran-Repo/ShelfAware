@@ -206,9 +206,16 @@
                 <ul class="ingredient-list">
                     @foreach (var i in r.MainIngredients)
                     {
-                        var have = i.IsSatisfiedBy(onHand);
+                        var cover = i.CoverageBy(onHand);
+                        var have = cover != IngredientCoverage.None;
                         <li class="@(have ? "have" : "grab")">
                             <span class="ingredient-name">@(have ? "✓" : "🛒") @RecipeFormat.Line(i.Quantity, i.Name)</span>
+                            @* Covered only by a declared stand-in — the steps are written for the original and
+                               may cook differently. The Cookbook browses/reads; Adapt lives on the Recipes page. *@
+                            @if (cover == IngredientCoverage.Substitute)
+                            {
+                                <span class="swap-note" title="You don't have @i.Name, but a stand-in you own covers it — the steps are written for @i.Name and may cook differently. Adapt it on the Recipes page to rebuild them.">stand-in</span>
+                            }
                         </li>
                     }
                     @{ var extras = r.Seasonings.Select(i => RecipeFormat.Line(i.Quantity, i.Name)).ToList(); }
@@ -401,14 +408,12 @@ else
 
     private Recipe? Current => filtered.Count > 0 ? filtered[Math.Clamp(index, 0, filtered.Count - 1)] : null;
 
-    // Makeable when every MAIN ingredient is covered by something on hand — food-family match via
-    // IngredientMatcher, exactly as the Recipes page decides it. Seasonings/staples don't count.
-    private bool Makeable(Recipe r) => r.IsMakeableWith(onHand);
-
-    // The makeability chip is shown in TWO places now — the preview and the detail panel. Its class and its
-    // label get ONE definition each so the two surfaces can't drift (the state is already the shared Makeable).
-    private string MakeableChipClass(Recipe r) => Makeable(r) ? "chip chip-stocked" : "chip chip-unknown";
-    private string MakeableChipLabel(Recipe r) => Makeable(r) ? "Ready to make" : "Missing items";
+    // The makeability chip shows in THREE places — this page's preview and detail panel, and the Recipes
+    // page. Its class and label get ONE definition (MakeabilityFormat, in Core) so they can't drift — e.g.
+    // one surface reading "Ready to make" while another shows "Makeable with a swap" for the same recipe.
+    // Food-family makeability via IngredientMatcher, exactly as the Recipes page decides it; seasonings don't count.
+    private string MakeableChipClass(Recipe r) => MakeabilityFormat.ChipClass(r.MakeabilityWith(onHand));
+    private string MakeableChipLabel(Recipe r) => MakeabilityFormat.Label(r.MakeabilityWith(onHand));
 
     // A recipe's tags in display order — used by both the preview and the detail panel, so the sort lives in
     // one place. (The tag CLOUD sorts by count instead; that's a different order, kept separate on purpose.)

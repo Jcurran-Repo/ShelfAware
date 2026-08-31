@@ -8,6 +8,11 @@ namespace ShelfAware.Core.Recipes;
 /// times — while still going green when you own a valid stand-in.</summary>
 public record PantryProduct(string Name, IReadOnlyList<string> AlsoWorksAs);
 
+/// <summary>How a recipe ingredient is covered by what's on hand — see <see cref="IngredientMatcher.CoverageOf"/>.
+/// <see cref="Direct"/> means you own the food (cook the recipe as written); <see cref="Substitute"/> means
+/// only a declared stand-in covers it, so the steps may need rebuilding via Adapt.</summary>
+public enum IngredientCoverage { None, Direct, Substitute }
+
 /// <summary>
 /// Decides whether a recipe ingredient is covered by something on hand. Recipes stay specific ("chicken
 /// breast", not "chicken"), so cook times mean something; the flexibility lives in each product's curated
@@ -49,11 +54,38 @@ public static class IngredientMatcher
     /// for a pinned ingredient without having to re-implement the precedence.</para>
     /// <para>More than one result is a real and expected outcome, not an error: the rule is deliberately
     /// loose (two cuts of beef both cover "ground beef"), so a caller that must pick ONE has to decide
-    /// what to do about that rather than assume uniqueness — see <c>MealStock</c>, which refuses.</para>
-    /// <para>Computes the ingredient's core tokens ONCE for the whole candidate set. Asking
-    /// <see cref="IsSatisfied"/> per candidate to find out which one matched re-tokenised the ingredient
-    /// on every call.</para></summary>
+    /// what to do about that rather than assume uniqueness — see <c>MealStock</c>, which refuses.</para></summary>
     public static IReadOnlyList<PantryProduct> Covering(
+        string? ingredientName, string? matchedProduct, IReadOnlyCollection<PantryProduct> onHand) =>
+        [.. CoveringCore(ingredientName, matchedProduct, onHand).Select(c => c.Product)];
+
+    /// <summary>How this ingredient is covered by what's on hand: <see cref="IngredientCoverage.None"/>
+    /// (grab it), <see cref="IngredientCoverage.Direct"/> (you own the food — cook the recipe as written),
+    /// or <see cref="IngredientCoverage.Substitute"/> (covered ONLY by a declared stand-in that may cook
+    /// differently, so the steps should be rebuilt via Adapt). Direct wins when both apply: owning the real
+    /// food means no swap is needed even if a stand-in also happens to cover it.
+    /// <para>"Also works as" is the user saying they'll EAT that product in this dish — NOT that it cooks
+    /// the same way (chuck roast stands in for steak, but it must be braised, not seared). So a
+    /// substitute-only cover is what flags that the method needs rebuilding, however the stand-in got onto
+    /// the list.</para></summary>
+    public static IngredientCoverage CoverageOf(
+        string? ingredientName, string? matchedProduct, IReadOnlyCollection<PantryProduct> onHand)
+    {
+        var covers = CoveringCore(ingredientName, matchedProduct, onHand);
+        if (covers.Count == 0) return IngredientCoverage.None;
+        return covers.Any(c => c.Kind == CoverKind.Direct) ? IngredientCoverage.Direct : IngredientCoverage.Substitute;
+    }
+
+    // How a single on-hand product covers an ingredient (internal to the matcher).
+    private enum CoverKind { Direct, Substitute }
+
+    private readonly record struct Cover(PantryProduct Product, CoverKind Kind);
+
+    // THE matching core: which on-hand products cover the ingredient, and HOW each covers it. Covering() and
+    // CoverageOf() both derive from this single pass, so the ✓ tick, the "I'm out" decrement, and the
+    // "makeable with a swap" read can never disagree about coverage — one rule, not three copies. Computes
+    // the ingredient's core tokens ONCE for the whole candidate set.
+    private static List<Cover> CoveringCore(
         string? ingredientName, string? matchedProduct, IReadOnlyCollection<PantryProduct> onHand)
     {
         if (matchedProduct is { Length: > 0 })
@@ -62,18 +94,25 @@ public static class IngredientMatcher
             // stores a NAME captured at save time, and a punctuation variant of the current product name
             // ("Home Canned Sauce" for "Home-Canned Sauce") is the same product to every write-side guard (the
             // census, the add form, rename and merge) — so a raw compare left the grounded link silently
-            // uncovered, the ✓ tick and makeability going blind. One definition of identity, everywhere.
-            // The core-token fallback below is untouched — only this exact-name leg changes.
+            // uncovered, the ✓ tick and makeability going blind. One definition of identity, everywhere. A
+            // human confirmed this pairing, so having it reads as Direct — the steps were written for it.
             var groundedKey = ProductMatcher.IdentityKey(matchedProduct);
-            var grounded = onHand
-                .Where(p => ProductMatcher.IdentityKey(p.Name) == groundedKey)
-                .ToList();
-            if (grounded.Count > 0) return grounded;
+            var grounded = onHand.Where(p => ProductMatcher.IdentityKey(p.Name) == groundedKey).ToList();
+            if (grounded.Count > 0) return grounded.ConvertAll(p => new Cover(p, CoverKind.Direct));
         }
 
         var need = CoreTokens(ingredientName);
         if (need.Count == 0) return [];
-        return [.. onHand.Where(p => Covers(need, p.Name) || p.AlsoWorksAs.Any(s => Covers(need, s)))];
+        var covers = new List<Cover>();
+        foreach (var p in onHand)
+        {
+            // A NAME match means you own the food itself (same food, or a more specific form) → Direct. Only
+            // when the name misses does a curated "also works as" phrase count — and that is a Substitute, a
+            // declared stand-in whose cooking method may differ.
+            if (Covers(need, p.Name)) covers.Add(new Cover(p, CoverKind.Direct));
+            else if (p.AlsoWorksAs.Any(s => Covers(need, s))) covers.Add(new Cover(p, CoverKind.Substitute));
+        }
+        return covers;
     }
 
     // Every core word of the ingredient must appear (plural-tolerant) in the candidate phrase, so the

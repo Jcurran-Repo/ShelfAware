@@ -1928,6 +1928,16 @@ button.tag-chip {
     font-style: italic;
 }
 
+/* A main covered ONLY by a declared stand-in (chuck roast for steak): the recipe's steps are written for
+   the original and may cook differently, so this points at Adapt. Amber accent to tie it to the "Makeable
+   with a swap" chip, but the TEXT stays in readable ink — amber text on the page background fails contrast. */
+.swap-note {
+    color: var(--ink-soft);
+    font-size: 0.8rem;
+    border-left: 3px solid var(--duesoon-line);
+    padding-left: 0.35rem;
+}
+
 /* Ingredient row with its swap control + bubble cloud. */
 .ingredient-list li {
     display: flex;

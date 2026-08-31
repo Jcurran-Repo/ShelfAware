@@ -137,6 +137,66 @@ public class IngredientMatcherTests
             "chicken breast", matchedProduct: null, [P("Whole Chicken", "chicken", "roast chicken")]));
     }
 
+    // ---- CoverageOf: HOW it's covered — Direct (you own the food, cook as written) vs Substitute (only a
+    //      declared stand-in covers it, so the steps may cook differently and need Adapt). -----------------
+
+    [Fact]
+    public void CoverageOf_is_None_when_nothing_covers_it()
+    {
+        Assert.Equal(IngredientCoverage.None,
+            IngredientMatcher.CoverageOf("chicken breast", matchedProduct: null, [P("Whole Chicken")]));
+    }
+
+    [Fact]
+    public void CoverageOf_is_Direct_when_the_products_own_name_covers_it()
+    {
+        // You own the food itself (a more specific form of it) — the recipe's steps fit as written.
+        Assert.Equal(IngredientCoverage.Direct,
+            IngredientMatcher.CoverageOf("chicken breast", matchedProduct: null, [P("Chicken Breast Tenderloins")]));
+    }
+
+    [Fact]
+    public void CoverageOf_is_Direct_for_the_grounded_save_time_match()
+    {
+        // A human confirmed the recipe uses THIS product, so having it is Direct even though the ingredient
+        // name ("creamer") shares no word with it — the steps were written for it.
+        Assert.Equal(IngredientCoverage.Direct,
+            IngredientMatcher.CoverageOf("creamer", matchedProduct: "Half and Half", [P("Half-and-Half")]));
+    }
+
+    [Fact]
+    public void CoverageOf_is_Substitute_when_only_a_declared_stand_in_covers_it()
+    {
+        // Chuck roast's NAME doesn't cover "steak"; only its "also works as" does. That's a declared
+        // stand-in the user will EAT but which cooks differently — the flag that the method needs rebuilding.
+        Assert.Equal(IngredientCoverage.Substitute,
+            IngredientMatcher.CoverageOf("steak", matchedProduct: null, [P("Chuck Roast", "steak")]));
+    }
+
+    [Fact]
+    public void CoverageOf_Direct_beats_a_stand_in_when_you_also_own_the_real_food()
+    {
+        // Owning the real food means no swap is needed, even if a stand-in also happens to cover it — so a
+        // recipe whose main you actually have never reads as "needs a swap".
+        var pantry = new[] { P("Chicken Breast Tenderloins"), P("Chicken Thighs", "chicken breast") };
+        Assert.Equal(IngredientCoverage.Direct,
+            IngredientMatcher.CoverageOf("chicken breast", matchedProduct: null, pantry));
+    }
+
+    [Fact]
+    public void CoverageOf_agrees_with_IsSatisfied_on_covered_vs_not()
+    {
+        // CoverageOf != None must mean EXACTLY what IsSatisfied does — both derive from the one matching
+        // core, so a "makeable with a swap" read can never contradict the ✓ tick beside it.
+        var pantry = new[] { P("Chicken Breast Tenderloins"), P("Chuck Roast", "steak") };
+        foreach (var ingredient in new string?[] { "chicken breast", "steak", "whole chicken", null, "" })
+        {
+            Assert.Equal(
+                IngredientMatcher.IsSatisfied(ingredient, matchedProduct: null, pantry),
+                IngredientMatcher.CoverageOf(ingredient, matchedProduct: null, pantry) != IngredientCoverage.None);
+        }
+    }
+
     [Fact]
     public void An_exact_matched_product_still_counts()
     {

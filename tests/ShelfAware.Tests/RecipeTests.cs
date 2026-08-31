@@ -68,6 +68,64 @@ public class RecipeTests
         Assert.False(r.IsMakeableWith([P("Salt"), P("Pepper")]));
     }
 
+    // MakeabilityWith: the three-way read — Ready (own every main), NeedsSwap (a main covered only by a
+    // declared stand-in, so Adapt should rebuild the steps), Missing (a main uncovered / no mains).
+
+    [Fact]
+    public void MakeabilityWith_is_Ready_when_every_main_is_owned_directly()
+    {
+        var r = ChickenAndPotatoes();
+        Assert.Equal(Makeability.Ready,
+            r.MakeabilityWith([P("Chicken Breast Tenderloins"), P("Fresh Baby Potatoes")]));
+    }
+
+    [Fact]
+    public void MakeabilityWith_is_NeedsSwap_when_a_main_is_covered_only_by_a_stand_in()
+    {
+        // Potatoes owned directly; "chicken breast" covered only because Chicken Thighs is a declared
+        // stand-in. Every main is covered, so it's makeable — but the steps are written for breast, so it
+        // needs a swap ("also works as" = you'll eat it, not that it cooks the same).
+        var r = ChickenAndPotatoes();
+        var pantry = new[] { P("Chicken Thighs", "chicken breast"), P("Fresh Baby Potatoes") };
+        Assert.Equal(Makeability.NeedsSwap, r.MakeabilityWith(pantry));
+    }
+
+    [Fact]
+    public void MakeabilityWith_is_Missing_when_a_main_is_uncovered()
+    {
+        var r = ChickenAndPotatoes();
+        Assert.Equal(Makeability.Missing, r.MakeabilityWith([P("Chicken Breast Tenderloins")])); // no potatoes
+    }
+
+    [Fact]
+    public void MakeabilityWith_is_Missing_for_a_recipe_with_no_mains()
+    {
+        var r = new Recipe { Name = "Seasoning blend", Ingredients = [Seasoning("salt"), Seasoning("pepper")] };
+        Assert.Equal(Makeability.Missing, r.MakeabilityWith([P("Salt"), P("Pepper")]));
+    }
+
+    [Fact]
+    public void MakeabilityWith_prefers_Missing_over_NeedsSwap_when_a_main_is_both_missing_and_another_is_swapped()
+    {
+        // One main uncovered, another covered only by a stand-in. Missing wins — you can't cook it at all
+        // yet, so "makeable with a swap" would overstate it. Pins that the None check comes before the
+        // Substitute check.
+        var r = ChickenAndPotatoes(); // chicken breast + potatoes
+        var pantry = new[] { P("Chicken Thighs", "chicken breast") }; // chicken via stand-in; no potatoes
+        Assert.Equal(Makeability.Missing, r.MakeabilityWith(pantry));
+    }
+
+    [Fact]
+    public void IsMakeableWith_is_true_for_both_Ready_and_NeedsSwap_and_false_for_Missing()
+    {
+        // The binary check is "not Missing" — a stand-in still counts as makeable (you can cook it, after
+        // adapting). Pins the delegation so the three-way badge and the binary check can't disagree.
+        var r = ChickenAndPotatoes();
+        Assert.True(r.IsMakeableWith([P("Chicken Breast Tenderloins"), P("Fresh Baby Potatoes")]));    // Ready
+        Assert.True(r.IsMakeableWith([P("Chicken Thighs", "chicken breast"), P("Fresh Baby Potatoes")])); // NeedsSwap
+        Assert.False(r.IsMakeableWith([P("Chicken Breast Tenderloins")]));                             // Missing
+    }
+
     [Fact]
     public void MissingMains_lists_only_the_uncovered_main_ingredients()
     {
