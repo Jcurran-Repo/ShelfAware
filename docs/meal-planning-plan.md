@@ -324,18 +324,51 @@ Phasing (on branch `feature/meal-planning-phase0`; `/pre-push` gate before any m
 1. ✅ **Data + generation** — DONE, live-verified: the data model (1a), the generator + prompt (1b-i),
    the service (1b-ii), and the `/meal-plan` page — setup + generate + display (1c). A real 3-day plan
    generated end to end (known dishes, pantry-grounded, method-correct). No pantry integration yet.
-2. **Calendar + reroll** — a nicer month view; per-slot regenerate.
+1b. ✅ **Resilience + per-meal settings + model choice** — DONE, live-verified:
+   - **Detached background job** (`IMealPlanJobs`/`MealPlanJobs`, singleton): generation runs in its own DI
+     scope on `CancellationToken.None`, so it survives the user navigating away or closing the tab; the page
+     starts a job and POLLS its status, re-attaching to an in-flight job on return. A full month is minutes
+     of AI calls — a circuit-bound synchronous call was cancelled by navigation. Verified: leave → return →
+     the plan is still building and finishes.
+   - **Generator resilience** — validate-and-retry-once (a truncated/empty structured response retries, then
+     returns nothing for that batch), + the service tolerates a short batch (a shorter plan, not a crash) and
+     fast-fails a systematic first-batch failure. A 90-meal (13-batch) Haiku run completed with ZERO retries.
+   - **Per-meal settings** — the setup fields are DEFAULTS; `MealPlanSettings.Meals` is a per-meal line-up
+     (1–7 `MealEntry` rows) that inherits them and can override **calories + effort** per meal (`CaloriesFor`/
+     `EffortFor`). `PlannedSlot` carries the resolved targets, so a snack asks for 150 cal / quick while
+     dinner asks for 600 on the same plan. Protein/carbs (daily totals), food groups, appliances, Invent and
+     **PreferLeftovers** stay plan-level. Fixes the one weakness the month stress test found (a single global
+     "calories per meal" made snacks dinner-sized). Live-verified: a 150-cal snack beside a 600-cal dinner.
+   - **⚠️ Haiku 4.5, NOT Sonnet 5, is the generator.** Measured on the SAME 90-meal month (30 days ×
+     lunch+dinner+snack, all targets, adapt-known): **Haiku ~2.5 min / $0.20 / 89-of-90 unique** vs Sonnet 5
+     **~30 min / ~$1.70–2.80 / ~2× more verbose** (killed early — too slow). Method-rebuild correct on both
+     (chuck roast braised 7–8 hrs vs ground chuck browned). The default `ChatModel` (`claude-haiku-4-5`) is
+     right; no override.
+2. **Calendar + reroll** — a nicer month view; per-slot regenerate. ("Add a meal" already generates one
+   keepable meal via the per-meal builder; reroll ties a single generated meal to a specific calendar slot.)
 3. **Pantry projection + grocery-list provenance** (§5b/§6) — the shared-definition provenance in Core,
    earliest-card dedup, the third source on the list + dashboard.
 4. **Census expiration** (§7) — the `CountExpiration` model change + the review-grid column.
 
-⚠️ **Not yet gated for merge:** phases 0–1 are pushed to the branch but have NOT been through the
+**Phase-3+ vision items (Jordan-approved, quality-ranked — future work, not the mechanical phases above):**
+- **Taste-learning & reuse** (85%) — bias generation toward what's actually cooked/kept (TimesEaten, kept
+  vs discarded, won't-eat) and mix-and-match the growing library. Turns it from generic into "ours."
+- **Adherence loop** (80%) — one-tap ate/skipped/ate-something-else per planned meal → gentle weekly
+  stick-rate. Closes the loop on the actual goal (weight). Must be one-tap, never nag.
+- **Variety / repetition lever** (75%) — from "surprise me daily" to "rotate 3 breakfasts" (decision-fatigue
+  adherence).
+- ✅ **Prefer-leftovers** (was idea #2) — shipped as a toggle in 1b (cook once, eat twice).
+- **Anti-snacking dashboard nudge** — show today's planned (snack-sized) snack in the moment; dovetails with
+  per-meal snack calories.
+
+⚠️ **Not yet gated for merge:** phases 0–1b are pushed to the branch but have NOT been through the
 `/pre-push` gate (independent code + security review). The whole arc gets gated before it merges.
 
 Open (settle during build):
 - Exact buy-before lead time (flat N days vs. tied to shopping cadence vs. per-perishability once we can
   sense it).
 - ~~Config home: on `MealPlan` vs. AppSettings.~~ **Resolved: AppSettings (§9).**
+- ~~Per-plan vs. per-meal targets.~~ **Resolved (1b): per-meal calories/effort as overrides on plan defaults.**
 - How much the plan-generated Recipes show in the Cookbook by default.
 - Adherence: the plan can read `MealEvent`/`TimesEaten` for "cooked vs. planned," but must **not**
-  nag/shame (counterproductive for the goal). Light touch, phase 2+.
+  nag/shame (counterproductive for the goal). Light touch, phase 2+ (approved as a phase-3 vision item).
