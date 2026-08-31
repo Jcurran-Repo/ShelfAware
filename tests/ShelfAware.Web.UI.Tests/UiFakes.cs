@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.Extensions.Logging;
 using ShelfAware.Core.Census;
 using ShelfAware.Core.Chat;
+using ShelfAware.Core.MealPlanning;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Speech;
 using ShelfAware.Web.Data;
@@ -294,4 +295,12 @@ internal sealed class FakeVoiceCredentials : IVoiceCredentials
 {
     public string ApiKey { get; set; } = "";
     public string AgentId { get; set; } = "";
+}
+
+/// <summary>A no-op meal-plan generator: pages that read the current plan (the grocery list, the dashboard)
+/// never generate, so MealPlanService needs a generator only to construct.</summary>
+internal sealed class FakeMealPlanGenerator : IMealPlanGenerator
+{
+    public Task<IReadOnlyList<RecipeSuggestion>> GenerateAsync(MealPlanBatch batch, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<RecipeSuggestion>>([]);
 }

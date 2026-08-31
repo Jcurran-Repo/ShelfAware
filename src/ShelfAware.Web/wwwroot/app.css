@@ -15,6 +15,7 @@
     --duesoon-bg: #fef4d6;  --duesoon-ink: #8a6100;  --duesoon-line: #e3b341;
     --stocked-bg: #dcf3e6;  --stocked-ink: #116b3c;  --stocked-line: #58b487;
     --unknown-bg: #e8eaed;  --unknown-ink: #4a525b;  --unknown-line: #b6bdc6;
+    --plan-bg: #e9e6fb;     --plan-ink: #5b3fbf;     --plan-line: #a99af0;
 
     --radius: 8px;
     --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.05);
@@ -55,6 +56,7 @@
     --duesoon-bg: #38300f;  --duesoon-ink: #eccf85;  --duesoon-line: #9a7d2c;
     --stocked-bg: #143427;  --stocked-ink: #84dfac;  --stocked-line: #3f8e64;
     --unknown-bg: #2a2f36;  --unknown-ink: #aab2bb;  --unknown-line: #586675;
+    --plan-bg: #262046;     --plan-ink: #c7bafa;     --plan-line: #6f5fc4;
 
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
 
@@ -1305,6 +1307,13 @@ button.mic-speaking {
 }
 .chip-stocked { background: var(--stocked-bg); color: var(--stocked-ink); }
 .chip-unknown { background: var(--unknown-bg); color: var(--unknown-ink); }
+.chip-plan { background: var(--plan-bg); color: var(--plan-ink); }
+
+/* A grocery row the meal plan put on the list (GroceryList.razor). Tinted so plan items read as
+   plan-driven at a glance; the "Plan" chip + "for <meal>" note carry the meaning for screen readers
+   (color is never the only signal). */
+.grocery-src-plan { background: color-mix(in srgb, var(--plan-bg) 45%, transparent); }
+.plan-for { font-size: 0.85em; color: var(--plan-ink); white-space: nowrap; }
 
 /* ---- Everything-else disclosure ---- */
 .everything-else summary {

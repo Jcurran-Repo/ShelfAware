@@ -1,12 +1,15 @@
 @page "/list"
 @using ShelfAware.Core.Chat
+@using ShelfAware.Core.MealPlanning
 @using ShelfAware.Core.Prediction
+@using ShelfAware.Core.Recipes
 @using ShelfAware.Core.Settings
 @using ShelfAware.Core.Shopping
 @implements IAsyncDisposable
 @inject IHouseholdDbFactory DbFactory
 @inject IAppSettings SettingsStore
 @inject IPantryStore Store
+@inject MealPlanService Planner
 @inject IJSRuntime JS
 @inject ILogger<GroceryList> Logger
 
@@ -99,8 +102,8 @@ else
 
 @code {
     private bool loaded;
-    private List<ProductEstimate> buyNow = [];
-    private List<ProductEstimate> comingUp = [];
+    private List<GroceryRow> buyNow = [];
+    private List<GroceryRow> comingUp = [];
     private List<ProductEstimate> learning = [];
     private decimal buyNowTotal, comingUpTotal;
     private int buyNowUnknownCount, comingUpUnknownCount;
@@ -141,36 +144,48 @@ else
             return ShoppingEstimator.For(p, prediction, today, prices.PriceFor(p.Id, prediction.RecommendedSize));
         }).ToList();
 
-        // Both tables ordered by aisle (category) so the whole page matches how you walk a store,
-        // then by urgency within each aisle. The date column still carries the chronology.
-        buyNow = all
-            .Where(e => e.Status is PredictionStatus.Overdue or PredictionStatus.DueSoon)
-            .OrderBy(e => e.Category)
-            .ThenBy(e => e.DaysUntil ?? int.MaxValue)
-            .ThenBy(e => e.Name)
+        // The plan's shop items (§6): ingredients the current meal plan needs in the next couple of weeks
+        // that you don't have. Derived every load — reality (the same on-hand set the recipe pages use) is an
+        // input, so this can't contradict a real signal and writes nothing back.
+        var onHand = PantryOnHand.EdibleInStock(products, today, trackExpirations)
+            .Select(p => new PantryProduct(p.Name, p.Substitutes.Select(s => s.Value).ToList()))
             .ToList();
-        comingUp = all
-            .Where(e => e.Status == PredictionStatus.Stocked)
-            .OrderBy(e => e.Category)
-            .ThenBy(e => e.NextBuyDate ?? DateOnly.MaxValue)
-            .ThenBy(e => e.Name)
-            .ToList();
+        var plannedMeals = (await Planner.GetCurrentPlanAsync())?.Meals
+            .Select(m => new PlannedMealView(
+                m.Date, m.Slot, m.Recipe!.Name,
+                [.. m.Recipe.MainIngredients.Select(i => new PlannedIngredient(i.Name, i.MatchedProduct))]))
+            .ToList() ?? [];
+        var planItems = MealPlanProjection.ShopItems(plannedMeals, onHand, today);
+
+        // Combine the two provenances into one set of rows (the ONE definition, shared with the dashboard),
+        // deduped by food so a product wanted by both shows once. Still-learning items stay predictor-only.
+        var board = GroceryBoard.Combine(all.Where(e => e.Status != PredictionStatus.Unknown).ToList(), planItems);
+
+        // Both tables ordered by aisle (category) so the whole page matches how you walk a store, then by
+        // urgency within each aisle. Plan-only rows have no known aisle, so they fall to the end. The date
+        // column still carries the chronology.
+        buyNow = board.Where(r => r.BuyNow).OrderBy(SortAisle).ThenBy(r => r.DaysUntil ?? int.MaxValue).ThenBy(r => r.Name).ToList();
+        comingUp = board.Where(r => !r.BuyNow).OrderBy(SortAisle).ThenBy(r => r.DaysUntil ?? int.MaxValue).ThenBy(r => r.Name).ToList();
         learning = all
             .Where(e => e.Status == PredictionStatus.Unknown)
             .OrderBy(e => e.Name)
             .ToList();
 
-        buyNowTotal = buyNow.Sum(e => e.ExpectedCost ?? 0m);
-        comingUpTotal = comingUp.Sum(e => e.ExpectedCost ?? 0m);
-        buyNowUnknownCount = buyNow.Count(e => e.ExpectedCost is null);
-        comingUpUnknownCount = comingUp.Count(e => e.ExpectedCost is null);
+        buyNowTotal = buyNow.Sum(r => r.Estimate?.ExpectedCost ?? 0m);
+        comingUpTotal = comingUp.Sum(r => r.Estimate?.ExpectedCost ?? 0m);
+        buyNowUnknownCount = buyNow.Count(r => r.Estimate?.ExpectedCost is null);
+        comingUpUnknownCount = comingUp.Count(r => r.Estimate?.ExpectedCost is null);
         loaded = true;
     }
 
-    private RenderFragment ReportTable(List<ProductEstimate> items, decimal subtotal, int unknownCount, bool canIgnore) =>
+    // Sort key for the aisle walk: a row's category, with un-categorized plan rows falling after every real
+    // aisle (int.MaxValue) rather than jumping to the front.
+    private static int SortAisle(GroceryRow r) => r.Category is { } c ? (int)c : int.MaxValue;
+
+    private RenderFragment ReportTable(List<GroceryRow> rows, decimal subtotal, int unknownCount, bool canIgnore) =>
         @<div class="table-scroll">
             <table>
-                <caption class="visually-hidden">Grocery items with category, replenishment status, next buy date, quantity, and estimated cost.</caption>
+                <caption class="visually-hidden">Grocery items with source, category, replenishment status, next buy date, quantity, and estimated cost.</caption>
                 <thead>
                     <tr>
                         <th scope="col">Item</th>
@@ -186,74 +201,112 @@ else
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var e in items)
+                    @foreach (var r in rows)
                     {
-                        <tr>
-                            <td>
-                                <a class="item-name" href="/product/@e.ProductId">@e.Name</a>
-                                @if (e.RecommendedSize is { Length: > 0 } || e.UsualBrand is not null || e.UsualVariety is not null || e.Tags.Count > 0)
-                                {
-                                    <div class="item-meta">
-                                        @if (e.RecommendedSize is { Length: > 0 } sz)
+                        @if (r.Source == ShoppingSource.Predictor)
+                        {
+                            var e = r.Estimate!;
+                            <tr>
+                                <td>
+                                    <a class="item-name" href="/product/@e.ProductId">@e.Name</a>
+                                    @if (e.RecommendedSize is { Length: > 0 } || e.UsualBrand is not null || e.UsualVariety is not null || e.Tags.Count > 0 || r.PlanFor is not null)
+                                    {
+                                        <div class="item-meta">
+                                            @if (e.RecommendedSize is { Length: > 0 } sz)
+                                            {
+                                                <span class="size-chip" title="Suggested size to buy">@sz</span>
+                                            }
+                                            <BrandVarietyHint UsualBrand="@e.UsualBrand" UsualVariety="@e.UsualVariety"
+                                                              Brands="@e.BrandsBought" Varieties="@e.VarietiesBought" />
+                                            @foreach (var t in e.Tags)
+                                            {
+                                                <a class="tag-chip tag-chip-mini" href="/products?tag=@Uri.EscapeDataString(t)" title="See all @t products">@t</a>
+                                            }
+                                            @if (r.PlanFor is { } pf)
+                                            {
+                                                <span class="plan-for" title="Your meal plan needs this too">also for @MealHint(pf)</span>
+                                            }
+                                        </div>
+                                    }
+                                </td>
+                                <td>@e.Category</td>
+                                <td><span class="chip chip-@ChipClass(e.Status)">@StatusLabel(e.Status)</span></td>
+                                <td>
+                                    @if (e.CountNote is { } note)
+                                    {
+                                        @* The due date is deliberately left untouched by suppression, so
+                                           printing it raw here would read "Stocked · 3 days overdue" on one
+                                           row. CountNote is the one shared phrasing — the products grid
+                                           reads the same string. §13.5 also asks for a one-tap correction
+                                           WHERE the claim is made, so the fix is at hand rather than a page
+                                           away: one package off, the same amount "Ate it" and the product
+                                           page take, and the row returns to the buy list once it hits zero. *@
+                                        <span>@note</span>
+                                        <button type="button" class="linkish" @onclick="() => UsedOne(e)"
+                                                disabled="@actionBusy"
+                                                title="Take one off — @QuantityFormat.Describe(e.OnePackage, e.DefaultUnit) of @e.Name"
+                                                aria-label="Used one @e.Name — correct the count without leaving the list">Used one</button>
+                                    }
+                                    else
+                                    {
+                                        @(r.DueDate is { } d ? d.ToString("MMM d") : "—")
+                                        @if (r.DaysUntil is { } du)
                                         {
-                                            <span class="size-chip" title="Suggested size to buy">@sz</span>
+                                            <span class="muted"> (@Relative(du))</span>
                                         }
-                                        <BrandVarietyHint UsualBrand="@e.UsualBrand" UsualVariety="@e.UsualVariety"
-                                                          Brands="@e.BrandsBought" Varieties="@e.VarietiesBought" />
-                                        @foreach (var t in e.Tags)
-                                        {
-                                            <a class="tag-chip tag-chip-mini" href="/products?tag=@Uri.EscapeDataString(t)" title="See all @t products">@t</a>
-                                        }
-                                    </div>
-                                }
-                            </td>
-                            <td>@e.Category</td>
-                            <td><span class="chip chip-@ChipClass(e.Status)">@StatusLabel(e.Status)</span></td>
-                            <td>
-                                @if (e.CountNote is { } note)
+                                    }
+                                </td>
+                                <td>@e.RecommendedQuantity.ToString("0.##")</td>
+                                <td>@(e.ExpectedCost is { } c ? Money(c) : "—")</td>
+                                @if (canIgnore)
                                 {
-                                    @* The due date is deliberately left untouched by suppression, so
-                                       printing it raw here would read "Stocked · 3 days overdue" on one
-                                       row. CountNote is the one shared phrasing — the products grid
-                                       reads the same string. §13.5 also asks for a one-tap correction
-                                       WHERE the claim is made, so the fix is at hand rather than a page
-                                       away: one package off, the same amount "Ate it" and the product
-                                       page take, and the row returns to the buy list once it hits zero. *@
-                                    <span>@note</span>
-                                    <button type="button" class="linkish" @onclick="() => UsedOne(e)"
-                                            disabled="@actionBusy"
-                                            title="Take one off — @QuantityFormat.Describe(e.OnePackage, e.DefaultUnit) of @e.Name"
-                                            aria-label="Used one @e.Name — correct the count without leaving the list">Used one</button>
+                                    <td class="row-actions">
+                                        <button type="button" class="restock-btn" @onclick="() => Restocked(e)"
+                                                disabled="@actionBusy"
+                                                title="Just bought or got more @e.Name — a FRESH supply, so its next due date re-anchors a full cycle out"
+                                                aria-label="Mark @e.Name restocked — a fresh supply">Restocked</button>
+                                        <button type="button" class="stillstock-btn" @onclick="() => StillInStock(e)"
+                                                disabled="@actionBusy"
+                                                title="Still have some @e.Name — the reminder was early. Snoozes it a few days rather than assuming a fresh supply"
+                                                aria-label="Mark @e.Name still in stock — you were early, snooze it">Still in stock</button>
+                                        <button type="button" class="untrack-btn" @onclick="() => Untrack(e)"
+                                                disabled="@actionBusy"
+                                                title="Don't want @e.Name for a while — stops suggesting it until you buy it again (history kept)"
+                                                aria-label="Untrack @e.Name — stop suggesting it until it's bought again">Untrack</button>
+                                    </td>
                                 }
-                                else
-                                {
-                                    @(e.NextBuyDate is { } d ? d.ToString("MMM d") : "—")
-                                    @if (e.DaysUntil is { } du)
+                            </tr>
+                        }
+                        else
+                        {
+                            @* A plan-sourced row: an ingredient a planned meal needs that you don't have. Leaner
+                               than a predictor row (no rhythm, cost, size or actions — it's derived from the plan),
+                               tinted + tagged so it reads as plan-driven at a glance and to a screen reader. *@
+                            <tr class="grocery-src-plan">
+                                <td>
+                                    <span class="item-name">@r.Name</span>
+                                    @if (r.PlanFor is { } pf)
+                                    {
+                                        <div class="item-meta"><span class="plan-for">for @MealHint(pf)</span></div>
+                                    }
+                                </td>
+                                <td class="muted">—</td>
+                                <td><span class="chip chip-plan">Plan</span></td>
+                                <td>
+                                    @(r.DueDate is { } d ? d.ToString("MMM d") : "—")
+                                    @if (r.DaysUntil is { } du)
                                     {
                                         <span class="muted"> (@Relative(du))</span>
                                     }
-                                }
-                            </td>
-                            <td>@e.RecommendedQuantity.ToString("0.##")</td>
-                            <td>@(e.ExpectedCost is { } c ? Money(c) : "—")</td>
-                            @if (canIgnore)
-                            {
-                                <td class="row-actions">
-                                    <button type="button" class="restock-btn" @onclick="() => Restocked(e)"
-                                            disabled="@actionBusy"
-                                            title="Just bought or got more @e.Name — a FRESH supply, so its next due date re-anchors a full cycle out"
-                                            aria-label="Mark @e.Name restocked — a fresh supply">Restocked</button>
-                                    <button type="button" class="stillstock-btn" @onclick="() => StillInStock(e)"
-                                            disabled="@actionBusy"
-                                            title="Still have some @e.Name — the reminder was early. Snoozes it a few days rather than assuming a fresh supply"
-                                            aria-label="Mark @e.Name still in stock — you were early, snooze it">Still in stock</button>
-                                    <button type="button" class="untrack-btn" @onclick="() => Untrack(e)"
-                                            disabled="@actionBusy"
-                                            title="Don't want @e.Name for a while — stops suggesting it until you buy it again (history kept)"
-                                            aria-label="Untrack @e.Name — stop suggesting it until it's bought again">Untrack</button>
                                 </td>
-                            }
-                        </tr>
+                                <td class="muted">—</td>
+                                <td class="muted">—</td>
+                                @if (canIgnore)
+                                {
+                                    <td></td>
+                                }
+                            </tr>
+                        }
                     }
                 </tbody>
                 <tfoot>
@@ -268,6 +321,9 @@ else
                 </tfoot>
             </table>
         </div>;
+
+    // A compact "for Beef Tacos, Thu" hint for a plan row / annotation.
+    private static string MealHint(PlanShopItem pf) => $"{pf.RecipeName}, {pf.MealDate:ddd}";
 
     private bool actionBusy;
 
@@ -422,15 +478,23 @@ else
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"Grocery List — {DateOnly.FromDateTime(DateTime.Today):yyyy-MM-dd}");
         sb.AppendLine($"Buy now (~{Money(buyNowTotal)}):");
-        foreach (var e in buyNow)
+        foreach (var r in buyNow)
         {
-            var qualifiers = new List<string>();
-            if (e.UsualBrand is { } b) qualifiers.Add(b);
-            if (e.UsualVariety is { } v) qualifiers.Add(v);
-            if (e.RecommendedSize is { Length: > 0 } s) qualifiers.Add(s);
-            var q = qualifiers.Count > 0 ? $" ({string.Join(", ", qualifiers)})" : "";
-            var cost = e.ExpectedCost is { } c ? $" — {Money(c)}" : "";
-            sb.AppendLine($"- {e.Name}{q} ×{e.RecommendedQuantity:0.##}{cost}");
+            if (r.Estimate is { } e)
+            {
+                var qualifiers = new List<string>();
+                if (e.UsualBrand is { } b) qualifiers.Add(b);
+                if (e.UsualVariety is { } v) qualifiers.Add(v);
+                if (e.RecommendedSize is { Length: > 0 } s) qualifiers.Add(s);
+                var q = qualifiers.Count > 0 ? $" ({string.Join(", ", qualifiers)})" : "";
+                var cost = e.ExpectedCost is { } c ? $" — {Money(c)}" : "";
+                var planNote = r.PlanFor is { } pf ? $" (also for {pf.RecipeName})" : "";
+                sb.AppendLine($"- {e.Name}{q} ×{e.RecommendedQuantity:0.##}{cost}{planNote}");
+            }
+            else
+            {
+                sb.AppendLine($"- {r.Name}{(r.PlanFor is { } pf ? $" (for {pf.RecipeName})" : "")}");
+            }
         }
         if (extras.Count > 0)
         {
