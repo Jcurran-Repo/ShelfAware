@@ -103,6 +103,32 @@ public class PantryOnHandTests
     }
 
     [Fact]
+    public void Detailed_drops_non_food_aisles_and_untracked_items()
+    {
+        // The detailed view carries the SAME aisle + tracking filter as every other on-hand method. A
+        // tracked household item and an untracked edible must both be ABSENT — even though each would read
+        // "in stock" on its own (the soap by its fresh count, the produce by an Unknown, not-overdue
+        // rhythm), so the filter, not the on-hand test, is what excludes them. Pins that filter directly on
+        // EdibleInStockDetailed so it can't be quietly re-duplicated or loosened.
+        var edible = new Product
+        {
+            Name = "Whole Milk", Category = Category.Dairy, IsTracked = true,
+            TrackQuantity = true, QuantityOnHand = 2m, QuantityCountedAt = DateTimeOffset.Now,
+        };
+        var trackedNonFood = new Product
+        {
+            Name = "Dish Soap", Category = Category.Household, IsTracked = true,
+            TrackQuantity = true, QuantityOnHand = 4m, QuantityCountedAt = DateTimeOffset.Now,
+        };
+        var untrackedEdible = P("Bananas", Category.Produce, tracked: false);
+
+        var names = PantryOnHand.EdibleInStockDetailed([edible, trackedNonFood, untrackedEdible], Today)
+            .Select(d => d.Product.Name).ToList();
+
+        Assert.Equal(["Whole Milk"], names);
+    }
+
+    [Fact]
     public void Out_of_stock_is_the_exact_complement_for_edible_tracked_items()
     {
         // Long-overdue coffee (the EdibleInStock drop case) is exactly what EdibleOutOfStock surfaces —

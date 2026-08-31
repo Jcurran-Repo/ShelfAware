@@ -1,5 +1,5 @@
 ---
-description: Run the required code review + security review gate before any push or merge to master.
+description: Run the required code review + security review + Core mutation-coverage gate before any push or merge to master.
 ---
 
 # Pre-push gate
@@ -41,7 +41,30 @@ For this repo, security review means the multi-tenancy boundary above all else:
   and `CachingTextToSpeech` — a file you can't attribute is a file you can't delete.)
 - Any new endpoint: does it scope to the CALLER's household claim, or take an id from the request?
 
-## 3. Verify, don't assume
+## 3. Mutation coverage on Core changes
+
+`ShelfAware.Core` is held at a 100% mutation score (`tests/ShelfAware.Tests/stryker-config.json`, break
+threshold 100). If the branch diff touches `src/ShelfAware.Core/**`, run that same gate over **only what
+this branch changed** — diff-scoped, so it is seconds-to-minutes rather than the ~13-minute full run:
+
+```
+cd tests/ShelfAware.Tests
+dotnet stryker --since:master
+```
+
+**If no `src/ShelfAware.Core/**` files changed, skip this — there is nothing to mutate.**
+
+Anything under 100% is a survivor: a mutant this branch introduced or newly exposed that no test kills.
+Treat each like a review finding — it is either a real coverage gap (**add the test**) or a true
+equivalent mutant (**annotate it in-code with a reason**, the `// Stryker disable once ...` pattern in
+`docs/mutation-testing.md`). Never lower the break threshold to pass.
+
+This is diff-scoped by design. The weekly full-Core run (`.github/workflows/mutation.yml`) stays the
+backstop for the one thing it cannot see — a Core edit that makes a *different, unchanged* file's
+previously-killed mutant survive. CI also runs this same diff-scoped check on every PR to `master`
+(`.github/workflows/mutation-pr.yml`), so it is enforced whether or not this gate was run by hand.
+
+## 4. Verify, don't assume
 
 Before reporting a finding as real, try to disprove it — and before reporting the code as clean,
 name what you actually checked. Where a claim is testable, test it rather than reasoning about it:
@@ -52,7 +75,7 @@ this repo has real-SQLite tests (`tests/ShelfAware.Web.Tests`) and two past "obv
 Green tests are not verification. The no-household 500 shipped past a fully green suite and was only
 found by running the app.
 
-## 4. Report, then stop
+## 5. Report, then stop
 
 Give the user the findings — file, line, and a concrete scenario — ranked, with the ones you couldn't
 construct a scenario for ranked lowest and labelled as such.

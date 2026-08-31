@@ -242,23 +242,40 @@ dotnet stryker --since:master
 
 Reconciling "target 100%" with "don't wall off feature work":
 
-- **Weekly full Core run** in GitHub Actions (`.github/workflows/mutation.yml`), break threshold = 100
-  — the no-regression guard: the build goes **red on any drop** below 100%, so if a change ever lets a
-  previously-killed mutant survive, it surfaces within a week and gets fixed (a new test or a justified
-  annotation). It runs on a weekly `schedule:` plus on-demand via the Actions "Run workflow" button
-  (`workflow_dispatch`), restores the pinned Stryker tool (`dotnet tool restore`), runs `dotnet stryker`
-  UN-piped so its break-threshold exit code fails the job, and uploads the report as an artifact.
-  ⚠️ **Unproven until it runs on `master`** — per CLAUDE.md item 35 a workflow's behaviour can only be
-  confirmed by its own run on the default branch (schedule fires only there; a branch push runs
-  nothing). So after this branch merges, trigger it once via "Run workflow" to prove it green; until
-  that first master run, the line is still held by running `dotnet stryker` locally before a merge.
-- **Pre-push diff run** (`--since:master`, changed Core files only) **reports** new survivors so they
-  are visible at push time, but does not hard-block a merge. For a basically-done project where Core
-  changes are rare, weekly-enforced-100% is the robust line; the pre-push report is the early warning.
+- **Per-PR diff-scoped CI check** (`.github/workflows/mutation-pr.yml`) — the enforcement line. On every
+  PR to `master` it runs `dotnet stryker --since:<PR base sha>`, mutating ONLY the Core files the PR
+  changed (and any whose covering tests changed) at break threshold = 100, so a coverage regression fails
+  the check **before** the merge instead of days later. It runs on every PR (no path filter) behind a "did
+  this PR touch Core?" guard that makes it a fast no-op — and a green check — when nothing under
+  `src/ShelfAware.Core` or `tests/ShelfAware.Tests` changed, so it is safe to set as a *required* status
+  check without the skipped-required-check deadlock. It exists because the PantryOnHand regression
+  (2026-08-31, run 33393036318) rode in on PR #42 and sat red until the next weekly run: a per-PR gate is
+  "before the merge is worth more than after it" applied to coverage. The workflow is `pull_request`-
+  triggered, so unlike the weekly one it is proven by its first run on a real PR (this branch's own PR
+  exercises it — it changed Core). A failed run is self-explanatory, not a bare "exit code 2":
+  `.github/scripts/mutation-annotations.sh` (run only on the mutation step's failure) posts each survivor
+  as an inline GitHub annotation on its exact line in the PR diff, plus a plain-English job summary naming
+  the two fixes (add a test, or annotate the equivalent) — so a contributor sees *why* the merge is
+  blocked without opening the log.
+- **Pre-push local gate step** (`.claude/commands/pre-push.md` §3) — the same `dotnet stryker --since:master`,
+  run by hand as part of the pre-merge gate when the branch diff touches Core. Each survivor is treated like
+  a review finding: a real gap gets a test, a true equivalent gets an in-code annotation with a reason. It is
+  the identical check CI enforces, so a clean local gate predicts a green PR check.
+- **Weekly full Core run** (`.github/workflows/mutation.yml`), break threshold = 100 — the backstop. The two
+  diff-scoped checks above only mutate the *changed* files, so neither can see a Core edit that makes a
+  DIFFERENT, unchanged file's previously-killed mutant survive; the weekly run re-tests all ~2600 mutants and
+  goes **red on any drop**, catching exactly that. It runs on a weekly `schedule:` plus on-demand via the
+  Actions "Run workflow" button (`workflow_dispatch`), restores the pinned Stryker tool (`dotnet tool
+  restore`), runs `dotnet stryker` UN-piped so its break-threshold exit fails the job, and uploads the
+  report. Proven green on `master` 2026-08-27 (CLAUDE.md item 35).
 
-The honest imprecision, named: the hard "block on regression" is the weekly red build, not a
-push-time wall, because true push-time regression-diffing against a stored per-mutant baseline is
-fragile. If Core churn ever picks up, the pre-push step can be promoted to a hard block.
+The three layers are diff-fast where it matters (the PR check and the local gate, both seconds-to-minutes on
+the changed files) and full-thorough weekly. The earlier posture — "the pre-push diff run only *reports*; the
+weekly red build is the only hard block" — is **superseded**: Core churn picked up (v5.x shipped real Core —
+`PriceSeries`, `WishlistTiers`, the counting/census engine), and a regression reaching `master` unnoticed for
+three days is the concrete cost that justified promoting the diff run to a hard, per-PR gate. The old worry
+(fragile push-time diffing against a stored per-mutant baseline) never materialised — `--since` diffs against
+a git ref, holds no baseline, and needs none.
 
 ## Score history
 
