@@ -10,11 +10,11 @@ namespace ShelfAware.Web.Data;
 /// <summary>
 /// Orchestrates meal planning: loads the household's setup + pantry, generates the plan a week at a time
 /// (<see cref="IMealPlanGenerator"/>), and assembles it. ONE active plan per household, so generating
-/// REPLACES the old one — deleting the recipes that plan introduced UNLESS they were cooked (a
-/// <see cref="MealEvent"/> references them; deleting would erase that history) or KEPT by the user
-/// (<see cref="Recipe.PlanGenerated"/> cleared). Also owns the setup's AppSettings persistence and reading
-/// the current plan back for display.
-/// <para>Generation happens BEFORE any delete, so a failed AI call leaves the existing plan untouched.</para>
+/// REPLACES the old plan's CALENDAR — but every generated recipe is KEPT as a reusable library (idea #1:
+/// mix-and-match across months). Regenerating a dish the library already holds REUSES that recipe rather
+/// than creating a twin (<see cref="RecipeSignature"/> dedup). Also owns the setup's AppSettings
+/// persistence and reading the current plan back for display.
+/// <para>Generation happens BEFORE any replace, so a failed AI call leaves the existing plan untouched.</para>
 /// </summary>
 public sealed class MealPlanService(
     IHouseholdDbFactory dbFactory,
@@ -108,7 +108,11 @@ public sealed class MealPlanService(
         return MealPlanResult.Ok(planId, planned.Count);
     }
 
-    // Replace the old plan and create the new one — in one transaction, AFTER generation succeeded.
+    // Replace the current plan's CALENDAR and create the new one — in one transaction, AFTER generation
+    // succeeded. Every generated recipe is KEPT as a reusable library (idea #1), so a dish the library
+    // already holds is REUSED (its PlannedMeal points at the existing recipe) rather than creating a twin —
+    // deduped by <see cref="RecipeSignature"/> (name + main ingredients), across past recipes AND within
+    // this batch.
     private async Task<int> PersistAsync(
         MealPlanSettings setup, IReadOnlyList<(PlannedSlot Slot, RecipeSuggestion Meal)> planned, CancellationToken ct)
     {
@@ -118,23 +122,48 @@ public sealed class MealPlanService(
 
         await RemoveOldPlanAsync(db, ct);
 
+        // The library to dedup against: every existing recipe, by signature (earliest id wins). Reusing a
+        // recipe already on file — plan-generated or user-kept — means no twin and no duplicate ingredients.
+        var existing = await db.Recipes
+            .Select(r => new { r.Id, r.Name, Mains = r.Ingredients.Where(i => i.IsMain).Select(i => i.Name) })
+            .ToListAsync(ct);
+        var recipeIdBySignature = new Dictionary<string, int>();
+        foreach (var r in existing)
+            recipeIdBySignature.TryAdd(RecipeSignature.Of(r.Name, r.Mains), r.Id);
+
         var plan = new MealPlan { CreatedAt = DateTimeOffset.Now, StartDate = today, Days = setup.Days };
+        var newBySignature = new Dictionary<string, Recipe>(); // dedup two same-signature meals in one plan
         foreach (var (slot, meal) in planned)
         {
-            var recipe = new Recipe
+            var signature = RecipeSignature.Of(meal.Name, meal.Ingredients.Where(i => i.IsMain).Select(i => i.Name));
+            var plannedMeal = new PlannedMeal { Date = today.AddDays(slot.Day), Slot = slot.Slot };
+            if (recipeIdBySignature.TryGetValue(signature, out var existingId))
             {
-                Name = meal.Name,
-                Blurb = meal.Blurb,
-                SavedAt = DateTimeOffset.Now,
-                PlanGenerated = true,
-                EstimatedCaloriesPerServing = meal.CaloriesPerServing,
-                Ingredients = meal.Ingredients.Select(i => new RecipeIngredient
+                plannedMeal.RecipeId = existingId;                 // reuse a recipe already on file
+            }
+            else if (newBySignature.TryGetValue(signature, out var justAdded))
+            {
+                plannedMeal.Recipe = justAdded;                   // reuse one created earlier in this batch
+            }
+            else
+            {
+                var recipe = new Recipe
                 {
-                    Name = i.Name, IsMain = i.IsMain, MatchedProduct = i.MatchedProduct, Quantity = i.Quantity,
-                }).ToList(),
-                Steps = meal.Steps.Select((t, idx) => new RecipeStep { Order = idx + 1, Text = t }).ToList(),
-            };
-            plan.Meals.Add(new PlannedMeal { Recipe = recipe, Date = today.AddDays(slot.Day), Slot = slot.Slot });
+                    Name = meal.Name,
+                    Blurb = meal.Blurb,
+                    SavedAt = DateTimeOffset.Now,
+                    PlanGenerated = true,
+                    EstimatedCaloriesPerServing = meal.CaloriesPerServing,
+                    Ingredients = meal.Ingredients.Select(i => new RecipeIngredient
+                    {
+                        Name = i.Name, IsMain = i.IsMain, MatchedProduct = i.MatchedProduct, Quantity = i.Quantity,
+                    }).ToList(),
+                    Steps = meal.Steps.Select((t, idx) => new RecipeStep { Order = idx + 1, Text = t }).ToList(),
+                };
+                newBySignature[signature] = recipe;
+                plannedMeal.Recipe = recipe;
+            }
+            plan.Meals.Add(plannedMeal);
         }
         db.MealPlans.Add(plan);
         await db.SaveChangesAsync(ct);
@@ -142,25 +171,16 @@ public sealed class MealPlanService(
         return plan.Id;
     }
 
-    // Delete the current plan and the recipes it introduced — but KEEP any that were cooked (a MealEvent
-    // references them, deleting would erase that history) or KEPT by the user (PlanGenerated cleared). The
-    // slots are removed first so the recipes are unreferenced before the recipe delete's FK check.
+    // Replace the current plan's CALENDAR but KEEP every generated recipe as a reusable library (idea #1:
+    // mix-and-match across months). Removing the MealPlan cascades its PlannedMeals; the recipes those
+    // pointed to survive (a recipe is the OTHER parent of a PlannedMeal, not deleted with the plan),
+    // orphaned until a future plan reuses one (PersistAsync dedups) or the user browses them under the
+    // Cookbook's "Meal-plan recipes" filter. Nothing is deleted here, so cooked history is safe too.
     private static async Task RemoveOldPlanAsync(ShelfAwareDbContext db, CancellationToken ct)
     {
-        var oldPlans = await db.MealPlans.Include(p => p.Meals).ToListAsync(ct);
+        var oldPlans = await db.MealPlans.ToListAsync(ct);
         if (oldPlans.Count == 0) return;
-
-        var recipeIds = oldPlans.SelectMany(p => p.Meals.Select(m => m.RecipeId)).Distinct().ToList();
-        db.MealPlans.RemoveRange(oldPlans); // cascades the PlannedMeals
-        await db.SaveChangesAsync(ct);
-
-        var cooked = await db.MealEvents
-            .Where(m => recipeIds.Contains(m.RecipeId))
-            .Select(m => m.RecipeId).Distinct().ToListAsync(ct);
-        var stale = await db.Recipes
-            .Where(r => recipeIds.Contains(r.Id) && r.PlanGenerated && !cooked.Contains(r.Id))
-            .ToListAsync(ct);
-        db.Recipes.RemoveRange(stale); // cascades their ingredients / steps / tags
+        db.MealPlans.RemoveRange(oldPlans); // cascades the PlannedMeals; recipes stay as the library
         await db.SaveChangesAsync(ct);
     }
 

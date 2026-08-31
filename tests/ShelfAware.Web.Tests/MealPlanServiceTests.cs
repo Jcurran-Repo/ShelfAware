@@ -107,7 +107,7 @@ public class MealPlanServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Generate_replaces_the_old_plan_and_deletes_its_unkept_recipes()
+    public async Task Generate_replaces_the_plan_calendar_but_keeps_old_recipes_as_a_library()
     {
         var settings = new FakeAppSettings(); // one store, shared by both generate calls
         var service = Service(new FakeMealPlanGenerator([Meal("Old A"), Meal("Old B")]), settings);
@@ -120,19 +120,19 @@ public class MealPlanServiceTests : IDisposable
         await using var db = _db.CreateDbContext();
         Assert.Single(await db.MealPlans.ToListAsync());                            // one active plan
         var names = await db.Recipes.Select(r => r.Name).OrderBy(n => n).ToListAsync();
-        Assert.Equal(["New A", "New B"], names);                                    // the old plan's recipes are gone
-        Assert.Equal(2, await db.PlannedMeals.CountAsync());
+        Assert.Equal(["New A", "New B", "Old A", "Old B"], names);                  // old recipes KEPT as the library
+        Assert.Equal(2, await db.PlannedMeals.CountAsync());                        // only the new plan is scheduled
     }
 
     [Fact]
-    public async Task Generate_keeps_a_cooked_plan_recipe_when_it_replaces_the_plan()
+    public async Task Regenerating_keeps_every_old_recipe_including_uncooked_ones()
     {
         var settings = new FakeAppSettings();
         var service = Service(new FakeMealPlanGenerator([Meal("Keeper"), Meal("Throwaway")]), settings);
         await SaveSettings(service, new MealPlanSettings { Days = 2 });
         await service.GenerateAsync();
 
-        // Cook "Keeper" — a MealEvent now references its recipe, so regenerating must not erase that history.
+        // Cook "Keeper" — a MealEvent references its recipe; that history must survive a regenerate.
         int keeperId;
         await using (var db = _db.CreateDbContext())
         {
@@ -145,10 +145,45 @@ public class MealPlanServiceTests : IDisposable
 
         await using (var db = _db.CreateDbContext())
         {
-            Assert.NotNull(await db.Recipes.FirstOrDefaultAsync(r => r.Id == keeperId)); // cooked → survives
-            Assert.Null(await db.Recipes.FirstOrDefaultAsync(r => r.Name == "Throwaway")); // uncooked → deleted
-            Assert.Single(await db.MealEvents.ToListAsync());                              // its meal-log is intact
+            Assert.NotNull(await db.Recipes.FirstOrDefaultAsync(r => r.Id == keeperId));      // cooked → survives
+            Assert.NotNull(await db.Recipes.FirstOrDefaultAsync(r => r.Name == "Throwaway")); // uncooked → kept too (library)
+            Assert.Single(await db.MealEvents.ToListAsync());                                  // its meal-log is intact
         }
+    }
+
+    [Fact]
+    public async Task Regenerating_the_same_dish_reuses_the_recipe_instead_of_making_a_twin()
+    {
+        var settings = new FakeAppSettings();
+        var service = Service(new FakeMealPlanGenerator([Meal("Skillet Tacos")]), settings);
+        await SaveSettings(service, new MealPlanSettings { Days = 1 });
+        await service.GenerateAsync();
+
+        int firstId;
+        await using (var db = _db.CreateDbContext())
+            firstId = (await db.Recipes.SingleAsync(r => r.Name == "Skillet Tacos")).Id;
+
+        // Regenerate the identical dish (same name + main ingredient).
+        await Service(new FakeMealPlanGenerator([Meal("Skillet Tacos")]), settings).GenerateAsync();
+
+        await using (var db = _db.CreateDbContext())
+        {
+            Assert.Single(await db.Recipes.Where(r => r.Name == "Skillet Tacos").ToListAsync()); // ONE, not two
+            Assert.Equal(firstId, (await db.PlannedMeals.SingleAsync()).RecipeId);               // new plan reuses it
+        }
+    }
+
+    [Fact]
+    public async Task Two_identical_meals_in_one_plan_share_one_recipe()
+    {
+        var service = Service(new FakeMealPlanGenerator([Meal("Chili"), Meal("Chili")]));
+        await SaveSettings(service, new MealPlanSettings { Days = 2 });
+
+        await service.GenerateAsync();
+
+        await using var db = _db.CreateDbContext();
+        Assert.Single(await db.Recipes.Where(r => r.Name == "Chili").ToListAsync()); // one recipe…
+        Assert.Equal(2, await db.PlannedMeals.CountAsync());                          // …both slots point at it
     }
 
     [Fact]

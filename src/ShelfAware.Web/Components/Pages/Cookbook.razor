@@ -34,6 +34,22 @@
 @if (allRecipes.Count > 0)
 {
     <section class="panel cookbook-interactive">
+        @{ var planCount = allRecipes.Count(r => r.PlanGenerated); var mineCount = allRecipes.Count - planCount; }
+        @if (planCount > 0 && mineCount > 0)
+        {
+            @* Two libraries: your own kept recipes, and the meal-plan generated ones — kept apart so the
+               plan's output doesn't drown the recipes you chose to save. Only shown when both exist. *@
+            <div class="cookbook-source" role="group" aria-label="Which recipes to show">
+                <button type="button" class="secondary @(showPlanRecipes ? null : "active")"
+                        aria-pressed="@(showPlanRecipes ? "false" : "true")" @onclick="() => SetSource(plan: false)">
+                    My recipes <span class="tag-count">@mineCount</span>
+                </button>
+                <button type="button" class="secondary @(showPlanRecipes ? "active" : null)"
+                        aria-pressed="@(showPlanRecipes ? "true" : "false")" @onclick="() => SetSource(plan: true)">
+                    Meal-plan recipes <span class="tag-count">@planCount</span>
+                </button>
+            </div>
+        }
         <div class="cookbook-filters">
             @if (productOptions.Count > 0)
             {
@@ -369,6 +385,7 @@ else
     private string productFilterText = ""; // the type-and-guess box's text; kept in step with the active filter
     private string? filterHint; // shown when a typed entry resolves to nothing/many, so a commit is never a silent no-op
     private string? activeTag;         // resolved from ?tag
+    private bool showPlanRecipes;      // false = your own kept recipes; true = the meal-plan library
     private Recipe? readingRecipe;     // the recipe whose read-aloud panel is open (null = none)
 
     // Tag editing (all through RecipeTagService — the one write path)
@@ -484,7 +501,9 @@ else
         filterHint = null; // any navigation lands on a real filter, so a stale "no match" note must not linger
         activeTag = Tag is { Length: > 0 } ? Tag : null;
 
-        IEnumerable<Recipe> q = allRecipes;
+        // Source first: your own kept recipes by default, or the meal-plan library when that tab is picked —
+        // so generated recipes accumulate as a browsable library without drowning your saved ones.
+        IEnumerable<Recipe> q = allRecipes.Where(r => showPlanRecipes ? r.PlanGenerated : !r.PlanGenerated);
         if (filterProductName is { } productName)
         {
             q = q.Where(r => r.Uses(productName));
@@ -496,6 +515,18 @@ else
 
         filtered = q.OrderBy(r => r.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
         if (index >= filtered.Count) index = Math.Max(0, filtered.Count - 1);
+    }
+
+    // Switch between your own recipes and the meal-plan library. Resets to the first card and closes any open
+    // reader (the deck it belonged to is changing out from under it).
+    private void SetSource(bool plan)
+    {
+        if (showPlanRecipes == plan) return;
+        showPlanRecipes = plan;
+        readingRecipe = null;
+        index = 0;
+        ApplyFilters();
+        _pendingScroll = 0;
     }
 
     private string FilterBannerText() => (filterProductName, activeTag) switch

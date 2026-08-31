@@ -94,6 +94,21 @@ public class CookbookPageTests : PageTestContext
         return recipe.Id;
     }
 
+    // A meal-plan-generated recipe (PlanGenerated) — the library the source toggle reveals.
+    private void SeedPlanRecipe(string name, string mainIngredient = "beef")
+    {
+        using var db = Db.CreateDbContext();
+        db.Recipes.Add(new Recipe
+        {
+            Name = name,
+            SavedAt = DateTimeOffset.Now,
+            PlanGenerated = true,
+            Ingredients = [new RecipeIngredient { Name = mainIngredient, IsMain = true }],
+            Steps = [new RecipeStep { Order = 1, Text = "Cook." }],
+        });
+        db.SaveChanges();
+    }
+
     private IRenderedComponent<Cookbook> RenderCookbook()
     {
         var cut = Render<Cookbook>();
@@ -725,6 +740,35 @@ public class CookbookPageTests : PageTestContext
             ? Directory.GetFiles(_imageDir, "*.jpg", SearchOption.AllDirectories)
             : [];
         Assert.Empty(strays);
+    }
+
+    // ------------------------------------------------------------------ meal-plan library source toggle
+
+    [Fact]
+    public void Meal_plan_recipes_are_hidden_by_default_and_shown_on_the_meal_plan_tab()
+    {
+        SeedRecipe("My Lasagna", [("pasta", true, null, null)], "Bake.");
+        SeedPlanRecipe("Planned Tacos");
+
+        var cut = RenderCookbook();
+
+        // Default view = your own kept recipes; the plan library is tucked away.
+        Assert.Contains("My Lasagna", cut.Markup);
+        Assert.DoesNotContain("Planned Tacos", cut.Markup);
+
+        cut.FindAll(".cookbook-source button").First(b => b.TextContent.Contains("Meal-plan")).Click();
+
+        // The meal-plan tab shows the library and not your own recipes.
+        Assert.Contains("Planned Tacos", cut.Markup);
+        Assert.DoesNotContain("My Lasagna", cut.Markup);
+    }
+
+    [Fact]
+    public void The_source_toggle_only_appears_when_both_libraries_exist()
+    {
+        SeedRecipe("Only Mine", [("x", true, null, null)], "Do.");
+
+        Assert.Empty(RenderCookbook().FindAll(".cookbook-source"));
     }
 }
 

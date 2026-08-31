@@ -2430,6 +2430,22 @@ button.tag-chip {
     margin-bottom: 0.8rem;
 }
 
+/* The My-recipes / Meal-plan-recipes source toggle — a two-button segmented control. The active side
+   reads as pressed (accent fill); reuses the button .secondary base. */
+.cookbook-source {
+    display: inline-flex;
+    gap: 0;
+    margin-bottom: 0.8rem;
+}
+.cookbook-source button:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.cookbook-source button:last-child { border-radius: 0 var(--radius) var(--radius) 0; margin-left: -1px; }
+.cookbook-source button.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+    position: relative; /* sit above the sibling's shared border */
+}
+
 .cookbook-product-filter {
     margin: 0;
 }
