@@ -122,6 +122,40 @@ public class MealPlanPageTests : PageTestContext
         Assert.Empty(cut.FindAll(".mealplan-meal"));
     }
 
+    [Fact]
+    public void Add_a_meal_appends_a_row()
+    {
+        var cut = RenderPage();
+
+        Assert.Single(cut.FindAll(".mealplan-mealrow"));   // one dinner row by default
+        cut.Find(".mealplan-addmeal").Click();
+
+        Assert.Equal(2, cut.FindAll(".mealplan-mealrow").Count);
+    }
+
+    [Fact]
+    public async Task Generating_saves_the_per_meal_line_up_with_its_overrides()
+    {
+        // The write path that matters: a per-meal override typed into a row must reach the saved settings
+        // (which the generator then expands into per-slot targets). Second row → a 150-cal quick snack.
+        var cut = RenderPage();
+        cut.Find(".mealplan-addmeal").Click();
+
+        // Each Change re-renders (via @bind/@onchange), so re-query the row fresh before each edit — the
+        // captured element handle goes stale after the previous render (a documented bUnit gotcha).
+        cut.FindAll(".mealplan-mealrow")[1].QuerySelector("select[aria-label='Meal type']")!.Change("Snack");
+        cut.FindAll(".mealplan-mealrow")[1].QuerySelector("input[type='number']")!.Change("150");
+        cut.FindAll(".mealplan-mealrow")[1].QuerySelector("select[aria-label*='Effort']")!.Change("Quick");
+
+        Generate(cut);
+
+        var saved = await Services.GetRequiredService<MealPlanService>().LoadSettingsAsync();
+        Assert.Equal(2, saved.Meals.Count);
+        var snack = Assert.Single(saved.Meals, m => m.Slot == MealSlot.Snack);
+        Assert.Equal(150, snack.Calories);                 // per-meal override survived to the store
+        Assert.Equal(TimeEffort.Quick, snack.Effort);
+    }
+
     /// <summary>A fake job runner: records who was Started and returns a scripted <see cref="Current"/>
     /// snapshot (the page polls it). No detached task — that's the real runner's own concern.</summary>
     private sealed class FakeMealPlanJobs : IMealPlanJobs
