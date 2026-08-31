@@ -344,11 +344,27 @@ Phasing (on branch `feature/meal-planning-phase0`; `/pre-push` gate before any m
      **~30 min / ~$1.70–2.80 / ~2× more verbose** (killed early — too slow). Method-rebuild correct on both
      (chuck roast braised 7–8 hrs vs ground chuck browned). The default `ChatModel` (`claude-haiku-4-5`) is
      right; no override.
-2. **Calendar + reroll** — a nicer month view; per-slot regenerate. ("Add a meal" already generates one
-   keepable meal via the per-meal builder; reroll ties a single generated meal to a specific calendar slot.)
-3. **Pantry projection + grocery-list provenance** (§5b/§6) — the shared-definition provenance in Core,
-   earliest-card dedup, the third source on the list + dashboard.
+3. ✅ **Pantry projection + grocery-list provenance** (§5b/§6) — DONE, live-verified.
+   - **3a — `MealPlanProjection` (Core):** the plan's shop items, derived at read time (a missing MAIN
+     ingredient in the next 14 days → a buy-before due date; on-hand ingredients are spoken for). Pure,
+     writes nothing. 9 tests, mutation-checked.
+   - **3b — `GroceryBoard` (Core) + the grocery list:** the ONE definition of a shopping row's provenance
+     (tag + tint) and the earliest-card dedup, consumed by `/list` (dashboard still to wire). Plan items
+     ride the existing list as tinted "Plan" rows with a "for <recipe>" note; a food the predictor also
+     lists shows once, annotated "also for …". Aisle→due-date order preserved (Jordan's call — the
+     walk-the-store-once UX; the doc's "sorted by due date" was superseded). 5 + 3 tests, mutation-checked.
+   - **Recipe library (idea #1 foundation):** regenerating KEEPS every generated recipe (was: deleted);
+     dedup by `RecipeSignature` (name + main ingredients); a Cookbook "My recipes / Meal-plan recipes"
+     source toggle. 5 + 4 + 2 tests.
+2. **Calendar + reroll** (NEXT) — Jordan's ask: an actual 30-day calendar (meal titles in a month grid,
+   expandable / clickthrough cards — "see a small summary of their future"); plus per-slot reroll.
+3b-remaining. **Dashboard plan items** — surface plan items on Running Low / Coming up via the same
+   `GroceryBoard` definition (the Core merge is ready; only Home.razor wiring remains).
 4. **Census expiration** (§7) — the `CountExpiration` model change + the review-grid column.
+
+**Also queued (Jordan, cross-cutting):** sortable + saved columns on data tables everywhere — a big UI
+win; its own arc after the calendar. (The default aisle-walk stays; a user can re-sort and it's remembered,
+which also settles the §5b ordering question for good.)
 
 **Phase-3+ vision items (Jordan-approved, quality-ranked — future work, not the mechanical phases above):**
 - **Taste-learning & reuse** (85%) — bias generation toward what's actually cooked/kept (TimesEaten, kept
