@@ -2012,6 +2012,82 @@ button.tag-chip {
     margin-bottom: 0.8rem;
 }
 
+/* Month-grid calendar (MealPlanPage): weekday header + week rows of 7 day cells, each showing its meal
+   titles; click a day to expand its recipes below. Cells shrink to fit (minmax 0) so it never overflows. */
+.mealcal {
+    margin-bottom: 1.2rem;
+}
+.mealcal-weekhead,
+.mealcal-week {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 4px;
+}
+.mealcal-weekhead {
+    margin-bottom: 4px;
+    font-size: 0.75rem;
+    color: var(--ink-soft);
+    text-align: center;
+}
+.mealcal-week {
+    margin-bottom: 4px;
+}
+.mealcal-day {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-height: 4.5rem;
+    padding: 4px;
+    text-align: left;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+    overflow: hidden;
+}
+.mealcal-day:hover:not(.mealcal-pad) { border-color: var(--accent); }
+.mealcal-day.today { border-color: var(--accent); }
+.mealcal-day.selected {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+    background: var(--surface-alt);
+}
+.mealcal-day.mealcal-pad {
+    background: transparent;
+    border-color: transparent;
+    cursor: default;
+    min-height: 0;
+}
+.mealcal-daynum {
+    font-size: 0.75rem;
+    color: var(--ink-soft);
+    font-weight: 600;
+}
+.mealcal-day.today .mealcal-daynum { color: var(--accent-ink); }
+/* A meal title chip in a day cell — truncated to one line; a coloured left edge marks the slot. */
+.mealcal-meal {
+    font-size: 0.72rem;
+    line-height: 1.2;
+    padding: 2px 4px;
+    border-radius: 4px;
+    background: var(--surface-alt);
+    border-left: 3px solid var(--unknown-line);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.mealcal-meal.slot-breakfast { border-left-color: var(--duesoon-line); }
+.mealcal-meal.slot-lunch { border-left-color: var(--stocked-line); }
+.mealcal-meal.slot-dinner { border-left-color: var(--accent); }
+.mealcal-meal.slot-snack { border-left-color: var(--plan-line); }
+.mealcal-detail {
+    border-top: 1px solid var(--line);
+    padding-top: 0.8rem;
+}
+.mealcal-detail > h3 { margin-top: 0; }
+
 /* Ingredient row with its swap control + bubble cloud. */
 .ingredient-list li {
     display: flex;

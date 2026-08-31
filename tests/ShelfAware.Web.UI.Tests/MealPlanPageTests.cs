@@ -104,10 +104,31 @@ public class MealPlanPageTests : PageTestContext
 
         cut.WaitForAssertion(() =>
         {
-            Assert.Equal(2, cut.FindAll(".mealplan-meal").Count);
+            // Both meals appear as titles in the calendar grid…
+            Assert.Equal(2, cut.FindAll(".mealcal-meal").Count);
             Assert.Contains("Tacos", cut.Markup);
+            Assert.Contains("Stir Fry", cut.Markup);
+            // …and today's meal is expanded in the detail panel below.
+            Assert.Single(cut.FindAll(".mealcal-detail .mealplan-meal"));
+            Assert.Contains("Tacos", cut.Find(".mealcal-detail").TextContent);
             Assert.Contains("Planned 2 meals.", cut.Markup);
         });
+    }
+
+    [Fact]
+    public void Clicking_a_day_expands_that_days_meals()
+    {
+        SeedPlan("Tacos", "Stir Fry");   // Tacos today, Stir Fry tomorrow (SeedPlan dates them day-by-day)
+        var cut = RenderPage();           // the plan loads on init; the detail defaults to today
+
+        Assert.Contains("Tacos", cut.Find(".mealcal-detail").TextContent);
+
+        // Click the day cell showing "Stir Fry" — its detail replaces today's.
+        cut.FindAll(".mealcal-day").First(d => d.TextContent.Contains("Stir Fry")).Click();
+
+        var detail = cut.Find(".mealcal-detail").TextContent;
+        Assert.Contains("Stir Fry", detail);
+        Assert.DoesNotContain("Tacos", detail);
     }
 
     [Fact]

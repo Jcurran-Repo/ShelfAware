@@ -133,50 +133,58 @@
 {
     <section class="panel">
         <div class="page-head">
-            <h2>Your plan <span class="muted">— @p.Meals.Count meal@(p.Meals.Count == 1 ? "" : "s")</span></h2>
+            <h2>Your plan <span class="muted">— @p.Days day@(p.Days == 1 ? "" : "s"), @p.Meals.Count meal@(p.Meals.Count == 1 ? "" : "s")</span></h2>
         </div>
-        @foreach (var day in p.Meals.GroupBy(m => m.Date).OrderBy(g => g.Key))
-        {
-            <div class="mealplan-day">
-                <h3>@day.Key.ToString("ddd, MMM d")</h3>
-                @foreach (var meal in day.OrderBy(m => m.Slot))
+
+        @* Month-at-a-glance: each day shows its meal titles (a summary of the week ahead); click a day to
+           expand its full recipes below. The week layout (Sun–Sat with padding) is MealCalendar. *@
+        <div class="mealcal" role="grid" aria-label="Meal plan calendar">
+            <div class="mealcal-weekhead" role="row">
+                @foreach (var wd in WeekdayLabels)
                 {
-                    <article class="recipe-card mealplan-meal">
-                        <div class="recipe-card-top">
-                            <h4><span class="chip chip-stocked">@meal.Slot</span> @meal.Recipe!.Name</h4>
-                        </div>
-                        @if (meal.Recipe.Blurb is { Length: > 0 } blurb)
+                    <div role="columnheader">@wd</div>
+                }
+            </div>
+            @foreach (var week in MealCalendar.Weeks(p.StartDate, p.Days))
+            {
+                <div class="mealcal-week" role="row">
+                    @foreach (var cell in week)
+                    {
+                        @if (cell is { } date)
                         {
-                            <p class="muted">@blurb</p>
+                            var dayMeals = mealsByDate.GetValueOrDefault(date, NoMeals);
+                            var dayClass = "mealcal-day"
+                                + (date == Today ? " today" : "")
+                                + (date == selectedDate ? " selected" : "");
+                            <button type="button" role="gridcell"
+                                    class="@dayClass"
+                                    @onclick="() => SelectDay(date)"
+                                    aria-pressed="@(date == selectedDate ? "true" : "false")"
+                                    aria-label="@DayAriaLabel(date, dayMeals)">
+                                <span class="mealcal-daynum">@date.Day</span>
+                                @foreach (var m in dayMeals)
+                                {
+                                    <span class="mealcal-meal slot-@m.Slot.ToString().ToLowerInvariant()"
+                                          title="@m.Slot: @m.Recipe!.Name">@m.Recipe!.Name</span>
+                                }
+                            </button>
                         }
-                        @if (meal.Recipe.EstimatedCaloriesPerServing is { } cal)
+                        else
                         {
-                            <p class="recipe-cal">~@cal cal / serving <span class="muted">(est.)</span></p>
+                            <div class="mealcal-day mealcal-pad" role="gridcell" aria-hidden="true"></div>
                         }
-                        <ul class="ingredient-list">
-                            @foreach (var i in meal.Recipe.MainIngredients)
-                            {
-                                <li>@RecipeFormat.Line(i.Quantity, i.Name)</li>
-                            }
-                            @{ var seasonings = meal.Recipe.Seasonings.Select(i => i.Name).ToList(); }
-                            @if (seasonings.Count > 0)
-                            {
-                                <li class="muted">+ @string.Join(", ", seasonings)</li>
-                            }
-                        </ul>
-                        @if (meal.Recipe.Steps.Count > 0)
-                        {
-                            <details class="recipe-steps">
-                                <summary>Steps (@meal.Recipe.Steps.Count)</summary>
-                                <ol>
-                                    @foreach (var step in meal.Recipe.Steps.OrderBy(s => s.Order))
-                                    {
-                                        <li>@step.Text</li>
-                                    }
-                                </ol>
-                            </details>
-                        }
-                    </article>
+                    }
+                </div>
+            }
+        </div>
+
+        @if (selectedDate is { } sel && mealsByDate.TryGetValue(sel, out var selectedMeals))
+        {
+            <div class="mealcal-detail">
+                <h3>@sel.ToString("dddd, MMM d")</h3>
+                @foreach (var meal in selectedMeals)
+                {
+                    @MealCard(meal)
                 }
             </div>
         }
@@ -220,6 +228,70 @@ else if (!generating)
     private string? error;
     private string? note;
 
+    // Calendar view: the plan's meals bucketed by day, and which day's detail is expanded below the grid.
+    private static readonly DateOnly Today = DateOnly.FromDateTime(DateTime.Today);
+    private static readonly string[] WeekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    private static readonly List<PlannedMeal> NoMeals = [];
+    private Dictionary<DateOnly, List<PlannedMeal>> mealsByDate = [];
+    private DateOnly? selectedDate;
+
+    // Bucket the current plan's meals by day (each day's slots in order) and open a sensible day: today if the
+    // plan covers it, else the first planned day. Called whenever the plan is (re)loaded.
+    private void IndexPlan()
+    {
+        mealsByDate = plan?.Meals
+            .GroupBy(m => m.Date)
+            .ToDictionary(g => g.Key, g => g.OrderBy(m => m.Slot).ToList()) ?? [];
+        selectedDate = mealsByDate.ContainsKey(Today)
+            ? Today
+            : mealsByDate.Keys.OrderBy(d => d).Cast<DateOnly?>().FirstOrDefault();
+    }
+
+    private void SelectDay(DateOnly date) => selectedDate = date;
+
+    private static string DayAriaLabel(DateOnly date, List<PlannedMeal> dayMeals) =>
+        dayMeals.Count == 0
+            ? $"{date:MMM d}, no meals"
+            : $"{date:MMM d}: {string.Join(", ", dayMeals.Select(m => m.Recipe!.Name))}";
+
+    // One meal's full card — shown in the selected-day detail below the calendar grid.
+    private RenderFragment MealCard(PlannedMeal meal) => @<article class="recipe-card mealplan-meal">
+        <div class="recipe-card-top">
+            <h4><span class="chip chip-stocked">@meal.Slot</span> @meal.Recipe!.Name</h4>
+        </div>
+        @if (meal.Recipe.Blurb is { Length: > 0 } blurb)
+        {
+            <p class="muted">@blurb</p>
+        }
+        @if (meal.Recipe.EstimatedCaloriesPerServing is { } cal)
+        {
+            <p class="recipe-cal">~@cal cal / serving <span class="muted">(est.)</span></p>
+        }
+        <ul class="ingredient-list">
+            @foreach (var i in meal.Recipe.MainIngredients)
+            {
+                <li>@RecipeFormat.Line(i.Quantity, i.Name)</li>
+            }
+            @{ var seasonings = meal.Recipe.Seasonings.Select(i => i.Name).ToList(); }
+            @if (seasonings.Count > 0)
+            {
+                <li class="muted">+ @string.Join(", ", seasonings)</li>
+            }
+        </ul>
+        @if (meal.Recipe.Steps.Count > 0)
+        {
+            <details class="recipe-steps">
+                <summary>Steps (@meal.Recipe.Steps.Count)</summary>
+                <ol>
+                    @foreach (var step in meal.Recipe.Steps.OrderBy(s => s.Order))
+                    {
+                        <li>@step.Text</li>
+                    }
+                </ol>
+            </details>
+        }
+    </article>;
+
     protected override async Task OnInitializedAsync()
     {
         var setup = await Planner.LoadSettingsAsync();
@@ -245,6 +317,7 @@ else if (!generating)
 
         householdId = await Household.GetIdAsync();
         plan = await Planner.GetCurrentPlanAsync();
+        IndexPlan();
 
         // Resume showing an in-flight generation the user left and came back to.
         if (householdId is not null && Jobs.Current(householdId) is { State: MealPlanJobState.Running })
@@ -324,6 +397,7 @@ else if (!generating)
                     if (snap.State == MealPlanJobState.Done)
                     {
                         plan = await Planner.GetCurrentPlanAsync();
+                        IndexPlan();
                         note = $"Planned {snap.MealCount} meal{(snap.MealCount == 1 ? "" : "s")}.";
                     }
                     else
