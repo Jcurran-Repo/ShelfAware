@@ -32,6 +32,8 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
     public DbSet<AppSetting> AppSettings => Set<AppSetting>();
     public DbSet<AiUsage> AiUsages => Set<AiUsage>();
     public DbSet<ActivityEntry> ActivityEntries => Set<ActivityEntry>();
+    public DbSet<MealPlan> MealPlans => Set<MealPlan>();
+    public DbSet<PlannedMeal> PlannedMeals => Set<PlannedMeal>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -67,6 +69,8 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
         ApplyHousehold<BugReport>(modelBuilder);
         ApplyHousehold<AiUsage>(modelBuilder);
         ApplyHousehold<ActivityEntry>(modelBuilder);
+        ApplyHousehold<MealPlan>(modelBuilder);
+        ApplyHousehold<PlannedMeal>(modelBuilder);
 
         // One usage row per household per day (the upsert's race-safety anchor).
         modelBuilder.Entity<AiUsage>()
@@ -92,6 +96,10 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
         // Reports read meals by recipe and date range, same access shape as purchases above.
         modelBuilder.Entity<MealEvent>()
             .HasIndex(m => new { m.RecipeId, m.AteAt });
+
+        // A meal plan's slots are read by plan and date (the calendar's ordering).
+        modelBuilder.Entity<PlannedMeal>()
+            .HasIndex(m => new { m.MealPlanId, m.Date });
     }
 
     private void ApplyHousehold<TEntity>(ModelBuilder modelBuilder) where TEntity : class, IHouseholdOwned

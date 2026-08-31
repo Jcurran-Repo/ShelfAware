@@ -78,6 +78,9 @@ public class HouseholdIsolationTests : IDisposable
                 Kind = ActivityKind.PurchaseAdded, OccurredAt = DateTimeOffset.Now,
                 Summary = "Bought 1 × Whole Milk", PayloadJson = "{}", Reversibility = Reversibility.Reversible,
             });
+            var plan = new MealPlan { CreatedAt = DateTimeOffset.Now, StartDate = new DateOnly(2026, 9, 1), Days = 7 };
+            plan.Meals.Add(new PlannedMeal { Recipe = toast, Date = new DateOnly(2026, 9, 2), Slot = MealSlot.Dinner });
+            db.MealPlans.Add(plan);
             await db.SaveChangesAsync();
         }
 
@@ -96,6 +99,8 @@ public class HouseholdIsolationTests : IDisposable
             Assert.Empty(await db.SavedReports.ToListAsync());
             Assert.Empty(await db.BugReports.ToListAsync());
             Assert.Empty(await db.ActivityEntries.ToListAsync());
+            Assert.Empty(await db.MealPlans.ToListAsync());
+            Assert.Empty(await db.PlannedMeals.ToListAsync());
         }
 
         await using (var db = As(A))
@@ -103,6 +108,8 @@ public class HouseholdIsolationTests : IDisposable
             Assert.Single(await db.Products.Include(p => p.Purchases).ToListAsync());
             Assert.Single(await db.Recipes.Include(r => r.Ingredients).Include(r => r.Steps).ToListAsync());
             Assert.Single(await db.RecipeTags.ToListAsync());
+            Assert.Single(await db.MealPlans.Include(p => p.Meals).ToListAsync());
+            Assert.Single(await db.PlannedMeals.ToListAsync());
         }
     }
 

@@ -75,6 +75,8 @@ public sealed class UserDataService(
             SavedReports = await db.SavedReports.AsNoTracking().ToListAsync(ct),
             BugReports = await db.BugReports.AsNoTracking().ToListAsync(ct),
             ActivityEntries = await db.ActivityEntries.AsNoTracking().ToListAsync(ct),
+            MealPlans = await db.MealPlans.AsNoTracking().ToListAsync(ct),
+            PlannedMeals = await db.PlannedMeals.AsNoTracking().ToListAsync(ct),
         };
     }
 
@@ -289,6 +291,8 @@ public sealed class UserDataService(
             + await db.GroceryExtras.CountAsync(ct)
             + await db.BugReports.CountAsync(ct)
             + await db.ActivityEntries.CountAsync(ct)
+            + await db.MealPlans.CountAsync(ct)
+            + await db.PlannedMeals.CountAsync(ct)
             + await db.AppSettings.CountAsync(ct);
     }
 
@@ -310,6 +314,8 @@ public sealed class UserDataService(
         await db.RecipeIngredients.ExecuteDeleteAsync(ct);
         await db.RecipeTags.ExecuteDeleteAsync(ct);  // references Recipe — before its parent, like the two above
         await db.MealEvents.ExecuteDeleteAsync(ct); // references Recipe — before its parent, like the two above
+        await db.PlannedMeals.ExecuteDeleteAsync(ct); // references MealPlan AND Recipe — before both
+        await db.MealPlans.ExecuteDeleteAsync(ct);
         await db.Recipes.ExecuteDeleteAsync(ct);
         await db.ReceiptLines.ExecuteDeleteAsync(ct);
         await db.PurchaseEvents.ExecuteDeleteAsync(ct);   // references both Product and Receipt
@@ -444,4 +450,9 @@ public sealed class DataExport
     /// <summary>The activity log — every undoable action the household took. User content (it names
     /// their products, dates and merchants), so it exports and is wiped by "delete all my data".</summary>
     public IReadOnlyList<ActivityEntry> ActivityEntries { get; init; } = [];
+
+    /// <summary>The household's meal plan and its dated slots — user content, so both export and are wiped
+    /// by "delete all my data".</summary>
+    public IReadOnlyList<MealPlan> MealPlans { get; init; } = [];
+    public IReadOnlyList<PlannedMeal> PlannedMeals { get; init; } = [];
 }

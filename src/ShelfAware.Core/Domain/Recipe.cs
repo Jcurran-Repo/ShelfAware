@@ -30,6 +30,11 @@ public class Recipe : IHouseholdOwned
     /// use what's on hand); null for an original. Variants group under their parent on the Recipes page.</summary>
     public int? ParentRecipeId { get; set; }
 
+    /// <summary>True for a recipe the meal PLANNER generated (vs. one the user saved from an idea or
+    /// imported). The Cookbook hides plan-generated recipes until the user "keeps" one (clears this), so a
+    /// month of auto-generated meals doesn't flood the browse shelf.</summary>
+    public bool PlanGenerated { get; set; }
+
     // ── Behaviour ───────────────────────────────────────────────────────────────────────────────────
     // Ask the recipe about itself ("are you a variant?", "can I make you with this?") instead of poking
     // at raw fields from every caller. The fuzzy makeability rules stay in IngredientMatcher (the domain

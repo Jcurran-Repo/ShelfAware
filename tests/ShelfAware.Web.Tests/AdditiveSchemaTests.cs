@@ -278,6 +278,81 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Creates_the_MealPlans_table_on_an_older_db_with_the_fresh_schema()
+    {
+        await using var db = _db.CreateDbContext();
+        var fresh = await TableSchemaAsync(db, "MealPlans");
+        Assert.NotEmpty(fresh);
+
+        // Drop the child first (PlannedMeals references MealPlans) so no dangling FK is left behind, then boot.
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE PlannedMeals;");
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE MealPlans;");
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // second boot — a no-op, not a table-exists error
+
+        Assert.Equal(fresh, await TableSchemaAsync(db, "MealPlans"));
+
+        db.MealPlans.Add(new MealPlan { CreatedAt = DateTimeOffset.Now, StartDate = new DateOnly(2026, 9, 1), Days = 30 });
+        await db.SaveChangesAsync();
+        Assert.Single(await db.MealPlans.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Creates_the_PlannedMeals_table_on_an_older_db_with_the_fresh_schema()
+    {
+        await using var db = _db.CreateDbContext();
+        var fresh = await TableSchemaAsync(db, "PlannedMeals");
+        Assert.NotEmpty(fresh); // includes the (MealPlanId, Date) index + the HouseholdId index
+
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE PlannedMeals;");
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        Assert.Equal(fresh, await TableSchemaAsync(db, "PlannedMeals"));
+
+        // A slot writes through, and deleting its plan cascades it away — the rebuilt DDL carries the FK
+        // cascade (PlannedMeal has TWO cascade parents, MealPlan and Recipe, by convention; this pins one).
+        var recipe = new Recipe { Name = "Sheet-Pan Chicken", SavedAt = DateTimeOffset.Now, PlanGenerated = true };
+        db.Recipes.Add(recipe);
+        var plan = new MealPlan { CreatedAt = DateTimeOffset.Now, StartDate = new DateOnly(2026, 9, 1), Days = 30 };
+        db.MealPlans.Add(plan);
+        await db.SaveChangesAsync();
+        db.PlannedMeals.Add(new PlannedMeal { MealPlanId = plan.Id, RecipeId = recipe.Id, Date = new DateOnly(2026, 9, 2), Slot = MealSlot.Dinner });
+        await db.SaveChangesAsync();
+        Assert.Single(await db.PlannedMeals.ToListAsync());
+
+        db.MealPlans.Remove(plan);
+        await db.SaveChangesAsync();
+        Assert.Empty(await db.PlannedMeals.ToListAsync()); // cascaded with its plan
+    }
+
+    [Fact]
+    public async Task Adds_the_plan_generated_column_to_a_pre_meal_plan_recipes_table()
+    {
+        // ⚠️ The ALTER path a live deployment takes: its Recipes table predates 2026-08-31. The drop-TABLE
+        // parity tests rebuild with the column present and never run this branch (item 49's lesson).
+        await using var db = _db.CreateDbContext();
+        var fresh = await ColumnTypesAsync(db, "Recipes");
+
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Recipes DROP COLUMN PlanGenerated;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "Recipes"));
+
+        // A pre-existing recipe reads back false (user-saved, shown as ever); a generated one round-trips true.
+        var saved = new Recipe { Name = "Saved Idea", SavedAt = DateTimeOffset.Now };
+        db.Recipes.Add(saved);
+        await db.SaveChangesAsync();
+        Assert.False((await db.Recipes.AsNoTracking().SingleAsync(r => r.Id == saved.Id)).PlanGenerated);
+
+        saved.PlanGenerated = true;
+        await db.SaveChangesAsync();
+        Assert.True((await db.Recipes.AsNoTracking().SingleAsync(r => r.Id == saved.Id)).PlanGenerated);
+    }
+
+    [Fact]
     public async Task Creates_the_ApiTokens_table_on_an_older_auth_db_with_the_fresh_schema()
     {
         // The auth-side twin of the pantry table tests: API tokens are credentials, so they live in

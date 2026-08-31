@@ -112,6 +112,16 @@ public static class AdditiveSchema
         // mis-branded by extraction pre-fills the right brand on the next receipt. Pre-existing aliases
         // get NULL (nothing learned; the review falls back to the extraction's brand). Same additive shape.
         EnsureColumn(db, table: "ProductAliases", column: "LearnedBrand", definition: "TEXT NULL");
+
+        // 2026-08-31: meal planning. The plan and its dated slots are new tables (invisible to existing
+        // rows); MealPlans first, since PlannedMeals references it. A brand-new table is invisible to
+        // existing rows.
+        EnsureTable(db, table: "MealPlans");
+        EnsureTable(db, table: "PlannedMeals");
+
+        // 2026-08-31: mark a recipe the planner generated, so the Cookbook can hide it until "kept".
+        // Pre-existing recipes land on 0 (false) — user-saved, shown as ever. Enum-free bool → INTEGER.
+        EnsureColumn(db, table: "Recipes", column: "PlanGenerated", definition: "INTEGER NOT NULL DEFAULT 0");
     }
 
     public static void Apply(AuthDbContext db)

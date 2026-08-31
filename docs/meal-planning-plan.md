@@ -263,13 +263,20 @@ and it's a pre-existing bug worth fixing regardless.
 
 ## 9. Data model & tenancy
 
-New household-owned tables (each walks the full tenancy drill below):
-- **`MealPlan`** — Id, HouseholdId, CreatedAt, horizon/date range, config snapshot. Standalone → copy
-  `ActivityEntry` (`src/ShelfAware.Core/Domain/ActivityEntry.cs`).
-- **`PlannedMeal`** — Id, HouseholdId, MealPlanId (FK), RecipeId (FK), Date, Slot
-  (breakfast/lunch/dinner/snack), State (planned/cooked/skipped). Parent-referencing → copy `RecipeTag`
-  (`src/ShelfAware.Core/Domain/RecipeTag.cs`).
-- **`MealPlanPreferences`** — the persisted setup (or an AppSettings JSON blob — decide in build).
+New household-owned tables (each walks the full tenancy drill below). **Built in phase 1a (2026-08-31):**
+- **`MealPlan`** — `Id`, `HouseholdId`, `CreatedAt`, `StartDate` (DateOnly), `Days` (int), `Meals` (nav).
+  **One active plan per household — regenerating replaces it** (the service deletes the old plan + its
+  unkept plan-generated recipes; phase 1b). No config snapshot: the setup lives in AppSettings (below).
+- **`PlannedMeal`** — `Id`, `HouseholdId`, `MealPlanId` (FK, cascade), `RecipeId` (FK, cascade), `Date`
+  (DateOnly), `Slot` (`MealSlot` enum: Breakfast/Lunch/Dinner/Snack). ⚠️ **Two cascade parents** (MealPlan
+  and Recipe), both by EF convention — SQLite has no multiple-cascade-path restriction, pinned by the
+  schema-parity + delete-cascade test. **No `State`/`CookedAt` for v1** — cooking is recorded by
+  `MealEvent` ("Ate it"); an adherence column is an additive change if phase 2 wants it. Indexed
+  `(MealPlanId, Date)` for the calendar's ordering.
+- **Config lives in AppSettings**, not a table (the §11 open question, resolved): a single
+  `MealPlanSettings` JSON key, the way `LastRecipeSuggestions` stores structured per-household config. It's
+  wiped by "delete my data" (all AppSettings are — item 33), correct for setup that has no meaning once
+  the pantry is gone.
 
 Additive columns (AdditiveSchema, like `Recipe.EstimatedCaloriesPerServing` already is):
 - **`Recipe.PlanGenerated`** (bool) — hide plan meals from the Cookbook until "kept."
@@ -314,7 +321,7 @@ Phasing (each its own gated branch, `/pre-push` before any merge to master):
 Open (settle during build):
 - Exact buy-before lead time (flat N days vs. tied to shopping cadence vs. per-perishability once we can
   sense it).
-- Config home: on `MealPlan` vs. AppSettings.
+- ~~Config home: on `MealPlan` vs. AppSettings.~~ **Resolved: AppSettings (§9).**
 - How much the plan-generated Recipes show in the Cookbook by default.
 - Adherence: the plan can read `MealEvent`/`TimesEaten` for "cooked vs. planned," but must **not**
   nag/shame (counterproductive for the goal). Light touch, phase 2+.
