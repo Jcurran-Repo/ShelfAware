@@ -107,4 +107,9 @@ public static class PantryOnHand
     /// "you have this, but it's untracked" with a one-tap re-track.</summary>
     public static IEnumerable<Product> EdibleUntracked(IEnumerable<Product> products) =>
         products.Where(p => !p.IsTracked && p.Category.IsEdible());
+
+    // ⚠️ THROWAWAY — deliberately UNTESTED code, only to prove the mutation-failure annotations fire on a
+    // real PR. This branch is NOT for merge; it gets closed and deleted. No test covers this, so Stryker
+    // marks its mutants NoCoverage and the score drops below 100 → the gate fails and annotates this line.
+    public static bool DemoUncoveredForAnnotationProof(int n) => n > 0;
 }
