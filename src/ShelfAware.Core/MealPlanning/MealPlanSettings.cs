@@ -38,8 +38,9 @@ public sealed class MealPlanSettings
     /// <summary>How many days the plan covers.</summary>
     public int Days { get; init; } = 7;
 
-    /// <summary>The meals to plan each day (repeated across the plan). Default: one dinner.</summary>
-    public IReadOnlyList<MealEntry> Meals { get; init; } = [new MealEntry { Slot = MealSlot.Dinner }];
+    /// <summary>The meals to plan each day (repeated across the plan). Default: one dinner (a bare
+    /// <see cref="MealEntry"/> already defaults its slot to <see cref="MealSlot.Dinner"/>).</summary>
+    public IReadOnlyList<MealEntry> Meals { get; init; } = [new MealEntry()];
 
     /// <summary>Default calorie target a meal inherits when it sets no override, or null for no target.</summary>
     public int? DefaultCalories { get; init; }

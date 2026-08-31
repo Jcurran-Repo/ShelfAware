@@ -124,6 +124,43 @@ public class MealPlanProjectionTests
     }
 
     [Fact]
+    public void A_meal_today_still_produces_a_shop_item()
+    {
+        // The horizon starts AT today (>=), not after it.
+        var item = Assert.Single(MealPlanProjection.ShopItems([Meal(0, "Tonight", "ground beef")], [], Today));
+        Assert.Equal("ground beef", item.Name);
+        Assert.Equal(Today, item.DueDate); // meal today, lead floored → due today
+    }
+
+    [Fact]
+    public void A_meal_on_the_last_day_of_the_horizon_is_included()
+    {
+        // Day == today + HorizonDays is the last INCLUDED day (<=), day after is out.
+        var onEdge = MealPlanProjection.ShopItems([Meal(MealPlanProjection.HorizonDays, "Edge", "salmon fillet")], [], Today);
+        Assert.Single(onEdge);
+        var justPast = MealPlanProjection.ShopItems([Meal(MealPlanProjection.HorizonDays + 1, "Past", "salmon fillet")], [], Today);
+        Assert.Empty(justPast);
+    }
+
+    [Fact]
+    public void A_due_date_exactly_at_the_coming_up_window_is_still_buy_now()
+    {
+        // due == ComingUpDays → Buy now (the split is strictly greater-than). Meal at ComingUpDays + lead.
+        var item = Assert.Single(MealPlanProjection.ShopItems(
+            [Meal(MealPlanProjection.ComingUpDays + MealPlanProjection.LeadDays, "Boundary", "pork chop")], [], Today));
+        Assert.Equal(MealPlanProjection.ComingUpDays, item.DaysUntil);
+        Assert.False(item.ComingUp);
+    }
+
+    [Fact]
+    public void Two_items_due_the_same_day_sort_by_name()
+    {
+        // One meal, two missing mains → two items with the same due date; the tie-break is the name.
+        var items = MealPlanProjection.ShopItems([Meal(3, "Big Dinner", "zucchini", "apples")], [], Today);
+        Assert.Equal(["apples", "zucchini"], items.Select(i => i.Name));
+    }
+
+    [Fact]
     public void A_blank_ingredient_name_is_ignored()
     {
         var meals = new[]

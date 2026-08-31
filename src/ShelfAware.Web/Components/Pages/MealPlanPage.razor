@@ -229,7 +229,9 @@ else if (!generating)
     private string? note;
 
     // Calendar view: the plan's meals bucketed by day, and which day's detail is expanded below the grid.
-    private static readonly DateOnly Today = DateOnly.FromDateTime(DateTime.Today);
+    // Computed per access (not cached at process start) so an always-on server's "today" highlight and
+    // default-open day don't stick to yesterday after midnight.
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
     private static readonly string[] WeekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     private static readonly List<PlannedMeal> NoMeals = [];
     private Dictionary<DateOnly, List<PlannedMeal>> mealsByDate = [];

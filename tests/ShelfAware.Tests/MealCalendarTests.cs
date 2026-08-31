@@ -45,6 +45,16 @@ public class MealCalendarTests
     }
 
     [Fact]
+    public void A_single_day_still_produces_a_week_with_that_one_dated_cell()
+    {
+        var start = new DateOnly(2026, 3, 4);
+        var weeks = MealCalendar.Weeks(start, 1);
+        var week = Assert.Single(weeks);
+        Assert.Equal(7, week.Count);
+        Assert.Equal([start], week.Where(c => c is not null).Select(c => c!.Value));
+    }
+
+    [Fact]
     public void A_non_positive_day_count_yields_no_weeks()
     {
         Assert.Empty(MealCalendar.Weeks(new DateOnly(2026, 3, 4), 0));

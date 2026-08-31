@@ -241,6 +241,20 @@ public class MealPlanServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Plan_days_reflects_the_covered_span_not_the_raw_request()
+    {
+        // Days = 0 is below the clamp floor; one day still generates. The stored Days must be the covered
+        // span (1), never the raw 0 — otherwise MealCalendar renders an empty grid.
+        var service = Service(new FakeMealPlanGenerator([Meal("Solo")]));
+        await SaveSettings(service, new MealPlanSettings { Days = 0 });
+
+        await service.GenerateAsync();
+
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(1, (await db.MealPlans.SingleAsync()).Days);
+    }
+
+    [Fact]
     public async Task Generate_batches_a_long_horizon_and_carries_the_already_planned_names_forward()
     {
         // 10 dinners > BatchSize (7) → two calls: 7 then 3. The second must be told the first batch's names.

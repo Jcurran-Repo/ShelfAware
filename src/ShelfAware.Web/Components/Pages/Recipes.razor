@@ -188,6 +188,10 @@
     {
         <p class="muted" role="status">@imOutNote</p>
     }
+    @if (deleteNote is not null)
+    {
+        <p class="error" role="alert">@deleteNote</p>
+    }
     @if (displayed.Count == 0)
     {
         <p class="muted">
@@ -538,6 +542,7 @@
 
     private Recipe? picked;
     private string? extraNote;
+    private string? deleteNote;   // why a delete was refused (recipe is in the meal plan)
     private Recipe? readingRecipe;
     private bool readingHandsFree; // ...with the mic open, listening between steps
     private Recipe? cookingRecipe; // the ElevenLabs realtime agent
@@ -921,8 +926,12 @@
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         excludedFoods = await db.ExcludedFoods.OrderBy(f => f.Value).ToListAsync();
-        // SQLite can't ORDER BY a DateTimeOffset column — sort client-side.
-        savedRecipes = (await db.Recipes.AsNoTracking().Include(r => r.Ingredients).Include(r => r.Steps).ToListAsync())
+        // SQLite can't ORDER BY a DateTimeOffset column — sort client-side. Exclude meal-plan-generated
+        // recipes: they're browsed/managed on the Cookbook's "Meal-plan recipes" tab, not here — otherwise a
+        // 30-day plan tops this list with auto-generated dishes, and deleting one from here would
+        // cascade-delete its calendar day (a recipe is a required FK parent of PlannedMeal).
+        savedRecipes = (await db.Recipes.AsNoTracking().Where(r => !r.PlanGenerated)
+                .Include(r => r.Ingredients).Include(r => r.Steps).ToListAsync())
             .OrderByDescending(r => r.SavedAt).ToList();
         savedNames = savedRecipes.Select(r => r.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         // Id → name for the ?uses filter (all products, tracked or not — a recipe may point at an
@@ -1296,7 +1305,15 @@
 
     private async Task DeleteSaved(Recipe r)
     {
+        deleteNote = null;
         await using var db = await DbFactory.CreateDbContextAsync();
+        // Refuse if the recipe is in the current meal plan: a recipe is a REQUIRED FK parent of PlannedMeal,
+        // so deleting it here would cascade-delete that calendar day silently. Send them to reroll it instead.
+        if (await db.PlannedMeals.AnyAsync(pm => pm.RecipeId == r.Id))
+        {
+            deleteNote = $"“{r.Name}” is in your meal plan — reroll or regenerate it there first, then delete it.";
+            return;
+        }
         // No fallback to the detached `r`: the lookup is household-filtered, so a miss means the recipe is
         // already gone (a double tap) or isn't ours — and removing `r` anyway would delete it keyed on the
         // id alone, with no household predicate. Nothing to delete is a no-op, not an error.

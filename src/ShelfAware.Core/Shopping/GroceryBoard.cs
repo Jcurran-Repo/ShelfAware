@@ -83,11 +83,21 @@ public static class GroceryBoard
             // Earliest-card dedup: a predictor row for the same food already covers this buy. Annotate it
             // with the meal and pull its due date/bucket earlier if the plan needs it sooner, rather than
             // adding a second row for the same product.
+            // ⚠️ "One prediction, one story" holds here by a COUPLING the caller must preserve: a plan shop
+            // item only exists for a food the plan considers NOT on hand, and the plan derives on-hand from
+            // the SAME PantryOnHand.InStock rule the predictor status comes from — so the only predictor twin
+            // a plan item meets is an Overdue one (whose sooner date wins), never a Stocked row that would
+            // read "Stocked" beside an urgent plan date. A future consumer (the dashboard) must likewise
+            // compute on-hand from the same rule it renders status from, or that contradiction becomes real.
             var twinIndex = rows.FindIndex(r =>
                 r.Source == ShoppingSource.Predictor && IngredientMatcher.IsSameFood(r.Name, item.Name));
             if (twinIndex >= 0)
             {
                 var twin = rows[twinIndex];
+                // Stryker disable once equality : `<` vs `<=` differ only when item.DueDate == twin.DueDate,
+                // and there item.DaysUntil == twin.DaysUntil too (both are days-until the same date from the
+                // same 'today'), so the branch below picks an identical DueDate + DaysUntil either way — no
+                // valid row distinguishes them (only a self-inconsistent DueDate/DaysUntil pair would).
                 var planSooner = twin.DueDate is not { } d || item.DueDate < d;
                 rows[twinIndex] = twin with
                 {

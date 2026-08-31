@@ -123,7 +123,11 @@ public sealed class MealPlanService(
         await RemoveOldPlanAsync(db, ct);
 
         var recipeIdBySignature = await LoadLibraryBySignatureAsync(db, ct);
-        var plan = new MealPlan { CreatedAt = DateTimeOffset.Now, StartDate = today, Days = setup.Days };
+        // Days = the span actually generated, not the raw request — SlotsFor clamps days to [1,31] and caps
+        // the total at MaxSlots, so a 31-day × many-meal plan may cover fewer days; the calendar must render
+        // exactly what was planned, not empty weeks. (planned is non-empty here — GenerateAsync guarantees it.)
+        var coveredDays = planned.Max(p => p.Slot.Day) + 1;
+        var plan = new MealPlan { CreatedAt = DateTimeOffset.Now, StartDate = today, Days = coveredDays };
         var newBySignature = new Dictionary<string, Recipe>(); // dedup two same-signature meals in one plan
         foreach (var (slot, meal) in planned)
         {
@@ -185,6 +189,9 @@ public sealed class MealPlanService(
         var suggestion = meals[0];
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
+        // Library dedup is best-effort: two rerolls racing from two tabs can't see each other's uncommitted
+        // recipe, so they could each create a twin of the same new dish. Harmless (a duplicate library row,
+        // no data loss) and rare (two concurrent rerolls of the same generated dish); not worth a lock.
         var recipeIdBySignature = await LoadLibraryBySignatureAsync(db, ct);
         if (recipeIdBySignature.TryGetValue(SignatureOf(suggestion), out var existingId))
             meal.RecipeId = existingId;             // reuse a library recipe (incl. the swapped-out one if identical)

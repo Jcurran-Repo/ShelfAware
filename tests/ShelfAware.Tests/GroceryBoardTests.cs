@@ -92,8 +92,56 @@ public class GroceryBoardTests
             [Plan("ground beef", dueInDays: 2)]);
 
         var row = Assert.Single(rows);
-        Assert.Equal(2, row.DaysUntil);   // adopted the plan's earlier due date
-        Assert.True(row.BuyNow);          // …and moved into Buy now
+        Assert.Equal(2, row.DaysUntil);              // adopted the plan's earlier due date
+        Assert.Equal(Today.AddDays(2), row.DueDate); // …on both the count and the date
+        Assert.True(row.BuyNow);                     // …and moved into Buy now
         Assert.NotNull(row.PlanFor);
+    }
+
+    [Fact]
+    public void When_the_predictor_needs_it_sooner_the_kept_row_holds_its_own_date()
+    {
+        // Predictor DueSoon in 5; the plan needs it later (8) → the predictor's sooner date stands.
+        var row = Assert.Single(GroceryBoard.Combine(
+            [Estimate("Chicken Breast", PredictionStatus.DueSoon, 5)],
+            [Plan("chicken breast", dueInDays: 8)]));
+
+        Assert.Equal(5, row.DaysUntil);
+        Assert.Equal(Today.AddDays(5), row.DueDate);
+        Assert.NotNull(row.PlanFor); // still annotated with the meal
+    }
+
+    [Fact]
+    public void A_plan_food_the_predictor_does_not_list_stays_its_own_row()
+    {
+        // A predictor row for a DIFFERENT food must not absorb the plan item (the twin match is by food).
+        var rows = GroceryBoard.Combine(
+            [Estimate("Milk", PredictionStatus.Overdue, -1, Category.Dairy)],
+            [Plan("cilantro", dueInDays: 3)]);
+
+        Assert.Equal(2, rows.Count);
+        Assert.Contains(rows, r => r is { Name: "Milk", Source: ShoppingSource.Predictor });
+        Assert.Contains(rows, r => r is { Name: "cilantro", Source: ShoppingSource.Plan });
+    }
+
+    [Fact]
+    public void Two_plan_items_matching_one_predictor_keep_the_first_meal()
+    {
+        // Both plan items are the same food as the predictor row; the first (earliest) meal is the one noted.
+        var rows = GroceryBoard.Combine(
+            [Estimate("Ground Beef", PredictionStatus.Stocked, 12)],
+            [Plan("ground beef", dueInDays: 3), Plan("ground beef", dueInDays: 5)]);
+
+        var row = Assert.Single(rows);
+        Assert.Equal(3, row.PlanFor!.DaysUntil); // the earlier meal is kept, not overwritten by the later
+    }
+
+    [Fact]
+    public void Provenance_tags_and_accents_are_source_specific()
+    {
+        Assert.Equal("Plan", ShoppingProvenance.Tag(ShoppingSource.Plan));
+        Assert.Null(ShoppingProvenance.Tag(ShoppingSource.Predictor)); // predictor rows show their status chip instead
+        Assert.Equal("plan", ShoppingProvenance.Accent(ShoppingSource.Plan));
+        Assert.Equal("predictor", ShoppingProvenance.Accent(ShoppingSource.Predictor));
     }
 }

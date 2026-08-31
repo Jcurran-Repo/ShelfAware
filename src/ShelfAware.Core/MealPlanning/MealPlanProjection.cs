@@ -97,5 +97,7 @@ public static class MealPlanProjection
         return [.. kept.OrderBy(i => i.DueDate).ThenBy(i => i.Name)];
     }
 
+    // Stryker disable once equality : `a >= b` and `a > b` return the same value here — when a == b both
+    // yield that equal DateOnly, so no input distinguishes them.
     private static DateOnly Later(DateOnly a, DateOnly b) => a > b ? a : b;
 }

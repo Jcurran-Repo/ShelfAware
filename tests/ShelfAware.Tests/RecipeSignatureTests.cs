@@ -48,4 +48,31 @@ public class RecipeSignatureTests
             RecipeSignature.Of("Roast", ["chicken breast"]),
             RecipeSignature.Of("Roast", ["fresh boneless chicken breast"]));
     }
+
+    // The exact format, pinned so the key stays stable and its parts can't bleed together: normalized name,
+    // then "|", then the ingredient foods (each its own words sorted, ingredients sorted, comma-joined).
+    [Fact]
+    public void The_signature_has_a_stable_name_pipe_sorted_ingredients_format()
+    {
+        Assert.Equal("tacos|beef,cheese", RecipeSignature.Of("Tacos", ["cheese", "beef"]));
+    }
+
+    [Fact]
+    public void An_ingredients_words_are_sorted_and_space_joined()
+    {
+        Assert.Equal("x|breast chicken", RecipeSignature.Of("X", ["chicken breast"]));
+    }
+
+    [Fact]
+    public void A_null_name_gives_an_empty_name_key()
+    {
+        Assert.Equal("|beef", RecipeSignature.Of(null, ["beef"]));
+    }
+
+    [Fact]
+    public void An_ingredient_with_no_food_words_is_dropped()
+    {
+        // "fresh" is all trivial modifiers → no core words → it contributes nothing (not an empty key).
+        Assert.Equal("x|beef", RecipeSignature.Of("X", ["beef", "fresh"]));
+    }
 }
