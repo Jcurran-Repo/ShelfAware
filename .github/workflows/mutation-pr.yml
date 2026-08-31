@@ -71,9 +71,18 @@ jobs:
       # tests changed). A survivor drops the score below the 100% break threshold and fails the job.
       # Run from the test project so Stryker finds its stryker-config.json.
       - name: Mutation test — changed Core files only
+        id: mutation
         if: steps.scope.outputs.core == 'true'
         working-directory: tests/ShelfAware.Tests
         run: dotnet stryker --since:"$BASE_SHA"
+
+      # On a survivor, turn Stryker's "exit code 2" into an instant, clear answer ON the PR: an inline
+      # annotation on each surviving line (red in the "Files changed" diff) + a plain-English job summary
+      # naming the fix. Runs only when the mutation step actually failed; best-effort, never rescues the
+      # red (the job stays failed).
+      - name: Explain a mutation failure
+        if: always() && steps.mutation.outcome == 'failure'
+        run: bash .github/scripts/mutation-annotations.sh
 
       # The report names every surviving mutant with its file + line — keep it (pass or fail) to
       # diagnose a red run.

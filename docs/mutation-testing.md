@@ -252,7 +252,11 @@ Reconciling "target 100%" with "don't wall off feature work":
   (2026-08-31, run 33393036318) rode in on PR #42 and sat red until the next weekly run: a per-PR gate is
   "before the merge is worth more than after it" applied to coverage. The workflow is `pull_request`-
   triggered, so unlike the weekly one it is proven by its first run on a real PR (this branch's own PR
-  exercises it — it changed Core).
+  exercises it — it changed Core). A failed run is self-explanatory, not a bare "exit code 2":
+  `.github/scripts/mutation-annotations.sh` (run only on the mutation step's failure) posts each survivor
+  as an inline GitHub annotation on its exact line in the PR diff, plus a plain-English job summary naming
+  the two fixes (add a test, or annotate the equivalent) — so a contributor sees *why* the merge is
+  blocked without opening the log.
 - **Pre-push local gate step** (`.claude/commands/pre-push.md` §3) — the same `dotnet stryker --since:master`,
   run by hand as part of the pre-merge gate when the branch diff touches Core. Each survivor is treated like
   a review finding: a real gap gets a test, a true equivalent gets an in-code annotation with a reason. It is
