@@ -1,5 +1,4 @@
 using System.Reflection;
-using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -9,60 +8,13 @@ namespace ShelfAware.Llm;
 
 /// <summary>
 /// <see cref="IRecipeAdvisor"/> over the Anthropic Messages API with structured outputs. Same pinned
-/// model + direct-SDK pattern as the extractor and chat.
+/// model + direct-SDK pattern as the extractor and chat. The recipe JSON shape and its parse live in
+/// <see cref="RecipeJson"/>, shared with the meal-plan generator so they can't drift.
 /// </summary>
 public class AnthropicRecipeAdvisor : IRecipeAdvisor
 {
     private static readonly string SystemPrompt = ReadEmbedded("Prompts.recipe-suggest-system.txt");
     private static readonly string AdaptSystemPrompt = ReadEmbedded("Prompts.recipe-adapt-system.txt");
-
-    private const string OutputSchemaJson = """
-    {
-      "type": "object",
-      "properties": {
-        "recipes": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "name":  { "type": "string" },
-              "blurb": { "type": "string" },
-              "ingredients": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "name": { "type": "string" },
-                    "quantity": {
-                      "type": ["string", "null"],
-                      "description": "Amount as a recipe would write it, e.g. \"2 lbs\", \"3 cloves\", \"1 (14 oz) can\", \"to taste\". null only if truly not applicable."
-                    },
-                    "main": { "type": "boolean" },
-                    "matched_product": { "type": ["string", "null"] }
-                  },
-                  "required": ["name", "quantity", "main", "matched_product"],
-                  "additionalProperties": false
-                }
-              },
-              "steps": {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "Ordered cooking method, one short instruction per element."
-              },
-              "calories_per_serving": {
-                "type": ["integer", "null"],
-                "description": "Rough estimated calories per serving (ballpark for planning, not precise nutrition). null only if truly unable to estimate."
-              }
-            },
-            "required": ["name", "blurb", "ingredients", "steps", "calories_per_serving"],
-            "additionalProperties": false
-          }
-        }
-      },
-      "required": ["recipes"],
-      "additionalProperties": false
-    }
-    """;
 
     private readonly IChatClient _chat;
     private readonly LlmOptions _options;
@@ -93,13 +45,11 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
         {
             ModelId = _options.ChatModel,
             MaxOutputTokens = 4096, // steps add length beyond name/blurb/ingredients
-            ResponseFormat = ChatResponseFormat.ForJsonSchema(
-                JsonSerializer.Deserialize<JsonElement>(OutputSchemaJson),
-                schemaName: "recipe_suggestions"),
+            ResponseFormat = ChatResponseFormat.ForJsonSchema(RecipeJson.Schema(), schemaName: "recipe_suggestions"),
         };
 
         var response = await _chat.GetResponseAsync(messages, options, cancellationToken);
-        var suggestions = Parse(response.Text);
+        var suggestions = RecipeJson.Parse(response.Text);
         _logger.LogInformation("Recipe advisor returned {Count} suggestion(s) for {OnHand} on-hand item(s).", suggestions.Count, onHand.Count);
         return suggestions;
     }
@@ -137,54 +87,13 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
         {
             ModelId = _options.ChatModel,
             MaxOutputTokens = 4096,
-            ResponseFormat = ChatResponseFormat.ForJsonSchema(
-                JsonSerializer.Deserialize<JsonElement>(OutputSchemaJson), schemaName: "recipe_adaptation"),
+            ResponseFormat = ChatResponseFormat.ForJsonSchema(RecipeJson.Schema(), schemaName: "recipe_adaptation"),
         };
 
         var response = await _chat.GetResponseAsync(messages, options, cancellationToken);
-        var adapted = Parse(response.Text).FirstOrDefault();
+        var adapted = RecipeJson.Parse(response.Text).FirstOrDefault();
         _logger.LogInformation("Recipe advisor adapted \"{Name}\" (produced result: {HasResult}).", recipe.Name, adapted is not null);
         return adapted;
-    }
-
-    private static List<RecipeSuggestion> Parse(string json)
-    {
-        var recipes = new List<RecipeSuggestion>();
-        using var doc = JsonDocument.Parse(json);
-        if (!doc.RootElement.TryGetProperty("recipes", out var arr)) return recipes;
-        foreach (var r in arr.EnumerateArray())
-        {
-            var ingredients = new List<SuggestedIngredient>();
-            if (r.TryGetProperty("ingredients", out var ing))
-            {
-                foreach (var i in ing.EnumerateArray())
-                {
-                    ingredients.Add(new SuggestedIngredient(
-                        i.GetProperty("name").GetString() ?? "",
-                        i.TryGetProperty("main", out var m) && m.ValueKind == JsonValueKind.True,
-                        i.TryGetProperty("matched_product", out var mp) && mp.ValueKind == JsonValueKind.String ? mp.GetString() : null,
-                        i.TryGetProperty("quantity", out var q) && q.ValueKind == JsonValueKind.String ? q.GetString() : null));
-                }
-            }
-            var steps = new List<string>();
-            if (r.TryGetProperty("steps", out var st) && st.ValueKind == JsonValueKind.Array)
-            {
-                steps.AddRange(st.EnumerateArray()
-                    .Where(e => e.ValueKind == JsonValueKind.String)
-                    .Select(e => e.GetString()!.Trim())
-                    .Where(s => s.Length > 0));
-            }
-            int? calories = r.TryGetProperty("calories_per_serving", out var cal) && cal.ValueKind == JsonValueKind.Number
-                ? cal.GetInt32()
-                : null;
-            recipes.Add(new RecipeSuggestion(
-                r.GetProperty("name").GetString() ?? "",
-                r.TryGetProperty("blurb", out var b) ? b.GetString() ?? "" : "",
-                ingredients,
-                steps,
-                calories));
-        }
-        return recipes;
     }
 
     private static string ReadEmbedded(string suffix)

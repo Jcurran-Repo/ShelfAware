@@ -359,6 +359,7 @@ builder.Services.AddScoped<IPantryChat, AnthropicPantryChat>();
 builder.Services.AddScoped<ITagAdvisor, AnthropicTagAdvisor>();
 builder.Services.AddScoped<IRecipeTagAdvisor, AnthropicRecipeTagAdvisor>();
 builder.Services.AddScoped<IRecipeAdvisor, AnthropicRecipeAdvisor>();
+builder.Services.AddScoped<ShelfAware.Core.MealPlanning.IMealPlanGenerator, AnthropicMealPlanGenerator>(); // §meal-planning: generates a plan's meals
 builder.Services.AddScoped<IProductSubstituteAdvisor, AnthropicProductSubstituteAdvisor>();
 builder.Services.AddScoped<IIngredientAlternativesAdvisor, AnthropicIngredientAlternativesAdvisor>();
 builder.Services.AddScoped<IRecipeAdapter, RecipeAdapter>();

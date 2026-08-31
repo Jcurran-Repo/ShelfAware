@@ -102,6 +102,16 @@ meals shouldn't).
 are only as method-correct as adapt is, so adapt getting braise-vs-sear right *is* the plan getting it
 right, at scale.
 
+> **As-built (phase 1b-i, 2026-08-31):** "adapt-known-first" is implemented as a **prompt philosophy**,
+> not literal per-recipe `AdaptAsync` calls. `AnthropicMealPlanGenerator` + `meal-plan-system.txt` produce
+> the whole plan in single-pass batches (a week per call), with the adapt prompt's rules baked in — reuse/
+> adapt the saved recipes given in the prompt, prefer known dishes, and **write correct steps directly**
+> (so generation is immune to the substitution-method bug by construction; phase 0's fix still governs the
+> standalone manual adapt). Chosen over literal per-recipe adapt because a month exceeds the ~15 saved
+> recipes (most meals are new known-dishes anyway), one call is far cheaper, and the model keeps the batch
+> varied when it sees it whole. **Deferred refinement, if wanted:** literal tier-1 adapt of saved recipes
+> via a constraint-aware `AdaptAsync`. Flagged for Jordan's review.
+
 Output: each planned meal is a real **`Recipe`** (`src/ShelfAware.Core/Domain/Recipe.cs`) — reuse the
 entity; it already carries `Steps`, `Ingredients`, `EstimatedCaloriesPerServing`, and every recipe
 surface for free (read-aloud, print, cook-along, makeability). Ingredients carry the grounded
