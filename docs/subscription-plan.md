@@ -527,6 +527,19 @@ AI" into a standing special case), or Jordan's own alternative — **"welcome ba
 one-time grant when a lapsed household returns, which keeps Free cleanly AI-free and spends the money
 only on someone who actually came back.
 
+**Parked — the dormant-subscriber conscience nudge (Jordan's call, 2026-09-01):** proactively email an
+ACTIVE, PAYING subscriber who has gone dormant (no app activity for ~a few months) to ask whether they
+still want it, with a one-click unsubscribe. Deliberately revenue-*reducing* — the integrity move a
+portfolio piece with real users should be seen making, and of a piece with this arc's other calls
+(refund clawback not automated, billing infra deferred until real customers exist). Cheap to build: the
+dormancy signal already exists (`AiUsage` per household/day, the `ActivityEntry` log, login recency), so
+"subscribed AND no activity in N months" is a clean query. The one hard dependency is a **monitored
+transactional email provider** — the same ops-launch-gate item (§9) that gates password reset and the
+email-confirmation grant — so this lands **Phase 4+, right after that provider is in place**, never on
+the Gmail-app-password family arrangement. Open sub-questions for build time: the exact dormancy window,
+whether it's a plain "still want this?" or an outright pre-filled cancel, and frequency-capping so it
+can't nag.
+
 ## 9. Build order (each phase gated by `/pre-push`, per the house rule)
 
 1. **Entitlement seam + Founder** — `Household.Tier`/`FounderSince`, plan→limits indirection in the
