@@ -353,6 +353,33 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Adds_the_servings_column_to_a_pre_meal_plan_recipes_table()
+    {
+        // ⚠️ The ALTER path a live deployment takes (item 49): its Recipes table predates the Servings
+        // column; the drop-TABLE parity tests rebuild WITH it and never exercise this branch.
+        await using var db = _db.CreateDbContext();
+        var fresh = await ColumnTypesAsync(db, "Recipes");
+
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Recipes DROP COLUMN Servings;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "Recipes"));
+
+        // A pre-existing recipe reads back null (unknown base → the serving box uses a plain multiplier);
+        // a real serving count round-trips.
+        var saved = new Recipe { Name = "Saved Idea", SavedAt = DateTimeOffset.Now };
+        db.Recipes.Add(saved);
+        await db.SaveChangesAsync();
+        Assert.Null((await db.Recipes.AsNoTracking().SingleAsync(r => r.Id == saved.Id)).Servings);
+
+        saved.Servings = 4;
+        await db.SaveChangesAsync();
+        Assert.Equal(4, (await db.Recipes.AsNoTracking().SingleAsync(r => r.Id == saved.Id)).Servings);
+    }
+
+    [Fact]
     public async Task Creates_the_ApiTokens_table_on_an_older_auth_db_with_the_fresh_schema()
     {
         // The auth-side twin of the pantry table tests: API tokens are credentials, so they live in
