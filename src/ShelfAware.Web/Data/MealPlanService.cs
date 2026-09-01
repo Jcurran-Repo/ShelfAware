@@ -226,6 +226,7 @@ public sealed class MealPlanService(
         SavedAt = DateTimeOffset.Now,
         PlanGenerated = true,
         EstimatedCaloriesPerServing = meal.CaloriesPerServing,
+        Servings = meal.Servings,
         Ingredients = meal.Ingredients.Select(i => new RecipeIngredient
         {
             Name = i.Name, IsMain = i.IsMain, MatchedProduct = i.MatchedProduct, Quantity = i.Quantity,

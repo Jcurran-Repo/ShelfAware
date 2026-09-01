@@ -45,9 +45,13 @@ internal static class RecipeJson
               "calories_per_serving": {
                 "type": ["integer", "null"],
                 "description": "Rough estimated calories per serving (ballpark for planning, not precise nutrition). null only if truly unable to estimate."
+              },
+              "servings": {
+                "type": ["integer", "null"],
+                "description": "Roughly how many servings the recipe as written makes — the base for scaling amounts (e.g. 4). null only if truly unable to estimate."
               }
             },
-            "required": ["name", "blurb", "ingredients", "steps", "calories_per_serving"],
+            "required": ["name", "blurb", "ingredients", "steps", "calories_per_serving", "servings"],
             "additionalProperties": false
           }
         }
@@ -93,12 +97,16 @@ internal static class RecipeJson
             int? calories = r.TryGetProperty("calories_per_serving", out var cal) && cal.ValueKind == JsonValueKind.Number
                 ? cal.GetInt32()
                 : null;
+            int? servings = r.TryGetProperty("servings", out var sv) && sv.ValueKind == JsonValueKind.Number
+                ? sv.GetInt32()
+                : null;
             recipes.Add(new RecipeSuggestion(
                 r.GetProperty("name").GetString() ?? "",
                 r.TryGetProperty("blurb", out var b) ? b.GetString() ?? "" : "",
                 ingredients,
                 steps,
-                calories));
+                calories,
+                servings));
         }
         return recipes;
     }

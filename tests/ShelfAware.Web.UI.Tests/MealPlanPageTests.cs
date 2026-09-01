@@ -55,6 +55,23 @@ public class MealPlanPageTests : PageTestContext
         db.SaveChanges();
     }
 
+    // A one-meal plan for today whose recipe carries a base serving count and a single main ingredient with
+    // an amount — the fixture the serving box scales.
+    private void SeedServingPlan(int? servings, string ingredient, string quantity)
+    {
+        using var db = Db.CreateDbContext();
+        var recipe = new Recipe
+        {
+            Name = "Dinner", SavedAt = DateTimeOffset.Now, PlanGenerated = true, Servings = servings,
+            Steps = [new RecipeStep { Order = 1, Text = "Cook." }],
+            Ingredients = [new RecipeIngredient { Name = ingredient, IsMain = true, Quantity = quantity }],
+        };
+        var plan = new MealPlan { CreatedAt = DateTimeOffset.Now, StartDate = DateOnly.FromDateTime(DateTime.Today), Days = 1 };
+        plan.Meals.Add(new PlannedMeal { Recipe = recipe, Date = DateOnly.FromDateTime(DateTime.Today), Slot = MealSlot.Dinner });
+        db.MealPlans.Add(plan);
+        db.SaveChanges();
+    }
+
     private static MealPlanJobSnapshot Running() => new(MealPlanJobState.Running, 1, 3, 0, null);
     private static MealPlanJobSnapshot Done(int meals) => new(MealPlanJobState.Done, 3, 3, meals, null);
     private static MealPlanJobSnapshot Failed(string error) => new(MealPlanJobState.Failed, 0, 3, 0, error);
@@ -189,6 +206,50 @@ public class MealPlanPageTests : PageTestContext
         var snack = Assert.Single(saved.Meals, m => m.Slot == MealSlot.Snack);
         Assert.Equal(150, snack.Calories);                 // per-meal override survived to the store
         Assert.Equal(TimeEffort.Quick, snack.Effort);
+    }
+
+    [Fact]
+    public void The_serving_box_defaults_to_the_recipes_base_and_scales_the_amounts_live()
+    {
+        SeedServingPlan(servings: 2, ingredient: "White Rice", quantity: "2 cups");
+        var cut = RenderPage();
+
+        var detail = cut.Find(".mealcal-detail");
+        Assert.Contains("Servings", detail.TextContent);                        // a real servings box (base known)
+        Assert.Equal("2", cut.Find(".serving-count").GetAttribute("value"));    // defaults to the recipe's base
+        Assert.Contains("2 cups", detail.TextContent);                          // the amount as written
+
+        cut.Find("button[aria-label='More servings']").Click();                 // 2 → 3 servings
+
+        Assert.Contains("3 cups", cut.Find(".mealcal-detail").TextContent);     // 2 cups × 3/2, scaled live
+    }
+
+    [Fact]
+    public void The_serving_box_scales_the_amounts_down_when_you_lower_the_count()
+    {
+        SeedServingPlan(servings: 4, ingredient: "Ground Beef", quantity: "2 lbs");
+        var cut = RenderPage();
+
+        cut.Find(".serving-count").Change("2");   // 4 → 2 servings, factor 0.5
+
+        Assert.Contains("1 lb", cut.Find(".mealcal-detail").TextContent);   // halved and singularised
+    }
+
+    [Fact]
+    public void With_no_base_servings_the_box_is_a_plain_batch_multiplier()
+    {
+        SeedServingPlan(servings: null, ingredient: "White Rice", quantity: "2 cups");
+        var cut = RenderPage();
+
+        var detail = cut.Find(".mealcal-detail");
+        Assert.Contains("Batch", detail.TextContent);                          // a multiplier, not "Servings"
+        Assert.DoesNotContain("Servings", detail.TextContent);
+        Assert.Equal("1", cut.Find(".serving-count").GetAttribute("value"));   // ×1 by default
+        Assert.Contains("2 cups", detail.TextContent);                          // unchanged at ×1
+
+        cut.Find(".serving-count").Change("3");                                 // ×3
+
+        Assert.Contains("6 cups", cut.Find(".mealcal-detail").TextContent);
     }
 
     /// <summary>A fake job runner: records who was Started and returns a scripted <see cref="Current"/>

@@ -100,6 +100,33 @@ public class MealPlanGeneratorTests
     }
 
     [Fact]
+    public async Task Parses_the_servings_the_model_reports()
+    {
+        const string withServings = """
+        { "recipes": [
+          { "name": "Sheet-Pan Chicken", "blurb": "Easy.", "ingredients": [
+              { "name": "chicken breast", "main": true, "matched_product": "Chicken Breast", "quantity": "2 lbs" } ],
+            "steps": ["Roast it."], "calories_per_serving": 480, "servings": 4 }
+        ] }
+        """;
+        var client = FakeChatClient.Returning(Responses.Text(withServings));
+
+        var meals = await Generator(client).GenerateAsync(
+            Batch(slots: [new PlannedSlot(0, MealSlot.Dinner, null, TimeEffort.Standard)]));
+
+        Assert.Equal(4, meals[0].Servings);
+    }
+
+    [Fact]
+    public async Task Servings_is_null_when_the_model_omits_it()
+    {
+        // Structured output guarantees the key, but the parse must not assume it (TwoMeals has no "servings").
+        var client = FakeChatClient.Returning(Responses.Text(TwoMeals));
+        var meals = await Generator(client).GenerateAsync(Batch());
+        Assert.Null(meals[0].Servings);
+    }
+
+    [Fact]
     public async Task Expiring_items_are_flagged_use_first_only_when_present()
     {
         // Empty → no "USE FIRST" section (an empty instruction would just be noise the model might over-weight).

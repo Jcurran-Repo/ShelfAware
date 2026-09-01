@@ -254,6 +254,29 @@ else if (!generating)
 
     private void SelectDay(DateOnly date) => selectedDate = date;
 
+    // Per-card serving choice (planned-meal id → chosen servings, or batch multiple when the recipe has no
+    // base). Ephemeral cooking-time scaling — deliberately NOT persisted; each card defaults to its recipe's
+    // base servings, or ×1 when the base is unknown (a pre-servings plan). The amount scaling itself is
+    // pure and instant (IngredientScale), so changing this just re-renders the card.
+    private readonly Dictionary<int, int> servingChoice = [];
+
+    private int TargetFor(PlannedMeal meal) =>
+        servingChoice.GetValueOrDefault(meal.Id, meal.Recipe!.Servings is > 0 ? meal.Recipe.Servings!.Value : 1);
+
+    private void Bump(PlannedMeal meal, int delta) => SetServings(meal, TargetFor(meal) + delta);
+
+    private void SetServings(PlannedMeal meal, int value) => servingChoice[meal.Id] = Math.Clamp(value, 1, 99);
+
+    private void SetServingsFromInput(PlannedMeal meal, string? raw)
+    {
+        if (int.TryParse(raw, out var n)) SetServings(meal, n);
+    }
+
+    private static string ServingsAriaLabel(PlannedMeal meal) =>
+        meal.Recipe!.Servings is > 0
+            ? $"Servings for {meal.Recipe.Name} (recipe makes {meal.Recipe.Servings})"
+            : $"Batch multiple for {meal.Recipe!.Name}";
+
     // Per-slot reroll: regenerate just this meal (one AI call, inline), then reload the plan keeping the open
     // day. The old recipe stays in the library. A guard blocks a second reroll while one is in flight.
     private int? rerollingMealId;
@@ -269,6 +292,7 @@ else if (!generating)
             var result = await Planner.RerollAsync(plannedMealId);
             if (result.Succeeded)
             {
+                servingChoice.Remove(plannedMealId); // the new recipe brings its own base — don't keep the old count
                 plan = await Planner.GetCurrentPlanAsync();
                 IndexPlan();
                 note = $"Swapped in {result.RecipeName}.";
@@ -294,14 +318,33 @@ else if (!generating)
 
     // One meal's full card — shown in the selected-day detail below the calendar grid.
     private RenderFragment MealCard(PlannedMeal meal) => @<article class="recipe-card mealplan-meal">
+        @{
+            var target = TargetFor(meal);
+            var baseServings = meal.Recipe!.Servings;
+            var baseKnown = baseServings is > 0;
+            var factor = baseKnown ? (double)target / baseServings!.Value : target;
+        }
         <div class="recipe-card-top mealcal-cardtop">
             <h4><span class="chip chip-stocked">@meal.Slot</span> @meal.Recipe!.Name</h4>
-            <button type="button" class="secondary mealcal-reroll" @onclick="() => Reroll(meal.Id)"
-                    disabled="@(rerollingMealId is not null)"
-                    title="Swap this meal for a different one — keeps the rest of your plan"
-                    aria-label="Reroll @meal.Recipe!.Name — swap it for a different meal">
-                @(rerollingMealId == meal.Id ? "Rerolling…" : "🔄 Reroll")
-            </button>
+            <div class="mealcal-cardactions">
+                <div class="serving-box" role="group" aria-label="@ServingsAriaLabel(meal)"
+                     title="@(baseKnown ? $"Scales the amounts to this many servings (recipe makes {baseServings})" : "Scales every amount by this multiple")">
+                    <span class="serving-label">@(baseKnown ? "Servings" : "Batch ×")</span>
+                    <button type="button" class="icon-btn serving-step" @onclick="() => Bump(meal, -1)"
+                            disabled="@(target <= 1)" aria-label="Fewer servings">−</button>
+                    <input type="number" min="1" max="99" class="serving-count" value="@target"
+                           @onchange="e => SetServingsFromInput(meal, e.Value?.ToString())"
+                           aria-label="@ServingsAriaLabel(meal)" />
+                    <button type="button" class="icon-btn serving-step" @onclick="() => Bump(meal, 1)"
+                            disabled="@(target >= 99)" aria-label="More servings">+</button>
+                </div>
+                <button type="button" class="secondary mealcal-reroll" @onclick="() => Reroll(meal.Id)"
+                        disabled="@(rerollingMealId is not null)"
+                        title="Swap this meal for a different one — keeps the rest of your plan"
+                        aria-label="Reroll @meal.Recipe!.Name — swap it for a different meal">
+                    @(rerollingMealId == meal.Id ? "Rerolling…" : "🔄 Reroll")
+                </button>
+            </div>
         </div>
         @if (meal.Recipe.Blurb is { Length: > 0 } blurb)
         {
@@ -314,7 +357,7 @@ else if (!generating)
         <ul class="ingredient-list">
             @foreach (var i in meal.Recipe.MainIngredients)
             {
-                <li>@RecipeFormat.Line(i.Quantity, i.Name)</li>
+                <li>@RecipeFormat.Line(IngredientScale.Scale(i.Quantity, factor), i.Name)</li>
             }
             @{ var seasonings = meal.Recipe.Seasonings.Select(i => i.Name).ToList(); }
             @if (seasonings.Count > 0)

@@ -19,6 +19,7 @@ public sealed class RecipeType : ObjectType<Recipe>
         descriptor.Field(r => r.SavedAt);
         descriptor.Field(r => r.TimesEaten);
         descriptor.Field(r => r.EstimatedCaloriesPerServing);
+        descriptor.Field(r => r.Servings);
         descriptor.Field(r => r.IsVariant);
         descriptor.Field(r => r.ParentRecipeId);
         descriptor.Field(r => r.Ingredients);

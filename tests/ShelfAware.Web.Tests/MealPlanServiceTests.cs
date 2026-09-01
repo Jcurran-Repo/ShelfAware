@@ -61,6 +61,23 @@ public class MealPlanServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task A_generated_recipe_persists_its_base_servings()
+    {
+        // The serving box scales from this base — it must survive persistence, not just ride the suggestion.
+        var withServings = new RecipeSuggestion(
+            "Sheet-Pan Chicken", "Easy.",
+            [new SuggestedIngredient("chicken breast", true, null, "2 lbs")],
+            ["Roast it."], 480, Servings: 4);
+        var service = Service(new FakeMealPlanGenerator([withServings]));
+        await SaveSettings(service, new MealPlanSettings { Days = 1 });
+
+        await service.GenerateAsync();
+
+        await using var db = _db.CreateDbContext();
+        Assert.Equal(4, (await db.Recipes.SingleAsync()).Servings);
+    }
+
+    [Fact]
     public async Task Get_current_plan_returns_the_active_plan_with_its_meals_and_recipes()
     {
         // Exercises the real GetCurrentPlanAsync query (Include chain + order) on SQLite — the OrderBy must
