@@ -138,4 +138,33 @@ public class IngredientScaleTests
     public void A_non_plural_word_ending_in_a_sibilant_run_is_not_over_singularised() =>
         // "sixty" doesn't end in "-es", so it must not be trimmed to "six" when scaled down to one.
         Assert.Equal("1 sixty", IngredientScale.Scale("2 sixty", 0.5));
+
+    [Fact]
+    public void Scaling_down_to_a_small_amount_shows_a_decimal_never_zero() =>
+        // A batch recipe's main scaled down to one serving must not read "0 cup".
+        Assert.Equal("0.04 cup", IngredientScale.Scale("1/2 cup", 0.08));
+
+    [Fact]
+    public void A_trace_amount_floors_to_a_visible_minimum_rather_than_zero() =>
+        Assert.Equal("0.01 oz", IngredientScale.Scale("1 oz", 0.001));
+
+    [Fact]
+    public void Zero_stays_zero() =>
+        Assert.Equal("0 cup", IngredientScale.Scale("0 cup", 2.0));
+
+    [Fact]
+    public void The_unit_plural_follows_the_displayed_number_not_the_raw_value() =>
+        // 1.033 snaps to the displayed "1", so the unit must read singular ("1 cup", never "1 cups").
+        Assert.Equal("1 cup", IngredientScale.Scale("1 cup", 31.0 / 30));
+
+    [Fact]
+    public void A_large_amount_scales_without_throwing() =>
+        Assert.Equal("20000000001 cups", IngredientScale.Scale("10000000000 1/2 cups", 2.0));
+
+    [Fact]
+    public void A_pathologically_large_amount_is_left_unscaled_rather_than_producing_garbage()
+    {
+        var absurd = new string('9', 400) + " cups";
+        Assert.Equal(absurd, IngredientScale.Scale(absurd, 2.0));
+    }
 }

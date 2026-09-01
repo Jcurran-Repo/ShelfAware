@@ -1069,6 +1069,7 @@
             Ingredients = s.Ingredients.Select(i => new RecipeIngredient { Name = i.Name, IsMain = i.IsMain, MatchedProduct = i.MatchedProduct, Quantity = i.Quantity }).ToList(),
             Steps = s.Steps.Select((t, idx) => new RecipeStep { Order = idx + 1, Text = t }).ToList(),
             EstimatedCaloriesPerServing = s.CaloriesPerServing,
+            Servings = s.Servings, // same base the meal-plan card scales from (BuildRecipe/RecipeAdapter also carry it)
         };
         db.Recipes.Add(recipe);
         // Undoable: the entry keys on the recipe's generated id (so undo can delete it), so the recipe

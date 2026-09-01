@@ -261,7 +261,7 @@ else if (!generating)
     private readonly Dictionary<int, int> servingChoice = [];
 
     private int TargetFor(PlannedMeal meal) =>
-        servingChoice.GetValueOrDefault(meal.Id, meal.Recipe!.Servings is > 0 ? meal.Recipe.Servings!.Value : 1);
+        servingChoice.GetValueOrDefault(meal.Id, meal.Recipe!.Servings is > 0 ? Math.Clamp(meal.Recipe.Servings!.Value, 1, 99) : 1);
 
     private void Bump(PlannedMeal meal, int delta) => SetServings(meal, TargetFor(meal) + delta);
 

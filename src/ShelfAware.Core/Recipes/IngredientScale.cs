@@ -52,7 +52,8 @@ public static class IngredientScale
 
     /// <summary>The amount scaled by <paramref name="factor"/>, or the amount unchanged when it carries no
     /// leading ASCII number, when <paramref name="factor"/> is 1, or when it's null/blank. A non-positive or
-    /// non-finite factor is treated as a no-op, so it never emits "0…" or a negative amount.</summary>
+    /// non-finite factor is a no-op; a positive amount that scales to a tiny value shows a small decimal
+    /// (floored to a visible 0.01), never a bare "0" or a negative.</summary>
     public static string? Scale(string? quantity, double factor)
     {
         if (string.IsNullOrWhiteSpace(quantity)) return quantity;
@@ -64,23 +65,30 @@ public static class IngredientScale
         var lead = m.Groups["lead"].Value;
         var tail = quantity[m.Length..];
         var a = ParseAmount(m.Groups["a"].Value) * factor;
+        if (!double.IsFinite(a)) return quantity; // a pathological (hallucinated) amount can't scale
 
         if (m.Groups["b"].Success)
         {
             var b = ParseAmount(m.Groups["b"].Value) * factor;
-            return lead + FormatValue(a) + m.Groups["sep"].Value + FormatValue(b) + Inflect(tail, b);
+            if (!double.IsFinite(b)) return quantity;
+            var (aText, _) = Format(a);
+            var (bText, bValue) = Format(b);
+            return lead + aText + m.Groups["sep"].Value + bText + Inflect(tail, bValue);
         }
-        return lead + FormatValue(a) + Inflect(tail, a);
+        var (text, value) = Format(a);
+        return lead + text + Inflect(tail, value);
     }
 
-    // "1 1/2" → 1.5, "1/2" → 0.5, "2.5"/".5"/"2" → their value. The regex guarantees the shape.
+    // "1 1/2" → 1.5, "1/2" → 0.5, "2.5"/".5"/"2" → their value. The regex guarantees the shape; parsing as
+    // double (never int) means an absurdly large digit run becomes Infinity rather than throwing — the
+    // caller then leaves the amount unscaled.
     private static double ParseAmount(string token)
     {
         if (token.Contains('/'))
         {
             var parts = token.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
             var frac = ParseFraction(parts[^1]);
-            return parts.Length == 2 ? int.Parse(parts[0], CultureInfo.InvariantCulture) + frac : frac;
+            return parts.Length == 2 ? double.Parse(parts[0], CultureInfo.InvariantCulture) + frac : frac;
         }
         return double.Parse(token, CultureInfo.InvariantCulture);
     }
@@ -88,14 +96,16 @@ public static class IngredientScale
     private static double ParseFraction(string frac)
     {
         var slash = frac.IndexOf('/');
-        var num = int.Parse(frac[..slash], CultureInfo.InvariantCulture);
-        var den = int.Parse(frac[(slash + 1)..], CultureInfo.InvariantCulture);
-        return den == 0 ? num : (double)num / den; // "1/0" can't sanely scale — keep the numerator
+        var num = double.Parse(frac[..slash], CultureInfo.InvariantCulture);
+        var den = double.Parse(frac[(slash + 1)..], CultureInfo.InvariantCulture);
+        return den == 0 ? num : num / den; // "1/0" can't sanely scale — keep the numerator
     }
 
-    // Format a scaled value as a cooking amount: an integer, a whole+fraction ("1 1/2"), a bare fraction
-    // ("3/4"), or — when it snaps to no friendly fraction — a trimmed 2-dp decimal.
-    private static string FormatValue(double v)
+    // Format a scaled value as a cooking amount — an integer, a whole+fraction ("1 1/2"), a bare fraction
+    // ("3/4"), or a trimmed 2-dp decimal — AND report the effective numeric value it represents, so the
+    // unit's plural/singular form (in Inflect) follows the number actually shown rather than the raw
+    // pre-snap value (e.g. 1.03 displays "1" and reads singular, not "1 cups").
+    private static (string Text, double Value) Format(double v)
     {
         var whole = (long)Math.Floor(v);
         var frac = v - whole;
@@ -106,11 +116,21 @@ public static class IngredientScale
         if (Math.Abs(frac - best.Value) <= FracTolerance)
         {
             var w = whole + best.Carry;
-            return best.Text.Length == 0
-                ? w.ToString(CultureInfo.InvariantCulture)
-                : w == 0 ? best.Text : $"{w} {best.Text}";
+            if (best.Text.Length == 0)
+            {
+                // A positive value that snaps to a bare whole of 0 is a tiny amount, not "none" — show a
+                // small decimal (floored to a visible 0.01), never "0 cup", and let plurality follow it.
+                if (w == 0 && v > 0d)
+                {
+                    var small = Math.Max(Math.Round(v, 2), 0.01);
+                    return (small.ToString(CultureInfo.InvariantCulture), small);
+                }
+                return (w.ToString(CultureInfo.InvariantCulture), w);
+            }
+            return (w == 0 ? best.Text : $"{w} {best.Text}", w + best.Value);
         }
-        return Math.Round(v, 2).ToString(CultureInfo.InvariantCulture); // Round already caps at 2 dp
+        var rounded = Math.Round(v, 2); // Round already caps at 2 dp
+        return (rounded.ToString(CultureInfo.InvariantCulture), rounded);
     }
 
     // Normalise the LAST word of the tail (the unit noun) to singular/plural for the scaled value:

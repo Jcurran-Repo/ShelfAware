@@ -6,7 +6,7 @@ namespace ShelfAware.Llm;
 /// <summary>The ONE definition of the recipe structured-output shape and its defensive parse — shared by
 /// the recipe advisor (suggest + adapt) and the meal-plan generator, so they can't drift on the schema or
 /// on how a model response is read back. A "recipes" array of {name, blurb, ingredients[], steps[],
-/// calories_per_serving}, parsed into <see cref="RecipeSuggestion"/>.</summary>
+/// calories_per_serving, servings}, parsed into <see cref="RecipeSuggestion"/>.</summary>
 internal static class RecipeJson
 {
     public const string SchemaJson = """
