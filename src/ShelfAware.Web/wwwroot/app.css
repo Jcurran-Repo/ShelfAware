@@ -2100,6 +2100,44 @@ button.tag-chip {
     padding: 0.25rem 0.6rem;
     white-space: nowrap;
 }
+/* Right side of the meal-card header: the serving box stacked directly above the reroll button. */
+.mealcal-cardactions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.4rem;
+    flex-shrink: 0;
+}
+/* Serving / batch stepper — scales the ingredient amounts live (a pure re-render, no AI call). */
+.serving-box {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.15rem 0.35rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface-alt);
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+.serving-label { color: var(--ink-soft); font-size: 0.75rem; }
+.serving-box .serving-step {
+    min-width: 1.5rem;
+    height: 1.5rem;
+    padding: 0;
+    font-size: 1rem;
+    line-height: 1;
+}
+.serving-count {
+    width: 3rem;
+    text-align: center;
+    padding: 0.15rem 0.2rem;
+    font-size: 0.85rem;
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+.serving-count::-webkit-outer-spin-button,
+.serving-count::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
 /* Ingredient row with its swap control + bubble cloud. */
 .ingredient-list li {

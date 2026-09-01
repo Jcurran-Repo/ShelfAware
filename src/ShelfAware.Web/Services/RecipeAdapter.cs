@@ -97,6 +97,7 @@ public class RecipeAdapter(
             SavedAt = DateTimeOffset.Now,
             ParentRecipeId = parentId,
             EstimatedCaloriesPerServing = adapted.CaloriesPerServing,
+            Servings = adapted.Servings,
             Ingredients = adapted.Ingredients
                 .Select(i => new RecipeIngredient { Name = i.Name, IsMain = i.IsMain, MatchedProduct = i.MatchedProduct, Quantity = i.Quantity })
                 .ToList(),

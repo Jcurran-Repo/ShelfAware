@@ -35,7 +35,7 @@ public record AdaptIngredient(string Name, bool IsMain, string? Quantity = null)
 
 public record RecipeSuggestion(
     string Name, string Blurb, IReadOnlyList<SuggestedIngredient> Ingredients, IReadOnlyList<string> Steps,
-    int? CaloriesPerServing = null)
+    int? CaloriesPerServing = null, int? Servings = null)
 {
     /// <summary>Main ingredients the user still needs to buy — what to add to the grocery list.
     /// Derived — excluded from the persisted last-suggestions snapshot.</summary>

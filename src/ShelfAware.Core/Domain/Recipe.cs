@@ -26,6 +26,10 @@ public class Recipe : IHouseholdOwned
     public string? ImagePath { get; set; }
     /// <summary>LLM's rough estimated calories per serving (ballpark, not precise nutrition); null if unknown.</summary>
     public int? EstimatedCaloriesPerServing { get; set; }
+    /// <summary>Roughly how many servings the recipe as written makes — the base the meal-plan card's serving
+    /// box scales ingredient amounts from. A ballpark from the generator; null for recipes made before this
+    /// existed (or that couldn't say), where the serving box falls back to a plain ×multiplier.</summary>
+    public int? Servings { get; set; }
     /// <summary>Set when this recipe is an "Adapt"-generated variant of another saved recipe (rewritten to
     /// use what's on hand); null for an original. Variants group under their parent on the Recipes page.</summary>
     public int? ParentRecipeId { get; set; }

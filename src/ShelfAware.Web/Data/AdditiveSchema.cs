@@ -122,6 +122,11 @@ public static class AdditiveSchema
         // 2026-08-31: mark a recipe the planner generated, so the Cookbook can hide it until "kept".
         // Pre-existing recipes land on 0 (false) — user-saved, shown as ever. Enum-free bool → INTEGER.
         EnsureColumn(db, table: "Recipes", column: "PlanGenerated", definition: "INTEGER NOT NULL DEFAULT 0");
+
+        // 2026-08-31: how many servings a generated recipe makes — the base the meal-plan card's serving
+        // box scales ingredient amounts from. Pre-existing recipes land on NULL (unknown; the box falls
+        // back to a plain ×multiplier). int? → INTEGER NULL, matching EnsureCreated's mapping.
+        EnsureColumn(db, table: "Recipes", column: "Servings", definition: "INTEGER NULL");
     }
 
     public static void Apply(AuthDbContext db)

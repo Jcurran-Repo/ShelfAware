@@ -70,7 +70,7 @@ public class RecipesSuggestAndAdaptTests : PageTestContext
     private static RecipeSuggestion Tacos(string? matched = null) => new(
         "Weeknight Tacos", "Fast and forgiving.",
         [new SuggestedIngredient("ground beef", true, matched), new SuggestedIngredient("cumin", false, null)],
-        ["Brown the beef.", "Season and serve."], 450);
+        ["Brown the beef.", "Season and serve."], 450, Servings: 4);
 
     // ------------------------------------------------------------------------- the suggestion batch
 
@@ -212,6 +212,7 @@ public class RecipesSuggestAndAdaptTests : PageTestContext
         Assert.Equal(2, recipe.Ingredients.Count);
         Assert.Equal(2, recipe.Steps.Count);
         Assert.Equal(450, recipe.EstimatedCaloriesPerServing);
+        Assert.Equal(4, recipe.Servings); // the base the meal-plan card scales from, carried through Save
 
         // The save is logged and undoable (undo deletes a still-pristine recipe).
         var entry = await raw.ActivityEntries.IgnoreQueryFilters().SingleAsync(e => e.Kind == ActivityKind.RecipeSaved);
