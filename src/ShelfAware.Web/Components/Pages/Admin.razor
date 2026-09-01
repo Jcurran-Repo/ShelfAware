@@ -8,7 +8,7 @@
 @using ShelfAware.Web.Services
 @using ShelfAware.Web.Wishlist
 @attribute [Authorize(Policy = AdminOptions.PolicyName)]
-@implements IDisposable
+@implements IAsyncDisposable
 @inject IJSRuntime JS
 @inject AdminReportReader Reader
 @inject ReportResolutionService Actions
@@ -412,14 +412,20 @@ else
                 <table>
                     <caption class="visually-hidden">Distinct errors the app has logged, still open</caption>
                     <thead>
-                        <tr><th>Last seen</th><th>Count</th><th>Level</th><th>What</th><th><span class="visually-hidden">Actions</span></th></tr>
+                        <tr>
+                            <SortableHeader Column="lastseen" Label="Last seen" Sort="errorSort.Sort" OnSort="ErrorSortBy" />
+                            <SortableHeader Column="count" Label="Count" Sort="errorSort.Sort" OnSort="ErrorSortBy" />
+                            <SortableHeader Column="level" Label="Level" Sort="errorSort.Sort" OnSort="ErrorSortBy" />
+                            <SortableHeader Column="what" Label="What" Sort="errorSort.Sort" OnSort="ErrorSortBy" />
+                            <th><span class="visually-hidden">Actions</span></th>
+                        </tr>
                     </thead>
                     <tbody>
                         @* @key: these lists lose and gain members per CLICK now, and without it
                            Blazor matches rows positionally — browser-held <details> state stuck to
                            a list POSITION, so resolving a row above an expanded stack trace showed
                            a different error's trace as expanded. *@
-                        @foreach (var e in open)
+                        @foreach (var e in errorSort.Sort.Order(open, ErrorKey))
                         {
                             <tr @key="e.Id">
                                 <td>@e.LastSeenAt.ToString("MMM d, HH:mm")</td>
@@ -655,6 +661,23 @@ else
     [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
 
     private IReadOnlyList<ErrorLogEntry>? errors;
+
+    // Column sort for the OPEN error log — the operator's triage table (by count, recency, level). Default
+    // (and un-sort) is the reader's order; saved per device (via the shared TableSortController). The small
+    // reference tables aren't sorted.
+    private readonly TableSortController errorSort = new("admin-errors", "lastseen", "count", "level", "what");
+
+    private IComparable? ErrorKey(ErrorLogEntry e) => errorSort.Sort.Column switch
+    {
+        "lastseen" => e.LastSeenAt,
+        "count" => e.Count,
+        "level" => e.Level,
+        "what" => e.LastMessage,
+        _ => e.LastSeenAt,
+    };
+
+    private Task ErrorSortBy(string column) => errorSort.ToggleAsync(column);
+
     private IReadOnlyList<AdminActivityRow>? activity;
     private IReadOnlyList<AdminBugReport>? bugReports;
     private IReadOnlyList<UserLoginStat>? loginStats;
@@ -691,10 +714,15 @@ else
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (!firstRender || refused) return;
+
+        // Restore this device's error-log sort (interop can't run during prerender, so it waits for here).
+        if (await errorSort.LoadAsync(JS)) await InvokeAsync(StateHasChanged);
+
         // CI status is fetched from GitHub after the first paint, so a slow (or unreachable) GitHub never
         // blocks the admin page from rendering. The provider never throws — it returns an Error status — so
         // the only thing to guard is the teardown race (the admin navigated away mid-fetch).
-        if (!firstRender || refused || ciLoaded || !Ci.Enabled) return;
+        if (ciLoaded || !Ci.Enabled) return;
         ciLoaded = true;
         try
         {
@@ -727,9 +755,10 @@ else
         }
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         if (subscribed) Presence.Changed -= OnPresenceChanged;
+        await errorSort.DisposeAsync();
     }
 
     /// <summary>Self-reporting (returns whether it worked) so callers can split their advice by

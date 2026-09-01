@@ -1,4 +1,5 @@
 @page "/products"
+@implements IAsyncDisposable
 @using ShelfAware.Core.Chat
 @using ShelfAware.Core.Prediction
 @using ShelfAware.Core.Settings
@@ -60,7 +61,7 @@
 }
 else
 {
-    var shown = FilteredProducts.ToList();
+    var shown = ApplySort(FilteredProducts).ToList();
 
     @if (tagCounts.Count > 0)
     {
@@ -119,12 +120,12 @@ else
         <caption class="visually-hidden">Products with category, tracking, purchase count, replenishment status, and next predicted buy date. Use the filter row to narrow the list.</caption>
         <thead>
             <tr>
-                <th scope="col">Name</th>
-                <th scope="col">Category</th>
-                <th scope="col">Tracked</th>
-                <th scope="col">Purchases</th>
-                <th scope="col">Status</th>
-                <th scope="col">Next buy</th>
+                <SortableHeader Column="name" Label="Name" Sort="sort.Sort" OnSort="SortBy" />
+                <SortableHeader Column="category" Label="Category" Sort="sort.Sort" OnSort="SortBy" />
+                <SortableHeader Column="tracked" Label="Tracked" Sort="sort.Sort" OnSort="SortBy" />
+                <SortableHeader Column="purchases" Label="Purchases" Sort="sort.Sort" OnSort="SortBy" />
+                <SortableHeader Column="status" Label="Status" Sort="sort.Sort" OnSort="SortBy" />
+                <SortableHeader Column="nextbuy" Label="Next buy" Sort="sort.Sort" OnSort="SortBy" />
                 <th scope="col"><span class="visually-hidden">Actions</span></th>
             </tr>
             <tr class="filter-row">
@@ -267,6 +268,36 @@ else
     private Dictionary<int, int> purchaseCounts = [];
     private Dictionary<int, PredictionResult> predictions = [];
     private Dictionary<int, ProductEstimate> estimates = [];
+
+    // Column sort: default is Name (the DB load order); a header click sorts + persists per device. The
+    // import / restore / save / dispose protocol lives in TableSortController (shared with the other tables).
+    private readonly TableSortController sort = new("products", "name", "category", "tracked", "purchases", "status", "nextbuy");
+
+    private IEnumerable<Product> ApplySort(IEnumerable<Product> items) => sort.Sort.Order(items, SortKey, p => p.Name);
+
+    // The active column's comparison key. The row type + its columns live here; TableSort owns the direction
+    // and the stable (Name) tiebreak. Status uses the enum's own severity order (Unknown→Overdue).
+    private IComparable? SortKey(Product p) => sort.Sort.Column switch
+    {
+        "name" => p.Name,
+        "category" => p.Category.ToString(),
+        "tracked" => p.IsTracked,
+        "purchases" => purchaseCounts.GetValueOrDefault(p.Id),
+        "status" => estimates.TryGetValue(p.Id, out var e) ? (int)e.Status : -1,
+        "nextbuy" => estimates.TryGetValue(p.Id, out var n) ? n.NextBuyDate ?? DateOnly.MaxValue : DateOnly.MaxValue,
+        _ => p.Name,
+    };
+
+    private Task SortBy(string column) => sort.ToggleAsync(column);
+
+    // Restore this device's saved sort once JS interop is available (a re-order after first paint, not a
+    // flash worth blocking paint for). Interop can't run during prerender, so this waits for firstRender.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && await sort.LoadAsync(JS)) StateHasChanged();
+    }
+
+    public ValueTask DisposeAsync() => sort.DisposeAsync();
 
     private string newName = "";
     private Category newCategory = Category.Pantry;

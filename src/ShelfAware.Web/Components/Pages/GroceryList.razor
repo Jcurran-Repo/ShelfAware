@@ -182,18 +182,37 @@ else
     // aisle (int.MaxValue) rather than jumping to the front.
     private static int SortAisle(GroceryRow r) => r.Category is { } c ? (int)c : int.MaxValue;
 
+    // Column sort. The DEFAULT — and the third "un-sort" click — is the aisle-walk order buyNow/comingUp are
+    // built in (walk the store once); a header click re-sorts BOTH tables the same way and is saved per
+    // device (via the shared TableSortController). No tiebreak, so ties keep the aisle-walk order (OrderBy is
+    // stable). Plan rows have no rhythm: status sorts them to the front (-1); qty/cost to the end (MaxValue).
+    private readonly TableSortController sort = new("grocery", "item", "category", "status", "nextbuy", "qty", "cost");
+
+    private IComparable? GroceryKey(GroceryRow r) => sort.Sort.Column switch
+    {
+        "item" => r.Name,
+        "category" => SortAisle(r),
+        "status" => r.Estimate is { } e ? (int)e.Status : -1,
+        "nextbuy" => r.DueDate ?? DateOnly.MaxValue,
+        "qty" => r.Estimate?.RecommendedQuantity ?? decimal.MaxValue,
+        "cost" => r.Estimate?.ExpectedCost ?? decimal.MaxValue,
+        _ => r.Name,
+    };
+
+    private Task SortBy(string column) => sort.ToggleAsync(column);
+
     private RenderFragment ReportTable(List<GroceryRow> rows, decimal subtotal, int unknownCount, bool canIgnore) =>
         @<div class="table-scroll">
             <table>
                 <caption class="visually-hidden">Grocery items with source, category, replenishment status, next buy date, quantity, and estimated cost.</caption>
                 <thead>
                     <tr>
-                        <th scope="col">Item</th>
-                        <th scope="col">Category</th>
-                        <th scope="col">Status</th>
-                        <th scope="col">Next buy</th>
-                        <th scope="col">Qty</th>
-                        <th scope="col">Est. cost</th>
+                        <SortableHeader Column="item" Label="Item" Sort="sort.Sort" OnSort="SortBy" />
+                        <SortableHeader Column="category" Label="Category" Sort="sort.Sort" OnSort="SortBy" />
+                        <SortableHeader Column="status" Label="Status" Sort="sort.Sort" OnSort="SortBy" />
+                        <SortableHeader Column="nextbuy" Label="Next buy" Sort="sort.Sort" OnSort="SortBy" />
+                        <SortableHeader Column="qty" Label="Qty" Sort="sort.Sort" OnSort="SortBy" />
+                        <SortableHeader Column="cost" Label="Est. cost" Sort="sort.Sort" OnSort="SortBy" />
                         @if (canIgnore)
                         {
                             <th scope="col"><span class="visually-hidden">Actions</span></th>
@@ -201,7 +220,7 @@ else
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var r in rows)
+                    @foreach (var r in sort.Sort.Order(rows, GroceryKey))
                     {
                         @if (r.Source == ShoppingSource.Predictor)
                         {
@@ -436,6 +455,8 @@ else
             downloadModule = await JS.InvokeAsync<IJSObjectReference>("import", "/js/download.js");
             selfRef = DotNetObjectReference.Create(this);
             await downloadModule.InvokeVoidAsync("registerShortcut", selfRef, "d");
+
+            if (await sort.LoadAsync(JS)) StateHasChanged();
         }
         catch (JSDisconnectedException) { /* circuit gone before wiring — nothing to clean up yet */ }
     }
@@ -470,6 +491,7 @@ else
             }
             catch (JSDisconnectedException) { /* circuit already gone */ }
         }
+        await sort.DisposeAsync();
         selfRef?.Dispose();
     }
 

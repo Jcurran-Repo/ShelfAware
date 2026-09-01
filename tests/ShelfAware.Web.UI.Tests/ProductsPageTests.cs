@@ -442,4 +442,26 @@ public class ProductsPageTests : PageTestContext
         Assert.Contains("You have 5", cell.TextContent);
         Assert.DoesNotContain("overdue", cell.TextContent);
     }
+
+    // ------------------------------------------------------------------- column sorting
+
+    private static PurchaseEvent Buy() => new() { PurchasedAt = Today, Quantity = 1m };
+
+    [Fact]
+    public void Clicking_a_column_header_sorts_by_it_and_flips_on_a_second_click()
+    {
+        Seed("Apple", p => p.Purchases = [Buy(), Buy(), Buy()]); // 3
+        Seed("Mango", p => p.Purchases = [Buy()]);               // 1
+        Seed("Zebra", p => p.Purchases = [Buy(), Buy()]);        // 2
+        var cut = RenderGrid();
+
+        Assert.Equal(["Apple", "Mango", "Zebra"], ShownNames(cut)); // default: name ascending
+
+        // Find the "Purchases" sortable header by its stable label text (aria-label changes once active).
+        cut.FindAll("button.th-sort").First(b => b.TextContent.Contains("Purchases")).Click();
+        Assert.Equal(["Mango", "Zebra", "Apple"], ShownNames(cut)); // 1, 2, 3 ascending
+
+        cut.FindAll("button.th-sort").First(b => b.TextContent.Contains("Purchases")).Click();
+        Assert.Equal(["Apple", "Zebra", "Mango"], ShownNames(cut)); // 3, 2, 1 descending
+    }
 }

@@ -356,4 +356,26 @@ public class GroceryListPageTests : PageTestContext
             Assert.Contains("New Thing", details.TextContent);
         });
     }
+
+    // ------------------------------------------------------------------- column sorting
+
+    [Fact]
+    public void Clicking_a_grocery_header_sorts_then_un_sorts_back_to_the_aisle_walk()
+    {
+        SeedOverdue("Apple");
+        SeedOverdue("Mango");
+        SeedOverdue("Zebra");
+        var cut = RenderList();
+        string[] Names() => [.. cut.FindAll("tbody tr .item-name").Select(a => a.TextContent.Trim())];
+
+        // Same aisle + same rhythm → the aisle-walk falls back to name order.
+        Assert.Equal(["Apple", "Mango", "Zebra"], Names());
+
+        cut.FindAll("button.th-sort").First(b => b.TextContent.Contains("Item")).Click(); // ascending
+        cut.FindAll("button.th-sort").First(b => b.TextContent.Contains("Item")).Click(); // descending
+        Assert.Equal(["Zebra", "Mango", "Apple"], Names());
+
+        cut.FindAll("button.th-sort").First(b => b.TextContent.Contains("Item")).Click(); // off → aisle-walk
+        Assert.Equal(["Apple", "Mango", "Zebra"], Names());
+    }
 }

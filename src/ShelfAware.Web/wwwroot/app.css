@@ -455,6 +455,28 @@ th {
     background: var(--surface-alt);
 }
 
+/* A sortable column header (SortableHeader): a plain-looking button that inherits the th styling, with a
+   direction arrow when it's the active sort. Whole cell is the click target. */
+.th-sort {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3em;
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+}
+.th-sort:hover { color: var(--accent-ink); }
+.th-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sort-ind { font-size: 0.85em; color: var(--accent); }
+th.sorted { color: var(--accent-ink); }
+
 tbody tr:last-child td {
     border-bottom: none;
 }

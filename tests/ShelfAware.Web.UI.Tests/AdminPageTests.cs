@@ -656,4 +656,27 @@ public class AdminPageTests : PageTestContext
             Assert.DoesNotContain("Resolved (1)", cut.Markup);
         });
     }
+
+    [Fact]
+    public async Task The_open_error_log_sorts_by_count()
+    {
+        var store = new ErrorLogStore(authDb);
+        async Task Record(string msg, int times)
+        {
+            for (var i = 0; i < times; i++)
+                await store.RecordAsync(new CapturedError(DateTimeOffset.Now, "Error", "Cat", "Type", msg, msg, null));
+        }
+        await Record("AlphaErr", 1);
+        await Record("BravoErr", 3);
+        await Record("CharlieErr", 2);
+
+        var cut = Render<Components.Pages.Admin>();
+        cut.WaitForAssertion(() => Assert.Contains("AlphaErr", cut.Markup));
+
+        cut.FindAll("button.th-sort").First(b => b.TextContent.Contains("Count")).Click(); // ascending by count
+
+        var m = cut.Markup;
+        Assert.True(m.IndexOf("AlphaErr") < m.IndexOf("CharlieErr") && m.IndexOf("CharlieErr") < m.IndexOf("BravoErr"),
+            "Ascending by count should order 1×, 2×, 3× (Alpha, Charlie, Bravo).");
+    }
 }
