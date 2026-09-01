@@ -905,8 +905,11 @@ public class UploadPageTests : PageTestContext
     [Fact]
     public void An_edit_follows_its_row_through_a_re_sort()
     {
-        // @key keeps each row's edit bound to its line, not its position: an edit must move with the row when
-        // the grid reorders, not stay behind or land on a neighbour.
+        // An edit follows its LINE through a re-sort, not its screen position: a corrected value must move
+        // with the row when the grid reorders, not stay behind or land on a neighbour. The row controls are
+        // all @bind to the line object, so the edit lives on the model and follows it. (@key="line" is kept
+        // for consistency with the persisted grids, but isn't load-bearing here — the review row holds no
+        // uncontrolled DOM state that would need it.)
         SeedPending("Walmart", Today, DbLine("Banana", "Banana"), DbLine("Apple", "Apple"), DbLine("Cherry", "Cherry"));
         var cut = OpenReview();
 

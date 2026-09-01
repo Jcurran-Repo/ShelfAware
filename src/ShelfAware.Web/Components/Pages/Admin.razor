@@ -413,10 +413,10 @@ else
                     <caption class="visually-hidden">Distinct errors the app has logged, still open</caption>
                     <thead>
                         <tr>
-                            <SortableHeader Column="lastseen" Label="Last seen" Sort="errorSort" OnSort="ErrorSortBy" />
-                            <SortableHeader Column="count" Label="Count" Sort="errorSort" OnSort="ErrorSortBy" />
-                            <SortableHeader Column="level" Label="Level" Sort="errorSort" OnSort="ErrorSortBy" />
-                            <SortableHeader Column="what" Label="What" Sort="errorSort" OnSort="ErrorSortBy" />
+                            <SortableHeader Column="lastseen" Label="Last seen" Sort="errorSort.Sort" OnSort="ErrorSortBy" />
+                            <SortableHeader Column="count" Label="Count" Sort="errorSort.Sort" OnSort="ErrorSortBy" />
+                            <SortableHeader Column="level" Label="Level" Sort="errorSort.Sort" OnSort="ErrorSortBy" />
+                            <SortableHeader Column="what" Label="What" Sort="errorSort.Sort" OnSort="ErrorSortBy" />
                             <th><span class="visually-hidden">Actions</span></th>
                         </tr>
                     </thead>
@@ -425,7 +425,7 @@ else
                            Blazor matches rows positionally — browser-held <details> state stuck to
                            a list POSITION, so resolving a row above an expanded stack trace showed
                            a different error's trace as expanded. *@
-                        @foreach (var e in errorSort.Order(open, ErrorKey))
+                        @foreach (var e in errorSort.Sort.Order(open, ErrorKey))
                         {
                             <tr @key="e.Id">
                                 <td>@e.LastSeenAt.ToString("MMM d, HH:mm")</td>
@@ -663,12 +663,11 @@ else
     private IReadOnlyList<ErrorLogEntry>? errors;
 
     // Column sort for the OPEN error log — the operator's triage table (by count, recency, level). Default
-    // (and un-sort) is the reader's order; saved per device. The small reference tables aren't sorted.
-    private readonly TableSort errorSort = new();
-    private IJSObjectReference? sortModule;
-    private sealed record SavedSort(string Col, bool Desc);
+    // (and un-sort) is the reader's order; saved per device (via the shared TableSortController). The small
+    // reference tables aren't sorted.
+    private readonly TableSortController errorSort = new("admin-errors", "lastseen", "count", "level", "what");
 
-    private IComparable? ErrorKey(ErrorLogEntry e) => errorSort.Column switch
+    private IComparable? ErrorKey(ErrorLogEntry e) => errorSort.Sort.Column switch
     {
         "lastseen" => e.LastSeenAt,
         "count" => e.Count,
@@ -677,15 +676,7 @@ else
         _ => e.LastSeenAt,
     };
 
-    private async Task ErrorSortBy(string column)
-    {
-        errorSort.Toggle(column);
-        if (sortModule is not null)
-        {
-            try { await sortModule.InvokeVoidAsync("set", "admin-errors", errorSort.Column, errorSort.Descending); }
-            catch (JSDisconnectedException) { /* circuit gone mid-click — the sort still applied this render */ }
-        }
-    }
+    private Task ErrorSortBy(string column) => errorSort.ToggleAsync(column);
 
     private IReadOnlyList<AdminActivityRow>? activity;
     private IReadOnlyList<AdminBugReport>? bugReports;
@@ -726,16 +717,7 @@ else
         if (!firstRender || refused) return;
 
         // Restore this device's error-log sort (interop can't run during prerender, so it waits for here).
-        try
-        {
-            sortModule = await JS.InvokeAsync<IJSObjectReference>("import", "/js/table-sort.js");
-            if (await sortModule.InvokeAsync<SavedSort?>("get", "admin-errors") is { } saved)
-            {
-                errorSort.Set(saved.Col, saved.Desc);
-                await InvokeAsync(StateHasChanged);
-            }
-        }
-        catch (Exception ex) when (ex is JSDisconnectedException or ObjectDisposedException) { }
+        if (await errorSort.LoadAsync(JS)) await InvokeAsync(StateHasChanged);
 
         // CI status is fetched from GitHub after the first paint, so a slow (or unreachable) GitHub never
         // blocks the admin page from rendering. The provider never throws — it returns an Error status — so
@@ -776,11 +758,7 @@ else
     public async ValueTask DisposeAsync()
     {
         if (subscribed) Presence.Changed -= OnPresenceChanged;
-        if (sortModule is not null)
-        {
-            try { await sortModule.DisposeAsync(); }
-            catch (JSDisconnectedException) { /* circuit already gone */ }
-        }
+        await errorSort.DisposeAsync();
     }
 
     /// <summary>Self-reporting (returns whether it worked) so callers can split their advice by
