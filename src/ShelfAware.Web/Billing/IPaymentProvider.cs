@@ -14,8 +14,8 @@ namespace ShelfAware.Web.Billing;
 /// </summary>
 public interface IPaymentProvider
 {
-    /// <summary>Which adapter this is — for diagnostics and the startup log line, so an operator can see
-    /// at a glance whether a box is on the fake or the real provider.</summary>
+    /// <summary>Which adapter this is — for diagnostics, so an operator (or a later admin/health surface)
+    /// can tell at a glance whether a box is on the fake or the real provider.</summary>
     PaymentProviderKind Kind { get; }
 
     /// <summary>Open hosted checkout for one product and return the URL to redirect the browser to. The

@@ -112,16 +112,34 @@ public class FakePaymentProviderTests
     }
 
     [Fact]
-    public void An_unconfigured_secret_falls_back_to_the_dev_secret()
+    public void A_webhook_is_rejected_when_no_secret_is_configured()
     {
-        // A fake box that left the secret unset should still verify its own events (local end-to-end
-        // testing without a provider account), so the fallback signs+verifies under DevSecret.
+        // With no configured secret the fake can't verify anything, so it rejects rather than fall back to
+        // a hard-coded key (a known secret in a public repo would be a forgery trapdoor). A deployed box
+        // that enables payments is required to set the secret (Program.cs ValidateOnStart).
         var provider = Provider(secret: null);
-        Assert.Equal(FakePaymentProvider.DevSecret, provider.EffectiveSecret);
-
         var payload = FakePaymentProvider.Serialize(SampleEvent());
-        var signature = FakePaymentProvider.Sign(FakePaymentProvider.DevSecret, payload);
-        Assert.NotNull(provider.ParseWebhook(payload, signature));
+        var signature = FakePaymentProvider.Sign("anything", payload);
+        Assert.Null(provider.ParseWebhook(payload, signature));
+    }
+
+    [Fact]
+    public void A_validly_signed_event_with_an_out_of_range_kind_is_rejected()
+    {
+        // JsonStringEnumConverter accepts NUMERIC enum values, so a valid signature can smuggle an
+        // undefined Kind past deserialization — reject it rather than hand the handler a
+        // (PaymentEventKind)42 to switch on (CLAUDE.md item 38, the numeric-smuggling hazard).
+        const string payload = """{"EventId":"evt_1","Kind":42}""";
+        var signature = FakePaymentProvider.Sign(Secret, payload);
+        Assert.Null(Provider().ParseWebhook(payload, signature));
+    }
+
+    [Fact]
+    public void A_validly_signed_event_with_an_out_of_range_product_is_rejected()
+    {
+        const string payload = """{"EventId":"evt_1","Kind":"CheckoutCompleted","Product":99}""";
+        var signature = FakePaymentProvider.Sign(Secret, payload);
+        Assert.Null(Provider().ParseWebhook(payload, signature));
     }
 
     [Fact]

@@ -26,13 +26,6 @@ public sealed class FakePaymentProvider(IOptions<PaymentsOptions> options) : IPa
         Converters = { new JsonStringEnumConverter() },
     };
 
-    /// <summary>The secret used to sign/verify — the configured one, or a fixed dev secret when a fake box
-    /// left it unset (a fake never talks to a real provider, so a missing secret shouldn't stop local
-    /// end-to-end testing). Internal so a test can sign against whichever path it's exercising.</summary>
-    internal const string DevSecret = "fake-dev-webhook-secret";
-    internal string EffectiveSecret =>
-        string.IsNullOrEmpty(_options.WebhookSigningSecret) ? DevSecret : _options.WebhookSigningSecret;
-
     public PaymentProviderKind Kind => PaymentProviderKind.Fake;
 
     /// <summary>A deterministic checkout URL carrying the request, so a test can assert what was asked and
@@ -63,14 +56,27 @@ public sealed class FakePaymentProvider(IOptions<PaymentsOptions> options) : IPa
     public PaymentWebhookEvent? ParseWebhook(string payload, string? signatureHeader)
     {
         if (string.IsNullOrEmpty(payload) || string.IsNullOrEmpty(signatureHeader)) return null;
-        if (!SignaturesMatch(Sign(EffectiveSecret, payload), signatureHeader)) return null;
+        // No configured secret means nothing can be verified — reject, never fall back to a hard-coded
+        // key (a known secret in a public repo would be a forgery trapdoor). A box that ENABLES payments
+        // is required to set Payments:WebhookSigningSecret (Program.cs ValidateOnStart), so this null path
+        // is only reachable for a disabled/programmatically-constructed provider.
+        var secret = _options.WebhookSigningSecret;
+        if (string.IsNullOrEmpty(secret)) return null;
+        if (!SignaturesMatch(Sign(secret, payload), signatureHeader)) return null;
 
         try
         {
             var parsed = JsonSerializer.Deserialize<PaymentWebhookEvent>(payload, JsonOptions);
             // A signed-but-empty event (no id to dedupe on) is malformed — reject rather than pass a
             // half-event to the idempotent handler.
-            return parsed is null || string.IsNullOrEmpty(parsed.EventId) ? null : parsed;
+            if (parsed is null || string.IsNullOrEmpty(parsed.EventId)) return null;
+            // JsonStringEnumConverter also accepts NUMERIC enum values, so a validly-signed body can smuggle
+            // an out-of-range Kind/Product past deserialization (CLAUDE.md item 38 — the numeric-smuggling
+            // hazard this repo guards at every enum parse). Reject an undefined value rather than hand the
+            // handler a (PaymentEventKind)42 to switch on.
+            if (!Enum.IsDefined(parsed.Kind)) return null;
+            if (parsed.Product is { } product && !Enum.IsDefined(product)) return null;
+            return parsed;
         }
         catch (JsonException)
         {

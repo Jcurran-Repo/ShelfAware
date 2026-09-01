@@ -43,8 +43,9 @@ public sealed class PaymentsOptions
 
     /// <summary>The provider's webhook signing secret — the shared secret the raw-body webhook endpoint
     /// (step 2) verifies each event's HMAC against. The fake signs and verifies with it too, so its wire
-    /// format is real crypto; when it's unset on a fake dev box, the fake falls back to a fixed dev
-    /// secret (see <see cref="FakePaymentProvider"/>). The real provider requires it.</summary>
+    /// format is real crypto. REQUIRED whenever <see cref="Enabled"/> (enforced at startup in Program.cs):
+    /// there is deliberately NO default — a hard-coded fallback would be a forgery trapdoor in a public
+    /// repo, so an enabled box must configure one, fake or real.</summary>
     public string? WebhookSigningSecret { get; set; }
 
     // ---- Product/price identifiers (the provider's ids for each purchasable thing, §6). Consumed by the

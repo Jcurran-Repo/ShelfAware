@@ -337,6 +337,10 @@ builder.Services.AddOptions<PaymentsOptions>()
     .Validate(o => !o.Enabled || o.Provider == PaymentProviderKind.Fake,
         "Payments:Provider=StripeManagedPayments isn't wired yet (phase-3 step 5). Set Payments:Provider=Fake, " +
         "or leave Payments:Enabled unset until the real adapter ships.")
+    .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.WebhookSigningSecret),
+        "Payments:WebhookSigningSecret is required when Payments:Enabled — the webhook endpoint verifies each " +
+        "event's signature against it, and there is deliberately no default (a hard-coded fallback would be a " +
+        "forgery trapdoor in a public repo).")
     .ValidateOnStart();
 if (paymentsEnabled)
 {
