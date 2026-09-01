@@ -69,8 +69,22 @@ public sealed class PaymentsOptions
 
     /// <summary>THE one definition of "payments exist on this box" — every surface that shows or hides a
     /// billing affordance asks this, so they can't drift (the <see cref="EmailOptions.IsConfigured"/>
-    /// pattern). Step 1 is just <see cref="Enabled"/>; step 5 tightens it to also require the real
-    /// provider's key + price ids so a half-configured pay-to-play box fails fast rather than 500ing at
-    /// the first checkout.</summary>
+    /// pattern). It stays just <see cref="Enabled"/>: fullness of the real provider's config (key + price
+    /// ids) is enforced at STARTUP (Program.cs ValidateOnStart) rather than here, so a half-configured
+    /// pay-to-play box fails fast at boot instead of silently hiding billing.</summary>
     public bool IsConfigured => Enabled;
+
+    /// <summary>The provider price id for a product, or null if unset. The real adapter maps the requested
+    /// <see cref="BillingProduct"/> to the configured price; a null for a product the box tries to sell is a
+    /// misconfiguration the startup validation should already have caught. The fake ignores this (it echoes
+    /// the requested product straight back).</summary>
+    public string? PriceIdFor(BillingProduct product) => product switch
+    {
+        BillingProduct.SubscriptionMonthly => MonthlyPriceId,
+        BillingProduct.SubscriptionAnnual => AnnualPriceId,
+        BillingProduct.CreditPack5 => CreditPack5PriceId,
+        BillingProduct.CreditPack10 => CreditPack10PriceId,
+        BillingProduct.CreditPack20 => CreditPack20PriceId,
+        _ => null,
+    };
 }

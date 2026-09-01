@@ -339,19 +339,40 @@ var fakePayments = paymentsEnabled &&
     !string.Equals(builder.Configuration["Payments:Provider"], nameof(PaymentProviderKind.StripeManagedPayments), StringComparison.OrdinalIgnoreCase);
 builder.Services.AddOptions<PaymentsOptions>()
     .Bind(builder.Configuration.GetSection(PaymentsOptions.SectionName))
-    .Validate(o => !o.Enabled || o.Provider == PaymentProviderKind.Fake,
-        "Payments:Provider=StripeManagedPayments isn't wired yet (phase-3 step 5). Set Payments:Provider=Fake, " +
-        "or leave Payments:Enabled unset until the real adapter ships.")
     .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.WebhookSigningSecret),
         "Payments:WebhookSigningSecret is required when Payments:Enabled — the webhook endpoint verifies each " +
         "event's signature against it, and there is deliberately no default (a hard-coded fallback would be a " +
         "forgery trapdoor in a public repo).")
+    // The real provider (step 5) needs its key + every price id, or checkout would 500 on the first click —
+    // fail fast at boot instead. The fake needs neither (it makes no external calls and echoes the product).
+    .Validate(o => !o.Enabled || o.Provider != PaymentProviderKind.StripeManagedPayments
+            || (!string.IsNullOrWhiteSpace(o.ApiKey)
+                && !string.IsNullOrWhiteSpace(o.MonthlyPriceId) && !string.IsNullOrWhiteSpace(o.AnnualPriceId)
+                && !string.IsNullOrWhiteSpace(o.CreditPack5PriceId) && !string.IsNullOrWhiteSpace(o.CreditPack10PriceId)
+                && !string.IsNullOrWhiteSpace(o.CreditPack20PriceId)),
+        "Payments:Provider=StripeManagedPayments requires Payments:ApiKey and all five price ids " +
+        "(MonthlyPriceId, AnnualPriceId, CreditPack5PriceId, CreditPack10PriceId, CreditPack20PriceId).")
     .ValidateOnStart();
 if (paymentsEnabled)
 {
-    // The fake is stateless (deterministic URLs + a pure HMAC verify), so a singleton is fine; the real
-    // adapter (step 5) will register its own HttpClient-backed client.
-    builder.Services.AddSingleton<IPaymentProvider, FakePaymentProvider>();
+    if (fakePayments)
+    {
+        // The fake is stateless (deterministic URLs + a pure HMAC verify), so a singleton is fine.
+        builder.Services.AddSingleton<IPaymentProvider, FakePaymentProvider>();
+    }
+    else
+    {
+        // Stripe Managed Payments (step 5). One StripeClient over a factory HttpClient; the adapter builds its
+        // per-call service objects from it. Singleton: the client is thread-safe and holds no request state.
+        builder.Services.AddHttpClient("stripe");
+        builder.Services.AddSingleton<Stripe.IStripeClient>(sp =>
+        {
+            var opts = sp.GetRequiredService<IOptions<PaymentsOptions>>().Value;
+            var http = sp.GetRequiredService<IHttpClientFactory>().CreateClient("stripe");
+            return new Stripe.StripeClient(opts.ApiKey, httpClient: new Stripe.SystemNetHttpClient(http));
+        });
+        builder.Services.AddSingleton<IPaymentProvider, StripePaymentProvider>();
+    }
     // Applies verified webhook events to the household's tier + credit ledger, idempotently (step 2).
     builder.Services.AddScoped<PaymentWebhookHandler>();
 }
@@ -887,9 +908,12 @@ if (paymentsEnabled)
             payload = await reader.ReadToEndAsync(ct);
 
         var signature = request.Headers[provider.SignatureHeaderName].ToString();
-        var webhookEvent = provider.ParseWebhook(payload, signature);
-        if (webhookEvent is null)
+        var parse = provider.ParseWebhook(payload, signature);
+        if (parse.Result == WebhookParseResult.InvalidSignature)
             return Results.Json(new { error = "invalid signature" }, statusCode: StatusCodes.Status400BadRequest);
+        // Verified but a type we don't act on (a real provider sends many) — ack with 2xx so it isn't retried.
+        if (parse.Event is not { } webhookEvent)
+            return Results.Json(new { status = "ignored" });
 
         try
         {
@@ -916,7 +940,7 @@ if (paymentsEnabled)
 {
     app.MapGet("/billing/checkout", async (
         HttpContext ctx, HttpRequest request, IPaymentProvider provider, IEntitlements entitlements,
-        string product, CancellationToken ct) =>
+        IDbContextFactory<AuthDbContext> authDbFactory, string product, CancellationToken ct) =>
     {
         var householdId = ctx.User.FindFirst(HouseholdClaimsPrincipalFactory.HouseholdClaim)?.Value;
         var email = ctx.User.Identity?.Name;
@@ -929,10 +953,20 @@ if (paymentsEnabled)
         if (BillingCatalog.IsPack(prod) && await entitlements.GetTierAsync(ct) != HouseholdTier.Aware)
             return Results.Redirect("/settings?checkout=packs_need_sub");
 
+        // A pack attaches to the subscriber's existing provider customer (the adapter uses it only for packs);
+        // a subscription ignores it and keys on the purchaser's email. Read it only when it's needed.
+        string? existingCustomerId = null;
+        if (BillingCatalog.IsPack(prod))
+        {
+            await using var authDb = await authDbFactory.CreateDbContextAsync(ct);
+            existingCustomerId = await authDb.Households
+                .Where(h => h.Id == householdId).Select(h => h.BillingCustomerId).FirstOrDefaultAsync(ct);
+        }
+
         var baseUrl = $"{request.Scheme}://{request.Host}";
         var success = BillingCatalog.IsPack(prod) ? "credits" : "subscribed";
         var checkoutRequest = new CheckoutRequest(householdId, email, prod,
-            $"{baseUrl}/settings?checkout={success}", $"{baseUrl}/settings?checkout=cancelled");
+            $"{baseUrl}/settings?checkout={success}", $"{baseUrl}/settings?checkout=cancelled", existingCustomerId);
         var session = await provider.CreateCheckoutAsync(checkoutRequest, ct);
         return Results.Redirect(session.Url);
     }).RequireAuthorization();

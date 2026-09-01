@@ -55,36 +55,38 @@ public sealed class FakePaymentProvider(IOptions<PaymentsOptions> options) : IPa
         return Task.FromResult(url);
     }
 
-    /// <summary>Verify the raw body against its signature and parse it, or null on a bad/missing signature
-    /// or malformed body. Constant-time comparison, exactly as the real endpoint must do (§6).</summary>
-    public PaymentWebhookEvent? ParseWebhook(string payload, string? signatureHeader)
+    /// <summary>Verify the raw body against its signature and parse it. Returns <see cref="WebhookParse.Invalid"/>
+    /// on a bad/missing signature or malformed body, else the parsed event. Constant-time comparison, exactly
+    /// as the real endpoint must do (§6). The fake never returns <see cref="WebhookParse.Ignored"/> — it only
+    /// ever produces events the app acts on; the ignore path is a real-provider (firehose) concern.</summary>
+    public WebhookParse ParseWebhook(string payload, string? signatureHeader)
     {
-        if (string.IsNullOrEmpty(payload) || string.IsNullOrEmpty(signatureHeader)) return null;
+        if (string.IsNullOrEmpty(payload) || string.IsNullOrEmpty(signatureHeader)) return WebhookParse.Invalid;
         // No configured secret means nothing can be verified — reject, never fall back to a hard-coded
         // key (a known secret in a public repo would be a forgery trapdoor). A box that ENABLES payments
-        // is required to set Payments:WebhookSigningSecret (Program.cs ValidateOnStart), so this null path
+        // is required to set Payments:WebhookSigningSecret (Program.cs ValidateOnStart), so this reject path
         // is only reachable for a disabled/programmatically-constructed provider.
         var secret = _options.WebhookSigningSecret;
-        if (string.IsNullOrEmpty(secret)) return null;
-        if (!SignaturesMatch(Sign(secret, payload), signatureHeader)) return null;
+        if (string.IsNullOrEmpty(secret)) return WebhookParse.Invalid;
+        if (!SignaturesMatch(Sign(secret, payload), signatureHeader)) return WebhookParse.Invalid;
 
         try
         {
             var parsed = JsonSerializer.Deserialize<PaymentWebhookEvent>(payload, JsonOptions);
             // A signed-but-empty event (no id to dedupe on) is malformed — reject rather than pass a
             // half-event to the idempotent handler.
-            if (parsed is null || string.IsNullOrEmpty(parsed.EventId)) return null;
+            if (parsed is null || string.IsNullOrEmpty(parsed.EventId)) return WebhookParse.Invalid;
             // JsonStringEnumConverter also accepts NUMERIC enum values, so a validly-signed body can smuggle
             // an out-of-range Kind/Product past deserialization (CLAUDE.md item 38 — the numeric-smuggling
             // hazard this repo guards at every enum parse). Reject an undefined value rather than hand the
             // handler a (PaymentEventKind)42 to switch on.
-            if (!Enum.IsDefined(parsed.Kind)) return null;
-            if (parsed.Product is { } product && !Enum.IsDefined(product)) return null;
-            return parsed;
+            if (!Enum.IsDefined(parsed.Kind)) return WebhookParse.Invalid;
+            if (parsed.Product is { } product && !Enum.IsDefined(product)) return WebhookParse.Invalid;
+            return WebhookParse.Handle(parsed);
         }
         catch (JsonException)
         {
-            return null;
+            return WebhookParse.Invalid;
         }
     }
 

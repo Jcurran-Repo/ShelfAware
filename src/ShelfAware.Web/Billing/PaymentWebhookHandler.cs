@@ -19,6 +19,13 @@ public enum WebhookOutcome
     /// <summary>Authentic (signature verified) but it named no household we know — recorded so it won't
     /// loop, logged for the operator, and acked. Not an error to retry.</summary>
     UnknownHousehold,
+
+    /// <summary>Verified and resolved to a household, but deliberately no effect — a subscription-lifecycle
+    /// event (renew/update/cancel) for a subscription that is NOT the household's current one. That happens
+    /// with a superseded/old subscription (the cancel-then-resubscribe or purchaser-departure edges) whose
+    /// late/reordered event still resolves here — often because both subscriptions share one customer.
+    /// Recorded + acked; applying it would clobber the active subscription.</summary>
+    Ignored,
 }
 
 /// <summary>
@@ -54,6 +61,22 @@ public sealed class PaymentWebhookHandler(
             db.ProcessedPaymentEvents.Add(Record(webhookEvent, householdId: null));
             return await SaveDedupedAsync(db, webhookEvent, cancellationToken)
                 ? WebhookOutcome.UnknownHousehold
+                : WebhookOutcome.AlreadyProcessed;
+        }
+
+        // A subscription-lifecycle event for a subscription that ISN'T the household's current one is stale
+        // (a superseded/old subscription) — ignore it, or a late/reordered cancel of the OLD subscription
+        // would clobber the active one. This is reachable because such an event can still resolve here by a
+        // shared customer id (cancel-then-resubscribe, or the purchaser-departure supersede). Recorded so a
+        // redelivery is recognised; acked so the provider stops.
+        if (IsStaleSubscriptionEvent(household, webhookEvent))
+        {
+            logger.LogInformation(
+                "Payment webhook {EventId} ({Kind}) concerns subscription {EventSub}, not the household's current {CurrentSub} — recorded, no effect.",
+                webhookEvent.EventId, webhookEvent.Kind, webhookEvent.SubscriptionId, household.SubscriptionId);
+            db.ProcessedPaymentEvents.Add(Record(webhookEvent, household.Id));
+            return await SaveDedupedAsync(db, webhookEvent, cancellationToken)
+                ? WebhookOutcome.Ignored
                 : WebhookOutcome.AlreadyProcessed;
         }
 
@@ -98,6 +121,19 @@ public sealed class PaymentWebhookHandler(
                 subscriptionId);
         }
     }
+
+    /// <summary>A subscription-lifecycle event (renew/update/cancel) naming a subscription OTHER than the
+    /// household's current one is stale — a superseded/old subscription whose late or reordered event would
+    /// otherwise clobber the active one (cancel-then-resubscribe, or the purchaser-departure supersede — and
+    /// it reaches this household at all only because both subscriptions can share one customer). A
+    /// <see cref="PaymentEventKind.CheckoutCompleted"/> is exempt: it is the event that legitimately INSTALLS
+    /// a new subscription, supersede included.</summary>
+    private static bool IsStaleSubscriptionEvent(Household household, PaymentWebhookEvent webhookEvent) =>
+        webhookEvent.Kind is PaymentEventKind.SubscriptionRenewed
+            or PaymentEventKind.SubscriptionUpdated
+            or PaymentEventKind.SubscriptionCancelled
+        && !string.IsNullOrEmpty(webhookEvent.SubscriptionId)
+        && webhookEvent.SubscriptionId != household.SubscriptionId;
 
     /// <summary>Resolve the target household from the event's OWN verified identifiers, in order of
     /// specificity: the household-id metadata a checkout carries, then the subscription id, then the

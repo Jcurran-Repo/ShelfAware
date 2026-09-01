@@ -32,11 +32,13 @@ public interface IPaymentProvider
     /// back when the member is done.</summary>
     Task<string> CreatePortalUrlAsync(string billingCustomerId, string returnUrl, CancellationToken cancellationToken = default);
 
-    /// <summary>Verify a raw webhook body against its signature header and parse it, or return null when the
-    /// signature doesn't verify or the body can't be parsed. Takes the EXACT bytes as received (as a string)
-    /// — the HMAC is over the raw payload, so the caller must not re-serialize it first (§6). Synchronous:
-    /// verification + parsing is pure, no external call.</summary>
-    PaymentWebhookEvent? ParseWebhook(string payload, string? signatureHeader);
+    /// <summary>Verify a raw webhook body against its signature header and, if it verifies, map it. Returns a
+    /// <see cref="WebhookParse"/> with three outcomes: an unverified signature (400, don't retry), a verified
+    /// event to act on, or a verified event of a type this app doesn't handle (2xx, don't retry — a real
+    /// provider sends many such events). Takes the EXACT bytes as received (as a string) — the HMAC is over
+    /// the raw payload, so the caller must not re-serialize it first (§6). Synchronous: verification + parsing
+    /// is pure, no external call.</summary>
+    WebhookParse ParseWebhook(string payload, string? signatureHeader);
 
     /// <summary>Cancel a subscription via the provider API — the purchaser-departure lifecycle and an
     /// explicit member cancel (§6). Cancellation runs out the paid period; the effect arrives back as a

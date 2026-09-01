@@ -27,6 +27,14 @@ public class FakePaymentProviderTests
         CancelAtPeriodEnd: false,
         AmountMicros: null);
 
+    /// <summary>A rejection is InvalidSignature with no event — the fake never returns the
+    /// verified-but-ignore outcome (that's a real-provider firehose concern).</summary>
+    private static void AssertRejected(WebhookParse parse)
+    {
+        Assert.Equal(WebhookParseResult.InvalidSignature, parse.Result);
+        Assert.Null(parse.Event);
+    }
+
     [Fact]
     public void Kind_is_fake() => Assert.Equal(PaymentProviderKind.Fake, Provider().Kind);
 
@@ -58,10 +66,10 @@ public class FakePaymentProviderTests
         var payload = FakePaymentProvider.Serialize(evt);
         var signature = FakePaymentProvider.Sign(Secret, payload);
 
-        var parsed = Provider().ParseWebhook(payload, signature);
+        var parse = Provider().ParseWebhook(payload, signature);
 
-        Assert.NotNull(parsed);
-        Assert.Equal(evt, parsed); // record value-equality pins every field through the JSON round-trip
+        Assert.Equal(WebhookParseResult.Verified, parse.Result);
+        Assert.Equal(evt, parse.Event); // record value-equality pins every field through the JSON round-trip
     }
 
     [Fact]
@@ -71,7 +79,7 @@ public class FakePaymentProviderTests
         var signature = FakePaymentProvider.Sign(Secret, payload);
 
         var tampered = payload.Replace("hh_1", "hh_2"); // same signature, different body
-        Assert.Null(Provider().ParseWebhook(tampered, signature));
+        AssertRejected(Provider().ParseWebhook(tampered, signature));
     }
 
     [Fact]
@@ -80,7 +88,7 @@ public class FakePaymentProviderTests
         var payload = FakePaymentProvider.Serialize(SampleEvent());
         var wrong = FakePaymentProvider.Sign("some-other-secret", payload);
 
-        Assert.Null(Provider().ParseWebhook(payload, wrong));
+        AssertRejected(Provider().ParseWebhook(payload, wrong));
     }
 
     [Theory]
@@ -90,7 +98,7 @@ public class FakePaymentProviderTests
     public void A_missing_or_malformed_signature_is_rejected(string? signature)
     {
         var payload = FakePaymentProvider.Serialize(SampleEvent());
-        Assert.Null(Provider().ParseWebhook(payload, signature));
+        AssertRejected(Provider().ParseWebhook(payload, signature));
     }
 
     [Fact]
@@ -98,7 +106,7 @@ public class FakePaymentProviderTests
     {
         const string payload = "{not valid json";
         var signature = FakePaymentProvider.Sign(Secret, payload); // signature is fine; the body isn't
-        Assert.Null(Provider().ParseWebhook(payload, signature));
+        AssertRejected(Provider().ParseWebhook(payload, signature));
     }
 
     [Fact]
@@ -108,7 +116,7 @@ public class FakePaymentProviderTests
         // half-event through, even though its signature is valid.
         var payload = FakePaymentProvider.Serialize(SampleEvent() with { EventId = "" });
         var signature = FakePaymentProvider.Sign(Secret, payload);
-        Assert.Null(Provider().ParseWebhook(payload, signature));
+        AssertRejected(Provider().ParseWebhook(payload, signature));
     }
 
     [Fact]
@@ -120,7 +128,7 @@ public class FakePaymentProviderTests
         var provider = Provider(secret: null);
         var payload = FakePaymentProvider.Serialize(SampleEvent());
         var signature = FakePaymentProvider.Sign("anything", payload);
-        Assert.Null(provider.ParseWebhook(payload, signature));
+        AssertRejected(provider.ParseWebhook(payload, signature));
     }
 
     [Fact]
@@ -131,7 +139,7 @@ public class FakePaymentProviderTests
         // (PaymentEventKind)42 to switch on (CLAUDE.md item 38, the numeric-smuggling hazard).
         const string payload = """{"EventId":"evt_1","Kind":42}""";
         var signature = FakePaymentProvider.Sign(Secret, payload);
-        Assert.Null(Provider().ParseWebhook(payload, signature));
+        AssertRejected(Provider().ParseWebhook(payload, signature));
     }
 
     [Fact]
@@ -139,7 +147,7 @@ public class FakePaymentProviderTests
     {
         const string payload = """{"EventId":"evt_1","Kind":"CheckoutCompleted","Product":99}""";
         var signature = FakePaymentProvider.Sign(Secret, payload);
-        Assert.Null(Provider().ParseWebhook(payload, signature));
+        AssertRejected(Provider().ParseWebhook(payload, signature));
     }
 
     [Fact]

@@ -31,7 +31,7 @@ public class PaymentWebhookHandlerTests : IDisposable
             Task.FromResult(new CheckoutSession("/fake"));
         public Task<string> CreatePortalUrlAsync(string billingCustomerId, string returnUrl, CancellationToken ct = default) =>
             Task.FromResult("/fake");
-        public PaymentWebhookEvent? ParseWebhook(string payload, string? signatureHeader) => null;
+        public WebhookParse ParseWebhook(string payload, string? signatureHeader) => WebhookParse.Invalid;
         public Task CancelSubscriptionAsync(string subscriptionId, CancellationToken ct = default)
         {
             Cancelled.Add(subscriptionId);
@@ -217,6 +217,32 @@ public class PaymentWebhookHandlerTests : IDisposable
         // Acked (a 2xx so the provider stops retrying an unhandleable event)…
         Assert.Equal(WebhookOutcome.UnknownHousehold, await Handler().HandleAsync(evt));
         // …and recorded, so a redelivery is recognised rather than re-attempted.
+        Assert.Equal(WebhookOutcome.AlreadyProcessed, await Handler().HandleAsync(evt));
+    }
+
+    [Fact]
+    public async Task A_lifecycle_event_for_a_superseded_subscription_is_ignored()
+    {
+        // After a cancel-then-resubscribe (or the purchaser-departure supersede) the household's CURRENT sub
+        // is sub_new on the same customer. A late/reordered cancel of the OLD sub still resolves here by the
+        // shared customer id, but must NOT clobber the active subscription.
+        var household = await SeedAsync(h =>
+        {
+            h.Tier = HouseholdTier.Aware;
+            h.BillingCustomerId = "cus_shared";
+            h.SubscriptionId = "sub_new";
+            h.SubscriptionRenewsAt = PeriodEnd;
+        });
+        var evt = new PaymentWebhookEvent("evt_stale", PaymentEventKind.SubscriptionCancelled,
+            BillingCustomerId: "cus_shared", SubscriptionId: "sub_old"); // resolves by customer, not sub id
+
+        var outcome = await Handler().HandleAsync(evt);
+
+        Assert.Equal(WebhookOutcome.Ignored, outcome);
+        var after = await ReloadAsync(household.Id);
+        Assert.Equal(HouseholdTier.Aware, after.Tier);        // the active subscription is untouched…
+        Assert.Equal("sub_new", after.SubscriptionId);        // …not dropped to Free by the old sub's event
+        // …and it's recorded, so a redelivery is recognised rather than re-evaluated.
         Assert.Equal(WebhookOutcome.AlreadyProcessed, await Handler().HandleAsync(evt));
     }
 

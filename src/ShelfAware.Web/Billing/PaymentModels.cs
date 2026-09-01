@@ -47,13 +47,20 @@ public enum PaymentEventKind
 /// attaches to the household, not the account (§6). <see cref="PurchaserEmail"/> is the member's
 /// already-verified account email — §6 keys the provider customer on that one address and never collects a
 /// separate billing email (the strict CSP is hosted-redirect-only). Success/cancel URLs are where the
-/// provider returns the browser after the hosted page.</summary>
+/// provider returns the browser after the hosted page.
+///
+/// <see cref="ExistingCustomerId"/> is the household's current provider customer, if any. The real adapter
+/// uses it for a PACK (bought by the active subscriber) so the pack attaches to their existing customer
+/// rather than minting a duplicate; a SUBSCRIPTION deliberately ignores it and uses the purchaser's email, so
+/// a NEW member (the purchaser-departure supersede) gets their own customer instead of capturing the old
+/// one's. The fake ignores it.</summary>
 public sealed record CheckoutRequest(
     string HouseholdId,
     string PurchaserEmail,
     BillingProduct Product,
     string SuccessUrl,
-    string CancelUrl);
+    string CancelUrl,
+    string? ExistingCustomerId = null);
 
 /// <summary>The result of opening checkout: the hosted-redirect URL to send the browser to. A record
 /// rather than a bare string so a provider that also returns a correlatable session id can add it here
@@ -76,3 +83,36 @@ public sealed record PaymentWebhookEvent(
     DateTimeOffset? PeriodEnd = null,
     bool CancelAtPeriodEnd = false,
     long? AmountMicros = null);
+
+/// <summary>Whether a webhook's signature verified — the endpoint's 400-vs-2xx decision. Separate from
+/// "is there something to act on" because a REAL provider (unlike the fake, which only ever sends events we
+/// act on) delivers a firehose of event types, most of which we ignore: those verify fine but carry no
+/// <see cref="PaymentWebhookEvent"/> and must be ACKED (2xx), never 400-retried — a sustained 400 storm gets
+/// the endpoint disabled. So verification and actionability are two answers, not one nullable.</summary>
+public enum WebhookParseResult
+{
+    /// <summary>The signature didn't verify (or the body was absent/unparseable) — a forgery or corruption.
+    /// The endpoint answers 400 so the provider does NOT retry.</summary>
+    InvalidSignature,
+
+    /// <summary>The signature verified. <see cref="WebhookParse.Event"/> is the event to act on, or null for
+    /// a verified event of a type this app doesn't handle (ack with 2xx, do nothing).</summary>
+    Verified,
+}
+
+/// <summary>The outcome of <see cref="IPaymentProvider.ParseWebhook"/>: whether the signature verified and,
+/// if so, the event to act on (or null for a verified-but-unhandled type). A result rather than a bare
+/// <c>PaymentWebhookEvent?</c> because a real provider needs THREE answers — bad signature (400, don't
+/// retry), verified-and-actionable (handle it), verified-but-ignore (2xx, don't retry) — and a nullable
+/// event can't distinguish the first from the third.</summary>
+public readonly record struct WebhookParse(WebhookParseResult Result, PaymentWebhookEvent? Event)
+{
+    /// <summary>The signature didn't verify — the endpoint answers 400.</summary>
+    public static WebhookParse Invalid { get; } = new(WebhookParseResult.InvalidSignature, null);
+
+    /// <summary>Verified, but a type this app doesn't act on — ack (2xx), do nothing.</summary>
+    public static WebhookParse Ignored { get; } = new(WebhookParseResult.Verified, null);
+
+    /// <summary>Verified, and this is the event to act on.</summary>
+    public static WebhookParse Handle(PaymentWebhookEvent webhookEvent) => new(WebhookParseResult.Verified, webhookEvent);
+}
