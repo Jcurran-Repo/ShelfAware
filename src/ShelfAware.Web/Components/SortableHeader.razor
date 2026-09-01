@@ -1,0 +1,28 @@
+@* A clickable, accessible table column header. Click to sort by this column; click again to flip. The
+   arrow shows the active column + direction, and aria-sort tells a screen reader the same thing (never
+   colour/glyph alone). Drives a shared TableSort; the page persists + applies it. *@
+<th scope="col" aria-sort="@AriaSort" class="@(Active ? "sorted" : null)">
+    <button type="button" class="th-sort" @onclick="() => OnSort.InvokeAsync(Column)" aria-label="@AriaLabel">
+        <span>@Label</span>
+        <span class="sort-ind" aria-hidden="true">@Indicator</span>
+    </button>
+</th>
+
+@code {
+    /// <summary>The column key this header sorts by — the page maps it to a comparison.</summary>
+    [Parameter, EditorRequired] public string Column { get; set; } = "";
+
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+
+    [Parameter, EditorRequired] public TableSort Sort { get; set; } = default!;
+
+    /// <summary>Raised with <see cref="Column"/> when clicked; the page toggles the sort, persists, re-renders.</summary>
+    [Parameter] public EventCallback<string> OnSort { get; set; }
+
+    private bool Active => Sort.Column == Column;
+    private string AriaSort => !Active ? "none" : Sort.Descending ? "descending" : "ascending";
+    private string Indicator => !Active ? "" : Sort.Descending ? "▼" : "▲";
+    private string AriaLabel => !Active
+        ? $"Sort by {Label}"
+        : $"Sort by {Label}, currently {(Sort.Descending ? "descending" : "ascending")}";
+}
