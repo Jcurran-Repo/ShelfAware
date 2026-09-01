@@ -436,7 +436,19 @@ Mechanics are provider-agnostic (all three offer them):
 Config-gated, the `Admin`/`Email`/`GraphQL:Enabled` pattern: **unset = the feature does not exist** —
 no tier checks, no upsell copy, no endpoints, today's behavior exactly. Self-host stays unlimited by
 default. Per box (updated per Jordan, 2026-08-23):
-- **Droplet demo** — BYOK, billing off. Unchanged.
+- **Droplet demo** — BYOK, billing off. Unchanged **today**. ⚠️ **Candidate change (Jordan, 2026-09-01,
+  a Phase-4 item — recorded, not built): a small managed TRIAL on the demo.** The pure-BYOK demo hides the
+  AI — nobody pastes an API key to try a demo — so grant a **verified** demo account ~**$0.50** of managed
+  AI (Jordan's cost, on the host's key), **no agent rights**, so casual visitors actually see receipts/chat/
+  recipes work. This makes the demo **managed, not BYOK** (the host's key on the public box — reversing "the
+  demo ships no usable keys; keys never used live", item 8; Jordan accepts this). Preconditions, all real:
+  (1) **balance ENFORCEMENT must exist** (phase 4) — without it a grant caps nothing, so a visitor or bot
+  runs unlimited on the host's key; (2) a **GLOBAL managed-spend ceiling + alert** is the primary guard, not
+  the per-account 50¢ — an open public demo means unbounded accounts (email/IP rotation is cheap), so the
+  safe shape is a hard "$X/month total for the demo, then AI pauses"; (3) **email verification** (the §1
+  verify-once / ops-gate item). "No agents" already matches §1 (realtime agents are purchased-credits-only
+  for everyone — grant money never funds a session; cheap read-aloud TTS may stay). Build it in Phase 4 with
+  the global demo budget as the wallet guard.
 - **Family box** — **billing OFF, permanently.** Every household there is a Founder (admin-granted,
   phase 1), and Founders don't pay — so the family box never needs a payment surface, a webhook, or
   open registration hardening. It gets phase 1 (tiers + Founder + badge) and nothing else.
