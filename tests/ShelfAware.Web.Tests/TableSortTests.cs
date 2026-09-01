@@ -17,13 +17,28 @@ public class TableSortTests
     }
 
     [Fact]
-    public void Clicking_the_same_column_flips_the_direction()
+    public void The_same_column_cycles_ascending_then_descending_then_off()
     {
         var s = new TableSort();
         s.Toggle("name");
+        Assert.Equal("name", s.Column);
+        Assert.False(s.Descending);        // ascending
+
         s.Toggle("name");
-        Assert.True(s.Descending);
+        Assert.True(s.Descending);         // descending
+
         s.Toggle("name");
+        Assert.Null(s.Column);             // off — back to the natural order
+        Assert.False(s.Descending);
+    }
+
+    [Fact]
+    public void Clicking_a_column_again_after_it_was_turned_off_starts_a_fresh_ascending_cycle()
+    {
+        var s = new TableSort();
+        s.Toggle("name"); s.Toggle("name"); s.Toggle("name"); // asc → desc → off
+        s.Toggle("name");
+        Assert.Equal("name", s.Column);
         Assert.False(s.Descending);
     }
 

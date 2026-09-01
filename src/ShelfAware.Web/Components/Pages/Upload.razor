@@ -174,26 +174,26 @@ else if (phase == Phase.Review && receipt is not null)
         <table>
             <thead>
                 <tr>
-                    <th scope="col">Receipt text</th>
-                    <th scope="col">Item</th>
-                    <th scope="col">Brand</th>
-                    <th scope="col">Size</th>
-                    <th scope="col">Variety</th>
+                    <SortableHeader Column="raw" Label="Receipt text" Sort="reviewSort" OnSort="ReviewSortBy" />
+                    <SortableHeader Column="item" Label="Item" Sort="reviewSort" OnSort="ReviewSortBy" />
+                    <SortableHeader Column="brand" Label="Brand" Sort="reviewSort" OnSort="ReviewSortBy" />
+                    <SortableHeader Column="size" Label="Size" Sort="reviewSort" OnSort="ReviewSortBy" />
+                    <SortableHeader Column="variety" Label="Variety" Sort="reviewSort" OnSort="ReviewSortBy" />
                     @if (trackExpirations)
                     {
-                        <th scope="col">Expires</th>
+                        <SortableHeader Column="expires" Label="Expires" Sort="reviewSort" OnSort="ReviewSortBy" />
                     }
-                    <th scope="col">Qty</th>
-                    <th scope="col">Category</th>
+                    <SortableHeader Column="qty" Label="Qty" Sort="reviewSort" OnSort="ReviewSortBy" />
+                    <SortableHeader Column="category" Label="Category" Sort="reviewSort" OnSort="ReviewSortBy" />
                     <th scope="col">Tags</th>
                     <th scope="col">Product match</th>
                     <th scope="col"><span class="visually-hidden">Actions</span></th>
                 </tr>
             </thead>
             <tbody>
-                @foreach (var line in reviewLines)
+                @foreach (var line in SortedReviewLines)
                 {
-                    <tr class="@(line.Confidence < 0.6m ? "low-confidence" : "")">
+                    <tr @key="line" class="@(line.Confidence < 0.6m ? "low-confidence" : "")">
                         <td class="raw">
                             @line.RawText
                             <div>
@@ -577,6 +577,31 @@ else if (phase == Phase.Done)
     }
     private DateOnly reviewDate = DateOnly.FromDateTime(DateTime.Today);
     private List<ReviewLine> reviewLines = [];
+
+    // Column sort for the review grid. Default (and the third "un-sort" click) is RECEIPT ORDER — the
+    // reviewLines list order — kept so a big receipt can still be eyeballed against the paper line by line;
+    // a click sorts to group/find items. Deliberately NOT persisted: each receipt opens in its own receipt
+    // order, never a sort carried over from the last one. reviewLines itself is never reordered (edits,
+    // remove, and confirm all use it as-is); this only reorders the DISPLAY, and @key keeps each row's edit
+    // state with its line across a re-sort.
+    private readonly TableSort reviewSort = new();
+    private IEnumerable<ReviewLine> SortedReviewLines => reviewSort.Order(reviewLines, ReviewSortKey);
+
+    private IComparable? ReviewSortKey(ReviewLine l) => reviewSort.Column switch
+    {
+        "raw" => l.RawText,
+        "item" => l.NormalizedName,
+        "brand" => l.Brand ?? "",
+        "size" => l.Size ?? "",
+        "variety" => l.Variety ?? "",
+        "expires" => l.ExpirationDate ?? DateOnly.MaxValue,
+        "qty" => l.Quantity,
+        "category" => l.Category.ToString(),
+        _ => l.RawText,
+    };
+
+    private void ReviewSortBy(string column) => reviewSort.Toggle(column);
+
     private List<Product> products = [];
     // Product names TWO OR MORE products share (by identity) — so the dropdown can annotate them with
     // their counts to tell them apart, the same way the census grid does. Recomputed with `products`.

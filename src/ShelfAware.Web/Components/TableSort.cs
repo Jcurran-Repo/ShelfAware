@@ -13,19 +13,14 @@ public sealed class TableSort(string? column = null, bool descending = false)
 
     public bool Descending { get; private set; } = descending;
 
-    /// <summary>Clicking a header: the SAME column flips direction; a NEW column starts ascending — the
-    /// convention every sortable table on the web uses.</summary>
+    /// <summary>Clicking a header cycles a NEW column → ascending → descending → OFF (the table's natural
+    /// order). The third click "un-sorts" back to how the table came — receipt order on the review grid, the
+    /// name/load order elsewhere — so there's always a way back, not just a flip.</summary>
     public void Toggle(string column)
     {
-        if (Column == column)
-        {
-            Descending = !Descending;
-        }
-        else
-        {
-            Column = column;
-            Descending = false;
-        }
+        if (Column != column) { Column = column; Descending = false; } // new column → ascending
+        else if (!Descending) { Descending = true; }                  // ascending → descending
+        else { Column = null; Descending = false; }                   // descending → off (natural order)
     }
 
     /// <summary>Restore a persisted sort (from table-sort.js) without the toggle semantics.</summary>
@@ -37,14 +32,15 @@ public sealed class TableSort(string? column = null, bool descending = false)
 
     /// <summary>Order <paramref name="items"/> by the active column's <paramref name="key"/> (the page picks
     /// the key selector for <see cref="Column"/> — its rows and comparisons live there) in the active
-    /// direction, with a STABLE ascending <paramref name="tiebreak"/> so equal rows keep a deterministic
-    /// order and re-sorts don't shuffle. Returns the items untouched when no column is active (the table's
-    /// natural order). One definition of "apply the sort", shared by every sortable table.</summary>
+    /// direction. Returns the items UNTOUCHED when no column is active (the table's natural order — receipt
+    /// order on the review grid, name/load order elsewhere). An optional ascending <paramref name="tiebreak"/>
+    /// gives equal rows a deterministic order; omit it to keep the input's own order for ties (OrderBy is
+    /// stable), which is what a table whose natural order IS meaningful wants. One shared definition.</summary>
     public IEnumerable<T> Order<T>(
-        IEnumerable<T> items, Func<T, IComparable?> key, Func<T, IComparable?> tiebreak)
+        IEnumerable<T> items, Func<T, IComparable?> key, Func<T, IComparable?>? tiebreak = null)
     {
         if (Column is null) return items;
         var ordered = Descending ? items.OrderByDescending(key) : items.OrderBy(key);
-        return ordered.ThenBy(tiebreak);
+        return tiebreak is null ? ordered : ordered.ThenBy(tiebreak);
     }
 }

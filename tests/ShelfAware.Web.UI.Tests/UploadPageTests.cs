@@ -877,4 +877,43 @@ public class UploadPageTests : PageTestContext
         cut.WaitForAssertion(() => Assert.Contains("Undone", cut.Markup));
         Assert.Empty(cut.FindAll(".callout")); // gone with the receipt
     }
+
+    // ------------------------------------------------------------------------- review-grid sorting
+
+    private string[] ReviewItemOrder(IRenderedComponent<Upload> cut) =>
+        [.. cut.FindAll("tbody tr").Select(tr => tr.QuerySelector("input[aria-label^='Item name']")!.GetAttribute("value") ?? "")];
+
+    [Fact]
+    public void The_review_grid_sorts_by_a_column_then_un_sorts_back_to_receipt_order()
+    {
+        // Receipt order (as read off the paper): Zebra, Apple, Mango.
+        SeedPending("Walmart", Today, DbLine("Zebra", "Zebra"), DbLine("Apple", "Apple"), DbLine("Mango", "Mango"));
+        var cut = OpenReview();
+        Assert.Equal(["Zebra", "Apple", "Mango"], ReviewItemOrder(cut)); // default = receipt order
+
+        var itemHeader = cut.FindAll("button.th-sort").First(b => b.TextContent.Contains("Item"));
+        itemHeader.Click();
+        Assert.Equal(["Apple", "Mango", "Zebra"], ReviewItemOrder(cut)); // ascending
+
+        cut.FindAll("button.th-sort").First(b => b.TextContent.Contains("Item")).Click();
+        Assert.Equal(["Zebra", "Mango", "Apple"], ReviewItemOrder(cut)); // descending
+
+        cut.FindAll("button.th-sort").First(b => b.TextContent.Contains("Item")).Click();
+        Assert.Equal(["Zebra", "Apple", "Mango"], ReviewItemOrder(cut)); // un-sorted → back to receipt order
+    }
+
+    [Fact]
+    public void An_edit_follows_its_row_through_a_re_sort()
+    {
+        // @key keeps each row's edit bound to its line, not its position: an edit must move with the row when
+        // the grid reorders, not stay behind or land on a neighbour.
+        SeedPending("Walmart", Today, DbLine("Banana", "Banana"), DbLine("Apple", "Apple"), DbLine("Cherry", "Cherry"));
+        var cut = OpenReview();
+
+        // Correct "Banana" → "Zucchini" (which will sort to the end), then sort by Item.
+        cut.FindAll("tbody tr input[aria-label^='Item name']").First(i => i.GetAttribute("value") == "Banana").Change("Zucchini");
+        cut.FindAll("button.th-sort").First(b => b.TextContent.Contains("Item")).Click();
+
+        Assert.Equal(["Apple", "Cherry", "Zucchini"], ReviewItemOrder(cut)); // the edit stuck AND sorted last
+    }
 }
