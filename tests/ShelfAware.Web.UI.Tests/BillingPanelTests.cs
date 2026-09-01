@@ -95,6 +95,18 @@ public class BillingPanelTests : PageTestContext
     }
 
     [Fact]
+    public void A_provider_error_shows_a_try_again_banner()
+    {
+        // The checkout/portal endpoints redirect here (?checkout=error) when the provider throws, rather than
+        // 500ing the user — the panel must have something to say for it.
+        var cut = Render(tier: HouseholdTier.Aware, checkout: "error");
+
+        Assert.Contains("try again", cut.Markup);
+        Assert.Contains("callout", cut.Markup);
+        Assert.DoesNotContain("callout ok", cut.Markup); // not the positive (green) variant — it's a failure
+    }
+
+    [Fact]
     public void An_aware_household_sees_its_renewal_date()
     {
         var renews = new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero);

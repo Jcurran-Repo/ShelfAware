@@ -940,7 +940,7 @@ if (paymentsEnabled)
 {
     app.MapGet("/billing/checkout", async (
         HttpContext ctx, HttpRequest request, IPaymentProvider provider, IEntitlements entitlements,
-        IDbContextFactory<AuthDbContext> authDbFactory, string product, CancellationToken ct) =>
+        IDbContextFactory<AuthDbContext> authDbFactory, ILoggerFactory logs, string product, CancellationToken ct) =>
     {
         var householdId = ctx.User.FindFirst(HouseholdClaimsPrincipalFactory.HouseholdClaim)?.Value;
         var email = ctx.User.Identity?.Name;
@@ -967,13 +967,24 @@ if (paymentsEnabled)
         var success = BillingCatalog.IsPack(prod) ? "credits" : "subscribed";
         var checkoutRequest = new CheckoutRequest(householdId, email, prod,
             $"{baseUrl}/settings?checkout={success}", $"{baseUrl}/settings?checkout=cancelled", existingCustomerId);
-        var session = await provider.CreateCheckoutAsync(checkoutRequest, ct);
-        return Results.Redirect(session.Url);
+        try
+        {
+            var session = await provider.CreateCheckoutAsync(checkoutRequest, ct);
+            return Results.Redirect(session.Url);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // A provider hiccup (Stripe down, a bad price id, rate limit) must not throw a raw 500 at someone
+            // trying to pay — log it and send them back with a friendly banner.
+            logs.CreateLogger("Billing").LogError(ex, "Checkout creation failed (household {HouseholdId}, product {Product}).", householdId, prod);
+            return Results.Redirect($"{baseUrl}/settings?checkout=error");
+        }
     }).RequireAuthorization();
 
     app.MapGet("/billing/portal", async (
         HttpContext ctx, HttpRequest request, IPaymentProvider provider,
-        IDbContextFactory<AuthDbContext> authDbFactory, CancellationToken ct) =>
+        IDbContextFactory<AuthDbContext> authDbFactory, ILoggerFactory logs, CancellationToken ct) =>
     {
         var householdId = ctx.User.FindFirst(HouseholdClaimsPrincipalFactory.HouseholdClaim)?.Value;
         if (householdId is null) return Results.Redirect("/settings");
@@ -981,8 +992,19 @@ if (paymentsEnabled)
         var customerId = await authDb.Households
             .Where(h => h.Id == householdId).Select(h => h.BillingCustomerId).FirstOrDefaultAsync(ct);
         if (string.IsNullOrEmpty(customerId)) return Results.Redirect("/settings?checkout=no_billing");
-        var url = await provider.CreatePortalUrlAsync(customerId, $"{request.Scheme}://{request.Host}/settings", ct);
-        return Results.Redirect(url);
+        try
+        {
+            var url = await provider.CreatePortalUrlAsync(customerId, $"{request.Scheme}://{request.Host}/settings", ct);
+            return Results.Redirect(url);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // The portal can fail on a stale/removed customer or — a real first-deploy gotcha — the Stripe
+            // Customer Portal not being configured in the dashboard yet. Don't 500 the "Manage billing" click.
+            logs.CreateLogger("Billing").LogError(ex, "Portal session creation failed (household {HouseholdId}).", householdId);
+            return Results.Redirect("/settings?checkout=error");
+        }
     }).RequireAuthorization();
 }
 
