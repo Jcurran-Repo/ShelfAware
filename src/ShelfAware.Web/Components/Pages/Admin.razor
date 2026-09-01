@@ -8,7 +8,7 @@
 @using ShelfAware.Web.Services
 @using ShelfAware.Web.Wishlist
 @attribute [Authorize(Policy = AdminOptions.PolicyName)]
-@implements IDisposable
+@implements IAsyncDisposable
 @inject IJSRuntime JS
 @inject AdminReportReader Reader
 @inject ReportResolutionService Actions
@@ -412,14 +412,20 @@ else
                 <table>
                     <caption class="visually-hidden">Distinct errors the app has logged, still open</caption>
                     <thead>
-                        <tr><th>Last seen</th><th>Count</th><th>Level</th><th>What</th><th><span class="visually-hidden">Actions</span></th></tr>
+                        <tr>
+                            <SortableHeader Column="lastseen" Label="Last seen" Sort="errorSort" OnSort="ErrorSortBy" />
+                            <SortableHeader Column="count" Label="Count" Sort="errorSort" OnSort="ErrorSortBy" />
+                            <SortableHeader Column="level" Label="Level" Sort="errorSort" OnSort="ErrorSortBy" />
+                            <SortableHeader Column="what" Label="What" Sort="errorSort" OnSort="ErrorSortBy" />
+                            <th><span class="visually-hidden">Actions</span></th>
+                        </tr>
                     </thead>
                     <tbody>
                         @* @key: these lists lose and gain members per CLICK now, and without it
                            Blazor matches rows positionally — browser-held <details> state stuck to
                            a list POSITION, so resolving a row above an expanded stack trace showed
                            a different error's trace as expanded. *@
-                        @foreach (var e in open)
+                        @foreach (var e in errorSort.Order(open, ErrorKey))
                         {
                             <tr @key="e.Id">
                                 <td>@e.LastSeenAt.ToString("MMM d, HH:mm")</td>
@@ -655,6 +661,32 @@ else
     [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
 
     private IReadOnlyList<ErrorLogEntry>? errors;
+
+    // Column sort for the OPEN error log — the operator's triage table (by count, recency, level). Default
+    // (and un-sort) is the reader's order; saved per device. The small reference tables aren't sorted.
+    private readonly TableSort errorSort = new();
+    private IJSObjectReference? sortModule;
+    private sealed record SavedSort(string Col, bool Desc);
+
+    private IComparable? ErrorKey(ErrorLogEntry e) => errorSort.Column switch
+    {
+        "lastseen" => e.LastSeenAt,
+        "count" => e.Count,
+        "level" => e.Level,
+        "what" => e.LastMessage,
+        _ => e.LastSeenAt,
+    };
+
+    private async Task ErrorSortBy(string column)
+    {
+        errorSort.Toggle(column);
+        if (sortModule is not null)
+        {
+            try { await sortModule.InvokeVoidAsync("set", "admin-errors", errorSort.Column, errorSort.Descending); }
+            catch (JSDisconnectedException) { /* circuit gone mid-click — the sort still applied this render */ }
+        }
+    }
+
     private IReadOnlyList<AdminActivityRow>? activity;
     private IReadOnlyList<AdminBugReport>? bugReports;
     private IReadOnlyList<UserLoginStat>? loginStats;
@@ -691,10 +723,24 @@ else
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (!firstRender || refused) return;
+
+        // Restore this device's error-log sort (interop can't run during prerender, so it waits for here).
+        try
+        {
+            sortModule = await JS.InvokeAsync<IJSObjectReference>("import", "/js/table-sort.js");
+            if (await sortModule.InvokeAsync<SavedSort?>("get", "admin-errors") is { } saved)
+            {
+                errorSort.Set(saved.Col, saved.Desc);
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (Exception ex) when (ex is JSDisconnectedException or ObjectDisposedException) { }
+
         // CI status is fetched from GitHub after the first paint, so a slow (or unreachable) GitHub never
         // blocks the admin page from rendering. The provider never throws — it returns an Error status — so
         // the only thing to guard is the teardown race (the admin navigated away mid-fetch).
-        if (!firstRender || refused || ciLoaded || !Ci.Enabled) return;
+        if (ciLoaded || !Ci.Enabled) return;
         ciLoaded = true;
         try
         {
@@ -727,9 +773,14 @@ else
         }
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         if (subscribed) Presence.Changed -= OnPresenceChanged;
+        if (sortModule is not null)
+        {
+            try { await sortModule.DisposeAsync(); }
+            catch (JSDisconnectedException) { /* circuit already gone */ }
+        }
     }
 
     /// <summary>Self-reporting (returns whether it worked) so callers can split their advice by
