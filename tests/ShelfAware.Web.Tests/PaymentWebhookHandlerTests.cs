@@ -14,10 +14,30 @@ namespace ShelfAware.Web.Tests;
 public class PaymentWebhookHandlerTests : IDisposable
 {
     private readonly TestAuthDb _auth = new();
+    private readonly RecordingProvider _provider = new();
 
     public void Dispose() => _auth.Dispose();
 
-    private PaymentWebhookHandler Handler() => new(_auth, NullLogger<PaymentWebhookHandler>.Instance);
+    private PaymentWebhookHandler Handler() => new(_auth, _provider, NullLogger<PaymentWebhookHandler>.Instance);
+
+    /// <summary>Records which subscriptions the handler asked the provider to cancel — the supersede
+    /// (purchaser-departure) behaviour is the one thing the handler drives through the provider API.</summary>
+    private sealed class RecordingProvider : IPaymentProvider
+    {
+        public List<string> Cancelled { get; } = [];
+        public PaymentProviderKind Kind => PaymentProviderKind.Fake;
+        public string SignatureHeaderName => "X-Fake-Signature";
+        public Task<CheckoutSession> CreateCheckoutAsync(CheckoutRequest request, CancellationToken ct = default) =>
+            Task.FromResult(new CheckoutSession("/fake"));
+        public Task<string> CreatePortalUrlAsync(string billingCustomerId, string returnUrl, CancellationToken ct = default) =>
+            Task.FromResult("/fake");
+        public PaymentWebhookEvent? ParseWebhook(string payload, string? signatureHeader) => null;
+        public Task CancelSubscriptionAsync(string subscriptionId, CancellationToken ct = default)
+        {
+            Cancelled.Add(subscriptionId);
+            return Task.CompletedTask;
+        }
+    }
 
     private async Task<Household> SeedAsync(Action<Household>? setup = null)
     {
@@ -198,5 +218,60 @@ public class PaymentWebhookHandlerTests : IDisposable
         Assert.Equal(WebhookOutcome.UnknownHousehold, await Handler().HandleAsync(evt));
         // …and recorded, so a redelivery is recognised rather than re-attempted.
         Assert.Equal(WebhookOutcome.AlreadyProcessed, await Handler().HandleAsync(evt));
+    }
+
+    [Fact]
+    public async Task A_new_subscription_supersedes_and_cancels_the_old_one()
+    {
+        // The purchaser-departure edge (§6): a member re-attaches billing with a fresh subscription, so the
+        // old one (on the previous purchaser's card) must be cancelled or the household is billed twice.
+        var household = await SeedAsync(h =>
+        {
+            h.Tier = HouseholdTier.Aware;
+            h.BillingCustomerId = "cus_old";
+            h.SubscriptionId = "sub_old";
+            h.SubscriptionRenewsAt = PeriodEnd;
+        });
+        var evt = new PaymentWebhookEvent("evt_resub", PaymentEventKind.CheckoutCompleted,
+            HouseholdId: household.Id, BillingCustomerId: "cus_new", SubscriptionId: "sub_new",
+            Product: BillingProduct.SubscriptionMonthly, PeriodEnd: PeriodEnd);
+
+        var outcome = await Handler().HandleAsync(evt);
+
+        Assert.Equal(WebhookOutcome.Applied, outcome);
+        var after = await ReloadAsync(household.Id);
+        Assert.Equal("sub_new", after.SubscriptionId);   // the new subscription is active…
+        Assert.Equal("cus_new", after.BillingCustomerId);
+        Assert.Contains("sub_old", _provider.Cancelled);  // …and the old one was cancelled — no double-billing
+    }
+
+    [Fact]
+    public async Task A_first_subscription_cancels_nothing()
+    {
+        var household = await SeedAsync(); // Free, no prior subscription
+        var evt = new PaymentWebhookEvent("evt_first", PaymentEventKind.CheckoutCompleted,
+            HouseholdId: household.Id, SubscriptionId: "sub_1",
+            Product: BillingProduct.SubscriptionMonthly, PeriodEnd: PeriodEnd);
+
+        await Handler().HandleAsync(evt);
+
+        Assert.Empty(_provider.Cancelled); // nothing to supersede
+    }
+
+    [Fact]
+    public async Task A_renewal_does_not_cancel_the_subscription()
+    {
+        // A renewal reuses the SAME subscription id — it must never be mistaken for a supersede.
+        var household = await SeedAsync(h =>
+        {
+            h.Tier = HouseholdTier.Aware;
+            h.SubscriptionId = "sub_1";
+        });
+        var evt = new PaymentWebhookEvent("evt_renew", PaymentEventKind.SubscriptionRenewed,
+            SubscriptionId: "sub_1", PeriodEnd: PeriodEnd);
+
+        await Handler().HandleAsync(evt);
+
+        Assert.Empty(_provider.Cancelled);
     }
 }

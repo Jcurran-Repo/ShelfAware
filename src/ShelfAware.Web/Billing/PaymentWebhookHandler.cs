@@ -34,6 +34,7 @@ public enum WebhookOutcome
 /// </summary>
 public sealed class PaymentWebhookHandler(
     IDbContextFactory<AuthDbContext> authDb,
+    IPaymentProvider provider,
     ILogger<PaymentWebhookHandler> logger)
 {
     public async Task<WebhookOutcome> HandleAsync(PaymentWebhookEvent webhookEvent, CancellationToken cancellationToken = default)
@@ -56,11 +57,46 @@ public sealed class PaymentWebhookHandler(
                 : WebhookOutcome.AlreadyProcessed;
         }
 
+        // A new subscription checkout SUPERSEDES an existing one (§6, the purchaser-departure edge): the
+        // old sub is on the previous purchaser's card, so once a member re-attaches billing with a fresh
+        // subscription, the old one must be cancelled or the household is billed twice. Captured before
+        // Apply overwrites SubscriptionId; cancelled AFTER the commit (an external API call, not part of
+        // the DB transaction). A renewal reuses the same id, so it never supersedes.
+        var supersededSubscriptionId =
+            webhookEvent.Kind == PaymentEventKind.CheckoutCompleted
+            && webhookEvent.Product is { } product && BillingCatalog.IsSubscription(product)
+            && !string.IsNullOrEmpty(household.SubscriptionId)
+            && household.SubscriptionId != webhookEvent.SubscriptionId
+                ? household.SubscriptionId
+                : null;
+
         Apply(db, household, webhookEvent);
         db.ProcessedPaymentEvents.Add(Record(webhookEvent, household.Id));
-        return await SaveDedupedAsync(db, webhookEvent, cancellationToken)
-            ? WebhookOutcome.Applied
-            : WebhookOutcome.AlreadyProcessed;
+        if (!await SaveDedupedAsync(db, webhookEvent, cancellationToken))
+            return WebhookOutcome.AlreadyProcessed;
+
+        if (supersededSubscriptionId is not null)
+            await CancelSupersededAsync(supersededSubscriptionId, cancellationToken);
+
+        return WebhookOutcome.Applied;
+    }
+
+    /// <summary>Cancel a subscription a new checkout replaced — best-effort, AFTER the commit. A failure is
+    /// logged, not fatal: the new subscription is already active, and the old one can be cancelled from the
+    /// provider dashboard. Never lets a provider hiccup fail an event we've already applied.</summary>
+    private async Task CancelSupersededAsync(string subscriptionId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await provider.CancelSubscriptionAsync(subscriptionId, cancellationToken);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogError(ex,
+                "Couldn't cancel superseded subscription {SubscriptionId} — cancel it in the provider dashboard to stop double-billing.",
+                subscriptionId);
+        }
     }
 
     /// <summary>Resolve the target household from the event's OWN verified identifiers, in order of
@@ -93,11 +129,11 @@ public sealed class PaymentWebhookHandler(
         switch (webhookEvent.Kind)
         {
             case PaymentEventKind.CheckoutCompleted:
-                if (webhookEvent.Product is BillingProduct.SubscriptionMonthly or BillingProduct.SubscriptionAnnual)
+                if (webhookEvent.Product is { } subProduct && BillingCatalog.IsSubscription(subProduct))
                 {
                     ActivateSubscription(household, webhookEvent);
                 }
-                else if (webhookEvent.Product is BillingProduct.CreditPack5 or BillingProduct.CreditPack10 or BillingProduct.CreditPack20)
+                else if (webhookEvent.Product is { } packProduct && BillingCatalog.IsPack(packProduct))
                 {
                     // A pack buyer already has the customer id from subscribing (packs are subscribers-only,
                     // §8), but keep whatever the event carries if we somehow don't.

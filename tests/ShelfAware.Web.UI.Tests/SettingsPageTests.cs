@@ -627,6 +627,24 @@ public class SettingsBillingPanelTests : SettingsTestBase
         var billing = Section(RenderSettings(), "Subscription");
         Assert.DoesNotContain("Aware now", billing.TextContent);
     }
+
+    [Fact]
+    public void The_billing_departure_note_names_who_controls_billing_when_subscribed()
+    {
+        // §6: a departing member keeps the provider's cancel/card control (it's on their email), so the
+        // member-removal area must NAME that — but only once there's actually a subscription to lose.
+        var household = AuthContext.Households.Single(h => h.Id == AuthHousehold);
+        household.SubscriptionId = "sub_1";
+        AuthContext.SaveChanges();
+
+        Assert.Contains("Billing follows whoever set up", Section(RenderSettings(), "Household").TextContent);
+    }
+
+    [Fact]
+    public void No_billing_departure_note_without_a_subscription()
+    {
+        Assert.DoesNotContain("Billing follows whoever set up", Section(RenderSettings(), "Household").TextContent);
+    }
 }
 
 /// <summary>The read-only GraphQL API is enabled, so the Settings "API access" section is present and its

@@ -127,6 +127,15 @@
             in on. It doesn't touch the pantry — that belongs to the household, not the account — and they
             keep their account, they're just not in a household until they join or start one.
         </p>
+        @if (household?.SubscriptionId is not null)
+        {
+            <p class="muted small">
+                Billing follows whoever set up the subscription — the card and the provider's cancel/receipt
+                controls stay with their account, not this household. If that person leaves, subscribe again
+                to move billing to your own account; the old subscription is cancelled automatically when the
+                new one starts.
+            </p>
+        }
         <p class="muted small">
             @if (EmailConfig.Value.IsConfigured)
             {
