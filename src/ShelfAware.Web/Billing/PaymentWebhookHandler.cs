@@ -55,9 +55,24 @@ public sealed class PaymentWebhookHandler(
         var household = await ResolveHouseholdAsync(db, webhookEvent, cancellationToken);
         if (household is null)
         {
-            logger.LogError(
-                "Payment webhook {EventId} ({Kind}) matched no household (household={HouseholdId}, sub={SubscriptionId}, customer={CustomerId}).",
-                webhookEvent.EventId, webhookEvent.Kind, webhookEvent.HouseholdId, webhookEvent.SubscriptionId, webhookEvent.BillingCustomerId);
+            // Only a CheckoutCompleted carries the household id in its metadata, so it MUST resolve — failing
+            // to is a real problem (a forged/misconfigured event, or a household deleted mid-checkout) worth an
+            // Error. A subscription-lifecycle event resolves only by ids that checkout stores, so it
+            // legitimately may not resolve yet: Stripe emits customer.subscription.created ALONGSIDE checkout
+            // completion (often first, before the mapping exists), and a superseded/old subscription's late
+            // events never resolve by design. Logging those at Error would flag "matched no household" on
+            // essentially every signup — and the item-47 pipeline would surface each as an operator error — so
+            // they're Information. The real period they carry isn't lost for good: a later subscription.updated
+            // (at the latest, the first renewal) resolves once the mapping exists and corrects it; checkout's
+            // provisional period holds until then.
+            if (webhookEvent.Kind == PaymentEventKind.CheckoutCompleted)
+                logger.LogError(
+                    "Payment webhook {EventId} ({Kind}) matched no household (household={HouseholdId}, sub={SubscriptionId}, customer={CustomerId}).",
+                    webhookEvent.EventId, webhookEvent.Kind, webhookEvent.HouseholdId, webhookEvent.SubscriptionId, webhookEvent.BillingCustomerId);
+            else
+                logger.LogInformation(
+                    "Payment webhook {EventId} ({Kind}) named no known household yet (sub={SubscriptionId}, customer={CustomerId}) — acked; a later event resolves it.",
+                    webhookEvent.EventId, webhookEvent.Kind, webhookEvent.SubscriptionId, webhookEvent.BillingCustomerId);
             db.ProcessedPaymentEvents.Add(Record(webhookEvent, householdId: null));
             return await SaveDedupedAsync(db, webhookEvent, cancellationToken)
                 ? WebhookOutcome.UnknownHousehold

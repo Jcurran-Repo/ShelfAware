@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using ShelfAware.Web.Auth;
 using ShelfAware.Web.Billing;
@@ -19,6 +20,18 @@ public class PaymentWebhookHandlerTests : IDisposable
     public void Dispose() => _auth.Dispose();
 
     private PaymentWebhookHandler Handler() => new(_auth, _provider, NullLogger<PaymentWebhookHandler>.Instance);
+    private PaymentWebhookHandler Handler(ILogger<PaymentWebhookHandler> logger) => new(_auth, _provider, logger);
+
+    /// <summary>Captures the level of every log the handler emits, so a test can pin that a routine
+    /// non-resolution is Information (not an operator Error that would fire on every signup).</summary>
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => Entries.Add((logLevel, formatter(state, exception)));
+    }
 
     /// <summary>Records which subscriptions the handler asked the provider to cancel — the supersede
     /// (purchaser-departure) behaviour is the one thing the handler drives through the provider API.</summary>
@@ -218,6 +231,33 @@ public class PaymentWebhookHandlerTests : IDisposable
         Assert.Equal(WebhookOutcome.UnknownHousehold, await Handler().HandleAsync(evt));
         // …and recorded, so a redelivery is recognised rather than re-attempted.
         Assert.Equal(WebhookOutcome.AlreadyProcessed, await Handler().HandleAsync(evt));
+    }
+
+    [Fact]
+    public async Task An_unresolved_checkout_logs_at_error()
+    {
+        // A checkout carries the household id in its metadata, so failing to resolve one is a real problem.
+        var log = new CapturingLogger<PaymentWebhookHandler>();
+        var evt = new PaymentWebhookEvent("evt_ck_ghost", PaymentEventKind.CheckoutCompleted,
+            HouseholdId: "no-such-household", Product: BillingProduct.SubscriptionMonthly);
+
+        Assert.Equal(WebhookOutcome.UnknownHousehold, await Handler(log).HandleAsync(evt));
+        Assert.Contains(log.Entries, e => e.Level == LogLevel.Error);
+    }
+
+    [Fact]
+    public async Task An_unresolved_subscription_event_logs_at_information_not_error()
+    {
+        // Stripe emits customer.subscription.created alongside checkout, often before the household->sub
+        // mapping exists — so an unresolved lifecycle event is routine and must NOT spawn an operator Error
+        // on every signup (the item-47 pipeline captures Error+). Live-observed 2026-09-01.
+        var log = new CapturingLogger<PaymentWebhookHandler>();
+        var evt = new PaymentWebhookEvent("evt_sub_ghost", PaymentEventKind.SubscriptionUpdated,
+            SubscriptionId: "sub_not_yet_known", PeriodEnd: PeriodEnd);
+
+        Assert.Equal(WebhookOutcome.UnknownHousehold, await Handler(log).HandleAsync(evt));
+        Assert.Contains(log.Entries, e => e.Level == LogLevel.Information);
+        Assert.DoesNotContain(log.Entries, e => e.Level == LogLevel.Error);
     }
 
     [Fact]
