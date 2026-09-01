@@ -114,10 +114,20 @@ Three review findings harden the grant (2026-08-23, accepted):
   ~5 text actions/day exhausts it in ~3 weeks, not 2 months.
 - **Anti-farming controls are LAUNCH DEFAULTS on any open-registration deployment, not contingencies**
   (the per-IP /Account limit exists and covers registration, but IP rotation is cheap, and
-  `RequireConfirmedAccount` is currently false): email-confirmation-before-grant ON, the per-household
-  daily caps ON, and — the piece nothing provided — **a global managed-spend ceiling with an alert**,
-  because without detection the operator learns about a grant farm from the Anthropic invoice.
+  `RequireConfirmedAccount` is currently false): flip `RequireConfirmedAccount` ON so the email is verified
+  at registration (the verify-once principle below), the per-household daily caps ON, and — the piece nothing
+  provided — **a global managed-spend ceiling with an alert**, because without detection the operator learns
+  about a grant farm from the Anthropic invoice.
   Optional: drip the grant (~25¢/day unlocked). Closed-registration boxes (family) need none of it.
+- **Verify each email ONCE, at first capture — then rely on it everywhere, no re-verification** (Jordan,
+  2026-09-01). Registration is the main capture point: with `RequireConfirmedAccount` ON the login email is
+  confirmed before the account is usable, and that single verification then stands for every later use of it
+  — the welcome grant, subscription + credit-pack purchase (§6), receipts, the MoR customer + portal,
+  dunning — none of which re-confirm. The one path that can introduce a fresh, never-verified email is the
+  anonymous **wishlist / pre-order** capture on `/about` (a visitor with no account): verify THAT once, in
+  place (double opt-in), before it counts as a reservation or joins the launch list — the double-opt-in that
+  item 62 shipped without. A visitor who has or later creates an account uses their already-verified account
+  email and is never asked again.
 - **Exhaustion is a RAMP, not a wall:** ambient remaining-grant meter, nudges at ~50%/~90% with the
   subscription offered BEFORE the wall, and the wall itself holds work rather than refusing it —
   "your receipt is saved; it'll extract when you subscribe" — because the wall fires mid-chore,
@@ -398,6 +408,16 @@ Mechanics are provider-agnostic (all three offer them):
 - **Lifecycle:** failed payment → provider dunning → on final failure tier drops to Free at period
   end (data untouched — Free is a posture, nothing is deleted). Cancel → runs out the paid period.
   Unused purchased credits survive tier drops (they were bought).
+- ⚠️ **Checkout runs on the account's already-verified email — it does NOT re-verify.** The MoR keys the
+  customer record, receipts, the cancel/card portal, and the refund/dispute contact on ONE email, and it's
+  the member's app-account email — already format-valid + unique (Identity's `[EmailAddress]` +
+  `RequireUniqueEmail`) AND already verified once at registration (§1's verify-once principle,
+  `RequireConfirmedAccount` ON). So checkout simply requires that verified address and adds no second
+  confirmation step; because it was verified, a typo'd or unowned address can't end up owning the
+  household's billing (compounding the purchaser-departure finding below) or silently swallowing receipts
+  and dispute notices. We never collect a SEPARATE billing email: the strict CSP is hosted-redirect-only
+  (no form-post checkout, above), so the verified account email is what we pass to the provider — one
+  address, nothing to keep in sync.
 - ⚠️ **The purchaser can leave the household — item 54's MED-HIGH shape, one level up** (review
   finding): member removal revokes the cookie and API tokens, but the LS customer account + portal
   belong to the purchasing member's EMAIL, unreachable by `RemoveMemberAsync` — a removed member
