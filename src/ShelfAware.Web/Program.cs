@@ -332,6 +332,11 @@ builder.Services.Configure<ShelfAware.Web.Wishlist.WishlistOptions>(
 // exist — today's behaviour exactly. Only the fake adapter is wired today; selecting the real provider
 // before its adapter ships (step 5) fails startup with a clear message rather than half-working.
 var paymentsEnabled = builder.Configuration.GetValue<bool>("Payments:Enabled");
+// The FAKE provider's stand-in "hosted checkout" pages (below) exist only where it's the active provider —
+// a real deployment (Provider=StripeManagedPayments) redirects to the provider's own page, so these pages
+// must not be mapped there. Default (unset) provider is Fake.
+var fakePayments = paymentsEnabled &&
+    !string.Equals(builder.Configuration["Payments:Provider"], nameof(PaymentProviderKind.StripeManagedPayments), StringComparison.OrdinalIgnoreCase);
 builder.Services.AddOptions<PaymentsOptions>()
     .Bind(builder.Configuration.GetSection(PaymentsOptions.SectionName))
     .Validate(o => !o.Enabled || o.Provider == PaymentProviderKind.Fake,
@@ -900,6 +905,97 @@ if (paymentsEnabled)
                 statusCode: StatusCodes.Status500InternalServerError);
         }
     }).DisableAntiforgery();
+}
+
+// ---- Subscription & billing: hosted-redirect checkout + portal (phase 3 step 3) ----
+// The strict CSP forbids any JS-overlay checkout, so each is a GET the Settings anchors hit: it creates a
+// provider session and 302s the browser to the hosted page. Authenticated — the household id and the
+// purchaser's already-verified account email come from the caller's OWN claims, never the request body
+// (§6). Mapped only when Payments:Enabled.
+if (paymentsEnabled)
+{
+    app.MapGet("/billing/checkout", async (
+        HttpContext ctx, HttpRequest request, IPaymentProvider provider, IEntitlements entitlements,
+        string product, CancellationToken ct) =>
+    {
+        var householdId = ctx.User.FindFirst(HouseholdClaimsPrincipalFactory.HouseholdClaim)?.Value;
+        var email = ctx.User.Identity?.Name;
+        if (householdId is null || string.IsNullOrEmpty(email)) return Results.Redirect("/settings");
+        if (!Enum.TryParse<BillingProduct>(product, out var prod) || !Enum.IsDefined(prod))
+            return Results.Redirect("/settings"); // an unknown/smuggled product — refuse, don't guess
+
+        // Credit packs are for active subscribers only (§8) — defense in depth behind the UI, which already
+        // hides packs from a non-Aware household.
+        if (BillingCatalog.IsPack(prod) && await entitlements.GetTierAsync(ct) != HouseholdTier.Aware)
+            return Results.Redirect("/settings?checkout=packs_need_sub");
+
+        var baseUrl = $"{request.Scheme}://{request.Host}";
+        var success = BillingCatalog.IsPack(prod) ? "credits" : "subscribed";
+        var checkoutRequest = new CheckoutRequest(householdId, email, prod,
+            $"{baseUrl}/settings?checkout={success}", $"{baseUrl}/settings?checkout=cancelled");
+        var session = await provider.CreateCheckoutAsync(checkoutRequest, ct);
+        return Results.Redirect(session.Url);
+    }).RequireAuthorization();
+
+    app.MapGet("/billing/portal", async (
+        HttpContext ctx, HttpRequest request, IPaymentProvider provider,
+        IDbContextFactory<AuthDbContext> authDbFactory, CancellationToken ct) =>
+    {
+        var householdId = ctx.User.FindFirst(HouseholdClaimsPrincipalFactory.HouseholdClaim)?.Value;
+        if (householdId is null) return Results.Redirect("/settings");
+        await using var authDb = await authDbFactory.CreateDbContextAsync(ct);
+        var customerId = await authDb.Households
+            .Where(h => h.Id == householdId).Select(h => h.BillingCustomerId).FirstOrDefaultAsync(ct);
+        if (string.IsNullOrEmpty(customerId)) return Results.Redirect("/settings?checkout=no_billing");
+        var url = await provider.CreatePortalUrlAsync(customerId, $"{request.Scheme}://{request.Host}/settings", ct);
+        return Results.Redirect(url);
+    }).RequireAuthorization();
+}
+
+// The FAKE provider's stand-in for a hosted checkout page + its "provider webhook" — DEV ONLY, mapped only
+// when the active provider is Fake. The real provider hosts its own page and POSTs a signed webhook to
+// /api/payments/webhook; here "Complete" applies the CheckoutCompleted event through the SAME
+// PaymentWebhookHandler and redirects, so the whole subscribe→Aware loop is drivable locally without Stripe.
+// The household comes from the caller's claim (a query can't target another household); the page is bare
+// HTML with no inline script/style, so the strict CSP holds.
+if (fakePayments)
+{
+    app.MapGet("/billing/fake-checkout", (string product) =>
+    {
+        var prod = System.Net.WebUtility.HtmlEncode(product);
+        var complete = $"/billing/fake-complete?product={Uri.EscapeDataString(product)}";
+        var html =
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">" +
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Fake checkout</title></head>" +
+            "<body><h1>Fake checkout</h1>" +
+            $"<p>This is the local <strong>fake</strong> payment provider — no real charge. Product: <strong>{prod}</strong>.</p>" +
+            $"<p><a href=\"{complete}\">Complete purchase</a></p>" +
+            "<p><a href=\"/settings?checkout=cancelled\">Cancel</a></p></body></html>";
+        return Results.Content(html, "text/html");
+    }).RequireAuthorization();
+
+    app.MapGet("/billing/fake-complete", async (
+        HttpContext ctx, PaymentWebhookHandler handler, string product, CancellationToken ct) =>
+    {
+        var householdId = ctx.User.FindFirst(HouseholdClaimsPrincipalFactory.HouseholdClaim)?.Value;
+        if (householdId is null || !Enum.TryParse<BillingProduct>(product, out var prod) || !Enum.IsDefined(prod))
+            return Results.Redirect("/settings");
+
+        var isPack = BillingCatalog.IsPack(prod);
+        var period = prod == BillingProduct.SubscriptionAnnual ? TimeSpan.FromDays(365) : TimeSpan.FromDays(30);
+        var completed = new PaymentWebhookEvent(
+            EventId: $"fake-{Guid.NewGuid():n}",
+            Kind: PaymentEventKind.CheckoutCompleted,
+            HouseholdId: householdId,
+            BillingCustomerId: $"cus_fake_{householdId}",
+            SubscriptionId: isPack ? null : $"sub_fake_{householdId}",
+            Product: prod,
+            PeriodEnd: isPack ? null : DateTimeOffset.Now.Add(period),
+            CancelAtPeriodEnd: false,
+            AmountMicros: isPack ? BillingCatalog.RetailMicrosFor(prod) : null);
+        await handler.HandleAsync(completed, ct);
+        return Results.Redirect(isPack ? "/settings?checkout=credits" : "/settings?checkout=subscribed");
+    }).RequireAuthorization();
 }
 
 // PWA manifest — makes the app installable ("Add to home screen"). Served explicitly so the content type

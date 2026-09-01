@@ -1,0 +1,97 @@
+@using ShelfAware.Web.Auth
+@using ShelfAware.Web.Billing
+
+@* The Settings "Subscription & billing" panel (phase 3 step 3). Hosted-redirect links only — the strict
+   CSP forbids any JS-overlay checkout, so each action is an ANCHOR to a server endpoint that 302s to the
+   provider (data-enhance-nav="false" forces a full browser navigation rather than an enhanced-nav fetch
+   that can't follow a cross-origin redirect). A pure presentation component — no injected services — so it
+   renders in isolation and its per-tier rules (esp. "Free is never offered credit packs", §8) are unit-
+   testable without the whole Settings page. *@
+
+@if (Enabled && Managed)
+{
+    <section class="panel">
+        <h2>Subscription &amp; billing</h2>
+
+        @if (BannerFor(Checkout) is { } banner)
+        {
+            <p class="callout @(banner.Ok ? "ok" : "")">@banner.Text</p>
+        }
+
+        @if (Tier == HouseholdTier.Founder)
+        {
+            <p class="muted">You're a Founder — billing doesn't apply. Enjoy the house's keys. 💛</p>
+        }
+        else if (Tier == HouseholdTier.Aware)
+        {
+            <p>You're on <strong>Aware</strong>.@(RenewalNote is "" ? "" : " " + RenewalNote)</p>
+
+            <h3>Buy credits</h3>
+            <p class="muted">Top up beyond your monthly allowance — purchased credits never expire.</p>
+            <div class="billing-actions">
+                @foreach (var pack in BillingCatalog.Packs)
+                {
+                    <a href="/billing/checkout?product=@pack.Product" data-enhance-nav="false">@pack.PriceDisplay</a>
+                }
+            </div>
+
+            @if (HasCustomer)
+            {
+                <div class="billing-actions">
+                    <a href="/billing/portal" data-enhance-nav="false">Manage billing (cancel or update card)</a>
+                </div>
+            }
+        }
+        else
+        {
+            <p>You're on the <strong>free plan</strong>. Subscribe to <strong>Aware</strong> for managed AI on
+                the house's keys — receipt reading, chat, recipes, census, and more.</p>
+            <div class="billing-actions">
+                <a class="primary" href="/billing/checkout?product=SubscriptionMonthly" data-enhance-nav="false">
+                    Subscribe — @BillingCatalog.Monthly.PriceDisplay
+                </a>
+                <a href="/billing/checkout?product=SubscriptionAnnual" data-enhance-nav="false">
+                    Annual — @BillingCatalog.Annual.PriceDisplay<span class="save-badge">save 22%</span>
+                </a>
+            </div>
+            <p class="muted small">Start monthly; the annual saves about two months. Cancel any time.</p>
+        }
+    </section>
+}
+
+@code {
+    /// <summary>Whether payments exist on this deployment (PaymentsOptions.IsConfigured). Off → the panel
+    /// renders nothing, so a self-host/BYOK box shows no billing surface.</summary>
+    [Parameter] public bool Enabled { get; set; }
+
+    /// <summary>Whether this is a managed (host-keys) circuit. BYOK circuits show no billing — their AI runs
+    /// on the visitor's own key, so there is nothing to sell them.</summary>
+    [Parameter] public bool Managed { get; set; }
+
+    [Parameter] public HouseholdTier Tier { get; set; }
+
+    /// <summary>Whether the household has a provider customer on file (Household.BillingCustomerId) — the
+    /// gate for showing the "manage billing" portal link.</summary>
+    [Parameter] public bool HasCustomer { get; set; }
+
+    [Parameter] public DateTimeOffset? RenewsAt { get; set; }
+    [Parameter] public bool CancelAtPeriodEnd { get; set; }
+
+    /// <summary>The ?checkout= query value on return from a hosted checkout — drives the banner.</summary>
+    [Parameter] public string? Checkout { get; set; }
+
+    private string RenewalNote =>
+        RenewsAt is not { } date ? ""
+        : CancelAtPeriodEnd ? $"Your plan ends on {date:MMM d, yyyy} — it'll drop to the free plan then."
+        : $"Renews on {date:MMM d, yyyy}.";
+
+    private static (string Text, bool Ok)? BannerFor(string? checkout) => checkout switch
+    {
+        "subscribed" => ("🎉 You're on Aware now — thanks for supporting Shelf Aware!", true),
+        "credits" => ("✓ Credits added to your balance.", true),
+        "cancelled" => ("Checkout cancelled — you weren't charged.", false),
+        "packs_need_sub" => ("Credit packs are for Aware subscribers — subscribe first, then top up.", false),
+        "no_billing" => ("No billing account yet — subscribe to Aware first.", false),
+        _ => null,
+    };
+}
