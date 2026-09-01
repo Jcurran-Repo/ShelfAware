@@ -22,6 +22,7 @@ using ShelfAware.Core.Speech;
 using ShelfAware.Core.Tagging;
 using ShelfAware.Llm;
 using ShelfAware.Web.Auth;
+using ShelfAware.Web.Billing;
 using ShelfAware.Web.Components;
 using ShelfAware.Web.Components.Account;
 using ShelfAware.Web.Data;
@@ -325,6 +326,24 @@ builder.Services.Configure<ShelfAware.Core.Billing.BillingOptions>(
 // early" supporter button. Absent section = the reserve's tier picker + email still work; no button.
 builder.Services.Configure<ShelfAware.Web.Wishlist.WishlistOptions>(
     builder.Configuration.GetSection(ShelfAware.Web.Wishlist.WishlistOptions.SectionName));
+
+// Payments (phase 3 — docs/subscription-plan.md §6). Config-gated like GraphQL:Enabled: with the
+// "Payments" section absent, Enabled is false, no IPaymentProvider is registered, and billing does not
+// exist — today's behaviour exactly. Only the fake adapter is wired today; selecting the real provider
+// before its adapter ships (step 5) fails startup with a clear message rather than half-working.
+var paymentsEnabled = builder.Configuration.GetValue<bool>("Payments:Enabled");
+builder.Services.AddOptions<PaymentsOptions>()
+    .Bind(builder.Configuration.GetSection(PaymentsOptions.SectionName))
+    .Validate(o => !o.Enabled || o.Provider == PaymentProviderKind.Fake,
+        "Payments:Provider=StripeManagedPayments isn't wired yet (phase-3 step 5). Set Payments:Provider=Fake, " +
+        "or leave Payments:Enabled unset until the real adapter ships.")
+    .ValidateOnStart();
+if (paymentsEnabled)
+{
+    // The fake is stateless (deterministic URLs + a pure HMAC verify), so a singleton is fine; the real
+    // adapter (step 5) will register its own HttpClient-backed client.
+    builder.Services.AddSingleton<IPaymentProvider, FakePaymentProvider>();
+}
 
 // The provider seam: the AI services depend only on IChatClient, so the provider is a swap and the logic
 // stays fakeable in tests. Under BYOK each circuit gets its own IChatClient built from that visitor's
