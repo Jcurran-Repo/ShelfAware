@@ -179,6 +179,11 @@ public static class AdditiveSchema
         // like the error log, so it lives here rather than in any household's pantry. A new table —
         // existing rows unaffected.
         EnsureTable(db, table: "Wishlist");
+
+        // 2026-09-01: payment webhook idempotency (phase 3 step 2) — one row per applied provider event,
+        // so a retried webhook can't double-apply. Auth-side beside the subscription + ledger. A new
+        // table — existing rows unaffected.
+        EnsureTable(db, table: "ProcessedPaymentEvents");
     }
 
     /// <summary>Create <paramref name="table"/> (and its indexes) on a DB built before it existed. The

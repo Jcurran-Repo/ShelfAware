@@ -18,6 +18,11 @@ public interface IPaymentProvider
     /// can tell at a glance whether a box is on the fake or the real provider.</summary>
     PaymentProviderKind Kind { get; }
 
+    /// <summary>The HTTP header the provider puts each webhook's signature in, so the endpoint knows which
+    /// one to read and hand to <see cref="ParseWebhook"/> (it's provider-specific — Stripe's is
+    /// "Stripe-Signature"). Keeps header knowledge with the adapter rather than hard-coded at the endpoint.</summary>
+    string SignatureHeaderName { get; }
+
     /// <summary>Open hosted checkout for one product and return the URL to redirect the browser to. The
     /// household id rides to the provider as metadata so the completion webhook maps back (§6).</summary>
     Task<CheckoutSession> CreateCheckoutAsync(CheckoutRequest request, CancellationToken cancellationToken = default);

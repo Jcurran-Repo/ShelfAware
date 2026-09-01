@@ -28,6 +28,10 @@ public sealed class FakePaymentProvider(IOptions<PaymentsOptions> options) : IPa
 
     public PaymentProviderKind Kind => PaymentProviderKind.Fake;
 
+    /// <summary>The header the fake's signature rides in — what the webhook endpoint reads and passes to
+    /// <see cref="ParseWebhook"/>, and what a test (or a dev tool simulating a callback) sets.</summary>
+    public string SignatureHeaderName => "X-Fake-Signature";
+
     /// <summary>A deterministic checkout URL carrying the request, so a test can assert what was asked and
     /// a later dev-only page could honour it to simulate a completed purchase. The fake has no hosted page
     /// of its own — in the real adapter this is the provider's hosted checkout URL.</summary>

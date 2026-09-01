@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Domain;
 using ShelfAware.Web.Auth;
+using ShelfAware.Web.Billing;
 using ShelfAware.Web.Data;
 using ShelfAware.Web.Diagnostics;
 using ShelfAware.Web.Wishlist;
@@ -562,6 +563,30 @@ public class AdditiveSchemaTests : IDisposable
         });
         await db.SaveChangesAsync();
         Assert.Single(await db.CreditLedger.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Creates_the_ProcessedPaymentEvents_table_on_an_older_auth_db_with_the_fresh_schema()
+    {
+        // Auth-side: the webhook idempotency ledger lives beside the subscription + credit ledger (all
+        // payment state is auth-side), and a live deployment's auth.db predates it (phase 3 step 2).
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await TableSchemaAsync(db, "ProcessedPaymentEvents");
+        Assert.NotEmpty(fresh); // includes the EventId primary key
+
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE ProcessedPaymentEvents;");
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        Assert.Equal(fresh, await TableSchemaAsync(db, "ProcessedPaymentEvents"));
+
+        db.ProcessedPaymentEvents.Add(new ProcessedPaymentEvent
+        {
+            EventId = "evt_1", Kind = PaymentEventKind.CheckoutCompleted, HouseholdId = "hh-1",
+        });
+        await db.SaveChangesAsync();
+        Assert.Single(await db.ProcessedPaymentEvents.ToListAsync());
     }
 
     [Fact]

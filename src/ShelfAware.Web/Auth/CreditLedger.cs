@@ -87,4 +87,29 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory)
             Reason = "Welcome grant",
         };
     }
+
+    /// <summary>A credit-PACK purchase entry (positive retail micros) — a FACTORY so the webhook handler
+    /// adds it to its own context, atomic with the tier/period write and the idempotency row, while the
+    /// entry's shape stays defined here. Non-positive → null (nothing worth recording).</summary>
+    public static CreditLedgerEntry? Purchase(string householdId, long retailMicros, string? reason) =>
+        retailMicros <= 0 ? null : new CreditLedgerEntry
+        {
+            HouseholdId = householdId,
+            Kind = CreditEntryKind.Purchase,
+            AmountMicros = retailMicros,
+            Reason = reason,
+        };
+
+    /// <summary>A REFUND reversal entry (stored NEGATIVE) — a FACTORY, same batching reason as
+    /// <see cref="Purchase"/>. <paramref name="retailMicros"/> is the positive amount being reversed; the
+    /// balance may go negative as a result (§4: a refund after credits were spent nets against future
+    /// purchases). Non-positive → null.</summary>
+    public static CreditLedgerEntry? Refund(string householdId, long retailMicros, string? reason) =>
+        retailMicros <= 0 ? null : new CreditLedgerEntry
+        {
+            HouseholdId = householdId,
+            Kind = CreditEntryKind.Refund,
+            AmountMicros = -retailMicros,
+            Reason = reason,
+        };
 }

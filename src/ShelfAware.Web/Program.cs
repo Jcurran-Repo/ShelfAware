@@ -347,6 +347,8 @@ if (paymentsEnabled)
     // The fake is stateless (deterministic URLs + a pure HMAC verify), so a singleton is fine; the real
     // adapter (step 5) will register its own HttpClient-backed client.
     builder.Services.AddSingleton<IPaymentProvider, FakePaymentProvider>();
+    // Applies verified webhook events to the household's tier + credit ledger, idempotently (step 2).
+    builder.Services.AddScoped<PaymentWebhookHandler>();
 }
 
 // The provider seam: the AI services depend only on IChatClient, so the provider is a swap and the logic
@@ -858,6 +860,47 @@ app.MapPost("/api/pantry-photo/read", async (
             statusCode: StatusCodes.Status500InternalServerError);
     }
 }).RequireAuthorization().RequireRateLimiting("photo-upload");
+
+// Payment provider webhook (phase 3 step 2 — docs/subscription-plan.md §6). A PUBLIC, unauthenticated
+// endpoint: a merchant of record sends no cookie, so the HMAC SIGNATURE over the raw body IS the
+// authentication (verified by IPaymentProvider.ParseWebhook — a forged/absent signature never parses).
+// PaymentWebhookHandler applies the effect idempotently by event id. Mapped only when Payments:Enabled, so
+// a box with no payments has no such endpoint.
+//   - Raw body, no form binding → the antiforgery middleware doesn't validate it; DisableAntiforgery makes
+//     that explicit (and unlike Hot Chocolate's builder, a plain MapPost supports it).
+//   - ⚠️ Every non-2xx carries a JSON body — an empty error response is re-executed by
+//     UseStatusCodePagesWithReExecute into POST /not-found → antiforgery → a misleading 400 (item 54's
+//     scar). A 400 = bad signature (don't retry); a 5xx = a transient failure (DO retry); a 2xx = handled.
+if (paymentsEnabled)
+{
+    app.MapPost("/api/payments/webhook", async (
+        HttpRequest request, IPaymentProvider provider, PaymentWebhookHandler handler,
+        ILoggerFactory logs, CancellationToken ct) =>
+    {
+        string payload;
+        using (var reader = new StreamReader(request.Body))
+            payload = await reader.ReadToEndAsync(ct);
+
+        var signature = request.Headers[provider.SignatureHeaderName].ToString();
+        var webhookEvent = provider.ParseWebhook(payload, signature);
+        if (webhookEvent is null)
+            return Results.Json(new { error = "invalid signature" }, statusCode: StatusCodes.Status400BadRequest);
+
+        try
+        {
+            var outcome = await handler.HandleAsync(webhookEvent, ct);
+            return Results.Json(new { status = outcome.ToString() });
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            logs.CreateLogger("PaymentWebhook").LogError(ex, "Payment webhook handling failed for {EventId}.", webhookEvent.EventId);
+            // 5xx WITH a body so the provider retries a transient failure rather than losing the event.
+            return Results.Json(new { error = "webhook handling failed" },
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }).DisableAntiforgery();
+}
 
 // PWA manifest — makes the app installable ("Add to home screen"). Served explicitly so the content type
 // is right regardless of static-file MIME config; it loads under the same-origin CSP (manifest-src falls

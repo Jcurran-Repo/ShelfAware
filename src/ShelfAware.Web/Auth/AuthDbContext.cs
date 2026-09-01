@@ -21,6 +21,10 @@ public class AuthDbContext(DbContextOptions<AuthDbContext> options) : IdentityDb
     public DbSet<UserLoginStat> UserLoginStats => Set<UserLoginStat>();
     public DbSet<CreditLedgerEntry> CreditLedger => Set<CreditLedgerEntry>();
 
+    /// <summary>Idempotency ledger for payment webhooks (phase 3) — one row per applied provider event.
+    /// See <see cref="ProcessedPaymentEvent"/>.</summary>
+    public DbSet<ProcessedPaymentEvent> ProcessedPaymentEvents => Set<ProcessedPaymentEvent>();
+
     /// <summary>Pre-launch demand for a HOSTED Shelf Aware — operator data, same rationale as the error
     /// log above. No index: like ErrorLog, the table is bounded and ordered/deduped client-side (SQLite
     /// can't ORDER BY a DateTimeOffset in SQL), so an index would serve nothing.</summary>
@@ -63,5 +67,10 @@ public class AuthDbContext(DbContextOptions<AuthDbContext> options) : IdentityDb
         // Indexed by household so summing a household's balance (and exporting/reading its ledger)
         // doesn't table-scan — the hand-scoped read path, since auth.db has no query filter.
         modelBuilder.Entity<CreditLedgerEntry>().HasIndex(e => e.HouseholdId);
+
+        // The provider's event id IS the key — a webhook is looked up and deduped by it, and making it
+        // the PK gives the unique constraint the concurrent-duplicate insert race relies on (a second
+        // delivery of the same event loses the insert). String key, like UserLoginStat's UserId.
+        modelBuilder.Entity<ProcessedPaymentEvent>().HasKey(e => e.EventId);
     }
 }
