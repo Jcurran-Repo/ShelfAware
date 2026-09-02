@@ -6,6 +6,8 @@
 @inject IHouseholdDbFactory DbFactory
 @inject ReceiptSelfEval SelfEval
 @inject AiUsageMeter Meter
+@inject IEntitlements Entitlements
+@inject CircuitAiSettings AiSettings
 @inject ILogger<Accuracy> Logger
 
 <PageTitle>Model Accuracy — Reginald</PageTitle>
@@ -275,6 +277,10 @@ else
         selfEvalRunning = true;
         selfEvalError = null;
         selfEvalProgress = "Starting…";
+        // A run is one vision call PER verified receipt; the grader fails soft per-receipt, so an exhausted
+        // balance would read "grading failed" on every row. Say the real reason up front and don't start (4c).
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        if (blocked is not null) { selfEvalError = blocked; selfEvalRunning = false; return; }
         try
         {
             var progress = new Progress<ReceiptSelfEval.RunProgress>(p =>

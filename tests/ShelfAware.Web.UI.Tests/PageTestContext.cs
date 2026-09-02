@@ -97,9 +97,15 @@ public abstract class PageTestContext : BunitContext
         Services.AddSingleton(Coordinator);
         Services.AddSingleton(Tour);
         Services.AddSingleton(BugContext);
-        // Keyless BYOK — the public-demo shape. A test needing the managed deployment registers its own
-        // over this (RegisterAdditionalServices runs after these, so the later registration wins).
-        Services.AddSingleton(new CircuitAiSettings(Options.Create(new LlmOptions())));
+        // AI-available BYOK (a visitor who has entered their key) — the shape most page tests assume, since
+        // they fake the AI seams to return results. The phase-4c pre-check (AiErrorText.BlockedReasonAsync)
+        // READS this, so a keyless default would report "no key" and block every AI action before the fake
+        // runs. A test exercising the blocked states registers its own keyless/managed CircuitAiSettings +
+        // IEntitlements over these (RegisterAdditionalServices runs after, so the later registration wins).
+        Services.AddSingleton(new CircuitAiSettings(Options.Create(new LlmOptions { KeyMode = "byok", ApiKey = "test-key" })));
+        // A generous default balance so the managed branch of the pre-check (if a test flips to a managed
+        // CircuitAiSettings) also reads as allowed; the BYOK default above never consults it.
+        Services.AddSingleton<IEntitlements>(new FakeEntitlements { BalanceMicros = 100_000_000 });
         Services.AddSingleton(new ProductRenameService(Factory, ActivityLog));
         Services.AddSingleton(new ProductMergeService(Factory, ActivityLog));
         // The grocery list + dashboard read the current meal plan (GetCurrentPlanAsync); they never

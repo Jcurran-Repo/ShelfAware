@@ -16,6 +16,8 @@
 @inject ISpeechToText Stt
 @inject IPantryChat Chat
 @inject ITextToSpeech Tts
+@inject IEntitlements Entitlements
+@inject CircuitAiSettings AiSettings
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 @inject VoiceCoordinator Coordinator
@@ -190,6 +192,22 @@
 
                 pendingUser = heard.Text;
                 await InvokeAsync(StateHasChanged);
+
+                // Phase 4c: if this circuit can't make an AI call (no key / out of credits), say the real
+                // reason ONCE and stand down — otherwise the brain returns a wrapped "couldn't reach the
+                // assistant" that we'd speak on every utterance. Mirrors the "stop listening" break path.
+                var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+                if (blocked is not null)
+                {
+                    history.Add(new ChatTurn(heard.Text, blocked));
+                    pendingUser = null;
+                    phase = Phase.Speaking;
+                    await InvokeAsync(StateHasChanged);
+                    var why = await Tts.SynthesizeAsync(blocked);
+                    if (why.Success)
+                        await _module.InvokeVoidAsync("play", Convert.ToBase64String(why.Audio), why.MediaType);
+                    break;
+                }
 
                 // Pass what the user is currently looking at so "the second one"/"that one" resolve.
                 var result = await Chat.HandleAsync(heard.Text, history, Coordinator.ScreenContext);

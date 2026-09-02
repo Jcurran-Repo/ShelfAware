@@ -14,6 +14,8 @@
 @inject IRecipeAdvisor Advisor
 @inject IRecipeAdapter Adapter
 @inject IIngredientAlternativesAdvisor AltAdvisor
+@inject IEntitlements Entitlements
+@inject CircuitAiSettings AiSettings
 @inject ShelfAware.Core.Speech.IVoiceCredentials Voice
 @inject Microsoft.Extensions.Configuration.IConfiguration Config
 @inject VoiceCoordinator Coordinator
@@ -432,7 +434,7 @@
                                         }
                                         else if (cloud.Count == 0)
                                         {
-                                            <span class="muted small">No good swaps for this one.</span>
+                                            <span class="muted small">@(altUnavailable ?? "No good swaps for this one.")</span>
                                         }
                                         else
                                         {
@@ -511,6 +513,7 @@
     private string? adaptNote;    // result of the last Adapt
     private int? openAltFor;      // RecipeIngredient.Id whose swap bubble-cloud is open (one at a time)
     private int? generatingAltFor; // RecipeIngredient.Id whose alternates are being generated
+    private string? altUnavailable; // why the open cloud couldn't fetch AI swaps (no key / out of credits), or null
 
     private List<PantryProduct> onHand = [];
     // The same in-stock products WITH their id and whether a FRESH COUNT backs each (vs the rhythm's mere
@@ -572,6 +575,8 @@
         if (adaptingId is not null) return;
         adaptingId = r.Id;
         adaptNote = null;
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        if (blocked is not null) { adaptNote = blocked; adaptingId = null; return; }
         try
         {
             var result = await Adapter.AdaptToOnHandAsync(r.Id);
@@ -590,7 +595,14 @@
     {
         if (openAltFor == i.Id) { openAltFor = null; return; }
         openAltFor = i.Id;
+        altUnavailable = null;
         if (!string.IsNullOrEmpty(i.AlternativesJson)) return;
+
+        // The AI generates the generic swap forms; the curated "also works as" stand-ins in CloudFor need no
+        // call. So if the AI is unavailable, don't attempt it — just say why the cloud is thinner (phase 4c).
+        // The cloud still renders whatever curated stand-ins exist.
+        altUnavailable = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        if (altUnavailable is not null) return;
 
         generatingAltFor = i.Id;
         try
@@ -628,6 +640,8 @@
         if (adaptingId is not null) return;
         adaptingId = r.Id;
         adaptNote = null;
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        if (blocked is not null) { adaptNote = blocked; adaptingId = null; return; }
         try
         {
             var result = await Adapter.AdaptToOnHandAsync(r.Id, new IngredientSwap(i.Name, form));
@@ -1023,6 +1037,9 @@
         if (suggesting || string.IsNullOrWhiteSpace(request)) return;
         suggesting = true;
         suggestError = null;
+        // Phase 4c: don't attempt a call this circuit can't make — show why (out of credits / no key) and stop.
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        if (blocked is not null) { suggestError = blocked; suggesting = false; return; }
         try
         {
             // onHand grounds the suggestions in real catalog items. The card's have/grab marks trust the

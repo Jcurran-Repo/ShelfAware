@@ -9,4 +9,4 @@ namespace ShelfAware.Web.Services;
 /// (phase 4c). BYOK circuits are never gated, so this never fires for a visitor on their own key.
 /// </summary>
 public sealed class AiCreditsExhaustedException(string? message = null)
-    : Exception(message ?? "You're out of AI credits for now — add credits or your own API key in Settings to keep going.");
+    : Exception(message ?? AiErrorText.OutOfCredits);
