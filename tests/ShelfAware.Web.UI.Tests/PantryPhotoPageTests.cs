@@ -642,7 +642,7 @@ public class PantryPhotoPageTests : PageTestContext
         RowFor(cut, "Frozen Peas").QuerySelectorAll("input[type=number]").Single().Change("0");
         cut.FindAll("button").Single(b => b.TextContent.Contains("Count ")).Click();
 
-        cut.WaitForAssertion(() => Assert.Contains("isn't something Shelf Aware knows about yet", Collapsed(cut.Markup)));
+        cut.WaitForAssertion(() => Assert.Contains("isn't something Reginald knows about yet", Collapsed(cut.Markup)));
         await using var db = Db.CreateDbContext();
         Assert.Empty(await db.Products.ToListAsync());
         Assert.Empty(await db.InventorySignals.ToListAsync());

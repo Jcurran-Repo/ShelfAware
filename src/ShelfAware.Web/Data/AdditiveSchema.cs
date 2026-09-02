@@ -175,7 +175,7 @@ public static class AdditiveSchema
         EnsureColumn(db, table: "Households", column: "SubscriptionRenewsAt", definition: "TEXT NULL");
         EnsureColumn(db, table: "Households", column: "SubscriptionCancelAtPeriodEnd", definition: "INTEGER NOT NULL DEFAULT 0");
 
-        // 2026-08-30: the /about wishlist — pre-launch demand for a hosted Shelf Aware. Operator data,
+        // 2026-08-30: the /about wishlist — pre-launch demand for a hosted Reginald. Operator data,
         // like the error log, so it lives here rather than in any household's pantry. A new table —
         // existing rows unaffected.
         EnsureTable(db, table: "Wishlist");

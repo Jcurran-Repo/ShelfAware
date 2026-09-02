@@ -15,7 +15,7 @@ public class AccountMailerTests
     {
         SmtpHost = "smtp.example.test",
         From = "noreply@example.test",
-        FromName = "Shelf Aware",
+        FromName = "Reginald",
     };
 
     [Fact]
@@ -26,11 +26,11 @@ public class AccountMailerTests
         var msg = SmtpAccountMailer.BuildReset(Configured(), "wife@example.test", url);
 
         var from = Assert.IsType<MailboxAddress>(Assert.Single(msg.From));
-        Assert.Equal("Shelf Aware", from.Name);
+        Assert.Equal("Reginald", from.Name);
         Assert.Equal("noreply@example.test", from.Address);
         var to = Assert.IsType<MailboxAddress>(Assert.Single(msg.To));
         Assert.Equal("wife@example.test", to.Address);
-        Assert.Equal("Reset your Shelf Aware password", msg.Subject);
+        Assert.Equal("Reset your Reginald password", msg.Subject);
         // Both bodies, because mail clients pick one: a link missing from either is a reset
         // email that works in some inboxes.
         Assert.Contains(url, msg.TextBody);

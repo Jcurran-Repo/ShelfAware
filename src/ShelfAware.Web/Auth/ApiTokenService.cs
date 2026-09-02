@@ -34,8 +34,9 @@ public sealed record ApiTokenSummary(
 /// explicitly, on the operations that need it (list/revoke take the caller's household id).</summary>
 public sealed class ApiTokenService(IDbContextFactory<AuthDbContext> dbFactory, ILogger<ApiTokenService>? logger = null)
 {
-    /// <summary>Every raw secret starts with this, so a leaked string is recognisable as a Shelf Aware
-    /// API token (the GitHub-<c>ghp_</c> convention) and the display prefix is human-identifiable.</summary>
+    /// <summary>Every raw secret starts with this, so a leaked string is recognisable as one of ours
+    /// (the GitHub-<c>ghp_</c> convention) and the display prefix is human-identifiable. <c>sa_</c> predates
+    /// the Reginald rename — it's a frozen token identifier, so tokens already issued keep working.</summary>
     public const string SecretPrefix = "sa_";
 
     // 32 CSPRNG bytes = 256 bits of entropy — far past any brute-force surface, so a plain hash (below)

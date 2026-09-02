@@ -2,6 +2,7 @@ using Bunit.TestDoubles;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using ShelfAware.Llm;
 using ShelfAware.Core.Chat;
@@ -104,6 +105,11 @@ public abstract class PageTestContext : BunitContext
         // The grocery list + dashboard read the current meal plan (GetCurrentPlanAsync); they never
         // generate, so a no-op generator suffices. A test needing generation registers its own over this.
         Services.AddSingleton(new MealPlanService(Factory, new FakeMealPlanGenerator(), AppSettings, NullLogger<MealPlanService>.Instance));
+        // Real (empty) IConfiguration so pages that read a deployment flag — e.g. Recipes' gate on
+        // Voice:LiveAgentEnabled — resolve; an absent key is the feature's default-off state, which is what
+        // a test should see. A test wanting a flag ON registers its own IConfiguration in
+        // RegisterAdditionalServices (which runs after this, so it wins).
+        Services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
         Services.AddLogging();
 
         JSInterop.Mode = JSRuntimeMode.Loose;

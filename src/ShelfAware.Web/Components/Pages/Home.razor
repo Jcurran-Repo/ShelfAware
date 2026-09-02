@@ -15,7 +15,7 @@
 @inject IJSRuntime JS
 @inject ILogger<Home> Logger
 
-<PageTitle>Shelf Aware</PageTitle>
+<PageTitle>Reginald</PageTitle>
 
 <OnboardingBanner CatalogEmpty="@(products is { Count: 0 })" OnSeeded="LoadAsync" />
 
@@ -68,7 +68,7 @@ else
     {
         <div class="empty-state">
             <img src="icons/icon-512.png" alt="" class="mascot empty-mascot" />
-            <p class="muted empty-note">Nothing's running low right now. Tracked items show up here as they approach their predicted run-out date.</p>
+            <p class="muted empty-note">Nothing's running low — Eggs is keeping watch. Tracked items show up here as they approach their predicted run-out date.</p>
         </div>
     }
     else

@@ -25,7 +25,7 @@ public class AuthDbContext(DbContextOptions<AuthDbContext> options) : IdentityDb
     /// See <see cref="ProcessedPaymentEvent"/>.</summary>
     public DbSet<ProcessedPaymentEvent> ProcessedPaymentEvents => Set<ProcessedPaymentEvent>();
 
-    /// <summary>Pre-launch demand for a HOSTED Shelf Aware — operator data, same rationale as the error
+    /// <summary>Pre-launch demand for a HOSTED Reginald — operator data, same rationale as the error
     /// log above. No index: like ErrorLog, the table is bounded and ordered/deduped client-side (SQLite
     /// can't ORDER BY a DateTimeOffset in SQL), so an index would serve nothing.</summary>
     public DbSet<WishlistEntry> Wishlist => Set<WishlistEntry>();

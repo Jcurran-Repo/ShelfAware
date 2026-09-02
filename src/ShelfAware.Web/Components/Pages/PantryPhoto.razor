@@ -13,7 +13,7 @@
 @inject IOptions<LlmOptions> Llm
 @inject ILogger<PantryPhoto> Logger
 
-<PageTitle>Count from a photo — Shelf Aware</PageTitle>
+<PageTitle>Count from a photo — Reginald</PageTitle>
 
 <h1>Count from a photo</h1>
 
@@ -21,7 +21,7 @@
 {
     <section class="panel">
         <p>
-            Photograph a shelf, a freezer, or a cupboard and Shelf Aware will list what it can see, with
+            Photograph a shelf, a freezer, or a cupboard and Reginald will list what it can see, with
             how many of each. Correct the list and it becomes your count — so it can stop asking you to
             buy things you already have a pile of.
         </p>
@@ -258,7 +258,7 @@ else if (phase == Phase.Review)
             }
             <p class="muted small">
                 Counting an item starts keeping a number for it: receipts add to it, cooking takes from it,
-                and when it drifts Shelf Aware asks rather than guessing. Stop any of them any time from the
+                and when it drifts Reginald asks rather than guessing. Stop any of them any time from the
                 product's page.
             </p>
             @if (confirmError is not null)
@@ -436,7 +436,7 @@ else if (phase == Phase.Done)
                     ? ($"Looks like your existing “{near.Name}” — pick it above if it's the same thing, or leave this to create a separate item.", false)
                     : null;
             case CensusPlan.CensusReason.AmbiguousSuggestion:
-                return ($"Shelf Aware read this as “{EffectiveAmbiguousSuggestion(row)}”, but more than one of your products answers to that name — pick which one you counted above, or leave it to add this as a new item.", true);
+                return ($"Reginald read this as “{EffectiveAmbiguousSuggestion(row)}”, but more than one of your products answers to that name — pick which one you counted above, or leave it to add this as a new item.", true);
             case CensusPlan.CensusReason.AmbiguousName:
                 return ($"More than one of your products answers to “{name}” — pick which one you counted above. Twins that keep a count show it beside their name.", true);
             case CensusPlan.CensusReason.WillLandOnExisting:
@@ -839,13 +839,13 @@ else if (phase == Phase.Done)
         CensusConfirmationService.CensusRefusal.DuplicateName =>
             $"“{row.Name}” — a product with that name already exists, so nothing was created. Count it from its own page, or run this again and pick it in the Product match column.",
         CensusConfirmationService.CensusRefusal.ZeroOnNewProduct =>
-            $"“{row.Name}” — counted as none, and it isn't something Shelf Aware knows about yet. There's nothing to add and nothing to count, so nothing was created. Give it a real number if it's on the shelf.",
+            $"“{row.Name}” — counted as none, and it isn't something Reginald knows about yet. There's nothing to add and nothing to count, so nothing was created. Give it a real number if it's on the shelf.",
         CensusConfirmationService.CensusRefusal.ProductGone =>
             $"“{row.Name}” — the item this row pointed at isn't there any more (removed or merged while you were reviewing). Nothing was guessed in its place; run this again and pick from the up-to-date list.",
         CensusConfirmationService.CensusRefusal.MissingCount =>
-            $"“{row.Name}” — the “how many” box was empty. An empty box isn't a zero, and Shelf Aware won't guess a number for you.",
+            $"“{row.Name}” — the “how many” box was empty. An empty box isn't a zero, and Reginald won't guess a number for you.",
         CensusConfirmationService.CensusRefusal.AmbiguousName =>
-            $"“{row.Name}” — more than one of your products answers to that name, so Shelf Aware won't guess which one you counted. Run this again and pick it in the Product match column.",
+            $"“{row.Name}” — more than one of your products answers to that name, so Reginald won't guess which one you counted. Run this again and pick it in the Product match column.",
         _ => $"“{row.Name}” — needs a name and a count of zero or more.",
     };
 

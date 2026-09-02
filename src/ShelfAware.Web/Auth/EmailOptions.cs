@@ -27,7 +27,7 @@ public class EmailOptions
     /// <summary>The From address. Required whenever <see cref="SmtpHost"/> is set.</summary>
     public string? From { get; set; }
 
-    public string FromName { get; set; } = "Shelf Aware";
+    public string FromName { get; set; } = "Reginald";
 
     /// <summary>THE one definition of "this deployment can send email" — every gate asks this
     /// (the sign-in page's reset link, the ForgotPassword page, Settings' wording), so the

@@ -1,8 +1,8 @@
-# Shelf Aware
+# Reginald
 
 **A pantry tracker that answers one question: _"What am I about to run out of?"_**
 
-Snap (or just save) your grocery receipt. Shelf Aware reads it, learns how often you buy each
+Snap (or just save) your grocery receipt. Reginald reads it, learns how often you buy each
 thing, and tells you what's about to run out — before you're standing in the kitchen realizing
 there's no coffee.
 
@@ -335,7 +335,7 @@ Settings admits as much).
 
 ## License
 
-**Shelf Aware is source-available, not open source** — a deliberate distinction. It's under the
+**Reginald is source-available, not open source** — a deliberate distinction. It's under the
 [PolyForm Noncommercial License 1.0.0](LICENSE): use it, self-host it, fork it, and tinker freely
 for any **noncommercial** purpose — for yourself, your household, a school class, a non-profit,
 even a government agency (the license's noncommercial-organization carve-outs apply regardless of
@@ -344,7 +344,7 @@ includes running it as a paid or ad-supported hosted service. Those rights stay 
 like a commercial license, open an issue and we'll talk.
 
 Housekeeping: if you redistribute it, keep the `Required Notice:` line from [LICENSE](LICENSE)
-intact — that's the license's one preservation rule. The license covers Shelf Aware's own code;
+intact — that's the license's one preservation rule. The license covers Reginald's own code;
 third-party components (the vendored audio worklets in `src/ShelfAware.Web/wwwroot/js/vendor` and
 the NuGet dependencies) stay under their own licenses — see
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). Contributions are welcome under the terms in
