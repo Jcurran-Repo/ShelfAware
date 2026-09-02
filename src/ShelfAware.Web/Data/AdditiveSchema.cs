@@ -165,10 +165,25 @@ public static class AdditiveSchema
         EnsureColumn(db, table: "Households", column: "Tier", definition: "INTEGER NOT NULL DEFAULT 0");
         EnsureColumn(db, table: "Households", column: "FounderSince", definition: "TEXT NULL");
 
+        // 2026-09-01: subscription state (docs/subscription-plan.md phase 3 step 1 — the payment
+        // foundation). Provider customer/subscription ids + period state on the household. Existing rows
+        // land on NULL/0 — never subscribed — which is the resting state and how a pre-billing box reads.
+        // ⚠️ These are Households columns, so NullableInviteCodeMigration must know them too: they're in
+        // its ExpectedColumns and COPIED (not wiped) by its rebuild, the way Tier/FounderSince are.
+        EnsureColumn(db, table: "Households", column: "BillingCustomerId", definition: "TEXT NULL");
+        EnsureColumn(db, table: "Households", column: "SubscriptionId", definition: "TEXT NULL");
+        EnsureColumn(db, table: "Households", column: "SubscriptionRenewsAt", definition: "TEXT NULL");
+        EnsureColumn(db, table: "Households", column: "SubscriptionCancelAtPeriodEnd", definition: "INTEGER NOT NULL DEFAULT 0");
+
         // 2026-08-30: the /about wishlist — pre-launch demand for a hosted Shelf Aware. Operator data,
         // like the error log, so it lives here rather than in any household's pantry. A new table —
         // existing rows unaffected.
         EnsureTable(db, table: "Wishlist");
+
+        // 2026-09-01: payment webhook idempotency (phase 3 step 2) — one row per applied provider event,
+        // so a retried webhook can't double-apply. Auth-side beside the subscription + ledger. A new
+        // table — existing rows unaffected.
+        EnsureTable(db, table: "ProcessedPaymentEvents");
     }
 
     /// <summary>Create <paramref name="table"/> (and its indexes) on a DB built before it existed. The

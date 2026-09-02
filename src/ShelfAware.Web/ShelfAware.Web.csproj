@@ -11,6 +11,10 @@
     <PackageReference Include="Microsoft.AspNetCore.Authentication.Google" Version="10.0.9" />
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.9" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.9" />
+    <!-- The real merchant-of-record adapter (StripePaymentProvider, phase-3 step 5). 52.x is Dahlia-era, so
+         it carries Managed Payments (managed_payments[enabled]) and the Basil field move of current_period_end
+         onto subscription items. Only referenced by the Stripe adapter + its tests; the fake needs none of it. -->
+    <PackageReference Include="Stripe.net" Version="52.4.1" />
     <!-- Override the vulnerable SQLitePCLRaw 2.1.11 that EF Core 10.0.9 pulls in transitively
          (GHSA-2m69-gcr7-jv3q, high severity). The 2.1.x line was never patched; the fix ships
          in the 3.x line, which is API-compatible with Microsoft.Data.Sqlite. -->

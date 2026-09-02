@@ -1,12 +1,17 @@
 namespace ShelfAware.Web.Auth;
 
-/// <summary>What kind of ledger movement this is. Phase 2 uses only <see cref="Grant"/> (the welcome
-/// grant) and <see cref="Consumption"/> (an AI call drawing the balance down). Purchase / Expiry /
-/// Refund join when payments land (phase 3) — the enum is extensible so a new kind is additive.</summary>
+/// <summary>What kind of ledger movement this is. <see cref="Grant"/> (the welcome grant, or an admin
+/// comp) and <see cref="Consumption"/> (an AI call drawing the balance down) are phase 2; <see cref="Purchase"/>
+/// (a credit-pack buy, positive) and <see cref="Refund"/> (a reversal, negative — balances may go negative,
+/// §4) join with payments (phase 3). Expiry joins with no-rollover enforcement (phase 4). The enum is
+/// extensible — a new kind is additive, and nothing switches on it exhaustively (the balance is a plain sum
+/// of <see cref="CreditLedgerEntry.AmountMicros"/>, kind is for display/audit).</summary>
 public enum CreditEntryKind
 {
     Grant = 0,
     Consumption = 1,
+    Purchase = 2,
+    Refund = 3,
 }
 
 /// <summary>

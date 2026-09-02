@@ -1,0 +1,300 @@
+using Microsoft.EntityFrameworkCore;
+using ShelfAware.Web.Auth;
+
+namespace ShelfAware.Web.Billing;
+
+/// <summary>What handling a verified webhook did — what the endpoint turns into a (2xx) response. Every
+/// outcome is a 2xx: the provider must stop retrying once we've taken responsibility for the event, whether
+/// we applied it, had already applied it, or acked an unhandleable one. A real failure throws instead (the
+/// endpoint answers 5xx so the provider retries).</summary>
+public enum WebhookOutcome
+{
+    /// <summary>Effects applied and the event recorded.</summary>
+    Applied,
+
+    /// <summary>The event id was already recorded (a provider retry, or a concurrent duplicate that raced
+    /// us) — a no-op, so nothing is applied twice.</summary>
+    AlreadyProcessed,
+
+    /// <summary>Authentic (signature verified) but it named no household we know — recorded so it won't
+    /// loop, logged for the operator, and acked. Not an error to retry.</summary>
+    UnknownHousehold,
+
+    /// <summary>Verified and resolved to a household, but deliberately no effect — a subscription-lifecycle
+    /// event (renew/update/cancel) for a subscription that is NOT the household's current one. That happens
+    /// with a superseded/old subscription (the cancel-then-resubscribe or purchaser-departure edges) whose
+    /// late/reordered event still resolves here — often because both subscriptions share one customer.
+    /// Recorded + acked; applying it would clobber the active subscription.</summary>
+    Ignored,
+}
+
+/// <summary>
+/// Applies a VERIFIED payment webhook event to the household's subscription + credit state (phase 3 step 2,
+/// docs/subscription-plan.md §6). The endpoint owns signature verification (via <see cref="IPaymentProvider.ParseWebhook"/>);
+/// this owns the effects, idempotently.
+///
+/// Everything lands in ONE auth.db transaction: the tier/period change on <see cref="Household"/>, any
+/// ledger entries (pack → grant, refund → reversal), AND the <see cref="ProcessedPaymentEvent"/> row that
+/// makes it idempotent. So a retried event can't double-apply (the id is already recorded), and a failure
+/// applies nothing (the transaction rolls back, the provider retries). auth.db has no tenancy query filter,
+/// so the household is resolved by the event's own verified identifiers — never a request-supplied scope.
+/// </summary>
+public sealed class PaymentWebhookHandler(
+    IDbContextFactory<AuthDbContext> authDb,
+    IPaymentProvider provider,
+    ILogger<PaymentWebhookHandler> logger)
+{
+    public async Task<WebhookOutcome> HandleAsync(PaymentWebhookEvent webhookEvent, CancellationToken cancellationToken = default)
+    {
+        await using var db = await authDb.CreateDbContextAsync(cancellationToken);
+
+        // Idempotency fast path: a retry of an event we've already applied.
+        if (await db.ProcessedPaymentEvents.AnyAsync(e => e.EventId == webhookEvent.EventId, cancellationToken))
+            return WebhookOutcome.AlreadyProcessed;
+
+        var household = await ResolveHouseholdAsync(db, webhookEvent, cancellationToken);
+        if (household is null)
+        {
+            // Only a CheckoutCompleted carries the household id in its metadata, so it MUST resolve — failing
+            // to is a real problem (a forged/misconfigured event, or a household deleted mid-checkout) worth an
+            // Error. A subscription-lifecycle event resolves only by ids that checkout stores, so it
+            // legitimately may not resolve yet: Stripe emits customer.subscription.created ALONGSIDE checkout
+            // completion (often first, before the mapping exists), and a superseded/old subscription's late
+            // events never resolve by design. Logging those at Error would flag "matched no household" on
+            // essentially every signup — and the item-47 pipeline would surface each as an operator error — so
+            // they're Information. The real period they carry isn't lost for good: a later subscription.updated
+            // (at the latest, the first renewal) resolves once the mapping exists and corrects it; checkout's
+            // provisional period holds until then.
+            if (webhookEvent.Kind == PaymentEventKind.CheckoutCompleted)
+                logger.LogError(
+                    "Payment webhook {EventId} ({Kind}) matched no household (household={HouseholdId}, sub={SubscriptionId}, customer={CustomerId}).",
+                    webhookEvent.EventId, webhookEvent.Kind, webhookEvent.HouseholdId, webhookEvent.SubscriptionId, webhookEvent.BillingCustomerId);
+            else
+                logger.LogInformation(
+                    "Payment webhook {EventId} ({Kind}) named no known household yet (sub={SubscriptionId}, customer={CustomerId}) — acked; a later event resolves it.",
+                    webhookEvent.EventId, webhookEvent.Kind, webhookEvent.SubscriptionId, webhookEvent.BillingCustomerId);
+            db.ProcessedPaymentEvents.Add(Record(webhookEvent, householdId: null));
+            return await SaveDedupedAsync(db, webhookEvent, cancellationToken)
+                ? WebhookOutcome.UnknownHousehold
+                : WebhookOutcome.AlreadyProcessed;
+        }
+
+        // A subscription-lifecycle event for a subscription that ISN'T the household's current one is stale
+        // (a superseded/old subscription) — ignore it, or a late/reordered cancel of the OLD subscription
+        // would clobber the active one. This is reachable because such an event can still resolve here by a
+        // shared customer id (cancel-then-resubscribe, or the purchaser-departure supersede). Recorded so a
+        // redelivery is recognised; acked so the provider stops.
+        if (IsStaleSubscriptionEvent(household, webhookEvent))
+        {
+            logger.LogInformation(
+                "Payment webhook {EventId} ({Kind}) concerns subscription {EventSub}, not the household's current {CurrentSub} — recorded, no effect.",
+                webhookEvent.EventId, webhookEvent.Kind, webhookEvent.SubscriptionId, household.SubscriptionId);
+            db.ProcessedPaymentEvents.Add(Record(webhookEvent, household.Id));
+            return await SaveDedupedAsync(db, webhookEvent, cancellationToken)
+                ? WebhookOutcome.Ignored
+                : WebhookOutcome.AlreadyProcessed;
+        }
+
+        // A new subscription checkout SUPERSEDES an existing one (§6, the purchaser-departure edge): the
+        // old sub is on the previous purchaser's card, so once a member re-attaches billing with a fresh
+        // subscription, the old one must be cancelled or the household is billed twice. Captured before
+        // Apply overwrites SubscriptionId; cancelled AFTER the commit (an external API call, not part of
+        // the DB transaction). A renewal reuses the same id, so it never supersedes.
+        var supersededSubscriptionId =
+            webhookEvent.Kind == PaymentEventKind.CheckoutCompleted
+            && webhookEvent.Product is { } product && BillingCatalog.IsSubscription(product)
+            && !string.IsNullOrEmpty(household.SubscriptionId)
+            && household.SubscriptionId != webhookEvent.SubscriptionId
+                ? household.SubscriptionId
+                : null;
+
+        Apply(db, household, webhookEvent);
+        db.ProcessedPaymentEvents.Add(Record(webhookEvent, household.Id));
+        if (!await SaveDedupedAsync(db, webhookEvent, cancellationToken))
+            return WebhookOutcome.AlreadyProcessed;
+
+        if (supersededSubscriptionId is not null)
+            await CancelSupersededAsync(supersededSubscriptionId);
+
+        return WebhookOutcome.Applied;
+    }
+
+    /// <summary>Cancel a subscription a new checkout replaced — best-effort, AFTER the commit. ⚠️ Runs on
+    /// <see cref="CancellationToken.None"/>, NOT the endpoint's token: this is a WRITE that must complete
+    /// (CLAUDE.md item 39, "a read may be cancelled when the visitor leaves; a write may not"). If it ran on
+    /// the request token and that fired between the commit and this call, the event would already be recorded
+    /// as processed, so the retry short-circuits on idempotency and the old subscription is NEVER cancelled —
+    /// the household is billed twice, silently. Any failure is logged, not fatal: the new subscription is
+    /// already active, and the old one can be cancelled from the provider dashboard.</summary>
+    private async Task CancelSupersededAsync(string subscriptionId)
+    {
+        try
+        {
+            await provider.CancelSubscriptionAsync(subscriptionId, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex,
+                "Couldn't cancel superseded subscription {SubscriptionId} — cancel it in the provider dashboard to stop double-billing.",
+                subscriptionId);
+        }
+    }
+
+    /// <summary>A subscription-lifecycle event (renew/update/cancel) naming a subscription OTHER than the
+    /// household's current one is stale — a superseded/old subscription whose late or reordered event would
+    /// otherwise clobber the active one (cancel-then-resubscribe, or the purchaser-departure supersede — and
+    /// it reaches this household at all only because both subscriptions can share one customer). A
+    /// <see cref="PaymentEventKind.CheckoutCompleted"/> is exempt: it is the event that legitimately INSTALLS
+    /// a new subscription, supersede included.</summary>
+    private static bool IsStaleSubscriptionEvent(Household household, PaymentWebhookEvent webhookEvent) =>
+        webhookEvent.Kind is PaymentEventKind.SubscriptionRenewed
+            or PaymentEventKind.SubscriptionUpdated
+            or PaymentEventKind.SubscriptionCancelled
+        && !string.IsNullOrEmpty(webhookEvent.SubscriptionId)
+        && webhookEvent.SubscriptionId != household.SubscriptionId;
+
+    /// <summary>Resolve the target household from the event's OWN verified identifiers, in order of
+    /// specificity: the household-id metadata a checkout carries, then the subscription id, then the
+    /// customer id (both stored at checkout, so a later renewal/cancel that carries only those still
+    /// finds its household).</summary>
+    private static async Task<Household?> ResolveHouseholdAsync(
+        AuthDbContext db, PaymentWebhookEvent webhookEvent, CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrEmpty(webhookEvent.HouseholdId))
+        {
+            var byId = await db.Households.FirstOrDefaultAsync(h => h.Id == webhookEvent.HouseholdId, cancellationToken);
+            if (byId is not null) return byId;
+        }
+        if (!string.IsNullOrEmpty(webhookEvent.SubscriptionId))
+        {
+            var bySub = await db.Households.FirstOrDefaultAsync(h => h.SubscriptionId == webhookEvent.SubscriptionId, cancellationToken);
+            if (bySub is not null) return bySub;
+        }
+        if (!string.IsNullOrEmpty(webhookEvent.BillingCustomerId))
+        {
+            var byCustomer = await db.Households.FirstOrDefaultAsync(h => h.BillingCustomerId == webhookEvent.BillingCustomerId, cancellationToken);
+            if (byCustomer is not null) return byCustomer;
+        }
+        return null;
+    }
+
+    private void Apply(AuthDbContext db, Household household, PaymentWebhookEvent webhookEvent)
+    {
+        switch (webhookEvent.Kind)
+        {
+            case PaymentEventKind.CheckoutCompleted:
+                if (webhookEvent.Product is { } subProduct && BillingCatalog.IsSubscription(subProduct))
+                {
+                    ActivateSubscription(household, webhookEvent);
+                }
+                else if (webhookEvent.Product is { } packProduct && BillingCatalog.IsPack(packProduct))
+                {
+                    // A pack buyer already has the customer id from subscribing (packs are subscribers-only,
+                    // §8), but keep whatever the event carries if we somehow don't.
+                    household.BillingCustomerId ??= webhookEvent.BillingCustomerId;
+                    var entry = CreditLedger.Purchase(household.Id, webhookEvent.AmountMicros ?? 0, "Credit pack");
+                    if (entry is not null) db.CreditLedger.Add(entry);
+                }
+                else
+                {
+                    logger.LogWarning("Payment webhook {EventId} is a checkout with no product — nothing to apply.", webhookEvent.EventId);
+                }
+                break;
+
+            case PaymentEventKind.SubscriptionRenewed:
+                ActivateSubscription(household, webhookEvent); // still active, for a new period
+                break;
+
+            case PaymentEventKind.SubscriptionUpdated:
+                // A state change without a renewal — most often cancel-at-period-end toggled. The tier
+                // stays (Aware until the period actually ends); update the period + the cancel flag.
+                if (webhookEvent.PeriodEnd is not null) household.SubscriptionRenewsAt = webhookEvent.PeriodEnd;
+                household.SubscriptionCancelAtPeriodEnd = webhookEvent.CancelAtPeriodEnd;
+                break;
+
+            case PaymentEventKind.SubscriptionCancelled:
+                // The subscription has ended. Tier drops to Free — a POSTURE, so nothing is deleted (§6),
+                // and purchased credits survive (the ledger is untouched). The customer id is kept so the
+                // household can re-subscribe or reach the portal. A Founder is exempt (SetTierFromPayment):
+                // an operator comp is not revoked by the end of a subscription the household also happened to have.
+                SetTierFromPayment(household, HouseholdTier.Free, webhookEvent);
+                household.SubscriptionId = null;
+                household.SubscriptionRenewsAt = null;
+                household.SubscriptionCancelAtPeriodEnd = false;
+                break;
+
+            case PaymentEventKind.PaymentFailed:
+                // Dunning has begun; the provider retries the charge. No tier change here — the terminal
+                // failure arrives as SubscriptionCancelled. The ProcessedPaymentEvent row is the audit trail.
+                break;
+
+            case PaymentEventKind.Refunded:
+                var reversal = CreditLedger.Refund(household.Id, webhookEvent.AmountMicros ?? 0, "Refund");
+                if (reversal is not null) db.CreditLedger.Add(reversal); // balance may go negative (§4)
+                break;
+
+            default:
+                // A kind the parse admitted (Enum.IsDefined) but this handler has no arm for — future-proofing.
+                // Recorded + acked (no retry storm) but visible in the log so a new kind gets a handler.
+                logger.LogWarning("Payment webhook {EventId} has unhandled kind {Kind} — recorded, no effect.", webhookEvent.EventId, webhookEvent.Kind);
+                break;
+        }
+    }
+
+    private void ActivateSubscription(Household household, PaymentWebhookEvent webhookEvent)
+    {
+        // A Founder stays a Founder (SetTierFromPayment) — the subscription metadata below still tracks, but a
+        // payment event never promotes/demotes an operator comp.
+        SetTierFromPayment(household, HouseholdTier.Aware, webhookEvent);
+        if (webhookEvent.BillingCustomerId is not null) household.BillingCustomerId = webhookEvent.BillingCustomerId;
+        if (webhookEvent.SubscriptionId is not null) household.SubscriptionId = webhookEvent.SubscriptionId;
+        if (webhookEvent.PeriodEnd is not null) household.SubscriptionRenewsAt = webhookEvent.PeriodEnd;
+        household.SubscriptionCancelAtPeriodEnd = webhookEvent.CancelAtPeriodEnd;
+    }
+
+    /// <summary>Set the household's tier from a payment event — UNLESS it is a <see cref="HouseholdTier.Founder"/>.
+    /// A Founder is an operator's comp (unlimited, "billing doesn't apply", §5), and the invariant is "only
+    /// Founder is unlimited, and always will be". A payment event must
+    /// never change it: an Aware subscriber comped to Founder KEEPS its SubscriptionId (the admin write is
+    /// column-scoped by design), so its own renewal/cancel events resolve here and would otherwise silently
+    /// flip Founder→Aware/Free — with no in-app signal, since a Founder isn't shown the billing portal. Two
+    /// writers to one fact; this guard is the one place the money side yields to the operator side.</summary>
+    private void SetTierFromPayment(Household household, HouseholdTier tier, PaymentWebhookEvent webhookEvent)
+    {
+        if (household.Tier == HouseholdTier.Founder)
+        {
+            logger.LogWarning(
+                "Payment webhook {EventId} ({Kind}) would set tier {Tier} on a FOUNDER household {HouseholdId} — skipped; an operator comp is not changed by a payment event.",
+                webhookEvent.EventId, webhookEvent.Kind, tier, household.Id);
+            return;
+        }
+        household.Tier = tier;
+    }
+
+    private static ProcessedPaymentEvent Record(PaymentWebhookEvent webhookEvent, string? householdId) => new()
+    {
+        EventId = webhookEvent.EventId,
+        Kind = webhookEvent.Kind,
+        HouseholdId = householdId,
+    };
+
+    /// <summary>Save the transaction, distinguishing a concurrent-duplicate insert race (the event id's
+    /// unique PK trips → the racer already applied it, so this is a no-op → false) from a real DB failure
+    /// (rethrow → the endpoint answers 5xx and the provider retries). The re-check runs on a FRESH context
+    /// because the failed one's change tracker is no longer trustworthy.</summary>
+    private async Task<bool> SaveDedupedAsync(AuthDbContext db, PaymentWebhookEvent webhookEvent, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            return true;
+        }
+        catch (DbUpdateException)
+        {
+            await using var check = await authDb.CreateDbContextAsync(cancellationToken);
+            if (await check.ProcessedPaymentEvents.AnyAsync(e => e.EventId == webhookEvent.EventId, cancellationToken))
+                return false; // a concurrent duplicate delivery won the insert race
+            throw; // a different failure — let the provider retry
+        }
+    }
+}

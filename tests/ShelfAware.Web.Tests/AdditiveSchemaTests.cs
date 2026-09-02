@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Domain;
 using ShelfAware.Web.Auth;
+using ShelfAware.Web.Billing;
 using ShelfAware.Web.Data;
 using ShelfAware.Web.Diagnostics;
 using ShelfAware.Web.Wishlist;
@@ -471,6 +472,53 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Adds_the_subscription_columns_to_a_pre_billing_auth_db()
+    {
+        // Phase 3 step 1: the Households table gained subscription state (provider ids + period + cancel
+        // flag). A live box's Households table predates it, so the ALTER path (not the drop-TABLE rebuild)
+        // is what runs on its next boot — the same live-deployment gap the tier-columns test above guards.
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await ColumnTypesAsync(db, "Households");
+
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Households DROP COLUMN BillingCustomerId;");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Households DROP COLUMN SubscriptionId;");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Households DROP COLUMN SubscriptionRenewsAt;");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Households DROP COLUMN SubscriptionCancelAtPeriodEnd;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        // Same declared types as a fresh file — the three id/date columns as TEXT NULL, the cancel flag as
+        // INTEGER NOT NULL — so a never-subscribed household reads back NULL/false and a live one round-trips.
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "Households"));
+
+        // A pre-billing household reads back "never subscribed".
+        var household = new Household { Name = "Test" };
+        db.Households.Add(household);
+        await db.SaveChangesAsync();
+        var blank = await db.Households.AsNoTracking().SingleAsync(h => h.Id == household.Id);
+        Assert.Null(blank.BillingCustomerId);
+        Assert.Null(blank.SubscriptionId);
+        Assert.Null(blank.SubscriptionRenewsAt);
+        Assert.False(blank.SubscriptionCancelAtPeriodEnd);
+
+        // A subscribed one round-trips the provider ids, the period, and the cancel flag through the
+        // migrated columns (the DateTimeOffset round-trip is the pin a can-EF-query check would miss).
+        var renews = new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero);
+        household.BillingCustomerId = "cus_fake_123";
+        household.SubscriptionId = "sub_fake_456";
+        household.SubscriptionRenewsAt = renews;
+        household.SubscriptionCancelAtPeriodEnd = true;
+        await db.SaveChangesAsync();
+        var subscribed = await db.Households.AsNoTracking().SingleAsync(h => h.Id == household.Id);
+        Assert.Equal("cus_fake_123", subscribed.BillingCustomerId);
+        Assert.Equal("sub_fake_456", subscribed.SubscriptionId);
+        Assert.Equal(renews, subscribed.SubscriptionRenewsAt);
+        Assert.True(subscribed.SubscriptionCancelAtPeriodEnd);
+    }
+
+    [Fact]
     public async Task Creates_the_Wishlist_table_on_an_older_auth_db_with_the_fresh_schema()
     {
         // The auth-side twin: the /about wishlist is operator data (like the error log), so it lives in
@@ -515,6 +563,30 @@ public class AdditiveSchemaTests : IDisposable
         });
         await db.SaveChangesAsync();
         Assert.Single(await db.CreditLedger.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Creates_the_ProcessedPaymentEvents_table_on_an_older_auth_db_with_the_fresh_schema()
+    {
+        // Auth-side: the webhook idempotency ledger lives beside the subscription + credit ledger (all
+        // payment state is auth-side), and a live deployment's auth.db predates it (phase 3 step 2).
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await TableSchemaAsync(db, "ProcessedPaymentEvents");
+        Assert.NotEmpty(fresh); // includes the EventId primary key
+
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE ProcessedPaymentEvents;");
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        Assert.Equal(fresh, await TableSchemaAsync(db, "ProcessedPaymentEvents"));
+
+        db.ProcessedPaymentEvents.Add(new ProcessedPaymentEvent
+        {
+            EventId = "evt_1", Kind = PaymentEventKind.CheckoutCompleted, HouseholdId = "hh-1",
+        });
+        await db.SaveChangesAsync();
+        Assert.Single(await db.ProcessedPaymentEvents.ToListAsync());
     }
 
     [Fact]

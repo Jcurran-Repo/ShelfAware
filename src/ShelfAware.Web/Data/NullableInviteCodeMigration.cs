@@ -37,7 +37,11 @@ public static class NullableInviteCodeMigration
          // pre-v3.4 box that boots today has these ALTERed on before the rebuild sees the table — the
          // rebuild carries them across by name (and must NOT wipe them: an invite-code migration losing
          // someone's Founder grant would be exactly the kind of silent cross-column harm the assert guards).
-         "Tier", "FounderSince"];
+         "Tier", "FounderSince",
+         // 2026-09-01: subscription state (phase 3 step 1). Same story as the tier columns: AdditiveSchema
+         // adds them before this runs, so the rebuild must know them and COPY them across — losing a
+         // household's live subscription on an unrelated invite-code migration is exactly the harm guarded.
+         "BillingCustomerId", "SubscriptionId", "SubscriptionRenewsAt", "SubscriptionCancelAtPeriodEnd"];
 
     public static void Apply(AuthDbContext db)
     {
@@ -76,17 +80,21 @@ public static class NullableInviteCodeMigration
                         "InviteMaxUses" INTEGER NULL,
                         "InviteUseCount" INTEGER NOT NULL DEFAULT 0,
                         "Tier" INTEGER NOT NULL DEFAULT 0,
-                        "FounderSince" TEXT NULL
+                        "FounderSince" TEXT NULL,
+                        "BillingCustomerId" TEXT NULL,
+                        "SubscriptionId" TEXT NULL,
+                        "SubscriptionRenewsAt" TEXT NULL,
+                        "SubscriptionCancelAtPeriodEnd" INTEGER NOT NULL DEFAULT 0
                     );
                     """);
 
                 // The wipe: codes and their limits come across as NULL/0 regardless of what was there.
-                // Tier/FounderSince are COPIED, not wiped — they're an unrelated entitlement, and this
-                // migration retires invite codes, not tiers.
+                // Tier/FounderSince AND the subscription columns are COPIED, not wiped — they're unrelated
+                // entitlement/billing state, and this migration retires invite codes, not subscriptions.
                 Execute(conn, tx, """
                     INSERT INTO "Households_new"
-                        ("Id", "Name", "InviteCode", "CreatedAt", "InviteExpiresAt", "InviteMaxUses", "InviteUseCount", "Tier", "FounderSince")
-                    SELECT "Id", "Name", NULL, "CreatedAt", NULL, NULL, 0, "Tier", "FounderSince" FROM "Households";
+                        ("Id", "Name", "InviteCode", "CreatedAt", "InviteExpiresAt", "InviteMaxUses", "InviteUseCount", "Tier", "FounderSince", "BillingCustomerId", "SubscriptionId", "SubscriptionRenewsAt", "SubscriptionCancelAtPeriodEnd")
+                    SELECT "Id", "Name", NULL, "CreatedAt", NULL, NULL, 0, "Tier", "FounderSince", "BillingCustomerId", "SubscriptionId", "SubscriptionRenewsAt", "SubscriptionCancelAtPeriodEnd" FROM "Households";
                     """);
 
                 // DROP takes the old indexes with it; the unique one is recreated below to match

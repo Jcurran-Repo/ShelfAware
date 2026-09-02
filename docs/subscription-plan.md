@@ -114,10 +114,20 @@ Three review findings harden the grant (2026-08-23, accepted):
   ~5 text actions/day exhausts it in ~3 weeks, not 2 months.
 - **Anti-farming controls are LAUNCH DEFAULTS on any open-registration deployment, not contingencies**
   (the per-IP /Account limit exists and covers registration, but IP rotation is cheap, and
-  `RequireConfirmedAccount` is currently false): email-confirmation-before-grant ON, the per-household
-  daily caps ON, and — the piece nothing provided — **a global managed-spend ceiling with an alert**,
-  because without detection the operator learns about a grant farm from the Anthropic invoice.
+  `RequireConfirmedAccount` is currently false): flip `RequireConfirmedAccount` ON so the email is verified
+  at registration (the verify-once principle below), the per-household daily caps ON, and — the piece nothing
+  provided — **a global managed-spend ceiling with an alert**, because without detection the operator learns
+  about a grant farm from the Anthropic invoice.
   Optional: drip the grant (~25¢/day unlocked). Closed-registration boxes (family) need none of it.
+- **Verify each email ONCE, at first capture — then rely on it everywhere, no re-verification** (Jordan,
+  2026-09-01). Registration is the main capture point: with `RequireConfirmedAccount` ON the login email is
+  confirmed before the account is usable, and that single verification then stands for every later use of it
+  — the welcome grant, subscription + credit-pack purchase (§6), receipts, the MoR customer + portal,
+  dunning — none of which re-confirm. The one path that can introduce a fresh, never-verified email is the
+  anonymous **wishlist / pre-order** capture on `/about` (a visitor with no account): verify THAT once, in
+  place (double opt-in), before it counts as a reservation or joins the launch list — the double-opt-in that
+  item 62 shipped without. A visitor who has or later creates an account uses their already-verified account
+  email and is never asked again.
 - **Exhaustion is a RAMP, not a wall:** ambient remaining-grant meter, nudges at ~50%/~90% with the
   subscription offered BEFORE the wall, and the wall itself holds work rather than refusing it —
   "your receipt is saved; it'll extract when you subscribe" — because the wall fires mid-chore,
@@ -353,6 +363,21 @@ across US states + EU VAT remain the merchant's problem — exactly the work bei
 is legally the seller, so all of it is theirs.) The ~25¢/transaction premium over raw Stripe is the
 price of never thinking about VAT, and the annual-first posture pays the fixed fee once a year.
 
+**PHASE-3 DECISION (2026-08-24): Stripe Managed Payments (SMP) CHOSEN**, superseding LS-"for now"
+(Jordan delegated: "I don't care which one, I just want it cheap and stable — recommend"). SMP is now
+GA (the preview in the table below shipped): all-in ≈ 2.9% + $0.30 base card + 3.5% MoR surcharge +
+~0.5–0.8% Billing on recurring ≈ **~7% + $0.30 per US charge**, $15/dispute (verify on
+stripe.com/pricing at wire-up — the third-party fee blogs run pessimistic; the components check out on
+Stripe's own pages). Highest *headline* rate of the MoRs, but the LOWEST *fixed* fee ($0.30 vs
+everyone else's $0.50) — and on these sub-$28 tickets the fixed fee dominates, so SMP lands within
+pennies and is actually CHEAPER than a 5% MoR on the $2.99 monthly (~$0.51 vs ~$0.66; roughly a wash
+on annual). Chosen for **stability** over the ~1%: Stripe just consolidated the MoR space by absorbing
+Lemon Squeezy into SMP, so the genuinely-cheaper options are startups (Creem/Dodo/Polar) carrying
+re-integration risk a portfolio piece shouldn't take, and LS is now a transition path INTO SMP, not a
+durable standalone. **No recurring/setup/minimum fee** — the integration is built and tested in test
+mode for free; nothing is charged until a real customer pays. The provider seam below keeps the choice
+swappable if the fee ever stings at scale.
+
 | Candidate | Fee (verified 2026-08-23) | Disputes | Notes |
 |---|---|---|---|
 | **Lemon Squeezy** — **CHOSEN ("for now")** | 5% + 50¢; **5.5% + 50¢ on subscriptions**; +1.5% intl / PayPal | ~$15 passed through | Supports the exact product shape (subs + one-time packs, documented API-credit pattern). ⚠️ **In an announced transition**: Stripe launched its own MoR (**Stripe Managed Payments**, public preview 2/2026) and LS is building migration paths onto it — SMP preview pricing (~6.4% + 30¢ ≈ $0.49 on $2.99) would be CHEAPER than LS on these tickets. Decision stands as "for now" — and Jordan is positively disposed to Stripe ("I like Stripe"): **at phase 3, check Stripe Managed Payments FIRST; if it's available at MoR parity, prefer it**. Apply for whichever store EARLY (activation review is the long pole); the seam below is the insurance |
@@ -383,6 +408,16 @@ Mechanics are provider-agnostic (all three offer them):
 - **Lifecycle:** failed payment → provider dunning → on final failure tier drops to Free at period
   end (data untouched — Free is a posture, nothing is deleted). Cancel → runs out the paid period.
   Unused purchased credits survive tier drops (they were bought).
+- ⚠️ **Checkout runs on the account's already-verified email — it does NOT re-verify.** The MoR keys the
+  customer record, receipts, the cancel/card portal, and the refund/dispute contact on ONE email, and it's
+  the member's app-account email — already format-valid + unique (Identity's `[EmailAddress]` +
+  `RequireUniqueEmail`) AND already verified once at registration (§1's verify-once principle,
+  `RequireConfirmedAccount` ON). So checkout simply requires that verified address and adds no second
+  confirmation step; because it was verified, a typo'd or unowned address can't end up owning the
+  household's billing (compounding the purchaser-departure finding below) or silently swallowing receipts
+  and dispute notices. We never collect a SEPARATE billing email: the strict CSP is hosted-redirect-only
+  (no form-post checkout, above), so the verified account email is what we pass to the provider — one
+  address, nothing to keep in sync.
 - ⚠️ **The purchaser can leave the household — item 54's MED-HIGH shape, one level up** (review
   finding): member removal revokes the cookie and API tokens, but the LS customer account + portal
   belong to the purchasing member's EMAIL, unreachable by `RemoveMemberAsync` — a removed member
@@ -401,7 +436,19 @@ Mechanics are provider-agnostic (all three offer them):
 Config-gated, the `Admin`/`Email`/`GraphQL:Enabled` pattern: **unset = the feature does not exist** —
 no tier checks, no upsell copy, no endpoints, today's behavior exactly. Self-host stays unlimited by
 default. Per box (updated per Jordan, 2026-08-23):
-- **Droplet demo** — BYOK, billing off. Unchanged.
+- **Droplet demo** — BYOK, billing off. Unchanged **today**. ⚠️ **Candidate change (Jordan, 2026-09-01,
+  a Phase-4 item — recorded, not built): a small managed TRIAL on the demo.** The pure-BYOK demo hides the
+  AI — nobody pastes an API key to try a demo — so grant a **verified** demo account ~**$0.50** of managed
+  AI (Jordan's cost, on the host's key), **no agent rights**, so casual visitors actually see receipts/chat/
+  recipes work. This makes the demo **managed, not BYOK** (the host's key on the public box — reversing "the
+  demo ships no usable keys; keys never used live", item 8; Jordan accepts this). Preconditions, all real:
+  (1) **balance ENFORCEMENT must exist** (phase 4) — without it a grant caps nothing, so a visitor or bot
+  runs unlimited on the host's key; (2) a **GLOBAL managed-spend ceiling + alert** is the primary guard, not
+  the per-account 50¢ — an open public demo means unbounded accounts (email/IP rotation is cheap), so the
+  safe shape is a hard "$X/month total for the demo, then AI pauses"; (3) **email verification** (the §1
+  verify-once / ops-gate item). "No agents" already matches §1 (realtime agents are purchased-credits-only
+  for everyone — grant money never funds a session; cheap read-aloud TTS may stay). Build it in Phase 4 with
+  the global demo budget as the wallet guard.
 - **Family box** — **billing OFF, permanently.** Every household there is a Founder (admin-granted,
   phase 1), and Founders don't pay — so the family box never needs a payment surface, a webhook, or
   open registration hardening. It gets phase 1 (tiers + Founder + badge) and nothing else.
@@ -479,6 +526,19 @@ recorded: the reviewer's one free scan/month (keeps data continuously warm, but 
 AI" into a standing special case), or Jordan's own alternative — **"welcome back" credits**: a small
 one-time grant when a lapsed household returns, which keeps Free cleanly AI-free and spends the money
 only on someone who actually came back.
+
+**Parked — the dormant-subscriber conscience nudge (Jordan's call, 2026-09-01):** proactively email an
+ACTIVE, PAYING subscriber who has gone dormant (no app activity for ~a few months) to ask whether they
+still want it, with a one-click unsubscribe. Deliberately revenue-*reducing* — the integrity move a
+portfolio piece with real users should be seen making, and of a piece with this arc's other calls
+(refund clawback not automated, billing infra deferred until real customers exist). Cheap to build: the
+dormancy signal already exists (`AiUsage` per household/day, the `ActivityEntry` log, login recency), so
+"subscribed AND no activity in N months" is a clean query. The one hard dependency is a **monitored
+transactional email provider** — the same ops-launch-gate item (§9) that gates password reset and the
+email-confirmation grant — so this lands **Phase 4+, right after that provider is in place**, never on
+the Gmail-app-password family arrangement. Open sub-questions for build time: the exact dormancy window,
+whether it's a plain "still want this?" or an outright pre-filled cancel, and frequency-capping so it
+can't nag.
 
 ## 9. Build order (each phase gated by `/pre-push`, per the house rule)
 

@@ -525,6 +525,47 @@ button.danger:hover:not(:disabled) {
     border-color: var(--overdue-line);
 }
 
+/* Subscription & billing (Settings): hosted-redirect links styled as buttons. A redirect is a NAVIGATION,
+   so these are anchors (they work without the circuit), mirroring the button look via the same theme vars. */
+.billing-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 0.5rem 0;
+}
+.billing-actions a {
+    display: inline-block;
+    padding: 0.4rem 0.8rem;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--ink);
+    border-radius: 6px;
+    text-decoration: none;
+}
+.billing-actions a:hover {
+    background: var(--surface-alt);
+    border-color: var(--ink-soft);
+}
+.billing-actions a.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+.billing-actions a.primary:hover {
+    background: var(--accent-ink);
+    border-color: var(--accent-ink);
+}
+/* "save 22%" beside the annual option — green, like the positive callout, so it reads as a win not a warning. */
+.save-badge {
+    font-size: 0.8rem;
+    color: var(--stocked-ink);
+    background: var(--stocked-bg);
+    border: 1px solid var(--stocked-line);
+    border-radius: 999px;
+    padding: 0.05rem 0.4rem;
+    margin-left: 0.35rem;
+}
+
 .danger-zone { border-color: var(--overdue-line); }
 
 .danger-confirm {

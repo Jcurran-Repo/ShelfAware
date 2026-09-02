@@ -11,7 +11,9 @@ using Microsoft.Extensions.Options;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Settings;
 using ShelfAware.Llm;
+using Microsoft.AspNetCore.Components;
 using ShelfAware.Web.Auth;
+using ShelfAware.Web.Billing;
 using ShelfAware.Web.Components.Pages;
 using ShelfAware.Web.Data;
 using ShelfAware.Web.Services;
@@ -587,6 +589,61 @@ public class SettingsManagedModeTests : SettingsTestBase
         // $1.65 grant − $0.15 consumed = $1.50 balance (same culture both sides).
         Assert.Contains("Credit balance", section.TextContent);
         Assert.Contains(1.50m.ToString("C2"), section.TextContent);
+    }
+}
+
+/// <summary>The Settings → BillingPanel wiring (phase 3 step 3): payments enabled on a managed box, so the
+/// billing panel shows. Its own per-tier rules are pinned in BillingPanelTests; this pins the WIRING the
+/// unit test can't — that the ?checkout= query param actually reaches the panel. (A string component
+/// parameter passed without a leading @ is a LITERAL, so the banner silently never fired — caught only by
+/// running it; this is the regression guard.)</summary>
+public class SettingsBillingPanelTests : SettingsTestBase
+{
+    private protected override LlmOptions ServerLlm => new() { KeyMode = "managed", ApiKey = "sk-host-key" };
+
+    protected override void RegisterAdditionalServices()
+    {
+        base.RegisterAdditionalServices();
+        // The open-generic IOptions<PaymentsOptions> default is disabled (panel hidden); turn it on so the
+        // panel renders. A later registration wins, the way ServerLlm overrides IOptions<LlmOptions>.
+        Services.AddSingleton(Options.Create(new PaymentsOptions { Enabled = true }));
+    }
+
+    [Fact]
+    public void The_checkout_query_param_reaches_the_billing_banner()
+    {
+        Services.GetRequiredService<NavigationManager>().NavigateTo("/settings?checkout=subscribed");
+
+        var billing = Section(RenderSettings(), "Subscription");
+
+        // The ?checkout=subscribed banner — proves CheckoutResult flows into BillingPanel.Checkout. With the
+        // param passed as a string LITERAL (the bug), BannerFor sees "CheckoutResult" and renders nothing.
+        Assert.Contains("Aware now", billing.TextContent);
+    }
+
+    [Fact]
+    public void No_banner_shows_without_a_checkout_query_param()
+    {
+        var billing = Section(RenderSettings(), "Subscription");
+        Assert.DoesNotContain("Aware now", billing.TextContent);
+    }
+
+    [Fact]
+    public void The_billing_departure_note_names_who_controls_billing_when_subscribed()
+    {
+        // §6: a departing member keeps the provider's cancel/card control (it's on their email), so the
+        // member-removal area must NAME that — but only once there's actually a subscription to lose.
+        var household = AuthContext.Households.Single(h => h.Id == AuthHousehold);
+        household.SubscriptionId = "sub_1";
+        AuthContext.SaveChanges();
+
+        Assert.Contains("Billing follows whoever set up", Section(RenderSettings(), "Household").TextContent);
+    }
+
+    [Fact]
+    public void No_billing_departure_note_without_a_subscription()
+    {
+        Assert.DoesNotContain("Billing follows whoever set up", Section(RenderSettings(), "Household").TextContent);
     }
 }
 

@@ -18,8 +18,8 @@ public class NullableInviteCodeMigrationTests : IDisposable
     /// <summary>The pre-nullable shape the migration actually sees at boot: EnsureCreated builds the
     /// CURRENT (nullable) schema, so an old DB has to be reconstructed. This is the live shape after
     /// AdditiveSchema.Apply has run (which always precedes this migration) but before the nullable
-    /// rebuild — the v3 columns, the three 7/15 invite columns, and the 8/24 tier columns, with
-    /// InviteCode still NOT NULL and the unfiltered unique index.</summary>
+    /// rebuild — the v3 columns, the three 7/15 invite columns, the 8/24 tier columns, and the 9/1
+    /// subscription columns, with InviteCode still NOT NULL and the unfiltered unique index.</summary>
     /// <summary>Built by substitution rather than interpolation so it stays an ExecuteSqlRawAsync(string):
     /// the interpolated overload trips EF1002 (SQL injection), which is the right warning to get for a
     /// value from outside and the wrong one to suppress just because this one is a test's own literal.</summary>
@@ -33,7 +33,11 @@ public class NullableInviteCodeMigrationTests : IDisposable
             "InviteMaxUses" INTEGER NULL,
             "InviteUseCount" INTEGER NOT NULL DEFAULT 0,
             "Tier" INTEGER NOT NULL DEFAULT 0,
-            "FounderSince" TEXT NULL/*EXTRAS*/
+            "FounderSince" TEXT NULL,
+            "BillingCustomerId" TEXT NULL,
+            "SubscriptionId" TEXT NULL,
+            "SubscriptionRenewsAt" TEXT NULL,
+            "SubscriptionCancelAtPeriodEnd" INTEGER NOT NULL DEFAULT 0/*EXTRAS*/
         );
         """;
 
@@ -107,6 +111,39 @@ public class NullableInviteCodeMigrationTests : IDisposable
         Assert.Null(saved.InviteCode);                     // the code went…
         Assert.Equal(HouseholdTier.Founder, saved.Tier);   // …the tier stayed
         Assert.Equal(granted, saved.FounderSince);
+    }
+
+    [Fact]
+    public async Task Subscription_state_survives_the_rebuild()
+    {
+        // Same rule as the Founder grant: this migration retires invite codes, not subscriptions. A
+        // household's live billing state (provider ids + period + cancel flag) must come across untouched
+        // — wiping it on an unrelated invite-code rebuild would drop a paying household's subscription,
+        // exactly the cross-column harm the copy-by-name assert exists to prevent.
+        await using var db = _db.CreateDbContext();
+        await GiveItTheOldSchemaAsync(db);
+        var renews = new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero);
+        db.Households.Add(new Household
+        {
+            Name = "The Currans", InviteCode = "PERMANENT1",
+            Tier = HouseholdTier.Aware,
+            BillingCustomerId = "cus_fake_123",
+            SubscriptionId = "sub_fake_456",
+            SubscriptionRenewsAt = renews,
+            SubscriptionCancelAtPeriodEnd = true,
+        });
+        await db.SaveChangesAsync();
+
+        NullableInviteCodeMigration.Apply(db);
+
+        await using var fresh = _db.CreateDbContext();
+        var saved = fresh.Households.Single();
+        Assert.Null(saved.InviteCode);                          // the code went…
+        Assert.Equal(HouseholdTier.Aware, saved.Tier);          // …everything billing stayed
+        Assert.Equal("cus_fake_123", saved.BillingCustomerId);
+        Assert.Equal("sub_fake_456", saved.SubscriptionId);
+        Assert.Equal(renews, saved.SubscriptionRenewsAt);
+        Assert.True(saved.SubscriptionCancelAtPeriodEnd);
     }
 
     [Fact]

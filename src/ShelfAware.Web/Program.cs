@@ -22,6 +22,7 @@ using ShelfAware.Core.Speech;
 using ShelfAware.Core.Tagging;
 using ShelfAware.Llm;
 using ShelfAware.Web.Auth;
+using ShelfAware.Web.Billing;
 using ShelfAware.Web.Components;
 using ShelfAware.Web.Components.Account;
 using ShelfAware.Web.Data;
@@ -326,6 +327,63 @@ builder.Services.Configure<ShelfAware.Core.Billing.BillingOptions>(
 builder.Services.Configure<ShelfAware.Web.Wishlist.WishlistOptions>(
     builder.Configuration.GetSection(ShelfAware.Web.Wishlist.WishlistOptions.SectionName));
 
+// Payments (phase 3 — docs/subscription-plan.md §6). Config-gated like GraphQL:Enabled: with the
+// "Payments" section absent, Enabled is false, no IPaymentProvider is registered, and billing does not
+// exist — today's behaviour exactly. Only the fake adapter is wired today; selecting the real provider
+// before its adapter ships (step 5) fails startup with a clear message rather than half-working.
+var paymentsEnabled = builder.Configuration.GetValue<bool>("Payments:Enabled");
+var isDevelopment = builder.Environment.IsDevelopment();
+// The FAKE provider + its stand-in "hosted checkout" pages (below) are Development-ONLY — they mint Aware/
+// credits with no charge, so they must never be reachable on a real box (a config typo on Provider must not
+// hand out free subscriptions). PaymentsOptions.FakeProviderAllowed folds in IsDevelopment (the DevAuth
+// pattern); a real deployment uses Provider=StripeManagedPayments and redirects to the provider's own page.
+var fakePayments = PaymentsOptions.FakeProviderAllowed(paymentsEnabled, builder.Configuration["Payments:Provider"], isDevelopment);
+builder.Services.AddOptions<PaymentsOptions>()
+    .Bind(builder.Configuration.GetSection(PaymentsOptions.SectionName))
+    // The fake mints paid entitlements for free — refuse to BOOT a non-Development box that enables payments
+    // on it (Provider unset defaults to Fake), so a misconfigured prod box fails fast with a clear message
+    // rather than silently arming the free-grant surface. Mirrors DevAuth's Development-only guarantee.
+    .Validate(o => !o.Enabled || o.Provider != PaymentProviderKind.Fake || isDevelopment,
+        "Payments:Provider=Fake is Development-only (it grants Aware/credits with no charge). A non-Development " +
+        "box with Payments:Enabled must set Payments:Provider=StripeManagedPayments.")
+    .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.WebhookSigningSecret),
+        "Payments:WebhookSigningSecret is required when Payments:Enabled — the webhook endpoint verifies each " +
+        "event's signature against it, and there is deliberately no default (a hard-coded fallback would be a " +
+        "forgery trapdoor in a public repo).")
+    // The real provider (step 5) needs its key + every price id, or checkout would 500 on the first click —
+    // fail fast at boot instead. The fake needs neither (it makes no external calls and echoes the product).
+    .Validate(o => !o.Enabled || o.Provider != PaymentProviderKind.StripeManagedPayments
+            || (!string.IsNullOrWhiteSpace(o.ApiKey)
+                && !string.IsNullOrWhiteSpace(o.MonthlyPriceId) && !string.IsNullOrWhiteSpace(o.AnnualPriceId)
+                && !string.IsNullOrWhiteSpace(o.CreditPack5PriceId) && !string.IsNullOrWhiteSpace(o.CreditPack10PriceId)
+                && !string.IsNullOrWhiteSpace(o.CreditPack20PriceId)),
+        "Payments:Provider=StripeManagedPayments requires Payments:ApiKey and all five price ids " +
+        "(MonthlyPriceId, AnnualPriceId, CreditPack5PriceId, CreditPack10PriceId, CreditPack20PriceId).")
+    .ValidateOnStart();
+if (paymentsEnabled)
+{
+    if (fakePayments)
+    {
+        // The fake is stateless (deterministic URLs + a pure HMAC verify), so a singleton is fine.
+        builder.Services.AddSingleton<IPaymentProvider, FakePaymentProvider>();
+    }
+    else
+    {
+        // Stripe Managed Payments (step 5). One StripeClient over a factory HttpClient; the adapter builds its
+        // per-call service objects from it. Singleton: the client is thread-safe and holds no request state.
+        builder.Services.AddHttpClient("stripe");
+        builder.Services.AddSingleton<Stripe.IStripeClient>(sp =>
+        {
+            var opts = sp.GetRequiredService<IOptions<PaymentsOptions>>().Value;
+            var http = sp.GetRequiredService<IHttpClientFactory>().CreateClient("stripe");
+            return new Stripe.StripeClient(opts.ApiKey, httpClient: new Stripe.SystemNetHttpClient(http));
+        });
+        builder.Services.AddSingleton<IPaymentProvider, StripePaymentProvider>();
+    }
+    // Applies verified webhook events to the household's tier + credit ledger, idempotently (step 2).
+    builder.Services.AddScoped<PaymentWebhookHandler>();
+}
+
 // The provider seam: the AI services depend only on IChatClient, so the provider is a swap and the logic
 // stays fakeable in tests. Under BYOK each circuit gets its own IChatClient built from that visitor's
 // browser-held settings (CircuitAiSettings), so concurrent visitors never share a key; local dev falls
@@ -463,6 +521,14 @@ builder.Services.AddRateLimiter(o =>
         RateLimitPartition.GetFixedWindowLimiter(
             ctx.User.FindFirst(ApiTokenAuthenticationHandler.TokenIdClaim)?.Value ?? "unknown",
             _ => new FixedWindowRateLimiterOptions { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+    // The hosted-redirect billing endpoints each mint a real Stripe session (an outbound API call + a
+    // dashboard-visible object), so they get the same brake every other outbound-call endpoint here has.
+    // Keyed per USER (with IP fallback) like the graphql policy — prod sits behind a proxy, so per-IP would
+    // bucket everyone together. 20/min is generous for a real member (who clicks Subscribe/Manage once).
+    o.AddPolicy("billing", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ctx.User.Identity?.Name ?? ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
     // Credential endpoints get a per-IP brake on top of Identity's per-account lockout: lockout
     // protects one account from many guesses, this protects all accounts from one hammering IP.
     // Razor-component form posts aren't attachable endpoints for a named policy, so the global
@@ -835,6 +901,194 @@ app.MapPost("/api/pantry-photo/read", async (
             statusCode: StatusCodes.Status500InternalServerError);
     }
 }).RequireAuthorization().RequireRateLimiting("photo-upload");
+
+// Payment provider webhook (phase 3 step 2 — docs/subscription-plan.md §6). A PUBLIC, unauthenticated
+// endpoint: a merchant of record sends no cookie, so the HMAC SIGNATURE over the raw body IS the
+// authentication (verified by IPaymentProvider.ParseWebhook — a forged/absent signature never parses).
+// PaymentWebhookHandler applies the effect idempotently by event id. Mapped only when Payments:Enabled, so
+// a box with no payments has no such endpoint.
+//   - Raw body, no form binding → the antiforgery middleware doesn't validate it; DisableAntiforgery makes
+//     that explicit (and unlike Hot Chocolate's builder, a plain MapPost supports it).
+//   - ⚠️ Every non-2xx carries a JSON body — an empty error response is re-executed by
+//     UseStatusCodePagesWithReExecute into POST /not-found → antiforgery → a misleading 400 (item 54's
+//     scar). A 400 = bad signature (don't retry); a 5xx = a transient failure (DO retry); a 2xx = handled.
+if (paymentsEnabled)
+{
+    app.MapPost("/api/payments/webhook", async (
+        HttpContext ctx, IPaymentProvider provider, PaymentWebhookHandler handler,
+        ILoggerFactory logs, CancellationToken ct) =>
+    {
+        // Cap the body on this PUBLIC, unauthenticated endpoint. A real provider event is a few KB; 1 MB is
+        // generous for even a large one while bounding an anonymous flood before it's read into memory.
+        // (Signature verification already runs before any DB work, so a forgery can't reach the ledger — this
+        // just closes the unbounded-read memory vector.)
+        var bodySize = ctx.Features.Get<IHttpMaxRequestBodySizeFeature>();
+        if (bodySize is { IsReadOnly: false }) bodySize.MaxRequestBodySize = 1024 * 1024;
+
+        var request = ctx.Request;
+        string payload;
+        try
+        {
+            using var reader = new StreamReader(request.Body);
+            payload = await reader.ReadToEndAsync(ct);
+        }
+        catch (Microsoft.AspNetCore.Http.BadHttpRequestException)
+        {
+            // Over the cap — a JSON body so UseStatusCodePages doesn't re-execute an empty 413 into the
+            // antiforgery /not-found trap (item 54). A legitimate event is never this large.
+            return Results.Json(new { error = "payload too large" }, statusCode: StatusCodes.Status413PayloadTooLarge);
+        }
+
+        var signature = request.Headers[provider.SignatureHeaderName].ToString();
+        var parse = provider.ParseWebhook(payload, signature);
+        if (parse.Result == WebhookParseResult.InvalidSignature)
+            return Results.Json(new { error = "invalid signature" }, statusCode: StatusCodes.Status400BadRequest);
+        // Verified but a type we don't act on (a real provider sends many) — ack with 2xx so it isn't retried.
+        if (parse.Event is not { } webhookEvent)
+            return Results.Json(new { status = "ignored" });
+
+        try
+        {
+            var outcome = await handler.HandleAsync(webhookEvent, ct);
+            return Results.Json(new { status = outcome.ToString() });
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            logs.CreateLogger("PaymentWebhook").LogError(ex, "Payment webhook handling failed for {EventId}.", webhookEvent.EventId);
+            // 5xx WITH a body so the provider retries a transient failure rather than losing the event.
+            return Results.Json(new { error = "webhook handling failed" },
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }).DisableAntiforgery();
+}
+
+// ---- Subscription & billing: hosted-redirect checkout + portal (phase 3 step 3) ----
+// The strict CSP forbids any JS-overlay checkout, so each is a GET the Settings anchors hit: it creates a
+// provider session and 302s the browser to the hosted page. Authenticated — the household id and the
+// purchaser's already-verified account email come from the caller's OWN claims, never the request body
+// (§6). Mapped only when Payments:Enabled.
+if (paymentsEnabled)
+{
+    app.MapGet("/billing/checkout", async (
+        HttpContext ctx, HttpRequest request, IPaymentProvider provider, IEntitlements entitlements,
+        IDbContextFactory<AuthDbContext> authDbFactory, ILoggerFactory logs, string product, CancellationToken ct) =>
+    {
+        var householdId = ctx.User.FindFirst(HouseholdClaimsPrincipalFactory.HouseholdClaim)?.Value;
+        var email = ctx.User.Identity?.Name;
+        if (householdId is null || string.IsNullOrEmpty(email)) return Results.Redirect("/settings");
+        if (!Enum.TryParse<BillingProduct>(product, out var prod) || !Enum.IsDefined(prod))
+            return Results.Redirect("/settings"); // an unknown/smuggled product — refuse, don't guess
+
+        var tier = await entitlements.GetTierAsync(ct);
+        // A Founder is comped — billing doesn't apply (§5), and a checkout would only try to demote them (the
+        // webhook handler guards the tier too, but don't even start the flow). Refuse it here.
+        if (tier == HouseholdTier.Founder) return Results.Redirect("/settings");
+        // Credit packs are for active subscribers only (§8) — defense in depth behind the UI, which already
+        // hides packs from a non-Aware household.
+        if (BillingCatalog.IsPack(prod) && tier != HouseholdTier.Aware)
+            return Results.Redirect("/settings?checkout=packs_need_sub");
+
+        // A pack attaches to the subscriber's existing provider customer (the adapter uses it only for packs);
+        // a subscription ignores it and keys on the purchaser's email. Read it only when it's needed.
+        string? existingCustomerId = null;
+        if (BillingCatalog.IsPack(prod))
+        {
+            await using var authDb = await authDbFactory.CreateDbContextAsync(ct);
+            existingCustomerId = await authDb.Households
+                .Where(h => h.Id == householdId).Select(h => h.BillingCustomerId).FirstOrDefaultAsync(ct);
+        }
+
+        var baseUrl = $"{request.Scheme}://{request.Host}";
+        var success = BillingCatalog.IsPack(prod) ? "credits" : "subscribed";
+        var checkoutRequest = new CheckoutRequest(householdId, email, prod,
+            $"{baseUrl}/settings?checkout={success}", $"{baseUrl}/settings?checkout=cancelled", existingCustomerId);
+        try
+        {
+            var session = await provider.CreateCheckoutAsync(checkoutRequest, ct);
+            return Results.Redirect(session.Url);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // A provider hiccup (Stripe down, a bad price id, rate limit) must not throw a raw 500 at someone
+            // trying to pay — log it and send them back with a friendly banner.
+            logs.CreateLogger("Billing").LogError(ex, "Checkout creation failed (household {HouseholdId}, product {Product}).", householdId, prod);
+            return Results.Redirect($"{baseUrl}/settings?checkout=error");
+        }
+    }).RequireAuthorization().RequireRateLimiting("billing");
+
+    app.MapGet("/billing/portal", async (
+        HttpContext ctx, HttpRequest request, IPaymentProvider provider,
+        IDbContextFactory<AuthDbContext> authDbFactory, ILoggerFactory logs, CancellationToken ct) =>
+    {
+        var householdId = ctx.User.FindFirst(HouseholdClaimsPrincipalFactory.HouseholdClaim)?.Value;
+        if (householdId is null) return Results.Redirect("/settings");
+        await using var authDb = await authDbFactory.CreateDbContextAsync(ct);
+        var customerId = await authDb.Households
+            .Where(h => h.Id == householdId).Select(h => h.BillingCustomerId).FirstOrDefaultAsync(ct);
+        if (string.IsNullOrEmpty(customerId)) return Results.Redirect("/settings?checkout=no_billing");
+        try
+        {
+            var url = await provider.CreatePortalUrlAsync(customerId, $"{request.Scheme}://{request.Host}/settings", ct);
+            return Results.Redirect(url);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // The portal can fail on a stale/removed customer or — a real first-deploy gotcha — the Stripe
+            // Customer Portal not being configured in the dashboard yet. Don't 500 the "Manage billing" click.
+            logs.CreateLogger("Billing").LogError(ex, "Portal session creation failed (household {HouseholdId}).", householdId);
+            return Results.Redirect("/settings?checkout=error");
+        }
+    }).RequireAuthorization().RequireRateLimiting("billing");
+}
+
+// The FAKE provider's stand-in for a hosted checkout page + its "provider webhook" — DEV ONLY, mapped only
+// when the active provider is Fake. The real provider hosts its own page and POSTs a signed webhook to
+// /api/payments/webhook; here "Complete" applies the CheckoutCompleted event through the SAME
+// PaymentWebhookHandler and redirects, so the whole subscribe→Aware loop is drivable locally without Stripe.
+// The household comes from the caller's claim (a query can't target another household); the page is bare
+// HTML with no inline script/style, so the strict CSP holds.
+if (fakePayments)
+{
+    app.MapGet("/billing/fake-checkout", (string product) =>
+    {
+        var prod = System.Net.WebUtility.HtmlEncode(product);
+        var complete = $"/billing/fake-complete?product={Uri.EscapeDataString(product)}";
+        var html =
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">" +
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Fake checkout</title></head>" +
+            "<body><h1>Fake checkout</h1>" +
+            $"<p>This is the local <strong>fake</strong> payment provider — no real charge. Product: <strong>{prod}</strong>.</p>" +
+            $"<p><a href=\"{complete}\">Complete purchase</a></p>" +
+            "<p><a href=\"/settings?checkout=cancelled\">Cancel</a></p></body></html>";
+        return Results.Content(html, "text/html");
+    }).RequireAuthorization();
+
+    app.MapGet("/billing/fake-complete", async (
+        HttpContext ctx, PaymentWebhookHandler handler, string product, CancellationToken ct) =>
+    {
+        var householdId = ctx.User.FindFirst(HouseholdClaimsPrincipalFactory.HouseholdClaim)?.Value;
+        if (householdId is null || !Enum.TryParse<BillingProduct>(product, out var prod) || !Enum.IsDefined(prod))
+            return Results.Redirect("/settings");
+
+        var isPack = BillingCatalog.IsPack(prod);
+        var period = prod == BillingProduct.SubscriptionAnnual ? TimeSpan.FromDays(365) : TimeSpan.FromDays(30);
+        var completed = new PaymentWebhookEvent(
+            EventId: $"fake-{Guid.NewGuid():n}",
+            Kind: PaymentEventKind.CheckoutCompleted,
+            HouseholdId: householdId,
+            BillingCustomerId: $"cus_fake_{householdId}",
+            SubscriptionId: isPack ? null : $"sub_fake_{householdId}",
+            Product: prod,
+            PeriodEnd: isPack ? null : DateTimeOffset.Now.Add(period),
+            CancelAtPeriodEnd: false,
+            AmountMicros: isPack ? BillingCatalog.RetailMicrosFor(prod) : null);
+        await handler.HandleAsync(completed, ct);
+        return Results.Redirect(isPack ? "/settings?checkout=credits" : "/settings?checkout=subscribed");
+    }).RequireAuthorization();
+}
 
 // PWA manifest — makes the app installable ("Add to home screen"). Served explicitly so the content type
 // is right regardless of static-file MIME config; it loads under the same-origin CSP (manifest-src falls

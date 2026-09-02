@@ -6,6 +6,7 @@
 @using ShelfAware.Core.Billing
 @using ShelfAware.Llm
 @using ShelfAware.Web.Auth
+@using ShelfAware.Web.Billing
 @using Microsoft.Extensions.Options
 @using System.Security.Claims
 @inject IAppSettings SettingsStore
@@ -18,6 +19,7 @@
 @inject CreditLedger Ledger
 @inject IOptions<LlmOptions> LlmConfig
 @inject IOptions<EmailOptions> EmailConfig
+@inject IOptions<PaymentsOptions> Payments
 @inject ILogger<Settings> Logger
 @inject UserDataService UserData
 @inject TourCoordinator Tour
@@ -125,6 +127,15 @@
             in on. It doesn't touch the pantry — that belongs to the household, not the account — and they
             keep their account, they're just not in a household until they join or start one.
         </p>
+        @if (household?.SubscriptionId is not null)
+        {
+            <p class="muted small">
+                Billing follows whoever set up the subscription — the card and the provider's cancel/receipt
+                controls stay with their account, not this household. If that person leaves, subscribe again
+                to move billing to your own account; the old subscription is cancelled automatically when the
+                new one starts.
+            </p>
+        }
         <p class="muted small">
             @if (EmailConfig.Value.IsConfigured)
             {
@@ -328,6 +339,14 @@
         </div>
     }
 </section>
+
+<BillingPanel Enabled="Payments.Value.IsConfigured"
+              Managed="AiSettings.Managed"
+              Tier="tier"
+              HasCustomer="household?.BillingCustomerId is not null"
+              RenewsAt="household?.SubscriptionRenewsAt"
+              CancelAtPeriodEnd="household?.SubscriptionCancelAtPeriodEnd ?? false"
+              Checkout="@CheckoutResult" />
 
 <section class="panel">
     <h2>AI usage</h2>
@@ -1190,6 +1209,11 @@
     }
 
     // ---- AI usage readouts (recorded in every key mode; limits apply only in managed mode) ----
+    /// <summary>The ?checkout= status a hosted checkout redirects back with (subscribed / credits /
+    /// cancelled / packs_need_sub / no_billing) — the BillingPanel turns it into a banner.</summary>
+    [SupplyParameterFromQuery(Name = "checkout")]
+    public string? CheckoutResult { get; set; }
+
     private HouseholdTier tier; // Free by default; a Founder gets the thank-you badge + unlimited AI
     private AiUsageMeter.TodayUsage? todayUsage;
     private IReadOnlyList<AiUsageMeter.DayUsage> usageHistory = [];
