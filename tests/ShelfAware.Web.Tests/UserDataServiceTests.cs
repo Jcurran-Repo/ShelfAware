@@ -21,7 +21,7 @@ public class UserDataServiceTests : IDisposable
     private const string HouseholdId = "household-under-test";
 
     private ApiTokenService Tokens => new(_authDb);
-    private CreditLedger Ledger => new(_authDb);
+    private CreditLedger Ledger => new(_authDb, Microsoft.Extensions.Options.Options.Create(new ShelfAware.Core.Billing.BillingOptions()));
 
     public void Dispose()
     {

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using ShelfAware.Core.Billing;
 using ShelfAware.Web.Auth;
 using ShelfAware.Web.Data;
 
@@ -42,17 +43,19 @@ public class EntitlementsTests : IDisposable
         }
     }
 
-    private async Task<string> SeedHouseholdAsync(HouseholdTier tier)
+    private async Task<string> SeedHouseholdAsync(HouseholdTier tier, DateTimeOffset? renewsAt = null)
     {
         await using var db = _auth.CreateDbContext();
-        var household = new Household { Name = "Test", Tier = tier };
+        var household = new Household { Name = "Test", Tier = tier, SubscriptionRenewsAt = renewsAt };
         db.Households.Add(household);
         await db.SaveChangesAsync();
         return household.Id;
     }
 
     private Entitlements For(string? householdId) =>
-        new(new FixedHousehold(householdId), _auth, NullLogger<Entitlements>.Instance);
+        new(new FixedHousehold(householdId), _auth,
+            new CreditLedger(_auth, Microsoft.Extensions.Options.Options.Create(new ShelfAware.Core.Billing.BillingOptions())),
+            NullLogger<Entitlements>.Instance);
 
     [Fact]
     public async Task A_founder_household_is_unlimited()
@@ -104,7 +107,9 @@ public class EntitlementsTests : IDisposable
         // "improvement" that caches the error.)
         var id = await SeedHouseholdAsync(HouseholdTier.Founder);
         var flaky = new FailOnceAuthFactory(_auth);
-        var entitlements = new Entitlements(new FixedHousehold(id), flaky, NullLogger<Entitlements>.Instance);
+        var entitlements = new Entitlements(new FixedHousehold(id), flaky,
+            new CreditLedger(_auth, Microsoft.Extensions.Options.Options.Create(new ShelfAware.Core.Billing.BillingOptions())),
+            NullLogger<Entitlements>.Instance);
 
         // First call: the factory throws → Free, and the errored result is not cached.
         Assert.Equal(HouseholdTier.Free, await entitlements.GetTierAsync());
@@ -130,5 +135,57 @@ public class EntitlementsTests : IDisposable
         }
 
         Assert.Equal(HouseholdTier.Founder, await entitlements.GetTierAsync()); // still the cached value
+    }
+
+    // ---- The credit balance + the AI-allowed gate predicate (phase 4a) ----
+
+    private static readonly long Allowance = AiPricing.MonthlyAllowanceRetailMicros(new BillingOptions());
+
+    private CreditLedger Ledger() =>
+        new(_auth, Microsoft.Extensions.Options.Options.Create(new BillingOptions()));
+
+    [Fact]
+    public async Task Get_balance_grants_an_Aware_household_its_lazy_allowance()
+    {
+        var id = await SeedHouseholdAsync(HouseholdTier.Aware, DateTimeOffset.Parse("2026-10-01T00:00:00Z"));
+
+        var balance = await For(id).GetBalanceMicrosAsync();
+
+        Assert.Equal(Allowance, balance); // reading the balance ran the lazy per-period grant
+    }
+
+    [Fact]
+    public async Task No_signed_in_household_has_no_balance_and_no_AI()
+    {
+        Assert.Equal(0, await For(null).GetBalanceMicrosAsync());
+        Assert.False(await For(null).IsAiAllowedAsync());
+    }
+
+    [Fact]
+    public async Task A_founder_is_allowed_regardless_of_balance()
+    {
+        // No subscription period → no allowance, zero balance — but Founder is unlimited, so the balance
+        // is never consulted.
+        var id = await SeedHouseholdAsync(HouseholdTier.Founder);
+
+        Assert.True(await For(id).IsAiAllowedAsync());
+    }
+
+    [Fact]
+    public async Task A_free_household_is_allowed_only_with_a_positive_balance()
+    {
+        var id = await SeedHouseholdAsync(HouseholdTier.Free);
+        Assert.False(await For(id).IsAiAllowedAsync()); // no grant, no balance
+
+        await Ledger().GrantAsync(id, 500_000, "Welcome grant");
+        Assert.True(await For(id).IsAiAllowedAsync()); // a leftover welcome grant is enough
+    }
+
+    [Fact]
+    public async Task An_Aware_household_is_allowed_via_its_lazy_allowance()
+    {
+        var id = await SeedHouseholdAsync(HouseholdTier.Aware, DateTimeOffset.Parse("2026-10-01T00:00:00Z"));
+
+        Assert.True(await For(id).IsAiAllowedAsync()); // the allowance is granted as the balance is checked
     }
 }

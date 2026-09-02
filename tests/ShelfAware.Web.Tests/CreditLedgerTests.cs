@@ -12,7 +12,7 @@ public class CreditLedgerTests : IDisposable
     private readonly TestAuthDb _authDb = new();
     private readonly CreditLedger _ledger;
 
-    public CreditLedgerTests() => _ledger = new CreditLedger(_authDb);
+    public CreditLedgerTests() => _ledger = new CreditLedger(_authDb, Microsoft.Extensions.Options.Options.Create(new BillingOptions()));
 
     public void Dispose() => _authDb.Dispose();
 
@@ -83,5 +83,109 @@ public class CreditLedgerTests : IDisposable
         var entry = CreditLedger.WelcomeGrant("hh-a", new BillingOptions { WelcomeGrantDollars = 0m });
 
         Assert.Null(entry);
+    }
+
+    // ---- The lazy per-period Aware allowance + no-rollover (phase 4a, §4) ----
+
+    private static readonly long Allowance = AiPricing.MonthlyAllowanceRetailMicros(new BillingOptions()); // $1 × 1.65
+
+    private async Task<string> SeedHouseholdAsync(HouseholdTier tier, DateTimeOffset? renewsAt)
+    {
+        await using var db = _authDb.CreateDbContext();
+        var h = new Household { Name = "Test", Tier = tier, SubscriptionRenewsAt = renewsAt };
+        db.Households.Add(h);
+        await db.SaveChangesAsync();
+        return h.Id;
+    }
+
+    private async Task SetRenewsAtAsync(string householdId, DateTimeOffset renewsAt)
+    {
+        await using var db = _authDb.CreateDbContext();
+        var h = await db.Households.SingleAsync(x => x.Id == householdId);
+        h.SubscriptionRenewsAt = renewsAt;
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task An_Aware_household_gets_the_monthly_allowance_on_first_check()
+    {
+        var period = DateTimeOffset.Parse("2026-10-01T00:00:00Z");
+        var id = await SeedHouseholdAsync(HouseholdTier.Aware, period);
+
+        await _ledger.EnsureCurrentAllowanceAsync(id);
+
+        Assert.Equal(Allowance, await _ledger.GetBalanceMicrosAsync(id));
+        await using var db = _authDb.CreateDbContext();
+        Assert.Equal(period, (await db.Households.SingleAsync()).AllowanceGrantedForPeriod); // marker set
+    }
+
+    [Fact]
+    public async Task The_allowance_is_idempotent_within_a_period()
+    {
+        var period = DateTimeOffset.Parse("2026-10-01T00:00:00Z");
+        var id = await SeedHouseholdAsync(HouseholdTier.Aware, period);
+
+        await _ledger.EnsureCurrentAllowanceAsync(id);
+        await _ledger.EnsureCurrentAllowanceAsync(id);
+        await _ledger.EnsureCurrentAllowanceAsync(id);
+
+        Assert.Equal(Allowance, await _ledger.GetBalanceMicrosAsync(id)); // one grant, not three
+        await using var db = _authDb.CreateDbContext();
+        Assert.Single(await db.CreditLedger.Where(e => e.Kind == CreditEntryKind.Allowance).ToListAsync());
+    }
+
+    [Fact]
+    public async Task A_non_Aware_household_gets_no_allowance()
+    {
+        var period = DateTimeOffset.Parse("2026-10-01T00:00:00Z");
+        var free = await SeedHouseholdAsync(HouseholdTier.Free, period);
+        var founder = await SeedHouseholdAsync(HouseholdTier.Founder, period);
+
+        await _ledger.EnsureCurrentAllowanceAsync(free);
+        await _ledger.EnsureCurrentAllowanceAsync(founder);
+
+        Assert.Equal(0, await _ledger.GetBalanceMicrosAsync(free));
+        Assert.Equal(0, await _ledger.GetBalanceMicrosAsync(founder));
+    }
+
+    [Fact]
+    public async Task An_Aware_household_with_no_period_gets_no_allowance()
+    {
+        var id = await SeedHouseholdAsync(HouseholdTier.Aware, renewsAt: null);
+
+        await _ledger.EnsureCurrentAllowanceAsync(id);
+
+        Assert.Equal(0, await _ledger.GetBalanceMicrosAsync(id));
+    }
+
+    [Fact]
+    public async Task A_new_period_expires_the_prior_unspent_allowance_and_grants_a_fresh_one()
+    {
+        var id = await SeedHouseholdAsync(HouseholdTier.Aware, DateTimeOffset.Parse("2026-10-01T00:00:00Z"));
+        await _ledger.EnsureCurrentAllowanceAsync(id);                // period 1: +A
+        await _ledger.RecordConsumptionAsync(id, 400_000, "chat");    // spend part of it → A − 400k
+
+        await SetRenewsAtAsync(id, DateTimeOffset.Parse("2026-11-01T00:00:00Z"));
+        await _ledger.EnsureCurrentAllowanceAsync(id);               // period 2: expire the unspent A−400k, grant +A
+
+        // No rollover: the unspent A−400k is swept, so the balance is exactly one fresh allowance.
+        Assert.Equal(Allowance, await _ledger.GetBalanceMicrosAsync(id));
+    }
+
+    [Fact]
+    public async Task Purchases_survive_the_allowance_expiry_when_consumption_dipped_into_them()
+    {
+        var id = await SeedHouseholdAsync(HouseholdTier.Aware, DateTimeOffset.Parse("2026-10-01T00:00:00Z"));
+        await _ledger.GrantAsync(id, 2_000_000, "credit pack");      // persisting money (a Grant persists like a Purchase)
+        await _ledger.EnsureCurrentAllowanceAsync(id);              // +A
+        await _ledger.RecordConsumptionAsync(id, 2_000_000, "big"); // spends all of A, then 350k of the persisting money
+
+        await SetRenewsAtAsync(id, DateTimeOffset.Parse("2026-11-01T00:00:00Z"));
+        await _ledger.EnsureCurrentAllowanceAsync(id);              // A fully spent → expire 0; grant +A
+
+        // Spend-allowance-first: consumption drew all of A, then the 350k OVERFLOW dipped the pack. So the
+        // pack keeps 2,000,000 − 350,000, and the expiry sweeps nothing (A was fully spent); plus the fresh A.
+        var overflow = 2_000_000 - Allowance; // consumption beyond the allowance
+        Assert.Equal((2_000_000 - overflow) + Allowance, await _ledger.GetBalanceMicrosAsync(id));
     }
 }

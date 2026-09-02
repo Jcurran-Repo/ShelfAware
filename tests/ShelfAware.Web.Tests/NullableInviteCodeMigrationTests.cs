@@ -37,7 +37,8 @@ public class NullableInviteCodeMigrationTests : IDisposable
             "BillingCustomerId" TEXT NULL,
             "SubscriptionId" TEXT NULL,
             "SubscriptionRenewsAt" TEXT NULL,
-            "SubscriptionCancelAtPeriodEnd" INTEGER NOT NULL DEFAULT 0/*EXTRAS*/
+            "SubscriptionCancelAtPeriodEnd" INTEGER NOT NULL DEFAULT 0,
+            "AllowanceGrantedForPeriod" TEXT NULL/*EXTRAS*/
         );
         """;
 

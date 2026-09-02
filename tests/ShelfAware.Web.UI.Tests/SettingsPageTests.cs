@@ -91,9 +91,9 @@ public abstract class SettingsTestBase : PageTestContext
         Services.AddSingleton<IEntitlements>(Entitlements);
         Services.AddSingleton(new AiUsageMeter(Factory, Options.Create(ServerLlm),
             Options.Create(new ElevenLabsOptions()), Entitlements, NullLogger<AiUsageMeter>.Instance));
-        Services.AddSingleton(new CreditLedger(authDb));
+        Services.AddSingleton(new CreditLedger(authDb, Options.Create(new ShelfAware.Core.Billing.BillingOptions())));
         Services.AddSingleton(new UserDataService(Factory, household, storage, recipeImages, null,
-            tokens, new CreditLedger(authDb), NullLogger<UserDataService>.Instance));
+            tokens, new CreditLedger(authDb, Options.Create(new ShelfAware.Core.Billing.BillingOptions())), NullLogger<UserDataService>.Instance));
     }
 
     protected override void Dispose(bool disposing)

@@ -88,7 +88,7 @@ public class MeteredChatClientTests : IDisposable
             NullLogger<AiUsageMeter>.Instance);
         var byok = new ByokChatClient(settings, new FakeFactory(_provider));
         var client = new MeteredChatClient(byok, settings, meter, Options.Create(new BillingOptions()),
-            new CreditLedger(_authDb), entitlements, new FakeCurrentHousehold("hh-test"),
+            new CreditLedger(_authDb, Options.Create(new BillingOptions())), entitlements, new FakeCurrentHousehold("hh-test"),
             NullLogger<MeteredChatClient>.Instance);
         return (client, meter);
     }
@@ -160,7 +160,7 @@ public class MeteredChatClientTests : IDisposable
         await AskAsync(client);
 
         // Cost 350 micros (Haiku 100/50) × 1.65 markup = 578 retail micros, stored as a consumption.
-        Assert.Equal(-578, await new CreditLedger(_authDb).GetBalanceMicrosAsync("hh-test"));
+        Assert.Equal(-578, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test"));
     }
 
     [Fact]
@@ -175,7 +175,7 @@ public class MeteredChatClientTests : IDisposable
         var response = await AskAsync(client);
 
         Assert.Equal("ok", response.Text);  // the user still got their answer
-        Assert.Equal(-578, await new CreditLedger(_authDb).GetBalanceMicrosAsync("hh-test")); // money write landed
+        Assert.Equal(-578, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test")); // money write landed
     }
 
     [Fact]
@@ -186,7 +186,7 @@ public class MeteredChatClientTests : IDisposable
         await AskAsync(client);
 
         Assert.Equal(350, (await meter.GetTodayAsync()).CostMicros);                        // cost still recorded
-        Assert.Equal(0, await new CreditLedger(_authDb).GetBalanceMicrosAsync("hh-test"));  // but no credit drawn
+        Assert.Equal(0, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test"));  // but no credit drawn
     }
 
     [Fact]
@@ -196,7 +196,7 @@ public class MeteredChatClientTests : IDisposable
 
         await AskAsync(client);
 
-        Assert.Equal(0, await new CreditLedger(_authDb).GetBalanceMicrosAsync("hh-test")); // their key, their wallet
+        Assert.Equal(0, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test")); // their key, their wallet
     }
 
     [Fact]

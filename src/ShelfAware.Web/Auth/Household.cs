@@ -78,6 +78,14 @@ public class Household
     /// runs out the paid period, data untouched). False by default and for an actively-renewing sub.</summary>
     public bool SubscriptionCancelAtPeriodEnd { get; set; }
 
+    /// <summary>The <see cref="SubscriptionRenewsAt"/> value the current Aware monthly allowance was granted
+    /// for — the idempotency marker for the lazy per-period grant (§4). Null until the first allowance is
+    /// granted (and on any non-Aware household). When it differs from the live <see cref="SubscriptionRenewsAt"/>,
+    /// the period has rolled over: the prior allowance's unspent remainder is swept and a new allowance
+    /// granted (<c>CreditLedger.EnsureCurrentAllowanceAsync</c>). Written only by that lazy grant, via a
+    /// conditional claim so two concurrent checks can't double-grant.</summary>
+    public DateTimeOffset? AllowanceGrantedForPeriod { get; set; }
+
     /// <summary>Whether the code would be accepted right now. A method rather than a property so EF leaves
     /// it alone (it's behaviour, not a column) and so the caller has to name the clock — which is what
     /// makes expiry testable without waiting.</summary>

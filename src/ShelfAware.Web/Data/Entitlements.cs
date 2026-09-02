@@ -9,6 +9,17 @@ public interface IEntitlements
     /// <summary>The current household's tier, or <see cref="HouseholdTier.Free"/> when there is no
     /// signed-in household or the tier can't be read (the safe default — never unlimited by accident).</summary>
     ValueTask<HouseholdTier> GetTierAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>The current household's credit balance in retail micros, read FRESH each call (never the
+    /// per-circuit tier cache — a balance changes on every AI call). The lazy monthly allowance is ensured
+    /// first, so an Aware subscriber's current-period grant is reflected. Zero when there's no signed-in
+    /// household.</summary>
+    ValueTask<long> GetBalanceMicrosAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Whether the current household may make a managed AI call: a <see cref="HouseholdTier"/> that
+    /// <see cref="HouseholdTierExtensions.IsUnlimited"/> (Founder), OR a positive credit balance. The gate
+    /// (phase 4b) consults this before a metered call. Read fresh via <see cref="GetBalanceMicrosAsync"/>.</summary>
+    ValueTask<bool> IsAiAllowedAsync(CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -36,6 +47,7 @@ public interface IEntitlements
 public sealed class Entitlements(
     ICurrentHousehold currentHousehold,
     IDbContextFactory<AuthDbContext> authDb,
+    CreditLedger ledger,
     ILogger<Entitlements> logger) : IEntitlements
 {
     private HouseholdTier? _cached;
@@ -74,5 +86,22 @@ public sealed class Entitlements(
             logger.LogError(ex, "Couldn't resolve the household tier; treating it as Free (limits apply).");
             return HouseholdTier.Free;
         }
+    }
+
+    public async ValueTask<long> GetBalanceMicrosAsync(CancellationToken cancellationToken = default)
+    {
+        var householdId = await currentHousehold.GetIdAsync(cancellationToken);
+        if (householdId is null) return 0;
+        // Lazy per-period grant runs first (idempotent within a period), so an Aware subscriber's current
+        // allowance is in the balance we then read. NOT cached — the balance changes on every AI call.
+        await ledger.EnsureCurrentAllowanceAsync(householdId, cancellationToken);
+        return await ledger.GetBalanceMicrosAsync(householdId, cancellationToken);
+    }
+
+    public async ValueTask<bool> IsAiAllowedAsync(CancellationToken cancellationToken = default)
+    {
+        // Founder is unlimited (skip the balance entirely); everyone else needs credit left.
+        if ((await GetTierAsync(cancellationToken)).IsUnlimited()) return true;
+        return await GetBalanceMicrosAsync(cancellationToken) > 0;
     }
 }

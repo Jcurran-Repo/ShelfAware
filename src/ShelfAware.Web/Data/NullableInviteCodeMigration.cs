@@ -41,7 +41,10 @@ public static class NullableInviteCodeMigration
          // 2026-09-01: subscription state (phase 3 step 1). Same story as the tier columns: AdditiveSchema
          // adds them before this runs, so the rebuild must know them and COPY them across — losing a
          // household's live subscription on an unrelated invite-code migration is exactly the harm guarded.
-         "BillingCustomerId", "SubscriptionId", "SubscriptionRenewsAt", "SubscriptionCancelAtPeriodEnd"];
+         "BillingCustomerId", "SubscriptionId", "SubscriptionRenewsAt", "SubscriptionCancelAtPeriodEnd",
+         // 2026-09-02: the lazy-allowance marker (phase 4a). Same story — AdditiveSchema adds it before this
+         // runs, so the rebuild must know it and COPY it across (an unrelated invite migration must not lose it).
+         "AllowanceGrantedForPeriod"];
 
     public static void Apply(AuthDbContext db)
     {
@@ -84,7 +87,8 @@ public static class NullableInviteCodeMigration
                         "BillingCustomerId" TEXT NULL,
                         "SubscriptionId" TEXT NULL,
                         "SubscriptionRenewsAt" TEXT NULL,
-                        "SubscriptionCancelAtPeriodEnd" INTEGER NOT NULL DEFAULT 0
+                        "SubscriptionCancelAtPeriodEnd" INTEGER NOT NULL DEFAULT 0,
+                        "AllowanceGrantedForPeriod" TEXT NULL
                     );
                     """);
 
@@ -93,8 +97,8 @@ public static class NullableInviteCodeMigration
                 // entitlement/billing state, and this migration retires invite codes, not subscriptions.
                 Execute(conn, tx, """
                     INSERT INTO "Households_new"
-                        ("Id", "Name", "InviteCode", "CreatedAt", "InviteExpiresAt", "InviteMaxUses", "InviteUseCount", "Tier", "FounderSince", "BillingCustomerId", "SubscriptionId", "SubscriptionRenewsAt", "SubscriptionCancelAtPeriodEnd")
-                    SELECT "Id", "Name", NULL, "CreatedAt", NULL, NULL, 0, "Tier", "FounderSince", "BillingCustomerId", "SubscriptionId", "SubscriptionRenewsAt", "SubscriptionCancelAtPeriodEnd" FROM "Households";
+                        ("Id", "Name", "InviteCode", "CreatedAt", "InviteExpiresAt", "InviteMaxUses", "InviteUseCount", "Tier", "FounderSince", "BillingCustomerId", "SubscriptionId", "SubscriptionRenewsAt", "SubscriptionCancelAtPeriodEnd", "AllowanceGrantedForPeriod")
+                    SELECT "Id", "Name", NULL, "CreatedAt", NULL, NULL, 0, "Tier", "FounderSince", "BillingCustomerId", "SubscriptionId", "SubscriptionRenewsAt", "SubscriptionCancelAtPeriodEnd", "AllowanceGrantedForPeriod" FROM "Households";
                     """);
 
                 // DROP takes the old indexes with it; the unique one is recreated below to match

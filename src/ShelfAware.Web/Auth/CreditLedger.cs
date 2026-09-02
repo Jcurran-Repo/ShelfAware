@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Web.Auth;
@@ -14,7 +16,7 @@ namespace ShelfAware.Web.Auth;
 /// would let one long session overspend (the gate flag carried on IEntitlements). Phase 2 does not yet
 /// ENFORCE the balance (no gating); it records and displays it, so the math can be proven on real usage.
 /// </summary>
-public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory)
+public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOptions<BillingOptions> billing, ILogger<CreditLedger>? logger = null)
 {
     /// <summary>The household's balance in retail micros = the sum of its ledger entries (empty → 0).</summary>
     public async Task<long> GetBalanceMicrosAsync(string householdId, CancellationToken cancellationToken = default)
@@ -23,6 +25,103 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory)
         return await db.CreditLedger
             .Where(e => e.HouseholdId == householdId)
             .SumAsync(e => e.AmountMicros, cancellationToken);
+    }
+
+    /// <summary>
+    /// Lazily grant the current billing period's Aware monthly allowance, sweeping the previous period's
+    /// unspent one (no rollover) — docs/subscription-plan.md §4. Called on the entitlement hot path (the
+    /// balance is read right after), so it is idempotent within a period: once
+    /// <see cref="Household.AllowanceGrantedForPeriod"/> equals the live <see cref="Household.SubscriptionRenewsAt"/>,
+    /// it does nothing (and never writes).
+    ///
+    /// Only an <see cref="HouseholdTier.Aware"/> household with a period gets an allowance; the one-time
+    /// welcome grant and purchased credits are separate pools that persist. Consumption spends the allowance
+    /// FIRST, so the swept remainder is exactly the allowance's unspent part and the persisting balance is
+    /// untouched. Concurrency-safe: the period is CLAIMED with a conditional <c>ExecuteUpdate</c> (the
+    /// invite-code pattern) inside a transaction, so of two concurrent first-checks only the winner
+    /// (rows == 1) posts the expiry + grant. auth.db has no query filter, so every statement hand-scopes
+    /// to the household id.
+    /// </summary>
+    public async Task EnsureCurrentAllowanceAsync(string householdId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+
+        // Fast path (no write): only an Aware household that has rolled into a not-yet-granted period does anything.
+        var h = await db.Households.AsNoTracking()
+            .Where(x => x.Id == householdId)
+            .Select(x => new { x.Tier, x.SubscriptionRenewsAt, x.AllowanceGrantedForPeriod })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (h is null || h.Tier != HouseholdTier.Aware) return;
+        var period = h.SubscriptionRenewsAt;
+        if (period is null || h.AllowanceGrantedForPeriod == period) return;
+
+        try
+        {
+            await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+
+            // Claim the period atomically — only the writer whose UPDATE actually changes the marker
+            // (rows == 1) posts entries, so two concurrent first-checks can't both grant. The WHERE
+            // re-asserts tier + period so a state change since the fast-path read can't be granted against.
+            var claimed = await db.Households
+                .Where(x => x.Id == householdId
+                    && x.Tier == HouseholdTier.Aware
+                    && x.SubscriptionRenewsAt == period
+                    && x.AllowanceGrantedForPeriod != period)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.AllowanceGrantedForPeriod, period), cancellationToken);
+            if (claimed == 0) { await tx.RollbackAsync(cancellationToken); return; }
+
+            // No rollover: sweep the prior allowance's unspent remainder BEFORE posting the new one.
+            var unspent = await UnspentAllowanceMicrosAsync(db, householdId, cancellationToken);
+            if (unspent > 0)
+                db.CreditLedger.Add(new CreditLedgerEntry
+                {
+                    HouseholdId = householdId,
+                    Kind = CreditEntryKind.Expiry,
+                    AmountMicros = -unspent,
+                    Reason = "Monthly allowance expired (no rollover)",
+                });
+
+            var allowance = AiPricing.MonthlyAllowanceRetailMicros(billing.Value);
+            if (allowance > 0)
+                db.CreditLedger.Add(new CreditLedgerEntry
+                {
+                    HouseholdId = householdId,
+                    Kind = CreditEntryKind.Allowance,
+                    AmountMicros = allowance,
+                    Reason = "Monthly allowance",
+                });
+
+            await db.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // Best-effort: a lost write race or a transient auth.db error must NOT fail the entitlement check
+            // that called this (that would wrongly block a paying subscriber). The marker isn't committed, so
+            // the NEXT check re-attempts. Logged so a persistent failure is visible.
+            logger?.LogWarning(ex, "Couldn't post the monthly allowance for household {HouseholdId}; the next entitlement check retries.", householdId);
+        }
+    }
+
+    /// <summary>The unspent remainder of the household's CURRENT (most recent) allowance: its amount minus
+    /// the consumption since it was granted (spend-allowance-first, so all later consumption draws it down
+    /// first). Zero when there's no prior allowance, or when consumption has already exhausted it.</summary>
+    private static async Task<long> UnspentAllowanceMicrosAsync(AuthDbContext db, string householdId, CancellationToken cancellationToken)
+    {
+        var lastAllowance = await db.CreditLedger
+            .Where(e => e.HouseholdId == householdId && e.Kind == CreditEntryKind.Allowance)
+            .OrderByDescending(e => e.Id)
+            .Select(e => new { e.Id, e.AmountMicros })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (lastAllowance is null) return 0;
+
+        // Consumption is stored negative, so amount + (sum of negatives) = amount − spent.
+        var consumedSince = await db.CreditLedger
+            .Where(e => e.HouseholdId == householdId && e.Kind == CreditEntryKind.Consumption && e.Id > lastAllowance.Id)
+            .SumAsync(e => e.AmountMicros, cancellationToken);
+        var unspent = lastAllowance.AmountMicros + consumedSince;
+        return unspent > 0 ? unspent : 0;
     }
 
     /// <summary>A household's ledger entries, oldest first (by Id — SQLite can't ORDER BY a

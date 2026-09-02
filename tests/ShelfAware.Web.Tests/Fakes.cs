@@ -13,7 +13,16 @@ internal sealed class FakeEntitlements(HouseholdTier tier = HouseholdTier.Free) 
     /// instance (RegisterAdditionalServices runs before the test body).</summary>
     public HouseholdTier Tier { get; set; } = tier;
 
+    /// <summary>Settable credit balance in retail micros; <see cref="IsAiAllowedAsync"/> mirrors the real
+    /// rule (Founder is unlimited, otherwise a positive balance).</summary>
+    public long BalanceMicros { get; set; }
+
     public ValueTask<HouseholdTier> GetTierAsync(CancellationToken cancellationToken = default) => new(Tier);
+
+    public ValueTask<long> GetBalanceMicrosAsync(CancellationToken cancellationToken = default) => new(BalanceMicros);
+
+    public ValueTask<bool> IsAiAllowedAsync(CancellationToken cancellationToken = default) =>
+        new(Tier.IsUnlimited() || BalanceMicros > 0);
 }
 
 /// <summary>A fixed household, standing in for the scope resolution (claim / circuit auth state) that only
