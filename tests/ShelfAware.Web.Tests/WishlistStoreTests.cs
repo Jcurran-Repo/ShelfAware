@@ -58,7 +58,7 @@ public class WishlistStoreTests : IDisposable
         var newest = DateTimeOffset.Now;
         await store.RecordAsync("shelf", "a@example.com", older);
         await store.RecordAsync("aware", "a@example.com", newest);          // changed their mind → latest wins
-        await store.RecordAsync("souschef", "b@example.com", older.AddDays(-1));
+        await store.RecordAsync("shelf", "b@example.com", older.AddDays(-1));
 
         var contacts = await store.ContactsAsync();
 

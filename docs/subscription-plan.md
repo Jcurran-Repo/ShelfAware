@@ -25,15 +25,18 @@ throughout is now LS's real subscription rate (5.5% + 50¢ — §6).
 |---|---|---|---|---|
 | Free | **Shelf** | $0 | None past the welcome grant (§1/§2) — the full manual app | default |
 | AI | **Aware** | **$2.99/mo · $27.99/yr** | On, on the host's keys, **incl. conversational voice** (chat back-and-forth); includes **~$1.00/mo of AI at cost** | subscription (Lemon Squeezy — §6) |
-| Voice (future add) | **Sous Chef** | ~$4.99/mo · ~$47.99/yr (sketch) | Aware plus the hands-free **cook-along agent** | a later ADDED tier — never a raise (§1) |
 | Founder | **Founder** | $0 | **Unlimited**, usage still recorded | admin toggle (the thank-you tier for early helpers) |
 
-**Voice split revised (2026-08-30, Jordan's call):** the *conversational* voice — talking with it back
-and forth — is cheap enough to sit in **Aware**. **Sous Chef** is specifically the premium hands-free
-**cook-along agent** (the realtime agent that reads the recipe and talks you through cooking). Earlier
-drafts lumped all voice into Sous Chef; that's superseded. Founder stays an admin-granted GIFT — never a
-selectable/purchasable tier (so it's absent from the /about reserve picker; the paid early-supporter
-funnel there is a generic "back it early" link, not "become a Founder").
+**Sous Chef removed — voice folds into Aware (2026-09-02, Jordan's call, supersedes the 2026-08-30 split):**
+there is no separate voice tier. The *conversational* voice — talking with it back and forth — sits in
+**Aware**, and the premium realtime **"Live agent"** cook-along (the ElevenLabs realtime agent) has been
+**hidden** (the rebrand pass), so the feature Sous Chef was going to charge for no longer ships as a paid
+add-on. The **built-in cook-along reader stays free** — only the paid EL realtime agent was retired; a
+future free-voice swap (Jordan's plan) keeps the brain and just changes the TTS/STT seam. The `souschef`
+reserve tier is gone from `WishlistTiers` and `/about`; any reservation stored under it before today stays
+as historical signal (the wishlist `Tier` is a string, never a `HouseholdTier`). Founder stays an
+admin-granted GIFT — never a selectable/purchasable tier (so it's absent from the /about reserve picker;
+the paid early-supporter funnel there is a generic "back it early" link, not "become a Founder").
 
 **Names decided (2026-08-23, "set A" — Jordan: "it's fun"):** the free→paid upgrade reassembles the
 app's name — *your Shelf becomes Aware* — and the voice tier is the cook-along made literal. The doc
@@ -54,15 +57,18 @@ hike, so generosity gets added after real `AiUsage` calibration, not promised up
 **$4.99 was considered and declined for the BASE (2026-08-23):** the sufficiency argument that forced
 $1.99→$2.99 is satisfied at $2.99, pantry-app category anchors are low (AnyList's household plan is
 ~$15/yr), and the one legitimate case for $4.99 — voice *included* in the promise — is a product
-decision that waits for EL instrumentation. Instead it becomes the **future voice-inclusive tier**:
-under the never-raise constraint tiers can always be ADDED, never lifted, so the base launches
-text-centric at $2.99 and the **Sous Chef** tier (~$4.99/mo with a fatter ~$2–2.50 grant) joins later
-if wanted — breaking no promise to anyone.
+decision that waits for EL instrumentation. Under the never-raise constraint tiers can always be ADDED,
+never lifted, so the base launches text-centric at $2.99 and a richer paid voice tier could still be
+ADDED later if wanted — breaking no promise to anyone. ⚠️ **The specific Sous Chef tier that occupied
+this slot was DROPPED (2026-09-02 — see the tier table above):** the realtime Live agent is hidden and
+voice folds into Aware, so there is no planned voice tier today; the mechanism (add-a-tier-later) is what
+survives, not the tier.
 
 **Annual pricing (decided 2026-08-23): steep discount, annual-first posture.** Base **$27.99/yr ≈
 $2.33/mo effective** (Jordan's number; ~22% off — MoR net ~$25.95, floor at full grant use
-**~$1.16/mo**). The future voice tier sketches at **$4.99/mo / ~$47.99/yr ≈ $4.00/mo effective**
-(Jordan's "steep annual, ~$3.99 effective") — the two discounts deliberately rhyme at ~20%.
+**~$1.16/mo**). A possible future voice tier (dropped for now — see above) sketched at **$4.99/mo /
+~$47.99/yr ≈ $4.00/mo effective** (Jordan's "steep annual, ~$3.99 effective") — the two discounts
+deliberately rhyme at ~20%.
 **The discount is cheaper than it looks:** a perfect 12-month monthly subscriber nets ~$27.91/yr
 (twelve fixed fees) vs the annual's ~$25.95 — so the 22% sticker discount costs only **~$2/yr ≈ 7%
 net**, and break-even tenure is ~11.2 months: any monthly subscriber who'd churn before month 11
@@ -478,7 +484,7 @@ judge-by-the-log rule. On the planned separate public box, this doesn't arise.
   fees + payout terms at signup before locking the §3 tables.
 - **Grandfathering: yes** — every current family-box household becomes a Founder, granted by Jordan
   from /admin when phase 1 ships (§5).
-- **Tier names — set A** (§1): **Shelf** / **Aware** / **Sous Chef** / Founder.
+- **Tier names — set A** (§1): **Shelf** / **Aware** / Founder. (Sous Chef was dropped 2026-09-02 — voice folds into Aware, the Live agent is hidden; see §1.)
 - **Credit packs: $5 / $10 / $20, flat rate** — $5 floor because the 50¢ fixed fee makes smaller
   packs wasteful; three options max; deliberately no bulk-bonus games — one honest price per credit
   matches the §1 ethos.

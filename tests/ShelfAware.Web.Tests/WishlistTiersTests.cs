@@ -7,10 +7,11 @@ namespace ShelfAware.Web.Tests;
 public class WishlistTiersTests
 {
     [Fact]
-    public void The_catalog_is_the_three_selectable_tiers_in_ladder_order_each_with_display_copy()
+    public void The_catalog_is_the_two_selectable_tiers_in_ladder_order_each_with_display_copy()
     {
         // Founder is deliberately NOT here — it's the operator's gift to grant, never a reservable choice.
-        Assert.Equal(["shelf", "aware", "souschef"], WishlistTiers.All.Select(t => t.Key).ToArray());
+        // Sous Chef was removed (2026-09-02): voice folds into Aware and the realtime Live agent is hidden.
+        Assert.Equal(["shelf", "aware"], WishlistTiers.All.Select(t => t.Key).ToArray());
         Assert.All(WishlistTiers.All, t =>
         {
             Assert.False(string.IsNullOrWhiteSpace(t.Name));
@@ -40,7 +41,8 @@ public class WishlistTiersTests
     public void IsValidKey_accepts_selectable_tiers_and_refuses_everything_else()
     {
         Assert.True(WishlistTiers.IsValidKey("shelf"));
-        Assert.True(WishlistTiers.IsValidKey("souschef"));
+        Assert.True(WishlistTiers.IsValidKey("aware"));
+        Assert.False(WishlistTiers.IsValidKey("souschef")); // removed 2026-09-02 — no longer reservable
         Assert.False(WishlistTiers.IsValidKey("enterprise")); // not a tier
         Assert.False(WishlistTiers.IsValidKey(""));
         Assert.False(WishlistTiers.IsValidKey(null));

@@ -15,11 +15,12 @@ public class WishlistEntry
 {
     public int Id { get; set; }
 
-    /// <summary>The tier the person said they'd want — a <see cref="WishlistTiers"/> key
-    /// ("shelf"/"aware"/"souschef"/"founder"), validated against that catalog before it's stored so a
-    /// tampered form can't write an arbitrary string. Marketing INTENT, not an entitlement grant —
-    /// deliberately a string, not <see cref="ShelfAware.Web.Auth.HouseholdTier"/> (which has no
-    /// Aware/Sous Chef yet).</summary>
+    /// <summary>The tier the person said they'd want — a <see cref="WishlistTiers"/> key ("shelf"/"aware"),
+    /// validated against that catalog before it's stored so a tampered form can't write an arbitrary string.
+    /// Marketing INTENT, not an entitlement grant — deliberately a string, not
+    /// <see cref="ShelfAware.Web.Auth.HouseholdTier"/> (the enforcement enum), so a reservation for a tier
+    /// that later changes (e.g. the retired Sous Chef) stays readable historical signal, never a dangling
+    /// enum value.</summary>
     public required string Tier { get; set; }
 
     /// <summary>Optional "notify me" address. Null/empty = an anonymous interest click. When present it
