@@ -36,12 +36,24 @@ public class AiErrorTextTests
     }
 
     [Fact]
-    public async Task Managed_with_no_credit_reports_out_of_credits()
+    public async Task Managed_Aware_with_no_credit_says_top_up()
     {
+        // An Aware subscriber CAN buy a credit pack, so the out-of-credits message names that.
         var reason = await AiErrorText.BlockedReasonAsync(
-            new FakeEntitlements { BalanceMicros = 0 }, Managed());
+            new FakeEntitlements(HouseholdTier.Aware) { BalanceMicros = 0 }, Managed());
 
         Assert.Equal(AiErrorText.OutOfCredits, reason);
+    }
+
+    [Fact]
+    public async Task Managed_Free_with_no_credit_says_subscribe()
+    {
+        // A Free household CANNOT buy packs (subscribers-only), so it's told to subscribe, not "add a pack"
+        // (item 36: never name an act the household can't take).
+        var reason = await AiErrorText.BlockedReasonAsync(
+            new FakeEntitlements(HouseholdTier.Free) { BalanceMicros = 0 }, Managed());
+
+        Assert.Equal(AiErrorText.SubscribeToUse, reason);
     }
 
     [Fact]

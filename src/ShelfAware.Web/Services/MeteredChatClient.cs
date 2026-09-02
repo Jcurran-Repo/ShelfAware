@@ -113,8 +113,9 @@ public sealed class MeteredChatClient(
     /// <summary>Draw the household's credit balance down by this call's RETAIL cost — but only for a
     /// household that actually spends host credits: a MANAGED deployment (BYOK visitors ride their own
     /// key) and a NON-unlimited tier (a Founder's cost is recorded above for the operator, but they never
-    /// spend credit). Mirrors the meter's gate exemption. Phase 2 RECORDS consumption; it does not yet
-    /// ENFORCE the balance (gating is phase 4) — so no balance is read on this hot path.</summary>
+    /// spend credit). Mirrors the meter's gate exemption. This RECORDS consumption; the balance ENFORCEMENT
+    /// is <see cref="EnsureManagedCallAllowedAsync"/> (phase 4b), which runs BEFORE the call — so this
+    /// post-call hot path reads no balance.</summary>
     private async Task RecordCreditConsumptionAsync(long costMicros, string? model, CancellationToken cancellationToken)
     {
         if (!settings.Managed || costMicros <= 0) return;

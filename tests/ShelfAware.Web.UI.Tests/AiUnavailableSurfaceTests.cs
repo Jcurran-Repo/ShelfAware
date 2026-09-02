@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using ShelfAware.Llm;
+using ShelfAware.Web.Auth;
 using ShelfAware.Web.Components.Pages;
 using ShelfAware.Web.Data;
 using ShelfAware.Web.Services;
@@ -21,10 +22,11 @@ public class AiUnavailableSurfaceTests : PageTestContext
 {
     protected override void RegisterAdditionalServices()
     {
-        // A managed deployment (the server key is authoritative), out of credits — the exact state the
-        // token gate enforces. This overrides the base harness's AI-available default.
+        // A managed deployment (the server key is authoritative), an Aware subscriber out of credits — the
+        // exact state the token gate enforces (Aware → the "add a credit pack" message; a Free household
+        // would get "subscribe" instead — see AiErrorTextTests). Overrides the base harness's AI-available default.
         Services.AddSingleton(new CircuitAiSettings(Options.Create(new LlmOptions { KeyMode = "managed", ApiKey = "server-key" })));
-        Services.AddSingleton<IEntitlements>(new FakeEntitlements()); // Free, zero balance → not allowed
+        Services.AddSingleton<IEntitlements>(new FakeEntitlements(HouseholdTier.Aware)); // zero balance → not allowed
     }
 
     [Fact]

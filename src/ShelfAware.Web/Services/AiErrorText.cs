@@ -1,3 +1,4 @@
+using ShelfAware.Web.Auth;
 using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.Services;
@@ -17,19 +18,27 @@ namespace ShelfAware.Web.Services;
 /// </summary>
 public static class AiErrorText
 {
+    // Aware: has a subscription, so packs are the way to keep going. Only shown to an Aware household — a
+    // Free one can't buy packs (they're subscribers-only), so it gets SubscribeToUse instead.
     public const string OutOfCredits = "You're out of AI credits for now — add a credit pack in Settings to keep going.";
+    public const string SubscribeToUse = "You've used up the free AI trial — subscribe in Settings to keep using it.";
     public const string NoKey = "AI isn't set up yet — add an API key in Settings to use this (bring your own, or subscribe for managed keys).";
 
     /// <summary>The pre-call gate for a UI surface: null when this circuit may make an AI call now, otherwise
-    /// the reason to SHOW (and skip the attempt). A managed household needs a positive balance or an unlimited
-    /// tier (<see cref="IEntitlements.IsAiAllowedAsync"/>, which also runs the lazy allowance); a BYOK/self-host
-    /// circuit just needs a key. Enforcement lives in <see cref="MeteredChatClient"/> — this only turns a
-    /// refusal into a message and avoids a doomed call.</summary>
+    /// the reason to SHOW (and skip the attempt). A managed household is allowed when billing is off (§7),
+    /// unlimited (Founder), or in credit (<see cref="IEntitlements.IsAiAllowedAsync"/>, which also runs the
+    /// lazy allowance); when blocked, the next step is tier-specific — a Free trial is spent (subscribe),
+    /// an Aware balance is spent (top up). A BYOK/self-host circuit just needs a key. Enforcement lives in
+    /// <see cref="MeteredChatClient"/> — this only turns a refusal into a message and avoids a doomed call.</summary>
     public static async ValueTask<string?> BlockedReasonAsync(
         IEntitlements entitlements, CircuitAiSettings settings, CancellationToken cancellationToken = default)
     {
         if (settings.Managed)
-            return await entitlements.IsAiAllowedAsync(cancellationToken) ? null : OutOfCredits;
+        {
+            if (await entitlements.IsAiAllowedAsync(cancellationToken)) return null;
+            // Blocked on a billing-enabled managed box: name the act the household can actually take.
+            return await entitlements.GetTierAsync(cancellationToken) == HouseholdTier.Aware ? OutOfCredits : SubscribeToUse;
+        }
         return settings.HasKey ? null : NoKey;
     }
 }

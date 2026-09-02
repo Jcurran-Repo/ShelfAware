@@ -39,9 +39,9 @@ admin-granted GIFT — never a selectable/purchasable tier (so it's absent from 
 the paid early-supporter funnel there is a generic "back it early" link, not "become a Founder").
 
 **Names decided (2026-08-23, "set A" — Jordan: "it's fun"):** the free→paid upgrade reassembles the
-app's name — *your Shelf becomes Aware* — and the voice tier is the cook-along made literal. The doc
-below keeps descriptive labels (Free tier / AI tier / voice tier) for clarity; the display names are
-what surfaces render.
+app's name — *your Shelf becomes Aware*. (The set once had a third "voice tier" — Sous Chef, the
+cook-along made literal — dropped 2026-09-02; see §1.) The doc below keeps descriptive labels
+(Free tier / AI tier) for clarity; the display names are what surfaces render.
 
 **Why $2.99, not the $1.99 first floated (decided 2026-08-23):** Jordan's constraint is *never raise
 prices on early supporters*, and $1.99 couldn't keep that promise — its margin floor after payment

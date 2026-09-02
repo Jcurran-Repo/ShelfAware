@@ -572,23 +572,16 @@ public class SettingsManagedModeTests : SettingsTestBase
     }
 
     [Fact]
-    public void A_managed_household_sees_its_credit_balance()
+    public void A_managed_box_without_billing_hides_the_credit_balance()
     {
-        AuthContext.CreditLedger.Add(new CreditLedgerEntry
-        {
-            HouseholdId = AuthHousehold, Kind = CreditEntryKind.Grant, AmountMicros = 1_650_000, Reason = "Welcome grant",
-        });
-        AuthContext.CreditLedger.Add(new CreditLedgerEntry
-        {
-            HouseholdId = AuthHousehold, Kind = CreditEntryKind.Consumption, AmountMicros = -150_000, Reason = "chat",
-        });
-        AuthContext.SaveChanges();
+        // #5: the credit balance is a BILLING feature. On a managed box with billing OFF (self-host / dev /
+        // family — §7 "unlimited by default"), nothing spends credits, so the panel is hidden even with a
+        // balance present. (Mutation guard for the Payments.IsConfigured condition on the balance line.)
+        Entitlements.BalanceMicros = 1_500_000;
 
         var section = Section(RenderSettings(), "AI usage");
 
-        // $1.65 grant − $0.15 consumed = $1.50 balance (same culture both sides).
-        Assert.Contains("Credit balance", section.TextContent);
-        Assert.Contains(1.50m.ToString("C2"), section.TextContent);
+        Assert.DoesNotContain("Credit balance", section.TextContent);
     }
 }
 
@@ -626,6 +619,20 @@ public class SettingsBillingPanelTests : SettingsTestBase
     {
         var billing = Section(RenderSettings(), "Subscription");
         Assert.DoesNotContain("Aware now", billing.TextContent);
+    }
+
+    [Fact]
+    public void A_managed_household_with_billing_sees_its_credit_balance()
+    {
+        // With billing ON, the balance shows. Settings reads it via IEntitlements.GetBalanceMicrosAsync
+        // (the ONE definition that runs the lazy allowance) — so the test drives the fake's balance, not
+        // raw ledger rows, which is exactly the wiring #5 corrected.
+        Entitlements.BalanceMicros = 1_500_000;
+
+        var section = Section(RenderSettings(), "AI usage");
+
+        Assert.Contains("Credit balance", section.TextContent);
+        Assert.Contains(1.50m.ToString("C2"), section.TextContent); // $1.50, same culture both sides
     }
 
     [Fact]

@@ -7,6 +7,8 @@
 @inject MealPlanService Planner
 @inject IMealPlanJobs Jobs
 @inject ICurrentHousehold Household
+@inject IEntitlements Entitlements
+@inject CircuitAiSettings AiSettings
 @inject ILogger<MealPlanPage> Logger
 
 <PageTitle>Meal Plan — Reginald</PageTitle>
@@ -287,6 +289,8 @@ else if (!generating)
         rerollingMealId = plannedMealId;
         error = null;
         note = null;
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        if (blocked is not null) { error = blocked; rerollingMealId = null; return; }
         try
         {
             var result = await Planner.RerollAsync(plannedMealId);
@@ -419,6 +423,12 @@ else if (!generating)
         if (generating || householdId is null) return;
         error = null;
         note = null;
+
+        // Phase 4c: generation is a batch of AI calls in a detached job that fails soft (retries, returns
+        // []); a blocked circuit would just read "couldn't generate — try again". Say the real reason and
+        // don't start the doomed job.
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        if (blocked is not null) { error = blocked; return; }
 
         var mealEntries = meals.Count > 0
             ? meals.Select(m => new MealEntry { Slot = m.Slot, Calories = m.Calories, Effort = m.Effort }).ToList()

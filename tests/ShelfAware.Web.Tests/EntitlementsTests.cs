@@ -52,9 +52,10 @@ public class EntitlementsTests : IDisposable
         return household.Id;
     }
 
-    private Entitlements For(string? householdId) =>
+    private Entitlements For(string? householdId, bool paymentsEnabled = true) =>
         new(new FixedHousehold(householdId), _auth,
             new CreditLedger(_auth, Microsoft.Extensions.Options.Options.Create(new ShelfAware.Core.Billing.BillingOptions())),
+            Microsoft.Extensions.Options.Options.Create(new ShelfAware.Web.Billing.PaymentsOptions { Enabled = paymentsEnabled }),
             NullLogger<Entitlements>.Instance);
 
     [Fact]
@@ -109,6 +110,7 @@ public class EntitlementsTests : IDisposable
         var flaky = new FailOnceAuthFactory(_auth);
         var entitlements = new Entitlements(new FixedHousehold(id), flaky,
             new CreditLedger(_auth, Microsoft.Extensions.Options.Options.Create(new ShelfAware.Core.Billing.BillingOptions())),
+            Microsoft.Extensions.Options.Options.Create(new ShelfAware.Web.Billing.PaymentsOptions { Enabled = true }),
             NullLogger<Entitlements>.Instance);
 
         // First call: the factory throws → Free, and the errored result is not cached.
@@ -187,5 +189,17 @@ public class EntitlementsTests : IDisposable
         var id = await SeedHouseholdAsync(HouseholdTier.Aware, DateTimeOffset.Parse("2026-10-01T00:00:00Z"));
 
         Assert.True(await For(id).IsAiAllowedAsync()); // the allowance is granted as the balance is checked
+    }
+
+    [Fact]
+    public async Task With_billing_off_a_household_is_allowed_even_with_no_balance()
+    {
+        // ⚠️ §7: a managed box with no Payments config (self-host / dev / the family box) does NOT apply the
+        // credit system — managed AI is unlimited by default. This is what keeps the gate from walling a box
+        // that has a server key (which alone makes CircuitAiSettings.Managed true) but never enabled billing.
+        var id = await SeedHouseholdAsync(HouseholdTier.Free);
+
+        Assert.False(await For(id, paymentsEnabled: true).IsAiAllowedAsync());  // billing ON → Free with no credit is gated
+        Assert.True(await For(id, paymentsEnabled: false).IsAiAllowedAsync());  // billing OFF → unlimited by default
     }
 }

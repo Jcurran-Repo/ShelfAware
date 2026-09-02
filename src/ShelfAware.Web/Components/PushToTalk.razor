@@ -126,19 +126,9 @@
             return;
         }
 
-        // STT -> chat brain -> TTS. The brain is the existing tested tool-loop, untouched.
-        var heard = await Stt.TranscribeAsync(new AudioClip(Convert.FromBase64String(capture.Audio), capture.MimeType));
-        if (!heard.Success || string.IsNullOrWhiteSpace(heard.Text))
-        {
-            Finish(error: true, reply: "Sorry — I couldn't make out the audio.");
-            return;
-        }
-
-        _transcript = heard.Text;
-        StateHasChanged();
-
-        // Phase 4c: say the real reason (no key / out of credits) rather than the brain's wrapped
-        // "couldn't reach the assistant" it returns when the gate refuses the call.
+        // Phase 4c: check BEFORE the paid STT call — a blocked circuit (no key / out of credits) never
+        // spends a host-key transcription on a doomed turn; say the real reason instead of the brain's
+        // wrapped "couldn't reach the assistant".
         var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
         if (blocked is not null)
         {
@@ -149,6 +139,17 @@
             StateHasChanged();
             return;
         }
+
+        // STT -> chat brain -> TTS. The brain is the existing tested tool-loop, untouched.
+        var heard = await Stt.TranscribeAsync(new AudioClip(Convert.FromBase64String(capture.Audio), capture.MimeType));
+        if (!heard.Success || string.IsNullOrWhiteSpace(heard.Text))
+        {
+            Finish(error: true, reply: "Sorry — I couldn't make out the audio.");
+            return;
+        }
+
+        _transcript = heard.Text;
+        StateHasChanged();
 
         var result = await Chat.HandleAsync(heard.Text);
         _reply = result.Reply;
