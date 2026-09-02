@@ -745,8 +745,10 @@ app.MapGet("/api/cookalong/signed-url", async (HttpContext ctx, IHttpClientFacto
 {
     // The ElevenLabs realtime "Live agent" is disabled for now (2026-09) behind Voice:LiveAgentEnabled
     // (default off) — see Recipes.razor's CookAlongAvailable. Gated here too so a direct request can't
-    // mint a realtime session while the UI option is hidden. Flip the flag to bring it back.
-    if (!config.GetValue<bool>("Voice:LiveAgentEnabled"))
+    // mint a realtime session while the UI option is hidden. Flip the flag to bring it back. Parse it the
+    // SAME tolerant way the UI does (bool.TryParse — a non-boolean value reads as off rather than 500ing),
+    // so the endpoint and the button can never disagree about what "on" means.
+    if (!(bool.TryParse(config["Voice:LiveAgentEnabled"], out var liveAgentEnabled) && liveAgentEnabled))
         return Results.Problem("The live cook-along agent is currently disabled.", statusCode: StatusCodes.Status503ServiceUnavailable);
 
     // Managed deployment: the host's voice key is authoritative — ignore any header a browser sends.
