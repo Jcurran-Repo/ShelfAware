@@ -71,7 +71,7 @@ public class MeteredChatClientTests : IDisposable
 
     private (MeteredChatClient client, AiUsageMeter meter) Build(
         string keyMode, int? dailyCalls = null, long? dailyTokens = null, int? dailyMints = null,
-        HouseholdTier tier = HouseholdTier.Free)
+        HouseholdTier tier = HouseholdTier.Free, long balanceMicros = 100_000_000)
     {
         var llm = Options.Create(new LlmOptions
         {
@@ -81,7 +81,9 @@ public class MeteredChatClientTests : IDisposable
             DailyTokenLimit = dailyTokens,
         });
         var settings = new CircuitAiSettings(llm);
-        var entitlements = new FakeEntitlements(tier);
+        // Default "plenty" so a recording/metering test's managed call is allowed by the phase-4b gate; a
+        // gate test sets balanceMicros: 0 to exercise the refusal.
+        var entitlements = new FakeEntitlements(tier) { BalanceMicros = balanceMicros };
         var meter = new AiUsageMeter(_db, llm,
             Options.Create(new ElevenLabsOptions { DailySignedUrlLimit = dailyMints }),
             entitlements,
@@ -197,6 +199,66 @@ public class MeteredChatClientTests : IDisposable
         await AskAsync(client);
 
         Assert.Equal(0, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test")); // their key, their wallet
+    }
+
+    // ---- The AI-allowed gate: phase 4b refuses a managed call the household can't pay for ----
+
+    [Fact]
+    public async Task A_managed_household_with_no_credit_is_refused_before_the_call()
+    {
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free, balanceMicros: 0);
+
+        await Assert.ThrowsAsync<AiCreditsExhaustedException>(() => AskAsync(client));
+
+        Assert.Equal(0, _provider.Calls); // refused BEFORE the provider call — nothing spent
+        Assert.Equal(0, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test")); // nothing recorded
+    }
+
+    [Fact]
+    public async Task A_managed_household_with_credit_is_allowed()
+    {
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free, balanceMicros: 1_000_000);
+
+        var response = await AskAsync(client);
+
+        Assert.Equal("ok", response.Text);
+        Assert.Equal(1, _provider.Calls);
+    }
+
+    [Fact]
+    public async Task A_founder_with_no_credit_is_never_refused()
+    {
+        var (client, _) = Build("Managed", tier: HouseholdTier.Founder, balanceMicros: 0);
+
+        var response = await AskAsync(client);
+
+        Assert.Equal("ok", response.Text); // unlimited — the balance is never consulted
+        Assert.Equal(1, _provider.Calls);
+    }
+
+    [Fact]
+    public async Task A_BYOK_circuit_with_no_credit_is_never_gated()
+    {
+        var (client, _) = Build("Byok", tier: HouseholdTier.Free, balanceMicros: 0);
+
+        var response = await AskAsync(client);
+
+        Assert.Equal("ok", response.Text); // their key, their wallet — no managed gate
+        Assert.Equal(1, _provider.Calls);
+    }
+
+    [Fact]
+    public async Task The_streaming_path_also_refuses_an_exhausted_managed_household()
+    {
+        // The gate guards the streaming path too, so a future streaming service can't slip past it.
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free, balanceMicros: 0);
+
+        await Assert.ThrowsAsync<AiCreditsExhaustedException>(async () =>
+        {
+            await foreach (var _ in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "hi")])) { }
+        });
+
+        Assert.Equal(0, _provider.Calls); // refused before the stream opened
     }
 
     [Fact]

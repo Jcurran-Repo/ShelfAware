@@ -27,10 +27,7 @@ public sealed class MeteredChatClient(
     public async Task<ChatResponse> GetResponseAsync(
         IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
-        if (settings.Managed)
-        {
-            await meter.EnsureLlmCallAllowedAsync(cancellationToken);
-        }
+        await EnsureManagedCallAllowedAsync(cancellationToken);
         var response = await inner.GetResponseAsync(messages, options, cancellationToken);
         // Prefer the model the provider REPORTED; fall back to the one we REQUESTED before AiPricing's own
         // priciest-tier fallback — so a provider that doesn't echo the model still prices at the real
@@ -43,10 +40,7 @@ public sealed class MeteredChatClient(
         IEnumerable<ChatMessage> messages, ChatOptions? options = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        if (settings.Managed)
-        {
-            await meter.EnsureLlmCallAllowedAsync(cancellationToken);
-        }
+        await EnsureManagedCallAllowedAsync(cancellationToken);
         UsageDetails? usage = null;
         string? model = null;
         await foreach (var update in inner.GetStreamingResponseAsync(messages, options, cancellationToken))
@@ -62,6 +56,19 @@ public sealed class MeteredChatClient(
         }
         // Reported model, then the requested one (see GetResponseAsync), then AiPricing's fallback.
         await RecordAsync(usage, model ?? options?.ModelId, cancellationToken);
+    }
+
+    /// <summary>The managed-call gate, consulted BEFORE the provider call (phase 4b). BYOK circuits skip it
+    /// entirely (their key, their wallet). For a managed household: the optional daily abuse-valve cap, then
+    /// the tier + credit-balance check — a Founder is unlimited, everyone else needs a positive balance
+    /// (<see cref="IEntitlements.IsAiAllowedAsync"/>, which also runs the lazy monthly allowance first). Throws
+    /// to refuse — the provider call never happens, so nothing is spent or recorded.</summary>
+    private async Task EnsureManagedCallAllowedAsync(CancellationToken cancellationToken)
+    {
+        if (!settings.Managed) return;
+        await meter.EnsureLlmCallAllowedAsync(cancellationToken);
+        if (!await entitlements.IsAiAllowedAsync(cancellationToken))
+            throw new AiCreditsExhaustedException();
     }
 
     private async Task RecordAsync(UsageDetails? usage, string? model, CancellationToken cancellationToken)
