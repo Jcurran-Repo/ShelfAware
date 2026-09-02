@@ -114,21 +114,24 @@ public sealed class PaymentWebhookHandler(
             return WebhookOutcome.AlreadyProcessed;
 
         if (supersededSubscriptionId is not null)
-            await CancelSupersededAsync(supersededSubscriptionId, cancellationToken);
+            await CancelSupersededAsync(supersededSubscriptionId);
 
         return WebhookOutcome.Applied;
     }
 
-    /// <summary>Cancel a subscription a new checkout replaced — best-effort, AFTER the commit. A failure is
-    /// logged, not fatal: the new subscription is already active, and the old one can be cancelled from the
-    /// provider dashboard. Never lets a provider hiccup fail an event we've already applied.</summary>
-    private async Task CancelSupersededAsync(string subscriptionId, CancellationToken cancellationToken)
+    /// <summary>Cancel a subscription a new checkout replaced — best-effort, AFTER the commit. ⚠️ Runs on
+    /// <see cref="CancellationToken.None"/>, NOT the endpoint's token: this is a WRITE that must complete
+    /// (CLAUDE.md item 39, "a read may be cancelled when the visitor leaves; a write may not"). If it ran on
+    /// the request token and that fired between the commit and this call, the event would already be recorded
+    /// as processed, so the retry short-circuits on idempotency and the old subscription is NEVER cancelled —
+    /// the household is billed twice, silently. Any failure is logged, not fatal: the new subscription is
+    /// already active, and the old one can be cancelled from the provider dashboard.</summary>
+    private async Task CancelSupersededAsync(string subscriptionId)
     {
         try
         {
-            await provider.CancelSubscriptionAsync(subscriptionId, cancellationToken);
+            await provider.CancelSubscriptionAsync(subscriptionId, CancellationToken.None);
         }
-        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             logger.LogError(ex,
@@ -212,8 +215,9 @@ public sealed class PaymentWebhookHandler(
             case PaymentEventKind.SubscriptionCancelled:
                 // The subscription has ended. Tier drops to Free — a POSTURE, so nothing is deleted (§6),
                 // and purchased credits survive (the ledger is untouched). The customer id is kept so the
-                // household can re-subscribe or reach the portal.
-                household.Tier = HouseholdTier.Free;
+                // household can re-subscribe or reach the portal. A Founder is exempt (SetTierFromPayment):
+                // an operator comp is not revoked by the end of a subscription the household also happened to have.
+                SetTierFromPayment(household, HouseholdTier.Free, webhookEvent);
                 household.SubscriptionId = null;
                 household.SubscriptionRenewsAt = null;
                 household.SubscriptionCancelAtPeriodEnd = false;
@@ -237,13 +241,34 @@ public sealed class PaymentWebhookHandler(
         }
     }
 
-    private static void ActivateSubscription(Household household, PaymentWebhookEvent webhookEvent)
+    private void ActivateSubscription(Household household, PaymentWebhookEvent webhookEvent)
     {
-        household.Tier = HouseholdTier.Aware;
+        // A Founder stays a Founder (SetTierFromPayment) — the subscription metadata below still tracks, but a
+        // payment event never promotes/demotes an operator comp.
+        SetTierFromPayment(household, HouseholdTier.Aware, webhookEvent);
         if (webhookEvent.BillingCustomerId is not null) household.BillingCustomerId = webhookEvent.BillingCustomerId;
         if (webhookEvent.SubscriptionId is not null) household.SubscriptionId = webhookEvent.SubscriptionId;
         if (webhookEvent.PeriodEnd is not null) household.SubscriptionRenewsAt = webhookEvent.PeriodEnd;
         household.SubscriptionCancelAtPeriodEnd = webhookEvent.CancelAtPeriodEnd;
+    }
+
+    /// <summary>Set the household's tier from a payment event — UNLESS it is a <see cref="HouseholdTier.Founder"/>.
+    /// A Founder is an operator's comp (unlimited, "billing doesn't apply", §5), and the invariant is "only
+    /// Founder is unlimited, and always will be". A payment event must
+    /// never change it: an Aware subscriber comped to Founder KEEPS its SubscriptionId (the admin write is
+    /// column-scoped by design), so its own renewal/cancel events resolve here and would otherwise silently
+    /// flip Founder→Aware/Free — with no in-app signal, since a Founder isn't shown the billing portal. Two
+    /// writers to one fact; this guard is the one place the money side yields to the operator side.</summary>
+    private void SetTierFromPayment(Household household, HouseholdTier tier, PaymentWebhookEvent webhookEvent)
+    {
+        if (household.Tier == HouseholdTier.Founder)
+        {
+            logger.LogWarning(
+                "Payment webhook {EventId} ({Kind}) would set tier {Tier} on a FOUNDER household {HouseholdId} — skipped; an operator comp is not changed by a payment event.",
+                webhookEvent.EventId, webhookEvent.Kind, tier, household.Id);
+            return;
+        }
+        household.Tier = tier;
     }
 
     private static ProcessedPaymentEvent Record(PaymentWebhookEvent webhookEvent, string? householdId) => new()

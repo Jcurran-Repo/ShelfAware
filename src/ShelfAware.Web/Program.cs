@@ -332,13 +332,20 @@ builder.Services.Configure<ShelfAware.Web.Wishlist.WishlistOptions>(
 // exist — today's behaviour exactly. Only the fake adapter is wired today; selecting the real provider
 // before its adapter ships (step 5) fails startup with a clear message rather than half-working.
 var paymentsEnabled = builder.Configuration.GetValue<bool>("Payments:Enabled");
-// The FAKE provider's stand-in "hosted checkout" pages (below) exist only where it's the active provider —
-// a real deployment (Provider=StripeManagedPayments) redirects to the provider's own page, so these pages
-// must not be mapped there. Default (unset) provider is Fake.
-var fakePayments = paymentsEnabled &&
-    !string.Equals(builder.Configuration["Payments:Provider"], nameof(PaymentProviderKind.StripeManagedPayments), StringComparison.OrdinalIgnoreCase);
+var isDevelopment = builder.Environment.IsDevelopment();
+// The FAKE provider + its stand-in "hosted checkout" pages (below) are Development-ONLY — they mint Aware/
+// credits with no charge, so they must never be reachable on a real box (a config typo on Provider must not
+// hand out free subscriptions). PaymentsOptions.FakeProviderAllowed folds in IsDevelopment (the DevAuth
+// pattern); a real deployment uses Provider=StripeManagedPayments and redirects to the provider's own page.
+var fakePayments = PaymentsOptions.FakeProviderAllowed(paymentsEnabled, builder.Configuration["Payments:Provider"], isDevelopment);
 builder.Services.AddOptions<PaymentsOptions>()
     .Bind(builder.Configuration.GetSection(PaymentsOptions.SectionName))
+    // The fake mints paid entitlements for free — refuse to BOOT a non-Development box that enables payments
+    // on it (Provider unset defaults to Fake), so a misconfigured prod box fails fast with a clear message
+    // rather than silently arming the free-grant surface. Mirrors DevAuth's Development-only guarantee.
+    .Validate(o => !o.Enabled || o.Provider != PaymentProviderKind.Fake || isDevelopment,
+        "Payments:Provider=Fake is Development-only (it grants Aware/credits with no charge). A non-Development " +
+        "box with Payments:Enabled must set Payments:Provider=StripeManagedPayments.")
     .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.WebhookSigningSecret),
         "Payments:WebhookSigningSecret is required when Payments:Enabled — the webhook endpoint verifies each " +
         "event's signature against it, and there is deliberately no default (a hard-coded fallback would be a " +
@@ -514,6 +521,14 @@ builder.Services.AddRateLimiter(o =>
         RateLimitPartition.GetFixedWindowLimiter(
             ctx.User.FindFirst(ApiTokenAuthenticationHandler.TokenIdClaim)?.Value ?? "unknown",
             _ => new FixedWindowRateLimiterOptions { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+    // The hosted-redirect billing endpoints each mint a real Stripe session (an outbound API call + a
+    // dashboard-visible object), so they get the same brake every other outbound-call endpoint here has.
+    // Keyed per USER (with IP fallback) like the graphql policy — prod sits behind a proxy, so per-IP would
+    // bucket everyone together. 20/min is generous for a real member (who clicks Subscribe/Manage once).
+    o.AddPolicy("billing", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ctx.User.Identity?.Name ?? ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
     // Credential endpoints get a per-IP brake on top of Identity's per-account lockout: lockout
     // protects one account from many guesses, this protects all accounts from one hammering IP.
     // Razor-component form posts aren't attachable endpoints for a named policy, so the global
@@ -900,12 +915,29 @@ app.MapPost("/api/pantry-photo/read", async (
 if (paymentsEnabled)
 {
     app.MapPost("/api/payments/webhook", async (
-        HttpRequest request, IPaymentProvider provider, PaymentWebhookHandler handler,
+        HttpContext ctx, IPaymentProvider provider, PaymentWebhookHandler handler,
         ILoggerFactory logs, CancellationToken ct) =>
     {
+        // Cap the body on this PUBLIC, unauthenticated endpoint. A real provider event is a few KB; 1 MB is
+        // generous for even a large one while bounding an anonymous flood before it's read into memory.
+        // (Signature verification already runs before any DB work, so a forgery can't reach the ledger — this
+        // just closes the unbounded-read memory vector.)
+        var bodySize = ctx.Features.Get<IHttpMaxRequestBodySizeFeature>();
+        if (bodySize is { IsReadOnly: false }) bodySize.MaxRequestBodySize = 1024 * 1024;
+
+        var request = ctx.Request;
         string payload;
-        using (var reader = new StreamReader(request.Body))
+        try
+        {
+            using var reader = new StreamReader(request.Body);
             payload = await reader.ReadToEndAsync(ct);
+        }
+        catch (Microsoft.AspNetCore.Http.BadHttpRequestException)
+        {
+            // Over the cap — a JSON body so UseStatusCodePages doesn't re-execute an empty 413 into the
+            // antiforgery /not-found trap (item 54). A legitimate event is never this large.
+            return Results.Json(new { error = "payload too large" }, statusCode: StatusCodes.Status413PayloadTooLarge);
+        }
 
         var signature = request.Headers[provider.SignatureHeaderName].ToString();
         var parse = provider.ParseWebhook(payload, signature);
@@ -948,9 +980,13 @@ if (paymentsEnabled)
         if (!Enum.TryParse<BillingProduct>(product, out var prod) || !Enum.IsDefined(prod))
             return Results.Redirect("/settings"); // an unknown/smuggled product — refuse, don't guess
 
+        var tier = await entitlements.GetTierAsync(ct);
+        // A Founder is comped — billing doesn't apply (§5), and a checkout would only try to demote them (the
+        // webhook handler guards the tier too, but don't even start the flow). Refuse it here.
+        if (tier == HouseholdTier.Founder) return Results.Redirect("/settings");
         // Credit packs are for active subscribers only (§8) — defense in depth behind the UI, which already
         // hides packs from a non-Aware household.
-        if (BillingCatalog.IsPack(prod) && await entitlements.GetTierAsync(ct) != HouseholdTier.Aware)
+        if (BillingCatalog.IsPack(prod) && tier != HouseholdTier.Aware)
             return Results.Redirect("/settings?checkout=packs_need_sub");
 
         // A pack attaches to the subscriber's existing provider customer (the adapter uses it only for packs);
@@ -980,7 +1016,7 @@ if (paymentsEnabled)
             logs.CreateLogger("Billing").LogError(ex, "Checkout creation failed (household {HouseholdId}, product {Product}).", householdId, prod);
             return Results.Redirect($"{baseUrl}/settings?checkout=error");
         }
-    }).RequireAuthorization();
+    }).RequireAuthorization().RequireRateLimiting("billing");
 
     app.MapGet("/billing/portal", async (
         HttpContext ctx, HttpRequest request, IPaymentProvider provider,
@@ -1005,7 +1041,7 @@ if (paymentsEnabled)
             logs.CreateLogger("Billing").LogError(ex, "Portal session creation failed (household {HouseholdId}).", householdId);
             return Results.Redirect("/settings?checkout=error");
         }
-    }).RequireAuthorization();
+    }).RequireAuthorization().RequireRateLimiting("billing");
 }
 
 // The FAKE provider's stand-in for a hosted checkout page + its "provider webhook" — DEV ONLY, mapped only

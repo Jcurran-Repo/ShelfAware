@@ -87,4 +87,16 @@ public sealed class PaymentsOptions
         BillingProduct.CreditPack20 => CreditPack20PriceId,
         _ => null,
     };
+
+    /// <summary>Whether the FAKE provider — and its free-grant <c>/billing/fake-*</c> endpoints — may run
+    /// here. The fake mints Aware/credits with NO charge, so it is Development-ONLY: a non-Development box
+    /// with payments enabled must use the real provider. Mirrors <c>DevAuth.IsEnabled</c>'s "environment AND
+    /// opt-in" shape — Production can never satisfy <paramref name="isDevelopment"/>, so a config typo on
+    /// <c>Payments:Provider</c> can't hand out free subscriptions on a live box. Takes the RAW provider config
+    /// string (not the bound enum) so a value the binder would reject still reads as "not the real provider"
+    /// here rather than silently arming the fake. Program.cs also fails startup on <c>Enabled &amp;&amp;
+    /// Provider==Fake</c> outside Development, so a misconfigured prod box refuses to boot rather than run broken.</summary>
+    public static bool FakeProviderAllowed(bool enabled, string? providerConfigValue, bool isDevelopment) =>
+        enabled && isDevelopment
+        && !string.Equals(providerConfigValue, nameof(PaymentProviderKind.StripeManagedPayments), StringComparison.OrdinalIgnoreCase);
 }

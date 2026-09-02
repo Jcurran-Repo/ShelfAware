@@ -127,6 +127,11 @@ public sealed class StripePaymentProvider(
     private PaymentWebhookEvent? Map(Event stripeEvent) => stripeEvent.Type switch
     {
         "checkout.session.completed" => MapCheckout(stripeEvent),
+        // A delayed-settlement method (ACH/SEPA/Klarna) completes unpaid, then fires this when the funds land —
+        // it carries a now-paid session, so the same MapCheckout grants it. (The failure twin,
+        // async_payment_failed, needs no arm: the unpaid completion was gated out above, so nothing was granted
+        // to reverse — it falls through to the verified-but-ignored default.)
+        "checkout.session.async_payment_succeeded" => MapCheckout(stripeEvent),
         // created + updated both carry the real items[].current_period_end and the cancel flag; the handler
         // applies them idempotently and only to the household's CURRENT subscription (a stale/superseded one
         // is ignored there). Renewals arrive as updated (the period advances), so no separate renewal map.
@@ -141,8 +146,15 @@ public sealed class StripePaymentProvider(
     private PaymentWebhookEvent? MapCheckout(Event stripeEvent)
     {
         if (stripeEvent.Data.Object is not Session session) return Unmapped(stripeEvent, "event data was not a checkout session");
-        // Only a fully completed session grants anything (an "open"/"expired" one hasn't been paid).
+        // Only a completed AND paid session grants anything. An "open"/"expired" session isn't done; and an
+        // async payment method (ACH/SEPA/Klarna) completes the session with payment_status "unpaid" while
+        // settlement is still pending — gating on Status alone would grant credits/tier before the funds land,
+        // with no clawback if the pull later fails. "no_payment_required" covers a $0/trial case. For an async
+        // method the real grant arrives later via checkout.session.async_payment_succeeded (mapped in Map),
+        // which carries a now-paid session back through here. Under Managed Payments the available methods are
+        // a dashboard toggle, not a code choice, so this guard must hold even though we only ship card today.
         if (session.Status != "complete") return null;
+        if (session.PaymentStatus is not ("paid" or "no_payment_required")) return null;
 
         var product = ParseProduct(session.Metadata);
         if (product is null) return Unmapped(stripeEvent, "unknown or missing product metadata");

@@ -38,6 +38,9 @@ public class PaymentWebhookHandlerTests : IDisposable
     private sealed class RecordingProvider : IPaymentProvider
     {
         public List<string> Cancelled { get; } = [];
+        /// <summary>The cancellation token the last cancel was passed — the supersede cancel is a post-commit
+        /// WRITE that must run on CancellationToken.None, not the request token (item 39).</summary>
+        public CancellationToken LastCancelToken { get; private set; } = new(canceled: true);
         public PaymentProviderKind Kind => PaymentProviderKind.Fake;
         public string SignatureHeaderName => "X-Fake-Signature";
         public Task<CheckoutSession> CreateCheckoutAsync(CheckoutRequest request, CancellationToken ct = default) =>
@@ -48,6 +51,7 @@ public class PaymentWebhookHandlerTests : IDisposable
         public Task CancelSubscriptionAsync(string subscriptionId, CancellationToken ct = default)
         {
             Cancelled.Add(subscriptionId);
+            LastCancelToken = ct;
             return Task.CompletedTask;
         }
     }
@@ -309,6 +313,62 @@ public class PaymentWebhookHandlerTests : IDisposable
         Assert.Equal("sub_new", after.SubscriptionId);   // the new subscription is active…
         Assert.Equal("cus_new", after.BillingCustomerId);
         Assert.Contains("sub_old", _provider.Cancelled);  // …and the old one was cancelled — no double-billing
+    }
+
+    [Fact]
+    public async Task The_superseded_cancel_runs_on_a_non_cancellable_token()
+    {
+        // The old-sub cancel is a post-commit WRITE — it must NOT ride the request token, or a cancel firing
+        // between the commit and the Stripe call leaves the old sub un-cancelled (the retry short-circuits on
+        // idempotency) → double-billing. The handler passes CancellationToken.None (CLAUDE.md item 39).
+        var household = await SeedAsync(h =>
+        {
+            h.Tier = HouseholdTier.Aware;
+            h.BillingCustomerId = "cus_old";
+            h.SubscriptionId = "sub_old";
+        });
+        var evt = new PaymentWebhookEvent("evt_resub2", PaymentEventKind.CheckoutCompleted,
+            HouseholdId: household.Id, BillingCustomerId: "cus_new", SubscriptionId: "sub_new",
+            Product: BillingProduct.SubscriptionMonthly, PeriodEnd: PeriodEnd);
+
+        using var cts = new CancellationTokenSource(); // a CANCELLABLE token into HandleAsync…
+        await Handler().HandleAsync(evt, cts.Token);
+
+        Assert.Contains("sub_old", _provider.Cancelled);
+        Assert.False(_provider.LastCancelToken.CanBeCanceled); // …the cancel still ran on None
+    }
+
+    [Fact]
+    public async Task A_founder_is_not_demoted_when_its_subscription_is_cancelled()
+    {
+        // An Aware subscriber comped to Founder keeps its SubscriptionId, so its own cancel resolves here —
+        // but an operator's comp must not be revoked by a passive payment event (§5).
+        var household = await SeedAsync(h =>
+        {
+            h.Tier = HouseholdTier.Founder;
+            h.SubscriptionId = "sub_f";
+        });
+        var evt = new PaymentWebhookEvent("evt_f_cancel", PaymentEventKind.SubscriptionCancelled, SubscriptionId: "sub_f");
+
+        Assert.Equal(WebhookOutcome.Applied, await Handler().HandleAsync(evt));
+        var after = await ReloadAsync(household.Id);
+        Assert.Equal(HouseholdTier.Founder, after.Tier);   // still comped…
+        Assert.Null(after.SubscriptionId);                 // …though the ended subscription itself is cleared
+    }
+
+    [Fact]
+    public async Task A_founder_is_not_demoted_by_a_renewal()
+    {
+        var household = await SeedAsync(h =>
+        {
+            h.Tier = HouseholdTier.Founder;
+            h.SubscriptionId = "sub_f";
+        });
+        var evt = new PaymentWebhookEvent("evt_f_renew", PaymentEventKind.SubscriptionRenewed,
+            SubscriptionId: "sub_f", PeriodEnd: PeriodEnd);
+
+        Assert.Equal(WebhookOutcome.Applied, await Handler().HandleAsync(evt));
+        Assert.Equal(HouseholdTier.Founder, (await ReloadAsync(household.Id)).Tier); // a renewal doesn't flip Founder→Aware
     }
 
     [Fact]

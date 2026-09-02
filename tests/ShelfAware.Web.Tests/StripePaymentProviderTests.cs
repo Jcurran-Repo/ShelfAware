@@ -220,7 +220,7 @@ public class StripePaymentProviderTests
     {
         const string payload = """
             {"id":"evt_1","object":"event","type":"checkout.session.completed","data":{"object":{
-              "id":"cs_1","object":"checkout.session","status":"complete","mode":"subscription",
+              "id":"cs_1","object":"checkout.session","status":"complete","payment_status":"paid","mode":"subscription",
               "customer":"cus_1","subscription":"sub_1",
               "metadata":{"household_id":"hh_1","product":"SubscriptionMonthly"}}}}
             """;
@@ -244,7 +244,7 @@ public class StripePaymentProviderTests
     {
         const string payload = """
             {"id":"evt_2","object":"event","type":"checkout.session.completed","data":{"object":{
-              "id":"cs_2","object":"checkout.session","status":"complete","mode":"payment",
+              "id":"cs_2","object":"checkout.session","status":"complete","payment_status":"paid","mode":"payment",
               "customer":"cus_1","amount_total":1099,
               "metadata":{"household_id":"hh_1","product":"CreditPack10"}}}}
             """;
@@ -270,7 +270,42 @@ public class StripePaymentProviderTests
         var parse = Parse(payload);
 
         Assert.Equal(WebhookParseResult.Verified, parse.Result);
-        Assert.Null(parse.Event); // verified but nothing to do — an unpaid session grants nothing
+        Assert.Null(parse.Event); // verified but nothing to do — an "open" session isn't complete
+    }
+
+    [Fact]
+    public void A_complete_but_UNPAID_checkout_is_ignored()
+    {
+        // An async method (ACH/SEPA/Klarna) completes the session with payment_status "unpaid" while
+        // settlement is pending — it must NOT grant until the funds land (the grant arrives later via
+        // async_payment_succeeded). Gating on Status alone would grant before payment settles.
+        const string payload = """
+            {"id":"evt_unpaid","object":"event","type":"checkout.session.completed","data":{"object":{
+              "id":"cs_u","object":"checkout.session","status":"complete","payment_status":"unpaid","mode":"payment",
+              "customer":"cus_1","metadata":{"household_id":"hh_1","product":"CreditPack10"}}}}
+            """;
+
+        var parse = Parse(payload);
+
+        Assert.Equal(WebhookParseResult.Verified, parse.Result);
+        Assert.Null(parse.Event); // verified but not paid yet — no grant
+    }
+
+    [Fact]
+    public void An_async_payment_succeeded_event_grants_once_it_settles()
+    {
+        // The delayed-settlement follow-up: it carries a now-paid session, so it maps like a paid checkout.
+        const string payload = """
+            {"id":"evt_async","object":"event","type":"checkout.session.async_payment_succeeded","data":{"object":{
+              "id":"cs_a","object":"checkout.session","status":"complete","payment_status":"paid","mode":"payment",
+              "customer":"cus_1","metadata":{"household_id":"hh_1","product":"CreditPack10"}}}}
+            """;
+
+        var e = Parse(payload).Event!;
+
+        Assert.Equal(PaymentEventKind.CheckoutCompleted, e.Kind);
+        Assert.Equal(BillingProduct.CreditPack10, e.Product);
+        Assert.Equal(10_000_000, e.AmountMicros); // grants the face value now that it's settled
     }
 
     [Fact]
@@ -278,7 +313,7 @@ public class StripePaymentProviderTests
     {
         const string payload = """
             {"id":"evt_4","object":"event","type":"checkout.session.completed","data":{"object":{
-              "id":"cs_4","object":"checkout.session","status":"complete","mode":"subscription",
+              "id":"cs_4","object":"checkout.session","status":"complete","payment_status":"paid","mode":"subscription",
               "metadata":{"household_id":"hh_1","product":"NotARealProduct"}}}}
             """;
 
