@@ -15,6 +15,7 @@
 @inject IRecipeAdapter Adapter
 @inject IIngredientAlternativesAdvisor AltAdvisor
 @inject ShelfAware.Core.Speech.IVoiceCredentials Voice
+@inject Microsoft.Extensions.Configuration.IConfiguration Config
 @inject VoiceCoordinator Coordinator
 @inject NavigationManager Nav
 @inject ILogger<Recipes> Logger
@@ -557,10 +558,13 @@
     /// saved list to recipes that use that product, the middle step of the hands-free navigation chain.</summary>
     [SupplyParameterFromQuery(Name = "uses")] public int? UsesProductId { get; set; }
 
-    // The ElevenLabs realtime agent is an ALTERNATIVE now, not the cook-along: it only appears in the
-    // caret when the visitor has brought their own agent id (per circuit; empty = the option is hidden).
-    // Our own hands-free reader needs no agent, so cook-along itself is always available.
-    private bool CookAlongAvailable => !string.IsNullOrEmpty(Voice.AgentId);
+    // The ElevenLabs realtime agent is an ALTERNATIVE, not the cook-along: our own hands-free reader
+    // needs no agent, so cook-along itself is always available. DISABLED for now (2026-09) behind
+    // Voice:LiveAgentEnabled (default off) — the paid per-minute EL agent is off pending a free-voice
+    // rethink; flip the flag AND bring a per-circuit agent id to show it again. The signed-url endpoint
+    // (Program.cs) gates on the same flag, so it's off at the source too, not just hidden.
+    private bool CookAlongAvailable =>
+        bool.TryParse(Config["Voice:LiveAgentEnabled"], out var on) && on && !string.IsNullOrEmpty(Voice.AgentId);
 
     // Adapt a recipe to what's on hand and save it as a variant (on-demand — one AI call per click).
     private async Task AdaptRecipe(Recipe r)

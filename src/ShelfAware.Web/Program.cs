@@ -741,8 +741,14 @@ app.MapStaticAssets();
 // key is used only for this call and is never stored or logged; dev/self-host falls back to server config.
 // Rate-limited per IP so nobody can spam a visitor's key through it. A custom header is also a mild CSRF
 // guard (cross-site forms can't set one).
-app.MapGet("/api/cookalong/signed-url", async (HttpContext ctx, IHttpClientFactory httpFactory, IOptions<ElevenLabsOptions> opts, IOptions<LlmOptions> deployment, AiUsageMeter meter, CancellationToken ct) =>
+app.MapGet("/api/cookalong/signed-url", async (HttpContext ctx, IHttpClientFactory httpFactory, IOptions<ElevenLabsOptions> opts, IOptions<LlmOptions> deployment, AiUsageMeter meter, IConfiguration config, CancellationToken ct) =>
 {
+    // The ElevenLabs realtime "Live agent" is disabled for now (2026-09) behind Voice:LiveAgentEnabled
+    // (default off) — see Recipes.razor's CookAlongAvailable. Gated here too so a direct request can't
+    // mint a realtime session while the UI option is hidden. Flip the flag to bring it back.
+    if (!config.GetValue<bool>("Voice:LiveAgentEnabled"))
+        return Results.Problem("The live cook-along agent is currently disabled.", statusCode: StatusCodes.Status503ServiceUnavailable);
+
     // Managed deployment: the host's voice key is authoritative — ignore any header a browser sends.
     var managed = deployment.Value.IsManaged;
 
