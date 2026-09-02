@@ -84,8 +84,8 @@ public class TourScriptTests
     [Fact]
     public void The_byok_wording_leads_with_what_works_without_a_key()
     {
-        // The old copy opened "Shelf Aware runs on your own API key", which reads as a requirement — and
-        // the visitor has just been shown ten screens of a working app that needed no key at all.
+        // The old copy opened by pitching the app as running on your own API key, which reads as a
+        // requirement — and the visitor has just been shown ten screens of a working app that needed no key.
         var settings = TourScript.Steps[^1];
 
         Assert.Contains("without an API key", settings.BodyFor(managed: false), StringComparison.OrdinalIgnoreCase);

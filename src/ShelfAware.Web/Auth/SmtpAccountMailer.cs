@@ -51,12 +51,12 @@ public sealed class SmtpAccountMailer(IOptions<EmailOptions> options) : IAccount
         // parses). The recipient's shape is gated upstream by the form's [EmailAddress]; genuine
         // garbage past that fails at the relay, which the calling page logs.
         message.To.Add(MailboxAddress.Parse(toEmail));
-        message.Subject = "Reset your Shelf Aware password";
+        message.Subject = "Reset your Reginald password";
 
         var body = new BodyBuilder
         {
             TextBody = $"""
-                Someone asked to reset the Shelf Aware password for this address.
+                Someone asked to reset the Reginald password for this address.
 
                 Reset it here (the link expires after a day and stops working once used):
                 {resetUrl}
@@ -64,7 +64,7 @@ public sealed class SmtpAccountMailer(IOptions<EmailOptions> options) : IAccount
                 If this wasn't you, ignore this email — nothing has changed.
                 """,
             HtmlBody = $"""
-                <p>Someone asked to reset the Shelf Aware password for this address.</p>
+                <p>Someone asked to reset the Reginald password for this address.</p>
                 <p><a href="{System.Net.WebUtility.HtmlEncode(resetUrl)}">Reset your password</a>
                 — the link expires after a day and stops working once used.</p>
                 <p>If this wasn't you, ignore this email — nothing has changed.</p>

@@ -26,7 +26,7 @@
 @inject ApiTokenService Tokens
 @inject IConfiguration Configuration
 
-<PageTitle>Settings — Shelf Aware</PageTitle>
+<PageTitle>Settings — Reginald</PageTitle>
 
 <div class="page-head">
     <h1>Settings</h1>
@@ -210,7 +210,7 @@
                            placeholder="http://localhost:11434/v1" aria-label="OpenAI-compatible base URL" />
                 </label>
                 <p class="muted">Runs a model on your own machine (Ollama, LM Studio, llama.cpp, …) — zero token
-                    cost. Available when you self-host ShelfAware.</p>
+                    cost. Available when you self-host Reginald.</p>
             }
 
             <div class="model-fields">
@@ -358,7 +358,7 @@
     @if (tier == HouseholdTier.Founder)
     {
         <p class="founder-badge">★ You're a <strong>Founder</strong> — unlimited AI on the house, no caps.
-            Thank you for helping build Shelf Aware. 💛</p>
+            Thank you for helping build Reginald. 💛</p>
     }
     @if (AiSettings.Managed && tier != HouseholdTier.Founder)
     {
@@ -623,7 +623,7 @@
 <section class="panel danger-zone">
     <h2>Your data</h2>
     <p class="muted">
-        Everything ShelfAware knows lives only on this server — nothing is shared. Take a copy any time,
+        Everything Reginald knows lives only on this server — nothing is shared. Take a copy any time,
         or wipe the slate clean.
     </p>
 

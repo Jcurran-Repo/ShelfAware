@@ -9,7 +9,7 @@
 @inject IJSRuntime JS
 @inject ILogger<Receipts> Logger
 
-<PageTitle>Receipts — Shelf Aware</PageTitle>
+<PageTitle>Receipts — Reginald</PageTitle>
 
 <div class="page-head">
     <h1>Receipts</h1>
@@ -174,7 +174,7 @@ else
                     <div class="receipt-remove-actions">
                         @if (!row.Removable)
                         {
-                            <span class="muted">Recorded before ShelfAware tracked which purchases came from which
+                            <span class="muted">Recorded before Reginald tracked which purchases came from which
                             receipt, so it can't be removed as a unit — adjust its purchases from each product's page.</span>
                         }
                         else if (removingId != row.Receipt.Id)

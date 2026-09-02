@@ -19,7 +19,7 @@
 @inject NavigationManager Nav
 @inject ILogger<Recipes> Logger
 
-<PageTitle>Recipes — Shelf Aware</PageTitle>
+<PageTitle>Recipes — Reginald</PageTitle>
 
 <div class="page-head">
     <h1>Recipes</h1>
@@ -379,7 +379,7 @@
                                    not a confident tick. Asserting the guess is the false positive that erodes trust. *@
                                 @if (have && !confident)
                                 {
-                                    <span class="likely-note" title="You haven't counted this — Shelf Aware is going by your usual buying rhythm. Tap &quot;I'm out&quot; if you don't actually have it.">likely</span>
+                                    <span class="likely-note" title="You haven't counted this — Reginald is going by your usual buying rhythm. Tap &quot;I'm out&quot; if you don't actually have it.">likely</span>
                                 }
                                 <button type="button" class="alt-swap" @onclick="() => ToggleAlternatives(i)"
                                         aria-label="Swap @i.Name for something else" title="Swap this ingredient">⇄</button>

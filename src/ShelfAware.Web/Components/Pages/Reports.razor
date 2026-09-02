@@ -14,7 +14,7 @@
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 
-<PageTitle>Reports — Shelf Aware</PageTitle>
+<PageTitle>Reports — Reginald</PageTitle>
 
 <div class="report-head">
     <div>
@@ -36,7 +36,7 @@
 
 @* Only exists on paper — the printed page needs to say what and when it is without the app chrome. *@
 <div class="report-print-header">
-    <strong>Shelf Aware — @PresetDefs.First(p => p.Key == ActivePreset).Title</strong>
+    <strong>Reginald — @PresetDefs.First(p => p.Key == ActivePreset).Title</strong>
     <span>@RangeCaption · printed @DateTime.Today.ToString("MMM d, yyyy")</span>
 </div>
 

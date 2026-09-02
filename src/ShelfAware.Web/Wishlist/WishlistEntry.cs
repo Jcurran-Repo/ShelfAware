@@ -1,6 +1,6 @@
 namespace ShelfAware.Web.Wishlist;
 
-/// <summary>One person's signal that they'd use a HOSTED Shelf Aware — the pre-launch demand list.
+/// <summary>One person's signal that they'd use a HOSTED Reginald — the pre-launch demand list.
 /// Lives in auth.db, NOT the pantry DB, because it's OPERATOR data: no household owns it, it never
 /// appears in a household export or falls to "delete all my data", and the admin viewer needs no
 /// tenancy bypass to read it. Same placement and rationale as

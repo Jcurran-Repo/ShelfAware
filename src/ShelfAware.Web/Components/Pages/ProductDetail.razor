@@ -13,7 +13,7 @@
 @inject NavigationManager Nav
 @inject ILogger<ProductDetail> Logger
 
-<PageTitle>@(product?.Name ?? "Product") — Shelf Aware</PageTitle>
+<PageTitle>@(product?.Name ?? "Product") — Reginald</PageTitle>
 
 @if (notFound)
 {
@@ -254,7 +254,7 @@ else
                 <p>
                     @if (onHand == 0)
                     {
-                        @* A distrusted ZERO needs its own sentence. "You counted 0 — Shelf Aware isn't
+                        @* A distrusted ZERO needs its own sentence. "You counted 0 — Reginald isn't
                            counting on that any more" reads as though the app now suspects there might be
                            some, which is the opposite of what an aged zero means: nobody has looked since,
                            so it is unknown rather than optimistic. *@
@@ -263,7 +263,7 @@ else
                         {
                             <text>&#32;on @SignalDate.Of(countedNone).ToString("MMM d, yyyy")</text>
                         }
-                        <span class="muted">&#32;— long enough ago that Shelf Aware treats it as unknown now.</span>
+                        <span class="muted">&#32;— long enough ago that Reginald treats it as unknown now.</span>
                     }
                     else
                     {
@@ -273,7 +273,7 @@ else
                         {
                             <text>&#32;on @SignalDate.Of(counted).ToString("MMM d, yyyy")</text>
                         }
-                        <span class="muted">&#32;— Shelf Aware isn't counting on that any more.</span>
+                        <span class="muted">&#32;— Reginald isn't counting on that any more.</span>
                     }
                 </p>
             }
@@ -299,7 +299,7 @@ else
                     {
                         <text>
                             Nobody has counted this in a while, and there aren't enough purchases yet for
-                            Shelf Aware to guess how fast it goes — so it can't tell whether that number is
+                            Reginald to guess how fast it goes — so it can't tell whether that number is
                             still true, and it has stopped assuming it is.
                         </text>
                     }
@@ -368,7 +368,7 @@ else
                     else
                     {
                         <p class="muted">Down to none, and you've said so before — but that's not in force
-                            now, so Shelf Aware isn't treating you as out. If it's still right, set it to 0
+                            now, so Reginald isn't treating you as out. If it's still right, set it to 0
                             again; otherwise set the number you have.</p>
                     }
                 }
@@ -401,7 +401,7 @@ else
         }
         else
         {
-            <p class="muted">Not counted. Enter a number and Shelf Aware keeps it up to date from your
+            <p class="muted">Not counted. Enter a number and Reginald keeps it up to date from your
                 receipts — and stops asking you to buy more while you still have some.</p>
         }
 
@@ -442,7 +442,7 @@ else
             <button type="button" class="secondary" @onclick="SaveUnit" disabled="@quantityBusy">Set unit</button>
         </div>
         <p class="muted small">A count is what you saw on the shelf. Receipts add to it and cooking takes
-            from it, but only you can say what's actually there — so when it drifts, Shelf Aware asks
+            from it, but only you can say what's actually there — so when it drifts, Reginald asks
             rather than guessing.</p>
         @if (quantityError is not null)
         {

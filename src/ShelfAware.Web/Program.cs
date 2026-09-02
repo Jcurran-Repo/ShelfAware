@@ -1129,8 +1129,8 @@ var icon512Src = IconSrc("icon-512.png");
 
 app.MapGet("/manifest.webmanifest", () => Results.Content($$"""
 {
-  "name": "Shelf Aware",
-  "short_name": "ShelfAware",
+  "name": "Reginald",
+  "short_name": "Reginald",
   "description": "Know what you're running low on before you run out.",
   "start_url": "/",
   "scope": "/",
