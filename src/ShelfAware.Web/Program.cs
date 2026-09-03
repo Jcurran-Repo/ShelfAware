@@ -157,11 +157,19 @@ builder.Services.ConfigureApplicationCookie(options =>
     };
 });
 
+// A snapshot of the Auth: section for the Identity option below (same read-it-early pattern as
+// adminOptions / graphQlEnabled). The bound IOptions<AuthOptions> the app reads at request time is still
+// registered further down, with its own startup validation; this only feeds the one global Identity flag.
+var authOptionsSnapshot = builder.Configuration.GetSection(AuthOptions.SectionName).Get<AuthOptions>() ?? new();
+
 builder.Services.AddIdentityCore<AppUser>(options =>
 {
-    // Sign-in never requires a confirmed address: the only mail the app can send — and only when
-    // Email: is configured at all — is the password reset (EmailOptions; config-gated).
-    options.SignIn.RequireConfirmedAccount = false;
+    // Sign-in requires a confirmed address only where the box turns it on (Auth:RequireEmailConfirmation —
+    // the public demo box; §10). Default OFF, so self-host and the family box (which verifies email at the
+    // Cloudflare Access edge) register directly. ⚠️ Global by nature: when on, EVERY unconfirmed account is
+    // blocked from signing in, which is why a box with existing accounts backfills EmailConfirmed=1 first,
+    // and why startup validation refuses the flag without a configured Email: mailer (no way to confirm).
+    options.SignIn.RequireConfirmedAccount = authOptionsSnapshot.RequireEmailConfirmation;
     options.User.RequireUniqueEmail = true;
     // Length beats composition rules (NIST 800-63B): 10+ characters, no forced symbol soup.
     options.Password.RequiredLength = 10;
@@ -217,6 +225,17 @@ builder.Services.AddOptions<AuthOptions>()
     .Validate(o => o.InviteCodeLifetimeDays is null or > 0,
         "Auth:InviteCodeLifetimeDays must be at least 1, or absent for codes that never expire. " +
         "0 or negative would silently mean 'never', which is not what anyone types 0 to get.")
+    .Validate(o => o.DailyAccountCreationLimit is null or > 0,
+        "Auth:DailyAccountCreationLimit must be at least 1, or absent for no limit. 0 or negative would " +
+        "block every registration (or read as 'no limit'), neither of which is what a number here means.")
+    // The email-confirmation flag needs a mailer, or a new account can never confirm and never sign in —
+    // dead accounts and a locked-out box. Checked against the resolved Email: options at startup (like every
+    // other option here), so an operator who turns on Auth:RequireEmailConfirmation without an Email: section
+    // gets a boot failure that names the fix, not a silently broken demo box.
+    .Validate<IOptions<EmailOptions>>(
+        (auth, email) => AuthOptions.EmailConfirmationSatisfiable(auth.RequireEmailConfirmation, email.Value.IsConfigured),
+        "Auth:RequireEmailConfirmation needs the Email: section configured — otherwise a new account can " +
+        "never confirm its address and never sign in. Configure Email:, or turn the flag off.")
     .ValidateOnStart();
 // Password-reset email (the app's only outbound mail). All-or-nothing, validated at startup: a
 // wholly absent Email: section means the feature is off everywhere it shows (the sign-in link,
@@ -234,6 +253,10 @@ builder.Services.AddOptions<EmailOptions>()
     .ValidateOnStart();
 builder.Services.AddSingleton<IAccountMailer, SmtpAccountMailer>();
 builder.Services.AddScoped<HouseholdService>();
+// The demo box's daily account-creation cap (Auth:DailyAccountCreationLimit; §10). Scoped like
+// HouseholdService — it reads the same request-scoped AuthDbContext the registration flow uses. Harmless
+// dormant on a box with no cap configured (it short-circuits to "not at limit").
+builder.Services.AddScoped<AccountCreationLimiter>();
 // Mint/validate/list/revoke for read-only GraphQL API tokens (credentials in auth.db). Registered
 // always — the auth handler and Settings gate their EXPOSURE on GraphQL:Enabled, but the service
 // itself is harmless dormant and the delete-my-data flow may need it regardless.

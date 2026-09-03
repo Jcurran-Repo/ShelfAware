@@ -1,0 +1,74 @@
+@page "/Account/ConfirmEmail"
+@attribute [AllowAnonymous]
+@using System.Text
+@using Microsoft.AspNetCore.WebUtilities
+@inject UserManager<AppUser> UserManager
+@inject IdentityRedirectManager RedirectManager
+@inject ILogger<ConfirmEmail> Logger
+
+<PageTitle>Confirm email — Reginald</PageTitle>
+
+<h1>Confirm your email</h1>
+<StatusMessage Message="@errorMessage" />
+
+<p class="muted auth-alt"><a href="Account/Login">← Back to sign in</a></p>
+
+@code {
+    // One sentence for every failure — unknown account, malformed code, expired/used token — so the page
+    // confirms no account's existence and doesn't distinguish "already used" from "never valid".
+    private const string BadLinkMessage =
+        "Error: this confirmation link is invalid or has expired. Sign in and choose 'Resend the confirmation email' for a fresh one.";
+
+    private string? errorMessage;
+
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromQuery]
+    private string? UserId { get; set; }
+
+    [SupplyParameterFromQuery]
+    private string? Code { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // The link is a GET, so the confirmation happens here on load. Guard BOTH parameters first: a
+        // hand-crafted link missing either takes the same generic path as a bad token (and a null Code
+        // never reaches Base64UrlDecode, which throws ArgumentNullException rather than the FormatException
+        // caught below — the enumeration-oracle shape the reset page documents).
+        if (string.IsNullOrWhiteSpace(UserId) || string.IsNullOrWhiteSpace(Code))
+        {
+            errorMessage = BadLinkMessage;
+            return;
+        }
+
+        var user = await UserManager.FindByIdAsync(UserId);
+        if (user is null)
+        {
+            errorMessage = BadLinkMessage;
+            return;
+        }
+
+        string token;
+        try
+        {
+            token = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(Code));
+        }
+        catch (FormatException)
+        {
+            errorMessage = BadLinkMessage;
+            return;
+        }
+
+        var result = await UserManager.ConfirmEmailAsync(user, token);
+        if (result.Succeeded)
+        {
+            Logger.LogInformation("An account confirmed its email address.");
+            RedirectManager.RedirectToWithStatus(
+                "Account/Login", "Your email is confirmed — sign in to get started.", HttpContext);
+            return;
+        }
+
+        errorMessage = BadLinkMessage;
+    }
+}

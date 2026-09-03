@@ -30,6 +30,12 @@
     <button type="submit" class="auth-submit">Sign in</button>
 </EditForm>
 
+@if (showResendConfirmation)
+{
+    @* Shown only after an unconfirmed sign-in attempt — the way out of a lost confirmation email. *@
+    <p class="muted auth-alt"><a href="Account/ResendEmailConfirmation">Resend the confirmation email</a></p>
+}
+
 @if (Email.Value.IsConfigured)
 {
     @* Config-gated like the external providers below: no email infrastructure, no dead link. *@
@@ -57,6 +63,10 @@
 
 @code {
     private string? errorMessage;
+
+    // Set when a sign-in is refused for an unconfirmed email, so the resend link appears only when it's
+    // the actual problem (not on a wrong password).
+    private bool showResendConfirmation;
 
     // External providers are config-gated (registered only when credentials exist), so on most
     // deployments this is empty and the section renders nothing.
@@ -101,6 +111,16 @@
         {
             Logger.LogWarning("Sign-in blocked: account temporarily locked out.");
             errorMessage = "Error: this account is temporarily locked after repeated failed attempts. Try again in a few minutes.";
+        }
+        else if (result.IsNotAllowed)
+        {
+            // The credentials were fine, but Identity's RequireConfirmedAccount refuses an unconfirmed
+            // address (the demo box's Auth:RequireEmailConfirmation). Say so and point at "resend" — the
+            // one path out of a lost confirmation email that isn't a dead end. It only reaches this branch
+            // where the flag is on, so the link is live exactly when it's relevant.
+            Logger.LogInformation("Sign-in blocked: email not confirmed.");
+            errorMessage = "Error: confirm your email address before signing in — check your inbox for the link we sent when you registered.";
+            showResendConfirmation = true;
         }
         else
         {

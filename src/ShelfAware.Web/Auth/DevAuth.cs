@@ -47,7 +47,11 @@ public static class DevAuth
                 // One transaction across user + household, same as registration, so a failure leaves no
                 // orphaned half-account.
                 await using var tx = await authDb.Database.BeginTransactionAsync();
-                user = new AppUser { UserName = DevEmail, Email = DevEmail, EmailConfirmed = true };
+                user = new AppUser
+                {
+                    UserName = DevEmail, Email = DevEmail, EmailConfirmed = true,
+                    CreatedOn = DateOnly.FromDateTime(DateTime.Today),
+                };
                 // Passwordless: this account is only ever signed in through here, never the login form,
                 // so there is no dev credential to hardcode in source.
                 var created = await users.CreateAsync(user);

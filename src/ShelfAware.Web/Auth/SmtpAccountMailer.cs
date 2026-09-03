@@ -11,7 +11,16 @@ namespace ShelfAware.Web.Auth;
 /// a month, not a queue.</summary>
 public sealed class SmtpAccountMailer(IOptions<EmailOptions> options) : IAccountMailer
 {
-    public async Task SendPasswordResetAsync(string toEmail, string resetUrl, CancellationToken ct = default)
+    public Task SendPasswordResetAsync(string toEmail, string resetUrl, CancellationToken ct = default)
+        => SendAsync(o => BuildReset(o, toEmail, resetUrl), ct);
+
+    public Task SendEmailConfirmationAsync(string toEmail, string confirmUrl, CancellationToken ct = default)
+        => SendAsync(o => BuildConfirmation(o, toEmail, confirmUrl), ct);
+
+    /// <summary>The one place that connects, authenticates, sends, and disconnects — so both mails share
+    /// exactly one TLS/auth policy and neither can drift. <paramref name="build"/> runs only after the
+    /// configured guard, so BuildReset/BuildConfirmation can assume a satisfied <see cref="EmailOptions"/>.</summary>
+    private async Task SendAsync(Func<EmailOptions, MimeMessage> build, CancellationToken ct)
     {
         var o = options.Value;
         if (!o.IsConfigured)
@@ -20,15 +29,15 @@ public sealed class SmtpAccountMailer(IOptions<EmailOptions> options) : IAccount
                 "Email is not configured on this deployment; callers must gate on EmailOptions.IsConfigured.");
         }
 
-        var message = BuildReset(o, toEmail, resetUrl);
+        var message = build(o);
         using var client = new SmtpClient();
-        // The IsConfigured guard above guarantees SmtpHost (and From, used in BuildReset), and
-        // startup validation pairs SmtpUser with SmtpPassword — the compiler just can't see
-        // through the properties, hence the !s.
-        // 465 = implicit TLS; anything else = STARTTLS, MANDATORY — not SecureSocketOptions.Auto,
-        // whose 587 behavior is StartTls*WhenAvailable*: against a server (or an active attacker
-        // stripping the EHLO) that offers none, Auto continues in cleartext, credentials and
-        // reset link included. StartTls fails closed instead.
+        // The IsConfigured guard above guarantees SmtpHost (and From, used in the builders), and startup
+        // validation pairs SmtpUser with SmtpPassword — the compiler just can't see through the properties,
+        // hence the !s.
+        // 465 = implicit TLS; anything else = STARTTLS, MANDATORY — not SecureSocketOptions.Auto, whose 587
+        // behavior is StartTls*WhenAvailable*: against a server (or an active attacker stripping the EHLO)
+        // that offers none, Auto continues in cleartext, credentials and the link included. StartTls fails
+        // closed instead.
         var tls = o.SmtpPort == 465 ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTls;
         await client.ConnectAsync(o.SmtpHost!, o.SmtpPort, tls, ct);
         if (!string.IsNullOrWhiteSpace(o.SmtpUser))
@@ -43,19 +52,9 @@ public sealed class SmtpAccountMailer(IOptions<EmailOptions> options) : IAccount
     /// and that BOTH bodies carry the link. <paramref name="o"/> must satisfy
     /// <see cref="EmailOptions.IsConfigured"/> — the caller's guard, not re-checked here.</summary>
     internal static MimeMessage BuildReset(EmailOptions o, string toEmail, string resetUrl)
-    {
-        var message = new MimeMessage();
-        message.From.Add(new MailboxAddress(o.FromName, o.From!));
-        // Parse rather than new MailboxAddress(name, addr) so quoting/encoding stays MimeKit's
-        // problem — but it is NOT a validation layer: MimeKit is lenient (a bare local part
-        // parses). The recipient's shape is gated upstream by the form's [EmailAddress]; genuine
-        // garbage past that fails at the relay, which the calling page logs.
-        message.To.Add(MailboxAddress.Parse(toEmail));
-        message.Subject = "Reset your Reginald password";
-
-        var body = new BodyBuilder
-        {
-            TextBody = $"""
+        => Build(o, toEmail,
+            subject: "Reset your Reginald password",
+            text: $"""
                 Someone asked to reset the Reginald password for this address.
 
                 Reset it here (the link expires after a day and stops working once used):
@@ -63,14 +62,46 @@ public sealed class SmtpAccountMailer(IOptions<EmailOptions> options) : IAccount
 
                 If this wasn't you, ignore this email — nothing has changed.
                 """,
-            HtmlBody = $"""
+            html: $"""
                 <p>Someone asked to reset the Reginald password for this address.</p>
                 <p><a href="{System.Net.WebUtility.HtmlEncode(resetUrl)}">Reset your password</a>
                 — the link expires after a day and stops working once used.</p>
                 <p>If this wasn't you, ignore this email — nothing has changed.</p>
+                """);
+
+    /// <summary>Internal, same reasoning as <see cref="BuildReset"/>: the confirmation mail's addressing,
+    /// subject, and that BOTH bodies carry the link. <paramref name="o"/> must satisfy
+    /// <see cref="EmailOptions.IsConfigured"/> — the caller's guard, not re-checked here.</summary>
+    internal static MimeMessage BuildConfirmation(EmailOptions o, string toEmail, string confirmUrl)
+        => Build(o, toEmail,
+            subject: "Confirm your email for Reginald",
+            text: $"""
+                Welcome to Reginald! Confirm this email address to finish creating your account
+                and sign in:
+                {confirmUrl}
+
+                If you didn't sign up, ignore this email — no account can be used until it's confirmed.
                 """,
-        };
-        message.Body = body.ToMessageBody();
+            html: $"""
+                <p>Welcome to Reginald! Confirm this email address to finish creating your account and sign in.</p>
+                <p><a href="{System.Net.WebUtility.HtmlEncode(confirmUrl)}">Confirm my email</a></p>
+                <p>If you didn't sign up, ignore this email — no account can be used until it's confirmed.</p>
+                """);
+
+    /// <summary>Shared envelope for every account mail: From from the configured identity, the recipient,
+    /// the subject, and both a text and an HTML body (mail clients pick one, so a link missing from either
+    /// is a mail that works in some inboxes and not others).</summary>
+    private static MimeMessage Build(EmailOptions o, string toEmail, string subject, string text, string html)
+    {
+        var message = new MimeMessage();
+        message.From.Add(new MailboxAddress(o.FromName, o.From!));
+        // Parse rather than new MailboxAddress(name, addr) so quoting/encoding stays MimeKit's problem — but
+        // it is NOT a validation layer: MimeKit is lenient (a bare local part parses). The recipient's shape
+        // is gated upstream by the form's [EmailAddress]; genuine garbage past that fails at the relay, which
+        // the calling page logs.
+        message.To.Add(MailboxAddress.Parse(toEmail));
+        message.Subject = subject;
+        message.Body = new BodyBuilder { TextBody = text, HtmlBody = html }.ToMessageBody();
         return message;
     }
 }

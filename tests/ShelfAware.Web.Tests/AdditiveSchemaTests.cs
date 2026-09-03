@@ -550,6 +550,39 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Adds_the_created_on_column_to_a_pre_account_cap_auth_db()
+    {
+        // §10: AspNetUsers gained CreatedOn (the daily account-creation cap's counter). A live box's
+        // AspNetUsers table predates it, so the ALTER path (not the drop-TABLE rebuild) runs on its next
+        // boot — the same live-deployment gap the tier/subscription column tests guard.
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await ColumnTypesAsync(db, "AspNetUsers");
+
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE AspNetUsers DROP COLUMN CreatedOn;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        // Same declared type as a fresh file (DateOnly? → TEXT NULL), so the count query reads it back
+        // rather than a truncated form.
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "AspNetUsers"));
+
+        // A pre-cap account reads back NULL (unknown day) — which never matches "== today" and so never
+        // inflates the cap; a stamped one round-trips the day through the migrated column.
+        var legacy = new AppUser { UserName = "old@example.test", Email = "old@example.test" };
+        db.Users.Add(legacy);
+        await db.SaveChangesAsync();
+        Assert.Null((await db.Users.AsNoTracking().SingleAsync(u => u.Id == legacy.Id)).CreatedOn);
+
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var fresh2 = new AppUser { UserName = "new@example.test", Email = "new@example.test", CreatedOn = today };
+        db.Users.Add(fresh2);
+        await db.SaveChangesAsync();
+        Assert.Equal(today, (await db.Users.AsNoTracking().SingleAsync(u => u.Id == fresh2.Id)).CreatedOn);
+    }
+
+    [Fact]
     public async Task Creates_the_Wishlist_table_on_an_older_auth_db_with_the_fresh_schema()
     {
         // The auth-side twin: the /about wishlist is operator data (like the error log), so it lives in

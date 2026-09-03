@@ -5,6 +5,7 @@
 @inject SignInManager<AppUser> SignInManager
 @inject UserManager<AppUser> UserManager
 @inject HouseholdService Households
+@inject AccountCreationLimiter AccountLimiter
 @inject AuthDbContext Db
 @inject IOptions<AuthOptions> Auth
 @inject IdentityRedirectManager RedirectManager
@@ -133,10 +134,25 @@
             return;
         }
 
+        // The same daily account-creation cap the password path honours (§10) — new households only; a
+        // valid invite code is never turned away. Dormant with no cap configured.
+        if (!joining && await AccountLimiter.AtDailyLimitAsync(HttpContext.RequestAborted))
+        {
+            message = DemoLimits.DailyCapReachedMessage;
+            return;
+        }
+
         // One transaction across user + login link + household — no orphaned half-registrations.
         await using var tx = await Db.Database.BeginTransactionAsync();
 
-        var user = new AppUser { UserName = email, Email = email, EmailConfirmed = true }; // the provider asserted it
+        // EmailConfirmed: the provider asserted the address, so an external account skips confirmation even
+        // where Auth:RequireEmailConfirmation is on (Identity's gate reads EmailConfirmed, which is already
+        // true here). CreatedOn stamps the cap's daily counter, same as the password path.
+        var user = new AppUser
+        {
+            UserName = email, Email = email, EmailConfirmed = true,
+            CreatedOn = DateOnly.FromDateTime(DateTime.Today),
+        };
         var createResult = await UserManager.CreateAsync(user);
         if (!createResult.Succeeded)
         {

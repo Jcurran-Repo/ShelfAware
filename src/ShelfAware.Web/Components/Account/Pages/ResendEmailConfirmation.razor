@@ -1,0 +1,91 @@
+@page "/Account/ResendEmailConfirmation"
+@attribute [AllowAnonymous]
+@using Microsoft.Extensions.Options
+@inject UserManager<AppUser> UserManager
+@inject IAccountMailer Mailer
+@inject IOptions<EmailOptions> Email
+@inject NavigationManager NavigationManager
+@inject IdentityRedirectManager RedirectManager
+@inject ILogger<ResendEmailConfirmation> Logger
+
+<PageTitle>Resend confirmation — Reginald</PageTitle>
+
+<h1>Resend the confirmation email</h1>
+
+@if (!Email.Value.IsConfigured)
+{
+    @* No mailer, no link to resend — the same config gate the ForgotPassword page uses. *@
+    <p class="muted">This deployment can't send email, so there's no confirmation link to resend.</p>
+    <p class="muted auth-alt"><a href="Account/Login">← Back to sign in</a></p>
+}
+else
+{
+    <StatusMessage />
+    <p class="muted">
+        Enter your account's email. If it's registered and still needs confirming, we'll send a fresh link.
+    </p>
+    <EditForm Model="Input" method="post" OnValidSubmit="ResendAsync" FormName="resend-confirmation">
+        <DataAnnotationsValidator />
+        <div class="auth-field">
+            <label for="email">Email</label>
+            <InputText @bind-Value="Input.Email" id="email" type="email" autocomplete="username" required />
+            <ValidationMessage For="() => Input.Email" />
+        </div>
+        <button type="submit" class="auth-submit">Resend confirmation link</button>
+    </EditForm>
+    <p class="muted auth-alt"><a href="Account/Login">← Back to sign in</a></p>
+}
+
+@code {
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = default!;
+
+    protected override void OnInitialized()
+    {
+        // Form binding runs before OnInitialized: a POST arrives bound, a GET gets a fresh model.
+        Input ??= new();
+    }
+
+    private async Task ResendAsync()
+    {
+        // ONE response for every outcome (redirect-with-status so a refresh can't repost): unknown email,
+        // already-confirmed, sent, and send-failure all read the same — this form reveals no more than the
+        // ForgotPassword one does. Only a registered, still-unconfirmed account triggers a send, so response
+        // TIMING differs on that branch (the same accepted residual ForgotPassword documents; the per-IP
+        // limit on /Account POSTs bounds probing).
+        var user = await UserManager.FindByEmailAsync(Input.Email);
+        if (user is not null && !await UserManager.IsEmailConfirmedAsync(user))
+        {
+            var token = await UserManager.GenerateEmailConfirmationTokenAsync(user);
+            var url = AccountLinks.ConfirmEmailUrl(NavigationManager, user.Id, token);
+            try
+            {
+                await Mailer.SendEmailConfirmationAsync(Input.Email, url, HttpContext.RequestAborted);
+                Logger.LogInformation("Resent an email confirmation link.");
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Same as ForgotPassword's send failure: a relay hiccup can only occur on the
+                // account-exists-and-unconfirmed branch, so surfacing it would answer the very question the
+                // one-response design refuses. Ops reads the log; the user tries again.
+                Logger.LogError(ex, "Resent email confirmation link failed to send.");
+            }
+        }
+        RedirectManager.RedirectToCurrentPageWithStatus(
+            "If that email is registered and still needs confirming, a fresh link is on its way.", HttpContext);
+    }
+
+    private sealed class InputModel
+    {
+        [Required]
+        [EmailAddress]
+        public string Email { get; set; } = "";
+    }
+}

@@ -4,8 +4,11 @@
 @inject UserManager<AppUser> UserManager
 @inject SignInManager<AppUser> SignInManager
 @inject HouseholdService Households
+@inject AccountCreationLimiter AccountLimiter
+@inject IAccountMailer Mailer
 @inject AuthDbContext Db
 @inject IOptions<AuthOptions> Auth
+@inject NavigationManager NavigationManager
 @inject IdentityRedirectManager RedirectManager
 @inject ILogger<Register> Logger
 @inject LoginAudit LoginAudit
@@ -83,11 +86,20 @@
             return;
         }
 
+        // The demo box's daily account-creation cap (§10). Only the NEW-household path is bounded — a valid
+        // invite code is never turned away (it's not an abuse vector, and blocking a real demo hand-off would
+        // be a bad moment). Dormant when no cap is configured (self-host/family), so this is free there.
+        if (!joining && await AccountLimiter.AtDailyLimitAsync(HttpContext.RequestAborted))
+        {
+            errorMessage = DemoLimits.DailyCapReachedMessage;
+            return;
+        }
+
         // One transaction across user + household: UserManager's store rides the same scoped
         // AuthDbContext, so a bad invite code (or any failure) leaves no orphaned half-registration.
         await using var tx = await Db.Database.BeginTransactionAsync();
 
-        var user = new AppUser { UserName = Input.Email, Email = Input.Email };
+        var user = new AppUser { UserName = Input.Email, Email = Input.Email, CreatedOn = DateOnly.FromDateTime(DateTime.Today) };
         var result = await UserManager.CreateAsync(user, Input.Password);
         if (!result.Succeeded)
         {
@@ -112,11 +124,46 @@
         await tx.CommitAsync();
         Logger.LogInformation("New account registered ({Mode}).", joining ? "joined household" : "new household");
 
-        // Sign in AFTER the commit, so the issued cookie always carries a real household claim.
+        if (Auth.Value.RequireEmailConfirmation)
+        {
+            // The demo box (§10): don't sign in yet — email the confirmation link and send them to a
+            // "check your inbox" page. Identity's RequireConfirmedAccount then blocks sign-in until they
+            // open it. The account + household exist (committed above), so a lost email is recovered by
+            // "resend", not a re-registration (which RequireUniqueEmail would refuse anyway).
+            await SendConfirmationEmailAsync(user);
+            RedirectManager.RedirectTo("Account/RegisterConfirmation");
+            return;
+        }
+
+        // Direct registration (self-host / family): sign in AFTER the commit, so the issued cookie always
+        // carries a real household claim.
         await SignInManager.SignInAsync(user, isPersistent: false);
         // A registration is the account's first login — count it for the admin view (best-effort).
         await LoginAudit.RecordAsync(user.Id, user.Email ?? Input.Email, DateTimeOffset.Now);
         RedirectManager.RedirectTo(ReturnUrl);
+    }
+
+    /// <summary>Mint the email-confirmation token, encode it into an absolute link built from the live
+    /// request (so it carries whichever front door the registrant is at), and send it. Best-effort like
+    /// ForgotPassword's send: a relay hiccup logs but doesn't fail the registration — the account is already
+    /// committed and RegisterConfirmation points at "resend" for a link that never arrives.</summary>
+    private async Task SendConfirmationEmailAsync(AppUser user)
+    {
+        var token = await UserManager.GenerateEmailConfirmationTokenAsync(user);
+        var url = AccountLinks.ConfirmEmailUrl(NavigationManager, user.Id, token);
+        try
+        {
+            await Mailer.SendEmailConfirmationAsync(user.Email!, url, HttpContext.RequestAborted);
+            Logger.LogInformation("Email confirmation link sent to a new account.");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Email confirmation link failed to send to a new account.");
+        }
     }
 
     private sealed class InputModel

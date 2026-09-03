@@ -188,6 +188,11 @@ public static class AdditiveSchema
         // existing rows unaffected.
         EnsureTable(db, table: "Wishlist");
 
+        // 2026-09-03: when an account was created (server-local day) — feeds the demo box's daily
+        // account-creation cap (§10). Pre-existing accounts get NULL (unknown day), which never matches
+        // "== today" and so never counts toward the cap. DateOnly? → TEXT NULL, matching EnsureCreated's.
+        EnsureColumn(db, table: "AspNetUsers", column: "CreatedOn", definition: "TEXT NULL");
+
         // 2026-09-01: payment webhook idempotency (phase 3 step 2) — one row per applied provider event,
         // so a retried webhook can't double-apply. Auth-side beside the subscription + ledger. A new
         // table — existing rows unaffected.
