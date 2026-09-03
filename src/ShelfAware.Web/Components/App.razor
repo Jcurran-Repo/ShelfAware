@@ -10,9 +10,10 @@
     <link rel="stylesheet" href="@Assets["ShelfAware.Web.styles.css"]" />
     <link rel="manifest" href="manifest.webmanifest" />
     @* The browser toolbar / status-bar colour. js/theme.js updates it to the effective theme's --bg on
-       load and on every change; the initial value is the LIGHT default (matching the no-data-theme CSS
-       default) so a JS-off light visitor's chrome matches the light page. Must precede the script. *@
-    <meta name="theme-color" id="theme-color-meta" content="#f6f7f9" />
+       load and on every change; the initial value is the default palette's (Warm & Fresh) LIGHT --bg,
+       matching the no-data-theme CSS default, so a JS-off light visitor's chrome matches the page.
+       Must precede the script. *@
+    <meta name="theme-color" id="theme-color-meta" content="#f7f3ea" />
     @* Resolves the colour theme (Auto→OS / Light / Dark) and stamps data-theme on <html> BEFORE first
        paint, so there's no flash. External (not inline) because the strict CSP forbids inline scripts. *@
     <script src="@Assets["js/theme.js"]"></script>

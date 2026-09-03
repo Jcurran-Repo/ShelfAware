@@ -2,18 +2,23 @@
 :root,
 :root[data-theme="light"] {
     color-scheme: light;
-    --ink: #1f2328;
-    --ink-soft: #59636e;
-    --line: #e2e5e9;
-    --surface: #ffffff;
-    --surface-alt: #f0f2f5;
-    --bg: #f6f7f9;
-    --accent: #2563eb;
-    --accent-ink: #1d4ed8;
+    /* Warm & Fresh (default): buttery-paper neutrals, a clean teal action colour, a gold Reginald
+       mark. The teal never collides with the red/amber/green states, which are warmed to match.
+       The original blue-on-white palette is kept, selectable, as "Classic" further down. */
+    --ink: #29251e;
+    --ink-soft: #776e5e;
+    --line: #e7decd;
+    --surface: #fffdf8;
+    --surface-alt: #f3efe5;
+    --bg: #f7f3ea;
+    --accent: #0b7d71;        /* teal — darkened from the pick (#0e8c7f, which fails AA at 4.14:1) so white-on-accent (5.0:1) AND accent-as-text on cards/page (4.9 / 4.5:1) all clear WCAG AA */
+    --accent-ink: #0b6f63;
+    --on-accent: #ffffff;     /* text / icons that sit on an --accent fill */
+    --brand: #b5851f;         /* the Reginald wordmark — gold */
 
-    --overdue-bg: #fde7e9;  --overdue-ink: #b42318;  --overdue-line: #e8625a;
-    --duesoon-bg: #fef4d6;  --duesoon-ink: #8a6100;  --duesoon-line: #e3b341;
-    --stocked-bg: #dcf3e6;  --stocked-ink: #116b3c;  --stocked-line: #58b487;
+    --overdue-bg: #f6ded7;  --overdue-ink: #a5381f;  --overdue-line: #d67c64;
+    --duesoon-bg: #f7e9c4;  --duesoon-ink: #85610f;  --duesoon-line: #d6b248;
+    --stocked-bg: #deead0;  --stocked-ink: #46662c;  --stocked-line: #8fb068;
     --unknown-bg: #e8eaed;  --unknown-ink: #4a525b;  --unknown-line: #b6bdc6;
     --plan-bg: #e9e6fb;     --plan-ink: #5b3fbf;     --plan-line: #a99af0;
 
@@ -43,18 +48,22 @@
    keyed on data-theme, rather than being split across a prefers-color-scheme media query. */
 :root[data-theme="dark"] {
     color-scheme: dark;
-    --ink: #e6e8eb;
-    --ink-soft: #9aa4af;
-    --line: #2b3138;
-    --surface: #1b1f24;
-    --surface-alt: #20252b;
-    --bg: #131619;
-    --accent: #4b86ff;
-    --accent-ink: #7aa6ff;
+    --ink: #ece5d6;
+    --ink-soft: #a69b86;
+    --line: #342f22;
+    --surface: #232019;
+    --surface-alt: #29241a;
+    --bg: #191712;
+    --accent: #20a596;
+    --accent-ink: #48c1b4;
+    --on-accent: #06231f;     /* dark text on the lighter dark-mode teal (white would fail contrast) */
+    --brand: #d9a93b;
+    --danger-dark: #b3392c;       /* solid dark red for the danger BUTTON in dark mode — the --overdue-ink token is a light salmon here (tuned for pill text), so white on it is illegible */
+    --danger-dark-hover: #9a3025;
 
-    --overdue-bg: #3a1d1f;  --overdue-ink: #f4a6a0;  --overdue-line: #b4524a;
-    --duesoon-bg: #38300f;  --duesoon-ink: #eccf85;  --duesoon-line: #9a7d2c;
-    --stocked-bg: #143427;  --stocked-ink: #84dfac;  --stocked-line: #3f8e64;
+    --overdue-bg: #38201b;  --overdue-ink: #f0a79a;  --overdue-line: #a9564a;
+    --duesoon-bg: #332d12;  --duesoon-ink: #e6c77e;  --duesoon-line: #8f7529;
+    --stocked-bg: #16311f;  --stocked-ink: #83d69e;  --stocked-line: #3d8055;
     --unknown-bg: #2a2f36;  --unknown-ink: #aab2bb;  --unknown-line: #586675;
     --plan-bg: #262046;     --plan-ink: #c7bafa;     --plan-line: #6f5fc4;
 
@@ -70,6 +79,60 @@
     --chart-7: #d55181;
     --chart-8: #d95926;
     --chart-pooled: #6d7783;
+}
+
+/* ---- Named palettes (themes) --------------------------------------------------------------------
+   Two orthogonal axes, both stamped on <html> by wwwroot/js/theme.js BEFORE first paint:
+     • data-theme    = light | dark   (resolved from the OS under "auto" — the two blocks above)
+     • data-apptheme = which palette   (the DEFAULT palette lives in the bare :root above so a
+                        JS-off / pre-stamp render still gets it; every ALTERNATIVE palette is an
+                        override block down here)
+   Every component reads the --ink / --bg / --accent tokens and never a palette directly, so adding a
+   theme is one more override block and nothing else changes. Per-theme (redefined in each palette):
+   the core neutrals, accent, brand, on-accent, and the warm-tuned overdue/duesoon/stocked chips.
+   SHARED (defined once in :root, the same for every palette): the unknown/plan status colours, the
+   CVD-safe chart hues, --shadow, --radius and --sidebar-w — so the charts stay colourblind-safe on
+   every ground and the secondary states stay consistent.
+
+   Classic — the original blue-on-white palette (verbatim), kept selectable so anyone can switch
+   straight back. The [data-theme="light"] variant makes it out-specify the default light block for a
+   Classic+light visitor regardless of source order; the bare [data-apptheme="classic"] covers the
+   pre-stamp fallback. */
+:root[data-apptheme="classic"],
+:root[data-apptheme="classic"][data-theme="light"] {
+    color-scheme: light;
+    --ink: #1f2328;
+    --ink-soft: #59636e;
+    --line: #e2e5e9;
+    --surface: #ffffff;
+    --surface-alt: #f0f2f5;
+    --bg: #f6f7f9;
+    --accent: #2563eb;
+    --accent-ink: #1d4ed8;
+    --on-accent: #ffffff;
+    --brand: var(--ink);      /* Classic keeps its plain-ink wordmark — the gold mark is a Warm thing */
+
+    --overdue-bg: #fde7e9;  --overdue-ink: #b42318;  --overdue-line: #e8625a;
+    --duesoon-bg: #fef4d6;  --duesoon-ink: #8a6100;  --duesoon-line: #e3b341;
+    --stocked-bg: #dcf3e6;  --stocked-ink: #116b3c;  --stocked-line: #58b487;
+}
+
+:root[data-apptheme="classic"][data-theme="dark"] {
+    color-scheme: dark;
+    --ink: #e6e8eb;
+    --ink-soft: #9aa4af;
+    --line: #2b3138;
+    --surface: #1b1f24;
+    --surface-alt: #20252b;
+    --bg: #131619;
+    --accent: #4b86ff;
+    --accent-ink: #7aa6ff;
+    --on-accent: #ffffff;
+    --brand: var(--ink);
+
+    --overdue-bg: #3a1d1f;  --overdue-ink: #f4a6a0;  --overdue-line: #b4524a;
+    --duesoon-bg: #38300f;  --duesoon-ink: #eccf85;  --duesoon-line: #9a7d2c;
+    --stocked-bg: #143427;  --stocked-ink: #84dfac;  --stocked-line: #3f8e64;
 }
 
 body {
@@ -137,6 +200,7 @@ body {
     gap: 0.5rem;
     font-weight: 700;
     letter-spacing: -0.01em;
+    color: var(--brand);
 }
 
 /* The dapper-blob mascot, reused as a small brand badge and as the friendly face on the empty and
@@ -503,7 +567,7 @@ button {
     padding: 0.4rem 0.8rem;
     border: 1px solid var(--accent);
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     border-radius: 6px;
     cursor: pointer;
 }
@@ -541,6 +605,21 @@ button.danger:hover:not(:disabled) {
     border-color: var(--overdue-line);
 }
 
+/* In dark mode --overdue-ink is a LIGHT salmon (tuned for pill text), so white on the danger BUTTON is
+   illegible at rest — and its hover (--overdue-line, a mid-tone) can't satisfy both white and dark text.
+   So the dark-mode danger button gets a solid dark red instead, keeping the white label legible at rest
+   AND on hover, in both palettes. Light mode's fill is already a dark red, so it's left as-is (Classic's
+   light danger button stays verbatim). */
+:root[data-theme="dark"] button.danger {
+    background: var(--danger-dark);
+    border-color: var(--danger-dark);
+}
+
+:root[data-theme="dark"] button.danger:hover:not(:disabled) {
+    background: var(--danger-dark-hover);
+    border-color: var(--danger-dark-hover);
+}
+
 /* Subscription & billing (Settings): hosted-redirect links styled as buttons. A redirect is a NAVIGATION,
    so these are anchors (they work without the circuit), mirroring the button look via the same theme vars. */
 .billing-actions {
@@ -565,7 +644,7 @@ button.danger:hover:not(:disabled) {
 .billing-actions a.primary {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
 }
 .billing-actions a.primary:hover {
     background: var(--accent-ink);
@@ -1266,7 +1345,7 @@ button.mic-speaking {
     padding: 0.6rem 1rem;
     border-radius: 999px;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     border: 1px solid var(--accent-ink);
     box-shadow: var(--shadow);
     font-weight: 600;
@@ -2647,7 +2726,7 @@ button.tag-chip {
 .cookbook-source button:last-child { border-radius: 0 var(--radius) var(--radius) 0; margin-left: -1px; }
 .cookbook-source button.active {
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     border-color: var(--accent);
     position: relative; /* sit above the sibling's shared border */
 }
@@ -2992,7 +3071,7 @@ button.tag-chip {
     padding: 0.4rem 0.8rem;
     border: 1px solid var(--accent);
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     border-radius: 6px;
     cursor: pointer;
     margin-left: 0.5rem;
@@ -3159,7 +3238,7 @@ tfoot td {
 .report-preset-pill.active {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
 }
 
 .report-section {
@@ -3716,10 +3795,18 @@ tfoot td {
     color: var(--accent-ink);
 }
 
-/* Colour-theme switcher (Auto / Light / Dark) in the rail footer. Drives wwwroot/js/theme.js, which
-   stamps data-theme on <html>; the select itself is themed by the tokens like everything else. */
+/* Theme switcher in the rail footer: palette (Warm & Fresh / Classic) over light/dark (Auto/Light/Dark).
+   Drives wwwroot/js/theme.js, which stamps data-apptheme + data-theme on <html>; the selects are themed
+   by the tokens like everything else. Stacked so both fit the narrow rail. */
+.theme-switch {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
 .theme-switch select {
     /* font, background, and border come from the base `input, select` rule — only the overrides here. */
+    width: 100%;
     font-size: 0.9rem;
     color: var(--ink-soft);
     border-radius: var(--radius);
@@ -3812,7 +3899,7 @@ tfoot td {
     border: 1px solid var(--accent);
     border-radius: 6px;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     font-weight: 600;
     cursor: pointer;
 }
@@ -4105,7 +4192,7 @@ tfoot td {
     margin-top: 0.5rem;
     padding: 0.55rem 1rem;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     border-radius: var(--radius);
     text-decoration: none;
     font-weight: 600;
