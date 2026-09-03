@@ -72,6 +72,47 @@
     --chart-pooled: #6d7783;
 }
 
+/* ---- Named palettes (themes) --------------------------------------------------------------------
+   Two orthogonal axes, both stamped on <html> by wwwroot/js/theme.js BEFORE first paint:
+     • data-theme    = light | dark   (resolved from the OS under "auto" — the two blocks above)
+     • data-apptheme = which palette   (the DEFAULT palette lives in the bare :root above so a
+                        JS-off / pre-stamp render still gets it; every ALTERNATIVE palette is an
+                        override block down here)
+   Every component reads the --ink / --bg / --accent tokens and never a palette directly, so adding a
+   theme is one more override block and nothing else changes. Only the CORE neutrals + accent are
+   per-theme; the semantic status colours, the CVD-safe chart hues, --shadow, --radius and
+   --sidebar-w are SHARED (defined once in :root) so every theme agrees on "overdue red" and the
+   charts stay colourblind-safe on every ground.
+
+   Classic — the original blue-on-white palette (verbatim), kept selectable so anyone can switch
+   straight back. The [data-theme="light"] variant makes it out-specify the default light block for a
+   Classic+light visitor regardless of source order; the bare [data-apptheme="classic"] covers the
+   pre-stamp fallback. */
+:root[data-apptheme="classic"],
+:root[data-apptheme="classic"][data-theme="light"] {
+    color-scheme: light;
+    --ink: #1f2328;
+    --ink-soft: #59636e;
+    --line: #e2e5e9;
+    --surface: #ffffff;
+    --surface-alt: #f0f2f5;
+    --bg: #f6f7f9;
+    --accent: #2563eb;
+    --accent-ink: #1d4ed8;
+}
+
+:root[data-apptheme="classic"][data-theme="dark"] {
+    color-scheme: dark;
+    --ink: #e6e8eb;
+    --ink-soft: #9aa4af;
+    --line: #2b3138;
+    --surface: #1b1f24;
+    --surface-alt: #20252b;
+    --bg: #131619;
+    --accent: #4b86ff;
+    --accent-ink: #7aa6ff;
+}
+
 body {
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
     margin: 0;
