@@ -5,6 +5,7 @@
 @inject IdentityRedirectManager RedirectManager
 @inject ILogger<Login> Logger
 @inject IOptions<EmailOptions> Email
+@inject IOptions<AuthOptions> Auth
 @inject LoginAudit LoginAudit
 
 <PageTitle>Sign in — Reginald</PageTitle>
@@ -30,10 +31,18 @@
     <button type="submit" class="auth-submit">Sign in</button>
 </EditForm>
 
-@if (showResendConfirmation)
+@if (Auth.Value.RequireEmailConfirmation)
 {
-    @* Shown only after an unconfirmed sign-in attempt — the way out of a lost confirmation email. *@
-    <p class="muted auth-alt"><a href="Account/ResendEmailConfirmation">Resend the confirmation email</a></p>
+    @* A STANDING link, like "Forgot your password?" below — shown whenever the box requires email
+       confirmation, NOT triggered by a sign-in attempt. That is the whole point: a link that appeared only
+       for unconfirmed accounts would tell a prober which addresses those are (an enumeration oracle). This
+       one reveals nothing about any account — it states a property of the deployment — while still giving a
+       forgetful owner the way out of a lost confirmation email. Its text explains when it applies, so the
+       failed-sign-in message can stay generic. (RequireEmailConfirmation implies Email is configured — the
+       startup validation refuses the flag without a mailer — so the link never dangles.) *@
+    <p class="muted auth-alt">
+        <a href="Account/ResendEmailConfirmation">Registered but can't sign in? Confirm your email — resend the link</a>
+    </p>
 }
 
 @if (Email.Value.IsConfigured)
@@ -63,10 +72,6 @@
 
 @code {
     private string? errorMessage;
-
-    // Set when a sign-in is refused for an unconfirmed email, so the resend link appears only when it's
-    // the actual problem (not on a wrong password).
-    private bool showResendConfirmation;
 
     // External providers are config-gated (registered only when credentials exist), so on most
     // deployments this is empty and the section renders nothing.
@@ -114,26 +119,16 @@
         }
         else if (result.IsNotAllowed)
         {
-            // IsNotAllowed means the account EXISTS but is unconfirmed (RequireConfirmedAccount — the demo
-            // box's Auth:RequireEmailConfirmation). ⚠️ Identity runs that gate in PreSignInCheck, BEFORE it
-            // verifies the password, so this fires on ANY password — a wrong one included. Surfacing the
-            // "confirm your email" hint + resend link on IsNotAllowed alone would therefore tell an
-            // unauthenticated prober which addresses have unconfirmed accounts (the enumeration oracle the
-            // pre-merge review caught). So reveal it ONLY when the password ALSO checks out: the real,
-            // forgetful owner gets the helpful nudge, while a wrong password — like an unknown address or a
-            // confirmed account's wrong password — falls through to the same generic message, leaving the
-            // three indistinguishable. CheckPasswordAsync is a plain hash verify (no lockout side effect).
-            var user = await SignInManager.UserManager.FindByEmailAsync(Input.Email);
-            if (user is not null && await SignInManager.UserManager.CheckPasswordAsync(user, Input.Password))
-            {
-                Logger.LogInformation("Sign-in blocked: email not confirmed.");
-                errorMessage = "Error: confirm your email address before signing in — check your inbox for the link we sent when you registered.";
-                showResendConfirmation = true;
-            }
-            else
-            {
-                errorMessage = "Error: invalid email or password.";
-            }
+            // An unconfirmed account (RequireConfirmedAccount — the demo box's Auth:RequireEmailConfirmation).
+            // ⚠️ It gets the SAME generic message as any other failed sign-in, on purpose. Identity runs the
+            // confirmation gate BEFORE the password check, so IsNotAllowed fires on ANY password — a
+            // per-state message here would tell an unauthenticated prober which addresses have unconfirmed
+            // accounts (an enumeration oracle), and keying the message off password-correctness instead would
+            // just trade that for a password-guess oracle that account lockout can't throttle. So reveal
+            // NOTHING here; the forgetful owner recovers through the standing "resend" link above, which is
+            // shown for the whole deployment and singles out no address. The log line is server-side only.
+            Logger.LogInformation("Sign-in blocked: email not confirmed.");
+            errorMessage = "Error: invalid email or password.";
         }
         else
         {

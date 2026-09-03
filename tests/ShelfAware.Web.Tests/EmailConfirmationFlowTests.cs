@@ -116,27 +116,28 @@ public sealed class EmailConfirmationFlowTests : IDisposable
     }
 
     [Fact]
-    public async Task An_unconfirmed_account_is_blocked_at_sign_in_on_ANY_password_which_is_why_login_re_checks_it()
+    public async Task An_unconfirmed_account_is_blocked_at_sign_in_on_ANY_password_so_login_must_stay_generic()
     {
-        // The premise the Login page's enumeration guard rests on — and the fact this session's first
-        // comment got WRONG (the pre-merge review probed it). Identity runs the RequireConfirmedAccount gate
-        // in PreSignInCheck, BEFORE verifying the password, so an unconfirmed account returns IsNotAllowed on
-        // ANY password. Surfacing the "confirm your email" hint on IsNotAllowed alone would therefore leak
-        // which addresses have unconfirmed accounts to a prober who doesn't know the password — so Login
-        // re-checks the password (CheckPasswordAsync) and only shows the hint when it's also correct.
-        // If Identity ever verified the password first (making a wrong password read as Failed here), that
-        // guard would become belt-and-braces rather than load-bearing; it should stay either way.
+        // WHY the Login page gives an unconfirmed account the SAME generic "invalid email or password" as
+        // every other failed sign-in (and offers "resend" only as a standing, deployment-wide link, never a
+        // per-attempt one): Identity runs the RequireConfirmedAccount gate in PreSignInCheck, BEFORE it
+        // verifies the password, so an unconfirmed account returns IsNotAllowed on ANY password — a wrong one
+        // included. A message that fired on IsNotAllowed alone would leak which addresses have unconfirmed
+        // accounts, and keying it off password-correctness would just trade that for an unthrottled
+        // password-guess oracle — so the page reveals nothing here. If Identity ever verified the password
+        // first (a wrong password reading as Failed below), the reasoning would need revisiting; this test is
+        // the tripwire.
         var user = await UnconfirmedUserAsync(); // password "original-pass-10"
         var signIn = BuildSignInManager();
 
         // Right password, but unconfirmed → still blocked (the gate is checked before the password)...
         Assert.True((await signIn.PasswordSignInAsync(user, "original-pass-10", false, false)).IsNotAllowed);
-        // ...and a WRONG password returns the IDENTICAL result, so IsNotAllowed cannot tell the two apart.
+        // ...and a WRONG password returns the IDENTICAL result, so IsNotAllowed cannot tell the two apart —
+        // which is exactly why a password-keyed message would be an oracle rather than a fix.
         Assert.True((await signIn.PasswordSignInAsync(user, "wrong-pass-999", false, false)).IsNotAllowed);
 
         // Once confirmed, a wrong password is a plain Failed (NOT IsNotAllowed) — the state Login's generic
-        // "invalid email or password" already covers, which is why IsNotAllowed is specifically the
-        // unconfirmed-account signal the guard is about.
+        // "invalid email or password" already covers, so IsNotAllowed is specifically the unconfirmed signal.
         var token = await _users.GenerateEmailConfirmationTokenAsync(user);
         Assert.True((await _users.ConfirmEmailAsync(user, token)).Succeeded);
         var confirmedWrong = await signIn.PasswordSignInAsync(user, "wrong-pass-999", false, false);
