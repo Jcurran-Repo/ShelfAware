@@ -3,7 +3,8 @@ namespace ShelfAware.Web.Auth;
 /// <summary>What kind of ledger movement this is. <see cref="Grant"/> (the welcome grant, or an admin
 /// comp) and <see cref="Consumption"/> (an AI call drawing the balance down) are phase 2; <see cref="Purchase"/>
 /// (a credit-pack buy, positive) and <see cref="Refund"/> (a reversal, negative — balances may go negative,
-/// §4) join with payments (phase 3). Expiry joins with no-rollover enforcement (phase 4). The enum is
+/// §4) join with payments (phase 3). <see cref="Allowance"/> (the recurring Aware monthly grant) and
+/// <see cref="Expiry"/> (its no-rollover sweep) are phase 4. The enum is
 /// extensible — a new kind is additive, and nothing switches on it exhaustively (the balance is a plain sum
 /// of <see cref="CreditLedgerEntry.AmountMicros"/>, kind is for display/audit).</summary>
 public enum CreditEntryKind
@@ -12,6 +13,17 @@ public enum CreditEntryKind
     Consumption = 1,
     Purchase = 2,
     Refund = 3,
+
+    /// <summary>The recurring Aware monthly allowance (positive), granted lazily per billing period.
+    /// Distinct from <see cref="Grant"/> (welcome/comp, which persists) because it does NOT roll over: an
+    /// unspent allowance is swept by an <see cref="Expiry"/> entry at the next period (§4). Consumption
+    /// spends the allowance before the persisting money (welcome grant + purchases).</summary>
+    Allowance = 4,
+
+    /// <summary>A period-end sweep of an unspent <see cref="Allowance"/> (negative) — no-rollover
+    /// enforcement (§4). Its magnitude is exactly the prior allowance's unspent remainder, so the
+    /// persisting balance (welcome grant + purchases) is untouched.</summary>
+    Expiry = 5,
 }
 
 /// <summary>

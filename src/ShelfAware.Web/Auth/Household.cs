@@ -69,14 +69,25 @@ public class Household
 
     /// <summary>When the current paid period ends — the next renewal on an active subscription, or the
     /// date access runs out on one set to cancel. Null when there is no subscription. Drives "your plan
-    /// renews on …" / "access until …" and the lazy per-period grant (§4). Stored from the provider's UTC
-    /// period, never derived from server-local <c>DateTime.Today</c> (the TZ gotcha).</summary>
+    /// renews on …" / "access until …". Stored from the provider's UTC period, never derived from
+    /// server-local <c>DateTime.Today</c> (the TZ gotcha). ⚠️ Does NOT drive the monthly allowance — that
+    /// keys on the CALENDAR MONTH (<c>CreditLedger.PeriodFor</c>), so an annual subscriber still gets a
+    /// monthly drip; see <see cref="AllowanceGrantedForPeriod"/> (§4).</summary>
     public DateTimeOffset? SubscriptionRenewsAt { get; set; }
 
     /// <summary>True when the subscription is set to cancel at <see cref="SubscriptionRenewsAt"/> rather
     /// than renew — the member hit "cancel" and is running out the period they paid for (§6: cancel →
     /// runs out the paid period, data untouched). False by default and for an actively-renewing sub.</summary>
     public bool SubscriptionCancelAtPeriodEnd { get; set; }
+
+    /// <summary>The CALENDAR MONTH (<c>CreditLedger.PeriodFor(now)</c> — first-of-month UTC) the current Aware
+    /// monthly allowance was granted for — the idempotency marker for the lazy per-month grant (§4). Null until
+    /// the first allowance is granted (and on any non-Aware household). When it differs from the current
+    /// month's value, the month has rolled over: the prior allowance's unspent remainder is swept and a new
+    /// allowance granted (<c>CreditLedger.EnsureCurrentAllowanceAsync</c>). ⚠️ Keyed on the calendar month, NOT
+    /// <see cref="SubscriptionRenewsAt"/>, so the grant drips monthly even on annual billing. Written only by
+    /// that lazy grant, via a conditional claim so two concurrent checks can't double-grant.</summary>
+    public DateTimeOffset? AllowanceGrantedForPeriod { get; set; }
 
     /// <summary>Whether the code would be accepted right now. A method rather than a property so EF leaves
     /// it alone (it's behaviour, not a column) and so the caller has to name the clock — which is what

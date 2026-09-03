@@ -70,6 +70,16 @@ public class AiPricingTests
     }
 
     [Fact]
+    public void The_monthly_allowance_is_configured_cost_dollars_times_markup()
+    {
+        // $1.00 of cost × 1.65 = $1.65 retail = 1,650,000 micros (the recurring Aware grant, phase 4a).
+        Assert.Equal(1_650_000, AiPricing.MonthlyAllowanceRetailMicros(Defaults));
+
+        var generous = new BillingOptions { MonthlyAllowanceDollars = 3.00m };
+        Assert.Equal(4_950_000, AiPricing.MonthlyAllowanceRetailMicros(generous)); // 3 × 1.65, its own config variable
+    }
+
+    [Fact]
     public void A_configured_rate_overrides_the_built_in_one()
     {
         var o = new BillingOptions();

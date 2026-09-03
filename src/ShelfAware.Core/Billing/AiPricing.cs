@@ -26,6 +26,12 @@ public sealed class BillingOptions
     /// cost"); stored as retail credit = this × <see cref="CreditMarkup"/>.</summary>
     public decimal WelcomeGrantDollars { get; set; } = 1.00m;
 
+    /// <summary>The recurring monthly allowance for an Aware subscriber, in dollars OF COST (the doc's
+    /// "$1.65 retail = $1.00 cost" monthly grant); stored as retail credit = this × <see cref="CreditMarkup"/>.
+    /// Granted lazily per billing period and does NOT roll over (§4) — distinct from the one-time
+    /// <see cref="WelcomeGrantDollars"/>, which persists until spent.</summary>
+    public decimal MonthlyAllowanceDollars { get; set; } = 1.00m;
+
     /// <summary>The rate for a model not in <see cref="ModelRates"/> — a visitor's exotic BYOK model, or
     /// one added to config before this table. Deliberately the priciest current tier so an unknown model
     /// OVER-estimates (visible, self-correcting) rather than reads as free (silently eats margin).</summary>
@@ -82,6 +88,11 @@ public static class AiPricing
     /// <summary>The welcome grant in RETAIL micros: configured cost-dollars × markup, in micros.</summary>
     public static long WelcomeGrantRetailMicros(BillingOptions options) =>
         (long)Math.Round(options.WelcomeGrantDollars * MicrosPerDollar * options.CreditMarkup, MidpointRounding.AwayFromZero);
+
+    /// <summary>The Aware monthly allowance in RETAIL micros: configured cost-dollars × markup, in micros —
+    /// the recurring per-period grant (§4), same shape as the welcome grant but a distinct, no-rollover pool.</summary>
+    public static long MonthlyAllowanceRetailMicros(BillingOptions options) =>
+        (long)Math.Round(options.MonthlyAllowanceDollars * MicrosPerDollar * options.CreditMarkup, MidpointRounding.AwayFromZero);
 
     /// <summary>Micros → a display string in dollars (e.g. 1_234_500 → "$1.23"), on the current culture.</summary>
     public static string FormatMicros(long micros) => (micros / MicrosPerDollar).ToString("C2");

@@ -8,10 +8,11 @@ namespace ShelfAware.Web.Auth;
 /// operator's thank-you tier: unlimited AI, still fully recorded.
 ///
 /// <see cref="Aware"/> is granted by an active subscription (phase 3 — <c>docs/subscription-plan.md</c>
-/// §6), where <see cref="Free"/> is granted by default and <see cref="Founder"/> by the admin. The
-/// future voice-inclusive "Sous Chef" tier will join here when it's built (§1) — this enum is
-/// deliberately the SEAM. Stored as INTEGER; existing rows default to <see cref="Free"/> (0), so a
-/// household created before tiers existed is unchanged.
+/// §6), where <see cref="Free"/> is granted by default and <see cref="Founder"/> by the admin. This enum
+/// is deliberately the SEAM: under the never-raise rule (§1) a future paid tier can always be ADDED here.
+/// (There is no planned voice tier — the old "Sous Chef" was dropped 2026-09-02: the realtime Live agent
+/// is hidden and voice folds into Aware.) Stored as INTEGER; existing rows default to <see cref="Free"/>
+/// (0), so a household created before tiers existed is unchanged.
 /// </summary>
 public enum HouseholdTier
 {

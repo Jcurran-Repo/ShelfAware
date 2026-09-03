@@ -7,6 +7,8 @@
 @inject RecipeTagService TagService
 @inject IShelfPhotoLoader PhotoLoader
 @inject RecipeImageStorage Images
+@inject IEntitlements Entitlements
+@inject CircuitAiSettings AiSettings
 @inject NavigationManager Nav
 @inject IJSRuntime JS
 @inject ILogger<Cookbook> Logger
@@ -715,6 +717,8 @@ else
         taggingBusy = true;
         suggesting = true;
         tagNote = null;
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        if (blocked is not null) { tagNote = blocked; suggesting = false; taggingBusy = false; return; }
         try
         {
             var added = await TagService.SuggestAndApplyAsync(r.Id);
@@ -744,6 +748,8 @@ else
         bulkTagging = true;
         bulkDone = 0;
         tagNote = null;
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        if (blocked is not null) { tagNote = blocked; bulkTagging = false; taggingBusy = false; return; }
         var tagged = 0;
         try
         {

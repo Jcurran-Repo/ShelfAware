@@ -16,7 +16,6 @@
 @inject CircuitAiSettings AiSettings
 @inject AiUsageMeter UsageMeter
 @inject IEntitlements Entitlements
-@inject CreditLedger Ledger
 @inject IOptions<LlmOptions> LlmConfig
 @inject IOptions<EmailOptions> EmailConfig
 @inject IOptions<PaymentsOptions> Payments
@@ -360,10 +359,10 @@
         <p class="founder-badge">★ You're a <strong>Founder</strong> — unlimited AI on the house, no caps.
             Thank you for helping build Reginald. 💛</p>
     }
-    @if (AiSettings.Managed && tier != HouseholdTier.Founder)
+    @if (AiSettings.Managed && tier != HouseholdTier.Founder && Payments.Value.IsConfigured)
     {
         <p><strong>Credit balance:</strong> @AiPricing.FormatMicros(creditBalanceMicros)
-            <span class="muted"> — your included AI credit. Recorded, not yet enforced.</span></p>
+            <span class="muted"> — your AI credit; managed calls draw on it, and AI pauses at zero.</span></p>
     }
     @if (todayUsage is { } today)
     {
@@ -1132,7 +1131,11 @@
         usageHistory = await UsageMeter.GetRecentAsync(days: 14);
         monthlyUsage = await UsageMeter.GetMonthlyAsync(months: 12);
         tier = await Entitlements.GetTierAsync();
-        creditBalanceMicros = household is null ? 0 : await Ledger.GetBalanceMicrosAsync(household.Id);
+        // The ONE balance definition — IEntitlements.GetBalanceMicrosAsync runs the lazy monthly allowance
+        // first, so a new period shows this month's grant, not the pre-rollover number (Ledger's raw sum).
+        // Only read it when billing is on: the balance panel is hidden otherwise, and reading it would run
+        // the allowance grant (minting ledger rows) on a billing-off box for an admin-set Aware household.
+        creditBalanceMicros = Payments.Value.IsConfigured ? await Entitlements.GetBalanceMicrosAsync() : 0;
         await LoadSettingsStateAsync();
     }
 

@@ -3355,12 +3355,15 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      exactly and gave `/about` its own `AboutLayout` with `.about-*` classes (no collision with the
      `.public-*` scoped ones). The "don't silently change a shared thing" rule — verify `/demo` is byte-
      untouched. A layout for two marketing pages is not "one fact in two places"; two page-chromes are fine.
-   - **The wishlist is COUNTER + optional email, tiered.** Pick **Shelf / Aware / Sous Chef**; the raw
-     interest count is soft by design (a public one-click counter can't be made fraud-proof), the DISTINCT
-     EMAILS are the trusted signal + the launch list. ⚠️ **Founder is NOT selectable** — it's the operator's
-     free gift to grant (Jordan's call), so it's out of the picker AND `WishlistTiers.IsValidKey` refuses it.
-     **Voice split (Jordan's call):** the conversational voice folds into **Aware**; **Sous Chef** is the
-     hands-free **cook-along agent** specifically (`docs/subscription-plan.md` updated to match).
+   - **The wishlist is COUNTER + optional email, tiered.** Pick **Shelf / Aware** (**Sous Chef** was a third
+     option at ship, **removed 2026-09-02** — see below); the raw interest count is soft by design (a public
+     one-click counter can't be made fraud-proof), the DISTINCT EMAILS are the trusted signal + the launch
+     list. ⚠️ **Founder is NOT selectable** — it's the operator's free gift to grant (Jordan's call), so it's
+     out of the picker AND `WishlistTiers.IsValidKey` refuses it.
+     **Voice (Jordan's call):** the conversational voice folds into **Aware**. ⚠️ **[Sous Chef REMOVED
+     2026-09-02, commit 1cafaaf — phase 4d]:** the paid hands-free cook-along was the realtime "Live agent",
+     which the rebrand HID, so voice folds entirely into Aware and there is no separate voice tier;
+     `WishlistTiers.All` is now Shelf + Aware, and `docs/subscription-plan.md` §1 records the removal.
    - **`WishlistEntry` is OPERATOR data in `auth.db`** (the ErrorLog recipe — no household owns it, never in
      export / delete-my-data; DbSet on `AuthDbContext` + `AdditiveSchema.EnsureTable` + a schema-parity
      test). Admin reads (the reserve list, with EMAILS) go through `AdminReportReader`'s admin gate like the

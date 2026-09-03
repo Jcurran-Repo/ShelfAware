@@ -852,7 +852,7 @@ app.MapGet("/api/receipt-image/{id:int}", async (
 // PhotoUploadIntake — the shared front door both photo endpoints use.
 app.MapPost("/api/receipts/extract", async (
     HttpRequest request, HttpContext ctx, IAntiforgery antiforgery, CircuitAiSettings ai,
-    ReceiptIngestionService ingestion, ILoggerFactory logs, CancellationToken ct) =>
+    IEntitlements entitlements, ReceiptIngestionService ingestion, ILoggerFactory logs, CancellationToken ct) =>
 {
     var (files, error) = await PhotoUploadIntake.ReadAsync(request, ctx, antiforgery,
         mt => mt.StartsWith("image/", StringComparison.OrdinalIgnoreCase) || mt == "application/pdf",
@@ -860,6 +860,14 @@ app.MapPost("/api/receipts/extract", async (
     if (error is not null) return error;
 
     PhotoUploadIntake.ApplyByok(request, ai);
+    // Tell the visitor the TRUE reason up front (no key / out of credits) instead of spending a doomed vision
+    // call that MeteredChatClient would refuse anyway — the extractor fails soft, so the gate's exception
+    // never reaches this handler (phase 4c, AiErrorText). A body is required or UseStatusCodePagesWithReExecute
+    // rewrites the empty 402 into a misleading 400 (the webhook scar below).
+    var blocked = await AiErrorText.BlockedReasonAsync(entitlements, ai, ct);
+    if (blocked is not null)
+        return Results.Json(new { error = blocked }, statusCode: StatusCodes.Status402PaymentRequired);
+
     var pages = files!.Select(f => new ReceiptAttachment(f.Bytes, f.MediaType)).ToList();
     try
     {
@@ -882,7 +890,8 @@ app.MapPost("/api/receipts/extract", async (
 // freezer to PDF). The raw model output is deliberately NOT shipped back — it's debug-only and can be large.
 app.MapPost("/api/pantry-photo/read", async (
     HttpRequest request, HttpContext ctx, IAntiforgery antiforgery, CircuitAiSettings ai,
-    IShelfCensusReader reader, IHouseholdDbFactory dbFactory, ILoggerFactory logs, CancellationToken ct) =>
+    IEntitlements entitlements, IShelfCensusReader reader, IHouseholdDbFactory dbFactory,
+    ILoggerFactory logs, CancellationToken ct) =>
 {
     // maxFiles: 8 matches the census page's own cap (PantryPhoto.MaxPhotos — the shelf reader looks at a
     // handful per go), enforced here server-side, not just in the UI.
@@ -892,6 +901,12 @@ app.MapPost("/api/pantry-photo/read", async (
     if (error is not null) return error;
 
     PhotoUploadIntake.ApplyByok(request, ai);
+    // Say the true reason (no key / out of credits) rather than spend a doomed vision call the gate refuses —
+    // same phase-4c pre-check as the receipt endpoint; a body avoids the empty-402 re-execution scar.
+    var blocked = await AiErrorText.BlockedReasonAsync(entitlements, ai, ct);
+    if (blocked is not null)
+        return Results.Json(new { error = blocked }, statusCode: StatusCodes.Status402PaymentRequired);
+
     var photos = files!.Select(f => new ShelfPhoto(f.Bytes, f.MediaType)).ToList();
     try
     {

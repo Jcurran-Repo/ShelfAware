@@ -14,6 +14,8 @@
 @inject VoiceCoordinator Coordinator
 @inject IJSRuntime JS
 @inject ILogger<Home> Logger
+@inject IEntitlements Entitlements
+@inject CircuitAiSettings AiSettings
 
 <PageTitle>Reginald</PageTitle>
 
@@ -445,6 +447,15 @@ else
         }
         chatBusy = true;
         chatReply = null;
+        // Phase 4c: don't attempt a call this circuit can't make — show why (out of credits / no key) and stop.
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        if (blocked is not null)
+        {
+            chatReply = blocked;
+            chatError = true;
+            chatBusy = false;
+            return;
+        }
         try
         {
             var result = await Chat.HandleAsync(chatInput);

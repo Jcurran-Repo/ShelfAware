@@ -72,7 +72,7 @@ public class PaymentWebhookHandlerTests : IDisposable
         return await db.Households.AsNoTracking().SingleAsync(h => h.Id == id);
     }
 
-    private Task<long> BalanceAsync(string householdId) => new CreditLedger(_auth).GetBalanceMicrosAsync(householdId);
+    private Task<long> BalanceAsync(string householdId) => new CreditLedger(_auth, Microsoft.Extensions.Options.Options.Create(new ShelfAware.Core.Billing.BillingOptions())).GetBalanceMicrosAsync(householdId);
 
     private static readonly DateTimeOffset PeriodEnd = new(2026, 10, 1, 0, 0, 0, TimeSpan.Zero);
 
@@ -162,7 +162,7 @@ public class PaymentWebhookHandlerTests : IDisposable
             h.SubscriptionId = "sub_end";
             h.SubscriptionRenewsAt = PeriodEnd;
         });
-        await new CreditLedger(_auth).GrantAsync(household.Id, 5_000_000, "seed"); // purchased credits on file
+        await new CreditLedger(_auth, Microsoft.Extensions.Options.Options.Create(new ShelfAware.Core.Billing.BillingOptions())).GrantAsync(household.Id, 5_000_000, "seed"); // purchased credits on file
 
         var evt = new PaymentWebhookEvent("evt_cancel", PaymentEventKind.SubscriptionCancelled,
             SubscriptionId: "sub_end");
@@ -183,7 +183,7 @@ public class PaymentWebhookHandlerTests : IDisposable
     public async Task A_refund_resolves_by_customer_id_and_the_balance_can_go_negative()
     {
         var household = await SeedAsync(h => h.BillingCustomerId = "cus_r");
-        await new CreditLedger(_auth).GrantAsync(household.Id, 5_000_000, "seed");
+        await new CreditLedger(_auth, Microsoft.Extensions.Options.Options.Create(new ShelfAware.Core.Billing.BillingOptions())).GrantAsync(household.Id, 5_000_000, "seed");
 
         // No household or subscription id — a refund carries the customer; resolve by it. The refund
         // exceeds the balance, so it goes negative (§4: nets against future purchases).

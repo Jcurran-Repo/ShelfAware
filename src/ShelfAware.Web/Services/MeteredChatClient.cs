@@ -2,23 +2,25 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Billing;
 using ShelfAware.Web.Auth;
+using ShelfAware.Web.Billing;
 using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.Services;
 
 /// <summary>
-/// The metering skin over <see cref="ByokChatClient"/>. RECORDING is universal — every call's
-/// tokens land in the household's usage row so the user can see what they've spent (the Settings
-/// usage panel, the accuracy check's cost line). LIMITING is managed-mode only: quotas guard the
-/// HOST's wallet, so BYOK circuits (their key, their wallet) are recorded but never blocked. Sits
-/// at the top of the IChatClient chain so every AI service (chat, extraction, advisors) is covered
-/// without touching any of them.
+/// The metering skin over <see cref="ByokChatClient"/>. RECORDING of token USAGE is universal — every
+/// call's tokens land in the household's usage row so the user can see what they've spent (the Settings
+/// usage panel, the accuracy check's cost line). LIMITING (and credit-ledger drawdown) is managed-AND-billing
+/// only: quotas guard the HOST's wallet, so BYOK circuits (their key, their wallet) and managed boxes with
+/// no Payments config (unlimited by default — §7) are recorded but never blocked or charged. Sits at the top
+/// of the IChatClient chain so every AI service (chat, extraction, advisors) is covered without touching them.
 /// </summary>
 public sealed class MeteredChatClient(
     ByokChatClient inner,
     CircuitAiSettings settings,
     AiUsageMeter meter,
     IOptions<BillingOptions> billing,
+    IOptions<PaymentsOptions> payments,
     CreditLedger ledger,
     IEntitlements entitlements,
     ICurrentHousehold currentHousehold,
@@ -27,10 +29,7 @@ public sealed class MeteredChatClient(
     public async Task<ChatResponse> GetResponseAsync(
         IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
-        if (settings.Managed)
-        {
-            await meter.EnsureLlmCallAllowedAsync(cancellationToken);
-        }
+        await EnsureManagedCallAllowedAsync(cancellationToken);
         var response = await inner.GetResponseAsync(messages, options, cancellationToken);
         // Prefer the model the provider REPORTED; fall back to the one we REQUESTED before AiPricing's own
         // priciest-tier fallback — so a provider that doesn't echo the model still prices at the real
@@ -43,10 +42,7 @@ public sealed class MeteredChatClient(
         IEnumerable<ChatMessage> messages, ChatOptions? options = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        if (settings.Managed)
-        {
-            await meter.EnsureLlmCallAllowedAsync(cancellationToken);
-        }
+        await EnsureManagedCallAllowedAsync(cancellationToken);
         UsageDetails? usage = null;
         string? model = null;
         await foreach (var update in inner.GetStreamingResponseAsync(messages, options, cancellationToken))
@@ -62,6 +58,19 @@ public sealed class MeteredChatClient(
         }
         // Reported model, then the requested one (see GetResponseAsync), then AiPricing's fallback.
         await RecordAsync(usage, model ?? options?.ModelId, cancellationToken);
+    }
+
+    /// <summary>The managed-call gate, consulted BEFORE the provider call (phase 4b). BYOK circuits skip it
+    /// entirely (their key, their wallet). For a managed household: the optional daily abuse-valve cap, then
+    /// <see cref="IEntitlements.IsAiAllowedAsync"/> — which is always true where billing is off (§7), and
+    /// otherwise allows a Founder (unlimited) or a positive balance (running the lazy monthly allowance
+    /// first). Throws to refuse — the provider call never happens, so nothing is spent or recorded.</summary>
+    private async Task EnsureManagedCallAllowedAsync(CancellationToken cancellationToken)
+    {
+        if (!settings.Managed) return;
+        await meter.EnsureLlmCallAllowedAsync(cancellationToken);
+        if (!await entitlements.IsAiAllowedAsync(cancellationToken))
+            throw new AiCreditsExhaustedException();
     }
 
     private async Task RecordAsync(UsageDetails? usage, string? model, CancellationToken cancellationToken)
@@ -104,13 +113,18 @@ public sealed class MeteredChatClient(
     }
 
     /// <summary>Draw the household's credit balance down by this call's RETAIL cost — but only for a
-    /// household that actually spends host credits: a MANAGED deployment (BYOK visitors ride their own
-    /// key) and a NON-unlimited tier (a Founder's cost is recorded above for the operator, but they never
-    /// spend credit). Mirrors the meter's gate exemption. Phase 2 RECORDS consumption; it does not yet
-    /// ENFORCE the balance (gating is phase 4) — so no balance is read on this hot path.</summary>
+    /// household that actually spends host credits: a MANAGED deployment with BILLING enabled (BYOK visitors
+    /// ride their own key; a managed box with no <c>Payments</c> config is unlimited-by-default per §7, so
+    /// the credit system doesn't apply and nothing is drawn) and a NON-unlimited tier (a Founder's cost is
+    /// recorded above for the operator, but they never spend credit). ⚠️ The billing-off skip mirrors
+    /// <see cref="IEntitlements.IsAiAllowedAsync"/>'s <c>!IsConfigured</c> short-circuit — the credit system
+    /// is on or off as ONE thing (gate, pre-check, display, AND this recorder), so a billing-off box never
+    /// accrues an invisible negative balance that flipping billing on would later enforce. This RECORDS
+    /// consumption; the balance ENFORCEMENT is <see cref="EnsureManagedCallAllowedAsync"/> (phase 4b), which
+    /// runs BEFORE the call — so this post-call hot path reads no balance.</summary>
     private async Task RecordCreditConsumptionAsync(long costMicros, string? model, CancellationToken cancellationToken)
     {
-        if (!settings.Managed || costMicros <= 0) return;
+        if (!settings.Managed || !payments.Value.IsConfigured || costMicros <= 0) return;
         if ((await entitlements.GetTierAsync(cancellationToken)).IsUnlimited()) return;
 
         var householdId = await currentHousehold.GetIdAsync(cancellationToken);

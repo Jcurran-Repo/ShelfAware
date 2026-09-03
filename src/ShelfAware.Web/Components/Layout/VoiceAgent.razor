@@ -16,6 +16,8 @@
 @inject ISpeechToText Stt
 @inject IPantryChat Chat
 @inject ITextToSpeech Tts
+@inject IEntitlements Entitlements
+@inject CircuitAiSettings AiSettings
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 @inject VoiceCoordinator Coordinator
@@ -156,6 +158,22 @@
         {
             while (active && _module is not null)
             {
+                // Phase 4c: check BEFORE capturing/transcribing, so a blocked circuit (no key / out of
+                // credits) never spends a host-key STT call on a doomed turn. Say the real reason and stand
+                // down; re-checked each turn, so mid-session exhaustion is caught too. `error` clears on the
+                // next StartListeningAsync, so a top-up + restart clears this.
+                var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+                if (blocked is not null)
+                {
+                    error = blocked;
+                    phase = Phase.Speaking;
+                    await InvokeAsync(StateHasChanged);
+                    var why = await Tts.SynthesizeAsync(blocked);
+                    if (why.Success)
+                        await _module.InvokeVoidAsync("play", Convert.ToBase64String(why.Audio), why.MediaType);
+                    break;
+                }
+
                 phase = Phase.Listening;
                 await InvokeAsync(StateHasChanged);
 

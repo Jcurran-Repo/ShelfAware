@@ -5,6 +5,8 @@
 @inject IShelfPhotoLoader PhotoLoader
 @inject RecipeImageStorage Images
 @inject IHouseholdDbFactory DbFactory
+@inject IEntitlements Entitlements
+@inject CircuitAiSettings AiSettings
 @inject NavigationManager Nav
 @inject ILogger<RecipeImport> Logger
 
@@ -227,6 +229,10 @@ else if (phase == Phase.Done)
         importing = true;
         error = null;
         phase = Phase.Reading;
+        // Importing IS the AI call (photo → vision, text → parse), so a blocked circuit has nothing to do but
+        // say why (no key / out of credits) rather than fail with a generic "something went wrong" (4c).
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, pageCts.Token);
+        if (blocked is not null) { error = blocked; phase = Phase.Error; importing = false; return; }
         try
         {
             // A staged photo wins — it's the richer source, and it becomes the recipe's picture on save.

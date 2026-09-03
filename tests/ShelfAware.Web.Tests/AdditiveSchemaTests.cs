@@ -519,6 +519,37 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Adds_the_allowance_marker_column_to_a_pre_enforcement_auth_db()
+    {
+        // Phase 4a: the Households table gained AllowanceGrantedForPeriod (the lazy per-period allowance
+        // marker). A live box's Households table predates it, so the ALTER path (not the drop-TABLE rebuild)
+        // adds it on the next boot — the same live-deployment gap the tier/subscription column tests guard.
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await ColumnTypesAsync(db, "Households");
+
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Households DROP COLUMN AllowanceGrantedForPeriod;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        // Same declared type as a fresh file (DateTimeOffset? → TEXT NULL), so the marker round-trips.
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "Households"));
+
+        // A pre-enforcement household reads back "no allowance granted yet".
+        var household = new Household { Name = "Test", Tier = HouseholdTier.Aware };
+        db.Households.Add(household);
+        await db.SaveChangesAsync();
+        Assert.Null((await db.Households.AsNoTracking().SingleAsync(h => h.Id == household.Id)).AllowanceGrantedForPeriod);
+
+        // And the marker round-trips a period value through the migrated column.
+        var period = new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero);
+        household.AllowanceGrantedForPeriod = period;
+        await db.SaveChangesAsync();
+        Assert.Equal(period, (await db.Households.AsNoTracking().SingleAsync(h => h.Id == household.Id)).AllowanceGrantedForPeriod);
+    }
+
+    [Fact]
     public async Task Creates_the_Wishlist_table_on_an_older_auth_db_with_the_fresh_schema()
     {
         // The auth-side twin: the /about wishlist is operator data (like the error log), so it lives in

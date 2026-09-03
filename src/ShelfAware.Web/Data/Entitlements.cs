@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using ShelfAware.Web.Auth;
+using ShelfAware.Web.Billing;
 
 namespace ShelfAware.Web.Data;
 
@@ -9,6 +11,19 @@ public interface IEntitlements
     /// <summary>The current household's tier, or <see cref="HouseholdTier.Free"/> when there is no
     /// signed-in household or the tier can't be read (the safe default — never unlimited by accident).</summary>
     ValueTask<HouseholdTier> GetTierAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>The current household's credit balance in retail micros, read FRESH each call (never the
+    /// per-circuit tier cache — a balance changes on every AI call). The lazy monthly allowance is ensured
+    /// first, so an Aware subscriber's current-period grant is reflected. Zero when there's no signed-in
+    /// household.</summary>
+    ValueTask<long> GetBalanceMicrosAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Whether the current household may make a managed AI call. Allowed when billing is OFF on this
+    /// deployment (self-host / dev / the family box — §7 "unlimited by default"; the credit system only bites
+    /// where <c>Payments:Enabled</c>), OR the tier <see cref="HouseholdTierExtensions.IsUnlimited"/> (Founder),
+    /// OR a positive credit balance. The gate (phase 4b) consults this before a metered call. Read fresh via
+    /// <see cref="GetBalanceMicrosAsync"/>.</summary>
+    ValueTask<bool> IsAiAllowedAsync(CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -36,6 +51,8 @@ public interface IEntitlements
 public sealed class Entitlements(
     ICurrentHousehold currentHousehold,
     IDbContextFactory<AuthDbContext> authDb,
+    CreditLedger ledger,
+    IOptions<PaymentsOptions> payments,
     ILogger<Entitlements> logger) : IEntitlements
 {
     private HouseholdTier? _cached;
@@ -74,5 +91,28 @@ public sealed class Entitlements(
             logger.LogError(ex, "Couldn't resolve the household tier; treating it as Free (limits apply).");
             return HouseholdTier.Free;
         }
+    }
+
+    public async ValueTask<long> GetBalanceMicrosAsync(CancellationToken cancellationToken = default)
+    {
+        var householdId = await currentHousehold.GetIdAsync(cancellationToken);
+        if (householdId is null) return 0;
+        // Lazy per-month grant runs first (idempotent within the month), so an Aware subscriber's current
+        // allowance is in the balance we then read. NOT cached — the balance changes on every AI call.
+        // named cancellationToken: — EnsureCurrentAllowanceAsync's optional `now` (DateTimeOffset?) sits
+        // before the token, so a positional token would fail to bind; we want UtcNow, so skip `now` by name.
+        await ledger.EnsureCurrentAllowanceAsync(householdId, cancellationToken: cancellationToken);
+        return await ledger.GetBalanceMicrosAsync(householdId, cancellationToken);
+    }
+
+    public async ValueTask<bool> IsAiAllowedAsync(CancellationToken cancellationToken = default)
+    {
+        // Billing OFF on this deployment → the credit system doesn't apply; managed AI is unlimited by
+        // default (self-host / dev / family box — §7). This is what keeps the gate from walling a box that
+        // has a server key but no Payments config (a key alone makes CircuitAiSettings.Managed true).
+        if (!payments.Value.IsConfigured) return true;
+        // Founder is unlimited (skip the balance entirely); everyone else needs credit left.
+        if ((await GetTierAsync(cancellationToken)).IsUnlimited()) return true;
+        return await GetBalanceMicrosAsync(cancellationToken) > 0;
     }
 }

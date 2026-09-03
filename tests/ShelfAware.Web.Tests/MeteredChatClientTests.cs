@@ -71,7 +71,7 @@ public class MeteredChatClientTests : IDisposable
 
     private (MeteredChatClient client, AiUsageMeter meter) Build(
         string keyMode, int? dailyCalls = null, long? dailyTokens = null, int? dailyMints = null,
-        HouseholdTier tier = HouseholdTier.Free)
+        HouseholdTier tier = HouseholdTier.Free, long balanceMicros = 100_000_000, bool paymentsEnabled = true)
     {
         var llm = Options.Create(new LlmOptions
         {
@@ -81,14 +81,17 @@ public class MeteredChatClientTests : IDisposable
             DailyTokenLimit = dailyTokens,
         });
         var settings = new CircuitAiSettings(llm);
-        var entitlements = new FakeEntitlements(tier);
+        // Default "plenty" so a recording/metering test's managed call is allowed by the phase-4b gate; a
+        // gate test sets balanceMicros: 0 to exercise the refusal.
+        var entitlements = new FakeEntitlements(tier) { BalanceMicros = balanceMicros };
         var meter = new AiUsageMeter(_db, llm,
             Options.Create(new ElevenLabsOptions { DailySignedUrlLimit = dailyMints }),
             entitlements,
             NullLogger<AiUsageMeter>.Instance);
         var byok = new ByokChatClient(settings, new FakeFactory(_provider));
         var client = new MeteredChatClient(byok, settings, meter, Options.Create(new BillingOptions()),
-            new CreditLedger(_authDb), entitlements, new FakeCurrentHousehold("hh-test"),
+            Options.Create(new ShelfAware.Web.Billing.PaymentsOptions { Enabled = paymentsEnabled }),
+            new CreditLedger(_authDb, Options.Create(new BillingOptions())), entitlements, new FakeCurrentHousehold("hh-test"),
             NullLogger<MeteredChatClient>.Instance);
         return (client, meter);
     }
@@ -160,7 +163,7 @@ public class MeteredChatClientTests : IDisposable
         await AskAsync(client);
 
         // Cost 350 micros (Haiku 100/50) × 1.65 markup = 578 retail micros, stored as a consumption.
-        Assert.Equal(-578, await new CreditLedger(_authDb).GetBalanceMicrosAsync("hh-test"));
+        Assert.Equal(-578, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test"));
     }
 
     [Fact]
@@ -175,7 +178,7 @@ public class MeteredChatClientTests : IDisposable
         var response = await AskAsync(client);
 
         Assert.Equal("ok", response.Text);  // the user still got their answer
-        Assert.Equal(-578, await new CreditLedger(_authDb).GetBalanceMicrosAsync("hh-test")); // money write landed
+        Assert.Equal(-578, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test")); // money write landed
     }
 
     [Fact]
@@ -186,7 +189,22 @@ public class MeteredChatClientTests : IDisposable
         await AskAsync(client);
 
         Assert.Equal(350, (await meter.GetTodayAsync()).CostMicros);                        // cost still recorded
-        Assert.Equal(0, await new CreditLedger(_authDb).GetBalanceMicrosAsync("hh-test"));  // but no credit drawn
+        Assert.Equal(0, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test"));  // but no credit drawn
+    }
+
+    [Fact]
+    public async Task A_managed_call_with_billing_off_records_cost_but_no_credit_consumption()
+    {
+        // ⚠️ The credit system is on or off as ONE thing: on a managed box with no Payments config (dev /
+        // self-host / family — §7 "unlimited by default"), USAGE is still recorded but the ledger is NOT
+        // drawn — otherwise a billing-off box accrues an invisible negative balance that flipping billing on
+        // would later enforce (the partial-conversion the re-gate caught). Mirrors IsAiAllowedAsync's skip.
+        var (client, meter) = Build("Managed", tier: HouseholdTier.Free, paymentsEnabled: false);
+
+        await AskAsync(client);
+
+        Assert.Equal(350, (await meter.GetTodayAsync()).CostMicros);                        // usage still recorded
+        Assert.Equal(0, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test"));  // no ledger drawdown
     }
 
     [Fact]
@@ -196,7 +214,67 @@ public class MeteredChatClientTests : IDisposable
 
         await AskAsync(client);
 
-        Assert.Equal(0, await new CreditLedger(_authDb).GetBalanceMicrosAsync("hh-test")); // their key, their wallet
+        Assert.Equal(0, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test")); // their key, their wallet
+    }
+
+    // ---- The AI-allowed gate: phase 4b refuses a managed call the household can't pay for ----
+
+    [Fact]
+    public async Task A_managed_household_with_no_credit_is_refused_before_the_call()
+    {
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free, balanceMicros: 0);
+
+        await Assert.ThrowsAsync<AiCreditsExhaustedException>(() => AskAsync(client));
+
+        Assert.Equal(0, _provider.Calls); // refused BEFORE the provider call — nothing spent
+        Assert.Equal(0, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test")); // nothing recorded
+    }
+
+    [Fact]
+    public async Task A_managed_household_with_credit_is_allowed()
+    {
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free, balanceMicros: 1_000_000);
+
+        var response = await AskAsync(client);
+
+        Assert.Equal("ok", response.Text);
+        Assert.Equal(1, _provider.Calls);
+    }
+
+    [Fact]
+    public async Task A_founder_with_no_credit_is_never_refused()
+    {
+        var (client, _) = Build("Managed", tier: HouseholdTier.Founder, balanceMicros: 0);
+
+        var response = await AskAsync(client);
+
+        Assert.Equal("ok", response.Text); // unlimited — the balance is never consulted
+        Assert.Equal(1, _provider.Calls);
+    }
+
+    [Fact]
+    public async Task A_BYOK_circuit_with_no_credit_is_never_gated()
+    {
+        var (client, _) = Build("Byok", tier: HouseholdTier.Free, balanceMicros: 0);
+
+        var response = await AskAsync(client);
+
+        Assert.Equal("ok", response.Text); // their key, their wallet — no managed gate
+        Assert.Equal(1, _provider.Calls);
+    }
+
+    [Fact]
+    public async Task The_streaming_path_also_refuses_an_exhausted_managed_household()
+    {
+        // The gate guards the streaming path too, so a future streaming service can't slip past it.
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free, balanceMicros: 0);
+
+        await Assert.ThrowsAsync<AiCreditsExhaustedException>(async () =>
+        {
+            await foreach (var _ in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "hi")])) { }
+        });
+
+        Assert.Equal(0, _provider.Calls); // refused before the stream opened
     }
 
     [Fact]

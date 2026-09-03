@@ -175,6 +175,14 @@ public static class AdditiveSchema
         EnsureColumn(db, table: "Households", column: "SubscriptionRenewsAt", definition: "TEXT NULL");
         EnsureColumn(db, table: "Households", column: "SubscriptionCancelAtPeriodEnd", definition: "INTEGER NOT NULL DEFAULT 0");
 
+        // 2026-09-02: the lazy per-month Aware allowance marker (subscription phase 4a — enforcement). Holds
+        // the CALENDAR MONTH (CreditLedger.PeriodFor — first-of-month UTC) the current monthly allowance was
+        // granted for, so the grant is idempotent within a month and rolls over at the next. Existing rows
+        // land on NULL (no allowance granted yet).
+        // ⚠️ A Households column → NullableInviteCodeMigration must list it in ExpectedColumns (copied, not
+        // wiped) like Tier/Subscription*.
+        EnsureColumn(db, table: "Households", column: "AllowanceGrantedForPeriod", definition: "TEXT NULL");
+
         // 2026-08-30: the /about wishlist — pre-launch demand for a hosted Reginald. Operator data,
         // like the error log, so it lives here rather than in any household's pantry. A new table —
         // existing rows unaffected.

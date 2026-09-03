@@ -8,6 +8,8 @@
 @inject IAppSettings SettingsStore
 @inject IPantryStore Store
 @inject IProductSubstituteAdvisor SubAdvisor
+@inject IEntitlements Entitlements
+@inject CircuitAiSettings AiSettings
 @inject ProductRenameService Renamer
 @inject ProductMergeService Merger
 @inject NavigationManager Nav
@@ -469,6 +471,10 @@ else
             <button type="button" @onclick="AddSubstitute" disabled="@string.IsNullOrWhiteSpace(newSubstitute)">Add</button>
             <button type="button" class="secondary" @onclick="SuggestSubstitutes" disabled="@suggesting">@(suggesting ? "Thinking…" : "✨ Suggest")</button>
         </div>
+        @if (subNote is not null)
+        {
+            <p class="muted small">@subNote</p>
+        }
     </section>
 
     @if (usedInRecipes.Count > 0)
@@ -633,6 +639,7 @@ else
 
     private string newSubstitute = "";
     private bool suggesting;
+    private string? subNote;   // result of the last ✨ substitute-suggest (why it was blocked, or "nothing new")
 
     private const string Unbranded = "Unbranded";
     private const string Unlabeled = "Unlabeled";
@@ -1257,13 +1264,18 @@ else
     {
         if (product is null || suggesting) return;
         suggesting = true;
+        subNote = null;
+        // Suggesting is optional polish on top of the curated list, so a blocked circuit just says why rather
+        // than leaving the ✨ button spin and add nothing (phase 4c).
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        if (blocked is not null) { subNote = blocked; suggesting = false; return; }
         try
         {
             var ideas = await SubAdvisor.SuggestAsync(product.Name, product.Category.ToString());
             var toAdd = ideas
                 .Where(v => !product.Substitutes.Any(s => string.Equals(s.Value, v, StringComparison.OrdinalIgnoreCase)))
                 .ToList();
-            if (toAdd.Count == 0) return;
+            if (toAdd.Count == 0) { subNote = "No new suggestions to add."; return; }
             await Store.AddSubstitutesAsync(product.Id, toAdd); // dedupes + logs a SubstitutesAdded
             await using var db = await DbFactory.CreateDbContextAsync();
             await ReloadSubstitutes(db);
