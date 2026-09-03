@@ -11,7 +11,7 @@
     --surface: #fffdf8;
     --surface-alt: #f3efe5;
     --bg: #f7f3ea;
-    --accent: #0e8c7f;
+    --accent: #0b7d71;        /* teal — darkened from the pick (#0e8c7f, which fails AA at 4.14:1) so white-on-accent (5.0:1) AND accent-as-text on cards/page (4.9 / 4.5:1) all clear WCAG AA */
     --accent-ink: #0b6f63;
     --on-accent: #ffffff;     /* text / icons that sit on an --accent fill */
     --brand: #b5851f;         /* the Reginald wordmark — gold */
@@ -86,10 +86,11 @@
                         JS-off / pre-stamp render still gets it; every ALTERNATIVE palette is an
                         override block down here)
    Every component reads the --ink / --bg / --accent tokens and never a palette directly, so adding a
-   theme is one more override block and nothing else changes. Only the CORE neutrals + accent are
-   per-theme; the semantic status colours, the CVD-safe chart hues, --shadow, --radius and
-   --sidebar-w are SHARED (defined once in :root) so every theme agrees on "overdue red" and the
-   charts stay colourblind-safe on every ground.
+   theme is one more override block and nothing else changes. Per-theme (redefined in each palette):
+   the core neutrals, accent, brand, on-accent, and the warm-tuned overdue/duesoon/stocked chips.
+   SHARED (defined once in :root, the same for every palette): the unknown/plan status colours, the
+   CVD-safe chart hues, --shadow, --radius and --sidebar-w — so the charts stay colourblind-safe on
+   every ground and the secondary states stay consistent.
 
    Classic — the original blue-on-white palette (verbatim), kept selectable so anyone can switch
    straight back. The [data-theme="light"] variant makes it out-specify the default light block for a
