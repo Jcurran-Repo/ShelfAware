@@ -107,7 +107,8 @@
     private ElementReference closeButton;
 
     // The brand mark appears in the mobile top bar and at the head of the rail — one definition so the
-    // two can't drift.
+    // two can't drift. ⚠️ The `brand-mascot` class is the hook for the dancing-Reginald easter egg
+    // (js/reginald-dance.js delegates a click on it; app.css sizes the clip) — keep the class if you refactor.
     private RenderFragment BrandMark =>@<span class="brand"><img src="icons/icon-192.png" alt="" class="mascot brand-mascot" />Reginald</span>;
 
     private void CloseDrawer()
