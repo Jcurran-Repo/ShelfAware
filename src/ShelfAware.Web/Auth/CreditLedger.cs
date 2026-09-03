@@ -48,7 +48,9 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
     /// (tests pass a fixed instant to exercise the month rollover).
     ///
     /// Only an <see cref="HouseholdTier.Aware"/> household gets an allowance (Tier is the active-subscription
-    /// signal — the webhook drops it to Free on cancel); the one-time welcome grant and purchased credits are
+    /// signal — the webhook drops it to Free on cancel; grant continuity rides that webhook, so a delayed
+    /// cancel event keeps granting until it lands — bounded to ~one month's ~$1-cost allowance, accepted);
+    /// the one-time welcome grant and purchased credits are
     /// separate pools that persist. Consumption spends the allowance FIRST, so the swept remainder is exactly
     /// the allowance's unspent part and the persisting balance is untouched. Concurrency-safe: the month is
     /// CLAIMED with a conditional <c>ExecuteUpdate</c> (the invite-code pattern) inside a transaction, so of

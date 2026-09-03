@@ -13,10 +13,12 @@ namespace ShelfAware.Web.UI.Tests;
 /// Phase 4c wiring: when a MANAGED household's credit balance is spent, an AI surface must SAY the real
 /// reason up front (<see cref="AiErrorText.OutOfCredits"/>) and NOT attempt the doomed call — the services
 /// fail soft, so a swallowed refusal would otherwise read as a generic "try again". The DECISION lives in
-/// <see cref="AiErrorText.BlockedReasonAsync"/> (unit-tested across all four states in AiErrorTextTests);
-/// these pin that the two flagship surfaces WIRE it — show the reason AND skip the AI call. The other
-/// surfaces (Recipes adapt/swap, ProductDetail substitutes, Cookbook tags, RecipeImport, and the voice
-/// surfaces) make the identical pre-check call and are live-verified.
+/// <see cref="AiErrorText.BlockedReasonAsync"/> (unit-tested across every state — managed allowed / Founder /
+/// out-of-credits Aware vs Free / BYOK key vs none — in AiErrorTextTests). These pin the two flagship text
+/// surfaces (chat, get-ideas); MealPlanPage's blocked Generate is pinned in MealPlanPageBlockedTests, and the
+/// recorder's billing-off skip in MeteredChatClientTests. The remaining surfaces (Recipes adapt/swap,
+/// ProductDetail substitutes, Cookbook tags, RecipeImport, Upload retry/batch, and the voice surfaces) make
+/// the identical <see cref="AiErrorText.BlockedReasonAsync"/> call and are inspection-verified (same pattern).
 /// </summary>
 public class AiUnavailableSurfaceTests : PageTestContext
 {

@@ -99,7 +99,8 @@ public sealed class Entitlements(
         if (householdId is null) return 0;
         // Lazy per-month grant runs first (idempotent within the month), so an Aware subscriber's current
         // allowance is in the balance we then read. NOT cached — the balance changes on every AI call.
-        // (named cancellationToken: — EnsureCurrentAllowanceAsync's optional `now` sits before the token.)
+        // named cancellationToken: — EnsureCurrentAllowanceAsync's optional `now` (DateTimeOffset?) sits
+        // before the token, so a positional token would fail to bind; we want UtcNow, so skip `now` by name.
         await ledger.EnsureCurrentAllowanceAsync(householdId, cancellationToken: cancellationToken);
         return await ledger.GetBalanceMicrosAsync(householdId, cancellationToken);
     }

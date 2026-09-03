@@ -1,12 +1,16 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.MealPlanning;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Settings;
+using ShelfAware.Llm;
+using ShelfAware.Web.Auth;
 using ShelfAware.Web.Components.Pages;
 using ShelfAware.Web.Data;
+using ShelfAware.Web.Services;
 using ShelfAware.Web.Tests;
 
 namespace ShelfAware.Web.UI.Tests;
@@ -254,7 +258,7 @@ public class MealPlanPageTests : PageTestContext
 
     /// <summary>A fake job runner: records who was Started and returns a scripted <see cref="Current"/>
     /// snapshot (the page polls it). No detached task — that's the real runner's own concern.</summary>
-    private sealed class FakeMealPlanJobs : IMealPlanJobs
+    internal sealed class FakeMealPlanJobs : IMealPlanJobs
     {
         public List<string> Started { get; } = [];
         public MealPlanJobSnapshot? Snapshot { get; set; }
@@ -269,9 +273,45 @@ public class MealPlanPageTests : PageTestContext
     }
 
     /// <summary>Unused by these tests (the fake Jobs never generates), but MealPlanService needs one.</summary>
-    private sealed class NoopGenerator : IMealPlanGenerator
+    internal sealed class NoopGenerator : IMealPlanGenerator
     {
         public Task<IReadOnlyList<RecipeSuggestion>> GenerateAsync(MealPlanBatch batch, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<RecipeSuggestion>>([]);
+    }
+}
+
+/// <summary>Phase 4c wiring on the meal-plan page: when AI is unavailable (managed, out of credits), a
+/// blocked Generate must SAY the reason and NOT start the detached job — and (the re-gate's LOW-3) must
+/// still SAVE the setup form first, since the pre-check now sits after SaveSettingsAsync. Separate class
+/// so the whole harness runs in the blocked (managed + zero-balance) AI state.</summary>
+public class MealPlanPageBlockedTests : PageTestContext
+{
+    private readonly MealPlanPageTests.FakeMealPlanJobs _jobs = new();
+
+    protected override void RegisterAdditionalServices()
+    {
+        Services.AddScoped<ICurrentHousehold>(_ => new FakeCurrentHousehold("hh-test"));
+        Services.AddSingleton<IMealPlanJobs>(_jobs);
+        Services.AddScoped(sp => new MealPlanService(
+            Factory, new MealPlanPageTests.NoopGenerator(), sp.GetRequiredService<IAppSettings>(), NullLogger<MealPlanService>.Instance));
+        // Managed + an Aware subscriber out of credits — AI is unavailable.
+        Services.AddSingleton(new CircuitAiSettings(Options.Create(new LlmOptions { KeyMode = "managed", ApiKey = "server-key" })));
+        Services.AddSingleton<IEntitlements>(new FakeEntitlements(HouseholdTier.Aware));
+    }
+
+    [Fact]
+    public async Task A_blocked_generate_says_why_saves_the_setup_and_starts_no_job()
+    {
+        var cut = Render<MealPlanPage>();
+        cut.WaitForState(() => cut.FindAll("section.panel").Count > 0);
+
+        cut.FindAll("button").First(b => b.TextContent.Contains("Generate") || b.TextContent.Contains("Regenerate")).Click();
+
+        cut.WaitForAssertion(() => Assert.Contains(AiErrorText.OutOfCredits, cut.Markup));
+        Assert.Empty(_jobs.Started); // the doomed detached job was never started (the mutation-killer)
+        // LOW-3: the pre-check sits AFTER SaveSettingsAsync (the setup form's only writer), so the household's
+        // setup was persisted even though generation was blocked — the error above proves the pre-check ran,
+        // which is downstream of the save. Awaited out here (WaitForAssertion's lambda is synchronous).
+        Assert.False(string.IsNullOrEmpty(await AppSettings.GetAsync(SettingKeys.MealPlanSettings)));
     }
 }

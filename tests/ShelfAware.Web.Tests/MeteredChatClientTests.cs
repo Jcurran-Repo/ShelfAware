@@ -71,7 +71,7 @@ public class MeteredChatClientTests : IDisposable
 
     private (MeteredChatClient client, AiUsageMeter meter) Build(
         string keyMode, int? dailyCalls = null, long? dailyTokens = null, int? dailyMints = null,
-        HouseholdTier tier = HouseholdTier.Free, long balanceMicros = 100_000_000)
+        HouseholdTier tier = HouseholdTier.Free, long balanceMicros = 100_000_000, bool paymentsEnabled = true)
     {
         var llm = Options.Create(new LlmOptions
         {
@@ -90,6 +90,7 @@ public class MeteredChatClientTests : IDisposable
             NullLogger<AiUsageMeter>.Instance);
         var byok = new ByokChatClient(settings, new FakeFactory(_provider));
         var client = new MeteredChatClient(byok, settings, meter, Options.Create(new BillingOptions()),
+            Options.Create(new ShelfAware.Web.Billing.PaymentsOptions { Enabled = paymentsEnabled }),
             new CreditLedger(_authDb, Options.Create(new BillingOptions())), entitlements, new FakeCurrentHousehold("hh-test"),
             NullLogger<MeteredChatClient>.Instance);
         return (client, meter);
@@ -189,6 +190,21 @@ public class MeteredChatClientTests : IDisposable
 
         Assert.Equal(350, (await meter.GetTodayAsync()).CostMicros);                        // cost still recorded
         Assert.Equal(0, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test"));  // but no credit drawn
+    }
+
+    [Fact]
+    public async Task A_managed_call_with_billing_off_records_cost_but_no_credit_consumption()
+    {
+        // ⚠️ The credit system is on or off as ONE thing: on a managed box with no Payments config (dev /
+        // self-host / family — §7 "unlimited by default"), USAGE is still recorded but the ledger is NOT
+        // drawn — otherwise a billing-off box accrues an invisible negative balance that flipping billing on
+        // would later enforce (the partial-conversion the re-gate caught). Mirrors IsAiAllowedAsync's skip.
+        var (client, meter) = Build("Managed", tier: HouseholdTier.Free, paymentsEnabled: false);
+
+        await AskAsync(client);
+
+        Assert.Equal(350, (await meter.GetTodayAsync()).CostMicros);                        // usage still recorded
+        Assert.Equal(0, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test"));  // no ledger drawdown
     }
 
     [Fact]
