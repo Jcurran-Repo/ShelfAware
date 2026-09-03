@@ -3777,10 +3777,18 @@ tfoot td {
     color: var(--accent-ink);
 }
 
-/* Colour-theme switcher (Auto / Light / Dark) in the rail footer. Drives wwwroot/js/theme.js, which
-   stamps data-theme on <html>; the select itself is themed by the tokens like everything else. */
+/* Theme switcher in the rail footer: palette (Warm & Fresh / Classic) over light/dark (Auto/Light/Dark).
+   Drives wwwroot/js/theme.js, which stamps data-apptheme + data-theme on <html>; the selects are themed
+   by the tokens like everything else. Stacked so both fit the narrow rail. */
+.theme-switch {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
 .theme-switch select {
     /* font, background, and border come from the base `input, select` rule — only the overrides here. */
+    width: 100%;
     font-size: 0.9rem;
     color: var(--ink-soft);
     border-radius: var(--radius);

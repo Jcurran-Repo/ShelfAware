@@ -2,11 +2,17 @@
 @inject IJSRuntime JS
 @inject ILogger<ThemeSwitcher> Logger
 
-@* Auto (follow the OS) / Light / Dark. The heavy lifting is in wwwroot/js/theme.js — this just reflects
-   the stored choice and writes the new one. No data change, so nothing to persist server-side. The span
-   is the styling hook; aria-label is the select's accessible name. *@
+@* Two independent axes, both handled by wwwroot/js/theme.js (the pre-paint script) — this just reflects
+   the stored choices and writes new ones. No data change, so nothing to persist server-side.
+     • Palette     — Warm & Fresh (default) or Classic (the original blue-on-white).
+     • Light / dark — Auto (follow the OS) / Light / Dark.
+   The <span> is the styling hook; each aria-label is its select's accessible name. *@
 <span class="theme-switch">
-    <select @bind="pref" @bind:after="ApplyAsync" aria-label="Colour theme">
+    <select @bind="palette" @bind:after="ApplyPaletteAsync" aria-label="Colour palette">
+        <option value="warm">🎨 Warm &amp; Fresh</option>
+        <option value="classic">🎨 Classic</option>
+    </select>
+    <select @bind="mode" @bind:after="ApplyModeAsync" aria-label="Light or dark">
         <option value="auto">🌓 Auto</option>
         <option value="light">☀️ Light</option>
         <option value="dark">🌙 Dark</option>
@@ -14,10 +20,11 @@
 </span>
 
 @code {
-    private string pref = "auto";
+    private string mode = "auto";
+    private string palette = "warm";
 
-    // The theme is already applied (by the pre-paint script); this only syncs the control to the stored
-    // choice once the circuit can talk to JS. JSDisconnectedException is the teardown case (this island
+    // The theme is already applied (by the pre-paint script); this only syncs the controls to the stored
+    // choices once the circuit can talk to JS. JSDisconnectedException is the teardown case (this island
     // lives in MainLayout, so it's on every page) — swallow it; a real JSException (e.g. theme.js failed
     // to load, so shelfawareTheme is undefined) is a genuine bug, so it's logged.
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -25,21 +32,28 @@
         if (!firstRender) return;
         try
         {
-            var current = await JS.InvokeAsync<string>("shelfawareTheme.get");
-            if (current is "auto" or "light" or "dark" && current != pref)
-            {
-                pref = current;
-                StateHasChanged();
-            }
+            var m = await JS.InvokeAsync<string>("shelfawareTheme.get");
+            var p = await JS.InvokeAsync<string>("shelfawareTheme.getTheme");
+            var changed = false;
+            if (m is "auto" or "light" or "dark" && m != mode) { mode = m; changed = true; }
+            if (p is "warm" or "classic" && p != palette) { palette = p; changed = true; }
+            if (changed) StateHasChanged();
         }
         catch (JSDisconnectedException) { }
-        catch (JSException ex) { Logger.LogWarning(ex, "Reading the stored theme preference failed."); }
+        catch (JSException ex) { Logger.LogWarning(ex, "Reading the stored theme preferences failed."); }
     }
 
-    private async Task ApplyAsync()
+    private async Task ApplyModeAsync()
     {
-        try { await JS.InvokeVoidAsync("shelfawareTheme.set", pref); }
+        try { await JS.InvokeVoidAsync("shelfawareTheme.set", mode); }
         catch (JSDisconnectedException) { }
         catch (JSException ex) { Logger.LogWarning(ex, "Writing the theme preference failed."); }
+    }
+
+    private async Task ApplyPaletteAsync()
+    {
+        try { await JS.InvokeVoidAsync("shelfawareTheme.setTheme", palette); }
+        catch (JSDisconnectedException) { }
+        catch (JSException ex) { Logger.LogWarning(ex, "Writing the palette preference failed."); }
     }
 }
