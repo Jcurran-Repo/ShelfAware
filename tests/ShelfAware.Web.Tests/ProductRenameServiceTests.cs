@@ -133,4 +133,48 @@ public class ProductRenameServiceTests : IDisposable
         Assert.False((await _service.RenameAsync(id, "   ")).Ok);
         Assert.False((await _service.RenameAsync(99999, "Anything")).Ok);
     }
+
+    [Fact]
+    public async Task Repairing_a_junk_named_product_does_not_repoint_other_junk_links()
+    {
+        // Renaming "!!" to a real name is the sanctioned repair for a pre-guard junk product — but its
+        // old IdentityKey is "", which every OTHER identity-less MatchedProduct folds to as well, so an
+        // ungated re-point would drag the whole empty-key equivalence class onto the new name. It must
+        // touch nothing instead: an empty key can't say WHICH junk product a link meant, and such links
+        // were already unreachable by every other guard.
+        var id = await SeedProduct("!!"); // pre-guard state, seeded directly
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Recipes.Add(new Recipe
+            {
+                Name = "Mystery Stew",
+                Ingredients = [new RecipeIngredient { Name = "Something", IsMain = true, MatchedProduct = "--" }],
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var result = await _service.RenameAsync(id, "Sardines");
+
+        Assert.True(result.Ok); // the repair itself must keep working
+        Assert.Equal(0, result.RelinkedIngredients);
+        await using var read = _db.CreateDbContext();
+        Assert.Equal("--", (await read.RecipeIngredients.SingleAsync()).MatchedProduct);
+        Assert.Equal("Sardines", (await read.Products.SingleAsync(p => p.Id == id)).Name);
+    }
+
+    [Fact]
+    public async Task Rejects_a_name_with_no_letters_or_numbers()
+    {
+        // "!!" folds to an empty IdentityKey, which product identity cannot see — the taken-check is
+        // blind to it, and once renamed no matcher rule, census row, or recipe link could ever resolve
+        // the product again. Same refusal as the census's NoName row and the add form's.
+        var id = await SeedProduct("Ground Beef");
+
+        var result = await _service.RenameAsync(id, "!!");
+
+        Assert.False(result.Ok);
+        Assert.Contains("no letters or numbers", result.Message);
+        await using var read = _db.CreateDbContext();
+        Assert.Equal("Ground Beef", (await read.Products.SingleAsync(p => p.Id == id)).Name);
+    }
 }

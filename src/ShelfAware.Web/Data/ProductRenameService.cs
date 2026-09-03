@@ -49,6 +49,15 @@ public class ProductRenameService(IHouseholdDbFactory dbFactory, IActivityLog ac
         var name = newName.Trim();
         if (name.Length == 0) return new(false, "A product name is required.");
 
+        // A name with no letters or digits ("!!") folds to an empty IdentityKey, which product identity
+        // cannot see — the taken-check below couldn't find a twin of it, and once renamed no matcher
+        // rule, census row, or recipe link could ever resolve the product again. Refused, like the
+        // census's NoName row and the add form. (An undo renaming BACK to such a name — possible for a
+        // product created before this guard, or through a receipt confirm, which deliberately keeps its
+        // raw-name path — reports Superseded rather than restoring it.)
+        if (ProductMatcher.IdentityKey(name).Length == 0)
+            return new(false, "That name has no letters or numbers, so it can't name a product.");
+
         var product = await db.Products.FindAsync([productId], cancellationToken);
         if (product is null) return new(false, "Product not found.");
         if (string.Equals(product.Name, name, StringComparison.Ordinal)) return new(true, "No change.", product.Name);
@@ -68,19 +77,10 @@ public class ProductRenameService(IHouseholdDbFactory dbFactory, IActivityLog ac
 
         var oldName = product.Name;
         product.Name = name;
-        // ⚠️ Re-point by the matcher's rule-1 IDENTITY, not ToLower(): a MatchedProduct stored as
-        // "Home Canned Sauce" for a product named "Home-Canned Sauce" is the same product to every other
-        // guard (line 34 above already uses ExactMatches), so a raw compare here left that link silently
-        // stale — the partial conversion this finishes. IdentityKey isn't SQL-translatable, so filter in
-        // memory, the same load-then-match shape the collision check above uses.
-        var oldKey = ProductMatcher.IdentityKey(oldName);
-        var linked = (await db.RecipeIngredients
-                .Where(i => i.MatchedProduct != null)
-                .ToListAsync(cancellationToken))
-            .Where(i => ProductMatcher.IdentityKey(i.MatchedProduct!) == oldKey)
-            .ToList();
-        foreach (var ingredient in linked) ingredient.MatchedProduct = name;
+        // Via RecipeLinks — the ONE re-pointer, shared with the merge service (identity-keyed and
+        // empty-key-gated there), so the two sites can't drift apart again.
+        var relinked = await RecipeLinks.RepointAsync(db, oldName, name, cancellationToken);
 
-        return new(true, $"Renamed to {name}.", oldName, linked.Count);
+        return new(true, $"Renamed to {name}.", oldName, relinked);
     }
 }

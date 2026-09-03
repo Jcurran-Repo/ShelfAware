@@ -204,4 +204,24 @@ public class ProductMatcherTests
         Assert.Equal(ProductMatcher.MatchKind.None,
             ProductMatcher.ResolveWithKind("sardines zzabsent", pantry).Kind);
     }
+
+    [Fact]
+    public void A_punctuation_only_product_name_never_matches_anything()
+    {
+        // A name with no letters or digits normalizes to "", and "" is a substring of EVERY string —
+        // so one junk-named product used to win rule 2 for any query at all, ahead of the token rule,
+        // and every unmatched resolve in the household came back pointing at it as a "Substring" hit.
+        var junk = new Product { Id = 1, Name = "!!" };
+        var real = new Product { Id = 2, Name = "Sardines Kale" };
+
+        // Alone it must be a clean miss, not a universal substring hit.
+        Assert.Equal(ProductMatcher.MatchKind.None,
+            ProductMatcher.ResolveWithKind("peanut butter", [junk]).Kind);
+
+        // Beside a real product — junk listed FIRST, the order FirstOrDefault returned it in — the
+        // real one must still win by its own rule.
+        var (product, kind) = ProductMatcher.ResolveWithKind("sardines kale greens", [junk, real]);
+        Assert.Equal(2, product!.Id);
+        Assert.Equal(ProductMatcher.MatchKind.Substring, kind);
+    }
 }

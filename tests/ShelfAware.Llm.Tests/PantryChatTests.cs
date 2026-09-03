@@ -863,6 +863,26 @@ public class PantryChatTests
     }
 
     [Fact]
+    public async Task A_name_with_no_letters_or_numbers_cannot_create_a_product()
+    {
+        // "!!" folds to an empty IdentityKey, which product identity cannot see — the twin guard can
+        // never find it again, so each call would mint a fresh silent twin no later reference could
+        // resolve. Refused like the census's NoName row and the add form's.
+        var store = new FakePantryStore();
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("create_product", ("name", "!!"), ("category", "Pantry"))),
+            () => Responses.Text("That can't name a product."));
+
+        await Chat(client, store).HandleAsync("add a product called bang bang");
+
+        Assert.Empty(store.Created);
+        var toolResult = client.ReceivedMessages[1]
+            .Single(m => m.Role == ChatRole.Tool)
+            .Contents.OfType<FunctionResultContent>().Single().Result?.ToString();
+        Assert.Contains("no letters or numbers", toolResult);
+    }
+
+    [Fact]
     public async Task Creating_a_near_duplicate_product_is_refused_and_names_the_existing_one()
     {
         var store = new FakePantryStore(P(4, "Pedigree Dog Food", Category.PetCare));
