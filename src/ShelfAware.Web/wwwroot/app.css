@@ -58,6 +58,8 @@
     --accent-ink: #48c1b4;
     --on-accent: #06231f;     /* dark text on the lighter dark-mode teal (white would fail contrast) */
     --brand: #d9a93b;
+    --danger-dark: #b3392c;       /* solid dark red for the danger BUTTON in dark mode — the --overdue-ink token is a light salmon here (tuned for pill text), so white on it is illegible */
+    --danger-dark-hover: #9a3025;
 
     --overdue-bg: #38201b;  --overdue-ink: #f0a79a;  --overdue-line: #a9564a;
     --duesoon-bg: #332d12;  --duesoon-ink: #e6c77e;  --duesoon-line: #8f7529;
@@ -601,6 +603,21 @@ button.danger {
 button.danger:hover:not(:disabled) {
     background: var(--overdue-line);
     border-color: var(--overdue-line);
+}
+
+/* In dark mode --overdue-ink is a LIGHT salmon (tuned for pill text), so white on the danger BUTTON is
+   illegible at rest — and its hover (--overdue-line, a mid-tone) can't satisfy both white and dark text.
+   So the dark-mode danger button gets a solid dark red instead, keeping the white label legible at rest
+   AND on hover, in both palettes. Light mode's fill is already a dark red, so it's left as-is (Classic's
+   light danger button stays verbatim). */
+:root[data-theme="dark"] button.danger {
+    background: var(--danger-dark);
+    border-color: var(--danger-dark);
+}
+
+:root[data-theme="dark"] button.danger:hover:not(:disabled) {
+    background: var(--danger-dark-hover);
+    border-color: var(--danger-dark-hover);
 }
 
 /* Subscription & billing (Settings): hosted-redirect links styled as buttons. A redirect is a NAVIGATION,
