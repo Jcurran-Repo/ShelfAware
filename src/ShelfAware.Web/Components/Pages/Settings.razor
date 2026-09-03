@@ -1133,7 +1133,9 @@
         tier = await Entitlements.GetTierAsync();
         // The ONE balance definition — IEntitlements.GetBalanceMicrosAsync runs the lazy monthly allowance
         // first, so a new period shows this month's grant, not the pre-rollover number (Ledger's raw sum).
-        creditBalanceMicros = await Entitlements.GetBalanceMicrosAsync();
+        // Only read it when billing is on: the balance panel is hidden otherwise, and reading it would run
+        // the allowance grant (minting ledger rows) on a billing-off box for an admin-set Aware household.
+        creditBalanceMicros = Payments.Value.IsConfigured ? await Entitlements.GetBalanceMicrosAsync() : 0;
         await LoadSettingsStateAsync();
     }
 

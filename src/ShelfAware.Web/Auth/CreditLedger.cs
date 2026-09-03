@@ -63,7 +63,11 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
         var period = PeriodFor(now ?? DateTimeOffset.UtcNow);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
 
-        // Fast path (no write): only an Aware household that has rolled into a not-yet-granted month does anything.
+        // Fast path (no write): only an Aware household that has rolled into a not-yet-granted month does
+        // anything. ⚠️ Accepted edge: when a subscription is cancelled the tier drops to Free, so this returns
+        // before sweeping — the final month's UNSPENT allowance is never expired and lingers as a spendable
+        // balance until drawn down. Bounded to ≤ one allowance (~$1 cost), safe direction, and fair (they
+        // paid for that month); deliberately not swept-on-cancel.
         var h = await db.Households.AsNoTracking()
             .Where(x => x.Id == householdId)
             .Select(x => new { x.Tier, x.AllowanceGrantedForPeriod })
@@ -86,6 +90,11 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
             if (claimed == 0) { await tx.RollbackAsync(cancellationToken); return; }
 
             // No rollover: sweep the prior allowance's unspent remainder BEFORE posting the new one.
+            // ⚠️ ORDER IS LOAD-BEARING: the Expiry MUST be Added before the new Allowance below, so it gets a
+            // LOWER Id. UnspentAllowanceMicrosAsync finds the latest allowance by max Id and nets Expiry rows
+            // with a GREATER Id against it; if the Expiry landed after the new Allowance, next month it would
+            // be netted against THAT allowance and the sweep would silently double-count (a wrong rollover).
+            // Do not reorder these two Adds.
             var unspent = await UnspentAllowanceMicrosAsync(db, householdId, cancellationToken);
             if (unspent > 0)
                 db.CreditLedger.Add(new CreditLedgerEntry

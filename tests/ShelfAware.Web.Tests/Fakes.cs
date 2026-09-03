@@ -21,6 +21,11 @@ internal sealed class FakeEntitlements(HouseholdTier tier = HouseholdTier.Free) 
 
     public ValueTask<long> GetBalanceMicrosAsync(CancellationToken cancellationToken = default) => new(BalanceMicros);
 
+    // ⚠️ Deliberately omits the real Entitlements' billing-off short-circuit (!Payments.IsConfigured → true),
+    // so this fake is MORE restrictive than production (a billing-off box reads allowed there, blocked here).
+    // Consequence: don't write a "surface allowed because billing is off" test against this fake — it would
+    // pass vacuously. That branch is covered directly on the real type (EntitlementsTests). Here the fake's
+    // job is only to script allowed/blocked via Tier + BalanceMicros.
     public ValueTask<bool> IsAiAllowedAsync(CancellationToken cancellationToken = default) =>
         new(Tier.IsUnlimited() || BalanceMicros > 0);
 }
