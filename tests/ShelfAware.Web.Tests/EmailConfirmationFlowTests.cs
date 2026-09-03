@@ -1,5 +1,7 @@
 using System.Text;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.AspNetCore.WebUtilities;
@@ -22,18 +24,21 @@ public sealed class EmailConfirmationFlowTests : IDisposable
     private readonly TestAuthDb _db = new();
     private readonly AuthDbContext _context;
     private readonly UserManager<AppUser> _users;
+    private readonly IdentityOptions _identityOptions = new();
 
     public EmailConfirmationFlowTests()
     {
         _context = _db.CreateDbContext();
-        var identity = new IdentityOptions();
-        identity.Password.RequiredLength = 10;
-        identity.Password.RequireNonAlphanumeric = false;
-        identity.Password.RequireUppercase = false;
-        identity.Password.RequireLowercase = false;
-        identity.Password.RequireDigit = false;
+        _identityOptions.Password.RequiredLength = 10;
+        _identityOptions.Password.RequireNonAlphanumeric = false;
+        _identityOptions.Password.RequireUppercase = false;
+        _identityOptions.Password.RequireLowercase = false;
+        _identityOptions.Password.RequireDigit = false;
+        // The demo box's gate: an unconfirmed account may not sign in. Only the SignInManager reads this
+        // (the confirm-token tests below are unaffected by it), so it's on for the whole class.
+        _identityOptions.SignIn.RequireConfirmedAccount = true;
         _users = new UserManager<AppUser>(
-            new UserStore<AppUser>(_context), Options.Create(identity),
+            new UserStore<AppUser>(_context), Options.Create(_identityOptions),
             new PasswordHasher<AppUser>(), [], [new PasswordValidator<AppUser>()],
             new UpperInvariantLookupNormalizer(),
             new IdentityErrorDescriber(), null!, NullLogger<UserManager<AppUser>>.Instance);
@@ -108,5 +113,51 @@ public sealed class EmailConfirmationFlowTests : IDisposable
         Assert.False(result.Succeeded);
         Assert.False(await _users.IsEmailConfirmedAsync(theirs));
         Assert.False(await _users.IsEmailConfirmedAsync(mine));
+    }
+
+    [Fact]
+    public async Task An_unconfirmed_account_is_blocked_at_sign_in_on_ANY_password_which_is_why_login_re_checks_it()
+    {
+        // The premise the Login page's enumeration guard rests on — and the fact this session's first
+        // comment got WRONG (the pre-merge review probed it). Identity runs the RequireConfirmedAccount gate
+        // in PreSignInCheck, BEFORE verifying the password, so an unconfirmed account returns IsNotAllowed on
+        // ANY password. Surfacing the "confirm your email" hint on IsNotAllowed alone would therefore leak
+        // which addresses have unconfirmed accounts to a prober who doesn't know the password — so Login
+        // re-checks the password (CheckPasswordAsync) and only shows the hint when it's also correct.
+        // If Identity ever verified the password first (making a wrong password read as Failed here), that
+        // guard would become belt-and-braces rather than load-bearing; it should stay either way.
+        var user = await UnconfirmedUserAsync(); // password "original-pass-10"
+        var signIn = BuildSignInManager();
+
+        // Right password, but unconfirmed → still blocked (the gate is checked before the password)...
+        Assert.True((await signIn.PasswordSignInAsync(user, "original-pass-10", false, false)).IsNotAllowed);
+        // ...and a WRONG password returns the IDENTICAL result, so IsNotAllowed cannot tell the two apart.
+        Assert.True((await signIn.PasswordSignInAsync(user, "wrong-pass-999", false, false)).IsNotAllowed);
+
+        // Once confirmed, a wrong password is a plain Failed (NOT IsNotAllowed) — the state Login's generic
+        // "invalid email or password" already covers, which is why IsNotAllowed is specifically the
+        // unconfirmed-account signal the guard is about.
+        var token = await _users.GenerateEmailConfirmationTokenAsync(user);
+        Assert.True((await _users.ConfirmEmailAsync(user, token)).Succeeded);
+        var confirmedWrong = await signIn.PasswordSignInAsync(user, "wrong-pass-999", false, false);
+        Assert.False(confirmedWrong.IsNotAllowed);
+        Assert.False(confirmedWrong.Succeeded);
+    }
+
+    /// <summary>A SignInManager wired minimally for the failure-path probe above. Every case there returns
+    /// before an actual sign-in (PreSignInCheck bails, or the password is wrong), so a bare
+    /// <see cref="DefaultHttpContext"/> with no authentication services is enough — nothing calls
+    /// HttpContext.SignInAsync.</summary>
+    private SignInManager<AppUser> BuildSignInManager()
+    {
+        var options = Options.Create(_identityOptions);
+        return new SignInManager<AppUser>(
+            _users,
+            new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
+            new UserClaimsPrincipalFactory<AppUser>(_users, options),
+            options,
+            NullLogger<SignInManager<AppUser>>.Instance,
+            new AuthenticationSchemeProvider(Options.Create(new AuthenticationOptions())),
+            new DefaultUserConfirmation<AppUser>());
     }
 }

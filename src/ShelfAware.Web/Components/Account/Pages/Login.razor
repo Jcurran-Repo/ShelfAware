@@ -114,13 +114,26 @@
         }
         else if (result.IsNotAllowed)
         {
-            // The credentials were fine, but Identity's RequireConfirmedAccount refuses an unconfirmed
-            // address (the demo box's Auth:RequireEmailConfirmation). Say so and point at "resend" — the
-            // one path out of a lost confirmation email that isn't a dead end. It only reaches this branch
-            // where the flag is on, so the link is live exactly when it's relevant.
-            Logger.LogInformation("Sign-in blocked: email not confirmed.");
-            errorMessage = "Error: confirm your email address before signing in — check your inbox for the link we sent when you registered.";
-            showResendConfirmation = true;
+            // IsNotAllowed means the account EXISTS but is unconfirmed (RequireConfirmedAccount — the demo
+            // box's Auth:RequireEmailConfirmation). ⚠️ Identity runs that gate in PreSignInCheck, BEFORE it
+            // verifies the password, so this fires on ANY password — a wrong one included. Surfacing the
+            // "confirm your email" hint + resend link on IsNotAllowed alone would therefore tell an
+            // unauthenticated prober which addresses have unconfirmed accounts (the enumeration oracle the
+            // pre-merge review caught). So reveal it ONLY when the password ALSO checks out: the real,
+            // forgetful owner gets the helpful nudge, while a wrong password — like an unknown address or a
+            // confirmed account's wrong password — falls through to the same generic message, leaving the
+            // three indistinguishable. CheckPasswordAsync is a plain hash verify (no lockout side effect).
+            var user = await SignInManager.UserManager.FindByEmailAsync(Input.Email);
+            if (user is not null && await SignInManager.UserManager.CheckPasswordAsync(user, Input.Password))
+            {
+                Logger.LogInformation("Sign-in blocked: email not confirmed.");
+                errorMessage = "Error: confirm your email address before signing in — check your inbox for the link we sent when you registered.";
+                showResendConfirmation = true;
+            }
+            else
+            {
+                errorMessage = "Error: invalid email or password.";
+            }
         }
         else
         {
