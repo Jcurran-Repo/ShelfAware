@@ -156,10 +156,13 @@ body {
 
 /* Easter egg: the mascot's dance clip (js/reginald-dance.js), popped out and centred over the header
    badge, then removed when it ends. Transient + non-interactive, so it floats above the chrome without
-   blocking anything. Position/size are set inline by the script from the mascot's live rect. */
+   blocking anything. Position/size are set inline by the script from the mascot's live rect.
+   ⚠️ z-index ABOVE the mobile drawer (1100) + its backdrop (1050) — the drawer head is Reginald's most
+   tappable spot on a phone, so a dance triggered there must render over the open drawer, not vanish under
+   it. Kept under .skip-link. pointer-events:none, so being on top never blocks anything (item 36's rule). */
 .reginald-dance-clip {
     position: fixed;
-    z-index: 90;
+    z-index: 1200;
     pointer-events: none;
     border-radius: 22%;
     object-fit: contain;
@@ -3401,6 +3404,7 @@ tfoot td {
     .report-builder,
     .voice-agent,
     .tour-panel,
+    .reginald-dance-clip,
     .site-footer {
         /* .sidebar / .mobile-bar: the nav rail (and its phone top bar) are app chrome, not document
            content — hidden so a printed grocery list or report is just the document.
