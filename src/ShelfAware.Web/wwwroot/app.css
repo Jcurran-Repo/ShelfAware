@@ -151,6 +151,19 @@ body {
 .brand-mascot {
     width: 26px;
     height: 26px;
+    cursor: pointer; /* a gentle "click me" — the dancing-Reginald easter egg (js/reginald-dance.js) */
+}
+
+/* Easter egg: the mascot's dance clip (js/reginald-dance.js), popped out and centred over the header
+   badge, then removed when it ends. Transient + non-interactive, so it floats above the chrome without
+   blocking anything. Position/size are set inline by the script from the mascot's live rect. */
+.reginald-dance-clip {
+    position: fixed;
+    z-index: 90;
+    pointer-events: none;
+    border-radius: 22%;
+    object-fit: contain;
+    filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.28));
 }
 
 .empty-state {
