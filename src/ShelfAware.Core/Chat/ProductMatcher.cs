@@ -78,10 +78,14 @@ public static class ProductMatcher
         if (exact is not null) return (exact, MatchKind.ExactName);
 
         // 2. Substring either direction ("dog food" ⊂ "pedigree dog food").
+        // ⚠️ A name with no letters or digits ("!!") normalizes to "", and "" is a substring of EVERY
+        // string — without the length guard one such product wins this rule for any query at all,
+        // ahead of rule 3, for the whole catalog. (Rule 1 is safe — q is non-empty, so it never
+        // equals "" — and rule 3 already skips an empty token set.)
         var contains = products.FirstOrDefault(p =>
         {
             var n = Normalize(p.Name);
-            return n.Contains(q) || q.Contains(n);
+            return n.Length > 0 && (n.Contains(q) || q.Contains(n));
         });
         if (contains is not null) return (contains, MatchKind.Substring);
 

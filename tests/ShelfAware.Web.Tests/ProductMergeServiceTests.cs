@@ -183,6 +183,38 @@ public class ProductMergeServiceTests : IDisposable
         Assert.Equal("Sauce", (await read.RecipeIngredients.SingleAsync()).MatchedProduct);
     }
 
+    [Fact]
+    public async Task Merging_away_a_junk_named_product_does_not_repoint_other_junk_links()
+    {
+        // The merge is the other sanctioned repair for a pre-guard junk-named product ("!!" folded
+        // into a real item, junk row deleted) — but its old IdentityKey is "", which every OTHER
+        // identity-less MatchedProduct folds to as well, so an ungated re-point would drag the whole
+        // empty-key equivalence class onto the target's name. RecipeLinks (shared with the rename)
+        // must touch nothing instead: an empty key can't say WHICH junk product a link meant.
+        int sourceId, targetId;
+        await using (var db = _db.CreateDbContext())
+        {
+            var source = new Product { Name = "!!" }; // pre-guard state, seeded directly
+            var target = new Product { Name = "Sardines" };
+            db.Products.AddRange(source, target);
+            db.Recipes.Add(new Recipe
+            {
+                Name = "Mystery Stew",
+                Ingredients = [new RecipeIngredient { Name = "Something", IsMain = true, MatchedProduct = "--" }],
+            });
+            await db.SaveChangesAsync();
+            (sourceId, targetId) = (source.Id, target.Id);
+        }
+
+        var result = await _service.MergeAsync(sourceId, targetId);
+
+        Assert.True(result.Ok); // the repair itself must keep working — junk row gone, history pooled
+        Assert.Equal(0, result.RelinkedIngredients);
+        await using var read = _db.CreateDbContext();
+        Assert.Equal("--", (await read.RecipeIngredients.SingleAsync()).MatchedProduct);
+        Assert.Null(await read.Products.FirstOrDefaultAsync(p => p.Id == sourceId));
+    }
+
     [Theory]
     [InlineData("Strawberry Drink Mix", "Drink Mix", "Strawberry")]
     [InlineData("Gala Apples", "Apple", "Gala")] // plural fold: Apples ≈ Apple

@@ -116,6 +116,11 @@ public class ReceiptConfirmationService(IHouseholdDbFactory dbFactory, IActivity
             // receipt can't collide on "" and silently merge into one product. The two key kinds can't
             // cross: an identity key is letters/digits/spaces only, and a name whose key is empty
             // necessarily leads with a character no identity key contains.
+            // ⚠️ Deliberate residual: a junk name that resolves to nothing still CREATES here — even in
+            // Auto mode, where no human checks it — while the human-typed surfaces (add form, chat
+            // create, rename, census) refuse the same name outright. Accepted because extraction never
+            // emits one in practice, and the matcher's empty-name guard makes such a product inert:
+            // it can never match a query, shadow a real item, or be silently deduped into.
             var identityKey = ProductMatcher.IdentityKey(name);
             var rollUpKey = identityKey.Length > 0 ? identityKey : name;
 

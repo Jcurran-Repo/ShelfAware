@@ -365,6 +365,12 @@ public class AnthropicPantryChat : IPantryChat
             {
                 var name = Str("name")?.Trim();
                 if (string.IsNullOrWhiteSpace(name)) return ("A product name is required.", true);
+                // A name with no letters or digits ("!!") folds to an empty IdentityKey, which product
+                // identity cannot see — the twin guard below can never find it again, so each call
+                // would mint a fresh silent twin no later reference could resolve. Refused, like the
+                // census's NoName row and the add form's.
+                if (ProductMatcher.IdentityKey(name).Length == 0)
+                    return ("That name has no letters or numbers, so it can't name a product — give it a real name.", true);
                 if (!Enum.TryParse<Category>(Str("category"), ignoreCase: true, out var category) || !Enum.IsDefined(category))
                     category = Category.Other;
                 // Same resolver the other tools trust — a near-match means this product likely already

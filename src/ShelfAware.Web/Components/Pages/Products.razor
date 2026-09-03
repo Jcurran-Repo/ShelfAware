@@ -454,6 +454,16 @@ else
             return;
         }
 
+        // A name with no letters or digits ("!!") folds to an empty IdentityKey, which product
+        // identity cannot see — the duplicate guard below refuses an empty query, so every add of
+        // such a name would mint a silent twin, and no matcher rule, census row, or chat reference
+        // could ever resolve it. Refused, like the census grid's NoName row.
+        if (ProductMatcher.IdentityKey(name).Length == 0)
+        {
+            addError = "That name has no letters or numbers, so it can't name a product.";
+            return;
+        }
+
         // Same resolver the chat tools and receipt confirm trust (exact → substring → weighted tokens).
         // A second product for the same item splits its purchase history and blinds the predictor, so
         // surface the match before inserting instead of silently creating a twin.

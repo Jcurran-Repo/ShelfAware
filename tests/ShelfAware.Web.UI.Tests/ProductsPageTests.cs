@@ -74,6 +74,22 @@ public class ProductsPageTests : PageTestContext
     }
 
     [Fact]
+    public async Task A_name_with_no_letters_or_numbers_is_refused()
+    {
+        // "!!" folds to an empty IdentityKey, which product identity cannot see — the duplicate
+        // guard refuses an empty query, so every add of it would mint a silent twin that no matcher
+        // rule, census row, or chat reference could ever resolve. Same refusal the census grid
+        // gives a junk-named row.
+        var cut = RenderGrid();
+
+        SubmitAdd(cut, "!!");
+
+        cut.WaitForAssertion(() => Assert.Contains("no letters or numbers", cut.Find("p.error").TextContent));
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.Equal(0, await raw.Products.IgnoreQueryFilters().CountAsync());
+    }
+
+    [Fact]
     public async Task An_exact_duplicate_is_blocked_outright_with_a_link_to_the_original()
     {
         var id = Seed("Whole Milk");
