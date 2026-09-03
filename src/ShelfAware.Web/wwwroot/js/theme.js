@@ -11,8 +11,8 @@
 (function () {
     var THEME_KEY = 'shelfaware.theme';
     var APP_KEY = 'shelfaware.apptheme';
-    var DEFAULT_APP = 'classic';        // the palette a visitor gets until they pick another
-    var APP_THEMES = ['classic'];       // every known palette (incl. the default); guards a stale value
+    var DEFAULT_APP = 'warm';               // the palette a visitor gets until they pick another
+    var APP_THEMES = ['warm', 'classic'];   // every known palette (incl. the default); guards a stale value
     var mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 
     function themePref() {
@@ -42,7 +42,7 @@
         var meta = document.getElementById('theme-color-meta');
         if (meta) {
             var bg = getComputedStyle(root).getPropertyValue('--bg').trim();
-            meta.setAttribute('content', bg || (eff === 'dark' ? '#131619' : '#f6f7f9'));
+            meta.setAttribute('content', bg || (eff === 'dark' ? '#191712' : '#f7f3ea')); // default (Warm) --bg
         }
     }
 
