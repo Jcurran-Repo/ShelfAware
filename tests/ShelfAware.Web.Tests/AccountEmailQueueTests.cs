@@ -93,6 +93,59 @@ public class AccountEmailQueueTests
         Assert.Equal(new Sent(AccountEmailKind.EmailConfirmation, "ok@x.test", "https://x/confirm"), only);
     }
 
+    /// <summary>Blocks (respecting the token) on its FIRST send so the worker loop is stuck on it and later
+    /// jobs stay buffered — then records the rest, so a test can prove StopAsync drains the buffer.</summary>
+    private sealed class BlockingFirstMailer : IAccountMailer
+    {
+        private int _calls;
+        private readonly ConcurrentQueue<string> _sent = new();
+        public IReadOnlyList<string> SentTo => _sent.ToList();
+        public TaskCompletionSource FirstStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task SendPasswordResetAsync(string toEmail, string url, CancellationToken ct = default) => Handle(toEmail, ct);
+        public Task SendEmailConfirmationAsync(string toEmail, string url, CancellationToken ct = default) => Handle(toEmail, ct);
+        public Task SendAlreadyRegisteredAsync(string toEmail, string url, CancellationToken ct = default) => Handle(toEmail, ct);
+
+        private async Task Handle(string toEmail, CancellationToken ct)
+        {
+            if (Interlocked.Increment(ref _calls) == 1)
+            {
+                FirstStarted.TrySetResult();
+                await Task.Delay(Timeout.Infinite, ct); // hold the loop until shutdown cancels ct
+            }
+            // Honour the token like a real relay (MailKit throws on a cancelled ct). This is what makes the
+            // test distinguish the fix from the bug: the OLD loop dispatched buffered jobs under the CANCELLED
+            // stopping token (so they'd throw here and be abandoned, not sent), while the drain dispatches
+            // them under a fresh token (so they send).
+            ct.ThrowIfCancellationRequested();
+            _sent.Enqueue(toEmail);
+        }
+    }
+
+    [Fact]
+    public async Task Buffered_jobs_are_drained_on_shutdown_not_silently_dropped()
+    {
+        // The re-gate found the loop consumed buffered jobs (abandoning them) before StopAsync could drain.
+        // Here the first send blocks so the loop is stuck on it and the other two stay BUFFERED; on shutdown
+        // the blocked one is abandoned and StopAsync must SEND the two buffered — not drop them.
+        var mailer = new BlockingFirstMailer();
+        var queue = new AccountEmailQueue(NullLogger<AccountEmailQueue>.Instance);
+        IAccountEmailQueue api = queue;
+        var worker = new AccountEmailWorker(queue, mailer, NullLogger<AccountEmailWorker>.Instance);
+
+        api.Enqueue(new AccountEmailJob(AccountEmailKind.PasswordReset, "blocks@x.test", "u"));
+        api.Enqueue(new AccountEmailJob(AccountEmailKind.EmailConfirmation, "buffered1@x.test", "u"));
+        api.Enqueue(new AccountEmailJob(AccountEmailKind.AlreadyRegistered, "buffered2@x.test", "u"));
+
+        await worker.StartAsync(CancellationToken.None);
+        await mailer.FirstStarted.Task.WaitAsync(TimeSpan.FromSeconds(10)); // the loop is now stuck on job 1
+        await worker.StopAsync(CancellationToken.None); // cancels the loop; the drain must send 2 and 3
+
+        Assert.Contains("buffered1@x.test", mailer.SentTo);
+        Assert.Contains("buffered2@x.test", mailer.SentTo);
+        Assert.DoesNotContain("blocks@x.test", mailer.SentTo); // the in-flight one was abandoned, as intended
+    }
+
     [Fact]
     public void Enqueue_never_throws_even_past_capacity()
     {

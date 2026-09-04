@@ -14,47 +14,49 @@ public sealed class AccountEmailWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // ReadAllAsync completes (throws OperationCanceledException) when the host stops; the try lets that
-        // end the loop cleanly. The channel is never Complete()d, so shutdown is the only way out — and
-        // whatever is still buffered is handled by StopAsync's drain below.
+        // ONE reader, start to finish (so there is never a second concurrent drain racing this one). While
+        // running, each send uses the stopping token, so a hung relay is abandoned promptly on shutdown
+        // rather than wedging the pump. On stop, WaitToReadAsync eventually throws — but a channel hands back
+        // a non-empty backlog through WaitToReadAsync/TryRead REGARDLESS of the token, so a job can be pulled
+        // during shutdown; DrainOne sends any such job (and the final post-loop backlog) under a FRESH token,
+        // so a restart delivers queued confirmation/reset mail instead of abandoning it. That token switch —
+        // not the loop shape — is what makes the drain reliable; an earlier version that leaned on the loop
+        // stopping "in time" abandoned buffered mail in a race the re-gate caught.
         try
         {
-            await foreach (var job in queue.Reader.ReadAllAsync(stoppingToken))
+            while (await queue.Reader.WaitToReadAsync(stoppingToken))
             {
-                await SendOneAsync(job, stoppingToken);
+                while (queue.Reader.TryRead(out var job))
+                {
+                    await DrainOne(job, stoppingToken);
+                }
             }
         }
         catch (OperationCanceledException)
         {
-            // Normal shutdown.
+            // Stop requested; WaitToReadAsync may have thrown with jobs still buffered — the final drain sends them.
         }
-    }
 
-    /// <summary>On shutdown, send whatever is still buffered so a restart (e.g. a publish) doesn't silently
-    /// drop a confirmation or reset link. Bounded by the host's shutdown timeout (<paramref
-    /// name="cancellationToken"/>); anything still unsent when that elapses is LOGGED rather than lost
-    /// invisibly (it can be re-requested).</summary>
-    public override async Task StopAsync(CancellationToken cancellationToken)
-    {
-        await base.StopAsync(cancellationToken); // signals ExecuteAsync's loop to stop and waits for it
-
-        var undrained = 0;
+        // Whatever is still buffered when the loop ends: send it, on this same reader thread, under a fresh
+        // token. Bounded per send by SendTimeout; the host's own shutdown deadline bounds how long it waits
+        // for this to finish before proceeding (anything unsent past that is lost only on a forced kill).
+        var drained = 0;
         while (queue.Reader.TryRead(out var job))
         {
-            if (cancellationToken.IsCancellationRequested)
-            {
-                undrained++; // the shutdown deadline hit — count the rest rather than block
-                continue;
-            }
-            await SendOneAsync(job, cancellationToken);
+            await SendOneAsync(job, CancellationToken.None);
+            drained++;
         }
-        if (undrained > 0)
+        if (drained > 0)
         {
-            logger.LogWarning(
-                "{Count} account email(s) were still queued at shutdown and weren't sent — they can be re-requested.",
-                undrained);
+            logger.LogInformation("Drained {Count} queued account email(s) at shutdown.", drained);
         }
     }
+
+    /// <summary>Send one job pulled by the running loop. Normally uses the stopping token (a hung send is
+    /// abandoned fast on shutdown); once stop is requested, the channel can still hand back buffered jobs, so
+    /// those go out under a fresh token — a restart should deliver them, not drop them.</summary>
+    private Task DrainOne(AccountEmailJob job, CancellationToken stoppingToken) =>
+        SendOneAsync(job, stoppingToken.IsCancellationRequested ? CancellationToken.None : stoppingToken);
 
     /// <summary>Send one job with its own timeout, swallowing every failure (logged) so the caller — the
     /// loop or the drain — never sees an exception and always moves to the next job.</summary>
