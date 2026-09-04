@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using ShelfAware.Core.Domain;
 using ShelfAware.Web.Data;
+using ShelfAware.Web.Undo;
 
 namespace ShelfAware.Web.Tests;
 
@@ -14,11 +15,22 @@ namespace ShelfAware.Web.Tests;
 public class ProductMergeServiceTests : IDisposable
 {
     private readonly TestDb _db = new();
+    private readonly ActivityLogService _log;
     private readonly ProductMergeService _service;
 
-    public ProductMergeServiceTests() => _service = new ProductMergeService(_db, UndoTesting.Log(_db));
+    public ProductMergeServiceTests()
+    {
+        _log = UndoTesting.Log(_db);
+        _service = new ProductMergeService(_db, _log);
+    }
 
     public void Dispose() => _db.Dispose();
+
+    private async Task<int> LatestMergeEntryId()
+    {
+        await using var db = _db.CreateDbContext();
+        return (await db.ActivityEntries.OrderByDescending(e => e.Id).FirstAsync()).Id;
+    }
 
     private async Task<(int SourceId, int TargetId)> SeedSplitDrinkMix()
     {
@@ -27,6 +39,7 @@ public class ProductMergeServiceTests : IDisposable
         {
             Name = "Strawberry Drink Mix",
             IsTracked = true,
+            DefaultUnit = "ct", // the target has none, so the merge fills it — and the undo must clear it again
             Tags = [new ProductTag { Value = "Snack" }, new ProductTag { Value = "Powdered" }],
             Substitutes = [new ProductSubstitute { Value = "fruit drink" }],
             Purchases =
@@ -222,4 +235,147 @@ public class ProductMergeServiceTests : IDisposable
     [InlineData("Strawberry Drink Mix", "Cat Litter", null)] // no shared words — the leftover isn't a flavor
     public void Suggests_the_variety_label_from_the_name_diff(string source, string target, string? expected) =>
         Assert.Equal(expected, ProductMergeService.SuggestVarietyLabel(source, target));
+
+    // ---- undo: rebuild the deleted source and pull its contribution back out of the survivor ----
+
+    [Fact]
+    public async Task Undo_rebuilds_the_source_and_pulls_its_history_back_out()
+    {
+        var (sourceId, targetId) = await SeedSplitDrinkMix();
+        await _service.MergeAsync(sourceId, targetId, "Strawberry");
+        var entryId = await LatestMergeEntryId();
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entryId));
+
+        await using var db = _db.CreateDbContext();
+        // The source is back — a fresh row (new id) with its full definition and its own children restored.
+        var source = await db.Products.Include(p => p.Tags).Include(p => p.Substitutes)
+            .SingleAsync(p => p.Name == "Strawberry Drink Mix");
+        Assert.True(source.IsTracked);
+        Assert.Equal("ct", source.DefaultUnit);
+        Assert.Equal(["Powdered", "Snack"], source.Tags.Select(t => t.Value).OrderBy(v => v));
+        Assert.Equal("fruit drink", source.Substitutes.Single().Value);
+
+        // Its purchases / line / alias / signal moved back — and the variety the merge stamped is gone again.
+        var sourcePurchases = await db.PurchaseEvents.Where(p => p.ProductId == source.Id).ToListAsync();
+        Assert.Equal(2, sourcePurchases.Count);
+        Assert.All(sourcePurchases, p => Assert.Null(p.Variety));
+        var line = await db.ReceiptLines.SingleAsync();
+        Assert.Equal(source.Id, line.ProductId);
+        Assert.Null(line.Variety);
+        Assert.Equal(source.Id, (await db.ProductAliases.SingleAsync()).ProductId);
+        Assert.Equal(source.Id, (await db.InventorySignals.SingleAsync()).ProductId);
+
+        // The target is back to exactly what it had before the merge: its own purchase, one tag, no
+        // substitute, untracked, no unit.
+        var target = await db.Products.Include(p => p.Tags).Include(p => p.Substitutes).SingleAsync(p => p.Id == targetId);
+        Assert.False(target.IsTracked);
+        Assert.Null(target.DefaultUnit);
+        Assert.Equal(["Snack"], target.Tags.Select(t => t.Value));
+        Assert.Empty(target.Substitutes);
+        var targetPurchases = await db.PurchaseEvents.Where(p => p.ProductId == targetId).ToListAsync();
+        Assert.Equal("Grape", targetPurchases.Single().Variety); // its own purchase untouched
+
+        // The recipe link points back at the source (its canonical name — identity-equal to the original link).
+        Assert.Equal("Strawberry Drink Mix", (await db.RecipeIngredients.SingleAsync()).MatchedProduct);
+    }
+
+    [Fact]
+    public async Task Undo_of_an_unlabelled_merge_restores_the_moved_purchases_with_no_variety()
+    {
+        var (sourceId, targetId) = await SeedSplitDrinkMix();
+        await _service.MergeAsync(sourceId, targetId); // no label → nothing was stamped, nothing to un-stamp
+        var entryId = await LatestMergeEntryId();
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entryId));
+
+        await using var db = _db.CreateDbContext();
+        var source = await db.Products.SingleAsync(p => p.Name == "Strawberry Drink Mix");
+        var purchases = await db.PurchaseEvents.Where(p => p.ProductId == source.Id).ToListAsync();
+        Assert.Equal(2, purchases.Count);
+        Assert.All(purchases, p => Assert.Null(p.Variety));
+    }
+
+    [Fact]
+    public async Task Undo_revives_what_survives_when_a_moved_purchase_was_deleted_since()
+    {
+        var (sourceId, targetId) = await SeedSplitDrinkMix();
+        await _service.MergeAsync(sourceId, targetId, "Strawberry");
+        var entryId = await LatestMergeEntryId();
+
+        // One merged purchase is deleted meanwhile (e.g. a receipt removal). The undo can't resurrect it —
+        // it revives what's still there rather than refusing the whole reversal.
+        await using (var db = _db.CreateDbContext())
+        {
+            var doomed = await db.PurchaseEvents
+                .Where(p => p.ProductId == targetId && p.Variety == "Strawberry").FirstAsync();
+            db.PurchaseEvents.Remove(doomed);
+            await db.SaveChangesAsync();
+        }
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entryId));
+
+        await using var read = _db.CreateDbContext();
+        var source = await read.Products.SingleAsync(p => p.Name == "Strawberry Drink Mix");
+        Assert.Equal(1, await read.PurchaseEvents.CountAsync(p => p.ProductId == source.Id)); // only the survivor
+    }
+
+    [Fact]
+    public async Task Undo_refuses_when_the_target_was_itself_merged_away_since()
+    {
+        var (sourceId, targetId) = await SeedSplitDrinkMix();
+        await _service.MergeAsync(sourceId, targetId, "Strawberry");
+        var firstMergeEntryId = await LatestMergeEntryId();
+
+        // The survivor is then folded into a third product — targetId no longer exists to un-merge from.
+        int thirdId;
+        await using (var db = _db.CreateDbContext())
+        {
+            var third = new Product { Name = "Beverage Mix" };
+            db.Products.Add(third);
+            await db.SaveChangesAsync();
+            thirdId = third.Id;
+        }
+        await _service.MergeAsync(targetId, thirdId);
+
+        Assert.Equal(UndoOutcome.Gone, await _log.UndoAsync(firstMergeEntryId));
+        await using var read = _db.CreateDbContext();
+        Assert.Null(await read.Products.FirstOrDefaultAsync(p => p.Name == "Strawberry Drink Mix")); // not revived
+    }
+
+    [Fact]
+    public async Task Undo_refuses_when_a_product_now_answers_to_the_source_name()
+    {
+        var (sourceId, targetId) = await SeedSplitDrinkMix();
+        await _service.MergeAsync(sourceId, targetId, "Strawberry");
+        var entryId = await LatestMergeEntryId();
+
+        // A new product with the source's IDENTITY appears since (punctuation folds — same product to the
+        // matcher). Reviving would recreate the very twin the merge removed, so the undo refuses.
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Products.Add(new Product { Name = "Strawberry Drink-Mix" });
+            await db.SaveChangesAsync();
+        }
+
+        Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(entryId));
+        await using var read = _db.CreateDbContext();
+        // Only the newcomer exists — the undo didn't add a second, colliding "Strawberry Drink Mix".
+        Assert.Equal(1, await read.Products.CountAsync(p => p.Name.StartsWith("Strawberry Drink")));
+    }
+
+    [Fact]
+    public async Task Peek_reports_the_merge_undoable_without_un_merging_then_already_undone()
+    {
+        var (sourceId, targetId) = await SeedSplitDrinkMix();
+        await _service.MergeAsync(sourceId, targetId, "Strawberry");
+        var entryId = await LatestMergeEntryId();
+
+        Assert.Equal(UndoOutcome.Done, await _log.PeekAsync(entryId)); // undoable — but a Peek does NOT do it
+        await using (var db = _db.CreateDbContext())
+            Assert.Null(await db.Products.FirstOrDefaultAsync(p => p.Name == "Strawberry Drink Mix"));
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entryId));
+        Assert.Equal(UndoOutcome.AlreadyUndone, await _log.PeekAsync(entryId)); // spent now
+    }
 }

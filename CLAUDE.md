@@ -2637,8 +2637,8 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      create-product (delete only if it gained no other history — mirrors `ReceiptRemovalService`), tags/subs/
      extras adds, "Ate it" (via `MealStock.Restore`), **confirm-receipt via TOTAL removal** (`ReceiptRemovalService`
      — the same inverse the Upload page's ↩ Undo uses; the receipt image is the `IUndoAfterCommit` case), rename,
-     the won't-eat list. HISTORY-ONLY greyed: **merge** (lossy — moves purchases/aliases/signals, unions tags,
-     deletes the source) and **census confirm** (a real inverse — reverting summed per-product attestations — is
+     the won't-eat list. HISTORY-ONLY greyed: ~~**merge**~~ **[merge became REVERSIBLE 2026-09-04 — item 64]**
+     and **census confirm** (a real inverse — reverting summed per-product attestations — is
      genuine work, deferred). ⚠️ **`ReceiptRemoved` was DROPPED**: a confirmed receipt already carries a
      `ReceiptConfirmed` entry, which greys as **Gone** the instant the receipt is removed, so a separate entry
      would only double-log the same narrative — the enum value is gone and the reason is written into
@@ -3455,6 +3455,57 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      so the confirm→chooser leg is unit-tested + composed of pre-existing tested middleware.
    - **3035 green, 0 warnings** (non-incremental Release; the number climbed across the gate fixes). Every
      load-bearing rule mutation-checked.
+
+64. **Undoable product merge (2026-09-04, branch `feature/undoable-merge`; gate PENDING, UNPUSHED).** PR 1 of
+   the "Eggs flags two similar products" arc (Jordan's ask — a nudge for lookalikes on the grocery list, an
+   escalating offer to LINK them, and a source-side fix for descriptor words that split one item into two).
+   Jordan's ruling on the link: it's a **full merge, with real undo — "a must"** — so this PR makes the lossy
+   product merge reversible FIRST, which lifts BOTH the existing ⇆ merge panel and the future link offer (one
+   handler, every merge undoable). It was the arc's hardest piece and stands alone.
+   - **The problem: merge is lossy by nature**, which is why item 51 shipped it history-only (greyed). It folds
+     one product's purchases/lines/aliases/signals into the survivor, unions tags+substitutes (dropping dupes),
+     re-points name-keyed recipe links, flips the target's tracked flag / unit, and DELETES the source — so once
+     it runs, nothing on the survivor distinguishes the moved rows from its own.
+   - ⚠️ **The fix is a merge MANIFEST captured before the fold** (`ProductsMergedPayload` grew from
+     `(sourceName, targetName)` to the full set): the ids of every moved purchase/line/alias/signal (and which
+     of them the variety label stamped), the source's whole definition (`MergedSourceSnapshot` — category, unit,
+     counting fields, provenance, tag+sub values), the tags/subs it ADDED to the target (vs merely deduped), the
+     re-pointed recipe-link ids, and the target's pre/post `IsTracked`+`DefaultUnit`. Captured in
+     `ProductMergeService.MergeAsync` with SELECTs before the `ExecuteUpdate`s; without it the split simply can't
+     be rebuilt, which is the whole reason merge was deferred.
+   - **The undo** (`ProductsMergedHandler`, now a real `UndoHandler`, was `HistoryOnlyHandler`) rebuilds the
+     source as a **fresh row (a NEW id — the old one is dead)** and pulls its contribution back out: re-parents
+     the moved rows by **NAVIGATION** so EF assigns the new id and fixes every FK in the ONE `SaveChanges`
+     `ActivityLogService` commits — ⚠️ **no `ExecuteUpdate` in an undo** (it autocommits immediately and would
+     break the single-transaction guarantee a refused undo relies on); every moved entity happens to carry a
+     `Product` navigation, which is what makes this possible. Then it un-stamps exactly the variety the merge
+     wrote, pulls the added tags/subs off the target, re-points the recipe links back (only the ones still
+     identity-matching the target), and restores the target scalars.
+   - ⚠️ **TOLERANT — "revive what we can" (Jordan's call).** A moved row deleted since (a receipt removal) is
+     genuinely gone and simply skipped, not resurrected; the undo revives what still points at the target rather
+     than refusing wholesale. Precondition-checked per item 51: target still here → else `Gone`; the source's
+     identity key still free → else `Superseded` (reviving into a collision would recreate the very twin the
+     merge removed). The target scalar restore is restore-**if-unchanged-since** (a later user choice wins).
+   - ⚠️ **Legacy merges stay greyed for FREE.** A merge recorded before this carries `Reversibility.NotReversible`
+     stamped on its `ActivityEntry` ROW, so `ActivityLogService` refuses it before dispatch and the handler never
+     sees the old two-field payload — no migration, no legacy-payload branch. Pinned by a test.
+   - `RecipeLinks.RepointAsync` returns the re-pointed ingredient ids now (was a count); `ProductRenameService`
+     reads `.Count`. One definition, both callers (the ids are what the merge undo needs).
+   - **Tests + mutation-checks:** 6 undo tests in `ProductMergeServiceTests` (round-trip restoration, unlabelled
+     merge, tolerance of a since-deleted purchase, refuse-on-target-gone, refuse-on-name-collision-by-IDENTITY,
+     Peek==Undo) + `ActivityLogTests` reversible round-trip + legacy-greyed; two `HistoryPageTests` switched off
+     `ProductsMerged` (now reversible) onto `CensusConfirmed` (genuinely history-only) as their greyed example.
+     Seven mutations, each killing exactly its test (variety un-stamp, name-collision, target-missing, tag
+     removal, scalar restore, forward stamp-capture, and the reparent — which also proves the tolerance test
+     non-vacuous).
+   - **Live-verified end to end** (dev sandbox, alt port): merged Strawberry Drink Mix into Drink Mix (history
+     pooled to 8×, source deleted), `/history` then offered **Undo** on the merge row (reversible, via the
+     generic page), and the undo revived Strawberry Drink Mix as a **new product id (664→674)** with its 2
+     Kool-Aid purchases, its Snack tag, and the **variety un-stamped back to null**, while Drink Mix shrank back
+     to 6×. Zero console/CSP errors.
+   - **3042 green, 0 warnings** (non-incremental Release; Core 1329 · AI 172 · Persistence 961 · Pages 580;
+     +7 over master's 3035). ⚠️ **The nudge + per-pair dismissal + link-to-merge escalation, and the conservative
+     descriptor normalizer (extraction + `IdentityKey`), are the arc's LATER PRs — not in this one.**
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

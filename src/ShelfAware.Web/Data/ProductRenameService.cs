@@ -78,9 +78,10 @@ public class ProductRenameService(IHouseholdDbFactory dbFactory, IActivityLog ac
         var oldName = product.Name;
         product.Name = name;
         // Via RecipeLinks — the ONE re-pointer, shared with the merge service (identity-keyed and
-        // empty-key-gated there), so the two sites can't drift apart again.
+        // empty-key-gated there), so the two sites can't drift apart again. A rename only needs the count;
+        // the ids it also returns are what the merge undo uses.
         var relinked = await RecipeLinks.RepointAsync(db, oldName, name, cancellationToken);
 
-        return new(true, $"Renamed to {name}.", oldName, relinked);
+        return new(true, $"Renamed to {name}.", oldName, relinked.Count);
     }
 }

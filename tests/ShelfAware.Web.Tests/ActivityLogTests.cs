@@ -750,10 +750,12 @@ public sealed class ActivityLogTests : IDisposable
         Assert.Empty(cleanup.Deleted);                  // and no image delete for a receipt that was already gone
     }
 
-    // ---- history-only (recorded, greyed, never reversed): ProductsMerged, CensusConfirmed ----
+    // ---- history-only (recorded, greyed, never reversed): CensusConfirmed ----
+    // (ProductsMerged became reversible — its manifest-backed un-merge is pinned in ProductMergeServiceTests;
+    // here we only assert the log now records it Reversible and the round-trip rebuilds the deleted source.)
 
     [Fact]
-    public async Task Merging_products_records_a_history_only_entry_that_cannot_be_undone()
+    public async Task Merging_products_records_a_reversible_entry_and_undo_rebuilds_the_source()
     {
         var sourceId = await SeedProduct("Strawberry Drink Mix");
         var targetId = await SeedProduct("Drink Mix");
@@ -761,11 +763,44 @@ public sealed class ActivityLogTests : IDisposable
 
         var entry = await LatestEntry();
         Assert.Equal(ActivityKind.ProductsMerged, entry.Kind);
-        Assert.Equal(Reversibility.NotReversible, entry.Reversibility);
+        Assert.Equal(Reversibility.Reversible, entry.Reversibility);
         Assert.Equal("Merged Strawberry Drink Mix into Drink Mix", entry.Summary);
 
-        Assert.Equal(UndoOutcome.NotReversible, await _log.UndoAsync(entry.Id)); // greyed — refused before dispatch
-        Assert.Null((await Entry(entry.Id))!.UndoneAt);                          // and never stamped
+        // The merge deleted the source; the undo rebuilds it.
+        await using (var gone = _db.CreateDbContext())
+            Assert.Null(await gone.Products.FirstOrDefaultAsync(p => p.Name == "Strawberry Drink Mix"));
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entry.Id));
+
+        await using (var back = _db.CreateDbContext())
+            Assert.NotNull(await back.Products.FirstOrDefaultAsync(p => p.Name == "Strawberry Drink Mix"));
+        Assert.NotNull((await Entry(entry.Id))!.UndoneAt); // stamped
+    }
+
+    [Fact]
+    public async Task A_legacy_history_only_merge_entry_stays_greyed()
+    {
+        // A merge recorded before merges became reversible carries Reversibility.NotReversible on its ROW,
+        // so the service refuses it before ever dispatching to the (now reversible) handler — no manifest
+        // is needed, and the old two-field payload is never deserialized for a reverse.
+        int entryId;
+        await using (var db = _db.CreateDbContext())
+        {
+            var legacy = new ActivityEntry
+            {
+                Kind = ActivityKind.ProductsMerged,
+                OccurredAt = DateTimeOffset.Now,
+                Summary = "Merged Butter into Salted Butter",
+                Reversibility = Reversibility.NotReversible,
+                PayloadJson = """{"SourceName":"Butter","TargetName":"Salted Butter"}""",
+            };
+            db.ActivityEntries.Add(legacy);
+            await db.SaveChangesAsync();
+            entryId = legacy.Id;
+        }
+
+        Assert.Equal(UndoOutcome.NotReversible, await _log.UndoAsync(entryId));
+        Assert.Null((await Entry(entryId))!.UndoneAt);
     }
 
     [Fact]
