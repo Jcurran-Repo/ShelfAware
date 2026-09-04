@@ -309,6 +309,30 @@ public class ProductDetailEditFlowsTests : PageTestContext
         cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".callout")));
     }
 
+    [Fact]
+    public async Task Inline_undo_that_commits_but_cannot_refresh_says_it_was_undone_not_that_it_failed()
+    {
+        var (sourceId, kinId, _) = SeedMergeCatalog();
+        var result = await Services.GetRequiredService<ProductMergeService>().MergeAsync(sourceId, kinId);
+        MergeNotice.Set(result.UndoEntryId, "Strawberry Drink Mix", kinId);
+        var cut = RenderDetail(kinId);
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll(".callout")));
+
+        // The undo's own context commits; the reload right after it dies. The advice must say the undo
+        // HAPPENED (a retry would only hit AlreadyUndone) — never that it failed.
+        Factory.FailAfter = 1;
+        cut.Find(".callout button").Click(); // ↩ Undo
+
+        cut.WaitForAssertion(() =>
+            Assert.Contains("Undone — but the page couldn't refresh", cut.Find(".callout .error").TextContent));
+        Factory.FailAfter = null;
+
+        // The reversal really committed despite the reload failure.
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.NotNull(await raw.Products.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(p => p.Name == "Strawberry Drink Mix"));
+    }
+
     // ------------------------------------------------------------------- purchase-quantity edit
 
     [Fact]

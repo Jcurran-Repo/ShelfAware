@@ -3534,8 +3534,19 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      clear-on-switch) + the harness gained `MergeUndoNotice`; 4 mutations each kill exactly their test — and
      one exposed a vacuous assertion (`"undone"` also matched the FAILURE copy "already been undone"), tightened
      to "Merge undone" + the vanished button (item 34, live).
-   - **3045 green, 0 warnings** (non-incremental Release; Core 1329 · AI 172 · Persistence 961 · Pages 583;
-     +10 over master's 3035). Live-verified the inline undo end to end (merge → green notice on the target →
+   - **The re-gate over the two follow-up commits (item 39 — a fix pass needs its own review; code on Opus,
+     security on Sonnet, by SHA in isolated worktrees). Security PASS** (probed the per-circuit carrier + a
+     cross-household undo-by-id sweep, both clean; the removed guard was a same-household data-shape check,
+     never tenancy). **Code SHIP** — the collision removal verified safe (no unique index on product identity
+     anywhere, so a revived twin can't violate a constraint; probed), the switch-vs-refresh state machine
+     traced correct, one **Low** fixed: ⚠️ `UndoMerge`'s catch said "that didn't undo" even when the undo
+     COMMITTED and only the reload threw — the "'try again' after a success" case the three sibling handlers in
+     the same file split with a `saved` flag (items 27/31). Now split on an `undone` flag ("Undone — but the
+     page couldn't refresh" vs "That didn't undo"); pinned by a `FailAfter=1` reload-failure test,
+     mutation-checked. (Reviewer's out-of-scope note: the revive restoring a stale `CreatedByReceiptId` is a
+     non-issue — the breadcrumb is designed to tolerate a gone receipt, `Product.cs` says so.)
+   - **3046 green, 0 warnings** (non-incremental Release; Core 1329 · AI 172 · Persistence 961 · Pages 584;
+     +11 over master's 3035). Live-verified the inline undo end to end (merge → green notice on the target →
      ↩ Undo → "✓ Merge undone" + history reloaded 8×→6×; server logs clean). ⚠️ **The nudge + per-pair
      dismissal + link-to-merge escalation, and the conservative descriptor normalizer (extraction +
      `IdentityKey`), are the arc's LATER PRs — not in this one.**

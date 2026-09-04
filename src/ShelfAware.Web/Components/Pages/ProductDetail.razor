@@ -1125,11 +1125,16 @@ else
         if (justMerged is not { } jm || mergeUndoBusy) return;
         mergeUndoBusy = true;
         mergeUndoError = null;
+        // Same write-vs-reload split as ApplyQuantityAsync/SaveUnit: the undo COMMITS before the reload runs,
+        // so a reload failure must not tell the user it "didn't undo" — it did, and a retry would only hit
+        // AlreadyUndone. The message must not claim a completed reversal never happened.
+        var undone = false;
         try
         {
             var outcome = await ActivityLog.UndoAsync(jm.EntryId);
             if (outcome == UndoOutcome.Done)
             {
+                undone = true;
                 loadedId = null;
                 await OnParametersSetAsync(); // refresh the target's reduced history/rhythm/chart
                 justMerged = jm;              // re-affirm the notice (belt-and-suspenders) for the confirmation
@@ -1144,8 +1149,10 @@ else
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Logger.LogError(ex, "Undoing merge entry {EntryId} failed.", jm.EntryId);
-            mergeUndoError = "That didn't undo — reload the page and undo it from History instead.";
+            Logger.LogError(ex, "Undoing merge entry {EntryId} failed (undone: {Undone}).", jm.EntryId, undone);
+            mergeUndoError = undone
+                ? "Undone — but the page couldn't refresh. Reload to see the updated history."
+                : "That didn't undo — reload the page and undo it from History instead.";
         }
         finally { mergeUndoBusy = false; }
     }
