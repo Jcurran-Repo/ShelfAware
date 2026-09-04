@@ -5,6 +5,7 @@
 @inject SignInManager<AppUser> SignInManager
 @inject HouseholdService Households
 @inject AccountCreationLimiter AccountLimiter
+@inject AccountSupersession Supersession
 @inject IAccountEmailQueue EmailQueue
 @inject AuthDbContext Db
 @inject IOptions<AuthOptions> Auth
@@ -99,18 +100,29 @@
         // AuthDbContext, so a bad invite code (or any failure) leaves no orphaned half-registration.
         await using var tx = await Db.Database.BeginTransactionAsync();
 
+        // Supersede an UNCONFIRMED placeholder for this email before creating — so a re-registration gives
+        // THIS registrant a fresh account in the household they choose, not one someone pre-registered them
+        // into (the pre-hijack). ⚠️ Partial fix; see AccountSupersession for the residual race and the
+        // high-priority complete fix still owed. Only on a confirmation-required box, where an unconfirmed
+        // account is genuinely pending/unusable; on a direct-registration box it's a real usable account.
+        if (Auth.Value.RequireEmailConfirmation)
+        {
+            await Supersession.SupersedeUnconfirmedPlaceholderAsync(Input.Email, HttpContext.RequestAborted);
+        }
+
         var user = AppUser.NewToday(Input.Email);
         var result = await UserManager.CreateAsync(user, Input.Password);
         if (!result.Succeeded)
         {
             // A duplicate email is the one failure that could enumerate accounts: "that email is already
-            // taken" confirms the address exists. Where the box requires confirmation (its anti-enumeration
-            // posture), a valid registration for an already-taken email gets the SAME "check your inbox"
-            // response as a real one, and the existing owner is emailed a heads-up instead — so a prober
-            // learns nothing while the real person isn't left confused. ⚠️ NO timing burn here: CreateAsync
-            // hashes the password (UpdatePasswordHash) BEFORE it runs the uniqueness check, so a duplicate
-            // ALREADY paid the same PBKDF2 cost a real registration does — an added burn would make the
-            // duplicate path measurably SLOWER, which would itself be a timing oracle (the pre-merge gate
+            // taken" confirms the address exists. An unconfirmed placeholder was superseded above, so the
+            // only duplicate that reaches here is a CONFIRMED (real) account. Where the box requires
+            // confirmation (its anti-enumeration posture), a valid registration for it gets the SAME "check
+            // your inbox" response as a real one, and the existing owner is emailed a heads-up instead — so a
+            // prober learns nothing while the real person isn't left confused. ⚠️ NO timing burn here:
+            // CreateAsync hashes the password (UpdatePasswordHash) BEFORE it runs the uniqueness check, so a
+            // duplicate ALREADY paid the same PBKDF2 cost a real registration does — an added burn would make
+            // the duplicate path measurably SLOWER, which would itself be a timing oracle (the pre-merge gate
             // measured exactly that: duplicate 71ms vs success 36ms with the burn; ~parity without it).
             if (Auth.Value.RequireEmailConfirmation && RegistrationErrors.IsDuplicateOnly(result))
             {
