@@ -164,4 +164,20 @@ public class AccountEmailQueueTests
 
         Assert.Null(ex);
     }
+
+    [Fact]
+    public void Once_intake_is_closed_a_late_enqueue_is_refused_not_silently_buffered()
+    {
+        // On shutdown the worker calls CompleteWriter; a mail enqueued AFTER the drain has emptied the channel
+        // must be refused (a logged drop), not silently written to a channel with no reader left — the
+        // residual the sibling ErrorLogWriter closes the same way. Observable here: after CompleteWriter, the
+        // job never lands in the channel.
+        var queue = new AccountEmailQueue(NullLogger<AccountEmailQueue>.Instance);
+        IAccountEmailQueue api = queue;
+
+        queue.CompleteWriter();
+        api.Enqueue(new AccountEmailJob(AccountEmailKind.PasswordReset, "late@x.test", "https://x/reset"));
+
+        Assert.False(queue.Reader.TryRead(out _)); // refused, not buffered
+    }
 }

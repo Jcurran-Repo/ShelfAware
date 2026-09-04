@@ -16,12 +16,13 @@ public sealed class AccountEmailWorker(
     {
         // ONE reader, start to finish (so there is never a second concurrent drain racing this one). While
         // running, each send uses the stopping token, so a hung relay is abandoned promptly on shutdown
-        // rather than wedging the pump. On stop, WaitToReadAsync eventually throws — but a channel hands back
-        // a non-empty backlog through WaitToReadAsync/TryRead REGARDLESS of the token, so a job can be pulled
-        // during shutdown; DrainOne sends any such job (and the final post-loop backlog) under a FRESH token,
-        // so a restart delivers queued confirmation/reset mail instead of abandoning it. That token switch —
-        // not the loop shape — is what makes the drain reliable; an earlier version that leaned on the loop
-        // stopping "in time" abandoned buffered mail in a race the re-gate caught.
+        // rather than wedging the pump. On stop (StopAsync below), the channel is COMPLETED — so the loop
+        // drains the remaining backlog and exits on its own (WaitToReadAsync returns false once empty) — and
+        // it may also throw on the stopping token; either way a job pulled during shutdown, plus the final
+        // post-loop backlog, goes out under a FRESH token via DrainOne, so a restart delivers queued
+        // confirmation/reset mail instead of abandoning it. That token switch — not the loop shape — is what
+        // makes the drain reliable; an earlier version that leaned on the loop stopping "in time" abandoned
+        // buffered mail in a race the re-gate caught.
         try
         {
             while (await queue.Reader.WaitToReadAsync(stoppingToken))
@@ -50,6 +51,17 @@ public sealed class AccountEmailWorker(
         {
             logger.LogInformation("Drained {Count} queued account email(s) at shutdown.", drained);
         }
+    }
+
+    /// <summary>Close intake BEFORE the base stop cancels and drains, so any mail enqueued once the channel
+    /// is emptied is observably refused (a logged drop from <see cref="AccountEmailQueue.Enqueue"/>) instead
+    /// of silently written to a channel the worker has stopped reading — the residual its sibling
+    /// ErrorLogWriter closes the same way. base.StopAsync then signals ExecuteAsync's loop to finish the
+    /// buffered backlog and waits for it.</summary>
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        queue.CompleteWriter();
+        await base.StopAsync(cancellationToken);
     }
 
     /// <summary>Send one job pulled by the running loop. Normally uses the stopping token (a hung send is

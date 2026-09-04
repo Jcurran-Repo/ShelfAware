@@ -56,15 +56,23 @@ public sealed class AccountEmailQueue(ILogger<AccountEmailQueue> logger) : IAcco
 
     public void Enqueue(AccountEmailJob job)
     {
-        // TryWrite never blocks; in Wait mode it returns false when the queue is full. A dropped
-        // confirmation/reset is best-effort — the user can ask for another — and dropping is far better than
-        // blocking the request (which would reintroduce the timing/DoS this queue exists to remove) or
-        // throwing (the caller is mid-request). Log it so a chronically-full queue is visible.
+        // TryWrite never blocks; it returns false when the queue is full (Wait mode) OR once
+        // CompleteWriter has closed intake on shutdown. Either way a dropped confirmation/reset is
+        // best-effort — the user can ask for another — and dropping beats blocking the request (which would
+        // reintroduce the timing/DoS this queue exists to remove) or throwing (the caller is mid-request).
+        // Log it so a chronically-full queue, or a mail enqueued in the shutdown window, is VISIBLE rather
+        // than silently written to a channel nobody reads any more.
         if (!_channel.Writer.TryWrite(job))
         {
-            logger.LogWarning("Account email dropped ({Kind}) — the send queue is full.", job.Kind);
+            logger.LogWarning("Account email dropped ({Kind}) — the send queue is full or shutting down.", job.Kind);
         }
     }
+
+    /// <summary>Close intake on shutdown so the worker's drain finishes the buffered backlog and exits, and a
+    /// mail enqueued AFTER the drain has emptied the channel is observably REFUSED by <see cref="Enqueue"/>
+    /// (a logged drop) rather than silently written to a channel with no reader left. Same residual its
+    /// sibling ErrorLogWriter closes the same way. Called once, from <see cref="AccountEmailWorker.StopAsync"/>.</summary>
+    public void CompleteWriter() => _channel.Writer.TryComplete();
 
     /// <summary>The reader the worker drains. Internal — nothing but the worker should read the queue.</summary>
     internal ChannelReader<AccountEmailJob> Reader => _channel.Reader;

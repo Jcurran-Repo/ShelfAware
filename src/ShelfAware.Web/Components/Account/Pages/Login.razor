@@ -129,8 +129,9 @@
             // ⚠️ Every other failure — unknown email, wrong password, unconfirmed account (IsNotAllowed) —
             // gets the SAME generic message, so the RESPONSE reveals nothing. (Identity runs the confirmation
             // gate before the password check, so IsNotAllowed fires on any password; a per-state message, or
-            // one keyed off password-correctness, would be an enumeration oracle. The forgetful owner recovers
-            // via the standing "resend" link above, which singles out no address.)
+            // one keyed off password-correctness, would be an enumeration oracle. A registrant who never set
+            // a password recovers via the standing "set your password to activate" link above, which singles
+            // out no address.)
             //
             // ⚠️ And the TIMING must reveal nothing either: Identity pays the PBKDF2 verify only when it
             // reaches the password check — a found account WITH a password hash — and short-circuits ~1000x
