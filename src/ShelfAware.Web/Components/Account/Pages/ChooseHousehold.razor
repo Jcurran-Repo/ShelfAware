@@ -90,7 +90,7 @@
 
         // The same gate registration uses: a deployment that isn't accepting new households doesn't start
         // accepting them because the visitor already has an account.
-        mayCreate = HouseholdService.MayCreateHousehold(Auth.Value.AllowRegistration, await Households.AnyUsersAsync());
+        mayCreate = HouseholdService.MayCreateHousehold(Auth.Value.AllowRegistration, await Households.AnyHouseholdsAsync());
     }
 
     private async Task ChooseAsync()

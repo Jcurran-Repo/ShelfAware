@@ -268,10 +268,6 @@ builder.Services.AddScoped<HouseholdService>();
 // HouseholdService — it reads the same request-scoped AuthDbContext the registration flow uses. Harmless
 // dormant on a box with no cap configured (it short-circuits to "not at limit").
 builder.Services.AddScoped<AccountCreationLimiter>();
-// Supersedes an unconfirmed placeholder on re-registration (the pre-hijack partial fix; see
-// AccountSupersession). Scoped — it rides the same request-scoped AuthDbContext/UserManager the
-// registration transaction uses, so it participates in and rolls back with that transaction.
-builder.Services.AddScoped<AccountSupersession>();
 // Mint/validate/list/revoke for read-only GraphQL API tokens (credentials in auth.db). Registered
 // always — the auth handler and Settings gate their EXPOSURE on GraphQL:Enabled, but the service
 // itself is harmless dormant and the delete-my-data flow may need it regardless.

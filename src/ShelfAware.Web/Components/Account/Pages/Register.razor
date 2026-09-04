@@ -5,7 +5,6 @@
 @inject SignInManager<AppUser> SignInManager
 @inject HouseholdService Households
 @inject AccountCreationLimiter AccountLimiter
-@inject AccountSupersession Supersession
 @inject IAccountEmailQueue EmailQueue
 @inject AuthDbContext Db
 @inject IOptions<AuthOptions> Auth
@@ -36,20 +35,30 @@
         <InputText @bind-Value="Input.ConfirmPassword" id="confirm-password" type="password" autocomplete="new-password" required />
         <ValidationMessage For="() => Input.ConfirmPassword" />
     </div>
-    <fieldset class="auth-household">
-        <legend>Your household</legend>
-        <div class="auth-field">
-            <label for="invite-code">Joining someone? Enter their invite code</label>
-            <InputText @bind-Value="Input.InviteCode" id="invite-code" autocomplete="off"
-                       placeholder="e.g. K7MPQ2XW4A" />
-        </div>
-        <div class="auth-field">
-            <label for="household-name">…or name a new household</label>
-            <InputText @bind-Value="Input.HouseholdName" id="household-name" autocomplete="off"
-                       placeholder="e.g. The Currans" />
-            <ValidationMessage For="() => Input.HouseholdName" />
-        </div>
-    </fieldset>
+    @if (!Auth.Value.RequireEmailConfirmation)
+    {
+        @* Direct-registration box: the household is chosen here. On a confirmation-required box it is NOT
+           — it's set up after you confirm your email (see RegisterForConfirmationAsync), so these fields
+           are hidden and nothing about a household is decided before inbox control is proven. *@
+        <fieldset class="auth-household">
+            <legend>Your household</legend>
+            <div class="auth-field">
+                <label for="invite-code">Joining someone? Enter their invite code</label>
+                <InputText @bind-Value="Input.InviteCode" id="invite-code" autocomplete="off"
+                           placeholder="e.g. K7MPQ2XW4A" />
+            </div>
+            <div class="auth-field">
+                <label for="household-name">…or name a new household</label>
+                <InputText @bind-Value="Input.HouseholdName" id="household-name" autocomplete="off"
+                           placeholder="e.g. The Currans" />
+                <ValidationMessage For="() => Input.HouseholdName" />
+            </div>
+        </fieldset>
+    }
+    else
+    {
+        <p class="muted small">After you confirm your email, you'll set up or join a household.</p>
+    }
     <button type="submit" class="auth-submit">Create account</button>
 </EditForm>
 
@@ -72,11 +81,82 @@
 
     private async Task RegisterUserAsync()
     {
+        // Two genuinely different flows. A confirmation-required box defers the household until AFTER the
+        // registrant proves they control the inbox — that's the whole anti-hijack posture, so it can't share
+        // the direct path's "choose your household as you sign up".
+        if (Auth.Value.RequireEmailConfirmation)
+        {
+            await RegisterForConfirmationAsync();
+            return;
+        }
+        await RegisterDirectlyAsync();
+    }
+
+    /// <summary>Confirmation-required box (§10): create the ACCOUNT ONLY. No household is chosen here — it's
+    /// created or joined afterwards at /Account/Household, which the no-household middleware routes them to
+    /// once they confirm and sign in. This is the pre-hijack fix: with NO household assigned at registration,
+    /// re-registering someone else's email can't pre-plant a household they inherit by confirming — it's just
+    /// a duplicate (handled below). Accordingly the AllowRegistration gate and the household fields live at
+    /// the chooser now, not here; registration is open (bounded only by the daily account cap).</summary>
+    private async Task RegisterForConfirmationAsync()
+    {
+        // The daily cap (§10) bounds ACCOUNT creation here — every registration makes exactly one account,
+        // and there's no invite-join to exempt (joining happens later, at the chooser, uncapped). Dormant
+        // when no cap is configured.
+        if (await AccountLimiter.AtDailyLimitAsync(HttpContext.RequestAborted))
+        {
+            errorMessage = DemoLimits.DailyCapReachedMessage;
+            return;
+        }
+
+        var user = AppUser.NewToday(Input.Email);
+        var result = await UserManager.CreateAsync(user, Input.Password);
+        if (!result.Succeeded)
+        {
+            // A duplicate email is the one failure that could enumerate accounts. A registration for an
+            // address that already exists gets the SAME "check your inbox" response a genuine new one does,
+            // and the real owner is emailed a heads-up instead — so a prober learns nothing while the owner
+            // isn't left confused. Confirmed or unconfirmed, the notice (not a resend) is the safe answer:
+            // there is no household to inherit either way, and the sign-in page's standing "resend
+            // confirmation" link recovers an unconfirmed account. ⚠️ NO timing burn: CreateAsync hashes the
+            // password BEFORE the uniqueness check, so a duplicate ALREADY paid the same PBKDF2 cost — an
+            // added burn would make the duplicate path measurably slower, itself a timing oracle (the gate
+            // measured exactly that: duplicate 71ms vs success 36ms with the burn; ~parity without it).
+            if (RegistrationErrors.IsDuplicateOnly(result))
+            {
+                var signInUrl = NavigationManager.ToAbsoluteUri("Account/Login").AbsoluteUri;
+                EmailQueue.Enqueue(new AccountEmailJob(AccountEmailKind.AlreadyRegistered, Input.Email, signInUrl));
+                Logger.LogInformation("A registration hit an existing email; queued an already-registered notice.");
+                RedirectManager.RedirectTo("Account/RegisterConfirmation");
+                return;
+            }
+
+            // Any other failure (a weak password) is the user's own input — a policy complaint reveals no
+            // account's existence and fails identically for a new or taken email. A duplicate is stripped so
+            // "email taken" can't ride out beside it.
+            errorMessage = "Error: " + string.Join(" ",
+                RegistrationErrors.ExcludingDuplicate(result).Select(e => e.Description));
+            return;
+        }
+
+        // The account exists (no household yet); queue the confirmation link and send them to "check your
+        // inbox". Identity's RequireConfirmedAccount blocks sign-in until they open it; a lost link is
+        // recovered by "resend", not a re-registration (which RequireUniqueEmail would refuse anyway).
+        await QueueConfirmationEmailAsync(user);
+        Logger.LogInformation("New account registered (awaiting email confirmation; household deferred to the chooser).");
+        RedirectManager.RedirectTo("Account/RegisterConfirmation");
+    }
+
+    /// <summary>Direct-registration box (self-host / family): the household is chosen here and the account is
+    /// signed in immediately. The address isn't verified, but these boxes don't require it and there's no
+    /// confirmation step to defer the household to — so household-at-registration is safe here.</summary>
+    private async Task RegisterDirectlyAsync()
+    {
         var joining = !string.IsNullOrWhiteSpace(Input.InviteCode);
 
         // The gate is enforced HERE, server-side, not by hiding UI: creating a NEW household needs the
-        // AllowRegistration flag (or first-user bootstrap); joining an existing one only needs the code.
-        if (!joining && !HouseholdService.MayCreateHousehold(Auth.Value.AllowRegistration, await Households.AnyUsersAsync()))
+        // AllowRegistration flag (or first-household bootstrap); joining an existing one only needs the code.
+        if (!joining && !HouseholdService.MayCreateHousehold(Auth.Value.AllowRegistration, await Households.AnyHouseholdsAsync()))
         {
             errorMessage = "Error: this deployment isn't accepting new sign-ups. Joining an existing household still works with its invite code.";
             return;
@@ -86,61 +166,25 @@
             errorMessage = "Error: name your new household, or enter an invite code to join an existing one.";
             return;
         }
-
-        // The demo box's daily account-creation cap (§10). Only the NEW-household path is bounded — a valid
-        // invite code is never turned away (it's not an abuse vector, and blocking a real demo hand-off would
-        // be a bad moment). Dormant when no cap is configured (self-host/family), so this is free there.
+        // The daily cap bounds the new-household path only — a valid invite code is never turned away (not an
+        // abuse vector, and blocking a real hand-off would be a bad moment). Dormant when no cap is set.
         if (!joining && await AccountLimiter.AtDailyLimitAsync(HttpContext.RequestAborted))
         {
             errorMessage = DemoLimits.DailyCapReachedMessage;
             return;
         }
 
-        // One transaction across user + household: UserManager's store rides the same scoped
-        // AuthDbContext, so a bad invite code (or any failure) leaves no orphaned half-registration.
+        // One transaction across user + household: UserManager's store rides the same scoped AuthDbContext,
+        // so a bad invite code (or any failure) leaves no orphaned half-registration.
         await using var tx = await Db.Database.BeginTransactionAsync();
-
-        // Supersede an UNCONFIRMED placeholder for this email before creating — so a re-registration gives
-        // THIS registrant a fresh account in the household they choose, not one someone pre-registered them
-        // into (the pre-hijack). ⚠️ Partial fix; see AccountSupersession for the residual race and the
-        // high-priority complete fix still owed. Only on a confirmation-required box, where an unconfirmed
-        // account is genuinely pending/unusable; on a direct-registration box it's a real usable account.
-        if (Auth.Value.RequireEmailConfirmation)
-        {
-            await Supersession.SupersedeUnconfirmedPlaceholderAsync(Input.Email, HttpContext.RequestAborted);
-        }
 
         var user = AppUser.NewToday(Input.Email);
         var result = await UserManager.CreateAsync(user, Input.Password);
         if (!result.Succeeded)
         {
-            // A duplicate email is the one failure that could enumerate accounts: "that email is already
-            // taken" confirms the address exists. An unconfirmed placeholder was superseded above, so the
-            // only duplicate that reaches here is a CONFIRMED (real) account. Where the box requires
-            // confirmation (its anti-enumeration posture), a valid registration for it gets the SAME "check
-            // your inbox" response as a real one, and the existing owner is emailed a heads-up instead — so a
-            // prober learns nothing while the real person isn't left confused. ⚠️ NO timing burn here:
-            // CreateAsync hashes the password (UpdatePasswordHash) BEFORE it runs the uniqueness check, so a
-            // duplicate ALREADY paid the same PBKDF2 cost a real registration does — an added burn would make
-            // the duplicate path measurably SLOWER, which would itself be a timing oracle (the pre-merge gate
-            // measured exactly that: duplicate 71ms vs success 36ms with the burn; ~parity without it).
-            if (Auth.Value.RequireEmailConfirmation && RegistrationErrors.IsDuplicateOnly(result))
-            {
-                var signInUrl = NavigationManager.ToAbsoluteUri("Account/Login").AbsoluteUri;
-                EmailQueue.Enqueue(new AccountEmailJob(AccountEmailKind.AlreadyRegistered, Input.Email, signInUrl));
-                Logger.LogInformation("A registration hit an existing email; queued an already-registered notice.");
-                RedirectManager.RedirectTo("Account/RegisterConfirmation");
-                return;
-            }
-
-            // Other failures (a weak password) show their reason — the user supplied the password, so a
-            // policy complaint reveals no account's existence and fails identically for a new or taken email.
-            // Where the box hides existence, a duplicate error is stripped so "email taken" can't ride out
-            // beside a password complaint.
-            var shown = Auth.Value.RequireEmailConfirmation
-                ? RegistrationErrors.ExcludingDuplicate(result)
-                : result.Errors;
-            errorMessage = "Error: " + string.Join(" ", shown.Select(e => e.Description));
+            // A direct-registration box hides nothing about account existence (there's no confirmation wall
+            // to protect), so every error — a duplicate "email taken" included — is shown as-is.
+            errorMessage = "Error: " + string.Join(" ", result.Errors.Select(e => e.Description));
             return;
         }
 
@@ -161,19 +205,7 @@
         await tx.CommitAsync();
         Logger.LogInformation("New account registered ({Mode}).", joining ? "joined household" : "new household");
 
-        if (Auth.Value.RequireEmailConfirmation)
-        {
-            // The demo box (§10): don't sign in yet — queue the confirmation link and send them to a
-            // "check your inbox" page. Identity's RequireConfirmedAccount then blocks sign-in until they
-            // open it. The account + household exist (committed above), so a lost email is recovered by
-            // "resend", not a re-registration (which RequireUniqueEmail would refuse anyway).
-            await QueueConfirmationEmailAsync(user);
-            RedirectManager.RedirectTo("Account/RegisterConfirmation");
-            return;
-        }
-
-        // Direct registration (self-host / family): sign in AFTER the commit, so the issued cookie always
-        // carries a real household claim.
+        // Sign in AFTER the commit, so the issued cookie always carries a real household claim.
         await SignInManager.SignInAsync(user, isPersistent: false);
         // A registration is the account's first login — count it for the admin view (best-effort).
         await LoginAudit.RecordAsync(user.Id, user.Email ?? Input.Email, DateTimeOffset.Now);

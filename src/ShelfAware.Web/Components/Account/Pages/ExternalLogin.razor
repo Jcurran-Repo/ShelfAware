@@ -123,7 +123,7 @@
         // The SAME registration gate as the password path: a new household needs the flag (or
         // first-user bootstrap); joining an existing one only needs the invite code.
         var joining = !string.IsNullOrWhiteSpace(Input.InviteCode);
-        if (!joining && !HouseholdService.MayCreateHousehold(Auth.Value.AllowRegistration, await Households.AnyUsersAsync()))
+        if (!joining && !HouseholdService.MayCreateHousehold(Auth.Value.AllowRegistration, await Households.AnyHouseholdsAsync()))
         {
             message = "Error: this deployment isn't accepting new sign-ups. Joining an existing household still works with its invite code.";
             return;

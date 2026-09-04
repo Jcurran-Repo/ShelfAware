@@ -37,9 +37,15 @@ public sealed class EmailConfirmationFlowTests : IDisposable
         // The demo box's gate: an unconfirmed account may not sign in. Only the SignInManager reads this
         // (the confirm-token tests below are unaffected by it), so it's on for the whole class.
         _identityOptions.SignIn.RequireConfirmedAccount = true;
+        // Production pairs UserName with Email and requires the email unique — the invariant that makes a
+        // re-registration of an existing address a duplicate (the anti-hijack property below leans on it).
+        _identityOptions.User.RequireUniqueEmail = true;
         _users = new UserManager<AppUser>(
             new UserStore<AppUser>(_context), Options.Create(_identityOptions),
-            new PasswordHasher<AppUser>(), [], [new PasswordValidator<AppUser>()],
+            // A UserValidator runs the username/email uniqueness check and returns a clean DuplicateUserName
+            // result — without it a re-registration hits the DB unique index and THROWS instead, which is
+            // what a hand-built manager gets by default. Production registers the default validators.
+            new PasswordHasher<AppUser>(), [new UserValidator<AppUser>()], [new PasswordValidator<AppUser>()],
             new UpperInvariantLookupNormalizer(),
             new IdentityErrorDescriber(), null!, NullLogger<UserManager<AppUser>>.Instance);
         // Production gets this from AddDefaultTokenProviders(); the DataProtector "Default" provider is
@@ -84,6 +90,44 @@ public sealed class EmailConfirmationFlowTests : IDisposable
         Assert.True(result.Succeeded, string.Join(" ", result.Errors.Select(e => e.Description)));
         // IsEmailConfirmedAsync is exactly what RequireConfirmedAccount reads to allow sign-in.
         Assert.True(await _users.IsEmailConfirmedAsync(user));
+    }
+
+    [Fact]
+    public async Task A_confirmed_account_still_has_no_household_until_the_chooser_assigns_one()
+    {
+        // The pre-hijack fix, at the layer the flow relies on: on a confirmation-required box, registration
+        // creates the ACCOUNT ONLY — no household is assigned, and confirming the email does NOT grant one
+        // either. The household is created/joined afterwards at /Account/Household. So re-registering
+        // someone's email can pre-plant nothing they inherit by confirming: there is simply no household on
+        // the account to inherit.
+        var user = await UnconfirmedUserAsync();
+        Assert.Null(user.HouseholdId);
+
+        var token = await _users.GenerateEmailConfirmationTokenAsync(user);
+        Assert.True((await _users.ConfirmEmailAsync(user, token)).Succeeded);
+
+        await _context.Entry(user).ReloadAsync();
+        Assert.True(await _users.IsEmailConfirmedAsync(user));
+        Assert.Null(user.HouseholdId); // confirming grants no household — the chooser does, later
+    }
+
+    [Fact]
+    public async Task Re_registering_an_existing_email_is_refused_as_a_duplicate_with_no_household_to_inherit()
+    {
+        // The other half of the fix: a re-registration of an address that already has an account is refused
+        // by CreateAsync (unique username/email) — the page turns that into the enumeration-safe "check your
+        // inbox" plus an already-registered heads-up. And because the existing account carries no household
+        // (confirmed or not), the attempt can plant nothing regardless of who later confirms.
+        var existing = await UnconfirmedUserAsync("owner@example.test");
+        Assert.Null(existing.HouseholdId);
+
+        var second = new AppUser { UserName = "owner@example.test", Email = "owner@example.test" };
+        var result = await _users.CreateAsync(second, "another-pass-10");
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Errors, e =>
+            e.Code == nameof(IdentityErrorDescriber.DuplicateUserName)
+            || e.Code == nameof(IdentityErrorDescriber.DuplicateEmail));
     }
 
     [Fact]
