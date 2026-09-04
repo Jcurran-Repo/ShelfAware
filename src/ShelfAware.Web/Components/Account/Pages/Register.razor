@@ -6,6 +6,7 @@
 @inject HouseholdService Households
 @inject AccountCreationLimiter AccountLimiter
 @inject IAccountEmailQueue EmailQueue
+@inject PasswordHashTiming PasswordTiming
 @inject AuthDbContext Db
 @inject IOptions<AuthOptions> Auth
 @inject NavigationManager NavigationManager
@@ -103,7 +104,31 @@
         var result = await UserManager.CreateAsync(user, Input.Password);
         if (!result.Succeeded)
         {
-            errorMessage = "Error: " + string.Join(" ", result.Errors.Select(e => e.Description));
+            // A duplicate email is the one failure that could enumerate accounts: "that email is already
+            // taken" confirms the address exists. Where the box requires confirmation (its anti-enumeration
+            // posture), a valid registration for an already-taken email gets the SAME "check your inbox"
+            // response as a real one, and the existing owner is emailed a heads-up instead — so a prober
+            // learns nothing while the real person isn't left confused. Identity fails a duplicate BEFORE it
+            // hashes the password (unlike a real registration, which does), so equalize the timing too, or
+            // the two would be distinguishable by how long the response takes.
+            if (Auth.Value.RequireEmailConfirmation && RegistrationErrors.IsDuplicateOnly(result))
+            {
+                PasswordTiming.Equalize();
+                var signInUrl = NavigationManager.ToAbsoluteUri("Account/Login").AbsoluteUri;
+                EmailQueue.Enqueue(new AccountEmailJob(AccountEmailKind.AlreadyRegistered, Input.Email, signInUrl));
+                Logger.LogInformation("A registration hit an existing email; queued an already-registered notice.");
+                RedirectManager.RedirectTo("Account/RegisterConfirmation");
+                return;
+            }
+
+            // Other failures (a weak password) show their reason — the user supplied the password, so a
+            // policy complaint reveals no account's existence and fails identically for a new or taken email.
+            // Where the box hides existence, a duplicate error is stripped so "email taken" can't ride out
+            // beside a password complaint.
+            var shown = Auth.Value.RequireEmailConfirmation
+                ? RegistrationErrors.ExcludingDuplicate(result)
+                : result.Errors;
+            errorMessage = "Error: " + string.Join(" ", shown.Select(e => e.Description));
             return;
         }
 
