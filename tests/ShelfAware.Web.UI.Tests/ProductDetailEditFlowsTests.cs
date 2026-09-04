@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using ShelfAware.Core.Domain;
 using ShelfAware.Web.Components.Pages;
+using ShelfAware.Web.Data;
 
 namespace ShelfAware.Web.UI.Tests;
 
@@ -236,6 +237,76 @@ public class ProductDetailEditFlowsTests : PageTestContext
 
         await using var raw = Db.CreateUnscopedContext();
         Assert.Null(await raw.Products.IgnoreQueryFilters().FirstOrDefaultAsync(p => p.Id == sourceId));
+    }
+
+    [Fact]
+    public void Merge_stashes_the_inline_undo_for_the_target_page()
+    {
+        var (sourceId, kinId, _) = SeedMergeCatalog();
+        var cut = RenderDetail(sourceId);
+        cut.Find("button[aria-label^='Merge']").Click();
+        cut.WaitForState(() => cut.FindAll(".merge-panel").Count > 0);
+        cut.Find(".merge-panel select").Change(kinId.ToString());
+        cut.FindAll(".merge-panel button").Single(b => b.TextContent.Trim() == "Merge").Click();
+
+        var nav = Services.GetRequiredService<NavigationManager>();
+        cut.WaitForAssertion(() => Assert.EndsWith($"/product/{kinId}", nav.Uri));
+
+        // The inline ↩ Undo was stashed for the target page to pick up, naming the merged-away source and
+        // carrying the undo entry id.
+        var pending = MergeNotice.TakeFor(kinId);
+        Assert.NotNull(pending);
+        Assert.Equal("Strawberry Drink Mix", pending!.SourceName);
+        Assert.True(pending.EntryId > 0);
+    }
+
+    [Fact]
+    public async Task The_target_page_shows_the_inline_undo_and_it_reverses_the_merge()
+    {
+        var (sourceId, kinId, _) = SeedMergeCatalog();
+        // The real merge, then stash the notice exactly as SaveMerge does (the source is now deleted).
+        var result = await Services.GetRequiredService<ProductMergeService>().MergeAsync(sourceId, kinId);
+        Assert.True(result.Ok);
+        MergeNotice.Set(result.UndoEntryId, "Strawberry Drink Mix", kinId);
+
+        var cut = RenderDetail(kinId); // land on the target, as the post-merge navigation would
+
+        // The notice names the merged-away source and offers ↩ Undo.
+        cut.WaitForAssertion(() =>
+        {
+            var callout = cut.Find(".callout");
+            Assert.Contains("Merged", callout.TextContent);
+            Assert.Contains("Strawberry Drink Mix", callout.TextContent);
+        });
+
+        cut.Find(".callout button").Click(); // ↩ Undo
+
+        // The success confirmation replaces the button (NOT the failure branch, whose copy also contains
+        // "undone" — the specific "Merge undone" + the vanished button are what tell them apart).
+        cut.WaitForAssertion(() =>
+        {
+            var callout = cut.Find(".callout");
+            Assert.Contains("Merge undone", callout.TextContent);
+            Assert.Empty(callout.QuerySelectorAll("button"));
+        });
+        await using var raw = Db.CreateUnscopedContext();
+        Assert.NotNull(await raw.Products.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(p => p.Name == "Strawberry Drink Mix"));
+    }
+
+    [Fact]
+    public async Task The_inline_undo_clears_on_a_switch_to_a_different_product()
+    {
+        var (sourceId, kinId, strangerId) = SeedMergeCatalog();
+        var result = await Services.GetRequiredService<ProductMergeService>().MergeAsync(sourceId, kinId);
+        MergeNotice.Set(result.UndoEntryId, "Strawberry Drink Mix", kinId);
+
+        var cut = RenderDetail(kinId);
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll(".callout")));
+
+        // The notice belongs to the target it landed on; navigating to a different product clears it.
+        cut.Render(ps => ps.Add(p => p.Id, strangerId));
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".callout")));
     }
 
     // ------------------------------------------------------------------- purchase-quantity edit

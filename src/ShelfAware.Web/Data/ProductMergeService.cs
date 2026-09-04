@@ -24,7 +24,8 @@ namespace ShelfAware.Web.Data;
 /// </summary>
 public class ProductMergeService(IHouseholdDbFactory dbFactory, IActivityLog activityLog)
 {
-    public sealed record Result(bool Ok, string Message, int MovedPurchases = 0, int RelinkedIngredients = 0);
+    public sealed record Result(
+        bool Ok, string Message, int MovedPurchases = 0, int RelinkedIngredients = 0, int UndoEntryId = 0);
 
     public async Task<Result> MergeAsync(
         int sourceId, int targetId, string? varietyForMoved = null, CancellationToken cancellationToken = default)
@@ -129,16 +130,16 @@ public class ProductMergeService(IHouseholdDbFactory dbFactory, IActivityLog act
             movedPurchaseIds, stampedPurchaseIds, movedLineIds, stampedLineIds,
             aliasIds, signalIds, addedTags, addedSubs, relinkedIds,
             targetTrackedBefore, target.IsTracked, targetUnitBefore, target.DefaultUnit);
-        activityLog.Record(db, ActivityKind.ProductsMerged, payload);
+        var entry = activityLog.Record(db, ActivityKind.ProductsMerged, payload);
 
         db.Products.Remove(source);
-        await db.SaveChangesAsync(cancellationToken);
+        await db.SaveChangesAsync(cancellationToken); // assigns entry.Id — returned for the inline ↩ Undo
         await tx.CommitAsync(cancellationToken);
         await activityLog.TrimAsync(cancellationToken);
 
         var movedCount = movedPurchaseIds.Count;
         return new(true, $"Merged into {target.Name}: {movedCount} purchase{(movedCount == 1 ? "" : "s")} moved.",
-            movedCount, relinkedIds.Count);
+            movedCount, relinkedIds.Count, entry.Id);
     }
 
     /// <summary>

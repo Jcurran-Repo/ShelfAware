@@ -440,6 +440,7 @@ builder.Services.AddScoped<IChatClient, MeteredChatClient>();
 builder.Services.AddScoped<VoiceCoordinator>();
 builder.Services.AddScoped<TourCoordinator>(); // lets a page start the layout-hosted guided walkthrough
 builder.Services.AddScoped<BugReportContext>(); // carries a captured page snapshot from the footer to /bugs
+builder.Services.AddScoped<MergeUndoNotice>(); // carries a merge's inline ↩ Undo across the nav to the target
 
 // The AI services depend (directly or transitively) on the per-circuit IChatClient, so they're scoped —
 // a singleton can't hold a scoped dependency. Since v3 the data services are scoped too: they read

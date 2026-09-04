@@ -4,6 +4,7 @@
 @using ShelfAware.Core.Recipes
 @using ShelfAware.Core.Settings
 @using ShelfAware.Core.Shopping
+@using ShelfAware.Web.Undo
 @inject IHouseholdDbFactory DbFactory
 @inject IAppSettings SettingsStore
 @inject IPantryStore Store
@@ -12,6 +13,8 @@
 @inject CircuitAiSettings AiSettings
 @inject ProductRenameService Renamer
 @inject ProductMergeService Merger
+@inject MergeUndoNotice MergeNotice
+@inject ActivityLogService ActivityLog
 @inject NavigationManager Nav
 @inject ILogger<ProductDetail> Logger
 
@@ -46,6 +49,24 @@ else
     @if (renameError is not null)
     {
         <p class="error" role="alert">@renameError</p>
+    }
+    @if (justMerged is { } jm)
+    {
+        <div class="callout ok" role="status">
+            @if (mergeUndoDone)
+            {
+                <span>✓ Merge undone — <strong>@jm.SourceName</strong> is back.</span>
+            }
+            else
+            {
+                <span>Merged <strong>@jm.SourceName</strong> into @product.Name.</span>
+                <button type="button" class="linkish" @onclick="UndoMerge" disabled="@mergeUndoBusy">↩ Undo</button>
+            }
+            @if (mergeUndoError is not null)
+            {
+                <span class="error" role="alert">@mergeUndoError</span>
+            }
+        </div>
     }
     @if (merging)
     {
@@ -780,6 +801,13 @@ else
             brandBreakdown = [];
             varietyBreakdown = [];
             usedInRecipes = [];
+            // The inline merge-undo notice belongs to the target it landed on, so a switch to a DIFFERENT
+            // product clears it. A same-product REFRESH (the post-undo reload) skips this branch, so the
+            // "✓ undone" confirmation survives the reload that refreshes the reduced history.
+            justMerged = null;
+            mergeUndoDone = false;
+            mergeUndoError = null;
+            mergeUndoBusy = false;
         }
 
         // Transient edit affordances must not survive a product switch: a merge navigates this SAME
@@ -851,6 +879,10 @@ else
         expirationError = null;
         quantityError = null;
         purchaseError = null;
+
+        // Pick up a just-completed merge's inline ↩ Undo, if this is the product it landed on. One-shot, and
+        // SET only (never cleared here) so a post-undo refresh keeps the confirmation the switch-reset spared.
+        if (MergeNotice.TakeFor(Id) is { } pendingMerge) justMerged = pendingMerge;
 
         // The fresh product is in hand — now drop the previous render's derived rows. On a refresh
         // they stayed on screen while the load ran; no awaits sit between here and repopulation.
@@ -982,6 +1014,11 @@ else
     private int mergeTargetId;
     private string? mergeVariety;
     private string? mergeError;
+    // The inline ↩ Undo shown on the TARGET after a merge (carried across the nav by MergeUndoNotice).
+    private MergeUndoNotice.Pending? justMerged;
+    private bool mergeUndoBusy;
+    private bool mergeUndoDone;
+    private string? mergeUndoError;
     private string mergeTagFilter = ""; // "" = any tag
     private List<(string Tag, int Count)> mergeTagOptions = [];
     private List<MergeCandidate> mergeCandidates = [];
@@ -1064,6 +1101,9 @@ else
                 mergeError = result.Message;
                 return;
             }
+            // Stash the inline ↩ Undo for the target page: this (source) product was just deleted and we're
+            // about to navigate to the target, where a component field wouldn't survive the switch.
+            MergeNotice.Set(result.UndoEntryId, product.Name, mergeTargetId);
             Nav.NavigateTo($"/product/{mergeTargetId}");
         }
         catch (DbUpdateException ex)
@@ -1075,6 +1115,39 @@ else
             mergeError = "The merge didn't complete — the product may have changed or been merged elsewhere. Reload the page and try again.";
         }
         finally { mergeBusy = false; }
+    }
+
+    // The inline ↩ Undo on the post-merge notice — the SAME reversal /history runs (ActivityLogService is
+    // the one undo path). On success it reloads so the target's now-reduced history matches the un-merge;
+    // the same-product refresh skips the switch-reset, so the "✓ undone" confirmation survives it.
+    private async Task UndoMerge()
+    {
+        if (justMerged is not { } jm || mergeUndoBusy) return;
+        mergeUndoBusy = true;
+        mergeUndoError = null;
+        try
+        {
+            var outcome = await ActivityLog.UndoAsync(jm.EntryId);
+            if (outcome == UndoOutcome.Done)
+            {
+                loadedId = null;
+                await OnParametersSetAsync(); // refresh the target's reduced history/rhythm/chart
+                justMerged = jm;              // re-affirm the notice (belt-and-suspenders) for the confirmation
+                mergeUndoDone = true;
+            }
+            else
+            {
+                // Gone / Superseded / AlreadyUndone: the merge can't be cleanly reversed now (the survivor was
+                // itself merged away, or another device undid it). Say so; /history carries the full story.
+                mergeUndoError = "Couldn't undo the merge — it may have already been undone, or changed since. See History.";
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogError(ex, "Undoing merge entry {EntryId} failed.", jm.EntryId);
+            mergeUndoError = "That didn't undo — reload the page and undo it from History instead.";
+        }
+        finally { mergeUndoBusy = false; }
     }
 
     // Expiration editing. Writes go through the ONE path (IPantryStore.SetExpirationAsync — the same

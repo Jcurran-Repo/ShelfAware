@@ -3503,9 +3503,42 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      generic page), and the undo revived Strawberry Drink Mix as a **new product id (664→674)** with its 2
      Kool-Aid purchases, its Snack tag, and the **variety un-stamped back to null**, while Drink Mix shrank back
      to 6×. Zero console/CSP errors.
-   - **3042 green, 0 warnings** (non-incremental Release; Core 1329 · AI 172 · Persistence 961 · Pages 580;
-     +7 over master's 3035). ⚠️ **The nudge + per-pair dismissal + link-to-merge escalation, and the conservative
-     descriptor normalizer (extraction + `IdentityKey`), are the arc's LATER PRs — not in this one.**
+   - **The `/pre-push` gate (two independent Opus reviewers, reading by SHA in isolated worktrees).
+     Security PASS** — probe-verified: household B cannot undo A's merge (the entry loads household-filtered →
+     a foreign id is `Gone`), and a FORGED payload naming A's `TargetId` + A's row ids is stopped at the first
+     read (`FindAsync` applies the filter → `Gone`) before any write; no new `IgnoreQueryFilters`/endpoint/
+     settings-key/disk-write; the manifest rides the already-covered `ActivityEntry` (export/delete/CountAll
+     reach it). **Code review: one Medium, fixed.**
+     - ⚠️ **The revive-collision check false-refused a TWIN merge.** My check refused the undo if any product
+       still answered to the source's identity — but that includes the survivor itself when the merge folded
+       two identity-twins ("Half and Half" into "Half-and-Half", same `IdentityKey`), so undoing the merge
+       tool's *headline* case (twin cleanup) was refused forever and `/history` greyed it as a misleading
+       "superseded". **Fixed by REMOVING the check** (Jordan-flagged divergence from the reviewer's nuanced
+       alternative): there is no unique constraint on product identity — the app TOLERATES twins and the merge
+       tool exists to clean them — so an undo that revives a twin is the faithful, visible, re-mergeable
+       restoration of the pre-merge state, not the SILENT twin-creation item 41 guards extraction/rename
+       against. The handler now returns only Done/Gone. The collision-refusal test was replaced with an
+       inverted twin-merge-undo test (both twins come back, history split), mutation-checked (re-adding the
+       check fails exactly it — item 40's "a deleted rule's test is an inverted one"). Security's one INFO note
+       (a missing `Enum.IsDefined` on the deserialized `Category`) is unreachable — the payload is
+       server-generated from an already-guarded value — so it was left.
+   - **Inline ↩ Undo on the merge panel too (Jordan's ask).** A merge deletes the source and navigates to the
+     target, so the affordance can't live in a component field — `MergeUndoNotice` (scoped, one-shot; the
+     `BugReportContext` cross-nav carrier pattern) stashes `(entryId, sourceName, targetId)` in `SaveMerge`
+     and the TARGET's Product Detail picks it up ONCE on load, showing a green `.callout.ok` "Merged X into Y —
+     ↩ Undo". Clicking it runs the SAME `ActivityLogService.UndoAsync` /history uses, then reloads so the
+     target's reduced history matches, and shows "✓ Merge undone — X is back". ⚠️ **The notice is reset only on
+     a product SWITCH, never on the post-undo same-product REFRESH** (`OnParametersSetAsync` distinguishes them
+     by `product.Id != Id`), so the confirmation survives the reload; the consume is SET-only for the same
+     reason. `MergeAsync` returns the new `UndoEntryId`. 3 page tests (stash, notice+reverse round-trip,
+     clear-on-switch) + the harness gained `MergeUndoNotice`; 4 mutations each kill exactly their test — and
+     one exposed a vacuous assertion (`"undone"` also matched the FAILURE copy "already been undone"), tightened
+     to "Merge undone" + the vanished button (item 34, live).
+   - **3045 green, 0 warnings** (non-incremental Release; Core 1329 · AI 172 · Persistence 961 · Pages 583;
+     +10 over master's 3035). Live-verified the inline undo end to end (merge → green notice on the target →
+     ↩ Undo → "✓ Merge undone" + history reloaded 8×→6×; server logs clean). ⚠️ **The nudge + per-pair
+     dismissal + link-to-merge escalation, and the conservative descriptor normalizer (extraction +
+     `IdentityKey`), are the arc's LATER PRs — not in this one.**
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
