@@ -166,18 +166,23 @@ public class AccountEmailQueueTests
     }
 
     [Fact]
-    public void Once_intake_is_closed_a_late_enqueue_is_refused_not_silently_buffered()
+    public async Task Stopping_the_worker_closes_intake_so_a_later_enqueue_is_refused()
     {
-        // On shutdown the worker calls CompleteWriter; a mail enqueued AFTER the drain has emptied the channel
-        // must be refused (a logged drop), not silently written to a channel with no reader left — the
-        // residual the sibling ErrorLogWriter closes the same way. Observable here: after CompleteWriter, the
-        // job never lands in the channel.
+        // Pins the WIRING, not just CompleteWriter itself: the worker's StopAsync must complete the channel,
+        // so a mail enqueued after shutdown is refused (a logged drop) rather than silently written to a
+        // channel with no reader left — the residual its sibling ErrorLogWriter closes the same way. Removing
+        // queue.CompleteWriter() from StopAsync makes the enqueue succeed and this fail. Deterministic:
+        // StopAsync completes the channel synchronously before it awaits the base drain, and draining an
+        // already-empty channel is immediate.
         var queue = new AccountEmailQueue(NullLogger<AccountEmailQueue>.Instance);
         IAccountEmailQueue api = queue;
+        var worker = new AccountEmailWorker(queue, new RecordingMailer(expected: 1), NullLogger<AccountEmailWorker>.Instance);
 
-        queue.CompleteWriter();
+        await worker.StartAsync(CancellationToken.None);
+        await worker.StopAsync(CancellationToken.None);
+
         api.Enqueue(new AccountEmailJob(AccountEmailKind.PasswordReset, "late@x.test", "https://x/reset"));
 
-        Assert.False(queue.Reader.TryRead(out _)); // refused, not buffered
+        Assert.False(queue.Reader.TryRead(out _)); // intake closed by StopAsync → refused, not buffered
     }
 }

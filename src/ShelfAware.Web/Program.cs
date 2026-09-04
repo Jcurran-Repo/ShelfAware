@@ -604,12 +604,16 @@ if (speechCacheDir is not null)
 // it. (Explicit config wins; a high value runs it uncapped on purpose.)
 {
     var authOptions = app.Services.GetRequiredService<IOptions<AuthOptions>>().Value;
-    if (authOptions.RequireEmailConfirmation && authOptions.DailyAccountCreationLimit is null)
+    // The default is in effect when nothing explicit is set but the EFFECTIVE cap is non-null — read that
+    // off the property rather than re-testing the fallback condition here, so this narration can't drift
+    // from the property's own rule.
+    if (authOptions.DailyAccountCreationLimit is null
+        && authOptions.EffectiveDailyAccountCreationLimit is int effectiveCap)
     {
         app.Logger.LogInformation(
             "Auth:RequireEmailConfirmation is on with no explicit Auth:DailyAccountCreationLimit — applying "
             + "the default cap of {Cap} new accounts/day. Set Auth:DailyAccountCreationLimit to override.",
-            AuthOptions.DefaultDailyAccountCreationLimit);
+            effectiveCap);
     }
 }
 
