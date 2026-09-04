@@ -54,9 +54,9 @@ public sealed record MergedSourceSnapshot(
 /// every FK in that one save.
 ///
 /// <para><see cref="UndoResult.Gone"/> when the survivor is no longer here (deleted or itself merged away —
-/// there is nothing to un-merge from); <see cref="UndoResult.Superseded"/> when reviving would collide with a
-/// product that now answers to the source's identity (a new one added, or the target renamed onto it) — the
-/// twin the merge existed to remove.</para>
+/// there is nothing to un-merge from). Reviving is otherwise unconditional: an un-merge of two identity-twins
+/// legitimately brings both back (the app tolerates twins; the merge tool cleans them), so there is no
+/// collision refusal.</para>
 ///
 /// <para>Legacy note: merges recorded before this became reversible carry <c>Reversibility.NotReversible</c>
 /// on their <c>ActivityEntry</c> row, so <c>ActivityLogService</c> refuses them before dispatch and
@@ -75,16 +75,13 @@ public sealed class ProductsMergedHandler : UndoHandler<ProductsMergedPayload>
         var target = await db.Products.FindAsync([p.TargetId], ct);
         if (target is null) return UndoResult.Gone;
 
-        // Reviving recreates a product with the source's name. If some product now answers to that identity
-        // (a new one added, or the target renamed onto it), reviving would reintroduce the very twin the
-        // merge removed — refuse rather than split the item's history again. Identity-keyed, the one
-        // definition the matcher, census and add form all ask; an empty key (a junk name) matches nothing.
-        var sourceKey = ProductMatcher.IdentityKey(p.SourceName);
-        if (sourceKey.Length > 0)
-        {
-            var names = await db.Products.AsNoTracking().Select(x => x.Name).ToListAsync(ct);
-            if (names.Any(n => ProductMatcher.IdentityKey(n) == sourceKey)) return UndoResult.Superseded;
-        }
+        // No collision guard on reviving: folding two identity-TWINS ("Half and Half" into "Half-and-Half")
+        // is a primary use of the merge tool, and undoing it must faithfully restore the pre-merge state —
+        // both twins back, each with its own history. The app has no unique constraint on product identity
+        // and TOLERATES twins (the merge tool exists to clean them), so a revived twin is a visible,
+        // re-mergeable state, not a crash. Refusing here would block the feature's own headline case; and
+        // this is a loud, user-requested undo, not the SILENT twin-creation item 41 guards extraction/rename
+        // against.
 
         // Recreate the source as a fresh row. Its tags/substitutes are re-created as its own children, and
         // the moved rows below re-parent onto it by navigation, so EF assigns its id and every FK in one save.

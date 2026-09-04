@@ -344,24 +344,40 @@ public class ProductMergeServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Undo_refuses_when_a_product_now_answers_to_the_source_name()
+    public async Task Undo_of_a_twin_merge_revives_the_source_beside_the_target()
     {
-        var (sourceId, targetId) = await SeedSplitDrinkMix();
-        await _service.MergeAsync(sourceId, targetId, "Strawberry");
-        var entryId = await LatestMergeEntryId();
-
-        // A new product with the source's IDENTITY appears since (punctuation folds — same product to the
-        // matcher). Reviving would recreate the very twin the merge removed, so the undo refuses.
+        // Folding two identity-TWINS is a primary use of the merge tool (punctuation folds — "Half and Half"
+        // and "Half-and-Half" are one product to the matcher). Undoing it faithfully restores the pre-merge
+        // state: BOTH come back, each with its own history. The app tolerates twins (the merge tool exists to
+        // clean them), so the undo doesn't refuse on the collision — it restores, visibly and recoverably.
+        int sourceId, targetId;
         await using (var db = _db.CreateDbContext())
         {
-            db.Products.Add(new Product { Name = "Strawberry Drink-Mix" });
+            var source = new Product
+            {
+                Name = "Half and Half",
+                Purchases = [new PurchaseEvent { PurchasedAt = new DateOnly(2026, 6, 1) }],
+            };
+            var target = new Product
+            {
+                Name = "Half-and-Half",
+                Purchases = [new PurchaseEvent { PurchasedAt = new DateOnly(2026, 6, 5) }],
+            };
+            db.Products.AddRange(source, target);
             await db.SaveChangesAsync();
+            (sourceId, targetId) = (source.Id, target.Id);
         }
 
-        Assert.Equal(UndoOutcome.Superseded, await _log.UndoAsync(entryId));
+        await _service.MergeAsync(sourceId, targetId); // both purchases pool onto the target
+        var entryId = await LatestMergeEntryId();
+
+        Assert.Equal(UndoOutcome.Done, await _log.UndoAsync(entryId)); // NOT refused on the twin collision
+
         await using var read = _db.CreateDbContext();
-        // Only the newcomer exists — the undo didn't add a second, colliding "Strawberry Drink Mix".
-        Assert.Equal(1, await read.Products.CountAsync(p => p.Name.StartsWith("Strawberry Drink")));
+        // Both twins exist again, histories split back to one purchase each.
+        var revived = await read.Products.SingleAsync(p => p.Name == "Half and Half");
+        Assert.Equal(1, await read.PurchaseEvents.CountAsync(p => p.ProductId == revived.Id));
+        Assert.Equal(1, await read.PurchaseEvents.CountAsync(p => p.ProductId == targetId));
     }
 
     [Fact]
