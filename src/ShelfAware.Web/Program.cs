@@ -260,6 +260,9 @@ builder.Services.AddSingleton<IAccountMailer, SmtpAccountMailer>();
 builder.Services.AddSingleton<AccountEmailQueue>();
 builder.Services.AddSingleton<IAccountEmailQueue>(sp => sp.GetRequiredService<AccountEmailQueue>());
 builder.Services.AddHostedService<AccountEmailWorker>();
+// Equalises failed-sign-in timing so a probe can't tell an existing/confirmed account from a miss by how
+// long the response takes (see PasswordHashTiming). Singleton — the throwaway hash is computed once at boot.
+builder.Services.AddSingleton<PasswordHashTiming>();
 builder.Services.AddScoped<HouseholdService>();
 // The demo box's daily account-creation cap (Auth:DailyAccountCreationLimit; §10). Scoped like
 // HouseholdService — it reads the same request-scoped AuthDbContext the registration flow uses. Harmless

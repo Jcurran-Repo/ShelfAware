@@ -6,6 +6,7 @@
 @inject ILogger<Login> Logger
 @inject IOptions<EmailOptions> Email
 @inject IOptions<AuthOptions> Auth
+@inject PasswordHashTiming PasswordTiming
 @inject LoginAudit LoginAudit
 
 <PageTitle>Sign in — Reginald</PageTitle>
@@ -114,24 +115,34 @@
         }
         else if (result.IsLockedOut)
         {
+            // A locked account gets its OWN message so a legitimately locked-out user knows WHY they can't
+            // sign in (and to wait) rather than retrying into a longer lockout. This does reveal the account
+            // exists — the standard Identity trade-off, since you can't lock a non-existent account — kept
+            // because hiding it strands the real user; the per-IP and per-account limits bound its abuse.
             Logger.LogWarning("Sign-in blocked: account temporarily locked out.");
             errorMessage = "Error: this account is temporarily locked after repeated failed attempts. Try again in a few minutes.";
         }
-        else if (result.IsNotAllowed)
-        {
-            // An unconfirmed account (RequireConfirmedAccount — the demo box's Auth:RequireEmailConfirmation).
-            // ⚠️ It gets the SAME generic message as any other failed sign-in, on purpose. Identity runs the
-            // confirmation gate BEFORE the password check, so IsNotAllowed fires on ANY password — a
-            // per-state message here would tell an unauthenticated prober which addresses have unconfirmed
-            // accounts (an enumeration oracle), and keying the message off password-correctness instead would
-            // just trade that for a password-guess oracle that account lockout can't throttle. So reveal
-            // NOTHING here; the forgetful owner recovers through the standing "resend" link above, which is
-            // shown for the whole deployment and singles out no address. The log line is server-side only.
-            Logger.LogInformation("Sign-in blocked: email not confirmed.");
-            errorMessage = "Error: invalid email or password.";
-        }
         else
         {
+            // ⚠️ Every other failure — unknown email, wrong password, unconfirmed account (IsNotAllowed) —
+            // gets the SAME generic message, so the RESPONSE reveals nothing. (Identity runs the confirmation
+            // gate before the password check, so IsNotAllowed fires on any password; a per-state message, or
+            // one keyed off password-correctness, would be an enumeration oracle. The forgetful owner recovers
+            // via the standing "resend" link above, which singles out no address.)
+            //
+            // ⚠️ And the TIMING must reveal nothing either: Identity pays the PBKDF2 verify only when it
+            // reaches the password check — a found, CONFIRMED account — and short-circuits ~1000x faster for
+            // an unknown email or an unconfirmed one. Burn one equivalent verify on exactly those fast paths
+            // so every generic failure costs the same. (IsNotAllowed never hashed; a null lookup means the
+            // email is unknown, which also never hashed. A found account on the Failed path already paid it.)
+            if (result.IsNotAllowed || await SignInManager.UserManager.FindByEmailAsync(Input.Email) is null)
+            {
+                PasswordTiming.Equalize();
+            }
+            if (result.IsNotAllowed)
+            {
+                Logger.LogInformation("Sign-in blocked: email not confirmed.");
+            }
             errorMessage = "Error: invalid email or password.";
         }
     }
