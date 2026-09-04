@@ -5,6 +5,7 @@
 @inject SignInManager<AppUser> SignInManager
 @inject UserManager<AppUser> UserManager
 @inject HouseholdService Households
+@inject AccountCreationLimiter AccountLimiter
 @inject AuthDbContext Db
 @inject IOptions<AuthOptions> Auth
 @inject IdentityRedirectManager RedirectManager
@@ -122,7 +123,7 @@
         // The SAME registration gate as the password path: a new household needs the flag (or
         // first-user bootstrap); joining an existing one only needs the invite code.
         var joining = !string.IsNullOrWhiteSpace(Input.InviteCode);
-        if (!joining && !HouseholdService.MayCreateHousehold(Auth.Value.AllowRegistration, await Households.AnyUsersAsync()))
+        if (!joining && !HouseholdService.MayCreateHousehold(Auth.Value.AllowRegistration, await Households.AnyHouseholdsAsync()))
         {
             message = "Error: this deployment isn't accepting new sign-ups. Joining an existing household still works with its invite code.";
             return;
@@ -133,10 +134,21 @@
             return;
         }
 
+        // The same daily account-creation cap the password path honours (§10) — new households only; a
+        // valid invite code is never turned away. Dormant with no cap configured.
+        if (!joining && await AccountLimiter.AtDailyLimitAsync(HttpContext.RequestAborted))
+        {
+            message = DemoLimits.DailyCapReachedMessage;
+            return;
+        }
+
         // One transaction across user + login link + household — no orphaned half-registrations.
         await using var tx = await Db.Database.BeginTransactionAsync();
 
-        var user = new AppUser { UserName = email, Email = email, EmailConfirmed = true }; // the provider asserted it
+        // emailConfirmed: true — the provider asserted the address, so an external account skips confirmation
+        // even where Auth:RequireEmailConfirmation is on (Identity's gate reads EmailConfirmed, already true
+        // here). NewToday stamps the cap's daily counter, same as the password path.
+        var user = AppUser.NewToday(email, emailConfirmed: true);
         var createResult = await UserManager.CreateAsync(user);
         if (!createResult.Succeeded)
         {

@@ -5,6 +5,8 @@
 @inject IdentityRedirectManager RedirectManager
 @inject ILogger<Login> Logger
 @inject IOptions<EmailOptions> Email
+@inject IOptions<AuthOptions> Auth
+@inject PasswordHashTiming PasswordTiming
 @inject LoginAudit LoginAudit
 
 <PageTitle>Sign in — Reginald</PageTitle>
@@ -29,6 +31,22 @@
     </label>
     <button type="submit" class="auth-submit">Sign in</button>
 </EditForm>
+
+@if (Auth.Value.RequireEmailConfirmation)
+{
+    @* A STANDING link, like "Forgot your password?" below — shown whenever the box requires email
+       confirmation, NOT triggered by a sign-in attempt. That is the whole point: a link that appeared only
+       for not-yet-activated accounts would tell a prober which addresses those are (an enumeration oracle).
+       This one reveals nothing about any account — it states a property of the deployment — while still
+       giving a new registrant the way out of a lost activation link. It goes to the same enumeration-safe
+       "set your password" page a forgotten password does (a passwordless account recovers there too). Its
+       text explains when it applies, so the failed-sign-in message can stay generic. (RequireEmailConfirmation
+       implies Email is configured — the startup validation refuses the flag without a mailer — so the link
+       never dangles.) *@
+    <p class="muted auth-alt">
+        <a href="Account/ForgotPassword">Registered but haven't set a password yet? Set it to activate your account</a>
+    </p>
+}
 
 @if (Email.Value.IsConfigured)
 {
@@ -99,11 +117,42 @@
         }
         else if (result.IsLockedOut)
         {
+            // A locked account gets its OWN message so a legitimately locked-out user knows WHY they can't
+            // sign in (and to wait) rather than retrying into a longer lockout. This does reveal the account
+            // exists — the standard Identity trade-off, since you can't lock a non-existent account — kept
+            // because hiding it strands the real user; the per-IP and per-account limits bound its abuse.
             Logger.LogWarning("Sign-in blocked: account temporarily locked out.");
             errorMessage = "Error: this account is temporarily locked after repeated failed attempts. Try again in a few minutes.";
         }
         else
         {
+            // ⚠️ Every other failure — unknown email, wrong password, unconfirmed account (IsNotAllowed) —
+            // gets the SAME generic message, so the RESPONSE reveals nothing. (Identity runs the confirmation
+            // gate before the password check, so IsNotAllowed fires on any password; a per-state message, or
+            // one keyed off password-correctness, would be an enumeration oracle. A registrant who never set
+            // a password recovers via the standing "set your password to activate" link above, which singles
+            // out no address.)
+            //
+            // ⚠️ And the TIMING must reveal nothing either: Identity pays the PBKDF2 verify only when it
+            // reaches the password check — a found account WITH a password hash — and short-circuits ~1000x
+            // faster otherwise. Burn one equivalent verify on exactly the paths where it skipped the hash:
+            // an unconfirmed account (IsNotAllowed, gated before the password), an unknown email, OR a
+            // PASSWORD-LESS account (an external-login-only account has no hash, so CheckPasswordAsync returns
+            // fast without PBKDF2). A found account with a password on the Failed path already paid it.
+            var skippedHash = result.IsNotAllowed;
+            if (!skippedHash)
+            {
+                var user = await SignInManager.UserManager.FindByEmailAsync(Input.Email);
+                skippedHash = user is null || !await SignInManager.UserManager.HasPasswordAsync(user);
+            }
+            if (skippedHash)
+            {
+                PasswordTiming.Equalize();
+            }
+            if (result.IsNotAllowed)
+            {
+                Logger.LogInformation("Sign-in blocked: email not confirmed.");
+            }
             errorMessage = "Error: invalid email or password.";
         }
     }

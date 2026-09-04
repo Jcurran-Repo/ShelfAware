@@ -157,11 +157,19 @@ builder.Services.ConfigureApplicationCookie(options =>
     };
 });
 
+// A snapshot of the Auth: section for the Identity option below (same read-it-early pattern as
+// adminOptions / graphQlEnabled). The bound IOptions<AuthOptions> the app reads at request time is still
+// registered further down, with its own startup validation; this only feeds the one global Identity flag.
+var authOptionsSnapshot = builder.Configuration.GetSection(AuthOptions.SectionName).Get<AuthOptions>() ?? new();
+
 builder.Services.AddIdentityCore<AppUser>(options =>
 {
-    // Sign-in never requires a confirmed address: the only mail the app can send — and only when
-    // Email: is configured at all — is the password reset (EmailOptions; config-gated).
-    options.SignIn.RequireConfirmedAccount = false;
+    // Sign-in requires a confirmed address only where the box turns it on (Auth:RequireEmailConfirmation —
+    // the public demo box; §10). Default OFF, so self-host and the family box (which verifies email at the
+    // Cloudflare Access edge) register directly. ⚠️ Global by nature: when on, EVERY unconfirmed account is
+    // blocked from signing in, which is why a box with existing accounts backfills EmailConfirmed=1 first,
+    // and why startup validation refuses the flag without a configured Email: mailer (no way to confirm).
+    options.SignIn.RequireConfirmedAccount = authOptionsSnapshot.RequireEmailConfirmation;
     options.User.RequireUniqueEmail = true;
     // Length beats composition rules (NIST 800-63B): 10+ characters, no forced symbol soup.
     options.Password.RequiredLength = 10;
@@ -217,12 +225,23 @@ builder.Services.AddOptions<AuthOptions>()
     .Validate(o => o.InviteCodeLifetimeDays is null or > 0,
         "Auth:InviteCodeLifetimeDays must be at least 1, or absent for codes that never expire. " +
         "0 or negative would silently mean 'never', which is not what anyone types 0 to get.")
+    .Validate(o => o.DailyAccountCreationLimit is null or > 0,
+        "Auth:DailyAccountCreationLimit must be at least 1, or absent for no limit. 0 or negative would " +
+        "block every registration (or read as 'no limit'), neither of which is what a number here means.")
+    // The email-confirmation flag needs a mailer, or a new account can never confirm and never sign in —
+    // dead accounts and a locked-out box. Checked against the resolved Email: options at startup (like every
+    // other option here), so an operator who turns on Auth:RequireEmailConfirmation without an Email: section
+    // gets a boot failure that names the fix, not a silently broken demo box.
+    .Validate<IOptions<EmailOptions>>(
+        (auth, email) => AuthOptions.EmailConfirmationSatisfiable(auth.RequireEmailConfirmation, email.Value.IsConfigured),
+        "Auth:RequireEmailConfirmation needs the Email: section configured — otherwise a new account can " +
+        "never confirm its address and never sign in. Configure Email:, or turn the flag off.")
     .ValidateOnStart();
-// Password-reset email (the app's only outbound mail). All-or-nothing, validated at startup: a
-// wholly absent Email: section means the feature is off everywhere it shows (the sign-in link,
-// /Account/ForgotPassword, Settings' wording — all gated on the ONE EmailOptions.IsConfigured);
-// a partially present one is almost certainly a typo'd deploy, so the app won't boot rather than
-// half-work.
+// Outbound account email (the password reset, and — under Auth:RequireEmailConfirmation — the
+// confirmation + already-registered notices). All-or-nothing, validated at startup: a wholly absent
+// Email: section means the feature is off everywhere it shows (the sign-in link, /Account/ForgotPassword,
+// Settings' wording — all gated on the ONE EmailOptions.IsConfigured); a partially present one is almost
+// certainly a typo'd deploy, so the app won't boot rather than half-work.
 builder.Services.AddOptions<EmailOptions>()
     .Bind(builder.Configuration.GetSection(EmailOptions.SectionName))
     .Validate(o => o.IsConfigured || o.IsWhollyAbsent,
@@ -231,9 +250,28 @@ builder.Services.AddOptions<EmailOptions>()
     .Validate(o => o.CredentialsPaired,
         "Email:SmtpUser and Email:SmtpPassword go together — set both or neither.")
     .Validate(o => o.SmtpPort > 0, "Email:SmtpPort must be a positive port number.")
+    .Validate(o => o.PerRecipientCooldownSeconds >= 0,
+        "Email:PerRecipientCooldownSeconds can't be negative — set 0 to disable the per-recipient cooldown.")
+    .Validate(o => o.DailyOutboundLimit is null or > 0,
+        "Email:DailyOutboundLimit must be at least 1, or absent for no daily send cap.")
     .ValidateOnStart();
 builder.Services.AddSingleton<IAccountMailer, SmtpAccountMailer>();
+// Account emails (reset / confirmation / already-registered) go out on a background worker, not the request
+// thread. That keeps outbound-mail timing uniform — a real account and an unknown address both return in
+// ~ms rather than the real one waiting on a ~1s SMTP send — so the send can't be used to enumerate accounts,
+// and a slow relay can't stall registration or a reset. One queue instance behind both the interface (pages
+// enqueue) and the worker (drains + sends).
+builder.Services.AddSingleton<AccountEmailQueue>();
+builder.Services.AddSingleton<IAccountEmailQueue>(sp => sp.GetRequiredService<AccountEmailQueue>());
+builder.Services.AddHostedService<AccountEmailWorker>();
+// Equalises failed-sign-in timing so a probe can't tell an existing/confirmed account from a miss by how
+// long the response takes (see PasswordHashTiming). Singleton — the throwaway hash is computed once at boot.
+builder.Services.AddSingleton<PasswordHashTiming>();
 builder.Services.AddScoped<HouseholdService>();
+// The demo box's daily account-creation cap (Auth:DailyAccountCreationLimit; §10). Scoped like
+// HouseholdService — it reads the same request-scoped AuthDbContext the registration flow uses. Harmless
+// dormant on a box with no cap configured (it short-circuits to "not at limit").
+builder.Services.AddScoped<AccountCreationLimiter>();
 // Mint/validate/list/revoke for read-only GraphQL API tokens (credentials in auth.db). Registered
 // always — the auth handler and Settings gate their EXPOSURE on GraphQL:Enabled, but the service
 // itself is harmless dormant and the delete-my-data flow may need it regardless.
@@ -560,6 +598,29 @@ if (speechCacheDir is not null)
 {
     CachingTextToSpeech.Trim(speechCacheDir, speechCacheMb * 1024L * 1024L,
         app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("SpeechCache"));
+}
+
+// A confirmation-required box no longer gates ACCOUNT creation on Auth:AllowRegistration — the household
+// gate moved to the chooser (so an invited person can still make an account) — so the daily cap is what
+// bounds new accounts there, and a box with no explicit cap falls back to the DEFAULT (never left
+// accidentally unbounded). Note the cap bounds ACCOUNTS, not mail: the activation/reset/already-registered
+// emails are bounded separately by the outbound throttle (Email:PerRecipientCooldownSeconds /
+// Email:DailyOutboundLimit in AccountEmailQueue), since a duplicate or forgot-password send makes no account
+// and so never touches this cap. Surface the effective account cap at INFO so the operator knows it, and how
+// to change it. (Explicit config wins; a high value runs it uncapped on purpose.)
+{
+    var authOptions = app.Services.GetRequiredService<IOptions<AuthOptions>>().Value;
+    // The default is in effect when nothing explicit is set but the EFFECTIVE cap is non-null — read that
+    // off the property rather than re-testing the fallback condition here, so this narration can't drift
+    // from the property's own rule.
+    if (authOptions.DailyAccountCreationLimit is null
+        && authOptions.EffectiveDailyAccountCreationLimit is int effectiveCap)
+    {
+        app.Logger.LogInformation(
+            "Auth:RequireEmailConfirmation is on with no explicit Auth:DailyAccountCreationLimit — applying "
+            + "the default cap of {Cap} new accounts/day. Set Auth:DailyAccountCreationLimit to override.",
+            effectiveCap);
+    }
 }
 
 using (var scope = app.Services.CreateScope())

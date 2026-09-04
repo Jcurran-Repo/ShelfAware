@@ -1,11 +1,15 @@
 @page "/Account/Register"
 @attribute [AllowAnonymous]
+@using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Options
 @inject UserManager<AppUser> UserManager
 @inject SignInManager<AppUser> SignInManager
 @inject HouseholdService Households
+@inject AccountCreationLimiter AccountLimiter
+@inject IAccountEmailQueue EmailQueue
 @inject AuthDbContext Db
 @inject IOptions<AuthOptions> Auth
+@inject NavigationManager NavigationManager
 @inject IdentityRedirectManager RedirectManager
 @inject ILogger<Register> Logger
 @inject LoginAudit LoginAudit
@@ -22,30 +26,45 @@
         <InputText @bind-Value="Input.Email" id="email" type="email" autocomplete="username" required />
         <ValidationMessage For="() => Input.Email" />
     </div>
-    <div class="auth-field">
-        <label for="password">Password <span class="muted small">(at least 10 characters)</span></label>
-        <InputText @bind-Value="Input.Password" id="password" type="password" autocomplete="new-password" required />
-        <ValidationMessage For="() => Input.Password" />
-    </div>
-    <div class="auth-field">
-        <label for="confirm-password">Confirm password</label>
-        <InputText @bind-Value="Input.ConfirmPassword" id="confirm-password" type="password" autocomplete="new-password" required />
-        <ValidationMessage For="() => Input.ConfirmPassword" />
-    </div>
-    <fieldset class="auth-household">
-        <legend>Your household</legend>
+    @if (!Auth.Value.RequireEmailConfirmation)
+    {
+        @* Direct-registration box: set a password and choose a household right here. On a
+           confirmation-required box NEITHER is set at registration — the account is created with NO password,
+           and the emailed link is where the person who controls the inbox sets it (which also confirms the
+           address); the household comes afterwards, at the chooser. So nobody who merely typed the email at
+           sign-up ends up controlling a password or a household — that's the anti-hijack posture. *@
         <div class="auth-field">
-            <label for="invite-code">Joining someone? Enter their invite code</label>
-            <InputText @bind-Value="Input.InviteCode" id="invite-code" autocomplete="off"
-                       placeholder="e.g. K7MPQ2XW4A" />
+            <label for="password">Password <span class="muted small">(at least 10 characters)</span></label>
+            <InputText @bind-Value="Input.Password" id="password" type="password" autocomplete="new-password" required />
+            <ValidationMessage For="() => Input.Password" />
         </div>
         <div class="auth-field">
-            <label for="household-name">…or name a new household</label>
-            <InputText @bind-Value="Input.HouseholdName" id="household-name" autocomplete="off"
-                       placeholder="e.g. The Currans" />
-            <ValidationMessage For="() => Input.HouseholdName" />
+            <label for="confirm-password">Confirm password</label>
+            <InputText @bind-Value="Input.ConfirmPassword" id="confirm-password" type="password" autocomplete="new-password" required />
+            <ValidationMessage For="() => Input.ConfirmPassword" />
         </div>
-    </fieldset>
+        <fieldset class="auth-household">
+            <legend>Your household</legend>
+            <div class="auth-field">
+                <label for="invite-code">Joining someone? Enter their invite code</label>
+                <InputText @bind-Value="Input.InviteCode" id="invite-code" autocomplete="off"
+                           placeholder="e.g. K7MPQ2XW4A" />
+            </div>
+            <div class="auth-field">
+                <label for="household-name">…or name a new household</label>
+                <InputText @bind-Value="Input.HouseholdName" id="household-name" autocomplete="off"
+                           placeholder="e.g. The Currans" />
+                <ValidationMessage For="() => Input.HouseholdName" />
+            </div>
+        </fieldset>
+    }
+    else
+    {
+        <p class="muted small">
+            We'll email you a link to set your password and activate your account — then you'll set up or
+            join a household.
+        </p>
+    }
     <button type="submit" class="auth-submit">Create account</button>
 </EditForm>
 
@@ -68,11 +87,109 @@
 
     private async Task RegisterUserAsync()
     {
+        // Two genuinely different flows. A confirmation-required box defers the household until AFTER the
+        // registrant proves they control the inbox — that's the whole anti-hijack posture, so it can't share
+        // the direct path's "choose your household as you sign up".
+        if (Auth.Value.RequireEmailConfirmation)
+        {
+            await RegisterForConfirmationAsync();
+            return;
+        }
+        await RegisterDirectlyAsync();
+    }
+
+    /// <summary>Confirmation-required box (§10): create a PASSWORDLESS account and nothing else — no password,
+    /// no household. The emailed activation link is where the inbox-holder sets the password (which also
+    /// confirms the address), and the household is chosen afterwards at /Account/Household, which the
+    /// no-household middleware routes them to once they sign in. This is the anti-hijack posture: whoever
+    /// merely typed the email at sign-up controls neither a password (so they can't sign in) nor a household
+    /// (so there's nothing to pre-plant) — re-registering someone else's email is just a duplicate (handled
+    /// below). Accordingly the AllowRegistration gate and the household fields live at the chooser now, not
+    /// here; registration is open (bounded only by the daily account cap).</summary>
+    private async Task RegisterForConfirmationAsync()
+    {
+        // The daily cap (§10) bounds ACCOUNT creation here — every registration makes exactly one account,
+        // and there's no invite-join to exempt (joining happens later, at the chooser, uncapped). Dormant
+        // when no cap is configured.
+        if (await AccountLimiter.AtDailyLimitAsync(HttpContext.RequestAborted))
+        {
+            errorMessage = DemoLimits.DailyCapReachedMessage;
+            return;
+        }
+
+        // NO password: the account is created passwordless, and the emailed activation link is where the
+        // inbox-holder sets one (that's the anti-hijack property — see the summary above). CreateAsync
+        // without a password does no hashing, so this path never touches PBKDF2 at all.
+        var user = AppUser.NewToday(Input.Email);
+        IdentityResult result;
+        try
+        {
+            result = await UserManager.CreateAsync(user);
+        }
+        catch (DbUpdateException)
+        {
+            // A concurrent double-submit for a NEW address: the uniqueness validator passed for BOTH racing
+            // requests, then the DB's unique index caught the loser's INSERT. Identity's user store doesn't
+            // catch that (only its Update/Delete do), so it surfaces here as a DbUpdateException. Treat it
+            // exactly like a detected duplicate — the SAME enumeration-safe response — so a parallel probe
+            // can't tell a would-be 500 (a new address, raced) from a 302 (an existing address, clean
+            // duplicate). Without this, "a 500 in the pair ⇒ the address was not registered" is an oracle.
+            // ⚠️ The catch is deliberately BROAD: a non-constraint DbUpdateException (a transient SQLite
+            // busy on the WAL write lock, say) also lands here as a SAFE false "check your inbox" — no account
+            // was created (the failed SaveChanges committed no row) and the user's retry self-heals. Narrowing
+            // to inspect the inner SqliteException code would be provider-specific and fragile, and either way
+            // answering 302 (not 500) is what keeps enumeration safety.
+            await HandleDuplicateAsync();
+            RedirectManager.RedirectTo("Account/RegisterConfirmation");
+            return;
+        }
+        if (!result.Succeeded)
+        {
+            // A duplicate email is the one failure that could enumerate accounts. A registration for an
+            // address that already exists gets the SAME "check your inbox" response a genuine new one does,
+            // and the real owner is emailed a heads-up instead — so a prober learns nothing while the owner
+            // isn't left confused. There is no household to inherit either way, and the sign-in page's
+            // standing "set your password" recovery link reactivates an account whose link was lost.
+            // ⚠️ No practical timing oracle: neither path hashes (a passwordless CreateAsync skips PBKDF2
+            // entirely). The success path does an insert plus a sub-millisecond reset-token mint + URL build;
+            // the duplicate path does a failed uniqueness check. Neither touches PBKDF2, so the delta is
+            // dwarfed by network jitter and the async email — the same residual ForgotPassword documents.
+            if (RegistrationErrors.IsDuplicateOnly(result))
+            {
+                await HandleDuplicateAsync();
+                RedirectManager.RedirectTo("Account/RegisterConfirmation");
+                return;
+            }
+
+            // Any other failure reveals no account's existence and fails identically for a new or taken
+            // email. A duplicate is stripped so "email taken" can't ride out beside it — defence-in-depth: no
+            // mixed duplicate-plus-other result is actually reachable today (see RegistrationErrors), but the
+            // strip stays against a future change.
+            errorMessage = "Error: " + string.Join(" ",
+                RegistrationErrors.ExcludingDuplicate(result).Select(e => e.Description));
+            return;
+        }
+
+        // The passwordless account exists (no household yet); queue the activation link — a ResetPassword
+        // link where the inbox-holder sets the password, which activates the account AND confirms the
+        // address. Identity's RequireConfirmedAccount blocks sign-in until then, and a passwordless account
+        // can't be signed into anyway. A lost link is recovered via "forgot/set your password", not a
+        // re-registration (which RequireUniqueEmail would refuse).
+        await QueueActivationEmailAsync(user);
+        Logger.LogInformation("New account registered (passwordless; awaiting activation; household deferred to the chooser).");
+        RedirectManager.RedirectTo("Account/RegisterConfirmation");
+    }
+
+    /// <summary>Direct-registration box (self-host / family): the household is chosen here and the account is
+    /// signed in immediately. The address isn't verified, but these boxes don't require it and there's no
+    /// confirmation step to defer the household to — so household-at-registration is safe here.</summary>
+    private async Task RegisterDirectlyAsync()
+    {
         var joining = !string.IsNullOrWhiteSpace(Input.InviteCode);
 
         // The gate is enforced HERE, server-side, not by hiding UI: creating a NEW household needs the
-        // AllowRegistration flag (or first-user bootstrap); joining an existing one only needs the code.
-        if (!joining && !HouseholdService.MayCreateHousehold(Auth.Value.AllowRegistration, await Households.AnyUsersAsync()))
+        // AllowRegistration flag (or first-household bootstrap); joining an existing one only needs the code.
+        if (!joining && !HouseholdService.MayCreateHousehold(Auth.Value.AllowRegistration, await Households.AnyHouseholdsAsync()))
         {
             errorMessage = "Error: this deployment isn't accepting new sign-ups. Joining an existing household still works with its invite code.";
             return;
@@ -82,15 +199,24 @@
             errorMessage = "Error: name your new household, or enter an invite code to join an existing one.";
             return;
         }
+        // The daily cap bounds the new-household path only — a valid invite code is never turned away (not an
+        // abuse vector, and blocking a real hand-off would be a bad moment). Dormant when no cap is set.
+        if (!joining && await AccountLimiter.AtDailyLimitAsync(HttpContext.RequestAborted))
+        {
+            errorMessage = DemoLimits.DailyCapReachedMessage;
+            return;
+        }
 
-        // One transaction across user + household: UserManager's store rides the same scoped
-        // AuthDbContext, so a bad invite code (or any failure) leaves no orphaned half-registration.
+        // One transaction across user + household: UserManager's store rides the same scoped AuthDbContext,
+        // so a bad invite code (or any failure) leaves no orphaned half-registration.
         await using var tx = await Db.Database.BeginTransactionAsync();
 
-        var user = new AppUser { UserName = Input.Email, Email = Input.Email };
+        var user = AppUser.NewToday(Input.Email);
         var result = await UserManager.CreateAsync(user, Input.Password);
         if (!result.Succeeded)
         {
+            // A direct-registration box hides nothing about account existence (there's no confirmation wall
+            // to protect), so every error — a duplicate "email taken" included — is shown as-is.
             errorMessage = "Error: " + string.Join(" ", result.Errors.Select(e => e.Description));
             return;
         }
@@ -119,14 +245,52 @@
         RedirectManager.RedirectTo(ReturnUrl);
     }
 
+    /// <summary>Mint a password-reset token for the passwordless new account and QUEUE the activation link —
+    /// a ResetPassword URL where the inbox-holder sets the password (which activates the account and confirms
+    /// the address). Built from the live request (so it carries whichever front door the registrant is at)
+    /// and delivered on the background queue so the request never waits on SMTP. The account is already
+    /// committed; a link that never arrives is recovered via "forgot/set your password".</summary>
+    /// <summary>The shared enumeration-safe response for a duplicate on a confirmation-required box — used
+    /// whether the duplicate came back as an IdentityResult error or was caught as a concurrent-insert
+    /// DbUpdateException. If the existing account was NEVER ACTIVATED (passwordless), resend the ACTIVATION
+    /// link — telling an account that can't sign in yet to "just sign in" is a useless detour. A real
+    /// (passworded) account gets the already-registered heads-up. Both mails go to the inbox OWNER and the
+    /// page's response (a redirect to RegisterConfirmation) is identical either way, so this reveals nothing
+    /// to a prober; resend-spam is bounded by the queue's per-recipient cooldown.</summary>
+    private async Task HandleDuplicateAsync()
+    {
+        var existing = await UserManager.FindByEmailAsync(Input.Email);
+        if (existing is not null && !await UserManager.HasPasswordAsync(existing))
+        {
+            await QueueActivationEmailAsync(existing);
+            return;
+        }
+
+        var signInUrl = NavigationManager.ToAbsoluteUri("Account/Login").AbsoluteUri;
+        EmailQueue.Enqueue(new AccountEmailJob(AccountEmailKind.AlreadyRegistered, Input.Email, signInUrl));
+        Logger.LogInformation("A registration hit an existing (activated) email; queued an already-registered notice.");
+    }
+
+    private async Task QueueActivationEmailAsync(AppUser user)
+    {
+        var token = await UserManager.GeneratePasswordResetTokenAsync(user);
+        var url = AccountLinks.SetPasswordUrl(NavigationManager, token);
+        EmailQueue.Enqueue(new AccountEmailJob(AccountEmailKind.Activation, user.Email!, url));
+        Logger.LogInformation("Queued an activation (set-password) link for a new account.");
+    }
+
     private sealed class InputModel
     {
         [Required]
         [EmailAddress]
         public string Email { get; set; } = "";
 
-        [Required]
-        [StringLength(100, ErrorMessage = "The password must be at least {2} characters long.", MinimumLength = 10)]
+        // Optional on the model because the confirmation-required form doesn't render it (that box creates a
+        // passwordless account — see RegisterForConfirmationAsync). The direct path requires it: the field
+        // carries the HTML `required` attribute, and CreateAsync's password policy enforces the 10-char
+        // minimum server-side with a clear message. [StringLength] keeps only a sanity UPPER bound — no
+        // MinimumLength or [Required], which would reject the unrendered confirmation-required case.
+        [StringLength(200)]
         [DataType(DataType.Password)]
         public string Password { get; set; } = "";
 

@@ -91,12 +91,13 @@ public class HouseholdServiceTests : IDisposable
     // ---- Registration gate (create-a-new-household path) ----
 
     [Theory]
-    [InlineData(true, false, true)]   // open registration, fresh deploy
-    [InlineData(true, true, true)]    // open registration, users exist
-    [InlineData(false, false, true)]  // locked down, but FIRST user bootstraps
-    [InlineData(false, true, false)]  // locked down, users exist → closed
-    public void MayCreateHousehold_matrix(bool allowRegistration, bool anyUsersExist, bool expected)
-        => Assert.Equal(expected, HouseholdService.MayCreateHousehold(allowRegistration, anyUsersExist));
+    [InlineData(true, false, true)]   // open registration → may create even once a household exists
+    [InlineData(true, true, true)]
+    [InlineData(false, false, true)]  // locked down, but no household yet → the first one bootstraps in
+    [InlineData(false, true, false)]  // locked down and a household already exists → refused
+    public void MayCreateHousehold_gates_on_registration_or_the_bootstrap(
+        bool allowRegistration, bool anyHouseholdsExist, bool expected)
+        => Assert.Equal(expected, HouseholdService.MayCreateHousehold(allowRegistration, anyHouseholdsExist));
 
     // ---- Create / join ----
 
@@ -716,11 +717,13 @@ public class HouseholdServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task AnyUsers_reflects_the_store()
+    public async Task AnyHouseholds_reflects_the_store()
     {
-        Assert.False(await _service.AnyUsersAsync());
-        _context.Users.Add(NewUser("a@example.com"));
+        // The bootstrap signal for MayCreateHousehold: "no household exists yet", not "no user exists" — a
+        // confirmation-required box creates the account before the household, so a user can exist with none.
+        Assert.False(await _service.AnyHouseholdsAsync());
+        _context.Households.Add(new Household { Name = "Home" });
         await _context.SaveChangesAsync();
-        Assert.True(await _service.AnyUsersAsync());
+        Assert.True(await _service.AnyHouseholdsAsync());
     }
 }

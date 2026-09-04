@@ -60,4 +60,63 @@ public class AccountMailerTests
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => mailer.SendPasswordResetAsync("a@b.test", "https://x.test/reset"));
     }
+
+    [Fact]
+    public async Task An_unconfigured_mailer_refuses_the_activation_send_too()
+    {
+        // Same guard on the activation mail — every send goes through the one SendAsync, which throws before
+        // touching a network when Email: isn't configured.
+        var mailer = new SmtpAccountMailer(Options.Create(new EmailOptions()));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => mailer.SendAccountActivationAsync("a@b.test", "https://x.test/Account/ResetPassword?code=abc"));
+    }
+
+    [Fact]
+    public void The_activation_message_carries_addressing_subject_and_the_link_in_both_bodies()
+    {
+        // The activation link is a ResetPassword URL carrying only the code (no userId — the page matches the
+        // token against the typed email), so no '&': the raw link appears verbatim in both bodies. The
+        // HTML-encoding of an '&' is the same WebUtility.HtmlEncode(url) every Build* method applies, already
+        // covered by BuildReset's '&' test — so no coverage is lost by not repeating it for activation.
+        const string url = "https://demo.example.test/Account/ResetPassword?code=abc123";
+
+        var msg = SmtpAccountMailer.BuildActivation(Configured(), "visitor@example.test", url);
+
+        var from = Assert.IsType<MailboxAddress>(Assert.Single(msg.From));
+        Assert.Equal("Reginald", from.Name);
+        Assert.Equal("noreply@example.test", from.Address);
+        var to = Assert.IsType<MailboxAddress>(Assert.Single(msg.To));
+        Assert.Equal("visitor@example.test", to.Address);
+        Assert.Equal("Set your password to activate Reginald", msg.Subject);
+        // Both bodies, because mail clients pick one — a link missing from either is an activation email that
+        // works in some inboxes and not others.
+        Assert.Contains(url, msg.TextBody);
+        Assert.Contains(url, msg.HtmlBody);
+    }
+
+    [Fact]
+    public async Task An_unconfigured_mailer_refuses_the_already_registered_send_too()
+    {
+        var mailer = new SmtpAccountMailer(Options.Create(new EmailOptions()));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => mailer.SendAlreadyRegisteredAsync("a@b.test", "https://x.test/Account/Login"));
+    }
+
+    [Fact]
+    public void The_already_registered_message_carries_addressing_subject_and_the_sign_in_link_in_both_bodies()
+    {
+        const string url = "https://demo.example.test/Account/Login";
+
+        var msg = SmtpAccountMailer.BuildAlreadyRegistered(Configured(), "visitor@example.test", url);
+
+        var from = Assert.IsType<MailboxAddress>(Assert.Single(msg.From));
+        Assert.Equal("noreply@example.test", from.Address);
+        var to = Assert.IsType<MailboxAddress>(Assert.Single(msg.To));
+        Assert.Equal("visitor@example.test", to.Address);
+        Assert.Equal("You already have a Reginald account", msg.Subject);
+        Assert.Contains(url, msg.TextBody);
+        Assert.Contains(url, msg.HtmlBody);
+    }
 }

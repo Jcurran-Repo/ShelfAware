@@ -8,10 +8,11 @@
 @inject IdentityRedirectManager RedirectManager
 @inject ILogger<ChooseHousehold> Logger
 
-@* Where a signed-in account with no household lands: today that means someone who was removed from one.
-   It exists because the alternative is worse — every page resolves the household through
-   GetRequiredIdAsync, which throws rather than guess a tenant, so without this page a removed member
-   meets an error page and no explanation. *@
+@* Where a signed-in account with no household lands: a member who was removed from one, AND — since the
+   activation flow — every registrant on a confirmation-required box, who is deliberately given no household
+   at registration and chooses it here after activating (the anti-hijack posture). It exists because the
+   alternative is worse — every page resolves the household through GetRequiredIdAsync, which throws rather
+   than guess a tenant, so without this page a household-less account meets an error page and no explanation. *@
 
 <PageTitle>Your household — Reginald</PageTitle>
 
@@ -90,7 +91,7 @@
 
         // The same gate registration uses: a deployment that isn't accepting new households doesn't start
         // accepting them because the visitor already has an account.
-        mayCreate = HouseholdService.MayCreateHousehold(Auth.Value.AllowRegistration, await Households.AnyUsersAsync());
+        mayCreate = HouseholdService.MayCreateHousehold(Auth.Value.AllowRegistration, await Households.AnyHouseholdsAsync());
     }
 
     private async Task ChooseAsync()

@@ -595,3 +595,69 @@ can't nag.
    ⚠️ from CLAUDE.md items 39/48 is closed), and the self-removal message that named the
    not-yet-built "Delete my account" is fixed (`fix/self-removal-copy`) — when account deletion
    ships under this gate, that message's sole-member branch is the place to point at it.
+
+## 10. Demo box: free receipts for demos (2026-09-03, Jordan's calls)
+
+**Goal:** a visitor to the demo box (demo.shelfaware.net) can try the flagship feature — receipt
+scanning — **without their own API key**, so the demo actually demonstrates the AI. Today the demo box
+is `KeyMode=Byok` with open registration: no host key, so a keyless visitor can only *review* the
+seeded pending receipt, never scan a new one. This carves out a **receipt-only host-key fallback** on
+that box, bounded hard so a public box on the host's key can't run up the bill.
+
+**This deviates from §2's "demo droplet ships no usable keys" — deliberately, Jordan's call:** a demo
+you can't try is a weak demo. Everything except receipt extraction stays BYOK (chat, census, recipe AI
+still need the visitor's own key). The mechanism is built config-gated + general, so the same
+free-receipt grant can later power the **paid box's Free tier** (§1/§2) — but it's turned on for the
+demo box first.
+
+**The numbers (Jordan, 2026-09-03):**
+- **9 free receipts per household, LIFETIME** (not monthly) — ≈ 2 months of normal use, then it's gone
+  and stays gone: the conversion pressure ("want the app by the time they aren't using free anymore").
+  A monthly refresh would never create that pressure, so lifetime is the point.
+- **21/day global free-scan cap** — the box-wide circuit breaker (the real wallet bound; per-household
+  alone is unbounded under open registration). At ~$0.01–0.03/receipt that's ≈ $0.20–0.65/day worst case.
+- **10/day global account-creation cap** ("for now") — bounds how many free households appear per day.
+- **Alert threshold, default 5, configurable** — when the day's *global* free-scan count crosses it
+  (well under the 21 hard cap), **alert the admin** (surface on `/admin` + log at Warning so the admin
+  ErrorLog catches it) and **track free usage**. An early "the demo is being used / cost is accruing"
+  signal, not the hard cap. **Confirmed daily-global** (Jordan 2026-09-03: "I need to know if I suddenly
+  get users") — NOT per-household.
+- **Spend-capped host key** on the box — Jordan OK'd exposing a key there, bounded; use a DEDICATED
+  Anthropic key with its own workspace spend limit (belt-and-suspenders under the app-level caps).
+
+**Abuse controls (layered — Jordan prioritized these):**
+- **Email-confirmed registration is the foundation** ("most importantly"): a real, distinct, VERIFIED
+  inbox to make an account. Distinct is already enforced (`RequireUniqueEmail`); this adds *verified*.
+  ⚠️ **As built, this is an ACTIVATION flow, not the token→confirm-page flow first sketched here:** on a
+  confirmation-required box, registration creates a PASSWORDLESS account and emails a *set-password* link
+  (the ResetPassword page); setting the password both establishes the credential and confirms the address.
+  It evolved this way during the build to close a pre-registration account-hijack (an attacker who set the
+  password at registration could take over a victim who clicked the link) — the passwordless design means
+  only the inbox-holder ever holds a credential. See the as-built record in CLAUDE.md. Reuses the
+  `IAccountMailer`/SMTP seam from the forgot-password arc (item 45), via the **Gmail app-password route**
+  like the family box.
+  - ⚠️ **Config-gated, demo-box only** (a new flag e.g. `Auth:RequireEmailConfirmation`, default false).
+    Enabling `RequireConfirmedAccount` globally would lock out existing accounts (registered
+    pre-confirmation → `EmailConfirmed=false`); the flag turns it on for the demo box only. Family +
+    self-host keep direct registration.
+  - **The family box does NOT need this flag — Cloudflare Access already verifies email at the edge**
+    (a one-time PIN to the allow-listed address before anyone reaches the box, item 44). So app-level
+    confirmation is redundant there; only the *public* demo box (no edge gate) needs it. Existing
+    family accounts can be backfilled `EmailConfirmed = true` (a one-time
+    `UPDATE AspNetUsers SET EmailConfirmed = 1` on the family `auth.db`) — legitimate precisely because
+    Cloudflare's OTP already proved they control those emails — which tidies the data and future-proofs
+    if the flag is ever flipped there. Do the backfill BEFORE enabling the flag on any box with users.
+- **Per-IP friction** on free scans + registration (blocks a trivial bot loop from eating the daily
+  caps and griefing real visitors). No heavier gate than email-confirm + the caps.
+- **The polite cap message** (either daily cap hit — no scans left, or no new accounts left): *"This
+  demo box is usage-limited and has hit today's limit — please come back tomorrow."*
+
+**Build order (each gated by `/pre-push`, deployed separately; the demo-box SMTP config is Jordan's step):**
+1. **Email-confirmed registration + the 10/day account-creation cap.** The abuse foundation the rest
+   leans on. Build + gate; deploy needs the Gmail app-password configured on the demo box (Jordan).
+2. **The free-receipt grant** — receipt-only host-key fallback (9 lifetime/household), the 21/day
+   global circuit breaker, per-IP friction, the admin alert + free-usage tracking, and the "come back
+   tomorrow" message. Build + gate + deploy.
+
+⚠️ Only the demo box (or a future managed Free tier) uses any of this; self-host + the family box are
+untouched (BYOK / all-Founder). All caps + the grant + the alert threshold are operator config.

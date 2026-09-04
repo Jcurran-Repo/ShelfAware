@@ -26,12 +26,18 @@ public sealed class HouseholdService(
     public static string NewInviteCode() => RandomNumberGenerator.GetString(InviteAlphabet, InviteCodeLength);
 
     /// <summary>The registration gate for CREATING a new household by self-signup. Joining an existing
-    /// household with a valid invite code is always allowed (the code is the authorization), and the
-    /// very first user is always allowed so a locked-down fresh deploy is enterable.</summary>
-    public static bool MayCreateHousehold(bool allowRegistration, bool anyUsersExist)
-        => allowRegistration || !anyUsersExist;
+    /// household with a valid invite code is always allowed (the code is the authorization), and the very
+    /// first household is always allowed so a locked-down fresh deploy is enterable.
+    ///
+    /// The bootstrap signal is "no household exists yet", NOT "no user exists". On a confirmation-required
+    /// box the account is created BEFORE the household (the household is chosen after the registrant proves
+    /// inbox control — the pre-hijack fix), so a user can exist with none, and keying the bootstrap on users
+    /// would leave the very first person unable to create the very first household. On a direct-registration
+    /// box every user has a household, so the two are equivalent there.</summary>
+    public static bool MayCreateHousehold(bool allowRegistration, bool anyHouseholdsExist)
+        => allowRegistration || !anyHouseholdsExist;
 
-    public Task<bool> AnyUsersAsync(CancellationToken ct = default) => db.Users.AnyAsync(ct);
+    public Task<bool> AnyHouseholdsAsync(CancellationToken ct = default) => db.Households.AnyAsync(ct);
 
     public Task<Household?> GetAsync(string householdId, CancellationToken ct = default)
         => db.Households.SingleOrDefaultAsync(h => h.Id == householdId, ct);
