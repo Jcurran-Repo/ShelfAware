@@ -145,14 +145,10 @@
         // One transaction across user + login link + household — no orphaned half-registrations.
         await using var tx = await Db.Database.BeginTransactionAsync();
 
-        // EmailConfirmed: the provider asserted the address, so an external account skips confirmation even
-        // where Auth:RequireEmailConfirmation is on (Identity's gate reads EmailConfirmed, which is already
-        // true here). CreatedOn stamps the cap's daily counter, same as the password path.
-        var user = new AppUser
-        {
-            UserName = email, Email = email, EmailConfirmed = true,
-            CreatedOn = DateOnly.FromDateTime(DateTime.Today),
-        };
+        // emailConfirmed: true — the provider asserted the address, so an external account skips confirmation
+        // even where Auth:RequireEmailConfirmation is on (Identity's gate reads EmailConfirmed, already true
+        // here). NewToday stamps the cap's daily counter, same as the password path.
+        var user = AppUser.NewToday(email, emailConfirmed: true);
         var createResult = await UserManager.CreateAsync(user);
         if (!createResult.Succeeded)
         {

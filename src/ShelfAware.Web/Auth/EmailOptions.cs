@@ -1,6 +1,7 @@
 namespace ShelfAware.Web.Auth;
 
-/// <summary>SMTP settings for the app's outbound account email (today: the password reset).
+/// <summary>SMTP settings for the app's outbound account email (the password reset, and — where
+/// Auth:RequireEmailConfirmation is on — the email-confirmation and already-registered notices).
 /// Config-gated like Google OAuth: leave the whole "Email" section absent and the feature simply
 /// doesn't exist — the sign-in page shows no reset link, /Account/ForgotPassword explains itself,
 /// and Settings keeps its honest "no email reset" wording. Configure it and all three flip together.

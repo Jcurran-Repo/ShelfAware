@@ -237,11 +237,11 @@ builder.Services.AddOptions<AuthOptions>()
         "Auth:RequireEmailConfirmation needs the Email: section configured — otherwise a new account can " +
         "never confirm its address and never sign in. Configure Email:, or turn the flag off.")
     .ValidateOnStart();
-// Password-reset email (the app's only outbound mail). All-or-nothing, validated at startup: a
-// wholly absent Email: section means the feature is off everywhere it shows (the sign-in link,
-// /Account/ForgotPassword, Settings' wording — all gated on the ONE EmailOptions.IsConfigured);
-// a partially present one is almost certainly a typo'd deploy, so the app won't boot rather than
-// half-work.
+// Outbound account email (the password reset, and — under Auth:RequireEmailConfirmation — the
+// confirmation + already-registered notices). All-or-nothing, validated at startup: a wholly absent
+// Email: section means the feature is off everywhere it shows (the sign-in link, /Account/ForgotPassword,
+// Settings' wording — all gated on the ONE EmailOptions.IsConfigured); a partially present one is almost
+// certainly a typo'd deploy, so the app won't boot rather than half-work.
 builder.Services.AddOptions<EmailOptions>()
     .Bind(builder.Configuration.GetSection(EmailOptions.SectionName))
     .Validate(o => o.IsConfigured || o.IsWhollyAbsent,

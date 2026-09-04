@@ -99,7 +99,7 @@
         // AuthDbContext, so a bad invite code (or any failure) leaves no orphaned half-registration.
         await using var tx = await Db.Database.BeginTransactionAsync();
 
-        var user = new AppUser { UserName = Input.Email, Email = Input.Email, CreatedOn = DateOnly.FromDateTime(DateTime.Today) };
+        var user = AppUser.NewToday(Input.Email);
         var result = await UserManager.CreateAsync(user, Input.Password);
         if (!result.Succeeded)
         {

@@ -3,15 +3,28 @@
 @using System.Text
 @using Microsoft.AspNetCore.WebUtilities
 @inject UserManager<AppUser> UserManager
-@inject IdentityRedirectManager RedirectManager
 @inject ILogger<ConfirmEmail> Logger
 
 <PageTitle>Confirm email — Reginald</PageTitle>
 
 <h1>Confirm your email</h1>
-<StatusMessage Message="@errorMessage" />
 
-<p class="muted auth-alt"><a href="Account/Login">← Back to sign in</a></p>
+@if (confirmed)
+{
+    @* Rendered IN-PAGE, not via a redirect-with-status cookie. The link is clicked from an email client,
+       so the whole navigation chain is cross-site — a SameSite=Strict status cookie (what
+       RedirectToWithStatus uses) is withheld by browsers on that chain, so a redirect to Login would land
+       with no "confirmed!" notice for web-mail users. Showing the outcome here needs no cookie. *@
+    <div class="auth-status auth-status-ok" role="status">
+        Your email is confirmed — you can sign in now.
+    </div>
+    <p class="auth-alt"><a class="auth-submit" href="Account/Login">Sign in</a></p>
+}
+else
+{
+    <StatusMessage Message="@errorMessage" />
+    <p class="muted auth-alt"><a href="Account/Login">← Back to sign in</a></p>
+}
 
 @code {
     // One sentence for every failure — unknown account, malformed code, expired/used token — so the page
@@ -19,10 +32,8 @@
     private const string BadLinkMessage =
         "Error: this confirmation link is invalid or has expired. Sign in and choose 'Resend the confirmation email' for a fresh one.";
 
+    private bool confirmed;
     private string? errorMessage;
-
-    [CascadingParameter]
-    private HttpContext HttpContext { get; set; } = default!;
 
     [SupplyParameterFromQuery]
     private string? UserId { get; set; }
@@ -64,8 +75,7 @@
         if (result.Succeeded)
         {
             Logger.LogInformation("An account confirmed its email address.");
-            RedirectManager.RedirectToWithStatus(
-                "Account/Login", "Your email is confirmed — sign in to get started.", HttpContext);
+            confirmed = true;
             return;
         }
 

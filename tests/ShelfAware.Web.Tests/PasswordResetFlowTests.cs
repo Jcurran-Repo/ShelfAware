@@ -135,6 +135,28 @@ public sealed class PasswordResetFlowTests : IDisposable
     }
 
     [Fact]
+    public async Task A_successful_reset_does_not_confirm_the_email_on_its_own()
+    {
+        // WHY ResetPassword.razor sets EmailConfirmed explicitly after a successful reset: Identity's
+        // ResetPasswordAsync changes the password and rotates the stamp but never touches EmailConfirmed.
+        // Without the explicit set, resetting an unconfirmed account on a confirmation-required box would
+        // succeed and then still be refused at sign-in ("reset done — invalid email or password"). If this
+        // ever changes (Identity confirming on reset), that explicit set becomes redundant, not wrong.
+        var user = await UserAsync();
+        Assert.False(await _users.IsEmailConfirmedAsync(user));
+        var token = await _users.GeneratePasswordResetTokenAsync(user);
+
+        Assert.True((await _users.ResetPasswordAsync(user, token, "brand-new-pass-12")).Succeeded);
+
+        Assert.False(await _users.IsEmailConfirmedAsync(user)); // still unconfirmed — the page must set it
+
+        // And the explicit set the page performs does persist the confirmation.
+        user.EmailConfirmed = true;
+        Assert.True((await _users.UpdateAsync(user)).Succeeded);
+        Assert.True(await _users.IsEmailConfirmedAsync(user));
+    }
+
+    [Fact]
     public async Task A_used_token_stops_working()
     {
         // The email says "stops working once used" — true because a successful reset rotates the
