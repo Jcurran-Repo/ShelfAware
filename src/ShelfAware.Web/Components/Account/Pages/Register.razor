@@ -134,6 +134,11 @@
             // exactly like a detected duplicate — the SAME enumeration-safe response — so a parallel probe
             // can't tell a would-be 500 (a new address, raced) from a 302 (an existing address, clean
             // duplicate). Without this, "a 500 in the pair ⇒ the address was not registered" is an oracle.
+            // ⚠️ The catch is deliberately BROAD: a non-constraint DbUpdateException (a transient SQLite
+            // busy on the WAL write lock, say) also lands here as a SAFE false "check your inbox" — no account
+            // was created (the failed SaveChanges committed no row) and the user's retry self-heals. Narrowing
+            // to inspect the inner SqliteException code would be provider-specific and fragile, and either way
+            // answering 302 (not 500) is what keeps enumeration safety.
             await HandleDuplicateAsync();
             RedirectManager.RedirectTo("Account/RegisterConfirmation");
             return;
