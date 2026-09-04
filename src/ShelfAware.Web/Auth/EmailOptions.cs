@@ -30,6 +30,19 @@ public class EmailOptions
 
     public string FromName { get; set; } = "Reginald";
 
+    /// <summary>Minimum seconds between two account mails to the SAME address (default 60; 0 disables).
+    /// Bounds the abuse where someone re-POSTs registration or forgot-password for one address to burn the
+    /// send quota, and drops redundant rapid resends. A THROTTLED mail is a silent, logged drop on the
+    /// request path — the page's response is unchanged — so it adds no account-enumeration oracle.</summary>
+    public int PerRecipientCooldownSeconds { get; set; } = 60;
+
+    /// <summary>The most account mails to send box-wide in one day, or null (the default) for no limit. Set
+    /// it on a PUBLIC box below the sending account's own quota (e.g. a Gmail app password is ~500/day) so a
+    /// flood of registration/reset requests can't exhaust the provider — which would silently break
+    /// activation for everyone and risk the account being flagged. Box-wide because the queue is a singleton;
+    /// a mail past the limit is a logged drop, not a response change.</summary>
+    public int? DailyOutboundLimit { get; set; }
+
     /// <summary>THE one definition of "this deployment can send email" — every gate asks this
     /// (the sign-in page's reset link, the ForgotPassword page, Settings' wording), so the
     /// surfaces can't drift apart.</summary>

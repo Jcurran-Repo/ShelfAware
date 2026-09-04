@@ -1,5 +1,6 @@
 @page "/Account/Register"
 @attribute [AllowAnonymous]
+@using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Options
 @inject UserManager<AppUser> UserManager
 @inject SignInManager<AppUser> SignInManager
@@ -120,7 +121,23 @@
         // inbox-holder sets one (that's the anti-hijack property — see the summary above). CreateAsync
         // without a password does no hashing, so this path never touches PBKDF2 at all.
         var user = AppUser.NewToday(Input.Email);
-        var result = await UserManager.CreateAsync(user);
+        IdentityResult result;
+        try
+        {
+            result = await UserManager.CreateAsync(user);
+        }
+        catch (DbUpdateException)
+        {
+            // A concurrent double-submit for a NEW address: the uniqueness validator passed for BOTH racing
+            // requests, then the DB's unique index caught the loser's INSERT. Identity's user store doesn't
+            // catch that (only its Update/Delete do), so it surfaces here as a DbUpdateException. Treat it
+            // exactly like a detected duplicate — the SAME enumeration-safe response — so a parallel probe
+            // can't tell a would-be 500 (a new address, raced) from a 302 (an existing address, clean
+            // duplicate). Without this, "a 500 in the pair ⇒ the address was not registered" is an oracle.
+            await HandleDuplicateAsync();
+            RedirectManager.RedirectTo("Account/RegisterConfirmation");
+            return;
+        }
         if (!result.Succeeded)
         {
             // A duplicate email is the one failure that could enumerate accounts. A registration for an
@@ -134,15 +151,15 @@
             // dwarfed by network jitter and the async email — the same residual ForgotPassword documents.
             if (RegistrationErrors.IsDuplicateOnly(result))
             {
-                var signInUrl = NavigationManager.ToAbsoluteUri("Account/Login").AbsoluteUri;
-                EmailQueue.Enqueue(new AccountEmailJob(AccountEmailKind.AlreadyRegistered, Input.Email, signInUrl));
-                Logger.LogInformation("A registration hit an existing email; queued an already-registered notice.");
+                await HandleDuplicateAsync();
                 RedirectManager.RedirectTo("Account/RegisterConfirmation");
                 return;
             }
 
             // Any other failure reveals no account's existence and fails identically for a new or taken
-            // email. A duplicate is stripped so "email taken" can't ride out beside it.
+            // email. A duplicate is stripped so "email taken" can't ride out beside it — defence-in-depth: no
+            // mixed duplicate-plus-other result is actually reachable today (see RegistrationErrors), but the
+            // strip stays against a future change.
             errorMessage = "Error: " + string.Join(" ",
                 RegistrationErrors.ExcludingDuplicate(result).Select(e => e.Description));
             return;
@@ -228,6 +245,27 @@
     /// the address). Built from the live request (so it carries whichever front door the registrant is at)
     /// and delivered on the background queue so the request never waits on SMTP. The account is already
     /// committed; a link that never arrives is recovered via "forgot/set your password".</summary>
+    /// <summary>The shared enumeration-safe response for a duplicate on a confirmation-required box — used
+    /// whether the duplicate came back as an IdentityResult error or was caught as a concurrent-insert
+    /// DbUpdateException. If the existing account was NEVER ACTIVATED (passwordless), resend the ACTIVATION
+    /// link — telling an account that can't sign in yet to "just sign in" is a useless detour. A real
+    /// (passworded) account gets the already-registered heads-up. Both mails go to the inbox OWNER and the
+    /// page's response (a redirect to RegisterConfirmation) is identical either way, so this reveals nothing
+    /// to a prober; resend-spam is bounded by the queue's per-recipient cooldown.</summary>
+    private async Task HandleDuplicateAsync()
+    {
+        var existing = await UserManager.FindByEmailAsync(Input.Email);
+        if (existing is not null && !await UserManager.HasPasswordAsync(existing))
+        {
+            await QueueActivationEmailAsync(existing);
+            return;
+        }
+
+        var signInUrl = NavigationManager.ToAbsoluteUri("Account/Login").AbsoluteUri;
+        EmailQueue.Enqueue(new AccountEmailJob(AccountEmailKind.AlreadyRegistered, Input.Email, signInUrl));
+        Logger.LogInformation("A registration hit an existing (activated) email; queued an already-registered notice.");
+    }
+
     private async Task QueueActivationEmailAsync(AppUser user)
     {
         var token = await UserManager.GeneratePasswordResetTokenAsync(user);

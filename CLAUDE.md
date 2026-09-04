@@ -3398,6 +3398,64 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      (store, tiers, the supporter-link gate, admin gating, schema parity) is unit/persistence-tested and
      the load-bearing rules mutation-checked.
 
+63. **Email-confirmed registration + the passwordless ACTIVATION flow (2026-09-04, branch
+   `feature/email-confirmed-registration`; NOT MERGED — gated clean, Jordan's merge call).** Phase 1 of the
+   demo-box abuse arc (docs/subscription-plan.md §10): a config-gated (`Auth:RequireEmailConfirmation`,
+   default OFF — demo box only; the family box verifies email at the Cloudflare edge) requirement that a new
+   account confirm a real inbox, plus a daily account-creation cap. **All default-off / self-host-inert.** The
+   arc's shape is the record — each layer only became visible because the last was built properly and
+   re-reviewed:
+   - **Enumeration oracles closed first:** the Login message (all-generic + a standing recovery link, no
+     per-attempt oracle), hash-timing (`PasswordHashTiming.Equalize` — a real PBKDF2 verify on the
+     hash-skipping sign-in paths), send-timing (a background `AccountEmailQueue`/`AccountEmailWorker` — mail
+     off the request thread), and the register duplicate (enumeration-safe: same "check your inbox" + an
+     already-registered notice to the owner). ⚠️ A gate found the register duplicate had a BACKWARDS timing
+     burn (the duplicate path was made ~2× slower — itself an oracle); removed.
+   - ⚠️ **The pre-registration ACCOUNT HIJACK, and the two-step fix.** (a) A "supersede an unconfirmed
+     placeholder" attempt was **net-negative** (inadequate AND a flag-flip data-loss landmine) — backed out.
+     (b) Deferring the household to AFTER confirmation (the account is created with NO household; it's chosen
+     at the existing `/Account/Household` chooser, reached by the no-household middleware) closed the
+     *planted-household* vector but left a **reset-path residual**: on a confirm box the ATTACKER set the
+     password at registration, so a victim who clicked an unsolicited link could be signed into by the
+     attacker. (c) **The ACTIVATION flow closes it fully (the as-built):** registration on a confirm box
+     creates a **PASSWORDLESS** account and emails a *set-password* link — the existing **ResetPassword** page
+     with a reset token — where the INBOX-HOLDER sets the password (which also confirms via ResetPassword's
+     confirm-on-set). A passwordless account can't be signed into, so whoever merely typed the email holds
+     nothing. This made the email-confirmation-TOKEN flow redundant, so **ConfirmEmail + ResendEmailConfirmation
+     were removed**; recovery is ForgotPassword ("Set or reset your password"). `AccountLinks.SetPasswordUrl`
+     is the one ResetPassword-link builder. Registration is also MORE enumeration-safe (passwordless
+     `CreateAsync` does no hashing → no hash-timing).
+   - **The cap:** `AuthOptions.EffectiveDailyAccountCreationLimit` — explicit `Auth:DailyAccountCreationLimit`
+     wins; a confirm box with none falls back to a **default of 10/day** (never accidentally unbounded); a
+     direct box stays uncapped. ⚠️ On a confirm box the cap gates EVERY registration (the household — and any
+     invite-join — is deferred to the chooser), unlike a direct box where an invite-join is exempt.
+   - ⚠️ **Outbound-mail throttle** (`EmailOptions.PerRecipientCooldownSeconds` default 60 /
+     `DailyOutboundLimit` default null), in `AccountEmailQueue` — the choke point. A public box's
+     registration/forgot-password is an anonymous send surface; the daily *account* cap doesn't bound the
+     reset/already-registered mail (they make no account), so without this one IP could exhaust the provider's
+     send quota (a Gmail app password is ~500/day) and silently break activation. A throttled/over-limit mail
+     is a logged drop with the page response UNCHANGED, so it adds no enumeration oracle. `AccountEmailWorker`
+     also completes the channel on `StopAsync` (matching `ErrorLogWriter`) so a shutdown-window enqueue is
+     refused, not silently lost.
+   - ⚠️ **`RegistrationErrors.ExcludingDuplicate` is DEFENCE-IN-DEPTH, not dead — do not delete it.** No
+     registration produces a duplicate-beside-another-error today (an invalid-username address can't ALSO be
+     an existing account, since every creation path validates the same username), but a future
+     `AllowedUserNameCharacters`/validation-order change could, and a wrong "unreachable" assumption there is a
+     silent enumeration leak. (A gate model claimed it WAS reachable via apostrophe addresses; probed — it
+     isn't, because the collision can never be created. Verify before "fixing".)
+   - **The gate: FIVE independent review passes across THREE models, all clean** (the local `/code-review` is
+     model-invocation-disabled, so each ran as an independent SHA-reading agent — item 42). The activation-flow
+     re-gate (code SHIP + security PASS), a FLIPPED whole-branch gate (**security on Opus: PASS**, **code on
+     Sonnet: SHIP**), a focused Opus delta pass, and a Fable-5.1 catch-all. Fable earned it — found a Medium
+     (the outbound amplification above, now fixed) + Lows (the concurrent-double-submit 500-vs-302 oracle, now
+     caught as a `DbUpdateException`→duplicate; the stale docs) the stronger models missed. ⚠️ **The DB probe
+     that mattered:** enabling the flag on a box with EXISTING accounts locks them out (they're
+     `EmailConfirmed=false`) — backfill `EmailConfirmed=1` first (documented in env.example). ⚠️ Not merged;
+     not live-verifiable past the SMTP boundary here (no local relay + a DB-locking preview-orphaned process),
+     so the confirm→chooser leg is unit-tested + composed of pre-existing tested middleware.
+   - **3035 green, 0 warnings** (non-incremental Release; the number climbed across the gate fixes). Every
+     load-bearing rule mutation-checked.
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active

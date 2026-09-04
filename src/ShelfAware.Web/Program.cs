@@ -250,6 +250,10 @@ builder.Services.AddOptions<EmailOptions>()
     .Validate(o => o.CredentialsPaired,
         "Email:SmtpUser and Email:SmtpPassword go together — set both or neither.")
     .Validate(o => o.SmtpPort > 0, "Email:SmtpPort must be a positive port number.")
+    .Validate(o => o.PerRecipientCooldownSeconds >= 0,
+        "Email:PerRecipientCooldownSeconds can't be negative — set 0 to disable the per-recipient cooldown.")
+    .Validate(o => o.DailyOutboundLimit is null or > 0,
+        "Email:DailyOutboundLimit must be at least 1, or absent for no daily send cap.")
     .ValidateOnStart();
 builder.Services.AddSingleton<IAccountMailer, SmtpAccountMailer>();
 // Account emails (reset / confirmation / already-registered) go out on a background worker, not the request
@@ -597,11 +601,13 @@ if (speechCacheDir is not null)
 }
 
 // A confirmation-required box no longer gates ACCOUNT creation on Auth:AllowRegistration — the household
-// gate moved to the chooser (so an invited person can still make an account), which leaves the daily cap
-// as the ONLY bound on new accounts AND on the activation emails they trigger to whatever address was
-// typed. So a confirmation-required box with no explicit cap falls back to the DEFAULT (it is never left
-// accidentally unbounded); surface the effective number at INFO so the operator knows it, and how to change
-// it. (Explicit config wins; a high value runs it uncapped on purpose.)
+// gate moved to the chooser (so an invited person can still make an account) — so the daily cap is what
+// bounds new accounts there, and a box with no explicit cap falls back to the DEFAULT (never left
+// accidentally unbounded). Note the cap bounds ACCOUNTS, not mail: the activation/reset/already-registered
+// emails are bounded separately by the outbound throttle (Email:PerRecipientCooldownSeconds /
+// Email:DailyOutboundLimit in AccountEmailQueue), since a duplicate or forgot-password send makes no account
+// and so never touches this cap. Surface the effective account cap at INFO so the operator knows it, and how
+// to change it. (Explicit config wins; a high value runs it uncapped on purpose.)
 {
     var authOptions = app.Services.GetRequiredService<IOptions<AuthOptions>>().Value;
     // The default is in effect when nothing explicit is set but the EFFECTIVE cap is non-null — read that

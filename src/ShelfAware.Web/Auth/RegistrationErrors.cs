@@ -12,12 +12,18 @@ namespace ShelfAware.Web.Auth;
 /// (show only that problem, with the duplicate stripped). Lives here, not in the page, so both branches are
 /// testable.
 ///
-/// ⚠️ Note the "duplicate beside a weak password" case cannot actually arise today: <c>CreateAsync</c>
-/// validates the password FIRST and returns before it ever reaches the uniqueness check, so a weak password
-/// yields a password error with no duplicate error alongside it (and a weak password fails identically for a
-/// new or an existing email, leaking nothing either way). <see cref="ExcludingDuplicate"/> is therefore
-/// defence-in-depth against a future change to Identity's validation order, not a reachable path — kept
-/// because a wrong assumption there would be a silent enumeration leak.</summary>
+/// ⚠️ <see cref="ExcludingDuplicate"/> is DEFENCE-IN-DEPTH — keep it, don't delete it as dead. Today no
+/// registration produces a duplicate error ALONGSIDE another: the passwordless confirmation path runs only
+/// Identity's UserValidator (no password to fail), and there username == email, so an existing address
+/// yields BOTH duplicate codes and nothing else (a pure duplicate — hidden). The one other error a new
+/// registration can raise is InvalidUserName (a local part outside Identity's default
+/// AllowedUserNameCharacters — an apostrophe, an accent), but that CAN'T ride beside a duplicate: an
+/// existing account can't have such an address, because every creation path (Register, ExternalLogin,
+/// DevAuth) validates the same username, so the collision that would add DuplicateEmail can never have been
+/// created. Kept because a future change — a relaxed AllowedUserNameCharacters, a legacy/bypass account, a
+/// shift in Identity's validation order — could produce a mixed result, and a wrong "unreachable" assumption
+/// there would be a SILENT enumeration leak. (The tests pin ExcludingDuplicate's stripping logic on
+/// hand-built mixed results for exactly that reason.)</summary>
 public static class RegistrationErrors
 {
     private static bool IsDuplicateAccount(IdentityError e) =>

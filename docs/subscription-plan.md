@@ -627,10 +627,15 @@ demo box first.
 
 **Abuse controls (layered — Jordan prioritized these):**
 - **Email-confirmed registration is the foundation** ("most importantly"): a real, distinct, VERIFIED
-  inbox to make an account. Distinct is already enforced (`RequireUniqueEmail`); this adds *verified*
-  (Identity confirm-email flow: token → email → confirm page → sign-in blocked until confirmed).
-  Reuses the `IAccountMailer`/SMTP seam from the forgot-password arc (item 45), via the **Gmail
-  app-password route** like the family box.
+  inbox to make an account. Distinct is already enforced (`RequireUniqueEmail`); this adds *verified*.
+  ⚠️ **As built, this is an ACTIVATION flow, not the token→confirm-page flow first sketched here:** on a
+  confirmation-required box, registration creates a PASSWORDLESS account and emails a *set-password* link
+  (the ResetPassword page); setting the password both establishes the credential and confirms the address.
+  It evolved this way during the build to close a pre-registration account-hijack (an attacker who set the
+  password at registration could take over a victim who clicked the link) — the passwordless design means
+  only the inbox-holder ever holds a credential. See the as-built record in CLAUDE.md. Reuses the
+  `IAccountMailer`/SMTP seam from the forgot-password arc (item 45), via the **Gmail app-password route**
+  like the family box.
   - ⚠️ **Config-gated, demo-box only** (a new flag e.g. `Auth:RequireEmailConfirmation`, default false).
     Enabling `RequireConfirmedAccount` globally would lock out existing accounts (registered
     pre-confirmation → `EmailConfirmed=false`); the flag turns it on for the demo box only. Family +

@@ -29,9 +29,10 @@ public class AuthOptions
     /// never accidentally unbounded, and on a direct-registration box means no limit (the self-host/family
     /// posture). Set explicitly to raise, lower, or (with a high value) deliberately run a
     /// confirmation-required box uncapped. Counted off <see cref="AppUser.CreatedOn"/> across all
-    /// registration paths; only the new-household path is actually blocked at the cap — a join with a valid
-    /// invite code is never turned away. Startup validation refuses 0 or negative (a typo, not "no accounts
-    /// today").</summary>
+    /// registration paths. On a DIRECT box only the new-household path is blocked at the cap (a join with a
+    /// valid invite code is never turned away); on a CONFIRMATION box the household is chosen later at the
+    /// chooser, so the cap gates EVERY registration there (an invitee registers under it, then joins
+    /// uncapped). Startup validation refuses 0 or negative (a typo, not "no accounts today").</summary>
     public int? DailyAccountCreationLimit { get; set; }
 
     /// <summary>The default daily account-creation cap applied to a confirmation-required (public) box that

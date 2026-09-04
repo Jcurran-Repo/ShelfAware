@@ -5,8 +5,12 @@ namespace ShelfAware.Web.Auth;
 
 /// <summary>The demo box's daily account-creation cap (docs/subscription-plan.md §10): a box-wide bound on
 /// how many new ACCOUNTS are created per day, so a public box on the host's key can't have free households
-/// created into it without limit. It counts every account made today (invite-code joins included), but only
-/// the NEW-household path is actually refused at the cap — a join with a valid code is never turned away.
+/// created into it without limit. It counts every account made today.
+///
+/// What the cap refuses differs by box. On a DIRECT-registration box it blocks only the new-household path —
+/// a join with a valid invite code is never turned away. On a CONFIRMATION-required box there is no join at
+/// registration (the household is chosen later, at the chooser, uncapped), so the cap gates EVERY
+/// registration there: an invitee creates their account under the cap, then joins uncapped once activated.
 ///
 /// Counts <see cref="AppUser.CreatedOn"/> rows stamped with today (server-local, the app's universal
 /// "today"), so the number IS reality — there is no separate counter to increment, keep in sync, or

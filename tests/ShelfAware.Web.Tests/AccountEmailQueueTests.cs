@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using ShelfAware.Web.Auth;
 
 namespace ShelfAware.Web.Tests;
@@ -12,6 +13,11 @@ namespace ShelfAware.Web.Tests;
 /// </summary>
 public class AccountEmailQueueTests
 {
+    // The dispatch/drain tests aren't about the outbound throttle — disable it so it can't interfere (a
+    // default EmailOptions would apply the 60s per-recipient cooldown). The throttle has its own tests below.
+    private static readonly IOptions<EmailOptions> NoThrottle =
+        Options.Create(new EmailOptions { PerRecipientCooldownSeconds = 0 });
+
     private sealed record Sent(AccountEmailKind Kind, string ToEmail, string Url);
 
     /// <summary>Records what the worker asked it to send, signals when it has seen enough, and can be told
@@ -58,7 +64,7 @@ public class AccountEmailQueueTests
     public async Task Each_kind_dispatches_to_the_matching_mailer_method_in_order()
     {
         var mailer = new RecordingMailer(expected: 3);
-        var queue = new AccountEmailQueue(NullLogger<AccountEmailQueue>.Instance);
+        var queue = new AccountEmailQueue(NullLogger<AccountEmailQueue>.Instance, NoThrottle);
         IAccountEmailQueue api = queue;
 
         api.Enqueue(new AccountEmailJob(AccountEmailKind.PasswordReset, "reset@x.test", "https://x/reset"));
@@ -80,7 +86,7 @@ public class AccountEmailQueueTests
     {
         // The whole point of the pump: one bad send (a down relay) must not stall or kill the queue.
         var mailer = new RecordingMailer(expected: 1, throwFor: "boom@x.test");
-        var queue = new AccountEmailQueue(NullLogger<AccountEmailQueue>.Instance);
+        var queue = new AccountEmailQueue(NullLogger<AccountEmailQueue>.Instance, NoThrottle);
         IAccountEmailQueue api = queue;
 
         api.Enqueue(new AccountEmailJob(AccountEmailKind.PasswordReset, "boom@x.test", "https://x/reset"));
@@ -129,7 +135,7 @@ public class AccountEmailQueueTests
         // Here the first send blocks so the loop is stuck on it and the other two stay BUFFERED; on shutdown
         // the blocked one is abandoned and StopAsync must SEND the two buffered — not drop them.
         var mailer = new BlockingFirstMailer();
-        var queue = new AccountEmailQueue(NullLogger<AccountEmailQueue>.Instance);
+        var queue = new AccountEmailQueue(NullLogger<AccountEmailQueue>.Instance, NoThrottle);
         IAccountEmailQueue api = queue;
         var worker = new AccountEmailWorker(queue, mailer, NullLogger<AccountEmailWorker>.Instance);
 
@@ -151,7 +157,7 @@ public class AccountEmailQueueTests
     {
         // Best-effort and mid-request: with no worker draining, filling well past the bound just drops the
         // overflow (logged), never throws onto the caller.
-        var queue = new AccountEmailQueue(NullLogger<AccountEmailQueue>.Instance);
+        var queue = new AccountEmailQueue(NullLogger<AccountEmailQueue>.Instance, NoThrottle);
         IAccountEmailQueue api = queue;
 
         var ex = Record.Exception(() =>
@@ -174,7 +180,7 @@ public class AccountEmailQueueTests
         // queue.CompleteWriter() from StopAsync makes the enqueue succeed and this fail. Deterministic:
         // StopAsync completes the channel synchronously before it awaits the base drain, and draining an
         // already-empty channel is immediate.
-        var queue = new AccountEmailQueue(NullLogger<AccountEmailQueue>.Instance);
+        var queue = new AccountEmailQueue(NullLogger<AccountEmailQueue>.Instance, NoThrottle);
         IAccountEmailQueue api = queue;
         var worker = new AccountEmailWorker(queue, new RecordingMailer(expected: 1), NullLogger<AccountEmailWorker>.Instance);
 
@@ -184,5 +190,44 @@ public class AccountEmailQueueTests
         api.Enqueue(new AccountEmailJob(AccountEmailKind.PasswordReset, "late@x.test", "https://x/reset"));
 
         Assert.False(queue.Reader.TryRead(out _)); // intake closed by StopAsync → refused, not buffered
+    }
+
+    [Fact]
+    public void A_second_mail_to_the_same_address_within_the_cooldown_is_throttled()
+    {
+        // The per-recipient bound: re-POSTing registration/reset for one address can't flood it. The repeat
+        // (case-insensitive) is a silent, logged drop that never reaches the channel; a DIFFERENT address is
+        // unaffected. This is what stops one IP burning the send quota on a single mailbox.
+        var queue = new AccountEmailQueue(NullLogger<AccountEmailQueue>.Instance,
+            Options.Create(new EmailOptions { PerRecipientCooldownSeconds = 60 }));
+        IAccountEmailQueue api = queue;
+
+        api.Enqueue(new AccountEmailJob(AccountEmailKind.PasswordReset, "victim@x.test", "u"));
+        api.Enqueue(new AccountEmailJob(AccountEmailKind.PasswordReset, "VICTIM@X.test", "u")); // same, other case
+        api.Enqueue(new AccountEmailJob(AccountEmailKind.PasswordReset, "someone.else@x.test", "u"));
+
+        Assert.True(queue.Reader.TryRead(out var first));
+        Assert.True(queue.Reader.TryRead(out var second));
+        Assert.False(queue.Reader.TryRead(out _)); // the case-variant repeat was throttled, not queued
+        Assert.Equal("victim@x.test", first!.ToEmail);
+        Assert.Equal("someone.else@x.test", second!.ToEmail);
+    }
+
+    [Fact]
+    public void Enqueues_past_the_daily_outbound_limit_are_dropped()
+    {
+        // The box-wide daily cap protects the sending account's own quota. With the cooldown off and distinct
+        // addresses, only the cap gates: two land, the third is dropped.
+        var queue = new AccountEmailQueue(NullLogger<AccountEmailQueue>.Instance,
+            Options.Create(new EmailOptions { PerRecipientCooldownSeconds = 0, DailyOutboundLimit = 2 }));
+        IAccountEmailQueue api = queue;
+
+        api.Enqueue(new AccountEmailJob(AccountEmailKind.PasswordReset, "a@x.test", "u"));
+        api.Enqueue(new AccountEmailJob(AccountEmailKind.Activation, "b@x.test", "u"));
+        api.Enqueue(new AccountEmailJob(AccountEmailKind.AlreadyRegistered, "c@x.test", "u")); // over the cap
+
+        Assert.True(queue.Reader.TryRead(out _));
+        Assert.True(queue.Reader.TryRead(out _));
+        Assert.False(queue.Reader.TryRead(out _)); // the third was dropped by the daily cap
     }
 }
