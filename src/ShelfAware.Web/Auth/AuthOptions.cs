@@ -23,13 +23,29 @@ public class AuthOptions
     /// with no mailer nobody could ever confirm, so startup validation refuses the combination.</summary>
     public bool RequireEmailConfirmation { get; set; }
 
-    /// <summary>The most NEW accounts that may be created in one day, box-wide, or null (the default) for no
-    /// limit — the self-host/family posture. Set on the demo box to bound how many free households appear
-    /// per day. Counted off <see cref="AppUser.CreatedOn"/> across all registration paths; only the
-    /// new-household path is actually blocked at the cap — a join with a valid invite code is never turned
-    /// away (it's not an abuse vector, and blocking a real demo hand-off would be a bad moment). Startup
-    /// validation refuses 0 or negative (which is a typo, not "no accounts today").</summary>
+    /// <summary>An EXPLICIT box-wide cap on how many new accounts may be created per day, or null (the
+    /// default) to defer to <see cref="EffectiveDailyAccountCreationLimit"/> — which on a
+    /// confirmation-required (public) box falls back to <see cref="DefaultDailyAccountCreationLimit"/> so it's
+    /// never accidentally unbounded, and on a direct-registration box means no limit (the self-host/family
+    /// posture). Set explicitly to raise, lower, or (with a high value) deliberately run a
+    /// confirmation-required box uncapped. Counted off <see cref="AppUser.CreatedOn"/> across all
+    /// registration paths; only the new-household path is actually blocked at the cap — a join with a valid
+    /// invite code is never turned away. Startup validation refuses 0 or negative (a typo, not "no accounts
+    /// today").</summary>
     public int? DailyAccountCreationLimit { get; set; }
+
+    /// <summary>The default daily account-creation cap applied to a confirmation-required (public) box that
+    /// configures none — so a demo box can never be left accidentally unbounded, even if the operator forgets
+    /// to set one. Deliberately generous for a small deployment and overridable by an explicit
+    /// <see cref="DailyAccountCreationLimit"/>.</summary>
+    public const int DefaultDailyAccountCreationLimit = 10;
+
+    /// <summary>The cap the limiter actually enforces. An explicit <see cref="DailyAccountCreationLimit"/>
+    /// always wins; otherwise a confirmation-required box falls back to <see cref="DefaultDailyAccountCreationLimit"/>
+    /// (never accidentally unbounded on a public box) and a direct box stays uncapped (null). One accessible
+    /// definition so the limiter, the startup log, and any future reader agree on the effective number.</summary>
+    public int? EffectiveDailyAccountCreationLimit =>
+        DailyAccountCreationLimit ?? (RequireEmailConfirmation ? DefaultDailyAccountCreationLimit : null);
 
     /// <summary>How long a freshly generated invite code stays usable, in days. Null (the default) means
     /// never expires — the behaviour every existing code already has, so upgrading changes nothing until

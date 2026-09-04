@@ -14,10 +14,29 @@ public class AuthOptionsTests
     public void The_new_demo_controls_default_off()
     {
         // Self-host / family posture: no email-confirmation requirement, no account cap. Turning either on
-        // is a deliberate per-box opt-in.
+        // is a deliberate per-box opt-in. With confirmation off and nothing configured, the EFFECTIVE cap is
+        // also null (uncapped) — the default only applies on a confirmation-required box.
         var o = new AuthOptions();
         Assert.False(o.RequireEmailConfirmation);
         Assert.Null(o.DailyAccountCreationLimit);
+        Assert.Null(o.EffectiveDailyAccountCreationLimit);
+    }
+
+    [Theory]
+    // (explicit DailyAccountCreationLimit, RequireEmailConfirmation) → effective cap
+    [InlineData(null, false, null)]                                        // direct box, none set → uncapped
+    [InlineData(null, true, AuthOptions.DefaultDailyAccountCreationLimit)] // confirm box, none set → the default
+    [InlineData(25, false, 25)]                                           // explicit always wins...
+    [InlineData(25, true, 25)]                                            // ...on either box
+    public void The_effective_cap_defaults_on_a_confirmation_required_box_and_an_explicit_value_overrides(
+        int? explicitLimit, bool requireConfirmation, int? expected)
+    {
+        var o = new AuthOptions
+        {
+            DailyAccountCreationLimit = explicitLimit,
+            RequireEmailConfirmation = requireConfirmation,
+        };
+        Assert.Equal(expected, o.EffectiveDailyAccountCreationLimit);
     }
 
     [Theory]

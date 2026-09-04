@@ -598,17 +598,18 @@ if (speechCacheDir is not null)
 
 // A confirmation-required box no longer gates ACCOUNT creation on Auth:AllowRegistration — the household
 // gate moved to the chooser (so an invited person can still make an account), which leaves the daily cap
-// as the ONLY bound on new accounts AND on the confirmation emails they trigger to whatever address was
-// typed. On a PUBLIC box that's an email-amplification / row-flooding exposure if left uncapped. Warn
-// rather than fail: a trusted self-host may legitimately run confirmation-required without a cap.
+// as the ONLY bound on new accounts AND on the activation emails they trigger to whatever address was
+// typed. So a confirmation-required box with no explicit cap falls back to the DEFAULT (it is never left
+// accidentally unbounded); surface the effective number at INFO so the operator knows it, and how to change
+// it. (Explicit config wins; a high value runs it uncapped on purpose.)
 {
     var authOptions = app.Services.GetRequiredService<IOptions<AuthOptions>>().Value;
     if (authOptions.RequireEmailConfirmation && authOptions.DailyAccountCreationLimit is null)
     {
-        app.Logger.LogWarning(
-            "Auth:RequireEmailConfirmation is on without Auth:DailyAccountCreationLimit — account creation, "
-            + "and the confirmation emails it sends to arbitrary addresses, are unbounded. Set a daily cap "
-            + "on a public deployment.");
+        app.Logger.LogInformation(
+            "Auth:RequireEmailConfirmation is on with no explicit Auth:DailyAccountCreationLimit — applying "
+            + "the default cap of {Cap} new accounts/day. Set Auth:DailyAccountCreationLimit to override.",
+            AuthOptions.DefaultDailyAccountCreationLimit);
     }
 }
 

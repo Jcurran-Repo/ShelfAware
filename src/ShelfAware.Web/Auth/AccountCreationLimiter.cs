@@ -19,12 +19,15 @@ namespace ShelfAware.Web.Auth;
 /// the registration flow uses.</summary>
 public sealed class AccountCreationLimiter(AuthDbContext db, IOptions<AuthOptions> options)
 {
-    /// <summary>True when today's account creations have reached the configured cap — the registration
-    /// page then refuses a NEW household with <see cref="DemoLimits.DailyCapReachedMessage"/>. Always false
-    /// when no cap is configured (the self-host/family default), so those boxes pay nothing.</summary>
+    /// <summary>True when today's account creations have reached the EFFECTIVE cap — the registration page
+    /// then refuses a NEW household with <see cref="DemoLimits.DailyCapReachedMessage"/>. Always false when
+    /// there's no effective cap (a direct-registration box that configures none), so those boxes pay nothing;
+    /// a confirmation-required box always has one — its explicit value or the default.</summary>
     public async Task<bool> AtDailyLimitAsync(CancellationToken ct = default)
     {
-        if (options.Value.DailyAccountCreationLimit is not int limit) return false;
+        // The EFFECTIVE limit, not the raw config: a confirmation-required box with no explicit cap falls
+        // back to the default (never accidentally unbounded on a public box); a direct box stays null.
+        if (options.Value.EffectiveDailyAccountCreationLimit is not int limit) return false;
 
         var today = DateOnly.FromDateTime(DateTime.Today);
         var createdToday = await db.Users.CountAsync(u => u.CreatedOn == today, ct);
