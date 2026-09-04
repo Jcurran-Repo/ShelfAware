@@ -77,7 +77,8 @@ public class AccountMailerTests
     {
         // The activation link is a ResetPassword URL carrying only the code (no userId — the page matches the
         // token against the typed email), so no '&': the raw link appears verbatim in both bodies. The
-        // HTML-encoding of an '&' is the same Build() path BuildReset's test already covers.
+        // HTML-encoding of an '&' is the same WebUtility.HtmlEncode(url) every Build* method applies, already
+        // covered by BuildReset's '&' test — so no coverage is lost by not repeating it for activation.
         const string url = "https://demo.example.test/Account/ResetPassword?code=abc123";
 
         var msg = SmtpAccountMailer.BuildActivation(Configured(), "visitor@example.test", url);

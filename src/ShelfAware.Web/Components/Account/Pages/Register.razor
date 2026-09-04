@@ -128,9 +128,10 @@
             // and the real owner is emailed a heads-up instead — so a prober learns nothing while the owner
             // isn't left confused. There is no household to inherit either way, and the sign-in page's
             // standing "set your password" recovery link reactivates an account whose link was lost.
-            // ⚠️ No timing oracle: neither the success nor the duplicate path hashes anything (a passwordless
-            // CreateAsync skips PBKDF2 entirely), so the two differ only by an insert vs. a failed uniqueness
-            // check — dwarfed by network jitter, like the ForgotPassword residual.
+            // ⚠️ No practical timing oracle: neither path hashes (a passwordless CreateAsync skips PBKDF2
+            // entirely). The success path does an insert plus a sub-millisecond reset-token mint + URL build;
+            // the duplicate path does a failed uniqueness check. Neither touches PBKDF2, so the delta is
+            // dwarfed by network jitter and the async email — the same residual ForgotPassword documents.
             if (RegistrationErrors.IsDuplicateOnly(result))
             {
                 var signInUrl = NavigationManager.ToAbsoluteUri("Account/Login").AbsoluteUri;
@@ -243,8 +244,10 @@
 
         // Optional on the model because the confirmation-required form doesn't render it (that box creates a
         // passwordless account — see RegisterForConfirmationAsync). The direct path requires it: the field
-        // carries the HTML `required` attribute, and CreateAsync's password policy rejects an empty or short
-        // one server-side with a clear message. The length hint stays on the label.
+        // carries the HTML `required` attribute, and CreateAsync's password policy enforces the 10-char
+        // minimum server-side with a clear message. [StringLength] keeps only a sanity UPPER bound — no
+        // MinimumLength or [Required], which would reject the unrendered confirmation-required case.
+        [StringLength(200)]
         [DataType(DataType.Password)]
         public string Password { get; set; } = "";
 
