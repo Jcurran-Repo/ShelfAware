@@ -131,11 +131,18 @@
             // via the standing "resend" link above, which singles out no address.)
             //
             // ⚠️ And the TIMING must reveal nothing either: Identity pays the PBKDF2 verify only when it
-            // reaches the password check — a found, CONFIRMED account — and short-circuits ~1000x faster for
-            // an unknown email or an unconfirmed one. Burn one equivalent verify on exactly those fast paths
-            // so every generic failure costs the same. (IsNotAllowed never hashed; a null lookup means the
-            // email is unknown, which also never hashed. A found account on the Failed path already paid it.)
-            if (result.IsNotAllowed || await SignInManager.UserManager.FindByEmailAsync(Input.Email) is null)
+            // reaches the password check — a found account WITH a password hash — and short-circuits ~1000x
+            // faster otherwise. Burn one equivalent verify on exactly the paths where it skipped the hash:
+            // an unconfirmed account (IsNotAllowed, gated before the password), an unknown email, OR a
+            // PASSWORD-LESS account (an external-login-only account has no hash, so CheckPasswordAsync returns
+            // fast without PBKDF2). A found account with a password on the Failed path already paid it.
+            var skippedHash = result.IsNotAllowed;
+            if (!skippedHash)
+            {
+                var user = await SignInManager.UserManager.FindByEmailAsync(Input.Email);
+                skippedHash = user is null || !await SignInManager.UserManager.HasPasswordAsync(user);
+            }
+            if (skippedHash)
             {
                 PasswordTiming.Equalize();
             }

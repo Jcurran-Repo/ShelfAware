@@ -9,8 +9,15 @@ namespace ShelfAware.Web.Auth;
 /// anti-enumeration (<c>Auth:RequireEmailConfirmation</c>), a registration for an already-taken email must
 /// return the SAME response as a real one — so the page needs to tell a PURE duplicate (hide it, respond as
 /// success) from a duplicate that rides alongside a real problem the user must fix, like a weak password
-/// (show only that problem, with the duplicate stripped — a weak password fails identically whether or not
-/// the email exists, so it leaks nothing). Lives here, not in the page, so both branches are testable.</summary>
+/// (show only that problem, with the duplicate stripped). Lives here, not in the page, so both branches are
+/// testable.
+///
+/// ⚠️ Note the "duplicate beside a weak password" case cannot actually arise today: <c>CreateAsync</c>
+/// validates the password FIRST and returns before it ever reaches the uniqueness check, so a weak password
+/// yields a password error with no duplicate error alongside it (and a weak password fails identically for a
+/// new or an existing email, leaking nothing either way). <see cref="ExcludingDuplicate"/> is therefore
+/// defence-in-depth against a future change to Identity's validation order, not a reachable path — kept
+/// because a wrong assumption there would be a silent enumeration leak.</summary>
 public static class RegistrationErrors
 {
     private static bool IsDuplicateAccount(IdentityError e) =>

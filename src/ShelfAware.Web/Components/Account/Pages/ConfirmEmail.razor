@@ -30,7 +30,8 @@ else
     // One sentence for every failure — unknown account, malformed code, expired/used token — so the page
     // confirms no account's existence and doesn't distinguish "already used" from "never valid".
     private const string BadLinkMessage =
-        "Error: this confirmation link is invalid or has expired. Sign in and choose 'Resend the confirmation email' for a fresh one.";
+        "Error: this confirmation link is invalid or has expired. Head to the sign-in page and use its " +
+        "\"Confirm your email — resend the link\" option to get a fresh one.";
 
     private bool confirmed;
     private string? errorMessage;

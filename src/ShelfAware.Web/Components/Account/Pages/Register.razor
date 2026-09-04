@@ -6,7 +6,6 @@
 @inject HouseholdService Households
 @inject AccountCreationLimiter AccountLimiter
 @inject IAccountEmailQueue EmailQueue
-@inject PasswordHashTiming PasswordTiming
 @inject AuthDbContext Db
 @inject IOptions<AuthOptions> Auth
 @inject NavigationManager NavigationManager
@@ -108,12 +107,13 @@
             // taken" confirms the address exists. Where the box requires confirmation (its anti-enumeration
             // posture), a valid registration for an already-taken email gets the SAME "check your inbox"
             // response as a real one, and the existing owner is emailed a heads-up instead — so a prober
-            // learns nothing while the real person isn't left confused. Identity fails a duplicate BEFORE it
-            // hashes the password (unlike a real registration, which does), so equalize the timing too, or
-            // the two would be distinguishable by how long the response takes.
+            // learns nothing while the real person isn't left confused. ⚠️ NO timing burn here: CreateAsync
+            // hashes the password (UpdatePasswordHash) BEFORE it runs the uniqueness check, so a duplicate
+            // ALREADY paid the same PBKDF2 cost a real registration does — an added burn would make the
+            // duplicate path measurably SLOWER, which would itself be a timing oracle (the pre-merge gate
+            // measured exactly that: duplicate 71ms vs success 36ms with the burn; ~parity without it).
             if (Auth.Value.RequireEmailConfirmation && RegistrationErrors.IsDuplicateOnly(result))
             {
-                PasswordTiming.Equalize();
                 var signInUrl = NavigationManager.ToAbsoluteUri("Account/Login").AbsoluteUri;
                 EmailQueue.Enqueue(new AccountEmailJob(AccountEmailKind.AlreadyRegistered, Input.Email, signInUrl));
                 Logger.LogInformation("A registration hit an existing email; queued an already-registered notice.");
