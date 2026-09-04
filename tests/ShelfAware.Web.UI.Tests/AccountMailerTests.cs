@@ -105,4 +105,29 @@ public class AccountMailerTests
         Assert.Contains("userId=u1&amp;code=abc", msg.HtmlBody);
         Assert.Contains("userId=u1&code=abc", msg.TextBody); // and the text body stays raw
     }
+
+    [Fact]
+    public async Task An_unconfigured_mailer_refuses_the_already_registered_send_too()
+    {
+        var mailer = new SmtpAccountMailer(Options.Create(new EmailOptions()));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => mailer.SendAlreadyRegisteredAsync("a@b.test", "https://x.test/Account/Login"));
+    }
+
+    [Fact]
+    public void The_already_registered_message_carries_addressing_subject_and_the_sign_in_link_in_both_bodies()
+    {
+        const string url = "https://demo.example.test/Account/Login";
+
+        var msg = SmtpAccountMailer.BuildAlreadyRegistered(Configured(), "visitor@example.test", url);
+
+        var from = Assert.IsType<MailboxAddress>(Assert.Single(msg.From));
+        Assert.Equal("noreply@example.test", from.Address);
+        var to = Assert.IsType<MailboxAddress>(Assert.Single(msg.To));
+        Assert.Equal("visitor@example.test", to.Address);
+        Assert.Equal("You already have a Reginald account", msg.Subject);
+        Assert.Contains(url, msg.TextBody);
+        Assert.Contains(url, msg.HtmlBody);
+    }
 }

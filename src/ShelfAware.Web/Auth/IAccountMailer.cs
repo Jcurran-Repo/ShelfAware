@@ -18,4 +18,10 @@ public interface IAccountMailer
     /// built by the page from the live request, same as the reset link — it carries whichever front door the
     /// registrant is actually at.</summary>
     Task SendEmailConfirmationAsync(string toEmail, string confirmUrl, CancellationToken ct = default);
+
+    /// <summary>Send the "you already have an account" notice to an address that tried to register but is
+    /// already taken — so a duplicate registration returns the SAME response as a real one and can't be used
+    /// to enumerate existing accounts, while the real owner still learns what happened.
+    /// <paramref name="signInUrl"/> is the absolute sign-in URL built from the live request.</summary>
+    Task SendAlreadyRegisteredAsync(string toEmail, string signInUrl, CancellationToken ct = default);
 }

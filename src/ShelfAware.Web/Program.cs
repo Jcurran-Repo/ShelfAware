@@ -252,6 +252,14 @@ builder.Services.AddOptions<EmailOptions>()
     .Validate(o => o.SmtpPort > 0, "Email:SmtpPort must be a positive port number.")
     .ValidateOnStart();
 builder.Services.AddSingleton<IAccountMailer, SmtpAccountMailer>();
+// Account emails (reset / confirmation / already-registered) go out on a background worker, not the request
+// thread. That keeps outbound-mail timing uniform — a real account and an unknown address both return in
+// ~ms rather than the real one waiting on a ~1s SMTP send — so the send can't be used to enumerate accounts,
+// and a slow relay can't stall registration or a reset. One queue instance behind both the interface (pages
+// enqueue) and the worker (drains + sends).
+builder.Services.AddSingleton<AccountEmailQueue>();
+builder.Services.AddSingleton<IAccountEmailQueue>(sp => sp.GetRequiredService<AccountEmailQueue>());
+builder.Services.AddHostedService<AccountEmailWorker>();
 builder.Services.AddScoped<HouseholdService>();
 // The demo box's daily account-creation cap (Auth:DailyAccountCreationLimit; §10). Scoped like
 // HouseholdService — it reads the same request-scoped AuthDbContext the registration flow uses. Harmless

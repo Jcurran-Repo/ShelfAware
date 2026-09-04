@@ -5,7 +5,7 @@
 @inject SignInManager<AppUser> SignInManager
 @inject HouseholdService Households
 @inject AccountCreationLimiter AccountLimiter
-@inject IAccountMailer Mailer
+@inject IAccountEmailQueue EmailQueue
 @inject AuthDbContext Db
 @inject IOptions<AuthOptions> Auth
 @inject NavigationManager NavigationManager
@@ -126,11 +126,11 @@
 
         if (Auth.Value.RequireEmailConfirmation)
         {
-            // The demo box (§10): don't sign in yet — email the confirmation link and send them to a
+            // The demo box (§10): don't sign in yet — queue the confirmation link and send them to a
             // "check your inbox" page. Identity's RequireConfirmedAccount then blocks sign-in until they
             // open it. The account + household exist (committed above), so a lost email is recovered by
             // "resend", not a re-registration (which RequireUniqueEmail would refuse anyway).
-            await SendConfirmationEmailAsync(user);
+            await QueueConfirmationEmailAsync(user);
             RedirectManager.RedirectTo("Account/RegisterConfirmation");
             return;
         }
@@ -144,26 +144,15 @@
     }
 
     /// <summary>Mint the email-confirmation token, encode it into an absolute link built from the live
-    /// request (so it carries whichever front door the registrant is at), and send it. Best-effort like
-    /// ForgotPassword's send: a relay hiccup logs but doesn't fail the registration — the account is already
-    /// committed and RegisterConfirmation points at "resend" for a link that never arrives.</summary>
-    private async Task SendConfirmationEmailAsync(AppUser user)
+    /// request (so it carries whichever front door the registrant is at), and QUEUE it for background
+    /// delivery — the request never waits on SMTP. The account is already committed; a link that never
+    /// arrives is recovered via "resend" on RegisterConfirmation.</summary>
+    private async Task QueueConfirmationEmailAsync(AppUser user)
     {
         var token = await UserManager.GenerateEmailConfirmationTokenAsync(user);
         var url = AccountLinks.ConfirmEmailUrl(NavigationManager, user.Id, token);
-        try
-        {
-            await Mailer.SendEmailConfirmationAsync(user.Email!, url, HttpContext.RequestAborted);
-            Logger.LogInformation("Email confirmation link sent to a new account.");
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Email confirmation link failed to send to a new account.");
-        }
+        EmailQueue.Enqueue(new AccountEmailJob(AccountEmailKind.EmailConfirmation, user.Email!, url));
+        Logger.LogInformation("Queued an email confirmation link for a new account.");
     }
 
     private sealed class InputModel

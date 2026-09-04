@@ -17,6 +17,9 @@ public sealed class SmtpAccountMailer(IOptions<EmailOptions> options) : IAccount
     public Task SendEmailConfirmationAsync(string toEmail, string confirmUrl, CancellationToken ct = default)
         => SendAsync(o => BuildConfirmation(o, toEmail, confirmUrl), ct);
 
+    public Task SendAlreadyRegisteredAsync(string toEmail, string signInUrl, CancellationToken ct = default)
+        => SendAsync(o => BuildAlreadyRegistered(o, toEmail, signInUrl), ct);
+
     /// <summary>The one place that connects, authenticates, sends, and disconnects — so both mails share
     /// exactly one TLS/auth policy and neither can drift. <paramref name="build"/> runs only after the
     /// configured guard, so BuildReset/BuildConfirmation can assume a satisfied <see cref="EmailOptions"/>.</summary>
@@ -86,6 +89,28 @@ public sealed class SmtpAccountMailer(IOptions<EmailOptions> options) : IAccount
                 <p>Welcome to Reginald! Confirm this email address to finish creating your account and sign in.</p>
                 <p><a href="{System.Net.WebUtility.HtmlEncode(confirmUrl)}">Confirm my email</a></p>
                 <p>If you didn't sign up, ignore this email — no account can be used until it's confirmed.</p>
+                """);
+
+    /// <summary>Internal, same reasoning as the others: the already-registered notice's addressing, subject,
+    /// and that BOTH bodies carry the sign-in link. <paramref name="o"/> must satisfy
+    /// <see cref="EmailOptions.IsConfigured"/> — the caller's guard, not re-checked here.</summary>
+    internal static MimeMessage BuildAlreadyRegistered(EmailOptions o, string toEmail, string signInUrl)
+        => Build(o, toEmail,
+            subject: "You already have a Reginald account",
+            text: $"""
+                Someone just tried to create a Reginald account with this email address — but you already
+                have one.
+
+                If that was you, just sign in: {signInUrl}
+                Forgotten your password? Use the "Forgot your password?" link on that page.
+
+                If it wasn't you, ignore this email — no new account was created and nothing changed.
+                """,
+            html: $"""
+                <p>Someone just tried to create a Reginald account with this email address — but you already have one.</p>
+                <p>If that was you, just <a href="{System.Net.WebUtility.HtmlEncode(signInUrl)}">sign in</a>.
+                Forgotten your password? Use the "Forgot your password?" link on that page.</p>
+                <p>If it wasn't you, ignore this email — no new account was created and nothing changed.</p>
                 """);
 
     /// <summary>Shared envelope for every account mail: From from the configured identity, the recipient,
