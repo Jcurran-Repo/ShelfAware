@@ -91,12 +91,13 @@ public class HouseholdServiceTests : IDisposable
     // ---- Registration gate (create-a-new-household path) ----
 
     [Theory]
-    [InlineData(true, false, true)]   // open registration, fresh deploy
-    [InlineData(true, true, true)]    // open registration, users exist
-    [InlineData(false, false, true)]  // locked down, but FIRST user bootstraps
-    [InlineData(false, true, false)]  // locked down, users exist → closed
-    public void MayCreateHousehold_matrix(bool allowRegistration, bool anyUsersExist, bool expected)
-        => Assert.Equal(expected, HouseholdService.MayCreateHousehold(allowRegistration, anyUsersExist));
+    [InlineData(true, false, true)]   // open registration → may create even once a household exists
+    [InlineData(true, true, true)]
+    [InlineData(false, false, true)]  // locked down, but no household yet → the first one bootstraps in
+    [InlineData(false, true, false)]  // locked down and a household already exists → refused
+    public void MayCreateHousehold_gates_on_registration_or_the_bootstrap(
+        bool allowRegistration, bool anyHouseholdsExist, bool expected)
+        => Assert.Equal(expected, HouseholdService.MayCreateHousehold(allowRegistration, anyHouseholdsExist));
 
     // ---- Create / join ----
 
@@ -725,13 +726,4 @@ public class HouseholdServiceTests : IDisposable
         await _context.SaveChangesAsync();
         Assert.True(await _service.AnyHouseholdsAsync());
     }
-
-    [Theory]
-    [InlineData(true, false, true)]   // registration open → may create even once households exist
-    [InlineData(true, true, true)]
-    [InlineData(false, false, true)]  // locked down, but no household yet → the first one bootstraps in
-    [InlineData(false, true, false)]  // locked down and a household already exists → refused
-    public void MayCreateHousehold_gates_on_registration_or_the_bootstrap(
-        bool allowRegistration, bool anyHouseholdsExist, bool expected)
-        => Assert.Equal(expected, HouseholdService.MayCreateHousehold(allowRegistration, anyHouseholdsExist));
 }

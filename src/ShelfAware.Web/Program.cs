@@ -596,6 +596,22 @@ if (speechCacheDir is not null)
         app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("SpeechCache"));
 }
 
+// A confirmation-required box no longer gates ACCOUNT creation on Auth:AllowRegistration — the household
+// gate moved to the chooser (so an invited person can still make an account), which leaves the daily cap
+// as the ONLY bound on new accounts AND on the confirmation emails they trigger to whatever address was
+// typed. On a PUBLIC box that's an email-amplification / row-flooding exposure if left uncapped. Warn
+// rather than fail: a trusted self-host may legitimately run confirmation-required without a cap.
+{
+    var authOptions = app.Services.GetRequiredService<IOptions<AuthOptions>>().Value;
+    if (authOptions.RequireEmailConfirmation && authOptions.DailyAccountCreationLimit is null)
+    {
+        app.Logger.LogWarning(
+            "Auth:RequireEmailConfirmation is on without Auth:DailyAccountCreationLimit — account creation, "
+            + "and the confirmation emails it sends to arbitrary addresses, are unbounded. Set a daily cap "
+            + "on a public deployment.");
+    }
+}
+
 using (var scope = app.Services.CreateScope())
 {
     // Accounts + households (auth.db) — always a from-scratch EnsureCreated (the file is new per

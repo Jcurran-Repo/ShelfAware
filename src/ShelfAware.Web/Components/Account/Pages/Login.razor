@@ -36,13 +36,15 @@
 {
     @* A STANDING link, like "Forgot your password?" below — shown whenever the box requires email
        confirmation, NOT triggered by a sign-in attempt. That is the whole point: a link that appeared only
-       for unconfirmed accounts would tell a prober which addresses those are (an enumeration oracle). This
-       one reveals nothing about any account — it states a property of the deployment — while still giving a
-       forgetful owner the way out of a lost confirmation email. Its text explains when it applies, so the
-       failed-sign-in message can stay generic. (RequireEmailConfirmation implies Email is configured — the
-       startup validation refuses the flag without a mailer — so the link never dangles.) *@
+       for not-yet-activated accounts would tell a prober which addresses those are (an enumeration oracle).
+       This one reveals nothing about any account — it states a property of the deployment — while still
+       giving a new registrant the way out of a lost activation link. It goes to the same enumeration-safe
+       "set your password" page a forgotten password does (a passwordless account recovers there too). Its
+       text explains when it applies, so the failed-sign-in message can stay generic. (RequireEmailConfirmation
+       implies Email is configured — the startup validation refuses the flag without a mailer — so the link
+       never dangles.) *@
     <p class="muted auth-alt">
-        <a href="Account/ResendEmailConfirmation">Registered but can't sign in? Confirm your email — resend the link</a>
+        <a href="Account/ForgotPassword">Registered but haven't set a password yet? Set it to activate your account</a>
     </p>
 }
 

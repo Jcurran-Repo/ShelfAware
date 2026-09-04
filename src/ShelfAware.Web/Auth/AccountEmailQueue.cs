@@ -6,7 +6,13 @@ namespace ShelfAware.Web.Auth;
 public enum AccountEmailKind
 {
     PasswordReset,
-    EmailConfirmation,
+
+    /// <summary>The set-your-password link a new account opens to activate itself on a confirmation-required
+    /// box (<c>Auth:RequireEmailConfirmation</c>). Registration there creates the account with NO password;
+    /// this link is where the person who controls the inbox sets it — which both establishes the credential
+    /// and confirms the address. It links to the same ResetPassword page a reset does (via
+    /// <see cref="AccountLinks.SetPasswordUrl"/>), which sets the password AND flips EmailConfirmed.</summary>
+    Activation,
 
     /// <summary>Sent to an address that tried to register but ALREADY has an account — so a duplicate
     /// registration returns the same "check your email" response as a real one and can't be used to

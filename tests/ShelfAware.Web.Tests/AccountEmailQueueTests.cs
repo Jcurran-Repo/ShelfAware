@@ -26,8 +26,8 @@ public class AccountEmailQueueTests
 
         public Task SendPasswordResetAsync(string toEmail, string url, CancellationToken ct = default)
             => Record(AccountEmailKind.PasswordReset, toEmail, url);
-        public Task SendEmailConfirmationAsync(string toEmail, string url, CancellationToken ct = default)
-            => Record(AccountEmailKind.EmailConfirmation, toEmail, url);
+        public Task SendAccountActivationAsync(string toEmail, string url, CancellationToken ct = default)
+            => Record(AccountEmailKind.Activation, toEmail, url);
         public Task SendAlreadyRegisteredAsync(string toEmail, string url, CancellationToken ct = default)
             => Record(AccountEmailKind.AlreadyRegistered, toEmail, url);
 
@@ -62,7 +62,7 @@ public class AccountEmailQueueTests
         IAccountEmailQueue api = queue;
 
         api.Enqueue(new AccountEmailJob(AccountEmailKind.PasswordReset, "reset@x.test", "https://x/reset"));
-        api.Enqueue(new AccountEmailJob(AccountEmailKind.EmailConfirmation, "confirm@x.test", "https://x/confirm"));
+        api.Enqueue(new AccountEmailJob(AccountEmailKind.Activation, "confirm@x.test", "https://x/confirm"));
         api.Enqueue(new AccountEmailJob(AccountEmailKind.AlreadyRegistered, "dup@x.test", "https://x/login"));
 
         await DrainAsync(queue, mailer);
@@ -71,7 +71,7 @@ public class AccountEmailQueueTests
         // its recipient + url intact (a swapped dispatch case fails this).
         Assert.Collection(mailer.Records,
             s => Assert.Equal(new Sent(AccountEmailKind.PasswordReset, "reset@x.test", "https://x/reset"), s),
-            s => Assert.Equal(new Sent(AccountEmailKind.EmailConfirmation, "confirm@x.test", "https://x/confirm"), s),
+            s => Assert.Equal(new Sent(AccountEmailKind.Activation, "confirm@x.test", "https://x/confirm"), s),
             s => Assert.Equal(new Sent(AccountEmailKind.AlreadyRegistered, "dup@x.test", "https://x/login"), s));
     }
 
@@ -84,13 +84,13 @@ public class AccountEmailQueueTests
         IAccountEmailQueue api = queue;
 
         api.Enqueue(new AccountEmailJob(AccountEmailKind.PasswordReset, "boom@x.test", "https://x/reset"));
-        api.Enqueue(new AccountEmailJob(AccountEmailKind.EmailConfirmation, "ok@x.test", "https://x/confirm"));
+        api.Enqueue(new AccountEmailJob(AccountEmailKind.Activation, "ok@x.test", "https://x/confirm"));
 
         await DrainAsync(queue, mailer);
 
         // The good one still went; the failure was swallowed (logged) rather than propagated.
         var only = Assert.Single(mailer.Records);
-        Assert.Equal(new Sent(AccountEmailKind.EmailConfirmation, "ok@x.test", "https://x/confirm"), only);
+        Assert.Equal(new Sent(AccountEmailKind.Activation, "ok@x.test", "https://x/confirm"), only);
     }
 
     /// <summary>Blocks (respecting the token) on its FIRST send so the worker loop is stuck on it and later
@@ -103,7 +103,7 @@ public class AccountEmailQueueTests
         public TaskCompletionSource FirstStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Task SendPasswordResetAsync(string toEmail, string url, CancellationToken ct = default) => Handle(toEmail, ct);
-        public Task SendEmailConfirmationAsync(string toEmail, string url, CancellationToken ct = default) => Handle(toEmail, ct);
+        public Task SendAccountActivationAsync(string toEmail, string url, CancellationToken ct = default) => Handle(toEmail, ct);
         public Task SendAlreadyRegisteredAsync(string toEmail, string url, CancellationToken ct = default) => Handle(toEmail, ct);
 
         private async Task Handle(string toEmail, CancellationToken ct)
@@ -134,7 +134,7 @@ public class AccountEmailQueueTests
         var worker = new AccountEmailWorker(queue, mailer, NullLogger<AccountEmailWorker>.Instance);
 
         api.Enqueue(new AccountEmailJob(AccountEmailKind.PasswordReset, "blocks@x.test", "u"));
-        api.Enqueue(new AccountEmailJob(AccountEmailKind.EmailConfirmation, "buffered1@x.test", "u"));
+        api.Enqueue(new AccountEmailJob(AccountEmailKind.Activation, "buffered1@x.test", "u"));
         api.Enqueue(new AccountEmailJob(AccountEmailKind.AlreadyRegistered, "buffered2@x.test", "u"));
 
         await worker.StartAsync(CancellationToken.None);

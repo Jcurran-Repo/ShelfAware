@@ -70,7 +70,9 @@ public sealed class AccountEmailWorker(
         }
         catch (OperationCanceledException) when (shutdownToken.IsCancellationRequested)
         {
-            // The host is stopping mid-send — abandon this one; StopAsync's undrained count covers the rest.
+            // The host is stopping mid-send — abandon this in-flight one (logged). The BUFFERED remainder is
+            // still sent, by the post-loop drain under a fresh token; only a job in flight when stop fires is
+            // dropped here, and total loss happens only on a forced kill past the host's shutdown deadline.
             logger.LogWarning("A queued account email ({Kind}) was abandoned at shutdown.", job.Kind);
         }
         catch (OperationCanceledException)
@@ -89,7 +91,7 @@ public sealed class AccountEmailWorker(
     private Task Dispatch(AccountEmailJob job, CancellationToken ct) => job.Kind switch
     {
         AccountEmailKind.PasswordReset => mailer.SendPasswordResetAsync(job.ToEmail, job.Url, ct),
-        AccountEmailKind.EmailConfirmation => mailer.SendEmailConfirmationAsync(job.ToEmail, job.Url, ct),
+        AccountEmailKind.Activation => mailer.SendAccountActivationAsync(job.ToEmail, job.Url, ct),
         AccountEmailKind.AlreadyRegistered => mailer.SendAlreadyRegisteredAsync(job.ToEmail, job.Url, ct),
         _ => Task.CompletedTask,
     };

@@ -14,15 +14,15 @@ public sealed class SmtpAccountMailer(IOptions<EmailOptions> options) : IAccount
     public Task SendPasswordResetAsync(string toEmail, string resetUrl, CancellationToken ct = default)
         => SendAsync(o => BuildReset(o, toEmail, resetUrl), ct);
 
-    public Task SendEmailConfirmationAsync(string toEmail, string confirmUrl, CancellationToken ct = default)
-        => SendAsync(o => BuildConfirmation(o, toEmail, confirmUrl), ct);
+    public Task SendAccountActivationAsync(string toEmail, string setPasswordUrl, CancellationToken ct = default)
+        => SendAsync(o => BuildActivation(o, toEmail, setPasswordUrl), ct);
 
     public Task SendAlreadyRegisteredAsync(string toEmail, string signInUrl, CancellationToken ct = default)
         => SendAsync(o => BuildAlreadyRegistered(o, toEmail, signInUrl), ct);
 
-    /// <summary>The one place that connects, authenticates, sends, and disconnects — so both mails share
-    /// exactly one TLS/auth policy and neither can drift. <paramref name="build"/> runs only after the
-    /// configured guard, so BuildReset/BuildConfirmation can assume a satisfied <see cref="EmailOptions"/>.</summary>
+    /// <summary>The one place that connects, authenticates, sends, and disconnects — so every mail shares
+    /// exactly one TLS/auth policy and none can drift. <paramref name="build"/> runs only after the
+    /// configured guard, so BuildReset/BuildActivation can assume a satisfied <see cref="EmailOptions"/>.</summary>
     private async Task SendAsync(Func<EmailOptions, MimeMessage> build, CancellationToken ct)
     {
         var o = options.Value;
@@ -72,23 +72,27 @@ public sealed class SmtpAccountMailer(IOptions<EmailOptions> options) : IAccount
                 <p>If this wasn't you, ignore this email — nothing has changed.</p>
                 """);
 
-    /// <summary>Internal, same reasoning as <see cref="BuildReset"/>: the confirmation mail's addressing,
+    /// <summary>Internal, same reasoning as <see cref="BuildReset"/>: the activation mail's addressing,
     /// subject, and that BOTH bodies carry the link. <paramref name="o"/> must satisfy
-    /// <see cref="EmailOptions.IsConfigured"/> — the caller's guard, not re-checked here.</summary>
-    internal static MimeMessage BuildConfirmation(EmailOptions o, string toEmail, string confirmUrl)
+    /// <see cref="EmailOptions.IsConfigured"/> — the caller's guard, not re-checked here. The link goes to the
+    /// same ResetPassword page a reset uses: setting the password there activates the account (and confirms
+    /// the address). Setting the password is what proves inbox control, so no one who merely knew the email
+    /// at sign-up can take the account over.</summary>
+    internal static MimeMessage BuildActivation(EmailOptions o, string toEmail, string setPasswordUrl)
         => Build(o, toEmail,
-            subject: "Confirm your email for Reginald",
+            subject: "Set your password to activate Reginald",
             text: $"""
-                Welcome to Reginald! Confirm this email address to finish creating your account
-                and sign in:
-                {confirmUrl}
+                Welcome to Reginald! Set your password to activate your account and sign in
+                (the link expires after a day and stops working once used):
+                {setPasswordUrl}
 
-                If you didn't sign up, ignore this email — no account can be used until it's confirmed.
+                If you didn't sign up, ignore this email — the account stays locked until a password is set.
                 """,
             html: $"""
-                <p>Welcome to Reginald! Confirm this email address to finish creating your account and sign in.</p>
-                <p><a href="{System.Net.WebUtility.HtmlEncode(confirmUrl)}">Confirm my email</a></p>
-                <p>If you didn't sign up, ignore this email — no account can be used until it's confirmed.</p>
+                <p>Welcome to Reginald! Set your password to activate your account and sign in.</p>
+                <p><a href="{System.Net.WebUtility.HtmlEncode(setPasswordUrl)}">Set my password</a>
+                — the link expires after a day and stops working once used.</p>
+                <p>If you didn't sign up, ignore this email — the account stays locked until a password is set.</p>
                 """);
 
     /// <summary>Internal, same reasoning as the others: the already-registered notice's addressing, subject,
