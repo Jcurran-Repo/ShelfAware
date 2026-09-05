@@ -141,9 +141,32 @@ public class LookalikeNudgeServiceTests : IDisposable
 
         await _service.DismissAsync(list[0].Id, list[1].Id, now);
 
-        Assert.Single(await _service.DismissedForProductAsync(list[0].Id));
-        Assert.Single(await _service.DismissedForProductAsync(list[1].Id));
+        // Each side names the OTHER product in the pair (resolved to its current name), never itself.
+        var fromLower = Assert.Single(await _service.DismissedForProductAsync(list[0].Id));
+        Assert.Equal(list[1].Id, fromLower.OtherProductId);
+        Assert.Equal(list[1].Name, fromLower.OtherName);
+        var fromHigher = Assert.Single(await _service.DismissedForProductAsync(list[1].Id));
+        Assert.Equal(list[0].Id, fromHigher.OtherProductId);
         Assert.Empty(await _service.DismissedForProductAsync(list[2].Id)); // the milk is in no pair
+    }
+
+    [Fact]
+    public async Task A_dismissal_drops_off_the_detail_page_once_its_partner_is_gone()
+    {
+        var list = await SeedList();
+        var now = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
+        await _service.GetActiveAsync(list, now);
+        await _service.DismissAsync(list[0].Id, list[1].Id, now);
+
+        // The partner is merged/deleted away. The breadcrumb id lingers, but there's nothing left to
+        // un-dismiss into, so the surviving product's page shows no dismissal.
+        await using (var db = _db.CreateDbContext())
+        {
+            db.Products.Remove(await db.Products.FindAsync(list[1].Id) ?? throw new InvalidOperationException());
+            await db.SaveChangesAsync();
+        }
+
+        Assert.Empty(await _service.DismissedForProductAsync(list[0].Id));
     }
 
     [Fact]

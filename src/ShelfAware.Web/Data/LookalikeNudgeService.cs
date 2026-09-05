@@ -8,6 +8,10 @@ namespace ShelfAware.Web.Data;
 /// it's lingered). A dismissed pair produces no nudge.</summary>
 public sealed record LookalikeNudge(SimilarPair Pair, NudgeMood Mood);
 
+/// <summary>A dismissed lookalike as seen from ONE product's detail page: the OTHER product in the pair,
+/// by current id and name, so the page can offer to un-dismiss it.</summary>
+public sealed record DismissedLookalike(int OtherProductId, string OtherName);
+
 /// <summary>Ties the pure detector (<see cref="SimilarPairs"/>) to Eggs's per-pair memory
 /// (<see cref="LookalikePair"/>): remembers when he first flagged each pair (so his mood can degrade),
 /// honours a permanent "they're different" dismissal, and reverses one. The ONE place the memory is read
@@ -93,13 +97,25 @@ public sealed class LookalikeNudgeService(
     }
 
     /// <summary>The dismissed pairs that involve <paramref name="productId"/> — for its detail page's "you
-    /// told Eggs this and X are fine as separate items" (each with an undo).</summary>
-    public async Task<IReadOnlyList<LookalikePair>> DismissedForProductAsync(int productId, CancellationToken ct = default)
+    /// told Eggs this and X are separate items" (each with an undo). Each carries the OTHER product's current
+    /// name; a pair whose partner was since merged or deleted (the ids are breadcrumbs, not FKs) drops out —
+    /// there's nothing left to un-dismiss into.</summary>
+    public async Task<IReadOnlyList<DismissedLookalike>> DismissedForProductAsync(int productId, CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        return await db.LookalikePairs.AsNoTracking()
+        var rows = await db.LookalikePairs.AsNoTracking()
             .Where(r => r.DismissedAt != null && (r.LowerProductId == productId || r.HigherProductId == productId))
             .ToListAsync(ct);
+        if (rows.Count == 0) return [];
+
+        var otherIds = rows.Select(r => r.LowerProductId == productId ? r.HigherProductId : r.LowerProductId).ToList();
+        var names = await db.Products.AsNoTracking()
+            .Where(p => otherIds.Contains(p.Id))
+            .ToDictionaryAsync(p => p.Id, p => p.Name, ct);
+
+        return [.. otherIds.Distinct()
+            .Where(names.ContainsKey) // partner still exists
+            .Select(id => new DismissedLookalike(id, names[id]))];
     }
 
     private static (int Lower, int Higher) Canonical(int a, int b) => a < b ? (a, b) : (b, a);

@@ -1467,6 +1467,28 @@ button.mic-speaking {
 .chip-unknown { background: var(--unknown-bg); color: var(--unknown-ink); }
 .chip-plan { background: var(--plan-bg); color: var(--plan-ink); }
 
+/* Eggs's lookalike nudge (GroceryList) — friendly, never a warning. The mood lives in his face and one
+   line; only a thin left accent shifts as a pair lingers (brand teal → gentle amber), and the copy stays
+   a soft "want to roll them into one?" the whole way. */
+.nudge {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    border-left: 4px solid var(--accent);
+}
+.nudge.nudge-nagging,
+.nudge.nudge-frazzled { border-left-color: var(--duesoon-line); }
+.nudge .eggs-mascot { flex: 0 0 auto; }
+.nudge-body { flex: 1 1 auto; min-width: 0; }
+.nudge-line { margin: 0 0 0.15rem; font-weight: 600; }
+.nudge-pair { margin: 0 0 0.6rem; }
+.nudge-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.nudge-done { display: flex; align-items: center; gap: 0.75rem; justify-content: space-between; }
+
+/* The "you told Eggs these are separate" list on a product's detail page (ProductDetail). */
+.dismissed-lookalikes .dismissed-list { list-style: none; margin: 0.4rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.dismissed-lookalikes .dismissed-list li { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+
 /* A grocery row the meal plan put on the list (GroceryList.razor). Tinted so plan items read as
    plan-driven at a glance; the "Plan" chip + "for <meal>" note carry the meaning for screen readers
    (color is never the only signal). */
