@@ -65,6 +65,9 @@ public abstract class PageTestContext : BunitContext
     /// <summary>Real courier, not a fake — a plain per-circuit slot. The footer stashes a captured snapshot
     /// into it and /bugs collects it, so a test can watch either end of that hand-off.</summary>
     internal BugReportContext BugContext { get; }
+    /// <summary>Real one-shot carrier — a merge stashes its inline ↩ Undo here and the target's Product Detail
+    /// picks it up on load, so a test can drive either end.</summary>
+    internal MergeUndoNotice MergeNotice { get; }
 
     protected PageTestContext()
     {
@@ -82,6 +85,7 @@ public abstract class PageTestContext : BunitContext
         Coordinator = new VoiceCoordinator();
         Tour = new TourCoordinator();
         BugContext = new BugReportContext();
+        MergeNotice = new MergeUndoNotice();
 
         Services.AddSingleton<IHouseholdDbFactory>(Factory);
         Services.AddSingleton<IAppSettings>(AppSettings);
@@ -97,6 +101,7 @@ public abstract class PageTestContext : BunitContext
         Services.AddSingleton(Coordinator);
         Services.AddSingleton(Tour);
         Services.AddSingleton(BugContext);
+        Services.AddSingleton(MergeNotice);
         // AI-available BYOK (a visitor who has entered their key) — the shape most page tests assume, since
         // they fake the AI seams to return results. The phase-4c pre-check (AiErrorText.BlockedReasonAsync)
         // READS this, so a keyless default would report "no key" and block every AI action before the fake

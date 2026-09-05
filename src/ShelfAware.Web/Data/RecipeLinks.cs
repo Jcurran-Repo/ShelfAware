@@ -20,12 +20,14 @@ namespace ShelfAware.Web.Data;
 public static class RecipeLinks
 {
     /// <summary>Re-points every link whose identity is <paramref name="oldName"/>'s onto
-    /// <paramref name="newName"/>; returns how many moved.</summary>
-    public static async Task<int> RepointAsync(
+    /// <paramref name="newName"/>; returns the ids of the ingredients it moved (empty when none). The ids
+    /// are what lets a merge undo move exactly those links back — a rename that only needs the count reads
+    /// <c>.Count</c>.</summary>
+    public static async Task<IReadOnlyList<int>> RepointAsync(
         ShelfAwareDbContext db, string oldName, string newName, CancellationToken cancellationToken = default)
     {
         var oldKey = ProductMatcher.IdentityKey(oldName);
-        if (oldKey.Length == 0) return 0;
+        if (oldKey.Length == 0) return [];
 
         var linked = (await db.RecipeIngredients
                 .Where(i => i.MatchedProduct != null)
@@ -33,6 +35,6 @@ public static class RecipeLinks
             .Where(i => ProductMatcher.IdentityKey(i.MatchedProduct!) == oldKey)
             .ToList();
         foreach (var ingredient in linked) ingredient.MatchedProduct = newName;
-        return linked.Count;
+        return linked.Select(i => i.Id).ToList();
     }
 }

@@ -37,7 +37,7 @@ public static class UndoServiceCollectionExtensions
         services.AddScoped<IUndoHandler, ProductRenamedHandler>();
         services.AddScoped<IUndoHandler, MealLoggedHandler>();
         services.AddScoped<IUndoHandler, ReceiptConfirmedHandler>();
-        services.AddScoped<IUndoHandler, ProductsMergedHandler>();   // history-only (greyed)
+        services.AddScoped<IUndoHandler, ProductsMergedHandler>();   // reversible (manifest-backed un-merge)
         services.AddScoped<IUndoHandler, CensusConfirmedHandler>();  // history-only (greyed)
         services.AddScoped<IUndoHandler, ExcludedFoodChangedHandler>(); // soft action, reversible
         services.AddScoped<IUndoHandler, RecipeSavedHandler>();      // soft action, reversible (warns if built on)

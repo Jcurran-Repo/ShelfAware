@@ -2637,8 +2637,8 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      create-product (delete only if it gained no other history — mirrors `ReceiptRemovalService`), tags/subs/
      extras adds, "Ate it" (via `MealStock.Restore`), **confirm-receipt via TOTAL removal** (`ReceiptRemovalService`
      — the same inverse the Upload page's ↩ Undo uses; the receipt image is the `IUndoAfterCommit` case), rename,
-     the won't-eat list. HISTORY-ONLY greyed: **merge** (lossy — moves purchases/aliases/signals, unions tags,
-     deletes the source) and **census confirm** (a real inverse — reverting summed per-product attestations — is
+     the won't-eat list. HISTORY-ONLY greyed: ~~**merge**~~ **[merge became REVERSIBLE 2026-09-04 — item 64]**
+     and **census confirm** (a real inverse — reverting summed per-product attestations — is
      genuine work, deferred). ⚠️ **`ReceiptRemoved` was DROPPED**: a confirmed receipt already carries a
      `ReceiptConfirmed` entry, which greys as **Gone** the instant the receipt is removed, so a separate entry
      would only double-log the same narrative — the enum value is gone and the reason is written into
@@ -3456,13 +3456,106 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
    - **3035 green, 0 warnings** (non-incremental Release; the number climbed across the gate fixes). Every
      load-bearing rule mutation-checked.
 
-64. **Conservative descriptor normalizer — ADVISE, don't block (2026-09-05, branch
-   `feature/descriptor-normalizer`; gate PENDING, UNPUSHED).** PR 2 of the "Eggs flags two similar products"
-   arc — Jordan's "there are a lot of useless descriptor words responsible for separating these two breads
-   into artificially separate items… so that's really the source problem, we should fix it both places",
-   with "autostrip should be conservative, the aggressive nudge catches the rest." ⚠️ **On this branch it
-   follows item 63; renumber to 65 at merge if the undoable-merge PR (#63, also numbered 64) lands first — it
-   will** (item 45's convention: the second-merged branch reorders CLAUDE.md).
+64. **Undoable product merge (2026-09-04, branch `feature/undoable-merge`; gate PENDING, UNPUSHED).** PR 1 of
+   the "Eggs flags two similar products" arc (Jordan's ask — a nudge for lookalikes on the grocery list, an
+   escalating offer to LINK them, and a source-side fix for descriptor words that split one item into two).
+   Jordan's ruling on the link: it's a **full merge, with real undo — "a must"** — so this PR makes the lossy
+   product merge reversible FIRST, which lifts BOTH the existing ⇆ merge panel and the future link offer (one
+   handler, every merge undoable). It was the arc's hardest piece and stands alone.
+   - **The problem: merge is lossy by nature**, which is why item 51 shipped it history-only (greyed). It folds
+     one product's purchases/lines/aliases/signals into the survivor, unions tags+substitutes (dropping dupes),
+     re-points name-keyed recipe links, flips the target's tracked flag / unit, and DELETES the source — so once
+     it runs, nothing on the survivor distinguishes the moved rows from its own.
+   - ⚠️ **The fix is a merge MANIFEST captured before the fold** (`ProductsMergedPayload` grew from
+     `(sourceName, targetName)` to the full set): the ids of every moved purchase/line/alias/signal (and which
+     of them the variety label stamped), the source's whole definition (`MergedSourceSnapshot` — category, unit,
+     counting fields, provenance, tag+sub values), the tags/subs it ADDED to the target (vs merely deduped), the
+     re-pointed recipe-link ids, and the target's pre/post `IsTracked`+`DefaultUnit`. Captured in
+     `ProductMergeService.MergeAsync` with SELECTs before the `ExecuteUpdate`s; without it the split simply can't
+     be rebuilt, which is the whole reason merge was deferred.
+   - **The undo** (`ProductsMergedHandler`, now a real `UndoHandler`, was `HistoryOnlyHandler`) rebuilds the
+     source as a **fresh row (a NEW id — the old one is dead)** and pulls its contribution back out: re-parents
+     the moved rows by **NAVIGATION** so EF assigns the new id and fixes every FK in the ONE `SaveChanges`
+     `ActivityLogService` commits — ⚠️ **no `ExecuteUpdate` in an undo** (it autocommits immediately and would
+     break the single-transaction guarantee a refused undo relies on); every moved entity happens to carry a
+     `Product` navigation, which is what makes this possible. Then it un-stamps exactly the variety the merge
+     wrote, pulls the added tags/subs off the target, re-points the recipe links back (only the ones still
+     identity-matching the target), and restores the target scalars.
+   - ⚠️ **TOLERANT — "revive what we can" (Jordan's call).** A moved row deleted since (a receipt removal) is
+     genuinely gone and simply skipped, not resurrected; the undo revives what still points at the target rather
+     than refusing wholesale. Precondition-checked per item 51: target still here → else `Gone`; the source's
+     identity key still free → else `Superseded` (reviving into a collision would recreate the very twin the
+     merge removed). The target scalar restore is restore-**if-unchanged-since** (a later user choice wins).
+   - ⚠️ **Legacy merges stay greyed for FREE.** A merge recorded before this carries `Reversibility.NotReversible`
+     stamped on its `ActivityEntry` ROW, so `ActivityLogService` refuses it before dispatch and the handler never
+     sees the old two-field payload — no migration, no legacy-payload branch. Pinned by a test.
+   - `RecipeLinks.RepointAsync` returns the re-pointed ingredient ids now (was a count); `ProductRenameService`
+     reads `.Count`. One definition, both callers (the ids are what the merge undo needs).
+   - **Tests + mutation-checks:** 6 undo tests in `ProductMergeServiceTests` (round-trip restoration, unlabelled
+     merge, tolerance of a since-deleted purchase, refuse-on-target-gone, refuse-on-name-collision-by-IDENTITY,
+     Peek==Undo) + `ActivityLogTests` reversible round-trip + legacy-greyed; two `HistoryPageTests` switched off
+     `ProductsMerged` (now reversible) onto `CensusConfirmed` (genuinely history-only) as their greyed example.
+     Seven mutations, each killing exactly its test (variety un-stamp, name-collision, target-missing, tag
+     removal, scalar restore, forward stamp-capture, and the reparent — which also proves the tolerance test
+     non-vacuous).
+   - **Live-verified end to end** (dev sandbox, alt port): merged Strawberry Drink Mix into Drink Mix (history
+     pooled to 8×, source deleted), `/history` then offered **Undo** on the merge row (reversible, via the
+     generic page), and the undo revived Strawberry Drink Mix as a **new product id (664→674)** with its 2
+     Kool-Aid purchases, its Snack tag, and the **variety un-stamped back to null**, while Drink Mix shrank back
+     to 6×. Zero console/CSP errors.
+   - **The `/pre-push` gate (two independent Opus reviewers, reading by SHA in isolated worktrees).
+     Security PASS** — probe-verified: household B cannot undo A's merge (the entry loads household-filtered →
+     a foreign id is `Gone`), and a FORGED payload naming A's `TargetId` + A's row ids is stopped at the first
+     read (`FindAsync` applies the filter → `Gone`) before any write; no new `IgnoreQueryFilters`/endpoint/
+     settings-key/disk-write; the manifest rides the already-covered `ActivityEntry` (export/delete/CountAll
+     reach it). **Code review: one Medium, fixed.**
+     - ⚠️ **The revive-collision check false-refused a TWIN merge.** My check refused the undo if any product
+       still answered to the source's identity — but that includes the survivor itself when the merge folded
+       two identity-twins ("Half and Half" into "Half-and-Half", same `IdentityKey`), so undoing the merge
+       tool's *headline* case (twin cleanup) was refused forever and `/history` greyed it as a misleading
+       "superseded". **Fixed by REMOVING the check** (Jordan-flagged divergence from the reviewer's nuanced
+       alternative): there is no unique constraint on product identity — the app TOLERATES twins and the merge
+       tool exists to clean them — so an undo that revives a twin is the faithful, visible, re-mergeable
+       restoration of the pre-merge state, not the SILENT twin-creation item 41 guards extraction/rename
+       against. The handler now returns only Done/Gone. The collision-refusal test was replaced with an
+       inverted twin-merge-undo test (both twins come back, history split), mutation-checked (re-adding the
+       check fails exactly it — item 40's "a deleted rule's test is an inverted one"). Security's one INFO note
+       (a missing `Enum.IsDefined` on the deserialized `Category`) is unreachable — the payload is
+       server-generated from an already-guarded value — so it was left.
+   - **Inline ↩ Undo on the merge panel too (Jordan's ask).** A merge deletes the source and navigates to the
+     target, so the affordance can't live in a component field — `MergeUndoNotice` (scoped, one-shot; the
+     `BugReportContext` cross-nav carrier pattern) stashes `(entryId, sourceName, targetId)` in `SaveMerge`
+     and the TARGET's Product Detail picks it up ONCE on load, showing a green `.callout.ok` "Merged X into Y —
+     ↩ Undo". Clicking it runs the SAME `ActivityLogService.UndoAsync` /history uses, then reloads so the
+     target's reduced history matches, and shows "✓ Merge undone — X is back". ⚠️ **The notice is reset only on
+     a product SWITCH, never on the post-undo same-product REFRESH** (`OnParametersSetAsync` distinguishes them
+     by `product.Id != Id`), so the confirmation survives the reload; the consume is SET-only for the same
+     reason. `MergeAsync` returns the new `UndoEntryId`. 3 page tests (stash, notice+reverse round-trip,
+     clear-on-switch) + the harness gained `MergeUndoNotice`; 4 mutations each kill exactly their test — and
+     one exposed a vacuous assertion (`"undone"` also matched the FAILURE copy "already been undone"), tightened
+     to "Merge undone" + the vanished button (item 34, live).
+   - **The re-gate over the two follow-up commits (item 39 — a fix pass needs its own review; code on Opus,
+     security on Sonnet, by SHA in isolated worktrees). Security PASS** (probed the per-circuit carrier + a
+     cross-household undo-by-id sweep, both clean; the removed guard was a same-household data-shape check,
+     never tenancy). **Code SHIP** — the collision removal verified safe (no unique index on product identity
+     anywhere, so a revived twin can't violate a constraint; probed), the switch-vs-refresh state machine
+     traced correct, one **Low** fixed: ⚠️ `UndoMerge`'s catch said "that didn't undo" even when the undo
+     COMMITTED and only the reload threw — the "'try again' after a success" case the three sibling handlers in
+     the same file split with a `saved` flag (items 27/31). Now split on an `undone` flag ("Undone — but the
+     page couldn't refresh" vs "That didn't undo"); pinned by a `FailAfter=1` reload-failure test,
+     mutation-checked. (Reviewer's out-of-scope note: the revive restoring a stale `CreatedByReceiptId` is a
+     non-issue — the breadcrumb is designed to tolerate a gone receipt, `Product.cs` says so.)
+   - **3046 green, 0 warnings** (non-incremental Release; Core 1329 · AI 172 · Persistence 961 · Pages 584;
+     +11 over master's 3035). Live-verified the inline undo end to end (merge → green notice on the target →
+     ↩ Undo → "✓ Merge undone" + history reloaded 8×→6×; server logs clean). ⚠️ **The nudge + per-pair
+     dismissal + link-to-merge escalation, and the conservative descriptor normalizer (extraction +
+     `IdentityKey`), are the arc's LATER PRs — not in this one.**
+
+65. **Conservative descriptor normalizer — ADVISE, don't block (2026-09-05, branch
+   `feature/descriptor-normalizer`; ✅ gated clean — code SHIP + security PASS; PR #64).** PR 2 of the "Eggs
+   flags two similar products" arc — Jordan's "there are a lot of useless descriptor words responsible for
+   separating these two breads into artificially separate items… so that's really the source problem, we
+   should fix it both places", with "autostrip should be conservative, the aggressive nudge catches the rest."
    - **`DescriptorFilter` (Core/Chat) is the ONE conservative throwaway-word list** (`style`, `brand`) — pure
      manner/marketing filler that never names a distinct food ("Greek **Style** Yogurt" is Greek Yogurt).
    - ⚠️ **It feeds the ADVISORY fuzzy path, NOT product identity — this is the crucial safety choice, and it

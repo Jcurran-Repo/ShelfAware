@@ -71,11 +71,11 @@ public class HistoryPageTests : PageTestContext
     [Fact]
     public void A_history_only_action_shows_greyed_with_no_undo()
     {
-        SeedEntry(ActivityKind.ProductsMerged, "Merged Butter into Butter", Reversibility.NotReversible);
+        SeedEntry(ActivityKind.CensusConfirmed, "Counted 3 items from a photo", Reversibility.NotReversible);
 
         var cut = RenderHistory();
 
-        var row = RowFor(cut, "Merged Butter into Butter");
+        var row = RowFor(cut, "Counted 3 items from a photo");
         Assert.Contains("can't be undone", row.TextContent);
         Assert.Empty(row.QuerySelectorAll("button"));
         Assert.Contains("muted", row.ClassName);
@@ -140,7 +140,7 @@ public class HistoryPageTests : PageTestContext
     public void Show_all_reveals_older_entries_beyond_the_recent_window()
     {
         for (var i = 0; i < 35; i++)
-            SeedEntry(ActivityKind.ProductsMerged, $"Older action {i}", Reversibility.NotReversible);
+            SeedEntry(ActivityKind.CensusConfirmed, $"Older action {i}", Reversibility.NotReversible);
 
         var cut = RenderHistory();
         Assert.Equal(30, cut.FindAll("tbody tr").Count); // recent window
