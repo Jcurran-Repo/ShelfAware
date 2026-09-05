@@ -34,8 +34,9 @@
 </div>
 
 @* Eggs flags two products on the list that look like the same thing and gently offers to merge them.
-   The ask stays gentle the whole way; only his face + one line degrade the longer a pair lingers. *@
-@foreach (var n in nudges)
+   The ask stays gentle the whole way; only his face + one line degrade the longer a pair lingers. Only a
+   few show at once (most-bothered first) so a catalog full of near-twins can't bury the actual list. *@
+@foreach (var n in VisibleNudges)
 {
     <section class="panel nudge nudge-@n.Mood.ToString().ToLowerInvariant()">
         <EggsMascot Mood="n.Mood" Size="72" />
@@ -49,6 +50,10 @@
             </div>
         </div>
     </section>
+}
+@if (HiddenNudgeCount > 0)
+{
+    <p class="muted nudge-overflow">…and @HiddenNudgeCount more look-alike@(HiddenNudgeCount == 1 ? "" : "s") to look at — sort these out and Eggs will show the next.</p>
 }
 @if (mergedNotice is { } mn)
 {
@@ -148,6 +153,13 @@ else
     private (int EntryId, string Message)? mergedNotice;
     private string? nudgeError;
     private bool nudgeBusy;
+
+    // Only a few nudges show at once so a catalog dense with near-twins can't bury the list. Most-bothered
+    // first (Frazzled → Fresh), so the pairs Eggs has stared at longest surface before the fresh ones.
+    private const int MaxNudgesShown = 3;
+    private IEnumerable<LookalikeNudge> VisibleNudges =>
+        nudges.OrderByDescending(n => n.Mood).ThenBy(n => n.Pair.LowerName).Take(MaxNudgesShown);
+    private int HiddenNudgeCount => Math.Max(0, nudges.Count - MaxNudgesShown);
 
     protected override Task OnInitializedAsync() => LoadAsync();
 

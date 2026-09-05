@@ -14,23 +14,26 @@ namespace ShelfAware.Web.UI.Tests;
 /// </summary>
 public class LookalikeNudgePageTests : PageTestContext
 {
-    // Two tracked products that share the pair-unique word "brioche" — one lookalike pair. Overdue so they
-    // also sit on the visible list. Bread is seeded first, so it holds the smaller (canonical "lower") id.
-    private (int BreadId, int LoafId) SeedLookalikePair()
+    private static List<PurchaseEvent> Overdue() =>
+    [
+        new() { PurchasedAt = Today.AddDays(-45), Quantity = 1m },
+        new() { PurchasedAt = Today.AddDays(-30), Quantity = 1m },
+    ];
+
+    // Two tracked products sharing a pair-unique word — one lookalike pair. Overdue so they also sit on the
+    // visible list. Returns the ids lowest-first (so the first is the canonical "lower").
+    private (int LowerId, int HigherId) SeedPair(string a, string b)
     {
         using var db = Db.CreateDbContext();
-        var bread = new Product { Name = "Artesano Brioche Bread", Category = Category.Pantry, Purchases = Overdue() };
-        var loaf = new Product { Name = "Brioche Loaf", Category = Category.Pantry, Purchases = Overdue() };
-        db.Products.AddRange(bread, loaf);
+        var first = new Product { Name = a, Category = Category.Pantry, Purchases = Overdue() };
+        var second = new Product { Name = b, Category = Category.Pantry, Purchases = Overdue() };
+        db.Products.AddRange(first, second);
         db.SaveChanges();
-        return (bread.Id, loaf.Id);
-
-        static List<PurchaseEvent> Overdue() =>
-        [
-            new() { PurchasedAt = Today.AddDays(-45), Quantity = 1m },
-            new() { PurchasedAt = Today.AddDays(-30), Quantity = 1m },
-        ];
+        return first.Id < second.Id ? (first.Id, second.Id) : (second.Id, first.Id);
     }
+
+    // Jordan's breads: "Artesano Brioche Bread" (seeded first, so lower id) and "Brioche Loaf" share "brioche".
+    private (int BreadId, int LoafId) SeedLookalikePair() => SeedPair("Artesano Brioche Bread", "Brioche Loaf");
 
     private IRenderedComponent<GroceryList> RenderList()
     {
@@ -89,6 +92,25 @@ public class LookalikeNudgePageTests : PageTestContext
 
         await using var db = Db.CreateUnscopedContext();
         Assert.NotNull(await db.Products.IgnoreQueryFilters().FirstOrDefaultAsync(p => p.Name == "Brioche Loaf"));
+    }
+
+    [Fact]
+    public void At_most_three_nudges_show_and_the_rest_sit_behind_an_overflow_note()
+    {
+        // Four lookalike pairs (a catalog dense with near-twins). Only three cards show so the actual list
+        // isn't buried; the fourth is behind a gentle overflow note.
+        SeedPair("Brioche Bread", "Brioche Loaf");
+        SeedPair("Sourdough Round", "Sourdough Boule");
+        SeedPair("Cheddar Block", "Cheddar Wedge");
+        SeedPair("Roma Tomatoes", "Cherry Tomatoes");
+
+        var cut = RenderList();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal(3, cut.FindAll(".nudge").Count);
+            Assert.Contains("1 more look-alike", cut.Find(".nudge-overflow").TextContent);
+        });
     }
 
     [Fact]
