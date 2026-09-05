@@ -3637,8 +3637,11 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      clipboard) with only the FACE varying by `Mood`: mouth droops Fresh→Frazzled, worried brows appear at
      Nagging, and at Frazzled a bead of sweat + a tipped hat (a bit crazy, never distressing). Per-instance
      clip-path id so two mascots on one page don't cross-wire. Decorative (`aria-hidden`) — the card carries
-     the words. ⚠️ A mascot's appearance can't be unit-tested, so the four faces were eyeballed in a static
-     preview (sent to Jordan) and the live Fresh face confirmed in-app.
+     the words. ⚠️ **He sits on the dark app-icon backdrop** (the `#131619` rounded badge the header brand
+     mark uses) — a preview-driven fix: his body is a white blob, which washed out on the default light
+     "Warm & Fresh" cream cards (it only popped on the dark live view); the badge makes him read on ANY card
+     colour and match the icon. ⚠️ A mascot's appearance can't be unit-tested, so the four faces were eyeballed
+     in a static preview (sent to Jordan) and the live Fresh face confirmed in-app on BOTH light and dark.
    - **`LookalikePair` (Core entity) is Eggs's per-pair memory** — `FirstSeenAt` (drives the mood) +
      `DismissedAt` (a permanent "they're different", reversible). Canonical lower/higher product ids are
      **breadcrumbs, NOT FKs** (a product may be merged/deleted while the row lingers harmlessly; the service
