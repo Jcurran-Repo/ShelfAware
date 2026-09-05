@@ -3480,6 +3480,13 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      form words (Frozen, Fresh, Loaf) are OUT — each can name a genuinely distinct item; the aggressive cases
      (Jordan's Artesano/Bakery breads) are the PR 3 nudge's job. `DescriptorFilterTests` pins the membership
      directly, so adding a word is a deliberate, reviewed act.
+   - ⚠️ **The "add anyway" recovery covers the INTERACTIVE surfaces** (add form, census, chat
+     `create_product` — each treats a rule-3 hit as advisory). **`ReceiptAutoConfirmer` (Smart/Auto import,
+     opt-in) is not advisory**: it consumes `ProductMatcher.Resolve` (rule 3) as an AUTOMATIC decision, so a
+     filler-only line now auto-rolls-up into the existing product rather than queuing for review (Smart) or
+     creating a new one (Auto). That is the intended rollup and consistent with the auto-confirmer already
+     trusting ≥0.8 rule-3 matches; recovery there is receipt-removal / merge, not "add anyway" (gate
+     observation, accepted).
    - **Extraction prompt rule 3** sheds the same filler at the SOURCE ("Greek Style Yogurt" → "Greek Yogurt"),
      for cleaner new names — the "both places" the source-fix needed (probabilistic prompt + the deterministic
      fuzzy shed that reliably ADVISES on existing splits). ⚠️ The PROMPT change is NOT unit-tested

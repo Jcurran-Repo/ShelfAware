@@ -104,12 +104,15 @@ public static class ProductMatcher
         foreach (var p in products)
         {
             var pTokens = Tokens(Normalize(p.Name));
-            // Stryker disable once Statement: equivalent — an empty-name product shares 0 weight and
-            // has pWeight 0, so score is 0 / max(qWeight, 0) = 0 (qWeight is strictly positive: every
-            // idf weight is ln((N+1)/(df+0.5)) > 0 and the q.Length guard guarantees a token, so no
-            // 0/0 NaN) and 0 can never beat bestScore (≥ 0); dropping the continue changes no result.
-            // Scoped to Statement ONLY (adversarial-review fix): the original `all` also suppressed a
-            // killable Equality mutant the existing token-overlap test kills.
+            // Stryker disable once Statement: equivalent — dropping the continue changes no result. An
+            // empty-name product has pWeight 0, so its score is 0 / max(qWeight, 0): that is 0 when
+            // qWeight > 0, and NaN when qWeight is ALSO 0 — reachable now that Tokens sheds filler, via an
+            // all-filler query like "style" (it passes the q.Length guard, since Normalize does NOT shed,
+            // then Tokens sheds every token → qWeight 0). Either way the score can never beat bestScore:
+            // 0 > bestScore is false (bestScore ≥ 0) and NaN > bestScore is ALWAYS false, so `best` is
+            // never updated for an empty-name product whether or not the continue is there. Scoped to
+            // Statement ONLY (adversarial-review fix): the original `all` also suppressed a killable
+            // Equality mutant the existing token-overlap test kills.
             if (pTokens.Count == 0) continue;
             var sharedWeight = qTokens.Where(pTokens.Contains).Sum(Weight);
             var pWeight = pTokens.Sum(Weight);
