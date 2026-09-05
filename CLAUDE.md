@@ -3602,6 +3602,86 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      +3 over master's 3035). ⚠️ **PR 3 — the nudge + per-pair dismissal + link-to-(undoable-)merge escalation —
      is the arc's next and final PR, and the real fix for the Artesano/Bakery bread case.**
 
+66. **The lookalike nudge — Eggs flags two similar products on the list (2026-09-05, branch
+   `feature/similar-products-nudge`; gate PENDING, UNPUSHED).** PR 3 (the final one) of the "Eggs flags two
+   similar products" arc, and the real fix for Jordan's Artesano/Bakery bread case that PR 2's conservative
+   shed deliberately left alone. Jordan's calls: *"we should always probably suggest merging, it should just
+   be a gentle suggestion"*; personality where *"he slowly degrades in happiness as it stays up, like a Mr
+   Meeseeks… nothing too crazy though, just matching the new song we wrote. a bit crazy"*; use the REAL Eggs
+   artwork; and for the 5-yogurt cluster edge, *"do A now"* (accept it, manual undoable merge is the fallback)
+   and note B *"not as an item to be done, but as a specific solution for that problem if it pops up."*
+   - **`SimilarPairs.Find` (Core, pure) is the detector.** The signal: two products on the list share a core
+     food word that NOTHING ELSE on the list has — a word held by EXACTLY two products (df == 2). "Artesano
+     Brioche Bread" and "Brioche Loaf" both own "brioche" and nothing else does → a pair; five chicken
+     products all share "chicken", which is then a category head (df ≥ 3, distinguishes nothing) → NOT a
+     signal, so no C(n,2) spam. ⚠️ **Deliberately looser than `IngredientMatcher.IsSameFood`** (which needs
+     MUTUAL core-word coverage and so misses a pair that shares only its distinguishing word — the reason the
+     detector isn't built on it). Aggressive by design (a false positive costs one permanent dismiss, the
+     caller's to apply — the detector holds no state); uses `IngredientMatcher.CoreTokens` (internal to Core)
+     so the trivial-modifier stripping matches the rest of the app. Canonical lower-id-first via MinBy/MaxBy
+     (ids distinct, so unambiguous), so a pair has ONE identity however it was scanned.
+   - ⚠️ **The cluster edge is ACCEPTED, and its fix is documented as a ready solution, NOT a to-do** (in
+     `SimilarPairs`'s own doc comment). Three+ products sharing a head (five yogurts) aren't nudged — per-pair
+     would be spam and a head shared by many is a category, not a "these two" signal. The fallback is manual
+     merge, safe now that merge is undoable (item 64). IF it ever proves annoying, the specific fix is a
+     SINGLE gentle cluster heads-up ("you've got 5 yogurts — take a look"), never per-pair — an additive nudge
+     kind, not a change to this detector.
+   - **`NudgeMood` / `NudgeMoods` (Core, pure) is the Meeseeks degrade.** `For(age)` → Fresh (<3d) →
+     Deflating (<7) → Nagging (<14) → Frazzled; a backwards clock reads Fresh, never a crash. `Line(mood)` is
+     Eggs's one line per mood ("Ooh — these two look like the same thing to me." → "I can't look at these two
+     anymore!"). ⚠️ **The ESCALATION is the mood; the ASK stays gentle the whole way** — only his face and the
+     line degrade, never the "want to roll them into one?" copy. One place, so the mascot's expression and the
+     card's line read the same enum.
+   - **`EggsMascot.razor` renders the REAL icon artwork** (docs/icons — the dapper blob, top hat, bow tie,
+     clipboard) with only the FACE varying by `Mood`: mouth droops Fresh→Frazzled, worried brows appear at
+     Nagging, and at Frazzled a bead of sweat + a tipped hat (a bit crazy, never distressing). Per-instance
+     clip-path id so two mascots on one page don't cross-wire. Decorative (`aria-hidden`) — the card carries
+     the words. ⚠️ A mascot's appearance can't be unit-tested, so the four faces were eyeballed in a static
+     preview (sent to Jordan) and the live Fresh face confirmed in-app.
+   - **`LookalikePair` (Core entity) is Eggs's per-pair memory** — `FirstSeenAt` (drives the mood) +
+     `DismissedAt` (a permanent "they're different", reversible). Canonical lower/higher product ids are
+     **breadcrumbs, NOT FKs** (a product may be merged/deleted while the row lingers harmlessly; the service
+     only ever surfaces a pair whose two products are both currently on the list). Full tenancy drill: query
+     filter + stamping, unique (HouseholdId, Lower, Higher) index, `AdditiveSchema.EnsureTable` + schema-parity
+     test, isolation test, export + delete-my-data + CountAll.
+   - **`LookalikeNudgeService` (Web) is the ONE place the memory is read and written**, so the grocery list and
+     a product's detail page can't disagree about a pair's state. `GetActiveAsync` detects the pairs, **lazily
+     records `FirstSeenAt` for a newly-seen one** (so the mood ages from the first flag, NOT each visit —
+     pinned, and the load-bearing rule), drops the dismissed, returns the rest with their mood; a concurrent
+     insert hitting the unique index is swallowed as harmless. `DismissAsync` is a permanent, order-independent
+     "they're different"; `UndismissAsync` reverses it and the mood **resumes from the ORIGINAL first-seen**
+     (it never went away, you just muted it). `DismissedForProductAsync` resolves the OTHER product's current
+     name and **drops any pair whose partner was since merged away** (nothing left to un-dismiss into).
+   - **The grocery-list card** (GroceryList.razor): the mascot + the gentle line + "roll them into one? Keep:"
+     with the two product names as buttons — the user picks which to KEEP, and the other folds in through the
+     **ONE undoable merge path** (`ProductMergeService`, item 64), with an inline ↩ Undo (the SAME reversal
+     /history runs). "They're different" is the permanent dismissal. ⚠️ **Capped at three, most-frazzled
+     first, with a gentle "…and N more" overflow note** — a live-verify finding: the sample catalog surfaces
+     FIVE genuine lookalikes at once (Ground Chuck/Beef Chuck Roast, Drink Mix/Strawberry Drink Mix, …) and
+     five full cards buried the actual list, which isn't the "gentle suggestion" it should be. A real
+     household rarely has this many; the cap only bites on a dense catalog.
+   - **The product-detail surface** (ProductDetail.razor): a "you told Eggs X is a separate item from: …"
+     list of the dismissals touching this product, each linking to the partner with a "Bring the suggestion
+     back" (un-dismiss → it re-nudges on the list, mood resuming from the original first-seen). Reset on a
+     product switch; cleared on every (re)load.
+   - **Also fixes the merge panel's now-stale "This can't be undone." copy** — merge became reversible in PR 1
+     (item 64), so the screen was claiming what the engine no longer does; now "You can undo it afterward."
+   - **Tests + mutation-checks:** 5 Core detector/mood + 9 service (real SQLite — write-once FirstSeenAt, id
+     canonicalisation, dismiss/undismiss, moot-partner drop, all mutation-checked) + 6 bUnit page across both
+     surfaces (nudge appears with the real mascot, merge direction, undo, dismiss-permanent, product-page
+     dismissal + bring-back, the 3-cap + overflow — merge direction, wiring, and cap each mutation-checked).
+     **Scoped Stryker 100% on the new Core files** (`SimilarPairs` + `NudgeMood`, 21 killed / 0 survived) —
+     item 59's rule, and it earned it: it caught an equivalent `<=` in the id ternary (rewritten to MinBy/MaxBy)
+     and an uncovered `Line` default (a test for an out-of-enum mood).
+   - **Live-verified end to end** (dev sandbox, alt port 5180): the nudge renders with the real Eggs on the
+     genuine sample catalog; merging the Drink Mix/Strawberry Drink Mix pair (the exact variety-split case the
+     merge repair exists for) showed the green "Merged … into …" + ↩ Undo, the undo revived Strawberry Drink
+     Mix and re-flagged the Fresh pair, dismiss removed a pair, the product page listed the dismissal, and
+     bring-back re-nudged it on the list. No app console errors (the SignalR noise was stale reconnect from
+     the rebuild window — timestamps confirmed, count didn't grow on reload).
+   - **3080 green, 0 warnings** (non-incremental Release; Core 1347 · AI 172 · Persistence 971 · Pages 590;
+     +42 over master's 3038). ⚠️ **The `/pre-push` gate is the branch's next step, then push + PR.**
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active
