@@ -23,8 +23,10 @@ public class LocalSpeechOptions
     public const string SectionName = "Speech:Local";
 
     /// <summary>Origin of the local TTS sidecar. The synthesizer POSTs to <c>{BaseUrl}/v1/audio/speech</c>
-    /// (the OpenAI-compatible endpoint Kokoro-FastAPI exposes). Must be an absolute http(s) URI — a
-    /// loopback address on a box that runs the sidecar locally.</summary>
+    /// (the OpenAI-compatible endpoint Kokoro-FastAPI exposes). Must be a bare http(s) ORIGIN with no path
+    /// (e.g. <c>http://127.0.0.1:8880</c>) — a loopback address on a box that runs the sidecar locally;
+    /// a subpath would be dropped, so registration refuses one rather than fail silently later. Don't put
+    /// the sidecar behind a reverse-proxy subpath.</summary>
     public string BaseUrl { get; set; } = "http://127.0.0.1:8880";
 
     /// <summary>Voice the sidecar exposes (Kokoro: e.g. <c>af_heart</c>, <c>af_bella</c>, <c>am_michael</c>).

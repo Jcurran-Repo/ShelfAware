@@ -38,9 +38,12 @@ The **browser never touches the sidecar** — the app calls it server-side and r
 
 ## Option A — Docker (recommended)
 
-1. **Pin an image tag.** Check the [Kokoro-FastAPI releases](https://github.com/remsky/Kokoro-FastAPI)
-   for the current CPU image and pin it — don't ship `:latest` (not reproducible). Edit
-   [`deploy/kokoro.service`](../deploy/kokoro.service) to replace `:latest` with that tag.
+1. **Confirm the image and pin a tag.** Check the [Kokoro-FastAPI project](https://github.com/remsky/Kokoro-FastAPI)
+   for the current **CPU image name** (the unit's `ghcr.io/remsky/kokoro-fastapi-cpu` is from the docs,
+   not yet verified on a live box) **and a release tag**, then edit
+   [`deploy/kokoro.service`](../deploy/kokoro.service) to use them — don't ship `:latest` (not
+   reproducible). The unit already runs the container with `--cap-drop=ALL --security-opt=no-new-privileges`;
+   add `--read-only` (plus a writable `--tmpfs` for any model/temp dir it needs) if you want to go further.
 
 2. **Install the unit** (it runs the container on `127.0.0.1:8880`, systemd-managed, restart-on-crash):
 

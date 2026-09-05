@@ -90,11 +90,16 @@ public static class SpeechRegistration
     private static void ConfigureLocal(IServiceProvider sp, HttpClient http)
     {
         var options = sp.GetRequiredService<IOptions<LocalSpeechOptions>>().Value;
-        // A typo here would otherwise surface as an opaque failure on the first read-aloud; fail with a
-        // message that names the setting (the same guard ChatClientFactory gives a local LLM base URL).
-        if (!Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out var baseUri))
+        // A bad value would otherwise surface as an opaque failure on the first read-aloud; fail at
+        // startup with a message that names the setting. Require a bare http(s) ORIGIN, no path: the
+        // request URI is a leading-slash absolute path, so a BaseUrl carrying a subpath would be
+        // silently dropped, and a non-http scheme (file://, ftp://) would fail later with a worse message.
+        if (!Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out var baseUri)
+            || (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps)
+            || baseUri.AbsolutePath.Trim('/').Length != 0)
             throw new InvalidOperationException(
-                $"Speech:Local:BaseUrl must be an absolute URL (e.g. http://127.0.0.1:8880); got '{options.BaseUrl}'.");
+                $"Speech:Local:BaseUrl must be a bare http(s) origin with no path " +
+                $"(e.g. http://127.0.0.1:8880); got '{options.BaseUrl}'.");
         http.BaseAddress = baseUri;
     }
 }

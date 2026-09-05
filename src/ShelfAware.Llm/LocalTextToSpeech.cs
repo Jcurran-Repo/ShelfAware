@@ -79,7 +79,6 @@ public class LocalTextToSpeech : ITextToSpeech
                 Content = JsonContent.Create(payload),
             };
             // Only when a shared sidecar is secured; a loopback one needs no auth and sends nothing.
-            // Only when a shared sidecar is secured; a loopback one needs no auth and sends nothing.
             if (!string.IsNullOrWhiteSpace(_options.ApiKey))
                 request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _options.ApiKey);
 
