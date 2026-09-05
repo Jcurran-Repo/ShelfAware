@@ -147,6 +147,46 @@ public class ProductMatcherTests
         Assert.Equal("", ProductMatcher.IdentityKey(null));
     }
 
+    // ---- shedding pure filler so a filler-only difference ADVISES (near-miss), never blocks (DescriptorFilter) ----
+
+    [Fact]
+    public void A_filler_only_difference_reads_as_a_near_miss_to_advise_on()
+    {
+        // "Greek Style Yogurt" vs "Greek Yogurt" differ only by the manner word "style". Shedding it from
+        // the fuzzy tokens makes them RELIABLY overlap, so the add/census surfaces advise ("use existing or
+        // add anyway") — a TokenOverlap similarity, NOT an ExactName the guard would block outright. Without
+        // the shed the lone "style" drags the score below 0.5 and this splits into a new product instead.
+        IReadOnlyList<Product> pantry = [new() { Id = 1, Name = "Greek Yogurt", Category = Category.Dairy }];
+
+        var (product, kind) = ProductMatcher.ResolveWithKind("Greek Style Yogurt", pantry);
+
+        Assert.Equal(1, product!.Id);
+        Assert.Equal(ProductMatcher.MatchKind.TokenOverlap, kind);
+    }
+
+    [Fact]
+    public void IdentityKey_does_NOT_shed_filler_so_a_filler_name_is_never_a_hard_duplicate()
+    {
+        // The shed feeds the ADVISORY fuzzy path only — identity is untouched, so the duplicate guard never
+        // BLOCKS a filler-only add outright and the census/rename never auto-merge it. A wrong strip is thus
+        // recoverable ("add anyway"), not a silent block — the item-41 safety choice.
+        Assert.NotEqual(ProductMatcher.IdentityKey("Greek Yogurt"), ProductMatcher.IdentityKey("Greek Style Yogurt"));
+        Assert.Empty(ProductMatcher.ExactMatches("Greek Yogurt", [new Product { Id = 1, Name = "Greek Style Yogurt" }]));
+    }
+
+    [Fact]
+    public void DescriptorFilter_sheds_only_pure_filler_never_a_distinguishing_word()
+    {
+        // The conservatism guard, pinned directly on the list: a distinguishing word is NEVER filler, or the
+        // shed would advise a false match (whole milk vs milk). Adding any of these fails here — a deliberate,
+        // reviewed gate on the membership.
+        Assert.True(DescriptorFilter.IsThrowaway("style"));
+        Assert.True(DescriptorFilter.IsThrowaway("brand"));
+        Assert.False(DescriptorFilter.IsThrowaway("whole"));    // 2% is a different milk
+        Assert.False(DescriptorFilter.IsThrowaway("classic"));  // "Folgers Classic Coffee" — a real name-word
+        Assert.False(DescriptorFilter.IsThrowaway("frozen"));   // frozen vs fresh
+    }
+
     [Fact]
     public void Resolve_matches_at_exactly_the_half_weight_threshold_keeping_the_first()
     {

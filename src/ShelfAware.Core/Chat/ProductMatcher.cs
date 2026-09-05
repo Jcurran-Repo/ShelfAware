@@ -104,12 +104,15 @@ public static class ProductMatcher
         foreach (var p in products)
         {
             var pTokens = Tokens(Normalize(p.Name));
-            // Stryker disable once Statement: equivalent — an empty-name product shares 0 weight and
-            // has pWeight 0, so score is 0 / max(qWeight, 0) = 0 (qWeight is strictly positive: every
-            // idf weight is ln((N+1)/(df+0.5)) > 0 and the q.Length guard guarantees a token, so no
-            // 0/0 NaN) and 0 can never beat bestScore (≥ 0); dropping the continue changes no result.
-            // Scoped to Statement ONLY (adversarial-review fix): the original `all` also suppressed a
-            // killable Equality mutant the existing token-overlap test kills.
+            // Stryker disable once Statement: equivalent — dropping the continue changes no result. An
+            // empty-name product has pWeight 0, so its score is 0 / max(qWeight, 0): that is 0 when
+            // qWeight > 0, and NaN when qWeight is ALSO 0 — reachable now that Tokens sheds filler, via an
+            // all-filler query like "style" (it passes the q.Length guard, since Normalize does NOT shed,
+            // then Tokens sheds every token → qWeight 0). Either way the score can never beat bestScore:
+            // 0 > bestScore is false (bestScore ≥ 0) and NaN > bestScore is ALWAYS false, so `best` is
+            // never updated for an empty-name product whether or not the continue is there. Scoped to
+            // Statement ONLY (adversarial-review fix): the original `all` also suppressed a killable
+            // Equality mutant the existing token-overlap test kills.
             if (pTokens.Count == 0) continue;
             var sharedWeight = qTokens.Where(pTokens.Contains).Sum(Weight);
             var pWeight = pTokens.Sum(Weight);
@@ -144,14 +147,21 @@ public static class ProductMatcher
     private static double MaxIdf(int productCount) => Math.Log((productCount + 1.0) / 0.5);
 
     private static HashSet<string> Tokens(string normalized) =>
-        normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet();
+        normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            // Shed throwaway filler ("style", "brand" — see DescriptorFilter) from the FUZZY token overlap
+            // (rule 3) and the IDF, so a filler-only difference reliably reads as a near-miss the surfaces
+            // ADVISE on ("looks like you have X — use it or add anyway"). Deliberately NOT in
+            // Normalize/IdentityKey: identity stays exact, so a filler-only name is never a HARD duplicate
+            // (blocked outright) nor auto-merged, and a wrong strip is recoverable with one "add anyway"
+            // rather than blocking a legitimate product — far lower stakes than an identity change.
+            .Where(t => !DescriptorFilter.IsThrowaway(t)).ToHashSet();
 
     // ⚠️ Every run of separators collapses to ONE space, not just doubles. A single Replace("  ", " ")
     // left "yogurt  strawberry" for "Yogurt - Strawberry" (two adjacent non-alphanumerics), so it was
     // neither equal to "Yogurt Strawberry" nor idempotent — which a documented dictionary KEY
     // (IdentityKey) has to be. It failed safe (rule 1 missed, rule 3 caught it as similarity, the grid
     // asked) but it made the key a near-key, and "collapses whitespace" was already what the code read
-    // as doing. Split/join says it once and holds for any run length.
+    // as doing. Split/join says it once and holds for any run length. Filler is NOT shed here — see Tokens.
     private static string Normalize(string s) =>
         string.Join(' ', new string(s.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : ' ').ToArray())
             .Split(' ', StringSplitOptions.RemoveEmptyEntries));
