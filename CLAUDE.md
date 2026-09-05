@@ -3603,7 +3603,8 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      is the arc's next and final PR, and the real fix for the Artesano/Bakery bread case.**
 
 66. **The lookalike nudge — Eggs flags two similar products on the list (2026-09-05, branch
-   `feature/similar-products-nudge`; gate PENDING, UNPUSHED).** PR 3 (the final one) of the "Eggs flags two
+   `feature/similar-products-nudge`; ✅ gated clean — code SHIP + security PASS; UNPUSHED).** PR 3 (the final
+   one) of the "Eggs flags two
    similar products" arc, and the real fix for Jordan's Artesano/Bakery bread case that PR 2's conservative
    shed deliberately left alone. Jordan's calls: *"we should always probably suggest merging, it should just
    be a gentle suggestion"*; personality where *"he slowly degrades in happiness as it stays up, like a Mr
@@ -3656,9 +3657,9 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      with the two product names as buttons — the user picks which to KEEP, and the other folds in through the
      **ONE undoable merge path** (`ProductMergeService`, item 64), with an inline ↩ Undo (the SAME reversal
      /history runs). "They're different" is the permanent dismissal. ⚠️ **Capped at three, most-frazzled
-     first, with a gentle "…and N more" overflow note** — a live-verify finding: the sample catalog surfaces
-     FIVE genuine lookalikes at once (Ground Chuck/Beef Chuck Roast, Drink Mix/Strawberry Drink Mix, …) and
-     five full cards buried the actual list, which isn't the "gentle suggestion" it should be. A real
+     first, with a gentle "…and N more" overflow note** — a live-verify finding: the sample catalog surfaced
+     multiple genuine lookalikes at once (Ground Chuck/Beef Chuck Roast, Drink Mix/Strawberry Drink Mix, …) and
+     that many full cards buried the actual list, which isn't the "gentle suggestion" it should be. A real
      household rarely has this many; the cap only bites on a dense catalog.
    - **The product-detail surface** (ProductDetail.razor): a "you told Eggs X is a separate item from: …"
      list of the dismissals touching this product, each linking to the partner with a "Bring the suggestion
@@ -3666,21 +3667,37 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      product switch; cleared on every (re)load.
    - **Also fixes the merge panel's now-stale "This can't be undone." copy** — merge became reversible in PR 1
      (item 64), so the screen was claiming what the engine no longer does; now "You can undo it afterward."
-   - **Tests + mutation-checks:** 5 Core detector/mood + 9 service (real SQLite — write-once FirstSeenAt, id
-     canonicalisation, dismiss/undismiss, moot-partner drop, all mutation-checked) + 6 bUnit page across both
-     surfaces (nudge appears with the real mascot, merge direction, undo, dismiss-permanent, product-page
-     dismissal + bring-back, the 3-cap + overflow — merge direction, wiring, and cap each mutation-checked).
-     **Scoped Stryker 100% on the new Core files** (`SimilarPairs` + `NudgeMood`, 21 killed / 0 survived) —
-     item 59's rule, and it earned it: it caught an equivalent `<=` in the id ternary (rewritten to MinBy/MaxBy)
-     and an uncovered `Line` default (a test for an out-of-enum mood).
+   - **Tests + mutation-checks:** Core detector/mood tests (`SimilarPairsTests` + `NudgeMoodTests`) + 9 service
+     (real SQLite — write-once FirstSeenAt, id canonicalisation, dismiss/undismiss, moot-partner drop, all
+     mutation-checked) + 7 bUnit page across both surfaces (nudge appears with the real mascot, merge direction,
+     undo, dismiss-permanent, stale-notice clear, product-page dismissal + bring-back, the 3-cap + overflow —
+     merge direction, wiring, cap, and notice-clear each mutation-checked). **Scoped Stryker 100% on the new
+     Core files** (`SimilarPairs` + `NudgeMood`) — item 59's rule, and it earned it: it caught an equivalent
+     `<=` in the id ternary (rewritten to MinBy/MaxBy) and an uncovered `Line` default (a test for an
+     out-of-enum mood).
    - **Live-verified end to end** (dev sandbox, alt port 5180): the nudge renders with the real Eggs on the
      genuine sample catalog; merging the Drink Mix/Strawberry Drink Mix pair (the exact variety-split case the
      merge repair exists for) showed the green "Merged … into …" + ↩ Undo, the undo revived Strawberry Drink
      Mix and re-flagged the Fresh pair, dismiss removed a pair, the product page listed the dismissal, and
      bring-back re-nudged it on the list. No app console errors (the SignalR noise was stale reconnect from
      the rebuild window — timestamps confirmed, count didn't grow on reload).
-   - **3080 green, 0 warnings** (non-incremental Release; Core 1347 · AI 172 · Persistence 971 · Pages 590;
-     +42 over master's 3038). ⚠️ **The `/pre-push` gate is the branch's next step, then push + PR.**
+   - **The `/pre-push` gate — code SHIP + security PASS** (two independent SHA-reading agents in isolated
+     worktrees). Security: the tenancy boundary holds (LookalikePair walks the full drill; every service read/
+     write is household-scoped; a tampered/foreign product id can't leak or cross-write — the scoped join
+     drops a foreign partner), no new `IgnoreQueryFilters`/endpoint/settings-key/disk-write, the mascot SVG
+     carries no user data. Code: the one-service design closes the "one story" fault; the merge direction,
+     lazy first-seen, and switch-vs-refresh reset are all correct. Low/Info fixes applied: the detector now
+     folds plurals via the SAME `IngredientMatcher.Singular` rule (made internal — one definition, so
+     "Apples"/"Apple" pairs), the nudge load degrades to no-nudges on a transient write failure, a dismiss
+     clears the stale merge notice, aria-labels on the keep buttons.
+   - ⚠️ **A fix-pass re-review (item 39) caught the plural fold's one side effect, ACCEPTED as more-correct:**
+     the demo has three tomato products (Canned Diced Tomatoes · Home-Canned Tomato Sauce · Roma Tomatoes);
+     pre-fold "tomatoes" was shared by exactly two → an accidental pair, post-fold all three fold to "tomato"
+     (df=3) → a proper CLUSTER, correctly not nudged (the detector's own policy). So the demo surfaces four
+     pairs now, not five — the artifact is gone, and the Drink Mix variety-split showcase is untouched. Never
+     hack the detector or the demo to restore an accidental pair. Scoped Stryker stayed 100% through the fix.
+   - **3084 green, 0 warnings** (non-incremental Release; Core 1350 · AI 172 · Persistence 971 · Pages 591;
+     +46 over master's 3038). ⚠️ **Gated clean; UNPUSHED — push + PR is Jordan's call.**
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
