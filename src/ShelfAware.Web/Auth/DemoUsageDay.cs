@@ -14,7 +14,4 @@ public sealed class DemoUsageDay
 
     /// <summary>Host-key LLM calls made today across all households (chat + extraction + advisors).</summary>
     public int Calls { get; set; }
-
-    /// <summary>Host-key read-aloud TTS syntheses today (cache MISSES only — a cached read is free).</summary>
-    public int VoiceCalls { get; set; }
 }

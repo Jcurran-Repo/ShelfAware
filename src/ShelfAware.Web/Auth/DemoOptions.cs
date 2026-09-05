@@ -9,13 +9,9 @@ namespace ShelfAware.Web.Auth;
 /// own provider-side spend limit hard-stops.</para></summary>
 public sealed class DemoOptions
 {
-    /// <summary>Max host-key LLM calls across ALL households per day. Null = unbounded.</summary>
+    /// <summary>Max host-key LLM calls across ALL households per day. Null = unbounded. (TTS isn't metered:
+    /// the managed demo box reads recipes with a free self-hosted Kokoro sidecar, so there's nothing to cap.)</summary>
     public int? DailyGlobalCallLimit { get; set; }
-
-    /// <summary>Max host-key read-aloud TTS syntheses (cache misses) across ALL households per day.
-    /// Null = unbounded. Only relevant when a host ElevenLabs key is configured (else reading is
-    /// cache-only and free).</summary>
-    public int? DailyGlobalVoiceLimit { get; set; }
 
     /// <summary>Warn the admin (a logged Warning → the error log → /admin) the moment the day's global call
     /// count crosses this — an early "you're suddenly getting traffic / cost is accruing" signal, well under

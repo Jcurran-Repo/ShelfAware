@@ -27,10 +27,10 @@ public sealed class DemoUsageMeterTests : IDisposable
     {
         var meter = Meter(new DemoOptions()); // all null — the family / self-host default
 
-        await meter.EnsureCallAllowedAsync();  // no cap → never throws
-        await meter.EnsureVoiceAllowedAsync();
+        Assert.False(meter.IsConfigured);
+        await meter.EnsureCallAllowedAsync();               // no cap → never throws
+        Assert.Null(await meter.CallBlockedMessageAsync()); // and the pre-check never blocks
         await meter.RecordCallAsync();
-        await meter.RecordVoiceAsync();
 
         Assert.Null(await meter.GetTodayAsync());          // no row surfaced
         await using var db = _authDb.CreateDbContext();
@@ -48,7 +48,6 @@ public sealed class DemoUsageMeterTests : IDisposable
         var today = await meter.GetTodayAsync();
         Assert.NotNull(today);
         Assert.Equal(2, today!.Calls);
-        Assert.Equal(0, today.VoiceCalls);
     }
 
     [Fact]
@@ -67,20 +66,22 @@ public sealed class DemoUsageMeterTests : IDisposable
         Assert.Contains("come back tomorrow", ex.Message);
     }
 
+    // The non-throwing pre-check twin the UI surfaces use (via AiErrorText): it reports the come-back message
+    // at exactly the point EnsureCallAllowedAsync would throw, so a surface skips a doomed call and shows the
+    // right words instead of a generic failure — and stays null under the cap.
     [Fact]
-    public async Task The_voice_cap_is_separate_from_the_call_cap()
+    public async Task The_pre_check_reports_the_come_back_message_at_the_cap()
     {
-        var meter = Meter(new DemoOptions { DailyGlobalCallLimit = 100, DailyGlobalVoiceLimit = 2 });
+        var meter = Meter(new DemoOptions { DailyGlobalCallLimit = 2 });
 
-        await meter.RecordVoiceAsync();
-        await meter.RecordVoiceAsync();
+        Assert.Null(await meter.CallBlockedMessageAsync()); // under the cap
+        await meter.RecordCallAsync();
+        Assert.Null(await meter.CallBlockedMessageAsync());
+        await meter.RecordCallAsync();
 
-        await meter.EnsureCallAllowedAsync(); // calls are nowhere near their cap — still allowed
-        await Assert.ThrowsAsync<DemoDailyCapException>(() => meter.EnsureVoiceAllowedAsync()); // voice is spent
-
-        var today = await meter.GetTodayAsync();
-        Assert.Equal(0, today!.Calls);       // recording voice never touched the call count
-        Assert.Equal(2, today.VoiceCalls);
+        var message = await meter.CallBlockedMessageAsync(); // at the cap
+        Assert.NotNull(message);
+        Assert.Contains("come back tomorrow", message);
     }
 
     [Fact]

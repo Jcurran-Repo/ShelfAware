@@ -170,7 +170,7 @@ public class AdditiveSchemaTests : IDisposable
 
         Assert.Equal(fresh, await TableSchemaAsync(db, "DemoUsage"));
 
-        db.DemoUsage.Add(new DemoUsageDay { Day = new DateOnly(2026, 9, 5), Calls = 3, VoiceCalls = 1 });
+        db.DemoUsage.Add(new DemoUsageDay { Day = new DateOnly(2026, 9, 5), Calls = 3 });
         await db.SaveChangesAsync();
     }
 
