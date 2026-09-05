@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -33,10 +34,20 @@ public class MeteredChatClientTests : IDisposable
         /// the Haiku rate; a test sets it null to exercise the requested-model fallback.</summary>
         public string? ResponseModelId { get; set; } = "claude-haiku-4-5";
 
+        /// <summary>When true, the provider call throws OperationCanceledException instead of returning —
+        /// the "client dropped the socket mid-flight" scenario (no response, so no tokens/cost).</summary>
+        public bool ThrowCancelled { get; set; }
+
+        /// <summary>When set, the provider cancels this source just as it returns the answer — the "client
+        /// dropped the instant the response landed" scenario, to prove the tail record runs uncancellably.</summary>
+        public CancellationTokenSource? CancelWhenReturning { get; set; }
+
         public Task<ChatResponse> GetResponseAsync(
             IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
         {
             Calls++;
+            if (ThrowCancelled) throw new OperationCanceledException();
+            CancelWhenReturning?.Cancel(); // the caller's token is now cancelled, but the answer is ready
             return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "ok"))
             {
                 ModelId = ResponseModelId,
@@ -71,7 +82,8 @@ public class MeteredChatClientTests : IDisposable
 
     private (MeteredChatClient client, AiUsageMeter meter) Build(
         string keyMode, int? dailyCalls = null, long? dailyTokens = null, int? dailyMints = null,
-        HouseholdTier tier = HouseholdTier.Free, long balanceMicros = 100_000_000, bool paymentsEnabled = true)
+        HouseholdTier tier = HouseholdTier.Free, long balanceMicros = 100_000_000, bool paymentsEnabled = true,
+        int? demoCap = null)
     {
         var llm = Options.Create(new LlmOptions
         {
@@ -89,9 +101,11 @@ public class MeteredChatClientTests : IDisposable
             entitlements,
             NullLogger<AiUsageMeter>.Instance);
         var byok = new ByokChatClient(settings, new FakeFactory(_provider));
-        // An unconfigured demo meter (no Demo caps) — a no-op, so these per-household metering tests are
-        // unaffected; the box-wide valve has its own DemoUsageMeterTests.
-        var demoMeter = new DemoUsageMeter(_authDb, Options.Create(new DemoOptions()), NullLogger<DemoUsageMeter>.Instance);
+        // The box-wide demo valve. Unconfigured by default (a no-op, so the per-household metering tests are
+        // unaffected); a demo-cap test passes demoCap to exercise the box-wide enforcement here — the point
+        // MeteredChatClient actually bounds the host wallet, which the fable gate found untested.
+        var demoMeter = new DemoUsageMeter(
+            _authDb, Options.Create(new DemoOptions { DailyGlobalCallLimit = demoCap }), NullLogger<DemoUsageMeter>.Instance);
         var client = new MeteredChatClient(byok, settings, meter, demoMeter, Options.Create(new BillingOptions()),
             Options.Create(new ShelfAware.Web.Billing.PaymentsOptions { Enabled = paymentsEnabled }),
             new CreditLedger(_authDb, Options.Create(new BillingOptions())), entitlements, new FakeCurrentHousehold("hh-test"),
@@ -101,6 +115,14 @@ public class MeteredChatClientTests : IDisposable
 
     private static Task<ChatResponse> AskAsync(MeteredChatClient client) =>
         client.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")]);
+
+    private async Task<int> DemoCallsTodayAsync()
+    {
+        await using var db = _authDb.CreateDbContext();
+        var row = await db.DemoUsage.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Day == DateOnly.FromDateTime(DateTime.Today));
+        return row?.Calls ?? 0;
+    }
 
     private async Task SeedDayAsync(string household, DateOnly day, int calls, long costMicros)
     {
@@ -307,6 +329,17 @@ public class MeteredChatClientTests : IDisposable
     }
 
     [Fact]
+    public async Task A_per_household_call_limit_of_zero_blocks_the_first_call()
+    {
+        // 0 is a kill switch — it must block before any row exists (the null-row was early-returning as
+        // "allowed" before). No seed, so this is the first call of the day.
+        var (client, _) = Build("Managed", dailyCalls: 0);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => AskAsync(client));
+        Assert.Equal(0, _provider.Calls);
+    }
+
+    [Fact]
     public async Task At_the_token_cap_the_provider_is_never_reached()
     {
         await SeedTodayAsync("hh-test", calls: 1, tokens: 10_000);
@@ -483,5 +516,71 @@ public class MeteredChatClientTests : IDisposable
         // No configured limit = unlimited (the self-host default).
         var (_, unlimited) = Build("Managed");
         Assert.True(await unlimited.MayMintVoiceSessionAsync());
+    }
+
+    // ---- Box-wide demo valve enforcement (the fable gate found this whole point untested) ----
+
+    [Fact]
+    public async Task The_box_wide_demo_cap_blocks_a_managed_call_and_counts_the_attempt_at_the_gate()
+    {
+        var (client, _) = Build("Managed", demoCap: 1);
+
+        await AskAsync(client);                        // first call: allowed, reserved at the gate
+        Assert.Equal(1, _provider.Calls);
+        Assert.Equal(1, await DemoCallsTodayAsync());  // the box-wide counter ticked
+
+        // The second is over the box-wide cap: refused, provider never reached (this is the enforcement
+        // point that actually bounds the host wallet — deleting the gate check leaves this passing wrongly).
+        await Assert.ThrowsAsync<DemoDailyCapException>(() => AskAsync(client));
+        Assert.Equal(1, _provider.Calls);
+    }
+
+    [Fact]
+    public async Task A_byok_call_never_touches_the_box_wide_demo_valve()
+    {
+        var (client, _) = Build("Byok", demoCap: 1);
+
+        await AskAsync(client);
+        await AskAsync(client);                        // both go through — BYOK rides its own key
+
+        Assert.Equal(2, _provider.Calls);
+        Assert.Equal(0, await DemoCallsTodayAsync());  // the host-key valve never counted them
+    }
+
+    // ---- The reserve is uncancellable: a fire-and-abort visitor can't dodge the caps ----
+
+    [Fact]
+    public async Task A_call_aborted_mid_flight_still_counts_against_the_per_household_and_box_wide_caps()
+    {
+        _provider.ThrowCancelled = true;               // the client drops before the provider returns
+        var (client, meter) = Build("Managed", dailyCalls: 5, demoCap: 5);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => AskAsync(client));
+
+        // No response means no tokens/cost — but the CALL was reserved at the gate, so a fire-and-abort
+        // visitor can't make host-key calls the caps never see.
+        var today = await meter.GetTodayAsync();
+        Assert.Equal(1, today.Calls);
+        Assert.Equal(0, today.Tokens);
+        Assert.Equal(1, await DemoCallsTodayAsync());
+    }
+
+    [Fact]
+    public async Task Tokens_cost_and_credit_are_recorded_even_if_the_caller_drops_after_the_response()
+    {
+        using var cts = new CancellationTokenSource();
+        _provider.CancelWhenReturning = cts;           // the answer lands, the client drops in the same instant
+        var (client, meter) = Build("Managed", tier: HouseholdTier.Free);
+
+        await client.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")], cancellationToken: cts.Token);
+
+        // The tail record runs on CancellationToken.None, so a caller who cancelled AFTER the answer can't
+        // dodge the token/cost/credit write (the completed-then-abort window fable flagged).
+        var today = await meter.GetTodayAsync();
+        Assert.Equal(1, today.Calls);
+        Assert.Equal(150, today.Tokens);
+        Assert.Equal(350, today.CostMicros);
+        // …and the money write landed too: 350 × 1.65 = 578 retail micros drawn.
+        Assert.Equal(-578, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test"));
     }
 }

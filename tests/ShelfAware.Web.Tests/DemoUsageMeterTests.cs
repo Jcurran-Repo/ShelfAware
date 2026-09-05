@@ -66,6 +66,17 @@ public sealed class DemoUsageMeterTests : IDisposable
         Assert.Contains("come back tomorrow", ex.Message);
     }
 
+    // 0 is an emergency kill switch — it must block the FIRST call, not admit one before a row exists
+    // (the null >= 0 hole). Both the gate and the pre-check agree.
+    [Fact]
+    public async Task A_cap_of_zero_blocks_the_very_first_call()
+    {
+        var meter = Meter(new DemoOptions { DailyGlobalCallLimit = 0 });
+
+        await Assert.ThrowsAsync<DemoDailyCapException>(() => meter.EnsureCallAllowedAsync());
+        Assert.NotNull(await meter.CallBlockedMessageAsync());
+    }
+
     // The non-throwing pre-check twin the UI surfaces use (via AiErrorText): it reports the come-back message
     // at exactly the point EnsureCallAllowedAsync would throw, so a surface skips a doomed call and shows the
     // right words instead of a generic failure — and stays null under the cap.

@@ -704,7 +704,8 @@ public class AdminPageTests : PageTestContext
         cut.WaitForAssertion(() =>
         {
             Assert.Contains("Demo box usage", cut.Markup);
-            Assert.Contains("42 / 300", cut.Markup); // today's box-wide calls against the cap
+            Assert.Contains("42 / 300", cut.Markup);        // today's box-wide calls against the cap
+            Assert.DoesNotContain("capped", cut.Markup);    // 42 < 300, so NOT capped (pins the >= boundary)
         });
     }
 

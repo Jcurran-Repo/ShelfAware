@@ -88,21 +88,24 @@ public sealed class AiUsageMeter(
 
         // A Founder household is exempt from the caps entirely (unlimited-but-recorded). Consulted AFTER
         // the no-limit check above, so a deployment that configures no caps never pays the tier read;
-        // and only the GATE is skipped — RecordLlmCallAsync (called after the provider replies) is
-        // untouched, so a Founder's usage still lands in the row.
+        // and only the GATE is skipped — the reserve/record after the provider replies are untouched, so a
+        // Founder's usage still lands in the row.
         if ((await entitlements.GetTierAsync(cancellationToken)).IsUnlimited()) return;
 
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var row = await TodayRowAsync(db, cancellationToken);
-        if (row is null) return;
+        // Coalesce the absent row to zero rather than early-returning: a limit of 0 must block the FIRST
+        // call, not admit one before a row exists (0 >= 0). A no-row day with a positive limit still passes.
+        var calls = row?.Calls ?? 0;
+        var tokens = (row?.InputTokens ?? 0) + (row?.OutputTokens ?? 0);
 
-        if (llm.Value.DailyCallLimit is int callLimit && row.Calls >= callLimit)
+        if (llm.Value.DailyCallLimit is int callLimit && calls >= callLimit)
         {
             throw new InvalidOperationException(
                 "Today's AI allowance on this server is used up — it resets tomorrow. " +
                 "(Bringing your own key in Settings is never limited.)");
         }
-        if (llm.Value.DailyTokenLimit is long tokenLimit && row.InputTokens + row.OutputTokens >= tokenLimit)
+        if (llm.Value.DailyTokenLimit is long tokenLimit && tokens >= tokenLimit)
         {
             throw new InvalidOperationException(
                 "Today's AI allowance on this server is used up — it resets tomorrow. " +
@@ -121,8 +124,17 @@ public sealed class AiUsageMeter(
         return row is null || row.VoiceSessionMints < limit;
     }
 
-    public Task RecordLlmCallAsync(long inputTokens, long outputTokens, long costMicros, CancellationToken cancellationToken = default)
-        => AccumulateAsync(calls: 1, inputTokens, outputTokens, costMicros, mints: 0, cancellationToken);
+    /// <summary>Count one call against today's row, BEFORE the provider call — split from the token/cost
+    /// record so <see cref="MeteredChatClient"/> can reserve the call uncancellably at the gate. Counting
+    /// the call at the gate is what bounds the daily CALL cap even when a client aborts mid-flight (an
+    /// abort still cost the host's key), instead of only counting calls that ran to completion.</summary>
+    public Task ReserveLlmCallAsync(CancellationToken cancellationToken = default)
+        => AccumulateAsync(calls: 1, inputTokens: 0, outputTokens: 0, costMicros: 0, mints: 0, cancellationToken);
+
+    /// <summary>Record a completed call's tokens + cost (NOT the call count — that was reserved at the gate).
+    /// Called at the tail once a response exists; the token cap and cost trend can only be known then.</summary>
+    public Task RecordLlmUsageAsync(long inputTokens, long outputTokens, long costMicros, CancellationToken cancellationToken = default)
+        => AccumulateAsync(calls: 0, inputTokens, outputTokens, costMicros, mints: 0, cancellationToken);
 
     // Voice mints carry no token COST here — voice is flat-priced separately (docs §4); this records the
     // mint count only, so the LLM cost column isn't polluted by a voice session.
@@ -153,10 +165,12 @@ public sealed class AiUsageMeter(
         {
             await db.SaveChangesAsync(cancellationToken);
         }
-        catch (DbUpdateException ex) when (ex.InnerException is Microsoft.Data.Sqlite.SqliteException { SqliteErrorCode: 19 })
+        catch (DbUpdateException ex) when (ex.InnerException is Microsoft.Data.Sqlite.SqliteException
+            { SqliteExtendedErrorCode: 2067 or 1555 }) // SQLITE_CONSTRAINT_UNIQUE / _PRIMARYKEY only
         {
             // Unique-index collision: a concurrent request created today's row between our check and
-            // insert. Detach our loser and add onto theirs instead.
+            // insert. Detach our loser and add onto theirs instead. (A different constraint — NOT NULL from
+            // a stale schema, say — is a real error and must propagate, not loop uselessly here.)
             db.ChangeTracker.Clear();
             var retried = await IncrementAsync(db, today, calls, inputTokens, outputTokens, costMicros, mints, cancellationToken);
             if (retried == 0)

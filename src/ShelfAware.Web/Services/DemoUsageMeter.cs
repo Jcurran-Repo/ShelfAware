@@ -55,7 +55,9 @@ public sealed class DemoUsageMeter(
     {
         if (Opt.DailyGlobalCallLimit is not int cap) return false;
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        return (await TodayAsync(db, ct))?.Calls >= cap;
+        // Coalesce the absent row to 0 so a cap of 0 blocks the FIRST call (an emergency kill switch),
+        // rather than admitting one before a row exists (null >= 0 is false).
+        return ((await TodayAsync(db, ct))?.Calls ?? 0) >= cap;
     }
 
     public Task RecordCallAsync(CancellationToken ct = default) => AccumulateAsync(calls: 1, ct);
@@ -85,10 +87,14 @@ public sealed class DemoUsageMeter(
             {
                 await db.SaveChangesAsync(ct);
             }
-            catch (DbUpdateException ex) when (ex.InnerException is Microsoft.Data.Sqlite.SqliteException { SqliteErrorCode: 19 })
+            catch (DbUpdateException ex) when (ex.InnerException is Microsoft.Data.Sqlite.SqliteException
+                { SqliteExtendedErrorCode: 2067 or 1555 }) // SQLITE_CONSTRAINT_UNIQUE / _PRIMARYKEY only
             {
+                // A concurrent insert won the race; add onto their row. (A different constraint — e.g. a
+                // NOT NULL from a stale schema — is a real error and propagates rather than looping here.)
                 db.ChangeTracker.Clear();
-                await IncrementAsync(db, today, calls, ct);
+                if (await IncrementAsync(db, today, calls, ct) == 0)
+                    logger.LogWarning("Demo usage upsert lost both the insert and the retry increment for {Day}.", today);
             }
         }
 
