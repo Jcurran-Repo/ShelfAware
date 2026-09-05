@@ -299,6 +299,24 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Creates_the_LookalikePairs_table_on_an_older_db_with_the_fresh_schema()
+    {
+        await using var db = _db.CreateDbContext();
+        var fresh = await TableSchemaAsync(db, "LookalikePairs");
+        Assert.NotEmpty(fresh); // includes the unique (HouseholdId, LowerProductId, HigherProductId) index
+
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE LookalikePairs;");
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // second boot — a no-op, not a table-exists error
+
+        Assert.Equal(fresh, await TableSchemaAsync(db, "LookalikePairs"));
+
+        db.LookalikePairs.Add(new LookalikePair { LowerProductId = 1, HigherProductId = 2, FirstSeenAt = DateTimeOffset.Now });
+        await db.SaveChangesAsync();
+        Assert.Single(await db.LookalikePairs.ToListAsync());
+    }
+
+    [Fact]
     public async Task Creates_the_PlannedMeals_table_on_an_older_db_with_the_fresh_schema()
     {
         await using var db = _db.CreateDbContext();

@@ -19,6 +19,12 @@ public sealed record SimilarPair(int LowerId, string LowerName, int HigherId, st
 /// strict same-food rule, which needs MUTUAL coverage and so misses a pair that shares only its
 /// distinguishing word. A false positive (two genuinely-different foods that happen to share a pair-unique
 /// word) costs one permanent dismiss, which is the caller's to apply — this detector holds no state.</para>
+/// <para>⚠️ Known edge, accepted (Jordan's call): a CLUSTER — three+ products all sharing a head word (five
+/// yogurts) — is NOT nudged. Per-pair that would be C(n,2) spam, and a head shared by many is a category, not
+/// a "these two specifically" signal. The fallback is manual merge, which is safe now that merge is undoable.
+/// This is NOT a to-do. IF the cluster case proves annoying in real use, the specific fix is a SINGLE gentle
+/// cluster heads-up ("you've got 5 yogurts — take a look"), never per-pair, linking to the products filtered
+/// to them where they merge manually — a separate, additive nudge kind, not a change to this detector.</para>
 /// </summary>
 public static class SimilarPairs
 {
