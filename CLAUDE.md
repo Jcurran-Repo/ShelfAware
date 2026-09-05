@@ -3603,8 +3603,8 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      is the arc's next and final PR, and the real fix for the Artesano/Bakery bread case.**
 
 66. **The lookalike nudge — Eggs flags two similar products on the list (2026-09-05, branch
-   `feature/similar-products-nudge`; ✅ gated clean — code SHIP + security PASS; UNPUSHED).** PR 3 (the final
-   one) of the "Eggs flags two
+   `feature/similar-products-nudge`; ✅ gated clean — code SHIP + security PASS; PUSHED + PR #65 open, awaiting
+   CI + Jordan's merge).** PR 3 (the final one) of the "Eggs flags two
    similar products" arc, and the real fix for Jordan's Artesano/Bakery bread case that PR 2's conservative
    shed deliberately left alone. Jordan's calls: *"we should always probably suggest merging, it should just
    be a gentle suggestion"*; personality where *"he slowly degrades in happiness as it stays up, like a Mr
@@ -3700,7 +3700,9 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      pairs now, not five — the artifact is gone, and the Drink Mix variety-split showcase is untouched. Never
      hack the detector or the demo to restore an accidental pair. Scoped Stryker stayed 100% through the fix.
    - **3084 green, 0 warnings** (non-incremental Release; Core 1350 · AI 172 · Persistence 971 · Pages 591;
-     +46 over master's 3038). ⚠️ **Gated clean; UNPUSHED — push + PR is Jordan's call.**
+     +46 over master's 3038). ✅ **Pushed + PR #65 open** (2026-09-05); merging is Jordan's call, gated by
+     master's required checks (Build & test + Core mutation on changed files). This closes the three-PR "Eggs
+     flags two similar products" arc (PR #63 undoable merge · PR #64 descriptor normalizer · PR #65 the nudge).
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
