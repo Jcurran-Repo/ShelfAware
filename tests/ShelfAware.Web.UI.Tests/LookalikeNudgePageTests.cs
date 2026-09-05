@@ -114,6 +114,23 @@ public class LookalikeNudgePageTests : PageTestContext
     }
 
     [Fact]
+    public void Dismissing_after_a_merge_clears_the_stale_merged_notice()
+    {
+        SeedPair("Brioche Bread", "Brioche Loaf");
+        SeedPair("Hand Soap", "Dish Soap");
+        var cut = RenderList();
+        cut.WaitForState(() => cut.FindAll(".nudge").Count == 2);
+
+        // Merge the breads → the inline "Merged…" notice appears.
+        cut.FindAll(".nudge-actions button").Single(b => b.TextContent.Trim() == "Brioche Bread").Click();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll(".nudge-done")));
+
+        // Dismiss the remaining pair → a new action supersedes the stale merge notice.
+        cut.FindAll(".nudge-actions .linkish").First().Click();
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".nudge-done")));
+    }
+
+    [Fact]
     public void Dismissing_a_nudge_makes_it_stop_permanently()
     {
         SeedLookalikePair();

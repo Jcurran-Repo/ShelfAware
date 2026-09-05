@@ -30,11 +30,13 @@ public static class SimilarPairs
 {
     public static IReadOnlyList<SimilarPair> Find(IReadOnlyList<Product> onList)
     {
-        // token -> the products whose name contains it (each product at most once per token).
+        // (singularised) food word -> the products whose name contains it (each product at most once per
+        // word). Folded to the singular via the SAME rule the ingredient matcher uses, so "Gala Apples" and
+        // "Honeycrisp Apple" share the word "apple" — the app treats plurals as one food everywhere else.
         var byToken = new Dictionary<string, List<Product>>(StringComparer.Ordinal);
         foreach (var p in onList)
         {
-            foreach (var t in IngredientMatcher.CoreTokens(p.Name).Distinct())
+            foreach (var t in IngredientMatcher.CoreTokens(p.Name).Select(IngredientMatcher.Singular).Distinct())
             {
                 if (!byToken.TryGetValue(t, out var holders)) byToken[t] = holders = [];
                 holders.Add(p);

@@ -58,9 +58,10 @@ public sealed class LookalikeNudgeService(
             }
             catch (DbUpdateException ex)
             {
-                // A concurrent list load (another tab) recorded the same new pair first, hitting the unique
-                // (household, lower, higher) index. Harmless: the pair is now remembered, and a just-seen
-                // pair is Fresh either way — the active list computed above still stands.
+                // A concurrent list load (another tab) recorded one of these new pairs first, hitting the
+                // unique (household, lower, higher) index. Harmless: the active list computed above still
+                // stands (a just-seen pair is Fresh either way). Any new rows that DIDN'T collide roll back
+                // with the batch and are simply re-recorded on the next load — no user-visible difference.
                 logger.LogDebug(ex, "A lookalike pair was recorded concurrently; using the state already computed.");
             }
         }

@@ -45,6 +45,19 @@ public class SimilarPairsTests
     }
 
     [Fact]
+    public void Flags_a_pair_that_shares_only_the_singular_of_a_plural_word()
+    {
+        // Their only shared food word differs by number ("Apples" vs "Apple"); the app folds plurals to one
+        // food everywhere, so these still surface (via IngredientMatcher.Singular).
+        IReadOnlyList<Product> onList = [P(1, "Gala Apples"), P(2, "Honeycrisp Apple"), P(3, "Whole Milk")];
+
+        var pair = Assert.Single(SimilarPairs.Find(onList));
+
+        Assert.Equal(1, pair.LowerId);
+        Assert.Equal(2, pair.HigherId);
+    }
+
+    [Fact]
     public void Emits_a_pair_once_even_when_two_words_are_pair_unique()
     {
         // Both own "sourdough" AND "boule" (each shared by exactly these two; "fresh" is a trivial modifier
