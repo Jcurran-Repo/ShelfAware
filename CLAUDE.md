@@ -3725,8 +3725,12 @@ date and renders `¤3.99` (invariant culture; a systemd service starts with NO `
 the first live deploy). Set the droplet's timezone (`timedatectl set-timezone`, or `TZ` in the
 service env) and keep `LANG` in the env file — runbook step 2 covers both.
 Also backlog: **CSV history importer — PARKED** (Walmart won't export to Jordan's state; needs another
-itemized source); a per-size Trends price chart. (**Learning corrected names/brands from receipt review is
-DONE** — the corrected product NAME via the alias's product (PR #19, item 53), the corrected BRAND per
+itemized source); a per-size Trends price chart; ⚠️ **Eggs' suit buttons are misaligned — realign on EVERY
+icon** (Jordan's call, 2026-09-05): the two blue suit buttons are off-centre + staggered (`cx=272,cy=356`
+/ `cx=278,cy=376`, right of the `x=256` centre line), and the coordinates are duplicated across the SVG
+sources, `EggsMascot.razor`, and the rasterized PNGs — fix the SVG(s) + the component together and
+regenerate the PNGs (full detail + the file list in `docs/icons/README.md`). (**Learning corrected
+names/brands from receipt review is DONE** — the corrected product NAME via the alias's product (PR #19, item 53), the corrected BRAND per
 (merchant, raw text) via PR #46 / item 61 — so item 52's backlog line is closed.)
 (Shipped since this note: the double-scroll fix; the **two-stream cadence model** — rebuy rhythm +
 burn rate, hybrid, restock is status-only (§6); the whole **production-hardening pass** —

@@ -25,6 +25,21 @@ Regenerate by rasterizing `shelfaware-icon.svg` at those sizes with any SVG→PN
 The manifest is served from `Program.cs` (`GET /manifest.webmanifest`); the head wiring lives in
 `Components/App.razor`.
 
+## ⚠️ Known issue — Eggs' buttons are misaligned (realign on EVERY icon)
+
+The two blue suit buttons are off-centre and staggered: in `shelfaware-icon.svg` they sit at
+`cx=272,cy=356` and `cx=278,cy=376`, so they're to the RIGHT of the body/bow-tie centre line
+(`x=256`) and don't run straight down the suit. They should be centred and vertically aligned
+(centred under the bow tie). **This must be fixed on every icon that carries them**, because the
+coordinates are duplicated in several places:
+
+- `docs/icons/shelfaware-icon.svg` (and `shelfaware-icon-gold-plain.svg`) — the vector sources
+- `src/ShelfAware.Web/Components/EggsMascot.razor` — the inline mood-mascot (same two `<circle>`s)
+- `wwwroot/icons/icon-512.png` · `icon-192.png` · `apple-touch-icon.png` — re-rasterize after the SVG fix
+
+Not yet done — a polish pass. When it's fixed, correct the SVG(s) + the component together (they
+share the exact coordinates) and regenerate the PNGs.
+
 ## Earlier explorations (kept for reference)
 
 - `shelfaware-icon-gold-plain.svg` — the same blob without the clipboard
