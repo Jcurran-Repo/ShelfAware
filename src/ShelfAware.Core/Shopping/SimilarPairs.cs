@@ -48,7 +48,10 @@ public static class SimilarPairs
             // Exactly two products own this word ⇒ it is unique to that pair. Three+ is a category head
             // (bread, chicken), which distinguishes nothing, so it is NOT a signal.
             if (holders.Count != 2) continue;
-            var (lo, hi) = holders[0].Id < holders[1].Id ? (holders[0], holders[1]) : (holders[1], holders[0]);
+            // Canonical: lower product id first (ids are distinct, so this is unambiguous), regardless of the
+            // order the two happened to be scanned — that's what gives a pair ONE identity for the memory.
+            var lo = holders.MinBy(h => h.Id)!;
+            var hi = holders.MaxBy(h => h.Id)!;
             // Two words might both be pair-unique to the same pair ("brioche" AND "bread"): one pair, once.
             if (seen.Add((lo.Id, hi.Id))) pairs.Add(new SimilarPair(lo.Id, lo.Name, hi.Id, hi.Name));
         }

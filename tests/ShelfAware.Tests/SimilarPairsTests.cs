@@ -20,6 +20,21 @@ public class SimilarPairsTests
     }
 
     [Fact]
+    public void Canonicalises_to_the_lower_id_regardless_of_scan_order()
+    {
+        // The higher-id product is listed FIRST; the pair must still name the smaller id as LowerId, so the
+        // pair has one identity for the dismissal/mood memory however the list happened to be ordered.
+        IReadOnlyList<Product> onList = [P(5, "Brioche Loaf"), P(2, "Artesano Brioche Bread")];
+
+        var pair = Assert.Single(SimilarPairs.Find(onList));
+
+        Assert.Equal(2, pair.LowerId);
+        Assert.Equal("Artesano Brioche Bread", pair.LowerName);
+        Assert.Equal(5, pair.HigherId);
+        Assert.Equal("Brioche Loaf", pair.HigherName);
+    }
+
+    [Fact]
     public void Does_not_flag_a_category_head_shared_by_three_or_more()
     {
         // "chicken" is in all three (a category head), so it distinguishes nothing and is NOT a signal;

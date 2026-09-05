@@ -27,4 +27,10 @@ public class NudgeMoodTests
         Assert.All(lines, l => Assert.False(string.IsNullOrWhiteSpace(l)));
         Assert.Equal(lines.Count, lines.Distinct().Count());
     }
+
+    [Fact]
+    public void An_unknown_mood_still_gets_a_real_line_never_an_empty_string() =>
+        // Defensive default: a mood value outside the enum (a future addition not yet wired) degrades to a
+        // friendly line rather than a blank — never a crash on the grocery list.
+        Assert.False(string.IsNullOrEmpty(NudgeMoods.Line((NudgeMood)999)));
 }
