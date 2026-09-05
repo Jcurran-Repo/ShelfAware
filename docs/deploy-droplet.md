@@ -65,6 +65,11 @@ ufw allow OpenSSH && ufw allow 80 && ufw allow 443 && ufw enable
 **demo posture**: `Llm__KeyMode=Byok`, no keys on the server, visitors paste their own
 in Settings. The managed / family variant sits in the same file, commented out.
 
+> **Free read-aloud voice (optional):** set `Speech__Provider=Local` to voice recipes
+> with a self-hosted Kokoro sidecar on the box instead of ElevenLabs — $0 per call, no
+> key. It's a separate systemd service; stand it up first with
+> [docs/deploy-kokoro.md](deploy-kokoro.md).
+
 **5. Service.** Copy [`deploy/shelfaware.service`](../deploy/shelfaware.service) to
 `/etc/systemd/system/shelfaware.service`, then:
 
