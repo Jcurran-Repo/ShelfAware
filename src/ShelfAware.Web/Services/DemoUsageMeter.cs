@@ -101,8 +101,8 @@ public sealed class DemoUsageMeter(
             if ((await TodayAsync(check, ct))?.Calls == threshold)
             {
                 logger.LogWarning(
-                    "Demo box: {Calls} host-key AI calls used today — crossed the alert threshold ({Threshold}). Watch usage on /admin.",
-                    threshold, threshold);
+                    "Demo box: today's host-key AI calls crossed the alert threshold ({Threshold}). Watch usage on /admin.",
+                    threshold);
             }
         }
     }

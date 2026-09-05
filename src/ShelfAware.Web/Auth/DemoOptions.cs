@@ -13,8 +13,10 @@ public sealed class DemoOptions
     /// the managed demo box reads recipes with a free self-hosted Kokoro sidecar, so there's nothing to cap.)</summary>
     public int? DailyGlobalCallLimit { get; set; }
 
-    /// <summary>Warn the admin (a logged Warning → the error log → /admin) the moment the day's global call
-    /// count crosses this — an early "you're suddenly getting traffic / cost is accruing" signal, well under
-    /// the hard cap. Null = no alert.</summary>
+    /// <summary>Log a Warning the moment the day's global call count crosses this — an early "you're
+    /// suddenly getting traffic / cost is accruing" signal, well under the hard cap. It lands in the
+    /// server's own logs (journald/stdout) and the crossing shows on the /admin <em>Demo box usage</em>
+    /// panel (the threshold tile reads "· crossed"); it is NOT routed to /admin's <em>error log</em>, which
+    /// is for Error-level events only — a routine heads-up isn't an error. Null = no alert.</summary>
     public int? AlertThreshold { get; set; }
 }
