@@ -297,6 +297,13 @@ internal sealed class FakeVoiceCredentials : IVoiceCredentials
     public string AgentId { get; set; } = "";
 }
 
+/// <summary>The box-wide demo valve for AiErrorText's pre-check. Blocks with <paramref name="message"/>, or
+/// never (null, the default) — a demo-cap page test constructs one with a message.</summary>
+internal sealed class FakeDemoValve(string? message = null) : IDemoValve
+{
+    public ValueTask<string?> CallBlockedMessageAsync(CancellationToken cancellationToken = default) => new(message);
+}
+
 /// <summary>A no-op meal-plan generator: pages that read the current plan (the grocery list, the dashboard)
 /// never generate, so MealPlanService needs a generator only to construct.</summary>
 internal sealed class FakeMealPlanGenerator : IMealPlanGenerator

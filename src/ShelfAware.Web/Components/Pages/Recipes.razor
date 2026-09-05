@@ -16,6 +16,7 @@
 @inject IIngredientAlternativesAdvisor AltAdvisor
 @inject IEntitlements Entitlements
 @inject CircuitAiSettings AiSettings
+@inject IDemoValve DemoValve
 @inject ShelfAware.Core.Speech.IVoiceCredentials Voice
 @inject Microsoft.Extensions.Configuration.IConfiguration Config
 @inject VoiceCoordinator Coordinator
@@ -575,7 +576,7 @@
         if (adaptingId is not null) return;
         adaptingId = r.Id;
         adaptNote = null;
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
         if (blocked is not null) { adaptNote = blocked; adaptingId = null; return; }
         try
         {
@@ -601,7 +602,7 @@
         // The AI generates the generic swap forms; the curated "also works as" stand-ins in CloudFor need no
         // call. So if the AI is unavailable, don't attempt it — just say why the cloud is thinner (phase 4c).
         // The cloud still renders whatever curated stand-ins exist.
-        altUnavailable = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        altUnavailable = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
         if (altUnavailable is not null) return;
 
         generatingAltFor = i.Id;
@@ -640,7 +641,7 @@
         if (adaptingId is not null) return;
         adaptingId = r.Id;
         adaptNote = null;
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
         if (blocked is not null) { adaptNote = blocked; adaptingId = null; return; }
         try
         {
@@ -1038,7 +1039,7 @@
         suggesting = true;
         suggestError = null;
         // Phase 4c: don't attempt a call this circuit can't make — show why (out of credits / no key) and stop.
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
         if (blocked is not null) { suggestError = blocked; suggesting = false; return; }
         try
         {

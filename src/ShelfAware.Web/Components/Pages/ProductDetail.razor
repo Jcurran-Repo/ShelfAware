@@ -11,6 +11,7 @@
 @inject IProductSubstituteAdvisor SubAdvisor
 @inject IEntitlements Entitlements
 @inject CircuitAiSettings AiSettings
+@inject IDemoValve DemoValve
 @inject ProductRenameService Renamer
 @inject ProductMergeService Merger
 @inject LookalikeNudgeService Nudges
@@ -1406,7 +1407,7 @@ else
         subNote = null;
         // Suggesting is optional polish on top of the curated list, so a blocked circuit just says why rather
         // than leaving the ✨ button spin and add nothing (phase 4c).
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
         if (blocked is not null) { subNote = blocked; suggesting = false; return; }
         try
         {

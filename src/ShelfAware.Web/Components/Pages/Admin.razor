@@ -19,6 +19,8 @@
 @inject IOptions<AdminOptions> AdminConfig
 @inject ErrorLogSink Sink
 @inject OnlinePresence Presence
+@inject DemoUsageMeter DemoUsage
+@inject IOptions<DemoOptions> DemoConfig
 @inject ILogger<Admin> Logger
 
 <PageTitle>Admin — Reginald</PageTitle>
@@ -87,6 +89,35 @@ else
             </div>
         </div>
     </section>
+    @if (DemoUsage.IsConfigured)
+    {
+        @* The managed demo box's box-wide daily AI valve — the wallet bound open registration needs that the
+           per-household quotas can't give (every new household gets its own allowance). At the cap, every AI
+           surface shows "come back tomorrow" until the day rolls over. Hidden entirely on a box with no Demo
+           config (family / self-host). TTS isn't metered — the demo reads recipes with a free local voice. *@
+        var demoCallsToday = demoUsage?.Calls ?? 0;
+        var demoLimit = DemoConfig.Value.DailyGlobalCallLimit;
+        var demoAtCap = demoLimit is { } cap && demoCallsToday >= cap;
+        <section class="panel">
+            <h2>Demo box usage</h2>
+            <p class="muted">Host-key AI calls across ALL households today, against the box-wide daily cap.
+                At the cap, every AI surface shows "come back tomorrow" until midnight (server time). The real
+                ceiling is the spend limit on the key itself; this valve just hands the polite message first.</p>
+            <div class="portfolio">
+                <div class="@(demoAtCap ? "stat fail" : "stat")">
+                    <div class="stat-value">@demoCallsToday@(demoLimit is { } shown ? $" / {shown}" : "")</div>
+                    <div class="stat-label">AI calls today@(demoAtCap ? " · capped" : "")</div>
+                </div>
+                @if (DemoConfig.Value.AlertThreshold is { } threshold)
+                {
+                    <div class="@(demoCallsToday >= threshold ? "stat pass" : "stat")">
+                        <div class="stat-value">@threshold</div>
+                        <div class="stat-label">Alert threshold@(demoCallsToday >= threshold ? " · crossed" : "")</div>
+                    </div>
+                }
+            </div>
+        </section>
+    }
     @if (Ci.Enabled)
     {
         <section class="panel">
@@ -686,6 +717,7 @@ else
     private IReadOnlyList<WishlistContact>? wishlistContacts;
     private string? wishlistCopyStatus;
     private AiSpendReport? aiSpend;
+    private DemoUsageDay? demoUsage;
     private CiStatus? ciStatus;
     private bool ciLoaded;
     private TestStatusReport? testStatus;
@@ -781,6 +813,7 @@ else
             wishlistSummary = await Reader.GetWishlistSummaryAsync();
             wishlistContacts = await Reader.ListWishlistContactsAsync();
             aiSpend = await AiSpend.GetAsync();
+            demoUsage = await DemoUsage.GetTodayAsync(); // null unless a Demo cap is configured (panel is gated on IsConfigured)
             testStatus = TestStatus.Read();
             return true;
         }

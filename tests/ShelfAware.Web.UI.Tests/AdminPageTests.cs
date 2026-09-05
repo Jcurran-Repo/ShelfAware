@@ -8,6 +8,7 @@ using ShelfAware.Web.Auth;
 using ShelfAware.Web.Components.Pages;
 using ShelfAware.Web.Data;
 using ShelfAware.Web.Diagnostics;
+using ShelfAware.Web.Services;
 using ShelfAware.Web.Tests;
 
 namespace ShelfAware.Web.UI.Tests;
@@ -24,6 +25,10 @@ public class AdminPageTests : PageTestContext
     private BunitAuthorizationContext auth = null!;
     private ErrorLogSink sink = null!;
     private OnlinePresence presence = null!;
+    // The demo box-wide valve's config — unconfigured by default (so the panel is hidden and every other
+    // admin test is unaffected). A demo-panel test mutates this BEFORE Render(); Options.Create wraps this
+    // same instance, so the change is live at render time.
+    private readonly DemoOptions demoOptions = new();
 
     private sealed class FakeCiStatus : ICiStatusProvider
     {
@@ -66,6 +71,8 @@ public class AdminPageTests : PageTestContext
         Services.AddScoped<AdminAiSpendReader>();
         Services.AddSingleton<ICiStatusProvider>(new FakeCiStatus());
         Services.AddSingleton<ITestStatusProvider>(new FakeTestStatus());
+        Services.AddSingleton<IOptions<DemoOptions>>(Options.Create(demoOptions));
+        Services.AddSingleton<DemoUsageMeter>();
     }
 
     protected override void Dispose(bool disposing)
@@ -678,5 +685,60 @@ public class AdminPageTests : PageTestContext
         var m = cut.Markup;
         Assert.True(m.IndexOf("AlphaErr") < m.IndexOf("CharlieErr") && m.IndexOf("CharlieErr") < m.IndexOf("BravoErr"),
             "Ascending by count should order 1×, 2×, 3× (Alpha, Charlie, Bravo).");
+    }
+
+    // ------------------------------------------------------------------- demo box valve
+
+    [Fact]
+    public void The_demo_usage_panel_shows_todays_calls_against_the_cap_when_configured()
+    {
+        demoOptions.DailyGlobalCallLimit = 300;
+        using (var db = authDb.CreateDbContext())
+        {
+            db.DemoUsage.Add(new DemoUsageDay { Day = DateOnly.FromDateTime(DateTime.Today), Calls = 42 });
+            db.SaveChanges();
+        }
+
+        var cut = Render<Components.Pages.Admin>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("Demo box usage", cut.Markup);
+            Assert.Contains("42 / 300", cut.Markup);        // today's box-wide calls against the cap
+            Assert.DoesNotContain("capped", cut.Markup);    // 42 < 300, so NOT capped (pins the >= boundary)
+        });
+    }
+
+    [Fact]
+    public void The_demo_usage_panel_is_hidden_on_a_box_with_no_demo_config()
+    {
+        // demoOptions is left unconfigured (the family / self-host default) — the valve is a no-op, so the
+        // panel must not appear at all (removing the IsConfigured gate would render "0" on every box).
+        var cut = Render<Components.Pages.Admin>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("At a glance", cut.Markup);            // the page rendered
+            Assert.DoesNotContain("Demo box usage", cut.Markup);  // …but not the demo panel
+        });
+    }
+
+    [Fact]
+    public void The_demo_usage_panel_flags_the_cap_being_reached()
+    {
+        demoOptions.DailyGlobalCallLimit = 5;
+        using (var db = authDb.CreateDbContext())
+        {
+            db.DemoUsage.Add(new DemoUsageDay { Day = DateOnly.FromDateTime(DateTime.Today), Calls = 5 });
+            db.SaveChanges();
+        }
+
+        var cut = Render<Components.Pages.Admin>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("5 / 5", cut.Markup);
+            Assert.Contains("capped", cut.Markup); // the "· capped" label the at-cap styling carries
+        });
     }
 }

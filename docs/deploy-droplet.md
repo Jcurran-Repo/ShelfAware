@@ -142,6 +142,56 @@ lives in `/var/lib/shelfaware`, not the app directory. (The publish output lands
   URL that the *server* then calls is an SSRF invitation; the option exists for
   self-hosters pointing at their own Ollama.
 
+## The demo box on YOUR key: the AI valve + abuse controls
+
+To let visitors try the AI without bringing a key, run the demo **managed** — the box
+uses your key, so it needs bounding. A ready-to-edit env with all of this filled in is
+[`deploy/demo-box.env.example`](../deploy/demo-box.env.example); the mechanics:
+
+**Turning the valve on = config + managed + a restart.** The box-wide valve caps the
+day's AI calls across *all* households (per-household quotas can't bound the box when
+every new sign-up gets its own allowance). It only does anything when **all three** are
+true:
+
+1. `Demo__DailyGlobalCallLimit=300` (and optionally `Demo__AlertThreshold=50`) is set —
+   unset, the valve is a complete no-op (it never even writes a row).
+2. The box is **managed** — `Llm__KeyMode=Managed` + `Llm__ApiKey`. ⚠️ **The valve only
+   counts the HOST's key.** On a BYOK box, visitors spend their own keys, so there's
+   nothing to cap; a demo box must be managed for the valve to matter.
+3. You **restart** the service (`systemctl restart shelfaware`) — `Demo:*` is read once
+   at boot, not hot-reloaded.
+
+**What a capped visitor sees:** every AI surface shows *"This demo box is usage-limited
+and has hit today's limit — please come back tomorrow"* **before** attempting the call,
+so nothing is spent. The counter resets at **midnight, server-local**.
+
+**⚠️ The real ceiling is the spend limit on the key itself** (set it in the Anthropic
+console). The valve is the *polite* stop that hands the friendly message first; the
+key's spend limit is the *hard* stop for your wallet. The counter records after each
+call, so a concurrent burst can slightly overshoot the cap — bounded, and backstopped by
+that spend limit. **Set both.**
+
+**The layers, outermost first:** `Llm__DailyCallLimit`/`DailyTokenLimit` (fair-per-visitor)
+→ `Demo__DailyGlobalCallLimit` (the box-wide wallet valve) → `Demo__AlertThreshold` (an
+early "traffic is arriving" heads-up, logged as a Warning and shown on **/admin → Demo
+box usage** as "· crossed" — *not* in the error log) → the key's own spend limit (the
+hard ceiling).
+
+**Sign-up abuse controls** (a public box wants these): `Auth__RequireEmailConfirmation=true`
+(a real inbox must confirm before sign-in — this NEEDS the `Email:` block, or the app
+won't boot) and `Auth__DailyAccountCreationLimit=10` (box-wide new-accounts/day). ⚠️ On a
+box with **existing** accounts, turning on email confirmation locks them out until you
+backfill `sqlite3 auth.db "UPDATE AspNetUsers SET EmailConfirmed = 1;"` — or start from a
+fresh DB (no accounts to backfill).
+
+**Read-aloud voice** on the demo is free via the local Kokoro sidecar — set
+`Speech__Provider=Local` *after* standing the sidecar up ([docs/deploy-kokoro.md](deploy-kokoro.md)).
+Until then, leave it commented; chat + receipts don't need it, and read-aloud just fails
+soft.
+
+**Payments stays OFF** on the demo (no `Payments` section) — with billing off, the AI
+simply works for every fresh household, gated only by the caps above.
+
 ## Running it for your own household instead
 
 Same box, three differences, all in `/etc/shelfaware/env`:

@@ -19,6 +19,7 @@ public sealed class MeteredChatClient(
     ByokChatClient inner,
     CircuitAiSettings settings,
     AiUsageMeter meter,
+    DemoUsageMeter demoMeter,
     IOptions<BillingOptions> billing,
     IOptions<PaymentsOptions> payments,
     CreditLedger ledger,
@@ -30,12 +31,24 @@ public sealed class MeteredChatClient(
         IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
         await EnsureManagedCallAllowedAsync(cancellationToken);
-        var response = await inner.GetResponseAsync(messages, options, cancellationToken);
-        // Prefer the model the provider REPORTED; fall back to the one we REQUESTED before AiPricing's own
-        // priciest-tier fallback — so a provider that doesn't echo the model still prices at the real
-        // (usually cheaper) requested model, not Opus rates. (See the code-review hardening, phase 2.)
-        await RecordAsync(response.Usage, response.ModelId ?? options?.ModelId, cancellationToken);
-        return response;
+        await ReserveCallAsync();
+        ChatResponse? response = null;
+        try
+        {
+            response = await inner.GetResponseAsync(messages, options, cancellationToken);
+            return response;
+        }
+        finally
+        {
+            // Record tokens/cost/credit UNCANCELLABLY once a response exists — a client that drops AFTER the
+            // answer landed can't dodge the token/cost/credit write. A mid-flight abort (no response) records
+            // nothing here; the CALL already counted at the reserve above, which is what bounds the caps.
+            // Prefer the model the provider REPORTED, then the one we REQUESTED before AiPricing's own
+            // priciest-tier fallback — so a provider that doesn't echo the model still prices at the real
+            // (usually cheaper) requested model, not Opus rates.
+            if (response is not null)
+                await RecordUsageAsync(response.Usage, response.ModelId ?? options?.ModelId);
+        }
     }
 
     public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
@@ -43,37 +56,76 @@ public sealed class MeteredChatClient(
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         await EnsureManagedCallAllowedAsync(cancellationToken);
+        await ReserveCallAsync();
         UsageDetails? usage = null;
         string? model = null;
-        await foreach (var update in inner.GetStreamingResponseAsync(messages, options, cancellationToken))
+        try
         {
-            // Providers report usage in a trailing UsageContent update; remember the last one seen, and
-            // the model id from whichever update carries it (for the cost lookup).
-            foreach (var content in update.Contents)
+            await foreach (var update in inner.GetStreamingResponseAsync(messages, options, cancellationToken))
             {
-                if (content is UsageContent u) usage = u.Details;
+                // Providers report usage in a trailing UsageContent update; remember the last one seen, and
+                // the model id from whichever update carries it (for the cost lookup).
+                foreach (var content in update.Contents)
+                {
+                    if (content is UsageContent u) usage = u.Details;
+                }
+                if (update.ModelId is not null) model = update.ModelId;
+                yield return update;
             }
-            if (update.ModelId is not null) model = update.ModelId;
-            yield return update;
         }
-        // Reported model, then the requested one (see GetResponseAsync), then AiPricing's fallback.
-        await RecordAsync(usage, model ?? options?.ModelId, cancellationToken);
+        finally
+        {
+            // Uncancellable tail record (see GetResponseAsync) — runs on normal completion AND when the
+            // consumer stops early, so a dropped stream that already yielded its usage can't dodge the write.
+            if (usage is not null)
+                await RecordUsageAsync(usage, model ?? options?.ModelId);
+        }
     }
 
-    /// <summary>The managed-call gate, consulted BEFORE the provider call (phase 4b). BYOK circuits skip it
-    /// entirely (their key, their wallet). For a managed household: the optional daily abuse-valve cap, then
-    /// <see cref="IEntitlements.IsAiAllowedAsync"/> — which is always true where billing is off (§7), and
-    /// otherwise allows a Founder (unlimited) or a positive balance (running the lazy monthly allowance
-    /// first). Throws to refuse — the provider call never happens, so nothing is spent or recorded.</summary>
+    /// <summary>The managed-call gate, consulted BEFORE the provider call (phase 4b) — the CHECKS only; the
+    /// reserve is <see cref="ReserveCallAsync"/>, next. BYOK circuits skip it entirely (their key, their
+    /// wallet). For a managed household: the per-household caps, then the demo box-wide valve, then
+    /// <see cref="IEntitlements.IsAiAllowedAsync"/> — always true where billing is off (§7), and otherwise a
+    /// Founder (unlimited) or a positive balance (running the lazy monthly allowance first). Throws to
+    /// refuse — the provider call never happens, and (because the reserve runs after) nothing is counted.</summary>
     private async Task EnsureManagedCallAllowedAsync(CancellationToken cancellationToken)
     {
         if (!settings.Managed) return;
         await meter.EnsureLlmCallAllowedAsync(cancellationToken);
+        // The demo box's BOX-WIDE daily valve (a no-op unless a Demo cap is configured) — the wallet bound
+        // the per-household cap above can't give under open registration. Throws the come-back message.
+        await demoMeter.EnsureCallAllowedAsync(cancellationToken);
         if (!await entitlements.IsAiAllowedAsync(cancellationToken))
             throw new AiCreditsExhaustedException();
     }
 
-    private async Task RecordAsync(UsageDetails? usage, string? model, CancellationToken cancellationToken)
+    /// <summary>Count one call, BEFORE the provider call and UNCANCELLABLY, so a client that aborts
+    /// mid-flight still counts against the caps that bound volume — an aborted call still cost the key. The
+    /// per-household count runs for BOTH modes (a BYOK visitor's own usage is recorded-but-never-limited,
+    /// like their tokens); the box-wide demo valve counts host-key (managed) calls only. Best-effort like
+    /// every usage write — a rare bookkeeping hiccup mustn't block a legitimate call, and the key's own spend
+    /// limit is the hard backstop. Tokens/cost/credit can't be reserved here (they need the response); they
+    /// record at the tail (<see cref="RecordUsageAsync"/>).</summary>
+    private async Task ReserveCallAsync()
+    {
+        try { await meter.ReserveLlmCallAsync(CancellationToken.None); }
+        catch (Exception ex) { logger.LogError(ex, "Reserving the AI call for the household usage row failed; it went uncounted."); }
+
+        if (settings.Managed)
+        {
+            try { await demoMeter.RecordCallAsync(CancellationToken.None); }
+            catch (Exception ex) { logger.LogError(ex, "Reserving the demo box-wide call failed; it went uncounted for the daily valve."); }
+        }
+    }
+
+    /// <summary>Record a completed call's tokens + cost + credit draw, UNCANCELLABLY (the whole point of the
+    /// finally that calls this): the caller's token may already be cancelled by the time we get here, and a
+    /// bookkeeping write may not be skipped by that (items 27/39 — a write may not be cancelled). The CALL
+    /// COUNT is not written here — it was reserved at the gate. The two writes are INDEPENDENT best-effort on
+    /// two SEPARATE databases (the AiUsage row in the pantry, the credit ledger in auth), which no single
+    /// transaction can span; each is guarded on its OWN so a pantry hiccup can't silently skip the MONEY
+    /// write. A write that fails after its sibling landed is logged and bounded to this one call.</summary>
+    private async Task RecordUsageAsync(UsageDetails? usage, string? model)
     {
         var inputTokens = usage?.InputTokenCount ?? 0;
         var outputTokens = usage?.OutputTokenCount ?? 0;
@@ -91,24 +143,16 @@ public sealed class MeteredChatClient(
             return;
         }
 
-        // Two INDEPENDENT best-effort writes on two SEPARATE databases — the AiUsage row (pantry) and the
-        // credit ledger (auth) — which no single transaction can span. Each is guarded on its OWN so one
-        // failing never drops the other: a pantry hiccup must not silently skip the MONEY (ledger) write,
-        // which is what a single wrapping try/catch used to do. Cross-DB atomicity genuinely isn't
-        // available here, so a write that fails after its sibling landed is logged and bounded to this one
-        // call — the user already has their answer, and failing it over a bookkeeping write is worse.
         try
         {
-            await meter.RecordLlmCallAsync(inputTokens, outputTokens, costMicros, cancellationToken);
+            await meter.RecordLlmUsageAsync(inputTokens, outputTokens, costMicros, CancellationToken.None);
         }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex) { logger.LogError(ex, "Recording AI usage failed; this call's cost went unrecorded."); }
+        catch (Exception ex) { logger.LogError(ex, "Recording AI usage failed; this call's tokens/cost went unrecorded."); }
 
         try
         {
-            await RecordCreditConsumptionAsync(costMicros, model, cancellationToken);
+            await RecordCreditConsumptionAsync(costMicros, model, CancellationToken.None);
         }
-        catch (OperationCanceledException) { throw; }
         catch (Exception ex) { logger.LogError(ex, "Recording credit consumption failed; this call didn't draw the balance."); }
     }
 

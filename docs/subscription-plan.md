@@ -598,6 +598,16 @@ can't nag.
 
 ## 10. Demo box: free receipts for demos (2026-09-03, Jordan's calls)
 
+> ⚠️ **SUPERSEDED (2026-09-05) — the demo box went MANAGED, not BYOK.** Jordan's call: make the demo box
+> a normal **managed** box (`Llm:KeyMode=Managed` + a dedicated spend-capped key) so AI just works for a
+> fresh household with no key of their own — the whole "receipt-only BYOK host-key fallback + 9-lifetime
+> free scans + 21/day free-scan cap" design **below was NOT built**. What shipped instead: a **box-wide
+> daily AI valve** (`DemoUsageMeter` / `Demo:DailyGlobalCallLimit` / `Demo:AlertThreshold`) that caps
+> host-key LLM calls across all households and hands the polite "come back tomorrow", plus email-confirmed
+> registration + an account-creation cap. See `deploy/env.example` ("Demo box" section),
+> `docs/deploy-droplet.md` ("The demo box on YOUR key"), and `deploy/demo-box.env.example`. The numbers /
+> rationale below are kept for history only.
+
 **Goal:** a visitor to the demo box (demo.shelfaware.net) can try the flagship feature — receipt
 scanning — **without their own API key**, so the demo actually demonstrates the AI. Today the demo box
 is `KeyMode=Byok` with open registration: no host key, so a keyless visitor can only *review* the

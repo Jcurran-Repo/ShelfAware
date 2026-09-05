@@ -30,6 +30,10 @@ public class AuthDbContext(DbContextOptions<AuthDbContext> options) : IdentityDb
     /// can't ORDER BY a DateTimeOffset in SQL), so an index would serve nothing.</summary>
     public DbSet<WishlistEntry> Wishlist => Set<WishlistEntry>();
 
+    /// <summary>The managed demo box's BOX-WIDE daily AI counters — operator data, same rationale as the
+    /// error log: a box-wide wallet valve no household owns. One row per day (see <see cref="DemoUsageDay"/>).</summary>
+    public DbSet<DemoUsageDay> DemoUsage => Set<DemoUsageDay>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -72,5 +76,9 @@ public class AuthDbContext(DbContextOptions<AuthDbContext> options) : IdentityDb
         // the PK gives the unique constraint the concurrent-duplicate insert race relies on (a second
         // delivery of the same event loses the insert). String key, like UserLoginStat's UserId.
         modelBuilder.Entity<ProcessedPaymentEvent>().HasKey(e => e.EventId);
+
+        // One row per day; unique so the meter's race-safe upsert (increment-or-insert) has the constraint
+        // its concurrent-insert fallback relies on.
+        modelBuilder.Entity<DemoUsageDay>().HasIndex(d => d.Day).IsUnique();
     }
 }

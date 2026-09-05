@@ -9,10 +9,11 @@ meter.** That is why the managed demo box uses it.
 The app change is one setting (`Speech:Provider=Local`); this doc is the other half — standing up the
 sidecar. The two are independent: flip the setting only once the sidecar answers.
 
-> **Status:** the app side (provider seam, `LocalTextToSpeech`, tests) is built and CI-green. The
-> **sidecar steps below are reasoned from Kokoro-FastAPI's documented setup and have not yet been run on
-> a live box** — verify the first time you deploy one, and correct anything here that drifted (the image
-> tag especially). Same honesty flag as any not-yet-observed deploy step.
+> **Status:** the app side (provider seam, `LocalTextToSpeech`, tests) is built and CI-green. The image
+> name (`ghcr.io/remsky/kokoro-fastapi-cpu`), tag (`v0.8.1`), port (8880) and endpoint
+> (`/v1/audio/speech`) are **verified against the Kokoro-FastAPI project**, but the end-to-end run has
+> **not yet happened on a live box** — the first deploy is the first real test, so watch
+> `journalctl -u kokoro -f` and the smoke-test in step 3 before flipping the app over.
 
 ## What talks to what
 
@@ -31,30 +32,43 @@ The **browser never touches the sidecar** — the app calls it server-side and r
 
 ## Requirements
 
-- **~2 GB RAM.** Kokoro-82M is a ~300 MB model plus the runtime; it's CPU-capable (no GPU needed). The
-  demo droplet is 2 GB, which fits. On a 1 GB box, keep ElevenLabs.
+- **RAM: 2 GB is TIGHT — add swap.** Kokoro-82M is CPU-capable (no GPU), but the model + ONNX runtime +
+  Python resident set runs ~1–1.5 GB under load, and Reginald (.NET) + Caddy + the OS want the rest of a
+  2 GB droplet. It works, but a synthesis spike can OOM without a cushion, so **add a 2 GB swap file**
+  (step 0 below). If the box still struggles, bump the droplet to 4 GB. On a 1 GB box, keep ElevenLabs.
 - Docker (recommended) **or** a Python venv. Docker bundles the phonemizer/espeak-ng dependencies the
   pip path otherwise needs, so it's the simpler path on a fresh droplet.
 
 ## Option A — Docker (recommended)
 
-1. **Confirm the image and pin a tag.** Check the [Kokoro-FastAPI project](https://github.com/remsky/Kokoro-FastAPI)
-   for the current **CPU image name** (the unit's `ghcr.io/remsky/kokoro-fastapi-cpu` is from the docs,
-   not yet verified on a live box) **and a release tag**, then edit
-   [`deploy/kokoro.service`](../deploy/kokoro.service) to use them — don't ship `:latest` (not
-   reproducible). The unit already runs the container with `--cap-drop=ALL --security-opt=no-new-privileges`;
-   add `--read-only` (plus a writable `--tmpfs` for any model/temp dir it needs) if you want to go further.
+**0. Add swap first** (a 2 GB droplet needs the cushion; skip if you already have swap or ≥ 4 GB RAM):
 
-2. **Install the unit** (it runs the container on `127.0.0.1:8880`, systemd-managed, restart-on-crash):
+   ```bash
+   sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+   sudo mkswap /swapfile && sudo swapon /swapfile
+   echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab   # survive reboots
+   free -h   # confirm Swap: 2.0Gi
+   ```
+
+1. **Install Docker** (skip if it's already there — `docker --version`):
+
+   ```bash
+   curl -fsSL https://get.docker.com | sudo sh
+   ```
+
+2. **Install the unit** — [`deploy/kokoro.service`](../deploy/kokoro.service) already pins the verified
+   image (`ghcr.io/remsky/kokoro-fastapi-cpu:v0.8.1`) and runs it loopback-bound with
+   `--cap-drop=ALL --security-opt=no-new-privileges`. Bump the tag when a newer release lands
+   ([project releases](https://github.com/remsky/Kokoro-FastAPI/releases)); add `--read-only` (plus a
+   writable `--tmpfs`) if you want to harden further. Then:
 
    ```bash
    sudo cp deploy/kokoro.service /etc/systemd/system/kokoro.service
-   # (edit the image tag first, per step 1)
    sudo systemctl daemon-reload
    sudo systemctl enable --now kokoro
    ```
 
-   The first start pulls the image and loads the model — give it a minute. Watch it:
+   The first start pulls the image and auto-downloads the model — give it a minute or two. Watch it:
    `journalctl -u kokoro -f`.
 
 3. **Prove the sidecar answers** (still on the box):
