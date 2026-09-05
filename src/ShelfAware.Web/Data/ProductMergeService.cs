@@ -18,10 +18,14 @@ namespace ShelfAware.Web.Data;
 /// ReceiptLine.ProductId has no delete action at all (see ProductDeletionTests), so deleting first
 /// would destroy the history the merge exists to combine. Tenancy: every query here runs through
 /// the household-scoped context, so a foreign household's product id simply fails to load.
+/// <para>The merge captures an undo MANIFEST (see <c>ProductsMergedHandler</c>) — the ids of every
+/// row it moves, the source's full definition, and what it added to the target — so it is reversible:
+/// the /history undo rebuilds the source and pulls its contribution back out of the survivor.</para>
 /// </summary>
 public class ProductMergeService(IHouseholdDbFactory dbFactory, IActivityLog activityLog)
 {
-    public sealed record Result(bool Ok, string Message, int MovedPurchases = 0, int RelinkedIngredients = 0);
+    public sealed record Result(
+        bool Ok, string Message, int MovedPurchases = 0, int RelinkedIngredients = 0, int UndoEntryId = 0);
 
     public async Task<Result> MergeAsync(
         int sourceId, int targetId, string? varietyForMoved = null, CancellationToken cancellationToken = default)
@@ -36,9 +40,22 @@ public class ProductMergeService(IHouseholdDbFactory dbFactory, IActivityLog act
 
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
 
+        // Capture the merge MANIFEST before the fold — the exact rows about to move (with the variety each
+        // carried, so the undo knows which the label stamps). The source's own tag/substitute values and the
+        // target's pre-merge tracked flag / unit are captured below, as those columns change. This is what
+        // makes the merge reversible: the undo rebuilds the source from it and pulls its rows back out.
+        var purchaseRows = await db.PurchaseEvents.Where(x => x.ProductId == sourceId)
+            .Select(x => new { x.Id, x.Variety }).ToListAsync(cancellationToken);
+        var lineRows = await db.ReceiptLines.Where(x => x.ProductId == sourceId)
+            .Select(x => new { x.Id, x.Variety }).ToListAsync(cancellationToken);
+        var aliasIds = await db.ProductAliases.Where(a => a.ProductId == sourceId)
+            .Select(a => a.Id).ToListAsync(cancellationToken);
+        var signalIds = await db.InventorySignals.Where(x => x.ProductId == sourceId)
+            .Select(x => x.Id).ToListAsync(cancellationToken);
+
         // Bulk re-points run as immediate SQL through the household query filter. The variety label
         // fills only blanks — a purchase that already knows its flavor keeps it.
-        var movedPurchases = await db.PurchaseEvents
+        await db.PurchaseEvents
             .Where(p => p.ProductId == sourceId)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(p => p.ProductId, targetId)
@@ -55,44 +72,74 @@ public class ProductMergeService(IHouseholdDbFactory dbFactory, IActivityLog act
             .Where(x => x.ProductId == sourceId)
             .ExecuteUpdateAsync(s => s.SetProperty(x => x.ProductId, targetId), cancellationToken);
 
-        // Tags and substitutes union in by value; a duplicate row is dropped rather than moved.
+        var movedPurchaseIds = purchaseRows.Select(r => r.Id).ToList();
+        var movedLineIds = lineRows.Select(r => r.Id).ToList();
+        // The COALESCE above stamps Variety only where it was blank AND a label was given, so the undo nulls
+        // exactly those rows. No label ⇒ nothing was stamped ⇒ nothing to un-stamp.
+        var stampedPurchaseIds = variety is null
+            ? new List<int>()
+            : purchaseRows.Where(r => r.Variety is null).Select(r => r.Id).ToList();
+        var stampedLineIds = variety is null
+            ? new List<int>()
+            : lineRows.Where(r => r.Variety is null).Select(r => r.Id).ToList();
+
+        // Tags and substitutes union in by value; a duplicate row is dropped rather than moved. Capture the
+        // source's full set (to recreate on undo) and the subset actually ADDED to the target (to pull off).
+        var sourceTags = await db.ProductTags.Where(t => t.ProductId == sourceId).ToListAsync(cancellationToken);
+        var sourceTagValues = sourceTags.Select(t => t.Value).ToList();
         var targetTags = await db.ProductTags.Where(t => t.ProductId == targetId)
             .Select(t => t.Value).ToListAsync(cancellationToken);
-        foreach (var tag in await db.ProductTags.Where(t => t.ProductId == sourceId).ToListAsync(cancellationToken))
+        var addedTags = new List<string>();
+        foreach (var tag in sourceTags)
         {
             if (targetTags.Contains(tag.Value, StringComparer.OrdinalIgnoreCase)) db.ProductTags.Remove(tag);
-            else tag.ProductId = targetId;
+            else { tag.ProductId = targetId; addedTags.Add(tag.Value); }
         }
+        var sourceSubs = await db.ProductSubstitutes.Where(s => s.ProductId == sourceId).ToListAsync(cancellationToken);
+        var sourceSubValues = sourceSubs.Select(s => s.Value).ToList();
         var targetSubs = await db.ProductSubstitutes.Where(s => s.ProductId == targetId)
             .Select(s => s.Value).ToListAsync(cancellationToken);
-        foreach (var sub in await db.ProductSubstitutes.Where(s => s.ProductId == sourceId).ToListAsync(cancellationToken))
+        var addedSubs = new List<string>();
+        foreach (var sub in sourceSubs)
         {
             if (targetSubs.Contains(sub.Value, StringComparer.OrdinalIgnoreCase)) db.ProductSubstitutes.Remove(sub);
-            else sub.ProductId = targetId;
+            else { sub.ProductId = targetId; addedSubs.Add(sub.Value); }
         }
 
         // Recipe links key on the product NAME, so they follow the merge — via RecipeLinks, the ONE
         // re-pointer shared with the rename service (identity-keyed and empty-key-gated there), so the
         // two sites can't drift apart again. A stale link is worse here than on a rename: the source
-        // delete below would ORPHAN it.
-        var relinkedIngredients = await RecipeLinks.RepointAsync(db, source.Name, target.Name, cancellationToken);
+        // delete below would ORPHAN it. The ids it moves are captured so the undo can move them back.
+        var relinkedIds = await RecipeLinks.RepointAsync(db, source.Name, target.Name, cancellationToken);
 
         // The merged product is tracked if either half was, and keeps the target's identity otherwise.
+        var targetTrackedBefore = target.IsTracked;
+        var targetUnitBefore = target.DefaultUnit;
         target.IsTracked |= source.IsTracked;
         target.DefaultUnit ??= source.DefaultUnit;
 
-        // History-only record, staged inside the merge's transaction so it commits with the merge (the
-        // source name is read now, before the row is gone). NotReversible — the app records the merge but
-        // doesn't rebuild the split it collapsed.
-        activityLog.Record(db, ActivityKind.ProductsMerged, new ProductsMergedPayload(source.Name, target.Name));
+        // The undo record, staged inside the merge's transaction so it commits with the merge (the source's
+        // fields are read now, before the row is gone). Reversible now — the manifest lets the undo rebuild
+        // the source and pull its contribution back out of the survivor.
+        var payload = new ProductsMergedPayload(
+            source.Name, target.Name, targetId,
+            new MergedSourceSnapshot(
+                source.Category, source.DefaultUnit, source.IsTracked, source.TrackQuantity,
+                source.QuantityOnHand, source.QuantityCountedAt, source.CreatedByReceiptId,
+                sourceTagValues, sourceSubValues),
+            movedPurchaseIds, stampedPurchaseIds, movedLineIds, stampedLineIds,
+            aliasIds, signalIds, addedTags, addedSubs, relinkedIds,
+            targetTrackedBefore, target.IsTracked, targetUnitBefore, target.DefaultUnit);
+        var entry = activityLog.Record(db, ActivityKind.ProductsMerged, payload);
 
         db.Products.Remove(source);
-        await db.SaveChangesAsync(cancellationToken);
+        await db.SaveChangesAsync(cancellationToken); // assigns entry.Id — returned for the inline ↩ Undo
         await tx.CommitAsync(cancellationToken);
         await activityLog.TrimAsync(cancellationToken);
 
-        return new(true, $"Merged into {target.Name}: {movedPurchases} purchase{(movedPurchases == 1 ? "" : "s")} moved.",
-            movedPurchases, relinkedIngredients);
+        var movedCount = movedPurchaseIds.Count;
+        return new(true, $"Merged into {target.Name}: {movedCount} purchase{(movedCount == 1 ? "" : "s")} moved.",
+            movedCount, relinkedIds.Count, entry.Id);
     }
 
     /// <summary>

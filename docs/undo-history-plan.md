@@ -163,7 +163,7 @@ is the map, not the territory.
 | 17 | Resolve / reopen report | `ReportResolutionService` | flip back (reopen already exists) | Reversible | |
 | 18 | Remove receipt | `ReceiptRemovalService` | ⚠️ no inverse (re-adding a removed receipt isn't built) | **Not reversible v1** | log history-only, greyed |
 | 19 | Census confirm | `CensusConfirmationService` | ⚠️ needs a NEW inverse (revert the summed per-product attestations) — hard | **Not reversible v1** | log history-only, greyed (see §10) |
-| 20 | Merge products | `ProductMergeService` | ⚠️ merge is **lossy** (moves purchases/aliases/signals, unions tags, deletes source) | **Not reversible** | log history-only, greyed |
+| 20 | Merge products | `ProductMergeService` | ⚠️ merge is **lossy** (moves purchases/aliases/signals, unions tags, deletes source) | ~~Not reversible~~ → **Reversible** (manifest-backed un-merge, 2026-09-04 — see §10 + CLAUDE.md item 64) | log history-only, greyed |
 
 **Soft actions — SETTLED with Jordan (2026-08-17):** log **exclude-food add/remove** and **recipe
 save / adapt** (both reversible — remove the excluded-food row; delete the saved/variant recipe).
@@ -203,6 +203,11 @@ covered by #13 (`AddGroceryExtrasAsync`).
 "Whole scope" means the **log + page cover every action**; it does **not** mean every action gets a
 working undo, because a few genuinely can't:
 - **Merge** is lossy → history-only, greyed, permanently.
+  > ⚠️ **Superseded 2026-09-04 (feature/undoable-merge):** merge is now **reversible**. The merge
+  > captures an undo MANIFEST (moved-row ids, the source's full definition, what it added to the
+  > target) so the undo rebuilds the source and pulls its contribution back out — precondition-checked
+  > and tolerant (revive what survives). See `ProductsMergedHandler` and CLAUDE.md item 64. Legacy
+  > merge entries stay greyed (they carry `NotReversible` on the row).
 - **Receipt removal** and **census confirm** *could* get inverses, but each is real work (re-adding a
   removed receipt; reverting summed attestations). **Recommendation for v1: log all three as
   history-only (greyed, "can't be undone")**, and build the census/receipt-removal inverses as a
