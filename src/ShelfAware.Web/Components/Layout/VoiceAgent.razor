@@ -18,6 +18,7 @@
 @inject ITextToSpeech Tts
 @inject IEntitlements Entitlements
 @inject CircuitAiSettings AiSettings
+@inject IDemoValve DemoValve
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 @inject VoiceCoordinator Coordinator
@@ -162,7 +163,7 @@
                 // credits) never spends a host-key STT call on a doomed turn. Say the real reason and stand
                 // down; re-checked each turn, so mid-session exhaustion is caught too. `error` clears on the
                 // next StartListeningAsync, so a top-up + restart clears this.
-                var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+                var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
                 if (blocked is not null)
                 {
                     error = blocked;

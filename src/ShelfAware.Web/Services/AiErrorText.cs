@@ -25,16 +25,24 @@ public static class AiErrorText
     public const string NoKey = "AI isn't set up yet — add an API key in Settings to use this (bring your own, or subscribe for managed keys).";
 
     /// <summary>The pre-call gate for a UI surface: null when this circuit may make an AI call now, otherwise
-    /// the reason to SHOW (and skip the attempt). A managed household is allowed when billing is off (§7),
-    /// unlimited (Founder), or in credit (<see cref="IEntitlements.IsAiAllowedAsync"/>, which also runs the
-    /// lazy allowance); when blocked, the next step is tier-specific — a Free trial is spent (subscribe),
-    /// an Aware balance is spent (top up). A BYOK/self-host circuit just needs a key. Enforcement lives in
-    /// <see cref="MeteredChatClient"/> — this only turns a refusal into a message and avoids a doomed call.</summary>
+    /// the reason to SHOW (and skip the attempt). A managed household is blocked when the box-wide demo valve
+    /// has hit today's cap (<see cref="IDemoValve"/> — a no-op unless a Demo cap is configured), else allowed
+    /// when billing is off (§7), unlimited (Founder), or in credit (<see cref="IEntitlements.IsAiAllowedAsync"/>,
+    /// which also runs the lazy allowance); when a billing-enabled box is out of credit the next step is
+    /// tier-specific — a Free trial is spent (subscribe), an Aware balance is spent (top up). A BYOK/self-host
+    /// circuit just needs a key. Enforcement lives in <see cref="MeteredChatClient"/> — this only turns a
+    /// refusal into a message and avoids a doomed call.</summary>
     public static async ValueTask<string?> BlockedReasonAsync(
-        IEntitlements entitlements, CircuitAiSettings settings, CancellationToken cancellationToken = default)
+        IEntitlements entitlements, CircuitAiSettings settings, IDemoValve demoValve,
+        CancellationToken cancellationToken = default)
     {
         if (settings.Managed)
         {
+            // Box-wide demo cap first — checked in the same position the MeteredChatClient gate checks it, so
+            // the pre-check and the server-side gate agree on WHY a managed call is refused. On a demo box
+            // (billing off) this is the only thing that can block; on a family box it's a no-op.
+            if (await demoValve.CallBlockedMessageAsync(cancellationToken) is { } demoBlocked) return demoBlocked;
+
             if (await entitlements.IsAiAllowedAsync(cancellationToken)) return null;
             // Blocked on a billing-enabled managed box: name the act the household can actually take.
             return await entitlements.GetTierAsync(cancellationToken) == HouseholdTier.Aware ? OutOfCredits : SubscribeToUse;

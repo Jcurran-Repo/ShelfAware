@@ -438,8 +438,10 @@ builder.Services.AddScoped<ByokChatClient>();
 builder.Services.AddScoped<IEntitlements, Entitlements>(); // the current household's tier — the meter's Founder exemption + the Settings badge
 builder.Services.AddScoped<AiUsageMeter>();
 // The box-wide demo valve is operator-global (auth.db, no per-scope state), so singleton — injected into the
-// scoped metering chain below.
+// scoped metering chain below. Also exposed as IDemoValve so the AI surfaces' pre-check (AiErrorText) can ask
+// "is the box capped for today?" through the seam without depending on the concrete DB-backed meter.
 builder.Services.AddSingleton<DemoUsageMeter>();
+builder.Services.AddSingleton<IDemoValve>(sp => sp.GetRequiredService<DemoUsageMeter>());
 builder.Services.AddScoped<IChatClient, MeteredChatClient>();
 
 // Per-circuit bus wiring the layout voice agent to the pages (data-changed refresh + resume hand-off).
@@ -921,7 +923,7 @@ app.MapGet("/api/receipt-image/{id:int}", async (
 // PhotoUploadIntake — the shared front door both photo endpoints use.
 app.MapPost("/api/receipts/extract", async (
     HttpRequest request, HttpContext ctx, IAntiforgery antiforgery, CircuitAiSettings ai,
-    IEntitlements entitlements, ReceiptIngestionService ingestion, ILoggerFactory logs, CancellationToken ct) =>
+    IEntitlements entitlements, IDemoValve demoValve, ReceiptIngestionService ingestion, ILoggerFactory logs, CancellationToken ct) =>
 {
     var (files, error) = await PhotoUploadIntake.ReadAsync(request, ctx, antiforgery,
         mt => mt.StartsWith("image/", StringComparison.OrdinalIgnoreCase) || mt == "application/pdf",
@@ -933,7 +935,7 @@ app.MapPost("/api/receipts/extract", async (
     // call that MeteredChatClient would refuse anyway — the extractor fails soft, so the gate's exception
     // never reaches this handler (phase 4c, AiErrorText). A body is required or UseStatusCodePagesWithReExecute
     // rewrites the empty 402 into a misleading 400 (the webhook scar below).
-    var blocked = await AiErrorText.BlockedReasonAsync(entitlements, ai, ct);
+    var blocked = await AiErrorText.BlockedReasonAsync(entitlements, ai, demoValve, ct);
     if (blocked is not null)
         return Results.Json(new { error = blocked }, statusCode: StatusCodes.Status402PaymentRequired);
 
@@ -959,7 +961,7 @@ app.MapPost("/api/receipts/extract", async (
 // freezer to PDF). The raw model output is deliberately NOT shipped back — it's debug-only and can be large.
 app.MapPost("/api/pantry-photo/read", async (
     HttpRequest request, HttpContext ctx, IAntiforgery antiforgery, CircuitAiSettings ai,
-    IEntitlements entitlements, IShelfCensusReader reader, IHouseholdDbFactory dbFactory,
+    IEntitlements entitlements, IDemoValve demoValve, IShelfCensusReader reader, IHouseholdDbFactory dbFactory,
     ILoggerFactory logs, CancellationToken ct) =>
 {
     // maxFiles: 8 matches the census page's own cap (PantryPhoto.MaxPhotos — the shelf reader looks at a
@@ -972,7 +974,7 @@ app.MapPost("/api/pantry-photo/read", async (
     PhotoUploadIntake.ApplyByok(request, ai);
     // Say the true reason (no key / out of credits) rather than spend a doomed vision call the gate refuses —
     // same phase-4c pre-check as the receipt endpoint; a body avoids the empty-402 re-execution scar.
-    var blocked = await AiErrorText.BlockedReasonAsync(entitlements, ai, ct);
+    var blocked = await AiErrorText.BlockedReasonAsync(entitlements, ai, demoValve, ct);
     if (blocked is not null)
         return Results.Json(new { error = blocked }, statusCode: StatusCodes.Status402PaymentRequired);
 

@@ -111,6 +111,10 @@ public abstract class PageTestContext : BunitContext
         // A generous default balance so the managed branch of the pre-check (if a test flips to a managed
         // CircuitAiSettings) also reads as allowed; the BYOK default above never consults it.
         Services.AddSingleton<IEntitlements>(new FakeEntitlements { BalanceMicros = 100_000_000 });
+        // The box-wide demo valve (AiErrorText's pre-check) — never blocks by default, so a test that flips
+        // to a managed CircuitAiSettings still renders its AI surface. A demo-cap test registers its own over
+        // this. (The BYOK default above never consults it — the valve only gates the host's key.)
+        Services.AddSingleton<IDemoValve>(new FakeDemoValve());
         Services.AddSingleton(new ProductRenameService(Factory, ActivityLog));
         Services.AddSingleton(new ProductMergeService(Factory, ActivityLog));
         Services.AddSingleton(new LookalikeNudgeService(Factory, NullLogger<LookalikeNudgeService>.Instance));

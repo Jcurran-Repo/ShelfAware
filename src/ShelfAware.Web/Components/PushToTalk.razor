@@ -9,6 +9,7 @@
 @inject ITextToSpeech Tts
 @inject IEntitlements Entitlements
 @inject CircuitAiSettings AiSettings
+@inject IDemoValve DemoValve
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 @inject ILogger<PushToTalk> Log
@@ -129,7 +130,7 @@
         // Phase 4c: check BEFORE the paid STT call — a blocked circuit (no key / out of credits) never
         // spends a host-key transcription on a doomed turn; say the real reason instead of the brain's
         // wrapped "couldn't reach the assistant".
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
         if (blocked is not null)
         {
             _reply = blocked;
