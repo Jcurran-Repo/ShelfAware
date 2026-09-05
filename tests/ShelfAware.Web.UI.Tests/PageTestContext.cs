@@ -112,8 +112,9 @@ public abstract class PageTestContext : BunitContext
         // CircuitAiSettings) also reads as allowed; the BYOK default above never consults it.
         Services.AddSingleton<IEntitlements>(new FakeEntitlements { BalanceMicros = 100_000_000 });
         // The box-wide demo valve (AiErrorText's pre-check) — never blocks by default, so a test that flips
-        // to a managed CircuitAiSettings still renders its AI surface. A demo-cap test registers its own over
-        // this. (The BYOK default above never consults it — the valve only gates the host's key.)
+        // to a managed CircuitAiSettings still renders its AI surface. A page test wanting the capped state
+        // could register a FakeDemoValve(message) over this. (The BYOK default above never consults it — the
+        // valve only gates the host's key; the box-wide enforcement itself is pinned in MeteredChatClientTests.)
         Services.AddSingleton<IDemoValve>(new FakeDemoValve());
         Services.AddSingleton(new ProductRenameService(Factory, ActivityLog));
         Services.AddSingleton(new ProductMergeService(Factory, ActivityLog));

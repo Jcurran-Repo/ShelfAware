@@ -39,8 +39,10 @@ public static class AiErrorText
         if (settings.Managed)
         {
             // Box-wide demo cap first — checked in the same position the MeteredChatClient gate checks it, so
-            // the pre-check and the server-side gate agree on WHY a managed call is refused. On a demo box
-            // (billing off) this is the only thing that can block; on a family box it's a no-op.
+            // the pre-check and the server-side gate agree on this reason. On a family box it's a no-op.
+            // (The per-household Llm:DailyCallLimit is also enforced by the gate, but isn't mirrored here —
+            // a pre-existing pre-check gap: exhausting it falls back to the surface's generic "try again"
+            // rather than an honest message. Worth a follow-up twin for AiUsageMeter.)
             if (await demoValve.CallBlockedMessageAsync(cancellationToken) is { } demoBlocked) return demoBlocked;
 
             if (await entitlements.IsAiAllowedAsync(cancellationToken)) return null;
