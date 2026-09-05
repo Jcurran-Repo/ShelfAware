@@ -89,7 +89,10 @@ public class MeteredChatClientTests : IDisposable
             entitlements,
             NullLogger<AiUsageMeter>.Instance);
         var byok = new ByokChatClient(settings, new FakeFactory(_provider));
-        var client = new MeteredChatClient(byok, settings, meter, Options.Create(new BillingOptions()),
+        // An unconfigured demo meter (no Demo caps) — a no-op, so these per-household metering tests are
+        // unaffected; the box-wide valve has its own DemoUsageMeterTests.
+        var demoMeter = new DemoUsageMeter(_authDb, Options.Create(new DemoOptions()), NullLogger<DemoUsageMeter>.Instance);
+        var client = new MeteredChatClient(byok, settings, meter, demoMeter, Options.Create(new BillingOptions()),
             Options.Create(new ShelfAware.Web.Billing.PaymentsOptions { Enabled = paymentsEnabled }),
             new CreditLedger(_authDb, Options.Create(new BillingOptions())), entitlements, new FakeCurrentHousehold("hh-test"),
             NullLogger<MeteredChatClient>.Instance);

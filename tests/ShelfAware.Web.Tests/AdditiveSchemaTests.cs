@@ -155,6 +155,26 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Creates_the_DemoUsage_table_on_an_older_auth_db_with_the_fresh_schema()
+    {
+        // The box-wide demo AI counters live in auth.db (operator data), and a live demo box's auth file
+        // predates them. EnsureTable (DDL from EF's own create script) must rebuild it byte-for-byte.
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await TableSchemaAsync(db, "DemoUsage");
+        Assert.NotEmpty(fresh);
+
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE DemoUsage;");
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent
+
+        Assert.Equal(fresh, await TableSchemaAsync(db, "DemoUsage"));
+
+        db.DemoUsage.Add(new DemoUsageDay { Day = new DateOnly(2026, 9, 5), Calls = 3, VoiceCalls = 1 });
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
     public async Task Creates_the_ErrorLog_table_on_an_older_auth_db_with_the_fresh_schema()
     {
         // The auth-side twin of the pantry table tests: the error log lives in auth.db (operator

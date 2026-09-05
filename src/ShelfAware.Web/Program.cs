@@ -356,6 +356,9 @@ if (OperatingSystem.IsWindows())
 }
 
 builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection(LlmOptions.SectionName));
+// The managed demo box's box-wide daily AI valve (docs §10). All null by default, so the family / self-host
+// box (no "Demo" section) is unbounded and untouched; only a managed public demo box sets these.
+builder.Services.Configure<DemoOptions>(builder.Configuration.GetSection("Demo"));
 // Billing tunables — model rates, credit markup, welcome-grant size — as operator config (defaults in
 // BillingOptions), so pricing can be retuned in appsettings without a rebuild.
 builder.Services.Configure<ShelfAware.Core.Billing.BillingOptions>(
@@ -434,6 +437,9 @@ builder.Services.AddScoped<CircuitAiSettings>();
 builder.Services.AddScoped<ByokChatClient>();
 builder.Services.AddScoped<IEntitlements, Entitlements>(); // the current household's tier — the meter's Founder exemption + the Settings badge
 builder.Services.AddScoped<AiUsageMeter>();
+// The box-wide demo valve is operator-global (auth.db, no per-scope state), so singleton — injected into the
+// scoped metering chain below.
+builder.Services.AddSingleton<DemoUsageMeter>();
 builder.Services.AddScoped<IChatClient, MeteredChatClient>();
 
 // Per-circuit bus wiring the layout voice agent to the pages (data-changed refresh + resume hand-off).

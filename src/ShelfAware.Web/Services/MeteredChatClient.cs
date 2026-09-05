@@ -19,6 +19,7 @@ public sealed class MeteredChatClient(
     ByokChatClient inner,
     CircuitAiSettings settings,
     AiUsageMeter meter,
+    DemoUsageMeter demoMeter,
     IOptions<BillingOptions> billing,
     IOptions<PaymentsOptions> payments,
     CreditLedger ledger,
@@ -69,6 +70,9 @@ public sealed class MeteredChatClient(
     {
         if (!settings.Managed) return;
         await meter.EnsureLlmCallAllowedAsync(cancellationToken);
+        // The demo box's BOX-WIDE daily valve (a no-op unless a Demo cap is configured) — the wallet bound
+        // the per-household cap above can't give under open registration. Throws the come-back message.
+        await demoMeter.EnsureCallAllowedAsync(cancellationToken);
         if (!await entitlements.IsAiAllowedAsync(cancellationToken))
             throw new AiCreditsExhaustedException();
     }
@@ -110,6 +114,15 @@ public sealed class MeteredChatClient(
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { logger.LogError(ex, "Recording credit consumption failed; this call didn't draw the balance."); }
+
+        // The demo box's box-wide daily counter — host-key calls only (a BYOK visitor rides their own
+        // wallet), and a no-op unless a Demo cap/alert is configured. Best-effort like the writes above.
+        if (settings.Managed)
+        {
+            try { await demoMeter.RecordCallAsync(cancellationToken); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { logger.LogError(ex, "Recording demo box-wide usage failed; this call went uncounted for the daily valve."); }
+        }
     }
 
     /// <summary>Draw the household's credit balance down by this call's RETAIL cost — but only for a
