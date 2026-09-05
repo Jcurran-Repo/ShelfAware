@@ -3456,6 +3456,52 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
    - **3035 green, 0 warnings** (non-incremental Release; the number climbed across the gate fixes). Every
      load-bearing rule mutation-checked.
 
+64. **Conservative descriptor normalizer — ADVISE, don't block (2026-09-05, branch
+   `feature/descriptor-normalizer`; gate PENDING, UNPUSHED).** PR 2 of the "Eggs flags two similar products"
+   arc — Jordan's "there are a lot of useless descriptor words responsible for separating these two breads
+   into artificially separate items… so that's really the source problem, we should fix it both places",
+   with "autostrip should be conservative, the aggressive nudge catches the rest." ⚠️ **On this branch it
+   follows item 63; renumber to 65 at merge if the undoable-merge PR (#63, also numbered 64) lands first — it
+   will** (item 45's convention: the second-merged branch reorders CLAUDE.md).
+   - **`DescriptorFilter` (Core/Chat) is the ONE conservative throwaway-word list** (`style`, `brand`) — pure
+     manner/marketing filler that never names a distinct food ("Greek **Style** Yogurt" is Greek Yogurt).
+   - ⚠️ **It feeds the ADVISORY fuzzy path, NOT product identity — this is the crucial safety choice, and it
+     changed mid-build on Jordan's call.** The first cut shed the filler in `Normalize` (so `IdentityKey`
+     shed too); a live check then showed adding "Greek Style Yogurt" beside "Greek Yogurt" got BLOCKED
+     outright ("no need to add it twice"). Jordan: *"advise don't block seems the right path here, in case of
+     a bad match."* Exactly right — identity is what the duplicate guard blocks an add on OUTRIGHT (no "add
+     anyway") and what census/rename auto-merge on, so a wrong strip there would silently block a legitimate
+     product (the item-41 blast radius). So the shed moved to `ProductMatcher.Tokens` (the fuzzy rule-3 token
+     overlap + IDF) ONLY; `Normalize`/`IdentityKey` are back to untouched. A filler-only difference now reads
+     as a RELIABLE near-miss the surfaces ADVISE on ("Looks like you might already have Greek Yogurt — add
+     anyway / never mind"), and a bad strip is recoverable with one "add anyway" rather than a hard block.
+   - ⚠️ **Still kept TINY** (a needless advisory is friction). The bar to add a word: no food-distinguishing
+     meaning in ANY context (never a type/cut/form/flavour/section). Aisle/section words (Bakery, Deli) and
+     form words (Frozen, Fresh, Loaf) are OUT — each can name a genuinely distinct item; the aggressive cases
+     (Jordan's Artesano/Bakery breads) are the PR 3 nudge's job. `DescriptorFilterTests` pins the membership
+     directly, so adding a word is a deliberate, reviewed act.
+   - **Extraction prompt rule 3** sheds the same filler at the SOURCE ("Greek Style Yogurt" → "Greek Yogurt"),
+     for cleaner new names — the "both places" the source-fix needed (probabilistic prompt + the deterministic
+     fuzzy shed that reliably ADVISES on existing splits). ⚠️ The PROMPT change is NOT unit-tested
+     (probabilistic — needs a live call); the token shed is the deterministic mechanism the tests cover.
+   - **The finding that shaped the scope:** the matcher ALREADY flagged filler-only splits via its fuzzy
+     "add anyway" prompt — but UNRELIABLY (a lone "style" drags the IDF-weighted score below 0.5, so it split
+     into a new product instead). Shedding the filler from the tokens makes that near-miss RELIABLE, which is
+     all PR 2 needs to be; the heavy lifting for Jordan's actual bread example stays with PR 3.
+   - **Tests + mutation-checks:** 3 Core tests (the filler-only near-miss reads as TokenOverlap not
+     ExactName; `IdentityKey` does NOT shed so a filler name is never a hard dup; the `DescriptorFilter`
+     membership guard) + 2 by-hand mutations (token shed disabled → the near-miss test fails; an over-strip
+     adding "classic" → the membership test fails) + **scoped Stryker 100% on the changed Core files (46
+     killed, 0 survived)** (item 59's rule). Every identity consumer UNCHANGED and green (census, duplicate
+     guard, rename, recipe links, merge — Web 954 / UI 580 == master), by construction: `IdentityKey` didn't
+     move.
+   - **Live-verified:** adding "Greek Style Yogurt" when "Greek Yogurt" exists now ADVISES —
+     "Looks like you might already have this as Greek Yogurt. [Add anyway] [Never mind]" — no product
+     auto-created, the human decides. Server logs clean.
+   - **3038 green, 0 warnings** (non-incremental Release; Core 1332 · AI 172 · Persistence 954 · Pages 580;
+     +3 over master's 3035). ⚠️ **PR 3 — the nudge + per-pair dismissal + link-to-(undoable-)merge escalation —
+     is the arc's next and final PR, and the real fix for the Artesano/Bakery bread case.**
+
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"
 on the list; weight items stay fractional); **out-now shows "due today"** — an active

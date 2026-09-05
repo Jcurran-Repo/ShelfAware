@@ -144,14 +144,21 @@ public static class ProductMatcher
     private static double MaxIdf(int productCount) => Math.Log((productCount + 1.0) / 0.5);
 
     private static HashSet<string> Tokens(string normalized) =>
-        normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet();
+        normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            // Shed throwaway filler ("style", "brand" — see DescriptorFilter) from the FUZZY token overlap
+            // (rule 3) and the IDF, so a filler-only difference reliably reads as a near-miss the surfaces
+            // ADVISE on ("looks like you have X — use it or add anyway"). Deliberately NOT in
+            // Normalize/IdentityKey: identity stays exact, so a filler-only name is never a HARD duplicate
+            // (blocked outright) nor auto-merged, and a wrong strip is recoverable with one "add anyway"
+            // rather than blocking a legitimate product — far lower stakes than an identity change.
+            .Where(t => !DescriptorFilter.IsThrowaway(t)).ToHashSet();
 
     // ⚠️ Every run of separators collapses to ONE space, not just doubles. A single Replace("  ", " ")
     // left "yogurt  strawberry" for "Yogurt - Strawberry" (two adjacent non-alphanumerics), so it was
     // neither equal to "Yogurt Strawberry" nor idempotent — which a documented dictionary KEY
     // (IdentityKey) has to be. It failed safe (rule 1 missed, rule 3 caught it as similarity, the grid
     // asked) but it made the key a near-key, and "collapses whitespace" was already what the code read
-    // as doing. Split/join says it once and holds for any run length.
+    // as doing. Split/join says it once and holds for any run length. Filler is NOT shed here — see Tokens.
     private static string Normalize(string s) =>
         string.Join(' ', new string(s.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : ' ').ToArray())
             .Split(' ', StringSplitOptions.RemoveEmptyEntries));
