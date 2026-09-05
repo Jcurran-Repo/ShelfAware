@@ -34,6 +34,7 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
     public DbSet<ActivityEntry> ActivityEntries => Set<ActivityEntry>();
     public DbSet<MealPlan> MealPlans => Set<MealPlan>();
     public DbSet<PlannedMeal> PlannedMeals => Set<PlannedMeal>();
+    public DbSet<LookalikePair> LookalikePairs => Set<LookalikePair>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -71,6 +72,7 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
         ApplyHousehold<ActivityEntry>(modelBuilder);
         ApplyHousehold<MealPlan>(modelBuilder);
         ApplyHousehold<PlannedMeal>(modelBuilder);
+        ApplyHousehold<LookalikePair>(modelBuilder);
 
         // One usage row per household per day (the upsert's race-safety anchor).
         modelBuilder.Entity<AiUsage>()
@@ -88,6 +90,12 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
         // Aliases are learned per household (each teaches its own matcher), so uniqueness is too.
         modelBuilder.Entity<ProductAlias>()
             .HasIndex(a => new { a.HouseholdId, a.Merchant, a.RawText })
+            .IsUnique();
+
+        // One row per lookalike pair per household (the canonical lower/higher key), so re-flagging a pair
+        // finds and reuses its row instead of duplicating it.
+        modelBuilder.Entity<LookalikePair>()
+            .HasIndex(p => new { p.HouseholdId, p.LowerProductId, p.HigherProductId })
             .IsUnique();
 
         modelBuilder.Entity<PurchaseEvent>()

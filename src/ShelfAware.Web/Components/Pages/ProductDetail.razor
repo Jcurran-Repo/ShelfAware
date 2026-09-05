@@ -13,6 +13,7 @@
 @inject CircuitAiSettings AiSettings
 @inject ProductRenameService Renamer
 @inject ProductMergeService Merger
+@inject LookalikeNudgeService Nudges
 @inject MergeUndoNotice MergeNotice
 @inject ActivityLogService ActivityLog
 @inject NavigationManager Nav
@@ -75,7 +76,7 @@ else
             <p class="muted">Moves every purchase, receipt line, alias, and signal from
                 <strong>@product.Name</strong> onto the product you pick, then deletes
                 <strong>@product.Name</strong>. Use it when one item got split — e.g. flavors that
-                should be one product. This can't be undone.</p>
+                should be one product. You can undo it afterward.</p>
             @if (mergeTagOptions.Count > 0)
             {
                 <div class="tag-cloud" role="group" aria-label="Narrow the merge candidates by tag">
@@ -118,6 +119,27 @@ else
             @if (mergeError is not null)
             {
                 <p class="error" role="alert">@mergeError</p>
+            }
+        </section>
+    }
+    @* Lookalike pairs you told Eggs to leave alone — kept so you can change your mind: bringing one back
+       makes him gently suggest merging this product with it again on the grocery list. *@
+    @if (dismissedPairs.Count > 0)
+    {
+        <section class="panel dismissed-lookalikes">
+            <p class="muted">You told Eggs <strong>@product.Name</strong> is a separate item from:</p>
+            <ul class="dismissed-list">
+                @foreach (var dl in dismissedPairs)
+                {
+                    <li>
+                        <a href="/product/@dl.OtherProductId">@dl.OtherName</a>
+                        <button type="button" class="linkish" @onclick="() => Undismiss(dl)" disabled="@dismissBusy">Bring the suggestion back</button>
+                    </li>
+                }
+            </ul>
+            @if (dismissError is not null)
+            {
+                <p class="error" role="alert">@dismissError</p>
             }
         </section>
     }
@@ -801,6 +823,7 @@ else
             brandBreakdown = [];
             varietyBreakdown = [];
             usedInRecipes = [];
+            dismissedPairs = [];
             // The inline merge-undo notice belongs to the target it landed on, so a switch to a DIFFERENT
             // product clears it. A same-product REFRESH (the post-undo reload) skips this branch, so the
             // "✓ undone" confirmation survives the reload that refreshes the reduced history.
@@ -957,6 +980,12 @@ else
             .OrderBy(r => r.Name)
             .Select(r => new RecipeLink(r.Id, r.Name))
             .ToList();
+
+        // Lookalike pairs you told Eggs to leave alone that touch this product. Loaded through the ONE
+        // nudge service so "which pairs" matches the grocery list, and it drops any whose partner was
+        // since merged away. Cleared here too so an earlier panel error can't sit beside current content.
+        dismissedPairs = [.. await Nudges.DismissedForProductAsync(Id)];
+        dismissError = null;
     }
 
     // Renaming. The service re-points the name-keyed recipe links (RecipeIngredient.MatchedProduct),
@@ -1023,6 +1052,12 @@ else
     private List<(string Tag, int Count)> mergeTagOptions = [];
     private List<MergeCandidate> mergeCandidates = [];
     private record MergeCandidate(int Id, string Name, IReadOnlyList<string> Tags);
+
+    // Lookalike pairs you dismissed that touch this product — kept so you can change your mind (undo the
+    // dismissal and Eggs suggests merging them again on the list).
+    private List<DismissedLookalike> dismissedPairs = [];
+    private bool dismissBusy;
+    private string? dismissError;
 
     // The candidate list can be a whole catalog; the tag filter narrows it to the aisle you're
     // thinking of ("Snack" finds the other drink mixes). "" shows everything.
@@ -1155,6 +1190,30 @@ else
                 : "That didn't undo — reload the page and undo it from History instead.";
         }
         finally { mergeUndoBusy = false; }
+    }
+
+    // Bring back a lookalike suggestion you'd dismissed: Eggs notices the pair again (it re-appears on the
+    // grocery list, its mood resuming from the ORIGINAL first-seen), then this page reloads so the row drops
+    // off. UndismissAsync is idempotent, so a "try again" after any hiccup — a failed write OR a failed
+    // reload — is always safe and self-correcting; one accurate message covers both.
+    private async Task Undismiss(DismissedLookalike d)
+    {
+        if (product is null || dismissBusy) return;
+        dismissBusy = true;
+        dismissError = null;
+        try
+        {
+            await Nudges.UndismissAsync(product.Id, d.OtherProductId);
+            loadedId = null;
+            await OnParametersSetAsync();
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Un-dismissing lookalike pair {A}/{B} failed.", product.Id, d.OtherProductId);
+            dismissError = "Couldn't bring that back just now — please try again.";
+        }
+        finally { dismissBusy = false; }
     }
 
     // Expiration editing. Writes go through the ONE path (IPantryStore.SetExpirationAsync — the same

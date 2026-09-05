@@ -127,6 +127,10 @@ public static class AdditiveSchema
         // box scales ingredient amounts from. Pre-existing recipes land on NULL (unknown; the box falls
         // back to a plain ×multiplier). int? → INTEGER NULL, matching EnsureCreated's mapping.
         EnsureColumn(db, table: "Recipes", column: "Servings", definition: "INTEGER NULL");
+
+        // 2026-09-05: Eggs's lookalike-pair memory (per-pair first-seen for his mood + a permanent "they're
+        // different" dismissal). A brand-new table — invisible to existing rows.
+        EnsureTable(db, table: "LookalikePairs");
     }
 
     public static void Apply(AuthDbContext db)

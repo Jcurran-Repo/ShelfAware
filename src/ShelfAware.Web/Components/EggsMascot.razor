@@ -1,0 +1,105 @@
+@using ShelfAware.Core.Shopping
+@*
+    Eggs, the app's dapper-blob mascot, with a mood. The body is the real icon artwork (docs/icons);
+    only the FACE changes — mouth, brows, and (at his most frazzled) a bead of sweat and a tipped hat —
+    so he visibly deflates the longer a lookalike pair lingers, Mr-Meeseeks style. Purely decorative:
+    the card beside him carries the words, so the SVG is aria-hidden.
+*@
+<svg class="eggs-mascot" width="@Size" height="@Size" viewBox="50 54 412 412"
+     xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+    <defs>
+        <clipPath id="@_clip">
+            <path d="M256,150 C330,150 392,206 392,292 C392,378 340,438 256,438 C172,438 120,378 120,292 C120,206 182,150 256,150 Z"/>
+        </clipPath>
+    </defs>
+
+    @* The dark rounded badge behind him — the app-icon backdrop, so his white body reads on ANY card colour
+       (it would otherwise wash out on the light "Warm & Fresh" surface) and he matches the header brand mark. *@
+    <rect x="54" y="58" width="404" height="404" rx="76" fill="#131619"/>
+
+    @* Body: the white blob. *@
+    <path d="M256,150 C330,150 392,206 392,292 C392,378 340,438 256,438 C172,438 120,378 120,292 C120,206 182,150 256,150 Z" fill="#ffffff"/>
+
+    @* Gold suit + two bow-tie buttons, clipped to the blob. *@
+    <g clip-path="url(#@_clip)">
+        <path d="M104,330 L206,330 L256,392 L306,330 L408,330 L408,452 L104,452 Z" fill="#e3b341"/>
+        <circle cx="272" cy="356" r="4.5" fill="#2563eb"/>
+        <circle cx="278" cy="376" r="4.5" fill="#2563eb"/>
+    </g>
+
+    @* The clipboard he's forever tucking. *@
+    <g clip-path="url(#@_clip)">
+        <g transform="rotate(-12 196 392)">
+            <rect x="150" y="346" width="92" height="104" rx="8" fill="#d2b48c" stroke="#a1855f" stroke-width="2.5"/>
+            <rect x="180" y="337" width="34" height="14" rx="4" fill="#b8bec7"/>
+            <rect x="189" y="332" width="14" height="7" rx="3" fill="#cdd3da"/>
+            <rect x="164" y="374" width="64" height="6" rx="3" fill="#b0925f"/>
+            <rect x="164" y="394" width="64" height="6" rx="3" fill="#b0925f"/>
+            <rect x="164" y="414" width="46" height="6" rx="3" fill="#b0925f"/>
+        </g>
+    </g>
+
+    @* Brows — only when he's started to worry. *@
+    @if (Mood == NudgeMood.Nagging)
+    {
+        <path d="M204,226 L230,233" stroke="#1f2937" stroke-width="7" stroke-linecap="round"/>
+        <path d="M308,226 L282,233" stroke="#1f2937" stroke-width="7" stroke-linecap="round"/>
+    }
+    else if (Mood == NudgeMood.Frazzled)
+    {
+        <path d="M204,232 L230,223" stroke="#1f2937" stroke-width="7" stroke-linecap="round"/>
+        <path d="M308,232 L282,223" stroke="#1f2937" stroke-width="7" stroke-linecap="round"/>
+    }
+
+    @* Eyes. *@
+    <ellipse cx="220" cy="250" rx="15" ry="18" fill="#1f2937"/>
+    <ellipse cx="292" cy="250" rx="15" ry="18" fill="#1f2937"/>
+    <circle cx="225" cy="243" r="4.5" fill="#ffffff"/>
+    <circle cx="297" cy="243" r="4.5" fill="#ffffff"/>
+
+    @* Mouth — the expression that degrades. *@
+    @switch (Mood)
+    {
+        case NudgeMood.Fresh:
+            <path d="M222,280 Q256,311 290,280" fill="none" stroke="#1f2937" stroke-width="9" stroke-linecap="round"/>
+            break;
+        case NudgeMood.Deflating:
+            <path d="M226,286 Q256,298 286,286" fill="none" stroke="#1f2937" stroke-width="9" stroke-linecap="round"/>
+            break;
+        case NudgeMood.Nagging:
+            <path d="M226,294 Q256,283 286,294" fill="none" stroke="#1f2937" stroke-width="9" stroke-linecap="round"/>
+            break;
+        case NudgeMood.Frazzled:
+            <ellipse cx="256" cy="291" rx="19" ry="15" fill="#1f2937"/>
+            break;
+    }
+
+    @* A single bead of sweat at peak Meeseeks. *@
+    @if (Mood == NudgeMood.Frazzled)
+    {
+        <path d="M336,232 q8,13 0,20 q-8,-7 0,-20 Z" fill="#7cc5ff"/>
+    }
+
+    @* Bow tie. *@
+    <path d="M256,320 L226,305 L226,335 Z" fill="#2563eb"/>
+    <path d="M256,320 L286,305 L286,335 Z" fill="#2563eb"/>
+    <rect x="249" y="311" width="14" height="18" rx="3" fill="#2563eb"/>
+
+    @* Top hat — tipped a touch when he's frazzled. *@
+    <g transform="@(Mood == NudgeMood.Frazzled ? "rotate(-7 256 158)" : "")">
+        <rect x="200" y="70" width="112" height="88" rx="6" fill="#e3b341"/>
+        <rect x="200" y="126" width="112" height="16" fill="#2563eb"/>
+        <ellipse cx="256" cy="158" rx="95" ry="15" fill="#e3b341"/>
+    </g>
+</svg>
+
+@code {
+    /// <summary>Eggs's mood — which face he wears.</summary>
+    [Parameter] public NudgeMood Mood { get; set; }
+
+    /// <summary>Rendered width/height in px (the artwork is square).</summary>
+    [Parameter] public int Size { get; set; } = 88;
+
+    // Unique per instance so two mascots on one page don't share (and cross-wire) the clip path.
+    private readonly string _clip = "eggs-" + Guid.NewGuid().ToString("N");
+}

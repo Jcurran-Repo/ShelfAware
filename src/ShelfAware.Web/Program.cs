@@ -490,6 +490,7 @@ builder.Services.AddScoped<IRecipeImageCleanup>(sp => sp.GetRequiredService<Reci
 
 builder.Services.AddScoped<ProductRenameService>(); // rename + re-point the name-keyed recipe links
 builder.Services.AddScoped<ProductMergeService>();  // fold a variety-split product into its item
+builder.Services.AddScoped<LookalikeNudgeService>(); // Eggs flags two look-alike products on the list
 
 // The activity log + per-action undo (and the /history page). EfPantryStore and the confirm/edit
 // services record through IActivityLog in the data layer, so chat/voice actions are logged for free;

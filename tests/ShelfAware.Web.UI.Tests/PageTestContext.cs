@@ -113,6 +113,7 @@ public abstract class PageTestContext : BunitContext
         Services.AddSingleton<IEntitlements>(new FakeEntitlements { BalanceMicros = 100_000_000 });
         Services.AddSingleton(new ProductRenameService(Factory, ActivityLog));
         Services.AddSingleton(new ProductMergeService(Factory, ActivityLog));
+        Services.AddSingleton(new LookalikeNudgeService(Factory, NullLogger<LookalikeNudgeService>.Instance));
         // The grocery list + dashboard read the current meal plan (GetCurrentPlanAsync); they never
         // generate, so a no-op generator suffices. A test needing generation registers its own over this.
         Services.AddSingleton(new MealPlanService(Factory, new FakeMealPlanGenerator(), AppSettings, NullLogger<MealPlanService>.Instance));

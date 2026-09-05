@@ -154,7 +154,8 @@ public static class IngredientMatcher
     private static bool TokenMatches(string a, string b) => a == b || Singular(a) == Singular(b);
 
     // Crude but sufficient singularizer for food nouns: potatoes->potato, peppers->pepper, berries->berry.
-    private static string Singular(string t)
+    // Internal so SimilarPairs (which already reuses CoreTokens) folds plurals the SAME way — one rule.
+    internal static string Singular(string t)
     {
         if (t.Length > 3 && t.EndsWith("ies")) return t[..^3] + "y";
         if (t.Length > 3 && (t.EndsWith("oes") || t.EndsWith("ses") || t.EndsWith("xes") ||

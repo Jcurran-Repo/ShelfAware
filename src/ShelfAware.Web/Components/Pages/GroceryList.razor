@@ -5,11 +5,15 @@
 @using ShelfAware.Core.Recipes
 @using ShelfAware.Core.Settings
 @using ShelfAware.Core.Shopping
+@using ShelfAware.Web.Undo
 @implements IAsyncDisposable
 @inject IHouseholdDbFactory DbFactory
 @inject IAppSettings SettingsStore
 @inject IPantryStore Store
 @inject MealPlanService Planner
+@inject LookalikeNudgeService Nudges
+@inject ProductMergeService Merge
+@inject ActivityLogService ActivityLog
 @inject IJSRuntime JS
 @inject ILogger<GroceryList> Logger
 
@@ -28,6 +32,40 @@
         </span>
     }
 </div>
+
+@* Eggs flags two products on the list that look like the same thing and gently offers to merge them.
+   The ask stays gentle the whole way; only his face + one line degrade the longer a pair lingers. Only a
+   few show at once (most-bothered first) so a catalog full of near-twins can't bury the actual list. *@
+@foreach (var n in VisibleNudges)
+{
+    <section class="panel nudge nudge-@n.Mood.ToString().ToLowerInvariant()">
+        <EggsMascot Mood="n.Mood" Size="72" />
+        <div class="nudge-body">
+            <p class="nudge-line">@NudgeMoods.Line(n.Mood)</p>
+            <p class="nudge-pair"><strong>@n.Pair.LowerName</strong> and <strong>@n.Pair.HigherName</strong> look like the same thing — want to roll them into one? Keep:</p>
+            <div class="nudge-actions">
+                <button class="secondary" aria-label="Keep @n.Pair.LowerName and merge @n.Pair.HigherName into it" @onclick="() => MergeKeeping(n.Pair.LowerId, n.Pair.LowerName, n.Pair.HigherId, n.Pair.HigherName)" disabled="@nudgeBusy">@n.Pair.LowerName</button>
+                <button class="secondary" aria-label="Keep @n.Pair.HigherName and merge @n.Pair.LowerName into it" @onclick="() => MergeKeeping(n.Pair.HigherId, n.Pair.HigherName, n.Pair.LowerId, n.Pair.LowerName)" disabled="@nudgeBusy">@n.Pair.HigherName</button>
+                <button class="linkish" @onclick="() => DismissNudge(n)" disabled="@nudgeBusy">They're different</button>
+            </div>
+        </div>
+    </section>
+}
+@if (HiddenNudgeCount > 0)
+{
+    <p class="muted nudge-overflow">…and @HiddenNudgeCount more look-alike@(HiddenNudgeCount == 1 ? "" : "s") to look at — sort these out and Eggs will show the next.</p>
+}
+@if (mergedNotice is { } mn)
+{
+    <section class="panel callout ok nudge-done">
+        <span>@mn.Message</span>
+        <button class="linkish" @onclick="UndoMerge" disabled="@nudgeBusy">↩ Undo</button>
+    </section>
+}
+@if (nudgeError is not null)
+{
+    <p class="error" role="alert">@nudgeError</p>
+}
 
 <section class="panel extras">
     <h2>Extras <span class="muted">— add anything manually, or from a recipe</span></h2>
@@ -111,6 +149,18 @@ else
     private List<GroceryExtra> extras = [];
     private string newExtra = "";
 
+    private List<LookalikeNudge> nudges = [];
+    private (int EntryId, string Message)? mergedNotice;
+    private string? nudgeError;
+    private bool nudgeBusy;
+
+    // Only a few nudges show at once so a catalog dense with near-twins can't bury the list. Most-bothered
+    // first (Frazzled → Fresh), so the pairs Eggs has stared at longest surface before the fresh ones.
+    private const int MaxNudgesShown = 3;
+    private IEnumerable<LookalikeNudge> VisibleNudges =>
+        nudges.OrderByDescending(n => n.Mood).ThenBy(n => n.Pair.LowerName).Take(MaxNudgesShown);
+    private int HiddenNudgeCount => Math.Max(0, nudges.Count - MaxNudgesShown);
+
     protected override Task OnInitializedAsync() => LoadAsync();
 
     private async Task LoadAsync()
@@ -175,7 +225,96 @@ else
         comingUpTotal = comingUp.Sum(r => r.Estimate?.ExpectedCost ?? 0m);
         buyNowUnknownCount = buyNow.Count(r => r.Estimate?.ExpectedCost is null);
         comingUpUnknownCount = comingUp.Count(r => r.Estimate?.ExpectedCost is null);
+
+        // Eggs's lookalike nudges. Every tracked product shows somewhere on this page (buy-now, coming-up,
+        // or still-learning), so the whole tracked set IS "the list" the detector runs over. The service
+        // remembers when each pair was first flagged (for the mood) and honours any dismissal. This is the
+        // one WRITE in the load (it records a newly-seen pair), so a transient failure degrades to no nudges
+        // rather than taking the primary list — the reason this page exists — down with it.
+        try
+        {
+            nudges = [.. await Nudges.GetActiveAsync(products, DateTimeOffset.Now)];
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Loading the lookalike nudges failed; showing the list without them.");
+            nudges = [];
+        }
+
         loaded = true;
+    }
+
+    // Merge a lookalike pair the gentle way: the user picks which name to KEEP, and the other folds into it
+    // through the ONE undoable merge path (ProductMergeService). The result carries an inline ↩ Undo — the
+    // SAME reversal /history runs — so a wrong guess is one tap back.
+    private async Task MergeKeeping(int keepId, string keepName, int dropId, string dropName)
+    {
+        if (nudgeBusy) return;
+        nudgeBusy = true;
+        nudgeError = null;
+        try
+        {
+            var result = await Merge.MergeAsync(sourceId: dropId, targetId: keepId);
+            if (result.Ok)
+                mergedNotice = (result.UndoEntryId, $"Merged {dropName} into {keepName}.");
+            else
+                nudgeError = result.Message;
+            await LoadAsync();
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Merging a lookalike pair failed.");
+            nudgeError = "Couldn't merge just now — please try again.";
+        }
+        finally { nudgeBusy = false; }
+    }
+
+    // "They're different" — a permanent, per-pair dismissal Eggs remembers (and surfaces on each product's
+    // page, where it can be undone). He stops nudging about this pair.
+    private async Task DismissNudge(LookalikeNudge n)
+    {
+        if (nudgeBusy) return;
+        nudgeBusy = true;
+        nudgeError = null;
+        mergedNotice = null; // a new action supersedes an earlier merge's inline notice (the dashboard pattern)
+        try
+        {
+            await Nudges.DismissAsync(n.Pair.LowerId, n.Pair.HigherId, DateTimeOffset.Now);
+            await LoadAsync();
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Dismissing a lookalike nudge failed.");
+            nudgeError = "Couldn't dismiss just now — please try again.";
+        }
+        finally { nudgeBusy = false; }
+    }
+
+    // Undo the last merge inline, through the ONE undo path. On the rare race where it's changed since, the
+    // notice stays with a reason rather than silently doing nothing (the dashboard's UndoLast pattern).
+    private async Task UndoMerge()
+    {
+        if (nudgeBusy || mergedNotice is not { } mn) return;
+        nudgeBusy = true;
+        nudgeError = null;
+        try
+        {
+            var outcome = await ActivityLog.UndoAsync(mn.EntryId);
+            mergedNotice = null;
+            if (outcome != UndoOutcome.Done)
+                nudgeError = "Couldn't undo that — it changed since. Check History.";
+            await LoadAsync();
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Undoing a lookalike merge failed.");
+            nudgeError = "Couldn't undo just now — please try again.";
+        }
+        finally { nudgeBusy = false; }
     }
 
     // Sort key for the aisle walk: a row's category, with un-categorized plan rows falling after every real
