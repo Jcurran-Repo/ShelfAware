@@ -368,13 +368,15 @@ internal sealed class FakeHttpMessageHandler : HttpMessageHandler
             request.RequestUri!,
             request.Headers.TryGetValues("xi-api-key", out var k) ? k.FirstOrDefault() : null,
             request.Content?.Headers.ContentType?.MediaType,
-            body));
+            body,
+            request.Headers.Authorization?.ToString()));
         if (_script.Count == 0) throw new InvalidOperationException("FakeHttpMessageHandler ran out of scripted responses.");
         return _script.Dequeue()();
     }
 }
 
-internal record CapturedRequest(HttpMethod Method, Uri Uri, string? ApiKey, string? ContentType, string Body);
+// ApiKey is ElevenLabs' xi-api-key header; Authorization is the Bearer a secured local sidecar takes.
+internal record CapturedRequest(HttpMethod Method, Uri Uri, string? ApiKey, string? ContentType, string Body, string? Authorization = null);
 
 /// <summary>Terse builders for the canned HTTP responses the fake handler hands back.</summary>
 internal static class HttpResponses

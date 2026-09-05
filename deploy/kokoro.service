@@ -1,0 +1,33 @@
+# Kokoro TTS sidecar (OpenAI-compatible) for ShelfAware's read-aloud voice.
+# Install as /etc/systemd/system/kokoro.service, then:
+#   systemctl daemon-reload; systemctl enable --now kokoro
+# Full runbook (image tag, verification, resource notes): docs/deploy-kokoro.md.
+#
+# ShelfAware's app talks to this over loopback (Speech__Provider=Local,
+# Speech__Local__BaseUrl=http://127.0.0.1:8880). The BROWSER never talks to it: the
+# app calls the sidecar server-side and returns the audio, so nothing here is exposed
+# to the internet and no browser CSP change is needed.
+[Unit]
+Description=Kokoro TTS sidecar for ShelfAware
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+# Foreground container; systemd owns its lifetime. Bound to 127.0.0.1 ONLY -- it takes
+# arbitrary text and needs no auth, so it must never be reachable from off the box.
+# --cap-drop=ALL + no-new-privileges: a TTS HTTP server on a high port needs no Linux
+# capabilities; cheap defense-in-depth (see docs/deploy-kokoro.md for --read-only etc.).
+# PIN THE IMAGE TAG before production (docs/deploy-kokoro.md) -- and confirm the image
+# NAME too; :latest is shown only so this file runs unedited, and an unpinned image is
+# not reproducible.
+ExecStartPre=-/usr/bin/docker rm -f kokoro-tts
+ExecStart=/usr/bin/docker run --rm --name kokoro-tts \
+  -p 127.0.0.1:8880:8880 \
+  --cap-drop=ALL --security-opt=no-new-privileges \
+  ghcr.io/remsky/kokoro-fastapi-cpu:latest
+ExecStop=/usr/bin/docker stop kokoro-tts
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

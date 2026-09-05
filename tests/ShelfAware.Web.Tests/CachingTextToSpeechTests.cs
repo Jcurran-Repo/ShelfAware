@@ -385,6 +385,72 @@ public sealed class CachingTextToSpeechTests : IDisposable
         Assert.IsNotType<CachingTextToSpeech>(scope.ServiceProvider.GetRequiredService<ITextToSpeech>());
     }
 
+    // Speech:Provider selects the TTS provider behind the cache. It's still the cache that answers
+    // ITextToSpeech (proven above); this proves WHICH provider it wraps — read off OutputFingerprint,
+    // which the cache delegates to its inner provider and which each provider namespaces to its own name,
+    // so a clip voiced by one can never be served for the other's key.
+    [Fact]
+    public void The_default_provider_is_elevenlabs()
+    {
+        Assert.StartsWith("elevenlabs", FingerprintFor(provider: null));
+    }
+
+    [Fact]
+    public void Speech_provider_local_selects_the_self_hosted_sidecar()
+    {
+        Assert.StartsWith("kokoro", FingerprintFor(provider: "Local"));
+    }
+
+    // Case-insensitively, like every other enum-from-config in the app (a typo'd value fails fast at boot).
+    [Fact]
+    public void The_provider_setting_is_case_insensitive()
+    {
+        Assert.StartsWith("kokoro", FingerprintFor(provider: "local"));
+    }
+
+    // The request URI is a leading-slash absolute path, so a BaseUrl carrying a subpath would be silently
+    // dropped -- registration refuses one up front instead, naming the setting.
+    [Fact]
+    public void A_local_base_url_with_a_path_is_refused_at_registration()
+    {
+        var ex = Assert.ThrowsAny<Exception>(() => FingerprintFor("Local", baseUrl: "http://host:8880/kokoro"));
+        Assert.Contains("Speech:Local:BaseUrl", DeepMessage(ex));
+    }
+
+    // ...and a non-http scheme, which would otherwise fail later with a worse message.
+    [Fact]
+    public void A_local_base_url_with_a_non_http_scheme_is_refused_at_registration()
+    {
+        var ex = Assert.ThrowsAny<Exception>(() => FingerprintFor("Local", baseUrl: "ftp://host:8880"));
+        Assert.Contains("Speech:Local:BaseUrl", DeepMessage(ex));
+    }
+
+    private string FingerprintFor(string? provider, string? baseUrl = null)
+    {
+        var settings = new Dictionary<string, string?>();
+        if (provider is not null) settings["Speech:Provider"] = provider;
+        if (baseUrl is not null) settings["Speech:Local:BaseUrl"] = baseUrl;
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddScoped<IVoiceCredentials>(_ => new StubVoiceCredentials());
+        services.AddScoped<ICurrentHousehold>(_ => new FakeCurrentHousehold());
+        services.AddSpeech(new ConfigurationBuilder().AddInMemoryCollection(settings).Build(), _dir);
+
+        using var root = services.BuildServiceProvider(validateScopes: true);
+        using var scope = root.CreateScope();
+        return scope.ServiceProvider.GetRequiredService<ITextToSpeech>().OutputFingerprint;
+    }
+
+    // DI may wrap the ConfigureLocal exception in a typed-client factory error, so assert against the
+    // whole chain rather than the top message.
+    private static string DeepMessage(Exception ex)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (Exception? e = ex; e is not null; e = e.InnerException) sb.Append(e.Message).Append(' ');
+        return sb.ToString();
+    }
+
     private sealed class StubVoiceCredentials : IVoiceCredentials
     {
         public string ApiKey => "";
