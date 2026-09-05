@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Options;
 using ShelfAware.Core.Speech;
 using ShelfAware.Llm;
 using ShelfAware.Web.Data;
@@ -12,13 +13,21 @@ namespace ShelfAware.Web.Services;
 public static class SpeechRegistration
 {
     /// <summary>
-    /// Registers ElevenLabs speech: Scribe = STT (ear), TTS = mouth, with TTS wrapped in a disk cache
-    /// at <paramref name="cacheDirectory"/>. Speech is its own REST API rather than an IChatClient
-    /// workload, so each rides a typed HttpClient. Typed clients are transient (the factory owns handler
-    /// lifetime) — fine, the services are stateless.
+    /// Registers speech: Scribe = STT (ear), and TTS = mouth wrapped in a disk cache at
+    /// <paramref name="cacheDirectory"/>. Speech is its own REST API rather than an IChatClient workload,
+    /// so each rides a typed HttpClient. Typed clients are transient (the factory owns handler lifetime) —
+    /// fine, the services are stateless.
     ///
-    /// Requires a scoped <see cref="IVoiceCredentials"/> registered by the caller: the key is per-circuit
-    /// (the visitor's own), so it is attached per request rather than baked into a default header.
+    /// <para>The TTS PROVIDER is chosen by <c>Speech:Provider</c> (default ElevenLabs, so no existing
+    /// deployment changes on upgrade): <see cref="SpeechProvider.Local"/> points at a self-hosted,
+    /// OpenAI-compatible sidecar (Kokoro) for $0 synthesis; <see cref="SpeechProvider.ElevenLabs"/> keeps
+    /// the cloud voice. The STT ear stays ElevenLabs Scribe either way — moving speech RECOGNITION off
+    /// ElevenLabs is a separate seam. Whichever provider is chosen, it's the CACHE that answers
+    /// <see cref="ITextToSpeech"/>; the provider is only ever reached through it.</para>
+    ///
+    /// Requires a scoped <see cref="IVoiceCredentials"/> registered by the caller: the ElevenLabs key is
+    /// per-circuit (the visitor's own), so it is attached per request rather than baked into a default
+    /// header. The local sidecar needs no such credential (see <see cref="LocalSpeechOptions"/>).
     /// </summary>
     /// <param name="cacheDirectory">Where synthesized audio lives, or null to synthesize every time. Null
     /// is what <c>Speech:CacheMegabytes = 0</c> means: someone asking for no cache should GET no cache,
@@ -28,19 +37,38 @@ public static class SpeechRegistration
         this IServiceCollection services, IConfiguration configuration, string? cacheDirectory)
     {
         services.Configure<ElevenLabsOptions>(configuration.GetSection(ElevenLabsOptions.SectionName));
+        services.Configure<LocalSpeechOptions>(configuration.GetSection(LocalSpeechOptions.SectionName));
+
+        // The ear is always ElevenLabs Scribe; only the mouth's provider is selectable.
         services.AddHttpClient<ISpeechToText, ElevenLabsSpeechToText>(ConfigureElevenLabs);
+
+        var provider = configuration.GetValue<SpeechProvider?>("Speech:Provider") ?? SpeechProvider.ElevenLabs;
+
+        // Register the chosen provider by its own concrete type (with its typed HttpClient) and expose a
+        // resolver for it — so the cache, or the direct registration below, can wrap it as the inner
+        // ITextToSpeech without either caring which provider it is.
+        Func<IServiceProvider, ITextToSpeech> resolveProvider;
+        if (provider == SpeechProvider.Local)
+        {
+            services.AddHttpClient<LocalTextToSpeech>(ConfigureLocal);
+            resolveProvider = sp => sp.GetRequiredService<LocalTextToSpeech>();
+        }
+        else
+        {
+            services.AddHttpClient<ElevenLabsTextToSpeech>(ConfigureElevenLabs);
+            resolveProvider = sp => sp.GetRequiredService<ElevenLabsTextToSpeech>();
+        }
 
         if (cacheDirectory is null)
         {
-            services.AddHttpClient<ITextToSpeech, ElevenLabsTextToSpeech>(ConfigureElevenLabs);
+            services.AddTransient(resolveProvider);
             return services;
         }
 
-        // The provider is registered concretely and the cache is what answers ITextToSpeech. The cache
-        // reads ICurrentHousehold (scoped) per call — clips are filed per household, never shared.
-        services.AddHttpClient<ElevenLabsTextToSpeech>(ConfigureElevenLabs);
+        // The cache is what answers ITextToSpeech; it reads ICurrentHousehold (scoped) per call so clips
+        // are filed per household, never shared.
         services.AddTransient(sp => new CachingTextToSpeech(
-            sp.GetRequiredService<ElevenLabsTextToSpeech>(),
+            resolveProvider(sp),
             cacheDirectory,
             sp.GetRequiredService<ICurrentHousehold>(),
             sp.GetRequiredService<ILogger<CachingTextToSpeech>>()));
@@ -57,5 +85,16 @@ public static class SpeechRegistration
         // Base address only — the xi-api-key is attached PER REQUEST from the visitor's per-circuit
         // credentials (CircuitVoiceCredentials), never baked in as a default header.
         http.BaseAddress = new Uri("https://api.elevenlabs.io");
+    }
+
+    private static void ConfigureLocal(IServiceProvider sp, HttpClient http)
+    {
+        var options = sp.GetRequiredService<IOptions<LocalSpeechOptions>>().Value;
+        // A typo here would otherwise surface as an opaque failure on the first read-aloud; fail with a
+        // message that names the setting (the same guard ChatClientFactory gives a local LLM base URL).
+        if (!Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out var baseUri))
+            throw new InvalidOperationException(
+                $"Speech:Local:BaseUrl must be an absolute URL (e.g. http://127.0.0.1:8880); got '{options.BaseUrl}'.");
+        http.BaseAddress = baseUri;
     }
 }

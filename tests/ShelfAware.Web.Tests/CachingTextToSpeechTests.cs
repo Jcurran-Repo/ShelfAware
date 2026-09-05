@@ -385,6 +385,46 @@ public sealed class CachingTextToSpeechTests : IDisposable
         Assert.IsNotType<CachingTextToSpeech>(scope.ServiceProvider.GetRequiredService<ITextToSpeech>());
     }
 
+    // Speech:Provider selects the TTS provider behind the cache. It's still the cache that answers
+    // ITextToSpeech (proven above); this proves WHICH provider it wraps — read off OutputFingerprint,
+    // which the cache delegates to its inner provider and which each provider namespaces to its own name,
+    // so a clip voiced by one can never be served for the other's key.
+    [Fact]
+    public void The_default_provider_is_elevenlabs()
+    {
+        Assert.StartsWith("elevenlabs", FingerprintFor(provider: null));
+    }
+
+    [Fact]
+    public void Speech_provider_local_selects_the_self_hosted_sidecar()
+    {
+        Assert.StartsWith("kokoro", FingerprintFor(provider: "Local"));
+    }
+
+    // Case-insensitively, like every other enum-from-config in the app (a typo'd value fails fast at boot).
+    [Fact]
+    public void The_provider_setting_is_case_insensitive()
+    {
+        Assert.StartsWith("kokoro", FingerprintFor(provider: "local"));
+    }
+
+    private string FingerprintFor(string? provider)
+    {
+        var config = new ConfigurationBuilder();
+        if (provider is not null)
+            config.AddInMemoryCollection(new Dictionary<string, string?> { ["Speech:Provider"] = provider });
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddScoped<IVoiceCredentials>(_ => new StubVoiceCredentials());
+        services.AddScoped<ICurrentHousehold>(_ => new FakeCurrentHousehold());
+        services.AddSpeech(config.Build(), _dir);
+
+        using var root = services.BuildServiceProvider(validateScopes: true);
+        using var scope = root.CreateScope();
+        return scope.ServiceProvider.GetRequiredService<ITextToSpeech>().OutputFingerprint;
+    }
+
     private sealed class StubVoiceCredentials : IVoiceCredentials
     {
         public string ApiKey => "";
