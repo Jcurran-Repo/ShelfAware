@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -138,11 +139,54 @@ public sealed class DemoUsageMeterTests : IDisposable
         Assert.Null(await meter.GetTodayAsync()); // no row written (a -1 row before the guard)
     }
 
+    [Fact]
+    public async Task Two_first_of_day_writes_racing_to_insert_dont_lose_a_count()
+    {
+        // The upsert is race-safe: if two requests both find no row for today and both try to INSERT, the
+        // loser hits the unique index (SQLITE_CONSTRAINT_UNIQUE 2067) and must fall back to the retry-
+        // increment, adding onto the winner's row rather than throwing and losing its count. Forced
+        // deterministically: an interceptor inserts today's row (the "winner") from a second context the
+        // instant before the meter's own insert reaches the DB. Mutating the caught error codes makes the
+        // collision propagate → RecordCallAsync throws → this test fails.
+        using var conn = new SqliteConnection("DataSource=:memory:");
+        conn.Open();
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var interceptor = new RaceInsertInterceptor(async ct =>
+        {
+            // A SEPARATE, non-intercepted context on the same DB inserts the winning row (Calls = 5).
+            var plain = new DbContextOptionsBuilder<AuthDbContext>().UseSqlite(conn).Options;
+            await using var other = new AuthDbContext(plain);
+            other.DemoUsage.Add(new DemoUsageDay { Day = today, Calls = 5 });
+            await other.SaveChangesAsync(ct);
+        });
+        var schemaOptions = new DbContextOptionsBuilder<AuthDbContext>().UseSqlite(conn).Options;
+        using (var schema = new AuthDbContext(schemaOptions)) schema.Database.EnsureCreated();
+        var meterOptions = new DbContextOptionsBuilder<AuthDbContext>()
+            .UseSqlite(conn).AddInterceptors(interceptor).Options;
+
+        var meter = new DemoUsageMeter(
+            new OptionsAuthDbFactory(meterOptions),
+            Options.Create(new DemoOptions { DailyGlobalCallLimit = 100 }), NullLogger<DemoUsageMeter>.Instance);
+
+        await meter.RecordCallAsync(); // our +1 collides with the winner's 5 → falls back → 6, no throw
+
+        using var read = new AuthDbContext(schemaOptions);
+        var row = await read.DemoUsage.FirstOrDefaultAsync(d => d.Day == today);
+        Assert.Equal(6, row?.Calls); // both deltas survived: winner 5 + our 1
+    }
+
     private sealed class ThrowingAuthDbFactory : IDbContextFactory<AuthDbContext>
     {
         public AuthDbContext CreateDbContext() => throw new InvalidOperationException("auth.db unavailable");
         public Task<AuthDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
             => throw new InvalidOperationException("auth.db unavailable");
+    }
+
+    private sealed class OptionsAuthDbFactory(DbContextOptions<AuthDbContext> options) : IDbContextFactory<AuthDbContext>
+    {
+        public AuthDbContext CreateDbContext() => new(options);
+        public Task<AuthDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult(CreateDbContext());
     }
 
     private sealed class CapturingLogger : ILogger<DemoUsageMeter>

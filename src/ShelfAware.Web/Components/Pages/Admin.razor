@@ -110,9 +110,9 @@ else
                 </div>
                 @if (DemoConfig.Value.AlertThreshold is { } threshold)
                 {
-                    @* A reached alert is a "watch spend" heads-up, not a "good" state — amber (forecast),
+                    @* A reached alert is a "watch spend" heads-up, not a "good" state — amber (warn),
                        never green (pass), which on an at-a-glance panel would read as all-clear. *@
-                    <div class="@(demoCallsToday >= threshold ? "stat forecast" : "stat")">
+                    <div class="@(demoCallsToday >= threshold ? "stat warn" : "stat")">
                         <div class="stat-value">@threshold</div>
                         <div class="stat-label">Alert threshold@(demoCallsToday >= threshold ? " · reached" : "")</div>
                     </div>

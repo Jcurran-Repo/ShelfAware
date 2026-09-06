@@ -1105,6 +1105,15 @@ input:focus, select:focus {
     color: var(--accent);
 }
 
+/* A "watch this" warning tile (amber) — distinct from pass (green all-clear) and fail (red). */
+.stat.warn {
+    border-color: var(--duesoon-line);
+}
+
+.stat.warn .stat-value {
+    color: var(--duesoon-ink);
+}
+
 .stat.pass { border-color: var(--stocked-line); }
 .stat.pass .stat-value { color: var(--stocked-ink); }
 .stat.fail { border-color: var(--overdue-line); }

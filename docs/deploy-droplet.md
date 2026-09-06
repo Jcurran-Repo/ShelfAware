@@ -174,7 +174,7 @@ the cap — bounded, and backstopped by that spend limit. **Set both.**
 **The layers, outermost first:** `Llm__DailyCallLimit`/`DailyTokenLimit` (fair-per-visitor)
 → `Demo__DailyGlobalCallLimit` (the box-wide wallet valve) → `Demo__AlertThreshold` (an
 early "traffic is arriving" heads-up, logged as a Warning and shown on **/admin → Demo
-box usage** as "· crossed" — *not* in the error log) → the key's own spend limit (the
+box usage** as "· reached" — *not* in the error log) → the key's own spend limit (the
 hard ceiling).
 
 **Sign-up abuse controls** (a public box wants these): `Auth__RequireEmailConfirmation=true`

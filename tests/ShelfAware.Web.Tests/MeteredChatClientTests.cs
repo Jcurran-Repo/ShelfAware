@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -153,10 +154,26 @@ public class MeteredChatClientTests : IDisposable
         }
     }
 
+    /// <summary>Wraps the auth.db factory and throws on the Nth context request, then delegates — models a
+    /// transient failure on a specific demo-meter step (the gate read is call #1, the reserve write #2), to
+    /// pin the box-wide half of the balanced release.</summary>
+    private sealed class FailNthAuthDbFactory(IDbContextFactory<AuthDbContext> inner, int failOn) : IDbContextFactory<AuthDbContext>
+    {
+        private int _calls;
+        public AuthDbContext CreateDbContext() => inner.CreateDbContext();
+        public Task<AuthDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
+        {
+            if (System.Threading.Interlocked.Increment(ref _calls) == failOn)
+                throw new InvalidOperationException("transient auth.db failure on the demo reserve write");
+            return inner.CreateDbContextAsync(cancellationToken);
+        }
+    }
+
     private (MeteredChatClient client, AiUsageMeter meter) Build(
         string keyMode, int? dailyCalls = null, long? dailyTokens = null, int? dailyMints = null,
         HouseholdTier tier = HouseholdTier.Free, long balanceMicros = 100_000_000, bool paymentsEnabled = true,
-        int? demoCap = null, bool factoryThrows = false, bool meterReserveFailsFirst = false)
+        int? demoCap = null, bool factoryThrows = false, bool meterReserveFailsFirst = false,
+        int? demoReserveFailsOnCall = null)
     {
         var llm = Options.Create(new LlmOptions
         {
@@ -183,8 +200,12 @@ public class MeteredChatClientTests : IDisposable
         // The box-wide demo valve. Unconfigured by default (a no-op, so the per-household metering tests are
         // unaffected); a demo-cap test passes demoCap to exercise the box-wide enforcement here — the point
         // MeteredChatClient actually bounds the host wallet, which the fable gate found untested.
+        // demoReserveFailsOnCall faults the Nth auth.db context request the demo meter makes (the gate read is
+        // #1, the reserve write is #2), to pin the box-wide half of the balanced release.
+        IDbContextFactory<AuthDbContext> demoFactory =
+            demoReserveFailsOnCall is int n ? new FailNthAuthDbFactory(_authDb, n) : _authDb;
         var demoMeter = new DemoUsageMeter(
-            _authDb, Options.Create(new DemoOptions { DailyGlobalCallLimit = demoCap }), NullLogger<DemoUsageMeter>.Instance);
+            demoFactory, Options.Create(new DemoOptions { DailyGlobalCallLimit = demoCap }), NullLogger<DemoUsageMeter>.Instance);
         var client = new MeteredChatClient(byok, settings, meter, demoMeter, Options.Create(new BillingOptions()),
             payments,
             new CreditLedger(_authDb, Options.Create(new BillingOptions())), entitlements, new FakeCurrentHousehold("hh-test"),
@@ -201,6 +222,13 @@ public class MeteredChatClientTests : IDisposable
         var row = await db.DemoUsage.AsNoTracking()
             .FirstOrDefaultAsync(d => d.Day == DateOnly.FromDateTime(DateTime.Today));
         return row?.Calls ?? 0;
+    }
+
+    private async Task SeedDemoTodayAsync(int calls)
+    {
+        await using var db = _authDb.CreateDbContext();
+        db.DemoUsage.Add(new DemoUsageDay { Day = DateOnly.FromDateTime(DateTime.Today), Calls = calls });
+        await db.SaveChangesAsync();
     }
 
     private async Task SeedDayAsync(string household, DateOnly day, int calls, long costMicros)
@@ -850,19 +878,40 @@ public class MeteredChatClientTests : IDisposable
     // ---- Balanced release: give back ONLY what was actually reserved ----
 
     [Fact]
-    public async Task A_release_after_a_failed_reserve_does_not_drive_the_counter_negative()
+    public async Task A_release_after_a_failed_reserve_does_not_touch_an_existing_count()
     {
         // F2: if the reserve WRITE silently fails but the provider then refuses, the release must give back
-        // only what was actually reserved — never subtract a count that was never added (which would insert
-        // a "-1 calls" row and raise the effective cap). No per-household cap + billing off so the gate reads
-        // nothing before the reserve, making the reserve the first — and only faulted — usage write.
+        // ONLY what was actually reserved. A prior call today left a row at 3; this call's reserve is faulted,
+        // so the release must leave the 3 untouched — an unbalanced "always release" would DECREMENT it to 2.
+        // (The no-row insert-of-a-negative case is covered by Releasing_a_household_call_with_no_row...; here
+        // a row EXISTS, so only the balanced-release guard — not the negative-insert guard — can save it.) No
+        // per-household cap + billing off so the gate reads nothing before the reserve, making the reserve the
+        // first — and only faulted — usage write.
+        await SeedTodayAsync("hh-test", calls: 3);
         _provider.ThrowRefusal = true;
         var (client, meter) = Build(
             "Managed", tier: HouseholdTier.Free, paymentsEnabled: false, meterReserveFailsFirst: true);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => AskAsync(client));
 
-        Assert.Equal(0, (await meter.GetTodayAsync()).Calls); // NOT -1
+        Assert.Equal(3, (await meter.GetTodayAsync()).Calls); // unchanged — the failed reserve wasn't released
+    }
+
+    [Fact]
+    public async Task A_release_after_a_failed_demo_reserve_does_not_touch_the_box_counter()
+    {
+        // The box-wide half of balanced release: if the DEMO reserve write fails but the provider then
+        // refuses, the release must NOT decrement the box counter (an unbalanced always-release would). Seed a
+        // prior box count of 3; the gate reads it (auth call #1), the reserve write faults (call #2 → boxWide
+        // false), and the release leaves the 3 alone. The household reserve succeeds and is released normally.
+        await SeedDemoTodayAsync(3);
+        _provider.ThrowRefusal = true;
+        var (client, _) = Build(
+            "Managed", tier: HouseholdTier.Free, paymentsEnabled: false, demoCap: 5, demoReserveFailsOnCall: 2);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => AskAsync(client));
+
+        Assert.Equal(3, await DemoCallsTodayAsync()); // unchanged — the failed demo reserve wasn't released
     }
 
     [Fact]
@@ -876,6 +925,45 @@ public class MeteredChatClientTests : IDisposable
         await meter.ReleaseLlmCallAsync(); // no reserve today — nothing to give back
 
         Assert.Equal(0, (await meter.GetTodayAsync()).Calls); // no row written, not -1
+    }
+
+    [Fact]
+    public async Task Two_first_of_day_household_writes_racing_to_insert_dont_lose_a_count()
+    {
+        // The AiUsageMeter twin of the demo collision test: two requests both find no row for today and race
+        // to INSERT; the loser hits the (HouseholdId, Day) unique index and must fall back to the retry-
+        // increment rather than throwing and losing its count. Forced by an interceptor that inserts the
+        // winning row just before ours lands. Mutating the caught error codes makes it propagate → throw.
+        using var conn = new SqliteConnection("DataSource=:memory:");
+        conn.Open();
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var interceptor = new RaceInsertInterceptor(async ct =>
+        {
+            var plain = new DbContextOptionsBuilder<ShelfAwareDbContext>().UseSqlite(conn).Options;
+            await using var other = new ShelfAwareDbContext(plain) { HouseholdId = "hh-test" };
+            other.AiUsages.Add(new AiUsage { Day = today, Calls = 5 });
+            await other.SaveChangesAsync(ct);
+        });
+        var schemaOptions = new DbContextOptionsBuilder<ShelfAwareDbContext>().UseSqlite(conn).Options;
+        using (var schema = new ShelfAwareDbContext(schemaOptions)) schema.Database.EnsureCreated();
+        var meterOptions = new DbContextOptionsBuilder<ShelfAwareDbContext>()
+            .UseSqlite(conn).AddInterceptors(interceptor).Options;
+
+        var meter = new AiUsageMeter(
+            new OptionsHouseholdDbFactory(meterOptions), Options.Create(new LlmOptions()),
+            Options.Create(new ElevenLabsOptions()), Options.Create(new ShelfAware.Web.Billing.PaymentsOptions()),
+            new FakeEntitlements(), NullLogger<AiUsageMeter>.Instance);
+
+        await meter.ReserveLlmCallAsync(); // our +1 collides with the winner's 5 → falls back → 6, no throw
+
+        using var read = new ShelfAwareDbContext(schemaOptions) { HouseholdId = "hh-test" };
+        Assert.Equal(6, (await read.AiUsages.FirstOrDefaultAsync(u => u.Day == today))?.Calls);
+    }
+
+    private sealed class OptionsHouseholdDbFactory(DbContextOptions<ShelfAwareDbContext> options) : IHouseholdDbFactory
+    {
+        public Task<ShelfAwareDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult(new ShelfAwareDbContext(options) { HouseholdId = "hh-test" });
     }
 
     // ---- The paid default's exact value: below it is admitted, and the operator can raise it ----

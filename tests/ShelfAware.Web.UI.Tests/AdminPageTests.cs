@@ -746,7 +746,7 @@ public class AdminPageTests : PageTestContext
     public void The_demo_usage_panel_flags_the_alert_threshold_being_reached()
     {
         // The alert tile was untested; it also must NOT wear the green "pass" (all-clear) styling — a reached
-        // cost alert is a "watch spend" heads-up, so it renders amber (forecast).
+        // cost alert is a "watch spend" heads-up, so it renders amber (warn).
         demoOptions.DailyGlobalCallLimit = 300;
         demoOptions.AlertThreshold = 50;
         using (var db = authDb.CreateDbContext())
@@ -761,7 +761,7 @@ public class AdminPageTests : PageTestContext
         {
             var tile = cut.FindAll("div.stat").First(d => d.TextContent.Contains("Alert threshold"));
             Assert.Contains("reached", tile.TextContent);                 // count 60 ≥ threshold 50
-            Assert.Contains("forecast", tile.GetAttribute("class")!);     // amber…
+            Assert.Contains("warn", tile.GetAttribute("class")!);         // amber…
             Assert.DoesNotContain("pass", tile.GetAttribute("class")!);   // …not the green all-clear
         });
     }

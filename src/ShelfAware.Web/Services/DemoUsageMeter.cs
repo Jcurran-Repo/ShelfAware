@@ -48,14 +48,14 @@ public sealed class DemoUsageMeter(
     public async ValueTask<string?> CallBlockedMessageAsync(CancellationToken ct = default) =>
         await IsCallBlockedAsync(ct) ? DemoLimits.DailyCapReachedMessage : null;
 
-    /// <summary>THE one reading of "is the box-wide LLM cap hit right now?" — shared by the throwing gate
-    /// and the non-throwing pre-check so a surface and the server-side gate never disagree. False (with no
-    /// DB read) when no cap is configured.</summary>
     /// <summary>THE rule for "is this many calls at/over the box-wide cap?" — shared by the gate/pre-check
     /// (<see cref="IsCallBlockedAsync"/>) and the /admin panel so the two can never disagree about "capped".
     /// A null cap is never at cap; a cap of 0 is at cap from the first call (the kill-switch, since 0 >= 0).</summary>
     public static bool IsAtCap(int calls, int? cap) => cap is int c && calls >= c;
 
+    /// <summary>THE one reading of "is the box-wide LLM cap hit right now?" — shared by the throwing gate
+    /// and the non-throwing pre-check so a surface and the server-side gate never disagree. False (with no
+    /// DB read) when no cap is configured, and — failing open — when the read itself errors.</summary>
     private async Task<bool> IsCallBlockedAsync(CancellationToken ct)
     {
         if (Opt.DailyGlobalCallLimit is not int cap) return false;
