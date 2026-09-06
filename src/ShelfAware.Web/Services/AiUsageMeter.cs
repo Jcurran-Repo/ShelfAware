@@ -18,9 +18,23 @@ public sealed class AiUsageMeter(
     IHouseholdDbFactory dbFactory,
     IOptions<LlmOptions> llm,
     IOptions<ElevenLabsOptions> elevenLabs,
+    IOptions<ShelfAware.Web.Billing.PaymentsOptions> payments,
     IEntitlements entitlements,
     ILogger<AiUsageMeter> logger)
 {
+    /// <summary>A per-household daily call cap applied when billing is on but the operator set none, so a
+    /// PAID box is never accidentally unbounded (the "never accidentally unbounded" pattern
+    /// <c>Auth.EffectiveDailyAccountCreationLimit</c> uses). It's an ABUSE bound, not a usage limit — a
+    /// paying subscriber is already bounded by their credit and won't approach it — so it only ever bites a
+    /// griefer (e.g. one abort-spamming to burn host spend, since an aborted call counts but draws no
+    /// credit). Generous on purpose; the operator can raise/lower it via <c>Llm:DailyCallLimit</c>.</summary>
+    private const int DefaultPaidDailyCallLimit = 1000;
+
+    /// <summary>The call cap actually enforced: the operator's <c>Llm:DailyCallLimit</c> if set, else the
+    /// paid-box default when billing is configured, else none (the self-host / demo default).</summary>
+    private int? EffectiveDailyCallLimit =>
+        llm.Value.DailyCallLimit ?? (payments.Value.IsConfigured ? DefaultPaidDailyCallLimit : null);
+
     public sealed record TodayUsage(int Calls, long Tokens, int VoiceSessionMints, long CostMicros);
 
     public sealed record DayUsage(
@@ -84,7 +98,8 @@ public sealed class AiUsageMeter(
     /// errors) when today's LLM usage has reached a configured cap. Call BEFORE the provider call.</summary>
     public async Task EnsureLlmCallAllowedAsync(CancellationToken cancellationToken = default)
     {
-        if (llm.Value.DailyCallLimit is null && llm.Value.DailyTokenLimit is null) return;
+        var callLimit = EffectiveDailyCallLimit;
+        if (callLimit is null && llm.Value.DailyTokenLimit is null) return;
 
         // A Founder household is exempt from the caps entirely (unlimited-but-recorded). Consulted AFTER
         // the no-limit check above, so a deployment that configures no caps never pays the tier read;
@@ -92,14 +107,29 @@ public sealed class AiUsageMeter(
         // Founder's usage still lands in the row.
         if ((await entitlements.GetTierAsync(cancellationToken)).IsUnlimited()) return;
 
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var row = await TodayRowAsync(db, cancellationToken);
+        AiUsage? row;
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+            row = await TodayRowAsync(db, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Reading today's usage row failed (a transient pantry hiccup) — the ABUSE caps here can't be
+            // checked, but an infrastructure blip must not block a legitimate call (the reserve/record after
+            // the call are best-effort for exactly this reason), and the real MONEY bound is the household's
+            // credit balance in auth.db — a SEPARATE database, enforced next in the gate — so a paying
+            // customer is never over-served by allowing here. A cancellation stays a cancellation.
+            logger.LogError(ex, "Reading today's AI usage for the daily caps failed; allowing the call (credit still gates it).");
+            return;
+        }
+
         // Coalesce the absent row to zero rather than early-returning: a limit of 0 must block the FIRST
         // call, not admit one before a row exists (0 >= 0). A no-row day with a positive limit still passes.
         var calls = row?.Calls ?? 0;
         var tokens = (row?.InputTokens ?? 0) + (row?.OutputTokens ?? 0);
 
-        if (llm.Value.DailyCallLimit is int callLimit && calls >= callLimit)
+        if (callLimit is int limit && calls >= limit)
         {
             throw new InvalidOperationException(
                 "Today's AI allowance on this server is used up — it resets tomorrow. " +
@@ -121,7 +151,9 @@ public sealed class AiUsageMeter(
         if ((await entitlements.GetTierAsync(cancellationToken)).IsUnlimited()) return true;
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var row = await TodayRowAsync(db, cancellationToken);
-        return row is null || row.VoiceSessionMints < limit;
+        // Coalesce the absent row to 0 so a limit of 0 blocks the first mint too (the cap=0 kill-switch
+        // rule, consistent with the call/token caps above) rather than admitting one before a row exists.
+        return (row?.VoiceSessionMints ?? 0) < limit;
     }
 
     /// <summary>Count one call against today's row, BEFORE the provider call — split from the token/cost
@@ -130,6 +162,13 @@ public sealed class AiUsageMeter(
     /// abort still cost the host's key), instead of only counting calls that ran to completion.</summary>
     public Task ReserveLlmCallAsync(CancellationToken cancellationToken = default)
         => AccumulateAsync(calls: 1, inputTokens: 0, outputTokens: 0, costMicros: 0, mints: 0, cancellationToken);
+
+    /// <summary>Give back a call reserved at the gate whose provider request the provider REFUSED before
+    /// incurring any cost (a 429/5xx/connection error) — so an outage doesn't burn the daily cap on calls
+    /// that never ran. NOT called for an abort or timeout: those reached the provider and cost the key, so
+    /// they stay counted. Guarded on the caller's side; the delta is signed so this is the exact inverse.</summary>
+    public Task ReleaseLlmCallAsync(CancellationToken cancellationToken = default)
+        => AccumulateAsync(calls: -1, inputTokens: 0, outputTokens: 0, costMicros: 0, mints: 0, cancellationToken);
 
     /// <summary>Record a completed call's tokens + cost (NOT the call count — that was reserved at the gate).
     /// Called at the tail once a response exists; the token cap and cost trend can only be known then.</summary>

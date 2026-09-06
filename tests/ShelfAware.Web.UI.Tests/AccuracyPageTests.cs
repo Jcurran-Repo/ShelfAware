@@ -59,6 +59,7 @@ public class AccuracyPageTests : PageTestContext
             Factory, new ThrowingExtractor(), aiSettings, AppSettings, storage, NullLogger<ReceiptSelfEval>.Instance));
         Services.AddSingleton(new AiUsageMeter(
             Factory, Options.Create(new LlmOptions()), Options.Create(new ElevenLabsOptions()),
+            Options.Create(new ShelfAware.Web.Billing.PaymentsOptions()),
             new FakeEntitlements(), NullLogger<AiUsageMeter>.Instance));
     }
 

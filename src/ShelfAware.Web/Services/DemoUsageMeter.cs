@@ -62,6 +62,12 @@ public sealed class DemoUsageMeter(
 
     public Task RecordCallAsync(CancellationToken ct = default) => AccumulateAsync(calls: 1, ct);
 
+    /// <summary>Give back a call reserved at the gate whose provider request was REFUSED before any cost (a
+    /// 429/5xx/connection error) — so a provider outage doesn't burn the box-wide daily valve on calls that
+    /// never ran. Not called for an abort/timeout (those cost the key and stay counted). The alert only
+    /// fires on a positive delta, so a release never triggers it.</summary>
+    public Task ReleaseCallAsync(CancellationToken ct = default) => AccumulateAsync(calls: -1, ct);
+
     /// <summary>Today's box-wide counter (for /admin), or null if nothing is configured or recorded yet.</summary>
     public async Task<DemoUsageDay?> GetTodayAsync(CancellationToken ct = default)
     {

@@ -38,6 +38,15 @@ public sealed class MeteredChatClient(
             response = await inner.GetResponseAsync(messages, options, cancellationToken);
             return response;
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // A provider REFUSAL before any cost (429/5xx/connection/keyless) — give the reserved call back so
+            // an outage doesn't burn the caps on requests that never ran. A mid-flight abort/timeout is
+            // OperationCanceledException (skipped by the filter) and stays counted: it cost the key. In both
+            // cases `response` is null, so the finally below records no tokens/cost/credit.
+            await ReleaseCallAsync();
+            throw;
+        }
         finally
         {
             // Record tokens/cost/credit UNCANCELLABLY once a response exists — a client that drops AFTER the
@@ -59,10 +68,28 @@ public sealed class MeteredChatClient(
         await ReserveCallAsync();
         UsageDetails? usage = null;
         string? model = null;
+        // Manual enumerator so the provider refusal (surfaced by MoveNextAsync) can be caught to release the
+        // reserved call — `yield return` may not sit inside a try WITH a catch, so the catch guards only the
+        // advance and the yield stays in the outer try/finally.
+        var enumerator = inner.GetStreamingResponseAsync(messages, options, cancellationToken)
+            .GetAsyncEnumerator(cancellationToken);
         try
         {
-            await foreach (var update in inner.GetStreamingResponseAsync(messages, options, cancellationToken))
+            while (true)
             {
+                ChatResponseUpdate update;
+                try
+                {
+                    if (!await enumerator.MoveNextAsync()) break;
+                    update = enumerator.Current;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Refused stream before any cost — give the reserved call back (see GetResponseAsync); an
+                    // abort/timeout is OperationCanceledException and stays counted.
+                    await ReleaseCallAsync();
+                    throw;
+                }
                 // Providers report usage in a trailing UsageContent update; remember the last one seen, and
                 // the model id from whichever update carries it (for the cost lookup).
                 foreach (var content in update.Contents)
@@ -75,6 +102,7 @@ public sealed class MeteredChatClient(
         }
         finally
         {
+            await enumerator.DisposeAsync();
             // Uncancellable tail record (see GetResponseAsync) — runs on normal completion AND when the
             // consumer stops early, so a dropped stream that already yielded its usage can't dodge the write.
             if (usage is not null)
@@ -115,6 +143,24 @@ public sealed class MeteredChatClient(
         {
             try { await demoMeter.RecordCallAsync(CancellationToken.None); }
             catch (Exception ex) { logger.LogError(ex, "Reserving the demo box-wide call failed; it went uncounted for the daily valve."); }
+        }
+    }
+
+    /// <summary>Give the reserved call back, UNCANCELLABLY, when the provider REFUSED before any cost (a
+    /// 429/5xx/connection error, or a keyless boot) — the mirror of <see cref="ReserveCallAsync"/>, so a
+    /// provider outage doesn't burn the caps on requests that never ran. Called ONLY on a non-cancellation
+    /// throw: an abort/timeout (<see cref="OperationCanceledException"/>) reached the provider and cost the
+    /// key, so it stays counted. Best-effort like the reserve; a failed release just leaves the call counted
+    /// (safe direction — the caps stay conservative).</summary>
+    private async Task ReleaseCallAsync()
+    {
+        try { await meter.ReleaseLlmCallAsync(CancellationToken.None); }
+        catch (Exception ex) { logger.LogError(ex, "Releasing the reserved AI call failed; it stays counted against the household row."); }
+
+        if (settings.Managed)
+        {
+            try { await demoMeter.ReleaseCallAsync(CancellationToken.None); }
+            catch (Exception ex) { logger.LogError(ex, "Releasing the reserved demo box-wide call failed; it stays counted against the daily valve."); }
         }
     }
 

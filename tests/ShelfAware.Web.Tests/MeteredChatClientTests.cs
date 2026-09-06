@@ -38,6 +38,16 @@ public class MeteredChatClientTests : IDisposable
         /// the "client dropped the socket mid-flight" scenario (no response, so no tokens/cost).</summary>
         public bool ThrowCancelled { get; set; }
 
+        /// <summary>When true, the provider call throws a NON-cancellation exception (a 429/5xx/connection
+        /// error) before any cost — the "outage" scenario the reserved call must be RELEASED for.</summary>
+        public bool ThrowRefusal { get; set; }
+
+        /// <summary>The streaming twins of the two throw flags — surfaced on the first MoveNextAsync so the
+        /// decorator's manual-enumerator catch can be exercised for both a refusal (released) and an
+        /// abort (stays counted).</summary>
+        public bool ThrowRefusalStreaming { get; set; }
+        public bool ThrowCancelledStreaming { get; set; }
+
         /// <summary>When set, the provider cancels this source just as it returns the answer — the "client
         /// dropped the instant the response landed" scenario, to prove the tail record runs uncancellably.</summary>
         public CancellationTokenSource? CancelWhenReturning { get; set; }
@@ -47,6 +57,7 @@ public class MeteredChatClientTests : IDisposable
         {
             Calls++;
             if (ThrowCancelled) throw new OperationCanceledException();
+            if (ThrowRefusal) throw new InvalidOperationException("the provider refused this call");
             CancelWhenReturning?.Cancel(); // the caller's token is now cancelled, but the answer is ready
             return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "ok"))
             {
@@ -62,6 +73,9 @@ public class MeteredChatClientTests : IDisposable
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             Calls++;
+            // Surface a refusal/abort on the first MoveNextAsync (the throw runs when enumeration starts).
+            if (ThrowRefusalStreaming) throw new InvalidOperationException("the provider refused this stream");
+            if (ThrowCancelledStreaming) throw new OperationCanceledException();
             await Task.Yield();
             yield return new ChatResponseUpdate(ChatRole.Assistant, "ok") { ModelId = ResponseModelId };
             yield return new ChatResponseUpdate
@@ -96,8 +110,10 @@ public class MeteredChatClientTests : IDisposable
         // Default "plenty" so a recording/metering test's managed call is allowed by the phase-4b gate; a
         // gate test sets balanceMicros: 0 to exercise the refusal.
         var entitlements = new FakeEntitlements(tier) { BalanceMicros = balanceMicros };
+        var payments = Options.Create(new ShelfAware.Web.Billing.PaymentsOptions { Enabled = paymentsEnabled });
         var meter = new AiUsageMeter(_db, llm,
             Options.Create(new ElevenLabsOptions { DailySignedUrlLimit = dailyMints }),
+            payments,
             entitlements,
             NullLogger<AiUsageMeter>.Instance);
         var byok = new ByokChatClient(settings, new FakeFactory(_provider));
@@ -107,7 +123,7 @@ public class MeteredChatClientTests : IDisposable
         var demoMeter = new DemoUsageMeter(
             _authDb, Options.Create(new DemoOptions { DailyGlobalCallLimit = demoCap }), NullLogger<DemoUsageMeter>.Instance);
         var client = new MeteredChatClient(byok, settings, meter, demoMeter, Options.Create(new BillingOptions()),
-            Options.Create(new ShelfAware.Web.Billing.PaymentsOptions { Enabled = paymentsEnabled }),
+            payments,
             new CreditLedger(_authDb, Options.Create(new BillingOptions())), entitlements, new FakeCurrentHousehold("hh-test"),
             NullLogger<MeteredChatClient>.Instance);
         return (client, meter);
@@ -195,14 +211,16 @@ public class MeteredChatClientTests : IDisposable
     public async Task A_usage_write_failure_still_records_the_credit_consumption()
     {
         // The AiUsage (pantry) write and the ledger (auth) write are INDEPENDENT best-effort: a pantry
-        // failure must not silently drop the MONEY write. Dispose the pantry db so the usage write throws;
-        // the auth ledger is untouched, so consumption still lands.
+        // failure must not silently drop the MONEY write. Dispose the pantry db so BOTH the gate's cap-read
+        // AND the tail usage-write throw; the gate read is best-effort too (an infra blip mustn't block a
+        // legitimate call — credit in auth.db is the real bound), and the auth ledger is untouched, so the
+        // call runs and consumption still lands.
         var (client, _) = Build("Managed", tier: HouseholdTier.Free);
         _db.Dispose();
 
         var response = await AskAsync(client);
 
-        Assert.Equal("ok", response.Text);  // the user still got their answer
+        Assert.Equal("ok", response.Text);  // the gate allowed past the dead pantry; the user still got their answer
         Assert.Equal(-578, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test")); // money write landed
     }
 
@@ -582,5 +600,92 @@ public class MeteredChatClientTests : IDisposable
         Assert.Equal(350, today.CostMicros);
         // …and the money write landed too: 350 × 1.65 = 578 retail micros drawn.
         Assert.Equal(-578, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test"));
+    }
+
+    // ---- Release-on-refusal: an OUTAGE gives the reserved call back; an ABORT does not ----
+
+    [Fact]
+    public async Task A_refused_managed_call_gives_the_reserved_call_back_on_both_caps()
+    {
+        _provider.ThrowRefusal = true;                 // provider 429/5xx before any cost
+        var (client, meter) = Build("Managed", dailyCalls: 5, demoCap: 5);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => AskAsync(client));
+
+        // The call was reserved at the gate, then RELEASED when the provider refused — so an outage
+        // doesn't burn the per-household or box-wide caps on requests that never ran. (Contrast the abort
+        // test above, which stays counted: the filter is `ex is not OperationCanceledException`.)
+        Assert.Equal(0, (await meter.GetTodayAsync()).Calls);
+        Assert.Equal(0, await DemoCallsTodayAsync());
+    }
+
+    [Fact]
+    public async Task A_refused_managed_stream_gives_the_reserved_call_back_on_both_caps()
+    {
+        _provider.ThrowRefusalStreaming = true;
+        var (client, meter) = Build("Managed", dailyCalls: 5, demoCap: 5);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "hi")])) { }
+        });
+
+        Assert.Equal(0, (await meter.GetTodayAsync()).Calls);
+        Assert.Equal(0, await DemoCallsTodayAsync());
+    }
+
+    [Fact]
+    public async Task A_streamed_call_aborted_mid_flight_stays_counted()
+    {
+        // The streaming filter's complement: an OperationCanceledException (the consumer dropped) reached
+        // the provider and cost the key, so it must NOT be released — it stays counted like the non-stream
+        // abort. This is what pins `ex is not OperationCanceledException` on the streaming catch.
+        _provider.ThrowCancelledStreaming = true;
+        var (client, meter) = Build("Managed", dailyCalls: 5, demoCap: 5);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await foreach (var _ in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "hi")])) { }
+        });
+
+        Assert.Equal(1, (await meter.GetTodayAsync()).Calls);
+        Assert.Equal(1, await DemoCallsTodayAsync());
+    }
+
+    // ---- The paid-box default call cap: a PAID box is never accidentally unbounded ----
+
+    [Fact]
+    public async Task A_paid_box_with_no_configured_call_limit_still_has_a_default_cap()
+    {
+        // Payments ON but the operator set no Llm:DailyCallLimit — the box must NOT run unbounded (a
+        // griefer abort-spamming would otherwise burn to the key's hard spend limit). Seed the default
+        // cap's worth of calls and the next is refused before the provider.
+        await SeedTodayAsync("hh-test", calls: 1000);
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free, paymentsEnabled: true); // no dailyCalls
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => AskAsync(client));
+        Assert.Equal(0, _provider.Calls);
+    }
+
+    [Fact]
+    public async Task A_billing_off_box_with_no_configured_call_limit_stays_unbounded()
+    {
+        // The complement: no Payments config (self-host / family / dev) means no accidental cap — the
+        // default applies only to a PAID box. The same seed that blocks the paid box above sails through.
+        await SeedTodayAsync("hh-test", calls: 1000);
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free, paymentsEnabled: false); // no dailyCalls
+
+        var response = await AskAsync(client);
+        Assert.Equal("ok", response.Text);
+        Assert.Equal(1, _provider.Calls);
+    }
+
+    [Fact]
+    public async Task A_voice_mint_cap_of_zero_blocks_the_first_mint()
+    {
+        // cap=0 is a kill switch for voice too — it must block before any row exists (the coalesce fix;
+        // a null row used to read as "allowed" and admit one mint).
+        var (_, meter) = Build("Managed", dailyMints: 0);
+        Assert.False(await meter.MayMintVoiceSessionAsync());
     }
 }
