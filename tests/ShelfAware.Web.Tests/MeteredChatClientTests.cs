@@ -6,6 +6,7 @@ using ShelfAware.Core.Billing;
 using ShelfAware.Core.Domain;
 using ShelfAware.Llm;
 using ShelfAware.Web.Auth;
+using ShelfAware.Web.Data;
 using ShelfAware.Web.Services;
 
 namespace ShelfAware.Web.Tests;
@@ -42,11 +43,21 @@ public class MeteredChatClientTests : IDisposable
         /// error) before any cost — the "outage" scenario the reserved call must be RELEASED for.</summary>
         public bool ThrowRefusal { get; set; }
 
+        /// <summary>When true, the provider call throws <see cref="TaskCanceledException"/> — the type the
+        /// real SDK produces for a timeout/abort (it derives from OperationCanceledException), to prove a
+        /// timeout STAYS counted like a plain cancel.</summary>
+        public bool ThrowTaskCancelled { get; set; }
+
         /// <summary>The streaming twins of the two throw flags — surfaced on the first MoveNextAsync so the
         /// decorator's manual-enumerator catch can be exercised for both a refusal (released) and an
         /// abort (stays counted).</summary>
         public bool ThrowRefusalStreaming { get; set; }
         public bool ThrowCancelledStreaming { get; set; }
+
+        /// <summary>When set, the stream yields this many updates and THEN throws a non-cancellation error
+        /// mid-stream — the "provider streamed a partial answer, then the connection broke" scenario, to
+        /// prove a post-output break STAYS counted (billable work was done).</summary>
+        public int? ThrowAfterStreamingUpdates { get; set; }
 
         /// <summary>When set, the provider cancels this source just as it returns the answer — the "client
         /// dropped the instant the response landed" scenario, to prove the tail record runs uncancellably.</summary>
@@ -57,6 +68,7 @@ public class MeteredChatClientTests : IDisposable
         {
             Calls++;
             if (ThrowCancelled) throw new OperationCanceledException();
+            if (ThrowTaskCancelled) throw new TaskCanceledException();
             if (ThrowRefusal) throw new InvalidOperationException("the provider refused this call");
             CancelWhenReturning?.Cancel(); // the caller's token is now cancelled, but the answer is ready
             return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "ok"))
@@ -77,6 +89,14 @@ public class MeteredChatClientTests : IDisposable
             if (ThrowRefusalStreaming) throw new InvalidOperationException("the provider refused this stream");
             if (ThrowCancelledStreaming) throw new OperationCanceledException();
             await Task.Yield();
+            if (ThrowAfterStreamingUpdates is int n)
+            {
+                for (var i = 0; i < n; i++)
+                    yield return new ChatResponseUpdate(ChatRole.Assistant, "chunk") { ModelId = ResponseModelId };
+                // The stream broke AFTER producing output — the provider did billable work, so the decorator
+                // must keep the call counted (yieldedAny is true by now).
+                throw new InvalidOperationException("the stream broke mid-answer");
+            }
             yield return new ChatResponseUpdate(ChatRole.Assistant, "ok") { ModelId = ResponseModelId };
             yield return new ChatResponseUpdate
             {
@@ -94,10 +114,34 @@ public class MeteredChatClientTests : IDisposable
         public IChatClient Create(AiProvider provider, string apiKey, string model, string? baseUrl = null) => client;
     }
 
+    /// <summary>Builds nothing — Create throws EAGERLY (the keyless / blank-key boot), so the provider call
+    /// never happens. ByokChatClient calls this synchronously at request time, so the streaming path's
+    /// enumerator creation throws before any output, exercising the eager-refusal release.</summary>
+    private sealed class ThrowingFactory : IChatClientFactory
+    {
+        public IChatClient Create(AiProvider provider, string apiKey, string model, string? baseUrl = null)
+            => throw new InvalidOperationException("no API key configured — add one in Settings");
+    }
+
+    /// <summary>Wraps the real household factory but throws on the FIRST context request, then delegates —
+    /// models a transient write failure that hits the RESERVE but clears before the release, the only shape
+    /// that can drive the counter negative (F2). The reserve is the first factory call when no per-household
+    /// cap runs at the gate, so failing #1 fails exactly the reserve.</summary>
+    private sealed class FailFirstHouseholdDbFactory(IHouseholdDbFactory inner) : IHouseholdDbFactory
+    {
+        private int _calls;
+        public Task<ShelfAwareDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
+        {
+            if (System.Threading.Interlocked.Increment(ref _calls) == 1)
+                throw new InvalidOperationException("transient DB failure on the reserve write");
+            return inner.CreateDbContextAsync(cancellationToken);
+        }
+    }
+
     private (MeteredChatClient client, AiUsageMeter meter) Build(
         string keyMode, int? dailyCalls = null, long? dailyTokens = null, int? dailyMints = null,
         HouseholdTier tier = HouseholdTier.Free, long balanceMicros = 100_000_000, bool paymentsEnabled = true,
-        int? demoCap = null)
+        int? demoCap = null, bool factoryThrows = false, bool meterReserveFailsFirst = false)
     {
         var llm = Options.Create(new LlmOptions
         {
@@ -111,12 +155,16 @@ public class MeteredChatClientTests : IDisposable
         // gate test sets balanceMicros: 0 to exercise the refusal.
         var entitlements = new FakeEntitlements(tier) { BalanceMicros = balanceMicros };
         var payments = Options.Create(new ShelfAware.Web.Billing.PaymentsOptions { Enabled = paymentsEnabled });
-        var meter = new AiUsageMeter(_db, llm,
+        // meterReserveFailsFirst faults ONLY the first usage-row write (the reserve), to pin the balanced
+        // release; the returned meter reads through the same wrapper, whose later calls delegate to _db.
+        IHouseholdDbFactory meterFactory = meterReserveFailsFirst ? new FailFirstHouseholdDbFactory(_db) : _db;
+        var meter = new AiUsageMeter(meterFactory, llm,
             Options.Create(new ElevenLabsOptions { DailySignedUrlLimit = dailyMints }),
             payments,
             entitlements,
             NullLogger<AiUsageMeter>.Instance);
-        var byok = new ByokChatClient(settings, new FakeFactory(_provider));
+        // factoryThrows models a keyless/blank-key boot: the provider client can't be built at all.
+        var byok = new ByokChatClient(settings, factoryThrows ? new ThrowingFactory() : new FakeFactory(_provider));
         // The box-wide demo valve. Unconfigured by default (a no-op, so the per-household metering tests are
         // unaffected); a demo-cap test passes demoCap to exercise the box-wide enforcement here — the point
         // MeteredChatClient actually bounds the host wallet, which the fable gate found untested.
@@ -687,5 +735,104 @@ public class MeteredChatClientTests : IDisposable
         // a null row used to read as "allowed" and admit one mint).
         var (_, meter) = Build("Managed", dailyMints: 0);
         Assert.False(await meter.MayMintVoiceSessionAsync());
+    }
+
+    // ---- Release keys on "no output yet", not exception type: a call that DID work stays counted ----
+
+    [Fact]
+    public async Task A_streamed_call_that_breaks_after_producing_output_stays_counted()
+    {
+        // F1: a stream that yields updates and THEN breaks (non-OCE) did billable work — the provider
+        // produced a partial answer — so the call must NOT be released, unlike a break BEFORE any output
+        // (A_refused_managed_stream...). Two updates land, then the provider errors mid-stream.
+        _provider.ThrowAfterStreamingUpdates = 2;
+        var (client, meter) = Build("Managed", dailyCalls: 5, demoCap: 5);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "hi")])) { }
+        });
+
+        Assert.Equal(1, (await meter.GetTodayAsync()).Calls); // yieldedAny was true → not released
+        Assert.Equal(1, await DemoCallsTodayAsync());
+    }
+
+    [Fact]
+    public async Task A_provider_timeout_TaskCanceledException_stays_counted()
+    {
+        // The real SDK surfaces a timeout as TaskCanceledException (derives from OperationCanceledException),
+        // so the filter must treat it as an abort that reached the provider and cost the key — stays counted,
+        // never released. Pins the documented "timeout stays counted" claim against a future narrowing of
+        // the filter to the exact OperationCanceledException type.
+        _provider.ThrowTaskCancelled = true;
+        var (client, meter) = Build("Managed", dailyCalls: 5, demoCap: 5);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => AskAsync(client));
+
+        Assert.Equal(1, (await meter.GetTodayAsync()).Calls);
+        Assert.Equal(1, await DemoCallsTodayAsync());
+    }
+
+    [Fact]
+    public async Task A_keyless_streaming_call_releases_the_reservation()
+    {
+        // F4: ByokChatClient builds the real client at request time and throws EAGERLY on a blank key,
+        // before the streaming loop opens. That eager refusal (no output produced) must release the reserved
+        // call like the non-streaming path does — the two paths must not disagree.
+        var (client, meter) = Build("Managed", dailyCalls: 5, demoCap: 5, factoryThrows: true);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "hi")])) { }
+        });
+
+        Assert.Equal(0, (await meter.GetTodayAsync()).Calls);
+        Assert.Equal(0, await DemoCallsTodayAsync());
+    }
+
+    // ---- Balanced release: give back ONLY what was actually reserved ----
+
+    [Fact]
+    public async Task A_release_after_a_failed_reserve_does_not_drive_the_counter_negative()
+    {
+        // F2: if the reserve WRITE silently fails but the provider then refuses, the release must give back
+        // only what was actually reserved — never subtract a count that was never added (which would insert
+        // a "-1 calls" row and raise the effective cap). No per-household cap + billing off so the gate reads
+        // nothing before the reserve, making the reserve the first — and only faulted — usage write.
+        _provider.ThrowRefusal = true;
+        var (client, meter) = Build(
+            "Managed", tier: HouseholdTier.Free, paymentsEnabled: false, meterReserveFailsFirst: true);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => AskAsync(client));
+
+        Assert.Equal(0, (await meter.GetTodayAsync()).Calls); // NOT -1
+    }
+
+    // ---- The paid default's exact value: below it is admitted, and the operator can raise it ----
+
+    [Fact]
+    public async Task The_paid_default_cap_admits_a_call_just_below_it()
+    {
+        // Complement of A_paid_box_with_no_configured_call_limit... — 999 seeded is under the 1000 default,
+        // so the call is allowed. Together they pin the default at exactly 1000.
+        await SeedTodayAsync("hh-test", calls: 999);
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free, paymentsEnabled: true);
+
+        var response = await AskAsync(client);
+        Assert.Equal("ok", response.Text);
+        Assert.Equal(1, _provider.Calls);
+    }
+
+    [Fact]
+    public async Task An_operator_can_raise_the_call_limit_above_the_paid_default()
+    {
+        // Llm:DailyCallLimit WINS over the 1000 default (it's the `??` left operand), so a paid box set to
+        // 2000 admits a call at 1500 seeded — a `Math.Min(explicit, 1000)` mutation would wrongly refuse it.
+        await SeedTodayAsync("hh-test", calls: 1500);
+        var (client, _) = Build("Managed", dailyCalls: 2000, tier: HouseholdTier.Free, paymentsEnabled: true);
+
+        var response = await AskAsync(client);
+        Assert.Equal("ok", response.Text);
+        Assert.Equal(1, _provider.Calls);
     }
 }

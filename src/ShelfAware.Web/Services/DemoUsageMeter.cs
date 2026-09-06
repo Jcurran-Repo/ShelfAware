@@ -64,8 +64,9 @@ public sealed class DemoUsageMeter(
 
     /// <summary>Give back a call reserved at the gate whose provider request was REFUSED before any cost (a
     /// 429/5xx/connection error) — so a provider outage doesn't burn the box-wide daily valve on calls that
-    /// never ran. Not called for an abort/timeout (those cost the key and stay counted). The alert only
-    /// fires on a positive delta, so a release never triggers it.</summary>
+    /// never ran. Not called for an abort/timeout (those cost the key and stay counted). A release itself
+    /// carries a negative delta so it never fires the alert directly, though the reserve that follows it
+    /// during an outage at the threshold can re-cross and re-fire it — see the alert note in AccumulateAsync.</summary>
     public Task ReleaseCallAsync(CancellationToken ct = default) => AccumulateAsync(calls: -1, ct);
 
     /// <summary>Today's box-wide counter (for /admin), or null if nothing is configured or recorded yet.</summary>
@@ -104,9 +105,12 @@ public sealed class DemoUsageMeter(
             }
         }
 
-        // Alert on the LLM call that crosses the threshold — the "traffic is arriving" signal. Best-effort
-        // (a concurrent burst can step past the exact value and miss it), and at most once, so it can't spam
-        // the log; the hard cap is the real bound. Re-read in a fresh context so it reflects the write above.
+        // Alert on the LLM call that crosses the threshold — the "traffic is arriving" signal. Best-effort:
+        // a concurrent burst can step past the exact value and miss it, and — since a refusal RELEASES the
+        // call (calls:-1) — an outage sitting right at the threshold can oscillate across it and re-fire the
+        // warning once per refused call. That's acceptable: it's log noise during an outage that is already
+        // logging errors, the hard cap is the real bound, and normal (non-outage) traffic fires it once as
+        // it climbs. Re-read in a fresh context so it reflects the write above.
         if (calls > 0 && Opt.AlertThreshold is int threshold)
         {
             await using var check = await dbFactory.CreateDbContextAsync(ct);

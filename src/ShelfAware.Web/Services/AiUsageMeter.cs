@@ -120,6 +120,11 @@ public sealed class AiUsageMeter(
             // the call are best-effort for exactly this reason), and the real MONEY bound is the household's
             // credit balance in auth.db — a SEPARATE database, enforced next in the gate — so a paying
             // customer is never over-served by allowing here. A cancellation stays a cancellation.
+            // The catch is deliberately broad (a dead context surfaces as anything from a provider
+            // SqliteException to an ObjectDisposedException); it would also swallow a "no household in scope"
+            // resolution error from the factory, but every AI surface sits behind auth + the household
+            // middleware, so that is unreachable — and if it ever occurred, the reserve and the credit gate
+            // both also need a household and would surface it, so failing open here changes nothing.
             logger.LogError(ex, "Reading today's AI usage for the daily caps failed; allowing the call (credit still gates it).");
             return;
         }
