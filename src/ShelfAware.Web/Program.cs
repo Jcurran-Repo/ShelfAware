@@ -358,7 +358,7 @@ if (OperatingSystem.IsWindows())
 builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection(LlmOptions.SectionName));
 // The managed demo box's box-wide daily AI valve (docs §10). All null by default, so the family / self-host
 // box (no "Demo" section) is unbounded and untouched; only a managed public demo box sets these.
-builder.Services.Configure<DemoOptions>(builder.Configuration.GetSection("Demo"));
+builder.Services.Configure<DemoOptions>(builder.Configuration.GetSection(DemoOptions.SectionName));
 // Billing tunables — model rates, credit markup, welcome-grant size — as operator config (defaults in
 // BillingOptions), so pricing can be retuned in appsettings without a rebuild.
 builder.Services.Configure<ShelfAware.Core.Billing.BillingOptions>(

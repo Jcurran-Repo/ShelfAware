@@ -9,14 +9,16 @@ namespace ShelfAware.Web.Auth;
 /// own provider-side spend limit hard-stops.</para></summary>
 public sealed class DemoOptions
 {
+    public const string SectionName = "Demo";
+
     /// <summary>Max host-key LLM calls across ALL households per day. Null = unbounded. (TTS isn't metered:
     /// the managed demo box reads recipes with a free self-hosted Kokoro sidecar, so there's nothing to cap.)</summary>
     public int? DailyGlobalCallLimit { get; set; }
 
     /// <summary>Log a Warning the moment the day's global call count crosses this — an early "you're
     /// suddenly getting traffic / cost is accruing" signal, well under the hard cap. It lands in the
-    /// server's own logs (journald/stdout) and the crossing shows on the /admin <em>Demo box usage</em>
-    /// panel (the threshold tile reads "· crossed"); it is NOT routed to /admin's <em>error log</em>, which
-    /// is for Error-level events only — a routine heads-up isn't an error. Null = no alert.</summary>
+    /// server's own logs (journald/stdout) and the /admin <em>Demo box usage</em> panel's threshold tile
+    /// reads "· reached" while the day's count is at/over it; it is NOT routed to /admin's <em>error log</em>,
+    /// which is for Error-level events only — a routine heads-up isn't an error. Null = no alert.</summary>
     public int? AlertThreshold { get; set; }
 }

@@ -97,7 +97,7 @@ else
            config (family / self-host). TTS isn't metered — the demo reads recipes with a free local voice. *@
         var demoCallsToday = demoUsage?.Calls ?? 0;
         var demoLimit = DemoConfig.Value.DailyGlobalCallLimit;
-        var demoAtCap = demoLimit is { } cap && demoCallsToday >= cap;
+        var demoAtCap = DemoUsageMeter.IsAtCap(demoCallsToday, demoLimit); // the meter's one definition
         <section class="panel">
             <h2>Demo box usage</h2>
             <p class="muted">Host-key AI calls across ALL households today, against the box-wide daily cap.
@@ -110,9 +110,11 @@ else
                 </div>
                 @if (DemoConfig.Value.AlertThreshold is { } threshold)
                 {
-                    <div class="@(demoCallsToday >= threshold ? "stat pass" : "stat")">
+                    @* A reached alert is a "watch spend" heads-up, not a "good" state — amber (forecast),
+                       never green (pass), which on an at-a-glance panel would read as all-clear. *@
+                    <div class="@(demoCallsToday >= threshold ? "stat forecast" : "stat")">
                         <div class="stat-value">@threshold</div>
-                        <div class="stat-label">Alert threshold@(demoCallsToday >= threshold ? " · crossed" : "")</div>
+                        <div class="stat-label">Alert threshold@(demoCallsToday >= threshold ? " · reached" : "")</div>
                     </div>
                 }
             </div>

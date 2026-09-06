@@ -865,6 +865,19 @@ public class MeteredChatClientTests : IDisposable
         Assert.Equal(0, (await meter.GetTodayAsync()).Calls); // NOT -1
     }
 
+    [Fact]
+    public async Task Releasing_a_household_call_with_no_row_for_today_writes_no_negative_row()
+    {
+        // The AiUsageMeter twin of the DemoUsageMeter negative-row guard: a release with no row for today (a
+        // midnight-straddling release, whose reserve counted on the prior day) must not insert a "-1 calls"
+        // row that raises the cap and reads "-1" on Settings/admin.
+        var (_, meter) = Build("Managed");
+
+        await meter.ReleaseLlmCallAsync(); // no reserve today — nothing to give back
+
+        Assert.Equal(0, (await meter.GetTodayAsync()).Calls); // no row written, not -1
+    }
+
     // ---- The paid default's exact value: below it is admitted, and the operator can raise it ----
 
     [Fact]

@@ -197,6 +197,12 @@ public sealed class AiUsageMeter(
         var updated = await IncrementAsync(db, today, calls, inputTokens, outputTokens, costMicros, mints, cancellationToken);
         if (updated > 0) return;
 
+        // A negative call delta with no row for today is a RELEASE with nothing to give back on this day (its
+        // reserve counted on a different day — a release straddling midnight — or not at all). Inserting it
+        // would create a "-1 calls" row that raises the effective cap; skip it. A token/cost record is always
+        // calls:0, and a reserve is +1, so only a stray release reaches here negative.
+        if (calls < 0) return;
+
         db.AiUsages.Add(new AiUsage
         {
             Day = today,

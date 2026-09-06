@@ -167,9 +167,9 @@ so nothing is spent. The counter resets at **midnight, server-local**.
 
 **⚠️ The real ceiling is the spend limit on the key itself** (set it in the Anthropic
 console). The valve is the *polite* stop that hands the friendly message first; the
-key's spend limit is the *hard* stop for your wallet. The counter records after each
-call, so a concurrent burst can slightly overshoot the cap — bounded, and backstopped by
-that spend limit. **Set both.**
+key's spend limit is the *hard* stop for your wallet. The counter is checked and then
+reserved in two steps (not one atomic step), so a concurrent burst can slightly overshoot
+the cap — bounded, and backstopped by that spend limit. **Set both.**
 
 **The layers, outermost first:** `Llm__DailyCallLimit`/`DailyTokenLimit` (fair-per-visitor)
 → `Demo__DailyGlobalCallLimit` (the box-wide wallet valve) → `Demo__AlertThreshold` (an

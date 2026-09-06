@@ -110,15 +110,52 @@ public sealed class DemoUsageMeterTests : IDisposable
         Assert.Contains("alert threshold", warning);
     }
 
+    [Fact]
+    public async Task A_read_failure_fails_open_instead_of_crashing_the_surface()
+    {
+        // MED: IsCallBlockedAsync feeds the pre-check that runs BEFORE each AI surface's own try, so a
+        // transient auth.db read failure must NOT throw (that tears down the circuit) — it fails open (not
+        // blocked), the key's own spend limit being the backstop. Same posture as AiUsageMeter's gate read.
+        var log = new CapturingLogger();
+        var meter = new DemoUsageMeter(
+            new ThrowingAuthDbFactory(), Options.Create(new DemoOptions { DailyGlobalCallLimit = 5 }), log);
+
+        Assert.Null(await meter.CallBlockedMessageAsync()); // no throw, and not blocked
+        await meter.EnsureCallAllowedAsync();               // the gate doesn't throw either
+
+        Assert.NotEmpty(log.Errors); // the failure was logged, not silently swallowed
+    }
+
+    [Fact]
+    public async Task A_release_with_no_row_for_today_does_not_write_a_negative_row()
+    {
+        // LOW: a release straddling midnight lands on a fresh day with no row and has nothing to give back,
+        // so it must NOT insert a "-1 calls" row (which would raise the effective cap and read "-1" on /admin).
+        var meter = Meter(new DemoOptions { DailyGlobalCallLimit = 5 });
+
+        await meter.ReleaseCallAsync(); // no reserve today — nothing to release
+
+        Assert.Null(await meter.GetTodayAsync()); // no row written (a -1 row before the guard)
+    }
+
+    private sealed class ThrowingAuthDbFactory : IDbContextFactory<AuthDbContext>
+    {
+        public AuthDbContext CreateDbContext() => throw new InvalidOperationException("auth.db unavailable");
+        public Task<AuthDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("auth.db unavailable");
+    }
+
     private sealed class CapturingLogger : ILogger<DemoUsageMeter>
     {
         public List<string> Warnings { get; } = [];
+        public List<string> Errors { get; } = [];
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
         public bool IsEnabled(LogLevel logLevel) => true;
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
             if (logLevel == LogLevel.Warning) Warnings.Add(formatter(state, exception));
+            else if (logLevel == LogLevel.Error) Errors.Add(formatter(state, exception));
         }
     }
 }

@@ -51,13 +51,32 @@ public sealed class DemoUsageMeter(
     /// <summary>THE one reading of "is the box-wide LLM cap hit right now?" — shared by the throwing gate
     /// and the non-throwing pre-check so a surface and the server-side gate never disagree. False (with no
     /// DB read) when no cap is configured.</summary>
+    /// <summary>THE rule for "is this many calls at/over the box-wide cap?" — shared by the gate/pre-check
+    /// (<see cref="IsCallBlockedAsync"/>) and the /admin panel so the two can never disagree about "capped".
+    /// A null cap is never at cap; a cap of 0 is at cap from the first call (the kill-switch, since 0 >= 0).</summary>
+    public static bool IsAtCap(int calls, int? cap) => cap is int c && calls >= c;
+
     private async Task<bool> IsCallBlockedAsync(CancellationToken ct)
     {
         if (Opt.DailyGlobalCallLimit is not int cap) return false;
-        await using var db = await dbFactory.CreateDbContextAsync(ct);
-        // Coalesce the absent row to 0 so a cap of 0 blocks the FIRST call (an emergency kill switch),
-        // rather than admitting one before a row exists (null >= 0 is false).
-        return ((await TodayAsync(db, ct))?.Calls ?? 0) >= cap;
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync(ct);
+            // Coalesce the absent row to 0 so a cap of 0 blocks the FIRST call (an emergency kill switch),
+            // rather than admitting one before a row exists (null >= 0 is false).
+            return IsAtCap((await TodayAsync(db, ct))?.Calls ?? 0, cap);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Reading the box-wide counter failed (a transient auth.db hiccup). Fail OPEN — return "not
+            // blocked" — matching the per-household gate (AiUsageMeter.EnsureLlmCallAllowedAsync). This read
+            // feeds BOTH the server gate AND the pre-check (AiErrorText), and the pre-check runs BEFORE each
+            // AI surface's own try/catch: an infra blip must not tear down the circuit, nor block a legitimate
+            // call, and the key's own console spend limit is the hard backstop the valve only makes polite.
+            // Returning one value keeps the gate and the pre-check in agreement.
+            logger.LogError(ex, "Reading the box-wide demo AI counter failed; allowing the call (the key's spend limit is the backstop).");
+            return false;
+        }
     }
 
     public Task RecordCallAsync(CancellationToken ct = default) => AccumulateAsync(calls: 1, ct);
@@ -89,6 +108,11 @@ public sealed class DemoUsageMeter(
         // collision) means we add onto theirs instead.
         if (await IncrementAsync(db, today, calls, ct) == 0)
         {
+            // A negative delta with no row for today is a RELEASE that has nothing to give back on this day —
+            // its reserve counted on a different day (a release straddling midnight) or not at all. Inserting
+            // it would create a "-1 calls" row that raises the effective cap; skip it (there is no positive
+            // count to reduce). Only a reserve (+1) or a token/cost record ever creates the day's first row.
+            if (calls < 0) return;
             db.DemoUsage.Add(new DemoUsageDay { Day = today, Calls = calls });
             try
             {
