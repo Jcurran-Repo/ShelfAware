@@ -201,6 +201,10 @@ public static class AdditiveSchema
         // so a retried webhook can't double-apply. Auth-side beside the subscription + ledger. A new
         // table — existing rows unaffected.
         EnsureTable(db, table: "ProcessedPaymentEvents");
+
+        // 2026-09-05: the managed demo box's box-wide daily AI counters (§10) — operator data, like the
+        // error log. A new table — existing rows unaffected, and unwritten unless a Demo cap is configured.
+        EnsureTable(db, table: "DemoUsage");
     }
 
     /// <summary>Create <paramref name="table"/> (and its indexes) on a DB built before it existed. The

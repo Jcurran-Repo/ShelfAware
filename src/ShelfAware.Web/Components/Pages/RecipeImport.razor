@@ -7,6 +7,7 @@
 @inject IHouseholdDbFactory DbFactory
 @inject IEntitlements Entitlements
 @inject CircuitAiSettings AiSettings
+@inject IDemoValve DemoValve
 @inject NavigationManager Nav
 @inject ILogger<RecipeImport> Logger
 
@@ -231,7 +232,7 @@ else if (phase == Phase.Done)
         phase = Phase.Reading;
         // Importing IS the AI call (photo → vision, text → parse), so a blocked circuit has nothing to do but
         // say why (no key / out of credits) rather than fail with a generic "something went wrong" (4c).
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, pageCts.Token);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, pageCts.Token);
         if (blocked is not null) { error = blocked; phase = Phase.Error; importing = false; return; }
         try
         {

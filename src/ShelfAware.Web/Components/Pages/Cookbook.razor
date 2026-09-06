@@ -9,6 +9,7 @@
 @inject RecipeImageStorage Images
 @inject IEntitlements Entitlements
 @inject CircuitAiSettings AiSettings
+@inject IDemoValve DemoValve
 @inject NavigationManager Nav
 @inject IJSRuntime JS
 @inject ILogger<Cookbook> Logger
@@ -717,7 +718,7 @@ else
         taggingBusy = true;
         suggesting = true;
         tagNote = null;
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
         if (blocked is not null) { tagNote = blocked; suggesting = false; taggingBusy = false; return; }
         try
         {
@@ -748,7 +749,7 @@ else
         bulkTagging = true;
         bulkDone = 0;
         tagNote = null;
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
         if (blocked is not null) { tagNote = blocked; bulkTagging = false; taggingBusy = false; return; }
         var tagged = 0;
         try

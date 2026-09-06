@@ -9,6 +9,7 @@
 @inject ICurrentHousehold Household
 @inject IEntitlements Entitlements
 @inject CircuitAiSettings AiSettings
+@inject IDemoValve DemoValve
 @inject ILogger<MealPlanPage> Logger
 
 <PageTitle>Meal Plan — Reginald</PageTitle>
@@ -289,7 +290,7 @@ else if (!generating)
         rerollingMealId = plannedMealId;
         error = null;
         note = null;
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
         if (blocked is not null) { error = blocked; rerollingMealId = null; return; }
         try
         {
@@ -457,7 +458,7 @@ else if (!generating)
         // []); a blocked circuit would just read "couldn't generate — try again". Say the real reason and
         // don't start the doomed job. ⚠️ AFTER SaveSettingsAsync (this is the setup form's only writer), so a
         // blocked Generate still keeps the household's edits — only the doomed job is skipped.
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
         if (blocked is not null) { error = blocked; return; }
 
         // Kick off a DETACHED background job and watch it: the generation survives navigating away, and the

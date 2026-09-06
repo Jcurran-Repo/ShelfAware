@@ -16,6 +16,7 @@
 @inject ILogger<Home> Logger
 @inject IEntitlements Entitlements
 @inject CircuitAiSettings AiSettings
+@inject IDemoValve DemoValve
 
 <PageTitle>Reginald</PageTitle>
 
@@ -448,7 +449,7 @@ else
         chatBusy = true;
         chatReply = null;
         // Phase 4c: don't attempt a call this circuit can't make — show why (out of credits / no key) and stop.
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
         if (blocked is not null)
         {
             chatReply = blocked;

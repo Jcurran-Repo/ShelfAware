@@ -1,0 +1,160 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using ShelfAware.Web.Auth;
+
+namespace ShelfAware.Web.Services;
+
+/// <summary>The come-back-tomorrow pre-check for a UI surface, split out from the concrete DB-backed
+/// <see cref="DemoUsageMeter"/> so <see cref="AiErrorText"/> can ask "is the whole box capped for today?"
+/// without dragging a database into its tests. Returns null unless a Demo cap is configured AND today's
+/// box-wide count has reached it — a total no-op on a family / self-host box.</summary>
+public interface IDemoValve
+{
+    ValueTask<string?> CallBlockedMessageAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>The managed demo box's BOX-WIDE daily AI valve — the wallet bound a public box with open
+/// registration needs that the per-household <see cref="AiUsageMeter"/> can't give (every new household
+/// gets its own daily allowance). Counts host-key LLM calls per day in ONE row (<see cref="DemoUsageDay"/>,
+/// auth.db operator data, like the error log), enforces the configured global cap, and warns the admin once
+/// the day crosses the alert threshold.
+/// <para>A NO-OP when nothing is configured (all <see cref="DemoOptions"/> null — the family / self-host
+/// default): it enforces nothing and writes no row, so those boxes are untouched. Only counts host-key
+/// (managed) calls — a BYOK visitor rides their own wallet and never touches this counter.</para>
+/// <para>TTS is deliberately NOT metered here: the managed demo box reads recipes with a free self-hosted
+/// Kokoro sidecar (Speech:Provider=Local), so there's no per-synthesis cost to bound.</para></summary>
+public sealed class DemoUsageMeter(
+    IDbContextFactory<AuthDbContext> dbFactory,
+    IOptions<DemoOptions> options,
+    ILogger<DemoUsageMeter> logger) : IDemoValve
+{
+    private DemoOptions Opt => options.Value;
+
+    /// <summary>Any box-wide cap OR the alert is configured. When false every method is a no-op and no row
+    /// is ever written — the family / self-host posture. Public so /admin can decide whether to show the
+    /// usage panel at all (a box with no Demo config has nothing to show).</summary>
+    public bool IsConfigured => Opt.DailyGlobalCallLimit is not null || Opt.AlertThreshold is not null;
+
+    /// <summary>Throw (with the polite come-back message) when today's box-wide LLM calls have hit the cap.
+    /// Call BEFORE the provider call. The <see cref="MeteredChatClient"/> gate uses this; the surfaces use
+    /// the non-throwing <see cref="CallBlockedMessageAsync"/> twin, which shares the same block check so the
+    /// two can never disagree about why a call is refused.</summary>
+    public async Task EnsureCallAllowedAsync(CancellationToken ct = default)
+    {
+        if (await IsCallBlockedAsync(ct)) throw new DemoDailyCapException();
+    }
+
+    /// <inheritdoc />
+    public async ValueTask<string?> CallBlockedMessageAsync(CancellationToken ct = default) =>
+        await IsCallBlockedAsync(ct) ? DemoLimits.DailyCapReachedMessage : null;
+
+    /// <summary>THE rule for "is this many calls at/over the box-wide cap?" — shared by the gate/pre-check
+    /// (<see cref="IsCallBlockedAsync"/>) and the /admin panel so the two can never disagree about "capped".
+    /// A null cap is never at cap; a cap of 0 is at cap from the first call (the kill-switch, since 0 >= 0).</summary>
+    public static bool IsAtCap(int calls, int? cap) => cap is int c && calls >= c;
+
+    /// <summary>THE one reading of "is the box-wide LLM cap hit right now?" — shared by the throwing gate
+    /// and the non-throwing pre-check so a surface and the server-side gate never disagree. False (with no
+    /// DB read) when no cap is configured, and — failing open — when the read itself errors.</summary>
+    private async Task<bool> IsCallBlockedAsync(CancellationToken ct)
+    {
+        if (Opt.DailyGlobalCallLimit is not int cap) return false;
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync(ct);
+            // Coalesce the absent row to 0 so a cap of 0 blocks the FIRST call (an emergency kill switch),
+            // rather than admitting one before a row exists (null >= 0 is false).
+            return IsAtCap((await TodayAsync(db, ct))?.Calls ?? 0, cap);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Reading the box-wide counter failed (a transient auth.db hiccup). Fail OPEN — return "not
+            // blocked" — matching the per-household gate (AiUsageMeter.EnsureLlmCallAllowedAsync). This read
+            // feeds BOTH the server gate AND the pre-check (AiErrorText), and the pre-check runs BEFORE each
+            // AI surface's own try/catch: an infra blip must not tear down the circuit, nor block a legitimate
+            // call, and the key's own console spend limit is the hard backstop the valve only makes polite.
+            // Returning one value keeps the gate and the pre-check in agreement.
+            logger.LogError(ex, "Reading the box-wide demo AI counter failed; allowing the call (the key's spend limit is the backstop).");
+            return false;
+        }
+    }
+
+    public Task RecordCallAsync(CancellationToken ct = default) => AccumulateAsync(calls: 1, ct);
+
+    /// <summary>Give back a call reserved at the gate whose provider request was REFUSED before any cost (a
+    /// 429/5xx/connection error) — so a provider outage doesn't burn the box-wide daily valve on calls that
+    /// never ran. Not called for an abort/timeout (those cost the key and stay counted). A release itself
+    /// carries a negative delta so it never fires the alert directly, though the reserve that follows it
+    /// during an outage at the threshold can re-cross and re-fire it — see the alert note in AccumulateAsync.</summary>
+    public Task ReleaseCallAsync(CancellationToken ct = default) => AccumulateAsync(calls: -1, ct);
+
+    /// <summary>Today's box-wide counter (for /admin), or null if nothing is configured or recorded yet.</summary>
+    public async Task<DemoUsageDay?> GetTodayAsync(CancellationToken ct = default)
+    {
+        if (!IsConfigured) return null;
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        return await TodayAsync(db, ct);
+    }
+
+    private async Task AccumulateAsync(int calls, CancellationToken ct)
+    {
+        if (!IsConfigured) return; // family / self-host: never write a row
+
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+
+        // Upsert on the day row, race-safe without a transaction (the AiUsageMeter pattern): increment in
+        // place, and only insert when there's no row yet — a concurrent insert that beats us (unique-index
+        // collision) means we add onto theirs instead.
+        if (await IncrementAsync(db, today, calls, ct) == 0)
+        {
+            // A negative delta with no row for today is a RELEASE that has nothing to give back on this day —
+            // its reserve counted on a different day (a release straddling midnight) or not at all. Inserting
+            // it would create a "-1 calls" row that raises the effective cap; skip it (there is no positive
+            // count to reduce). Only a reserve (+1) or a token/cost record ever creates the day's first row.
+            if (calls < 0) return;
+            db.DemoUsage.Add(new DemoUsageDay { Day = today, Calls = calls });
+            try
+            {
+                await db.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateException ex) when (ex.InnerException is Microsoft.Data.Sqlite.SqliteException
+                { SqliteExtendedErrorCode: 2067 or 1555 }) // SQLITE_CONSTRAINT_UNIQUE / _PRIMARYKEY only
+            {
+                // A concurrent insert won the race; add onto their row. (A different constraint — e.g. a
+                // NOT NULL from a stale schema — is a real error and propagates rather than looping here.)
+                db.ChangeTracker.Clear();
+                if (await IncrementAsync(db, today, calls, ct) == 0)
+                    logger.LogWarning("Demo usage upsert lost both the insert and the retry increment for {Day}.", today);
+            }
+        }
+
+        // Alert on the LLM call that crosses the threshold — the "traffic is arriving" signal. Best-effort:
+        // a concurrent burst can step past the exact value and miss it, and — since a refusal RELEASES the
+        // call (calls:-1) — an outage sitting right at the threshold can oscillate across it and re-fire the
+        // warning once per refused call. That's acceptable: it's log noise during an outage that is already
+        // logging errors, the hard cap is the real bound, and normal (non-outage) traffic fires it once as
+        // it climbs. Re-read in a fresh context so it reflects the write above.
+        if (calls > 0 && Opt.AlertThreshold is int threshold)
+        {
+            await using var check = await dbFactory.CreateDbContextAsync(ct);
+            if ((await TodayAsync(check, ct))?.Calls == threshold)
+            {
+                logger.LogWarning(
+                    "Demo box: today's host-key AI calls crossed the alert threshold ({Threshold}). Watch usage on /admin.",
+                    threshold);
+            }
+        }
+    }
+
+    private static Task<int> IncrementAsync(AuthDbContext db, DateOnly today, int calls, CancellationToken ct)
+        => db.DemoUsage.Where(d => d.Day == today).ExecuteUpdateAsync(s => s
+                .SetProperty(d => d.Calls, d => d.Calls + calls),
+            ct);
+
+    private static Task<DemoUsageDay?> TodayAsync(AuthDbContext db, CancellationToken ct)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        return db.DemoUsage.AsNoTracking().FirstOrDefaultAsync(d => d.Day == today, ct);
+    }
+}
