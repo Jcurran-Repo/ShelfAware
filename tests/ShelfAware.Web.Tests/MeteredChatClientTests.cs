@@ -1,6 +1,7 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Billing;
@@ -173,7 +174,7 @@ public class MeteredChatClientTests : IDisposable
         string keyMode, int? dailyCalls = null, long? dailyTokens = null, int? dailyMints = null,
         HouseholdTier tier = HouseholdTier.Free, long balanceMicros = 100_000_000, bool paymentsEnabled = true,
         int? demoCap = null, bool factoryThrows = false, bool meterReserveFailsFirst = false,
-        int? demoReserveFailsOnCall = null)
+        int? demoReserveFailsOnCall = null, ILogger<MeteredChatClient>? clientLogger = null)
     {
         var llm = Options.Create(new LlmOptions
         {
@@ -209,7 +210,7 @@ public class MeteredChatClientTests : IDisposable
         var client = new MeteredChatClient(byok, settings, meter, demoMeter, Options.Create(new BillingOptions()),
             payments,
             new CreditLedger(_authDb, Options.Create(new BillingOptions())), entitlements, new FakeCurrentHousehold("hh-test"),
-            NullLogger<MeteredChatClient>.Instance);
+            clientLogger ?? NullLogger<MeteredChatClient>.Instance);
         return (client, meter);
     }
 
@@ -889,11 +890,17 @@ public class MeteredChatClientTests : IDisposable
         // first — and only faulted — usage write.
         await SeedTodayAsync("hh-test", calls: 3);
         _provider.ThrowRefusal = true;
+        var log = new CapturingLogger<MeteredChatClient>();
         var (client, meter) = Build(
-            "Managed", tier: HouseholdTier.Free, paymentsEnabled: false, meterReserveFailsFirst: true);
+            "Managed", tier: HouseholdTier.Free, paymentsEnabled: false, meterReserveFailsFirst: true,
+            clientLogger: log);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => AskAsync(client));
 
+        // It was the RESERVE that faulted (not the gate read) — pin that, so a future reorder that faulted the
+        // gate instead (which would also read 3, gate failing open → reserve lands → 4 → release → 3) turns
+        // this red rather than silently vacuous.
+        Assert.Contains(log.Errors, e => e.Contains("Reserving the AI call for the household usage row failed"));
         Assert.Equal(3, (await meter.GetTodayAsync()).Calls); // unchanged — the failed reserve wasn't released
     }
 
@@ -906,11 +913,16 @@ public class MeteredChatClientTests : IDisposable
         // false), and the release leaves the 3 alone. The household reserve succeeds and is released normally.
         await SeedDemoTodayAsync(3);
         _provider.ThrowRefusal = true;
+        var log = new CapturingLogger<MeteredChatClient>();
         var (client, _) = Build(
-            "Managed", tier: HouseholdTier.Free, paymentsEnabled: false, demoCap: 5, demoReserveFailsOnCall: 2);
+            "Managed", tier: HouseholdTier.Free, paymentsEnabled: false, demoCap: 5, demoReserveFailsOnCall: 2,
+            clientLogger: log);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => AskAsync(client));
 
+        // It was the demo RESERVE that faulted (auth call #2), not the gate read (#1) — pin that, so a future
+        // reorder faulting the gate instead (which would also read 3) turns this red rather than vacuous.
+        Assert.Contains(log.Errors, e => e.Contains("Reserving the demo box-wide call failed"));
         Assert.Equal(3, await DemoCallsTodayAsync()); // unchanged — the failed demo reserve wasn't released
     }
 
@@ -964,6 +976,18 @@ public class MeteredChatClientTests : IDisposable
     {
         public Task<ShelfAwareDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
             => Task.FromResult(new ShelfAwareDbContext(options) { HouseholdId = "hh-test" });
+    }
+
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<string> Errors { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == LogLevel.Error) Errors.Add(formatter(state, exception));
+        }
     }
 
     // ---- The paid default's exact value: below it is admitted, and the operator can raise it ----
