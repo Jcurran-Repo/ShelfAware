@@ -123,8 +123,9 @@ public sealed class AiUsageMeter(
             // The catch is deliberately broad (a dead context surfaces as anything from a provider
             // SqliteException to an ObjectDisposedException); it would also swallow a "no household in scope"
             // resolution error from the factory, but every AI surface sits behind auth + the household
-            // middleware, so that is unreachable — and if it ever occurred, the reserve and the credit gate
-            // both also need a household and would surface it, so failing open here changes nothing.
+            // middleware, so that is unreachable. If it ever occurred, failing open here changes nothing: the
+            // reserve swallows the same error and proceeds UNCOUNTED, and the credit gate needs a household
+            // too (short-circuiting to allowed only when billing is off) — so nothing is over-served.
             logger.LogError(ex, "Reading today's AI usage for the daily caps failed; allowing the call (credit still gates it).");
             return;
         }

@@ -48,16 +48,21 @@ public class MeteredChatClientTests : IDisposable
         /// timeout STAYS counted like a plain cancel.</summary>
         public bool ThrowTaskCancelled { get; set; }
 
-        /// <summary>The streaming twins of the two throw flags — surfaced on the first MoveNextAsync so the
-        /// decorator's manual-enumerator catch can be exercised for both a refusal (released) and an
-        /// abort (stays counted).</summary>
+        /// <summary>The streaming twins of the throw flags — surfaced on the first MoveNextAsync so the
+        /// decorator's manual-enumerator catch can be exercised for a refusal (released), a plain abort, and
+        /// a real-SDK timeout (both counted).</summary>
         public bool ThrowRefusalStreaming { get; set; }
         public bool ThrowCancelledStreaming { get; set; }
+        public bool ThrowTaskCancelledStreaming { get; set; }
 
         /// <summary>When set, the stream yields this many updates and THEN throws a non-cancellation error
         /// mid-stream — the "provider streamed a partial answer, then the connection broke" scenario, to
         /// prove a post-output break STAYS counted (billable work was done).</summary>
         public int? ThrowAfterStreamingUpdates { get; set; }
+
+        /// <summary>When true, the stream yields normally but its DISPOSAL throws (a broken HTTP response
+        /// closing) — to prove the decorator records usage BEFORE it disposes the enumerator.</summary>
+        public bool ThrowOnStreamDispose { get; set; }
 
         /// <summary>When set, the provider cancels this source just as it returns the answer — the "client
         /// dropped the instant the response landed" scenario, to prove the tail record runs uncancellably.</summary>
@@ -88,6 +93,7 @@ public class MeteredChatClientTests : IDisposable
             // Surface a refusal/abort on the first MoveNextAsync (the throw runs when enumeration starts).
             if (ThrowRefusalStreaming) throw new InvalidOperationException("the provider refused this stream");
             if (ThrowCancelledStreaming) throw new OperationCanceledException();
+            if (ThrowTaskCancelledStreaming) throw new TaskCanceledException();
             await Task.Yield();
             if (ThrowAfterStreamingUpdates is int n)
             {
@@ -97,11 +103,20 @@ public class MeteredChatClientTests : IDisposable
                 // must keep the call counted (yieldedAny is true by now).
                 throw new InvalidOperationException("the stream broke mid-answer");
             }
-            yield return new ChatResponseUpdate(ChatRole.Assistant, "ok") { ModelId = ResponseModelId };
-            yield return new ChatResponseUpdate
+            try
             {
-                Contents = [new UsageContent(new UsageDetails { InputTokenCount = 100, OutputTokenCount = 50 })],
-            };
+                yield return new ChatResponseUpdate(ChatRole.Assistant, "ok") { ModelId = ResponseModelId };
+                yield return new ChatResponseUpdate
+                {
+                    Contents = [new UsageContent(new UsageDetails { InputTokenCount = 100, OutputTokenCount = 50 })],
+                };
+            }
+            finally
+            {
+                // The provider's stream fails to close cleanly — the throw runs when the enumerator is
+                // disposed (the consumer stopping early), so the decorator's dispose is what throws.
+                if (ThrowOnStreamDispose) throw new System.IO.IOException("closing the stream failed");
+            }
         }
 
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
@@ -755,6 +770,48 @@ public class MeteredChatClientTests : IDisposable
 
         Assert.Equal(1, (await meter.GetTodayAsync()).Calls); // yieldedAny was true → not released
         Assert.Equal(1, await DemoCallsTodayAsync());
+    }
+
+    [Fact]
+    public async Task A_streamed_provider_timeout_TaskCanceledException_stays_counted()
+    {
+        // The streaming twin of A_provider_timeout... — a TaskCanceledException on the first MoveNextAsync is
+        // a timeout that reached the provider, so the streaming inner catch must keep it counted (it derives
+        // from OperationCanceledException), never released.
+        _provider.ThrowTaskCancelledStreaming = true;
+        var (client, meter) = Build("Managed", dailyCalls: 5, demoCap: 5);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await foreach (var _ in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "hi")])) { }
+        });
+
+        Assert.Equal(1, (await meter.GetTodayAsync()).Calls);
+        Assert.Equal(1, await DemoCallsTodayAsync());
+    }
+
+    [Fact]
+    public async Task A_stream_records_usage_before_a_throwing_dispose()
+    {
+        // F5: the finally records tokens/cost BEFORE disposing, so a provider stream whose DISPOSAL throws
+        // (a broken HTTP response closing) can't skip the money write. The consumer breaks after the trailing
+        // usage update; disposal then throws IOException — but the 150 tokens are already recorded. Reverting
+        // the finally to dispose-first loses them (Tokens would read 0).
+        _provider.ThrowOnStreamDispose = true;
+        var (client, meter) = Build("Managed", dailyCalls: 5);
+
+        await Assert.ThrowsAsync<System.IO.IOException>(async () =>
+        {
+            var seen = 0;
+            await foreach (var _ in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "hi")]))
+            {
+                if (++seen == 2) break; // break after the trailing usage update — disposal is what throws
+            }
+        });
+
+        var today = await meter.GetTodayAsync();
+        Assert.Equal(150, today.Tokens); // recorded before the throwing dispose
+        Assert.Equal(1, today.Calls);
     }
 
     [Fact]

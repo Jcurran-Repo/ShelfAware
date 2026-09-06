@@ -153,10 +153,11 @@ public sealed class MeteredChatClient(
             throw new AiCreditsExhaustedException();
     }
 
-    /// <summary>Which of the two reserves actually landed, so the matching release gives back ONLY what was
-    /// taken. A reserve write is best-effort (below) — if it silently fails, "releasing" it anyway would
-    /// subtract a count that was never added and drive the counter below the true value (a negative row that
-    /// raises the effective cap). Balanced reserve/release makes that impossible.</summary>
+    /// <summary>Which of the two reserves DID NOT throw, so the matching release gives back ONLY those. A
+    /// reserve write is best-effort (below) — if it silently fails, "releasing" it anyway would subtract a
+    /// count that was never added and drive the counter below the true value (a negative row that raises the
+    /// effective cap). Balanced reserve/release makes that impossible. (A no-op reserve — the box-wide valve
+    /// on an unconfigured box — reads true and is released by an equally-no-op release, which is harmless.)</summary>
     private readonly record struct CallReservation(bool Household, bool BoxWide);
 
     /// <summary>Count one call, BEFORE the provider call and UNCANCELLABLY, so a client that aborts
