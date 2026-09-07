@@ -83,6 +83,16 @@ public class SimilarPairsTests
     }
 
     [Fact]
+    public void Sharing_only_the_head_of_a_longer_name_is_not_half()
+    {
+        // Same head ("bread"), but it is 1 of the 3 core words of each — under half. Two breads with nothing
+        // else in common are two breads, not two names for one; the variant shape needs half.
+        IReadOnlyList<Product> onList = [P(1, "Sliced Plain French Bread"), P(2, "Artesano Brioche Bakery Bread")];
+
+        Assert.Empty(SimilarPairs.Find(onList));
+    }
+
+    [Fact]
     public void A_head_that_is_only_a_modifier_in_the_other_name_is_not_a_pair()
     {
         // "grape" heads the grapes but merely modifies the tomatoes; half of "Grape Tomatoes" is shared, yet

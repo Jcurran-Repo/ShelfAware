@@ -71,6 +71,8 @@ public static class SimilarPairs
         foreach (var w in words) headCount[w.Head] = headCount.GetValueOrDefault(w.Head) + 1;
 
         var pairs = new List<SimilarPair>();
+        // Stryker disable once Equality: equivalent — at i == words.Count the inner loop has no j, so words[i]
+        // is never read and no pair is produced; `<=` cannot change the result.
         for (var i = 0; i < words.Count; i++)
         {
             for (var j = i + 1; j < words.Count; j++)
@@ -97,6 +99,7 @@ public static class SimilarPairs
 
                 // Canonical: lower product id first (ids are distinct, so this is unambiguous), regardless of
                 // the order the two were listed — that's what gives a pair ONE identity for the memory.
+                // Stryker disable once Equality: equivalent — product ids are distinct, so `<` and `<=` never differ.
                 var lo = a.Product.Id < b.Product.Id ? a.Product : b.Product;
                 var hi = ReferenceEquals(lo, a.Product) ? b.Product : a.Product;
                 pairs.Add(new SimilarPair(lo.Id, lo.Name, hi.Id, hi.Name));
