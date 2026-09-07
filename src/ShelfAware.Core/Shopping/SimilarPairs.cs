@@ -18,9 +18,13 @@ public sealed record SimilarPair(int LowerId, string LowerName, int HigherId, st
 /// <item><b>Two names for one product</b> — the shared words cover MORE than half of the shorter name
 /// (<see cref="TokenContainment"/> &gt; <see cref="MinCoverage"/>) and include a head of either name:
 /// "Artesano Brioche Bakery Bread" / "Brioche Style Bread Loaf" (brioche + bread, and bread heads one).</item>
-/// <item><b>Two variants of one thing</b> — the shared words cover exactly half, and the two names have the
-/// SAME head: "Envy Apples" / "Cosmic Crisp Apples", "Sweet Cream Salted Butter" / "Unsalted Butter"
-/// (salted/unsalted are trivial). Two variants of one item are asked about (Jordan's call).</item>
+/// <item><b>Two variants of one thing</b> — the shared words cover exactly half, OR one name is a single
+/// word, and the two names have the SAME head: "Envy Apples" / "Cosmic Crisp Apples", "Milk" / "Whole Milk",
+/// "Sweet Cream Salted Butter" / "Unsalted Butter" (salted/unsalted are trivial, so the second is the one
+/// word "butter"). Two variants of one item are asked about (Jordan's call). A one-word name is ALWAYS
+/// judged here: it is wholly contained in anything that mentions it, so its coverage is 1.0 against every
+/// such name and says nothing — only a shared head does. Without this, "Grapes" / "Grape Tomatoes" paired
+/// while "Green Seedless Grapes" / "Grape Tomatoes" didn't, and "Milk" among four milks gave four pairs.</item>
 /// </list>
 /// <para>What is NOT a signal, and why: a shared MODIFIER — "Ground Coffee" / "Ground Beef" share "ground",
 /// but the words that say what they are differ — and a head that is merely a modifier in the other name
@@ -51,6 +55,14 @@ public static class SimilarPairs
     /// <summary>A head word heading this many list products (or more) is a category head, not a pair signal.</summary>
     public const int ClusterSize = 3;
 
+    /// <summary>The most pairs one call returns. The first shape has no cluster gate by design (two names
+    /// for one product are a pair however many siblings they have), so a catalog of n near-identical names
+    /// is C(n,2) pairs — and each new pair is a memory row the nudge service inserts on the list load. Fifty
+    /// is far more than the page shows (three, plus an "…and N more" note); the ceiling only bites on a
+    /// catalog that is itself the problem, and stops it from taking the process down with it. Scan order is
+    /// the caller's list order, so which pairs make the cut is stable from one load to the next.</summary>
+    public const int MaxPairs = 50;
+
     public static IReadOnlyList<SimilarPair> Find(IReadOnlyList<Product> onList)
     {
         var words = new List<(Product Product, IReadOnlySet<string> Tokens, string Head)>(onList.Count);
@@ -72,7 +84,8 @@ public static class SimilarPairs
 
         var pairs = new List<SimilarPair>();
         // Stryker disable once Equality: equivalent — at i == words.Count the inner loop has no j, so words[i]
-        // is never read and no pair is produced; `<=` cannot change the result.
+        // is never read and no pair is produced; `<=` cannot change the result. The category also suppresses
+        // `>=` (the loop never runs), which IS killable — every pairing test would fail.
         for (var i = 0; i < words.Count; i++)
         {
             for (var j = i + 1; j < words.Count; j++)
@@ -81,7 +94,10 @@ public static class SimilarPairs
                 var coverage = TokenContainment.Of(a.Tokens, b.Tokens);
                 if (coverage < MinCoverage) continue;
 
-                if (coverage > MinCoverage)
+                // A one-word name ("Milk", "Grapes") is wholly contained in anything that mentions it, so
+                // its coverage is 1.0 against every such name and says nothing — only a shared head can.
+                var oneWord = a.Tokens.Count == 1 || b.Tokens.Count == 1;
+                if (coverage > MinCoverage && !oneWord)
                 {
                     // Two names for one product: most of the shorter name's words, and among them what the
                     // thing IS — a head of either name. ("Artesano Brioche Bakery Bread" / "Brioche Style
@@ -90,19 +106,22 @@ public static class SimilarPairs
                 }
                 else
                 {
-                    // Exactly half: only the variant shape counts — the SAME head word on both ("Envy Apples"
-                    // / "Cosmic Crisp Apples"). A head that is merely a modifier in the other name ("Green
-                    // Seedless Grapes" / "Grape Tomatoes") says nothing. And inside a cluster the head is a
-                    // category ("Greek Yogurt" / "Vanilla Yogurt" among five yogurts), not a pair signal.
+                    // The variant shape — the SAME head word on both ("Envy Apples" / "Cosmic Crisp Apples",
+                    // "Milk" / "Whole Milk"). A head that is merely a modifier in the other name ("Green
+                    // Seedless Grapes" / "Grape Tomatoes", "Grapes" / "Grape Tomatoes") says nothing. And
+                    // inside a cluster the head is a category ("Greek Yogurt" / "Vanilla Yogurt" among five
+                    // yogurts, "Milk" among four milks), not a pair signal.
                     if (a.Head != b.Head || headCount[a.Head] >= ClusterSize) continue;
                 }
 
                 // Canonical: lower product id first (ids are distinct, so this is unambiguous), regardless of
                 // the order the two were listed — that's what gives a pair ONE identity for the memory.
-                // Stryker disable once Equality: equivalent — product ids are distinct, so `<` and `<=` never differ.
+                // Stryker disable once Equality: equivalent — product ids are distinct, so `<` and `<=` never differ. The
+                // category also suppresses `>=` (canonical order flips), which IS killable — the canonical-order test fails.
                 var lo = a.Product.Id < b.Product.Id ? a.Product : b.Product;
                 var hi = ReferenceEquals(lo, a.Product) ? b.Product : a.Product;
                 pairs.Add(new SimilarPair(lo.Id, lo.Name, hi.Id, hi.Name));
+                if (pairs.Count == MaxPairs) return pairs;
             }
         }
         return pairs;

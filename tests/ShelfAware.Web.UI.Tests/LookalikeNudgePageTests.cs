@@ -20,7 +20,7 @@ public class LookalikeNudgePageTests : PageTestContext
         new() { PurchasedAt = Today.AddDays(-30), Quantity = 1m },
     ];
 
-    // Two tracked products sharing a pair-unique word — one lookalike pair. Overdue so they also sit on the
+    // Two tracked products that read as two names for one bread — one lookalike pair. Overdue so they also sit on the
     // visible list. Returns the ids lowest-first (so the first is the canonical "lower").
     private (int LowerId, int HigherId) SeedPair(string a, string b)
     {

@@ -3761,10 +3761,54 @@ and 67; the count is re-read off each item's final run).
      one REAL: with the `< MinCoverage` guard removed, a same-head pair sharing only that head out of three
      words ("Sliced Plain French Bread / Artesano Brioche Bakery Bread") fell into the variant shape and no
      test noticed. Pinned; **100.00%** on the re-run. Item 59's rule, proven again.
-   - **3158 green, 0 warnings** (non-incremental Release; Core 1364 · AI 189 · Persistence 1010 · Pages 595;
-     read off the final run). One UI test failed ONCE while the full suite ran concurrently with the
-     background Stryker run and passed on both clean re-runs — bUnit's waits under CPU starvation, not a
-     product change; don't run the two together when the number matters.
+   - **The `/pre-push` gate (two independent SHA-reading agents; security PASS WITH NOTES, code SHIP WITH
+     FIXES — every finding fixed the same session, each pinned by a test):**
+     - ⚠️ **[Security, MEDIUM — new to this branch] the strict-majority shape is unbounded.** The old rule
+       emitted at most one pair per word; the new first shape has no cluster gate by design, so a catalog of
+       n near-identical names is C(n,2) pairs AND C(n,2) `LookalikePair` inserts on one grocery-list load.
+       Probe-verified reachable: "Whole Milk 1" … "Whole Milk 9" pass the add form with no prompt (distinct
+       identity keys; the digit is dropped by `CoreTokens`, so all collapse to {whole, milk}); measured 12.5M
+       pairs / 2 s for 5,000 such products in the detector alone, and the tracked-entity insert would OOM the
+       shared process. **`SimilarPairs.MaxPairs` (50) is a hard ceiling in the detector**, scan order (the
+       page's by-name order, so stable across loads); the page shows three plus "…and N more", so nothing
+       visible is lost. Self-inflicted data, process-wide impact — hence fixed. A `LookalikePairs` retention
+       trim is a pre-existing gap, noted, not built.
+     - ⚠️ **[Code, MEDIUM] a ONE-WORD name took the strict-majority shape and bypassed both guards.** "Milk"
+       is wholly contained in anything mentioning milk, so its coverage is 1.0 against every such name: probed,
+       "Grapes / Grape Tomatoes" paired while the documented "Green Seedless Grapes / Grape Tomatoes" didn't,
+       and "Milk" among four milks gave four pairs — the per-pair spam the cluster gate exists to stop. A
+       one-word name is now ALWAYS judged by the variant shape (same head + cluster gate): "Milk / Whole Milk"
+       pairs, "Grapes / Grape Tomatoes" doesn't, "Milk" among four milks is gated. Brand-stripped one-word
+       products (Eggs, Bananas, Butter, Rice) are ordinary in this data model; the 36→9 measurement simply
+       hadn't hit one. **This also puts the salted-butter example in the shape the docs claimed** — "Unsalted
+       Butter" is the one word "butter" — which the reviewer had caught as a doc stating the wrong shape.
+     - [Code, LOW] `Sheds_filler_words_before_comparing` was VACUOUS — its fixture ("Greek Style Yogurt" /
+       "Greek Yogurt") scores 1.0 with or without the shed, so deleting the shed left it green (item 34's
+       class; Stryker can't see a removed `Where`). It now uses the real brioche pair, which the shed decides
+       (2 of 3 shed → pair; 2 of 4 kept, heads differ → none).
+     - [Code, LOW] **a THIRD inline containment copy** survived the "one definition" claim —
+       `AnthropicPantryChat.Containment` (the recipe-name resolver) was the same math byte for byte. It
+       delegates to `TokenContainment.Of` now; the top directive's "every caller in the same change",
+       caught one caller short.
+     - [Code, INFO] both `Stryker disable once Equality` annotations now state the bundled killable residual
+       (`>=`), per `docs/mutation-testing.md`'s convention; a stale "pair-unique word" comment in the page
+       tests fixed. Duplicate ids self-pair (unreachable: the sole caller passes distinct DB rows) — no fix.
+     - Clean, and named: tenancy boundary (Core-only diff; detector output ids ⊆ the household-scoped input;
+       memory rows through `IHouseholdDbFactory` + filter + stamping + `EnforceHousehold` + unique index;
+       export/delete/CountAll unchanged), pair names render encoded, the scorer refactor byte-equivalent over
+       225 probe pairs, every documented example re-probed against the code, performance ~1–3 ms per load at
+       real sizes.
+   - **Re-measured after the fix pass:** family box still 9; demo catalog 6 → 5 ("Canned Diced Tomatoes" is
+     the one word "tomatoes" once trivial modifiers go, so it no longer pairs with a tomato SAUCE — correct).
+   - **3162 green, 0 warnings** (non-incremental Release; Core 1368 · AI 189 · Persistence 1010 · Pages 595;
+     read off the final run; +4 over the pre-gate 3158: the cap test + three one-word tests). Diff-scoped
+     Stryker **100.00%** over the fix pass too. ⚠️ One UI test failed ONCE while the full suite ran
+     concurrently with a background Stryker run and passed on every clean re-run — bUnit's waits under CPU
+     starvation, not a product change; don't run the two together when the number matters. ⚠️ Also from this
+     session: a `perl -0pi` substitution that reported "no match" on a CRLF file had in fact written its
+     replacement at the TOP of `AnthropicPantryChat.cs` (14 build errors, caught by the clean build) — on
+     this repo's mixed line endings, use the Edit tool for source edits and `git diff` before trusting a
+     scripted rewrite (the same tripwire as the PS 5.1 encoding gotcha).
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

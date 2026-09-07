@@ -121,7 +121,55 @@ public class SimilarPairsTests
         Assert.Single(SimilarPairs.Find(onList));
     }
 
+    [Fact]
+    public void A_one_word_name_pairs_only_with_a_same_head_name()
+    {
+        // "Milk" is wholly contained in every name that mentions milk, so containment says nothing about it;
+        // it pairs with "Whole Milk" (same head) but not with "Milk Chocolate Bar" (milk is a modifier there).
+        IReadOnlyList<Product> onList = [P(1, "Milk"), P(2, "Whole Milk"), P(3, "Milk Chocolate Bar")];
+
+        var pair = Assert.Single(SimilarPairs.Find(onList));
+
+        Assert.Equal((1, 2), (pair.LowerId, pair.HigherId));
+    }
+
+    [Fact]
+    public void A_one_word_name_does_not_pair_with_a_name_that_only_uses_it_as_a_modifier()
+    {
+        // Same semantics as the seedless-grapes case, with the adjectives gone: still not a pair.
+        IReadOnlyList<Product> onList = [P(1, "Grapes"), P(2, "Grape Tomatoes")];
+
+        Assert.Empty(SimilarPairs.Find(onList));
+    }
+
+    [Fact]
+    public void A_one_word_name_inside_a_cluster_is_gated_like_any_variant()
+    {
+        // Four milks: "Milk" would otherwise pair with each of the other three — the per-pair spam the cluster
+        // gate exists to stop, arriving through a one-word name.
+        IReadOnlyList<Product> onList = [P(1, "Milk"), P(2, "Whole Milk"), P(3, "Oat Milk"), P(4, "Almond Milk")];
+
+        Assert.Empty(SimilarPairs.Find(onList));
+    }
+
     // ── General ──
+
+    [Fact]
+    public void Caps_the_pairs_it_returns_so_a_pathological_catalog_cannot_explode()
+    {
+        // Twelve products whose core words are all {whole, milk} (digits are dropped) pair with each other in
+        // every combination — C(12,2) = 66 — and every new pair becomes a memory row on the list load. The
+        // ceiling holds it to MaxPairs, in scan order, so the same pairs make the cut on every visit.
+        IReadOnlyList<Product> onList = [.. Enumerable.Range(1, 12).Select(i => P(i, $"Whole Milk {i}"))];
+
+        var first = SimilarPairs.Find(onList);
+        var again = SimilarPairs.Find(onList);
+
+        Assert.Equal(SimilarPairs.MaxPairs, first.Count);
+        Assert.Equal(first, again);
+        Assert.Equal((1, 2), (first[0].LowerId, first[0].HigherId));
+    }
+
 
     [Fact]
     public void Canonicalises_to_the_lower_id_regardless_of_scan_order()
@@ -150,10 +198,10 @@ public class SimilarPairsTests
     [Fact]
     public void Sheds_filler_words_before_comparing()
     {
-        // "style" is throwaway filler (DescriptorFilter): without shedding it "Brioche Style Bread" would be
-        // three words sharing two with "Brioche Bread" — still a pair here, but "Greek Style Yogurt" against
-        // "Greek Yogurt" is the sharper case: with the filler kept it's 2 of 3, with it shed it's identical.
-        IReadOnlyList<Product> onList = [P(1, "Greek Style Yogurt"), P(2, "Greek Yogurt")];
+        // "style" is throwaway filler (DescriptorFilter). Shed, the loaf is {brioche, bread, loaf} and shares
+        // 2 of 3 with the other bread (plus the head "bread") — a pair. Kept, it is four words sharing two:
+        // exactly half, with differing heads (loaf / bread) — no pair. So the shed decides this fixture.
+        IReadOnlyList<Product> onList = [P(1, "Brioche Style Bread Loaf"), P(2, "Artesano Brioche Bakery Bread")];
 
         Assert.Single(SimilarPairs.Find(onList));
     }

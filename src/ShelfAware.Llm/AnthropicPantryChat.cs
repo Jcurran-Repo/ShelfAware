@@ -819,8 +819,9 @@ public class AnthropicPantryChat : IPantryChat
             : null;
     }
 
-    private static double Containment(HashSet<string> a, HashSet<string> b) =>
-        a.Count == 0 || b.Count == 0 ? 0 : (double)a.Intersect(b).Count() / Math.Min(a.Count, b.Count);
+    // The one containment definition (Core) — the same arithmetic the extraction scorer and the lookalike
+    // detector use; only the tokens are this file's own.
+    private static double Containment(HashSet<string> a, HashSet<string> b) => TokenContainment.Of(a, b);
 
     private static HashSet<string> RecipeTokens(string s) =>
         new string(s.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : ' ').ToArray())
