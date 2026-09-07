@@ -285,6 +285,25 @@ public class LookalikeNudgePageTests : PageTestContext
     }
 
     [Fact]
+    public async Task A_failed_cluster_bring_back_says_so_in_the_shared_error_slot()
+    {
+        var (dentastix, _, _) = SeedTreatCluster();
+        var now = new DateTimeOffset(Today.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        await Nudges.DismissClusterAsync("treat", now);
+        var cut = RenderDetail(dentastix);
+        cut.WaitForState(() => cut.FindAll(".dismissed-cluster").Count == 1);
+
+        Factory.FailAfter = 0; // the un-dismiss WRITE's context dies (the render's loads already spent theirs)
+        cut.Find(".dismissed-cluster button").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("try again", cut.Find(".dismissed-lookalikes-error").TextContent);
+            Assert.Single(cut.FindAll(".dismissed-cluster")); // nothing changed — the row is still there to retry
+        });
+    }
+
+    [Fact]
     public async Task Pair_and_cluster_cards_share_the_three_card_cap_ranked_together()
     {
         // Three pairs plus one cluster: four nudges of two kinds, ranked TOGETHER — three cards, one behind

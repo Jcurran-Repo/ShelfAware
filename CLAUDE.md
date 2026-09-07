@@ -104,7 +104,7 @@ music (jingle · song · lyric video), a self-host pointer, and a pre-launch wis
 page outside the auth wall, on its own AboutLayout; see item 62)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **3184 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **3185 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 60, 61, 62
 and 67; the count is re-read off each item's final run).
@@ -3889,9 +3889,9 @@ and 67; the count is re-read off each item's final run).
      and the sandbox re-measured identical to its start. Zero server or console errors.
    - **Tests:** `SimilarPairsTests` 28 (up from 22 — the twin bar, the silent category, the fold, the
      straddle, `HeadOf`, `Find == Scan.Pairs`, cap-never-stops-clusters) + the cluster lines + the entity
-     default, service 16 (up from 9: +6 cluster, +1 the untracked-member guard), pages 11 (+4: one card no
-     pair buttons, permanent dismiss, member's page bring-back, the shared cap ranked together), plus the
-     schema-parity / isolation / export / delete pins.
+     default, service 16 (up from 9: +6 cluster, +1 the untracked-member guard), pages 12 (+5: one card no
+     pair buttons, permanent dismiss, member's page bring-back, the shared cap ranked together, the shared
+     error slot), plus the schema-parity / isolation / export / delete pins.
    - **The gate (two independent SHA-reading agents): security PASS WITH NOTES, code SHIP WITH FIXES — six
      small things, all fixed the same session:** the doc counts above were WRONG on first writing (29/17
      were filter-run totals, not the files' — item 21's class, fifth occurrence) and "5 pairs + 1 cluster"
@@ -3906,10 +3906,11 @@ and 67; the count is re-read off each item's final run).
      of the operator error log).
      Diff-scoped Stryker found three survivors on the first run (the twin scan's equivalent loop bound, the
      one-word guard on the SECOND member — no fixture had the one-word name last — and the entity's default
-     head, item 59's class), each fixed; **100.00%** after. **3184 green, 0 warnings** (non-incremental
-     Release; Core 1378 · AI 189 · Persistence 1018 · Pages 599; read off the final run after the gate's
-     fix pass, whose two new pins — the ranking test and the untracked-member guard — were each
-     mutation-checked to a kill). Live family box
+     head, item 59's class), each fixed; **100.00%** after. **3185 green, 0 warnings** (non-incremental
+     Release; Core 1378 · AI 189 · Persistence 1018 · Pages 600; read off the final run after the gate's
+     fix pass and its re-review — code SHIP, security PASS, no regressions; its one optional note, that the
+     shared error slot had no test, became the 600th page test — each new pin (the ranking test, the
+     untracked-member guard, the error slot) mutation-checked to a kill). Live family box
      (read-only, 134 tracked, 2026-09-07): **6 pairs + 1 cluster** — down from 36 pairs before item 67.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
