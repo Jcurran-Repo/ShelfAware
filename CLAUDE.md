@@ -104,7 +104,7 @@ music (jingle · song · lyric video), a self-host pointer, and a pre-launch wis
 page outside the auth wall, on its own AboutLayout; see item 62)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **3163 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **3183 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 60, 61, 62
 and 67; the count is re-read off each item's final run).
@@ -3832,6 +3832,68 @@ and 67; the count is re-read off each item's final run).
      replacement at the TOP of `AnthropicPantryChat.cs` (14 build errors, caught by the clean build) — on
      this repo's mixed line endings, use the Edit tool for source edits and `git diff` before trusting a
      scripted rewrite (the same tripwire as the PS 5.1 encoding gotcha).
+
+68. **The lookalike cluster card — one card per cluster, only when it holds a near-twin (2026-09-07, branch
+   `feature/lookalike-cluster-card`; gate pending, UNPUSHED).** The follow-up item 67 queued, built the day
+   after PR #68 merged. Jordan's calls, both asked and answered in-thread: "clusters should only get one card"
+   → one card per cluster REPLACING the pair cards inside it (no pair card for the two Dentastix among five dog
+   treats); then, on the first measurement, the bar for which clusters get a card at all.
+   - ⚠️ **The measurement that set the bar.** "Every 3+ same-head group gets a card" gave the family box **8
+     cluster cards, 7 of them plain categories** — three steak cuts, four peppers (black pepper included),
+     three cheeses, three beans, three potatoes, three bags, three tomatoes — 13 nudges on the first visit,
+     the aggressive-comparer complaint back in a new shape. Jordan chose the twin bar: **a cluster is reported
+     only when two of its members are two names for one product on their own** (the first pair shape — most
+     of the shorter name's words shared, neither a one-word name — OR equal core sets, one-word included, so
+     "Salted Butter" / "Unsalted Butter" beside a "Peanut Butter" still earns the butters a card: his variant
+     case). Five flavoured yogurts (each pair exactly half) are a silent category, accepted. Family box: **5
+     pairs + 1 cluster** (the five dog treats; was 9 pairs, four of them dog-treat cross pairs). Demo: 6 pairs
+     + 1 cluster (the four sauces, holding the "Home Canned" / "Home-Canned" punctuation twins — a fitting
+     showcase). ⚠️ An UNREPORTED cluster still gates every pair inside it — that gate is what stopped the
+     per-pair spam in the first place; the twin bar only decides whether the group gets its ONE card.
+   - **`SimilarPairs.Scan` returns `LookalikeScan(Pairs, Clusters)`; `Find` is its pairs.** A product has one
+     head word, so it is in at most one cluster; a pair whose two products share a cluster head is never
+     emitted in EITHER shape (the cluster's card speaks for them, reported or not). `HeadOf(name)` is the one
+     public reading of a product's head, so the product page asks "which cluster would this be in?" exactly as
+     the scan does. Clusters need no cap (≤ n/3); `MaxPairs` stays on the pair scan and never stops the
+     clusters (pinned).
+   - **`LookalikeCluster` (Core/Domain) is the cluster memory, keyed on `(HouseholdId, Head)`** — one row per
+     head word, NOT the per-pair rows (a 40-product "sauce" cluster would be 780 of those): `FirstSeenAt`
+     (drives the mood) + `DismissedAt` ("they're all different", permanent, reversible). Keyed on the word
+     deliberately: membership changes as products come and go, and a dismissal means "don't ask about the
+     yogurts again". Full tenancy drill: query filter + stamping, unique index, `AdditiveSchema.EnsureTable` +
+     drop-table parity test, isolation test, export `data.json` (`LookalikeClusters`), delete-my-data, CountAll.
+   - **`LookalikeNudgeService.GetActiveAsync` returns `ActiveNudges(Pairs, Clusters)`** from ONE scan and ONE
+     write (both memories' new rows in one SaveChanges; the concurrent-insert catch covers both); `DismissClusterAsync`
+     / `UndismissClusterAsync` mirror the pair versions (mood resumes from the ORIGINAL first-seen);
+     `DismissedClusterForProductAsync` re-scans the tracked catalog exactly as the list does, so a dismissal
+     whose cluster no longer exists (members merged away below three) drops off the product page — nothing
+     left to un-dismiss into.
+   - **The grocery list ranks pair and cluster cards TOGETHER** under the one three-card cap (most-bothered
+     first, then name — a cluster sorts by its head), so a dense catalog can't bury the list whichever shape
+     the nudges take (pinned by a mixed 3-pairs-plus-cluster test). A cluster card: Eggs + his line + "You've
+     got N kinds of <head> on the list — same thing under different names? Take a look:" + the members as
+     LINKS to their product pages (the ⇆ merge panel lives there, undoable since item 64; at most eight named,
+     then "…and N more") + one "They're all different". The product page lists a dismissed cluster
+     ("You told Eggs the <head> items on the list are all different — <other members>") with a bring-back.
+   - **`NudgeMoods.ClusterLine`** — Eggs's four mood lines worded for a GROUP. Found live: the pair lines say
+     "these two", and the first cluster card rendered "Ooh — these two look like the same thing to me" above
+     four sauces. Pinned in Core (distinct, non-empty, never "two"/"twin") and on the page.
+   - **Live-verified end to end** (dev sandbox, alt port 5180): the sandbox had no twin-holding cluster of its
+     own, so adding "Sriracha Hot Sauce" (past the add form's advisory) made a four-sauce cluster; the card
+     rendered with the real mascot, all four members as product-page links and "They're all different"; the
+     dismissal removed it; the member's product page read "You told Eggs the sauce items on the list are all
+     different — Marinara Sauce, Sriracha Hot Sauce, Sriracha Sauce" with the bring-back, which re-nudged the
+     cluster on the list. Every step reversed afterwards (three pairs brought back, the test product deleted)
+     and the sandbox re-measured identical to its start. Zero server or console errors.
+   - **Tests:** Core 29 (`SimilarPairsTests`, up from 22 — the twin bar, the silent category, the fold, the
+     straddle, `HeadOf`, `Find == Scan.Pairs`, cap-never-stops-clusters) + the cluster lines + the entity
+     default, service 17 (+6 cluster), pages 11 (+4: one card no pair buttons, permanent dismiss, member's
+     page bring-back, the shared cap), plus the schema-parity / isolation / export / delete pins.
+     Diff-scoped Stryker found three survivors on the first run (the twin scan's equivalent loop bound, the
+     one-word guard on the SECOND member — no fixture had the one-word name last — and the entity's default
+     head, item 59's class), each fixed; **100.00%** after. **3183 green, 0 warnings** (non-incremental
+     Release; Core 1378 · AI 189 · Persistence 1017 · Pages 599; read off the final run). Live family box
+     (read-only, 134 tracked, 2026-09-07): **6 pairs + 1 cluster** — down from 36 pairs before item 67.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

@@ -41,7 +41,7 @@ public class LookalikeNudgeServiceTests : IDisposable
         var list = await SeedList();
         var now = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
 
-        var nudge = Assert.Single(await _service.GetActiveAsync(list, now));
+        var nudge = Assert.Single((await _service.GetActiveAsync(list, now)).Pairs);
 
         Assert.Equal(NudgeMood.Fresh, nudge.Mood); // just spotted
         Assert.Equal(list[0].Id, nudge.Pair.LowerId);
@@ -63,7 +63,7 @@ public class LookalikeNudgeServiceTests : IDisposable
         await _service.GetActiveAsync(list, first); // FirstSeenAt = Sep 1
 
         // Eight days later he's Nagging — and re-seeing the pair must NOT reset the clock to "now".
-        var nudge = Assert.Single(await _service.GetActiveAsync(list, first.AddDays(8)));
+        var nudge = Assert.Single((await _service.GetActiveAsync(list, first.AddDays(8))).Pairs);
         Assert.Equal(NudgeMood.Nagging, nudge.Mood);
 
         await using var db = _db.CreateDbContext();
@@ -80,7 +80,7 @@ public class LookalikeNudgeServiceTests : IDisposable
 
         await _service.DismissAsync(list[0].Id, list[1].Id, now);
 
-        Assert.Empty(await _service.GetActiveAsync(list, now.AddDays(1)));
+        Assert.Empty((await _service.GetActiveAsync(list, now.AddDays(1))).Pairs);
     }
 
     [Fact]
@@ -111,7 +111,7 @@ public class LookalikeNudgeServiceTests : IDisposable
         var row = Assert.Single(await db.LookalikePairs.ToListAsync());
         Assert.Equal(now, row.DismissedAt);
         Assert.Equal(now, row.FirstSeenAt);
-        Assert.Empty(await _service.GetActiveAsync(list, now.AddDays(1))); // and stays silent
+        Assert.Empty((await _service.GetActiveAsync(list, now.AddDays(1))).Pairs); // and stays silent
     }
 
     [Fact]
@@ -121,12 +121,12 @@ public class LookalikeNudgeServiceTests : IDisposable
         var seen = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
         await _service.GetActiveAsync(list, seen);                 // FirstSeenAt = Sep 1
         await _service.DismissAsync(list[0].Id, list[1].Id, seen.AddDays(2));
-        Assert.Empty(await _service.GetActiveAsync(list, seen.AddDays(3))); // muted
+        Assert.Empty((await _service.GetActiveAsync(list, seen.AddDays(3))).Pairs); // muted
 
         await _service.UndismissAsync(list[0].Id, list[1].Id);
 
         // Nudges again, and the mood picks up from the ORIGINAL Sep 1 (ten days on → Nagging), not the undo.
-        var nudge = Assert.Single(await _service.GetActiveAsync(list, seen.AddDays(10)));
+        var nudge = Assert.Single((await _service.GetActiveAsync(list, seen.AddDays(10))).Pairs);
         Assert.Equal(NudgeMood.Nagging, nudge.Mood);
     }
 
@@ -180,7 +180,125 @@ public class LookalikeNudgeServiceTests : IDisposable
         await using var db = _db.CreateDbContext();
         var list = await db.Products.AsNoTracking().ToListAsync();
 
-        Assert.Empty(await _service.GetActiveAsync(list, DateTimeOffset.Now));
+        Assert.Equal(0, (await _service.GetActiveAsync(list, DateTimeOffset.Now)).Count);
         Assert.Empty(await db.LookalikePairs.ToListAsync()); // nothing to remember ⇒ no write-on-read
+        Assert.Empty(await db.LookalikeClusters.ToListAsync());
+    }
+
+    // ── Clusters: one memory row per head word ──
+
+    /// <summary>Three dog treats, two of them Dentastix twins (a cluster, head "treat") beside the brioche pair, so both kinds of nudge come
+    /// back from one scan. Returned lowest-id first.</summary>
+    private async Task<IReadOnlyList<Product>> SeedListWithCluster()
+    {
+        await using var db = _db.CreateDbContext();
+        db.Products.AddRange(
+            new Product { Name = "Artesano Brioche Bread" },
+            new Product { Name = "Brioche Bread Loaf" },
+            new Product { Name = "Dentastix Large Breed Dog Treats" },
+            new Product { Name = "Dentastix Bacon Large Breed Dog Treats" },
+            new Product { Name = "Chicken Jerky Dog Treats" });
+        await db.SaveChangesAsync();
+        return await db.Products.AsNoTracking().OrderBy(p => p.Id).ToListAsync();
+    }
+
+    [Fact]
+    public async Task Flags_a_cluster_beside_a_pair_and_records_its_first_seen_by_head_word()
+    {
+        var list = await SeedListWithCluster();
+        var now = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var active = await _service.GetActiveAsync(list, now);
+
+        Assert.Single(active.Pairs);
+        var cluster = Assert.Single(active.Clusters);
+        Assert.Equal("treat", cluster.Cluster.Head);
+        Assert.Equal(3, cluster.Cluster.Members.Count);
+        Assert.Equal(NudgeMood.Fresh, cluster.Mood);
+
+        await using var db = _db.CreateDbContext();
+        var row = Assert.Single(await db.LookalikeClusters.ToListAsync());
+        Assert.Equal("treat", row.Head);
+        Assert.Equal(now, row.FirstSeenAt);
+        Assert.Null(row.DismissedAt);
+    }
+
+    [Fact]
+    public async Task A_cluster_s_mood_ages_from_its_first_seen_not_each_visit()
+    {
+        var list = await SeedListWithCluster();
+        var first = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
+        await _service.GetActiveAsync(list, first);
+
+        var cluster = Assert.Single((await _service.GetActiveAsync(list, first.AddDays(8))).Clusters);
+
+        Assert.Equal(NudgeMood.Nagging, cluster.Mood);
+        await using var db = _db.CreateDbContext();
+        Assert.Single(await db.LookalikeClusters.ToListAsync()); // re-seen, not re-inserted
+    }
+
+    [Fact]
+    public async Task Dismissing_a_cluster_silences_it_and_undismissing_resumes_from_the_original_first_seen()
+    {
+        var list = await SeedListWithCluster();
+        var seen = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
+        await _service.GetActiveAsync(list, seen);
+
+        await _service.DismissClusterAsync("treat", seen.AddDays(2));
+        var muted = await _service.GetActiveAsync(list, seen.AddDays(3));
+        Assert.Empty(muted.Clusters);
+        Assert.Single(muted.Pairs); // the pair is untouched by a cluster dismissal
+
+        await _service.UndismissClusterAsync("treat");
+
+        var cluster = Assert.Single((await _service.GetActiveAsync(list, seen.AddDays(10))).Clusters);
+        Assert.Equal(NudgeMood.Nagging, cluster.Mood); // ten days from Sep 1, not from the undo
+    }
+
+    [Fact]
+    public async Task Dismissing_a_cluster_that_was_never_recorded_records_it_already_dismissed()
+    {
+        var list = await SeedListWithCluster();
+        var now = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
+
+        await _service.DismissClusterAsync("treat", now);
+
+        await using var db = _db.CreateDbContext();
+        var row = Assert.Single(await db.LookalikeClusters.ToListAsync());
+        Assert.Equal(now, row.DismissedAt);
+        Assert.Empty((await _service.GetActiveAsync(list, now.AddDays(1))).Clusters);
+    }
+
+    [Fact]
+    public async Task DismissedClusterForProductAsync_names_the_other_members_from_a_member_s_page()
+    {
+        var list = await SeedListWithCluster();
+        var now = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
+        await _service.DismissClusterAsync("treat", now);
+        var dentastix = list.Single(p => p.Name == "Dentastix Large Breed Dog Treats");
+
+        var dismissed = await _service.DismissedClusterForProductAsync(dentastix.Id);
+
+        Assert.NotNull(dismissed);
+        Assert.Equal("treat", dismissed.Head);
+        Assert.Equal(["Chicken Jerky Dog Treats", "Dentastix Bacon Large Breed Dog Treats"], dismissed.Others.Select(m => m.Name)); // by name, without itself
+        // A product outside the cluster (the bread) has no dismissed cluster to show.
+        Assert.Null(await _service.DismissedClusterForProductAsync(list[0].Id));
+    }
+
+    [Fact]
+    public async Task A_cluster_dismissal_drops_off_the_detail_page_once_the_cluster_is_gone()
+    {
+        var list = await SeedListWithCluster();
+        await _service.DismissClusterAsync("treat", DateTimeOffset.Now);
+        var dentastix = list.Single(p => p.Name == "Dentastix Large Breed Dog Treats");
+        await using (var db = _db.CreateDbContext())
+        {
+            // Two of the treats merged away: fewer than ClusterSize remain, so there is no cluster to un-dismiss into.
+            await db.Products.Where(p => p.Name == "Dentastix Bacon Large Breed Dog Treats").ExecuteDeleteAsync();
+            await db.Products.Where(p => p.Name == "Chicken Jerky Dog Treats").ExecuteDeleteAsync();
+        }
+
+        Assert.Null(await _service.DismissedClusterForProductAsync(dentastix.Id));
     }
 }

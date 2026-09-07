@@ -33,4 +33,19 @@ public class NudgeMoodTests
         // Defensive default: a mood value outside the enum (a future addition not yet wired) degrades to a
         // friendly line rather than a blank — never a crash on the grocery list.
         Assert.False(string.IsNullOrEmpty(NudgeMoods.Line((NudgeMood)999)));
+
+    [Fact]
+    public void Every_mood_has_a_distinct_non_empty_cluster_line_that_never_talks_about_a_pair()
+    {
+        // A cluster card names three or more products, so its line must not say "these two" / "twins".
+        var lines = Enum.GetValues<NudgeMood>().Select(NudgeMoods.ClusterLine).ToList();
+        Assert.All(lines, l => Assert.False(string.IsNullOrWhiteSpace(l)));
+        Assert.Equal(lines.Count, lines.Distinct().Count());
+        Assert.All(lines, l => Assert.DoesNotContain("two", l));
+        Assert.All(lines, l => Assert.DoesNotContain("twin", l));
+    }
+
+    [Fact]
+    public void An_unknown_mood_still_gets_a_real_cluster_line_never_an_empty_string() =>
+        Assert.False(string.IsNullOrEmpty(NudgeMoods.ClusterLine((NudgeMood)999)));
 }

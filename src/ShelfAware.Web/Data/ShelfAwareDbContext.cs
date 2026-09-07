@@ -35,6 +35,7 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
     public DbSet<MealPlan> MealPlans => Set<MealPlan>();
     public DbSet<PlannedMeal> PlannedMeals => Set<PlannedMeal>();
     public DbSet<LookalikePair> LookalikePairs => Set<LookalikePair>();
+    public DbSet<LookalikeCluster> LookalikeClusters => Set<LookalikeCluster>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -73,6 +74,7 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
         ApplyHousehold<MealPlan>(modelBuilder);
         ApplyHousehold<PlannedMeal>(modelBuilder);
         ApplyHousehold<LookalikePair>(modelBuilder);
+        ApplyHousehold<LookalikeCluster>(modelBuilder);
 
         // One usage row per household per day (the upsert's race-safety anchor).
         modelBuilder.Entity<AiUsage>()
@@ -96,6 +98,12 @@ public class ShelfAwareDbContext(DbContextOptions<ShelfAwareDbContext> options) 
         // finds and reuses its row instead of duplicating it.
         modelBuilder.Entity<LookalikePair>()
             .HasIndex(p => new { p.HouseholdId, p.LowerProductId, p.HigherProductId })
+            .IsUnique();
+
+        // One row per lookalike cluster per household, keyed on the head word the detector reports, so
+        // re-flagging a cluster finds and reuses its row instead of duplicating it.
+        modelBuilder.Entity<LookalikeCluster>()
+            .HasIndex(c => new { c.HouseholdId, c.Head })
             .IsUnique();
 
         modelBuilder.Entity<PurchaseEvent>()

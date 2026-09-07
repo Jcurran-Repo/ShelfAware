@@ -34,19 +34,55 @@ public class SimilarPairsTests
     }
 
     [Fact]
-    public void Inside_a_cluster_a_pair_still_surfaces_when_it_shares_a_strict_majority()
+    public void Inside_a_cluster_even_a_twin_pair_folds_into_the_cluster_card()
     {
-        // Five dog treats make "treats" a category head, yet the two Dentastix share 5 of 5 core words —
-        // two names for one product, cluster or not.
+        // Five dog treats make "treats" a cluster. The two Dentastix share 5 of 5 core words, but a cluster
+        // gets exactly ONE card (Jordan's call): they're on the dog-treats card, not on a card of their own.
         IReadOnlyList<Product> onList =
         [
             P(1, "Dentastix Bacon Flavor Large Breed Dog Treats"), P(2, "Dentastix Large Breed Dog Treats"),
             P(3, "Chicken Jerky Dog Treats"), P(4, "Rawhide Sticks Dog Treats"), P(5, "Duck Wrapped Cod Dog Treats"),
         ];
 
-        var pair = Assert.Single(SimilarPairs.Find(onList));
+        var scan = SimilarPairs.Scan(onList);
 
+        Assert.Empty(scan.Pairs);
+        var cluster = Assert.Single(scan.Clusters);
+        Assert.Equal("treat", cluster.Head);
+        Assert.Equal([1, 2, 3, 4, 5], cluster.Members.Select(m => m.Id));
+    }
+
+    [Fact]
+    public void A_pair_outside_a_cluster_is_still_a_pair()
+    {
+        // The brioche twins are two breads among just two breads (no bread cluster), beside a reported
+        // treats cluster — the cluster fold only removes pairs whose BOTH members share the cluster's head.
+        IReadOnlyList<Product> onList =
+        [
+            P(1, "Artesano Brioche Bakery Bread"), P(2, "Brioche Style Bread Loaf"),
+            P(3, "Dentastix Large Breed Dog Treats"), P(4, "Dentastix Bacon Large Breed Dog Treats"), P(5, "Duck Wrapped Cod Dog Treats"),
+        ];
+
+        var scan = SimilarPairs.Scan(onList);
+
+        var pair = Assert.Single(scan.Pairs);
         Assert.Equal((1, 2), (pair.LowerId, pair.HigherId));
+        Assert.Equal("treat", Assert.Single(scan.Clusters).Head);
+    }
+
+    [Fact]
+    public void A_cluster_is_reported_only_when_two_members_are_two_names_for_one_product()
+    {
+        // Three sauces, two of them the punctuation twins "Home Canned" / "Home-Canned" (equal core sets) —
+        // a reported cluster. Three steak cuts sharing nothing but "steak" — a silent category: no cluster,
+        // and (the gate the cluster always applied) no pairs between them either.
+        IReadOnlyList<Product> sauces = [P(1, "Home Canned Tomato Sauce"), P(2, "Home-Canned Tomato Sauce"), P(3, "Sriracha Sauce")];
+        IReadOnlyList<Product> steaks = [P(1, "Chuck Eye Steak"), P(2, "Coulotte Steak"), P(3, "NY Strip Steak")];
+
+        Assert.Equal("sauce", Assert.Single(SimilarPairs.Scan(sauces).Clusters).Head);
+        var silent = SimilarPairs.Scan(steaks);
+        Assert.Empty(silent.Clusters);
+        Assert.Empty(silent.Pairs);
     }
 
     // ── Shape 2: two variants of one thing (exactly half the words, the SAME head) ──
@@ -103,13 +139,56 @@ public class SimilarPairsTests
     }
 
     [Fact]
-    public void Does_not_flag_variants_inside_a_cluster()
+    public void Three_variants_sharing_only_a_head_are_a_silent_category()
     {
-        // "yogurt" heads three products — a category, not a "these two specifically" signal. Per-pair would be
-        // three nudges about one shelf.
-        IReadOnlyList<Product> onList = [P(1, "Greek Yogurt"), P(2, "Vanilla Yogurt"), P(3, "Strawberry Yogurt")];
+        // "yogurt" heads three products, each pair exactly half — a category, not a "these two specifically"
+        // signal. Per-pair would be three nudges about one shelf, and with no near-twin among them there is
+        // no cluster card either: nothing.
+        IReadOnlyList<Product> onList = [P(1, "Greek Yogurt"), P(2, "Vanilla Yogurt"), P(3, "Strawberry Yogurts")];
 
-        Assert.Empty(SimilarPairs.Find(onList));
+        var scan = SimilarPairs.Scan(onList);
+
+        Assert.Empty(scan.Pairs);
+        Assert.Empty(scan.Clusters);
+    }
+
+    [Fact]
+    public void A_reported_cluster_lists_its_members_in_scan_order_under_the_folded_head()
+    {
+        IReadOnlyList<Product> onList =
+            [P(1, "Dentastix Large Breed Dog Treats"), P(2, "Chicken Jerky Dog Treat"), P(3, "Dentastix Bacon Large Breed Dog Treats")];
+
+        var cluster = Assert.Single(SimilarPairs.Scan(onList).Clusters);
+
+        Assert.Equal("treat", cluster.Head);
+        Assert.Equal([1, 2, 3], cluster.Members.Select(m => m.Id));
+    }
+
+    [Fact]
+    public void Two_products_sharing_a_head_are_not_a_cluster()
+    {
+        // Below ClusterSize there is no cluster — the two are a variant PAIR (the test right below).
+        IReadOnlyList<Product> onList = [P(1, "Greek Yogurt"), P(2, "Vanilla Yogurt"), P(3, "Whole Milk")];
+
+        Assert.Empty(SimilarPairs.Scan(onList).Clusters);
+    }
+
+    [Fact]
+    public void Find_is_the_scan_s_pairs()
+    {
+        IReadOnlyList<Product> onList = [P(1, "Greek Yogurt"), P(2, "Vanilla Yogurt"), P(3, "Whole Milk")];
+
+        Assert.Equal(SimilarPairs.Scan(onList).Pairs, SimilarPairs.Find(onList));
+    }
+
+    [Fact]
+    public void HeadOf_is_the_last_core_word_singular_with_filler_shed()
+    {
+        Assert.Equal("bread", SimilarPairs.HeadOf("Artesano Brioche Bakery Bread"));
+        Assert.Equal("treat", SimilarPairs.HeadOf("Dentastix Large Breed Dog Treats"));
+        Assert.Equal("yogurt", SimilarPairs.HeadOf("Greek Yogurt Style")); // "style" is filler, not a head
+        Assert.Null(SimilarPairs.HeadOf("Style Brand"));                    // nothing but filler
+        Assert.Null(SimilarPairs.HeadOf(null));
     }
 
     [Fact]
@@ -143,26 +222,37 @@ public class SimilarPairsTests
     }
 
     [Fact]
-    public void A_one_word_name_inside_a_cluster_is_gated_like_any_variant()
+    public void A_one_word_name_inside_a_cluster_is_silenced_with_it_and_is_no_twin_evidence()
     {
         // Four milks: "Milk" would otherwise pair with each of the other three — the per-pair spam the cluster
-        // gate exists to stop, arriving through a one-word name.
+        // exists to stop, arriving through a one-word name. And a one-word name is contained in everything, so
+        // it can't be the near-twin that earns the group a card: nothing.
         IReadOnlyList<Product> onList = [P(1, "Milk"), P(2, "Whole Milk"), P(3, "Oat Milk"), P(4, "Almond Milk")];
+        // …whichever side of a comparison the one-word name falls on (it's the LAST member here).
+        IReadOnlyList<Product> reversed = [P(1, "Whole Milk"), P(2, "Oat Milk"), P(3, "Almond Milk"), P(4, "Milk")];
 
-        Assert.Empty(SimilarPairs.Find(onList));
+        foreach (var list in new[] { onList, reversed })
+        {
+            var scan = SimilarPairs.Scan(list);
+
+            Assert.Empty(scan.Pairs);
+            Assert.Empty(scan.Clusters);
+        }
     }
 
     [Fact]
-    public void Twins_whose_core_words_are_identical_survive_a_cluster_even_when_one_is_a_single_word()
+    public void Twins_whose_core_words_are_identical_earn_their_cluster_a_card_even_when_one_word()
     {
-        // "Salted Butter" and "Unsalted Butter" are both the one word {butter} — the strongest evidence there
-        // is. The one-word rule must not hand them to the cluster gate, or a "Peanut Butter" on the list
-        // (three butters) makes Jordan's own variant case vanish. Peanut Butter is NOT paired with either.
+        // "Salted Butter" and "Unsalted Butter" are both the one word {butter} — equal sets, the strongest
+        // evidence there is, and Jordan's own variant case. With a "Peanut Butter" on the list that's three
+        // butters: one cluster card naming all three, not a twin card plus a cluster card about the same shelf.
+        // Without the third, the two are an ordinary variant pair (the butter test above).
         IReadOnlyList<Product> onList = [P(1, "Salted Butter"), P(2, "Unsalted Butter"), P(3, "Peanut Butter")];
 
-        var pair = Assert.Single(SimilarPairs.Find(onList));
+        var scan = SimilarPairs.Scan(onList);
 
-        Assert.Equal((1, 2), (pair.LowerId, pair.HigherId));
+        Assert.Empty(scan.Pairs);
+        Assert.Equal([1, 2, 3], Assert.Single(scan.Clusters).Members.Select(m => m.Id));
     }
 
     // ── General ──
@@ -170,17 +260,24 @@ public class SimilarPairsTests
     [Fact]
     public void Caps_the_pairs_it_returns_so_a_pathological_catalog_cannot_explode()
     {
-        // Twelve products whose core words are all {whole, milk} (digits are dropped) pair with each other in
-        // every combination — C(12,2) = 66 — and every new pair becomes a memory row on the list load. The
-        // ceiling holds it to MaxPairs, in scan order, so the same pairs make the cut on every visit.
-        IReadOnlyList<Product> onList = [.. Enumerable.Range(1, 12).Select(i => P(i, $"Whole Milk {i}"))];
+        // Eleven "Whole Milk Jug N" (head jug) and eleven "Jug Whole Milk N" (head milk): same core words
+        // (digits are dropped), so every CROSS pair is two names for one product — 121 of them — while each
+        // group is a cluster of eleven whose inner pairs fold away. Every new pair becomes a memory row on the
+        // list load; the ceiling holds it to MaxPairs, in scan order, so the same pairs make the cut on every
+        // visit.
+        IReadOnlyList<Product> onList =
+        [
+            .. Enumerable.Range(1, 11).Select(i => P(i, $"Whole Milk Jug {i}")),
+            .. Enumerable.Range(12, 11).Select(i => P(i, $"Jug Whole Milk {i}")),
+        ];
 
-        var first = SimilarPairs.Find(onList);
-        var again = SimilarPairs.Find(onList);
+        var first = SimilarPairs.Scan(onList);
+        var again = SimilarPairs.Scan(onList);
 
-        Assert.Equal(SimilarPairs.MaxPairs, first.Count);
-        Assert.Equal(first, again);
-        Assert.Equal((1, 2), (first[0].LowerId, first[0].HigherId));
+        Assert.Equal(SimilarPairs.MaxPairs, first.Pairs.Count);
+        Assert.Equal(first.Pairs, again.Pairs);
+        Assert.Equal((1, 12), (first.Pairs[0].LowerId, first.Pairs[0].HigherId));
+        Assert.Equal(2, first.Clusters.Count); // the cap stops the pair scan, never the clusters
     }
 
 

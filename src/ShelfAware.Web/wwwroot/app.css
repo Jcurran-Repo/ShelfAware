@@ -1491,6 +1491,8 @@ button.mic-speaking {
 .nudge-body { flex: 1 1 auto; min-width: 0; }
 .nudge-line { margin: 0 0 0.15rem; font-weight: 600; }
 .nudge-pair { margin: 0 0 0.6rem; }
+/* A cluster card's member list: a compact inline run of product links, not a bulleted shelf. */
+.nudge-members { list-style: none; margin: 0 0 0.6rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; }
 .nudge-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .nudge-done { display: flex; align-items: center; gap: 0.75rem; justify-content: space-between; }
 

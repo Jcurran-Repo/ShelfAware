@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using ShelfAware.Core.Domain;
+using ShelfAware.Core.Shopping;
 using ShelfAware.Web.Components.Pages;
 using ShelfAware.Web.Data;
 
@@ -177,7 +178,7 @@ public class LookalikeNudgePageTests : PageTestContext
 
         cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".dismissed-lookalikes")));
         // It's active again — the service now returns it as a nudge.
-        Assert.Single(await Nudges.GetActiveAsync([.. await Load()], now));
+        Assert.Single((await Nudges.GetActiveAsync([.. await Load()], now)).Pairs);
 
         async Task<List<Product>> Load()
         {
@@ -197,5 +198,108 @@ public class LookalikeNudgePageTests : PageTestContext
 
         cut.WaitForState(() => cut.FindAll("h1").Count > 0);
         Assert.Empty(cut.FindAll(".dismissed-lookalikes"));
+    }
+
+    // --------------------------------------------------------------------------- cluster card
+
+    // One tracked, overdue product (so it sits on the visible list). Returns its id.
+    private int SeedProduct(string name)
+    {
+        using var db = Db.CreateDbContext();
+        var p = new Product { Name = name, Category = Category.Pantry, Purchases = Overdue() };
+        db.Products.Add(p);
+        db.SaveChanges();
+        return p.Id;
+    }
+
+    // Three dog treats, two of them Dentastix twins: a cluster (head "treat") that gets exactly ONE card. Returns the ids in name order.
+    private (int Dentastix, int DentastixBacon, int Jerky) SeedTreatCluster() =>
+        (SeedProduct("Dentastix Large Breed Dog Treats"), SeedProduct("Chicken Jerky Dog Treats"), SeedProduct("Dentastix Bacon Large Breed Dog Treats"));
+
+    private async Task<List<Product>> LoadAll()
+    {
+        await using var db = Db.CreateUnscopedContext();
+        return await db.Products.IgnoreQueryFilters().ToListAsync();
+    }
+
+    [Fact]
+    public void A_cluster_gets_one_card_naming_its_members_and_no_pair_cards()
+    {
+        var (dentastix, dentastixBacon, jerky) = SeedTreatCluster();
+
+        var cut = RenderList();
+
+        cut.WaitForAssertion(() =>
+        {
+            var card = Assert.Single(cut.FindAll(".nudge"));                    // ONE card for the whole cluster
+            Assert.Contains("nudge-cluster", card.ClassName);
+            Assert.NotNull(card.QuerySelector(".eggs-mascot"));
+            Assert.Equal(NudgeMoods.ClusterLine(NudgeMood.Fresh), card.QuerySelector(".nudge-line")!.TextContent.Trim()); // a group line, never "these two"
+            Assert.Contains("3", card.QuerySelector(".nudge-pair")!.TextContent);
+            Assert.Contains("treat", card.QuerySelector(".nudge-pair")!.TextContent);
+            foreach (var id in new[] { dentastix, dentastixBacon, jerky })
+                Assert.NotNull(card.QuerySelector($".nudge-members a[href='/product/{id}']")); // names link to the merge panel
+            Assert.Empty(cut.FindAll(".nudge-actions button.secondary"));       // no keep/merge pair buttons
+        });
+    }
+
+    [Fact]
+    public void Dismissing_a_cluster_makes_it_stop_permanently()
+    {
+        SeedTreatCluster();
+        var cut = RenderList();
+        cut.WaitForState(() => cut.FindAll(".nudge-cluster").Count == 1);
+
+        cut.Find(".nudge-cluster .nudge-actions button").Click(); // "They're all different"
+
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".nudge")));
+        // Permanent: a fresh visit shows nothing either.
+        var again = RenderList();
+        again.WaitForState(() => again.FindAll(".extras").Count > 0);
+        Assert.Empty(again.FindAll(".nudge"));
+    }
+
+    [Fact]
+    public async Task A_dismissed_cluster_is_listed_on_a_member_s_page_and_can_be_brought_back()
+    {
+        var (dentastix, _, _) = SeedTreatCluster();
+        var now = new DateTimeOffset(Today.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        await Nudges.GetActiveAsync(await LoadAll(), now);
+        await Nudges.DismissClusterAsync("treat", now);
+
+        var cut = RenderDetail(dentastix);
+
+        cut.WaitForAssertion(() =>
+        {
+            var section = cut.Find(".dismissed-cluster");
+            Assert.Contains("treat", section.TextContent);
+            Assert.Contains("Chicken Jerky Dog Treats", section.TextContent); // the OTHER members, not itself
+            Assert.Contains("Dentastix Bacon Large Breed Dog Treats", section.TextContent);
+            Assert.DoesNotContain("Dentastix Large Breed Dog Treats", section.TextContent);
+        });
+
+        cut.Find(".dismissed-cluster button").Click(); // "Bring the suggestion back"
+
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".dismissed-cluster")));
+        Assert.Single((await Nudges.GetActiveAsync(await LoadAll(), now)).Clusters); // active again
+    }
+
+    [Fact]
+    public void Pair_and_cluster_cards_share_the_three_card_cap()
+    {
+        // Three pairs plus one cluster: four nudges of two kinds, ranked together — three cards, one behind
+        // the overflow note, whichever shape it is.
+        SeedPair("Brioche Bread", "Brioche Bread Loaf");
+        SeedPair("Sourdough Boule", "Fresh Sourdough Boule");
+        SeedPair("Cheddar Cheese", "Sharp Cheddar Cheese");
+        SeedTreatCluster();
+
+        var cut = RenderList();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Equal(3, cut.FindAll(".nudge").Count);
+            Assert.Contains("1 more look-alike", cut.Find(".nudge-overflow").TextContent);
+        });
     }
 }
