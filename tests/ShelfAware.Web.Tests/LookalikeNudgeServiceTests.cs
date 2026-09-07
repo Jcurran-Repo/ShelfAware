@@ -22,14 +22,14 @@ public class LookalikeNudgeServiceTests : IDisposable
 
     public void Dispose() => _db.Dispose();
 
-    /// <summary>Three products, of which two ("Artesano Brioche Bread" / "Brioche Loaf") share the pair-unique
-    /// word "brioche" — one lookalike pair; the milk shares nothing. Returned lowest-id first.</summary>
+    /// <summary>Three products, of which two ("Artesano Brioche Bread" / "Brioche Bread Loaf") share most of
+    /// their words including the head "bread" — one lookalike pair; the milk shares nothing. Returned lowest-id first.</summary>
     private async Task<IReadOnlyList<Product>> SeedList()
     {
         await using var db = _db.CreateDbContext();
         db.Products.AddRange(
             new Product { Name = "Artesano Brioche Bread" },
-            new Product { Name = "Brioche Loaf" },
+            new Product { Name = "Brioche Bread Loaf" },
             new Product { Name = "Whole Milk" });
         await db.SaveChangesAsync();
         return await db.Products.AsNoTracking().OrderBy(p => p.Id).ToListAsync();

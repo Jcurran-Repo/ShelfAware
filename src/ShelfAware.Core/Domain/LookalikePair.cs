@@ -1,7 +1,7 @@
 namespace ShelfAware.Core.Domain;
 
-/// <summary>Eggs's memory of one lookalike PAIR he flagged on the shopping list — two products that share a
-/// food word nothing else does (see <c>SimilarPairs</c>). Household-owned. <see cref="FirstSeenAt"/> is when
+/// <summary>Eggs's memory of one lookalike PAIR he flagged on the shopping list — two products whose names read
+/// as one item (see <c>SimilarPairs</c>). Household-owned. <see cref="FirstSeenAt"/> is when
 /// he first flagged it, which drives how his mood degrades (<c>NudgeMoods</c>); <see cref="DismissedAt"/> is
 /// null until you tell him "they're different", which is PERMANENT (he stops nagging about this pair) yet
 /// reversible from either product's page. The pair is canonical — <see cref="LowerProductId"/> is always the
