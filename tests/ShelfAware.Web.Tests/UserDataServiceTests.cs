@@ -200,6 +200,8 @@ public class UserDataServiceTests : IDisposable
             Kind = ActivityKind.PurchaseAdded, OccurredAt = DateTimeOffset.Now,
             Summary = "Bought 1 × Whole Milk", PayloadJson = "{}", Reversibility = Reversibility.Reversible,
         });
+        db.LookalikePairs.Add(new LookalikePair { LowerProductId = 1, HigherProductId = 2, FirstSeenAt = DateTimeOffset.Now });
+        db.LookalikeClusters.Add(new LookalikeCluster { Head = "yogurt", FirstSeenAt = DateTimeOffset.Now });
         await db.SaveChangesAsync();
     }
 
@@ -226,6 +228,8 @@ public class UserDataServiceTests : IDisposable
         Assert.Equal(0, await db.GroceryExtras.CountAsync());
         Assert.Equal(0, await db.BugReports.CountAsync());
         Assert.Equal(0, await db.ActivityEntries.CountAsync());
+        Assert.Equal(0, await db.LookalikePairs.CountAsync());
+        Assert.Equal(0, await db.LookalikeClusters.CountAsync());
     }
 
     [Fact]
@@ -345,6 +349,8 @@ public class UserDataServiceTests : IDisposable
         Assert.Single(export.BugReports);
         Assert.Equal("The chart looked off", export.BugReports[0].Body);
         Assert.Single(export.ActivityEntries);
+        Assert.Single(export.LookalikePairs);
+        Assert.Equal("yogurt", Assert.Single(export.LookalikeClusters).Head);
     }
 
     [Fact]

@@ -36,20 +36,49 @@
 @* Eggs flags two products on the list that look like the same thing and gently offers to merge them.
    The ask stays gentle the whole way; only his face + one line degrade the longer a pair lingers. Only a
    few show at once (most-bothered first) so a catalog full of near-twins can't bury the actual list. *@
-@foreach (var n in VisibleNudges)
+@foreach (var card in VisibleNudges)
 {
-    <section class="panel nudge nudge-@n.Mood.ToString().ToLowerInvariant()">
-        <EggsMascot Mood="n.Mood" Size="72" />
-        <div class="nudge-body">
-            <p class="nudge-line">@NudgeMoods.Line(n.Mood)</p>
-            <p class="nudge-pair"><strong>@n.Pair.LowerName</strong> and <strong>@n.Pair.HigherName</strong> look like the same thing — want to roll them into one? Keep:</p>
-            <div class="nudge-actions">
-                <button class="secondary" aria-label="Keep @n.Pair.LowerName and merge @n.Pair.HigherName into it" @onclick="() => MergeKeeping(n.Pair.LowerId, n.Pair.LowerName, n.Pair.HigherId, n.Pair.HigherName)" disabled="@nudgeBusy">@n.Pair.LowerName</button>
-                <button class="secondary" aria-label="Keep @n.Pair.HigherName and merge @n.Pair.LowerName into it" @onclick="() => MergeKeeping(n.Pair.HigherId, n.Pair.HigherName, n.Pair.LowerId, n.Pair.LowerName)" disabled="@nudgeBusy">@n.Pair.HigherName</button>
-                <button class="linkish" @onclick="() => DismissNudge(n)" disabled="@nudgeBusy">They're different</button>
+    @if (card.Pair is { } n)
+    {
+        <section class="panel nudge nudge-@n.Mood.ToString().ToLowerInvariant()">
+            <EggsMascot Mood="n.Mood" Size="72" />
+            <div class="nudge-body">
+                <p class="nudge-line">@NudgeMoods.Line(n.Mood)</p>
+                <p class="nudge-pair"><strong>@n.Pair.LowerName</strong> and <strong>@n.Pair.HigherName</strong> look like the same thing — want to roll them into one? Keep:</p>
+                <div class="nudge-actions">
+                    <button class="secondary" aria-label="Keep @n.Pair.LowerName and merge @n.Pair.HigherName into it" @onclick="() => MergeKeeping(n.Pair.LowerId, n.Pair.LowerName, n.Pair.HigherId, n.Pair.HigherName)" disabled="@nudgeBusy">@n.Pair.LowerName</button>
+                    <button class="secondary" aria-label="Keep @n.Pair.HigherName and merge @n.Pair.LowerName into it" @onclick="() => MergeKeeping(n.Pair.HigherId, n.Pair.HigherName, n.Pair.LowerId, n.Pair.LowerName)" disabled="@nudgeBusy">@n.Pair.HigherName</button>
+                    <button class="linkish" @onclick="() => DismissNudge(n)" disabled="@nudgeBusy">They're different</button>
+                </div>
             </div>
-        </div>
-    </section>
+        </section>
+    }
+    else if (card.Cluster is { } k)
+    {
+        @* A CLUSTER — three or more products sharing a head word — gets exactly one card (Jordan's call):
+           a heads-up naming them, never a card per pair. Merging lives on each product's page (undoable), so
+           the names link there; the one dismissal covers the whole cluster. *@
+        <section class="panel nudge nudge-cluster nudge-@k.Mood.ToString().ToLowerInvariant()">
+            <EggsMascot Mood="k.Mood" Size="72" />
+            <div class="nudge-body">
+                <p class="nudge-line">@NudgeMoods.ClusterLine(k.Mood)</p>
+                <p class="nudge-pair">You've got <strong>@k.Cluster.Members.Count</strong> kinds of <strong>@k.Cluster.Head</strong> on the list — same thing under different names? Take a look:</p>
+                <ul class="nudge-members">
+                    @foreach (var m in k.Cluster.Members.Take(MaxClusterNamesShown))
+                    {
+                        <li><a href="/product/@m.Id">@m.Name</a></li>
+                    }
+                    @if (k.Cluster.Members.Count > MaxClusterNamesShown)
+                    {
+                        <li class="muted">…and @(k.Cluster.Members.Count - MaxClusterNamesShown) more</li>
+                    }
+                </ul>
+                <div class="nudge-actions">
+                    <button class="linkish" @onclick="() => DismissCluster(k)" disabled="@nudgeBusy">They're all different</button>
+                </div>
+            </div>
+        </section>
+    }
 }
 @if (HiddenNudgeCount > 0)
 {
@@ -149,16 +178,23 @@ else
     private List<GroceryExtra> extras = [];
     private string newExtra = "";
 
-    private List<LookalikeNudge> nudges = [];
+    private ActiveNudges nudges = ActiveNudges.None;
     private (int EntryId, string Message)? mergedNotice;
     private string? nudgeError;
     private bool nudgeBusy;
 
-    // Only a few nudges show at once so a catalog dense with near-twins can't bury the list. Most-bothered
-    // first (Frazzled → Fresh), so the pairs Eggs has stared at longest surface before the fresh ones.
+    // One card, of either kind. Pair and cluster nudges are ranked TOGETHER — most-bothered first
+    // (Frazzled → Fresh), then by name — under one cap, so a catalog dense with near-twins can't bury the
+    // list whichever shape they take.
+    private readonly record struct NudgeCard(NudgeMood Mood, string Name, LookalikeNudge? Pair, ClusterNudge? Cluster);
+
     private const int MaxNudgesShown = 3;
-    private IEnumerable<LookalikeNudge> VisibleNudges =>
-        nudges.OrderByDescending(n => n.Mood).ThenBy(n => n.Pair.LowerName).Take(MaxNudgesShown);
+    // A cluster card names its members; past this many it says "…and N more" rather than listing a shelf.
+    private const int MaxClusterNamesShown = 8;
+    private IEnumerable<NudgeCard> VisibleNudges =>
+        nudges.Pairs.Select(n => new NudgeCard(n.Mood, n.Pair.LowerName, n, null))
+            .Concat(nudges.Clusters.Select(k => new NudgeCard(k.Mood, k.Cluster.Head, null, k)))
+            .OrderByDescending(c => c.Mood).ThenBy(c => c.Name).Take(MaxNudgesShown);
     private int HiddenNudgeCount => Math.Max(0, nudges.Count - MaxNudgesShown);
 
     protected override Task OnInitializedAsync() => LoadAsync();
@@ -233,13 +269,13 @@ else
         // rather than taking the primary list — the reason this page exists — down with it.
         try
         {
-            nudges = [.. await Nudges.GetActiveAsync(products, DateTimeOffset.Now)];
+            nudges = await Nudges.GetActiveAsync(products, DateTimeOffset.Now);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Loading the lookalike nudges failed; showing the list without them.");
-            nudges = [];
+            nudges = ActiveNudges.None;
         }
 
         loaded = true;
@@ -288,6 +324,28 @@ else
         catch (Exception ex)
         {
             Logger.LogError(ex, "Dismissing a lookalike nudge failed.");
+            nudgeError = "Couldn't dismiss just now — please try again.";
+        }
+        finally { nudgeBusy = false; }
+    }
+
+    // "They're all different" — a permanent dismissal of the whole cluster, keyed on its head word, that Eggs
+    // remembers (and surfaces on each member's page, where it can be undone).
+    private async Task DismissCluster(ClusterNudge k)
+    {
+        if (nudgeBusy) return;
+        nudgeBusy = true;
+        nudgeError = null;
+        mergedNotice = null; // a new action supersedes an earlier merge's inline notice (the dashboard pattern)
+        try
+        {
+            await Nudges.DismissClusterAsync(k.Cluster.Head, DateTimeOffset.Now);
+            await LoadAsync();
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Dismissing a lookalike cluster nudge failed.");
             nudgeError = "Couldn't dismiss just now — please try again.";
         }
         finally { nudgeBusy = false; }

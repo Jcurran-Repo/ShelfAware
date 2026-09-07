@@ -138,11 +138,33 @@ else
                     </li>
                 }
             </ul>
-            @if (dismissError is not null)
-            {
-                <p class="error" role="alert">@dismissError</p>
-            }
         </section>
+    }
+    @* The lookalike CLUSTER you told Eggs to leave alone — one row for the whole group ("the yogurts"),
+       naming the other members on the list now; bringing it back re-nudges the cluster on the grocery list. *@
+    @if (dismissedCluster is { } dc)
+    {
+        <section class="panel dismissed-lookalikes dismissed-cluster">
+            <p class="muted">
+                You told Eggs the <strong>@dc.Head</strong> items on the list are all different
+                @if (dc.Others.Count > 0)
+                {
+                    <text> — </text>@for (var i = 0; i < dc.Others.Count; i++)
+                    {
+                        if (i > 0) { <text>, </text> }
+                        <a href="/product/@dc.Others[i].Id">@dc.Others[i].Name</a>
+                    }
+                }
+                <text>.</text>
+                <button type="button" class="linkish" @onclick="UndismissCluster" disabled="@dismissBusy">Bring the suggestion back</button>
+            </p>
+        </section>
+    }
+    @* ONE error slot for both dismissal panels, so a failed bring-back reports once, right below whichever
+       panels are showing, rather than inside one panel about the other's button. *@
+    @if (dismissError is not null && (dismissedPairs.Count > 0 || dismissedCluster is not null))
+    {
+        <p class="error dismissed-lookalikes-error" role="alert">@dismissError</p>
     }
     <p class="muted">@product.Category@(product.DefaultUnit is { } u ? $" · {u}" : "") · <a href="/products">All products</a></p>
     @if (product.Tags.Count > 0)
@@ -825,6 +847,7 @@ else
             varietyBreakdown = [];
             usedInRecipes = [];
             dismissedPairs = [];
+            dismissedCluster = null;
             // The inline merge-undo notice belongs to the target it landed on, so a switch to a DIFFERENT
             // product clears it. A same-product REFRESH (the post-undo reload) skips this branch, so the
             // "✓ undone" confirmation survives the reload that refreshes the reduced history.
@@ -986,6 +1009,7 @@ else
         // nudge service so "which pairs" matches the grocery list, and it drops any whose partner was
         // since merged away. Cleared here too so an earlier panel error can't sit beside current content.
         dismissedPairs = [.. await Nudges.DismissedForProductAsync(Id)];
+        dismissedCluster = await Nudges.DismissedClusterForProductAsync(Id);
         dismissError = null;
     }
 
@@ -1057,6 +1081,9 @@ else
     // Lookalike pairs you dismissed that touch this product — kept so you can change your mind (undo the
     // dismissal and Eggs suggests merging them again on the list).
     private List<DismissedLookalike> dismissedPairs = [];
+    // The lookalike CLUSTER you told Eggs to leave alone that this product belongs to (at most one — a
+    // product has one head word), for the same change-your-mind reason.
+    private DismissedCluster? dismissedCluster;
     private bool dismissBusy;
     private string? dismissError;
 
@@ -1212,6 +1239,29 @@ else
         catch (Exception ex)
         {
             Logger.LogError(ex, "Un-dismissing lookalike pair {A}/{B} failed.", product.Id, d.OtherProductId);
+            dismissError = "Couldn't bring that back just now — please try again.";
+        }
+        finally { dismissBusy = false; }
+    }
+
+    // Bring back a dismissed CLUSTER suggestion: Eggs notices the group again on the grocery list (mood
+    // resuming from the original first-seen), then this page reloads so the row drops off. Idempotent, so a
+    // "try again" after any hiccup is safe — the same shape as the pair version above.
+    private async Task UndismissCluster()
+    {
+        if (product is null || dismissBusy || dismissedCluster is not { } dc) return;
+        dismissBusy = true;
+        dismissError = null;
+        try
+        {
+            await Nudges.UndismissClusterAsync(dc.Head);
+            loadedId = null;
+            await OnParametersSetAsync();
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Un-dismissing the lookalike cluster of product {ProductId} failed.", product.Id);
             dismissError = "Couldn't bring that back just now — please try again.";
         }
         finally { dismissBusy = false; }

@@ -131,6 +131,10 @@ public static class AdditiveSchema
         // 2026-09-05: Eggs's lookalike-pair memory (per-pair first-seen for his mood + a permanent "they're
         // different" dismissal). A brand-new table — invisible to existing rows.
         EnsureTable(db, table: "LookalikePairs");
+
+        // 2026-09-07: Eggs's lookalike-CLUSTER memory (one row per head word: first-seen for his mood + a
+        // permanent "they're all different" dismissal). A brand-new table — invisible to existing rows.
+        EnsureTable(db, table: "LookalikeClusters");
     }
 
     public static void Apply(AuthDbContext db)

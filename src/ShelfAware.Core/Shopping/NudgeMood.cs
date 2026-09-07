@@ -45,4 +45,15 @@ public static class NudgeMoods
         NudgeMood.Frazzled => "I can't look at these two anymore!",
         _ => "Ooh — these two look like the same thing to me.",
     };
+
+    /// <summary>Eggs's line for the mood on a CLUSTER card — the same degrade, worded for a group rather than
+    /// "these two" (a card naming four sauces must not talk about a pair).</summary>
+    public static string ClusterLine(NudgeMood mood) => mood switch
+    {
+        NudgeMood.Fresh => "Ooh — a few of these look like the same thing to me.",
+        NudgeMood.Deflating => "…still seeing a shelf full of doubles over here.",
+        NudgeMood.Nagging => "This bunch is really nagging at me.",
+        NudgeMood.Frazzled => "I can't look at this lot anymore!",
+        _ => "Ooh — a few of these look like the same thing to me.",
+    };
 }

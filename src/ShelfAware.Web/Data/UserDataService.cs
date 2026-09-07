@@ -78,6 +78,7 @@ public sealed class UserDataService(
             MealPlans = await db.MealPlans.AsNoTracking().ToListAsync(ct),
             PlannedMeals = await db.PlannedMeals.AsNoTracking().ToListAsync(ct),
             LookalikePairs = await db.LookalikePairs.AsNoTracking().ToListAsync(ct),
+            LookalikeClusters = await db.LookalikeClusters.AsNoTracking().ToListAsync(ct),
         };
     }
 
@@ -295,6 +296,7 @@ public sealed class UserDataService(
             + await db.MealPlans.CountAsync(ct)
             + await db.PlannedMeals.CountAsync(ct)
             + await db.LookalikePairs.CountAsync(ct)
+            + await db.LookalikeClusters.CountAsync(ct)
             + await db.AppSettings.CountAsync(ct);
     }
 
@@ -333,6 +335,7 @@ public sealed class UserDataService(
         await db.BugReports.ExecuteDeleteAsync(ct); // no FKs — the household's own words, so they go too
         await db.ActivityEntries.ExecuteDeleteAsync(ct); // no FKs (ids ride in PayloadJson) — user content
         await db.LookalikePairs.ExecuteDeleteAsync(ct); // no FKs (product ids are breadcrumbs) — user content
+        await db.LookalikeClusters.ExecuteDeleteAsync(ct); // no FKs (keyed on a word) — user content
 
         // Settings go with everything else, and wholesale rather than by a list of keys. Some of this
         // table is pantry-derived content outright (the last recipe ideas; the self-eval's per-receipt
@@ -462,4 +465,8 @@ public sealed class DataExport
     /// <summary>Eggs's lookalike-pair memory (first-seen + dismissal). User content (it references their
     /// products), so it exports and is wiped by "delete all my data".</summary>
     public IReadOnlyList<LookalikePair> LookalikePairs { get; init; } = [];
+
+    /// <summary>Eggs's lookalike-cluster memory (first-seen + dismissal, per head word). User content (it
+    /// describes their catalog), so it exports and is wiped by "delete all my data".</summary>
+    public IReadOnlyList<LookalikeCluster> LookalikeClusters { get; init; } = [];
 }
