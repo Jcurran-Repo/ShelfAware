@@ -3800,6 +3800,15 @@ and 67; the count is re-read off each item's final run).
        real sizes.
    - **Re-measured after the fix pass:** family box still 9; demo catalog 6 → 5 ("Canned Diced Tomatoes" is
      the one word "tomatoes" once trivial modifiers go, so it no longer pairs with a tomato SAUCE — correct).
+   - ⚠️ **NEXT, decided the same day (Jordan: "clusters should only get one card"): a 3+ same-head cluster
+     gets exactly ONE Eggs card, replacing the pair cards inside it** — today a cluster gets none and a
+     strict-majority pair inside one (the two Dentastix among five dog treats) still gets its own card, which
+     is three dog-treat cards on the family box. Scope settled: one heads-up card per cluster ("you've got 5
+     dog treats — take a look", names linking to their product pages, one dismissal for the cluster), every
+     within-cluster pair folded into it; a NEW (household, head word) memory table through the full tenancy
+     drill (not the per-pair rows — a 40-product "sauce" cluster would be 780 of them); **a follow-up PR
+     after this fix merges**, deliberately not widened into this branch. Design notes in the
+     `lookalike-cluster-card` memory.
    - **3162 green, 0 warnings** (non-incremental Release; Core 1368 · AI 189 · Persistence 1010 · Pages 595;
      read off the final run; +4 over the pre-gate 3158: the cap test + three one-word tests). Diff-scoped
      Stryker **100.00%** over the fix pass too. ⚠️ One UI test failed ONCE while the full suite ran

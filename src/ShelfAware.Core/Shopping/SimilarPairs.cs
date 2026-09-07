@@ -37,10 +37,13 @@ public sealed record SimilarPair(int LowerId, string LowerName, int HigherId, st
 /// "Vanilla Yogurt" is not nudged — per-pair that would be C(n,2) spam. A pair inside a cluster still
 /// surfaces in the first shape ("Dentastix Large Breed Dog Treats" against the other Dentastix, among five dog
 /// treats) — that is two names for one product, cluster or not.</para>
-/// <para>⚠️ Known edge, accepted (Jordan's call): the cluster itself is NOT nudged. The fallback is manual
-/// merge, which is safe now that merge is undoable. This is NOT a to-do. IF the cluster case proves annoying
-/// in real use, the specific fix is a SINGLE gentle cluster heads-up ("you've got 5 yogurts — take a look"),
-/// never per-pair — a separate, additive nudge kind, not a change to this detector.</para>
+/// <para>⚠️ Known edge, and the next change (Jordan's call, 2026-09-06 — "clusters should only get one
+/// card"): the cluster itself is NOT nudged today, and a strict-majority pair INSIDE one still gets its own
+/// pair card. The follow-up gives a cluster exactly ONE gentle heads-up card ("you've got 5 dog treats — take
+/// a look", each name linking to its product page, one dismissal for the whole cluster) and folds every
+/// within-cluster pair — twins included — into it: a separate cluster result from this detector, with its
+/// own (household, head word) memory, never per-pair. Until then the fallback is manual merge, which is safe
+/// now that merge is undoable.</para>
 /// <para>⚠️ A head word is a WORD, not a concept: "Brioche Loaf" and "Brioche Bread" share no head, because
 /// the detector cannot know loaf = bread. Deliberately — a synonym list is exactly the kind of guess that
 /// produced the coincidence pairs above. Still deliberately looser than <see cref="IngredientMatcher"/>'s
