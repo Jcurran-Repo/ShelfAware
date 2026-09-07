@@ -152,6 +152,19 @@ public class SimilarPairsTests
         Assert.Empty(SimilarPairs.Find(onList));
     }
 
+    [Fact]
+    public void Twins_whose_core_words_are_identical_survive_a_cluster_even_when_one_is_a_single_word()
+    {
+        // "Salted Butter" and "Unsalted Butter" are both the one word {butter} — the strongest evidence there
+        // is. The one-word rule must not hand them to the cluster gate, or a "Peanut Butter" on the list
+        // (three butters) makes Jordan's own variant case vanish. Peanut Butter is NOT paired with either.
+        IReadOnlyList<Product> onList = [P(1, "Salted Butter"), P(2, "Unsalted Butter"), P(3, "Peanut Butter")];
+
+        var pair = Assert.Single(SimilarPairs.Find(onList));
+
+        Assert.Equal((1, 2), (pair.LowerId, pair.HigherId));
+    }
+
     // ── General ──
 
     [Fact]

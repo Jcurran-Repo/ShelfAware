@@ -104,7 +104,7 @@ music (jingle · song · lyric video), a self-host pointer, and a pre-launch wis
 page outside the auth wall, on its own AboutLayout; see item 62)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **3158 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **3163 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 60, 61, 62
 and 67; the count is re-read off each item's final run).
@@ -3809,9 +3809,23 @@ and 67; the count is re-read off each item's final run).
      drill (not the per-pair rows — a 40-product "sauce" cluster would be 780 of them); **a follow-up PR
      after this fix merges**, deliberately not widened into this branch. Design notes in the
      `lookalike-cluster-card` memory.
-   - **3162 green, 0 warnings** (non-incremental Release; Core 1368 · AI 189 · Persistence 1010 · Pages 595;
-     read off the final run; +4 over the pre-gate 3158: the cap test + three one-word tests). Diff-scoped
-     Stryker **100.00%** over the fix pass too. ⚠️ One UI test failed ONCE while the full suite ran
+   - ⚠️ **The fix pass's own re-review (item 39) caught the fix's regression: routing EVERY one-word pair to
+     the cluster gate also gated equal-core-set TWINS.** "Salted Butter" / "Unsalted Butter" are both the
+     one word {butter}, so with a "Peanut Butter" on the list (three butters) Jordan's own variant case
+     VANISHED — the `Salted_and_unsalted_butter…` test passed only because its fixture had no third butter.
+     Probed before/after by the reviewer: Eggs / Large Eggs / Chocolate Eggs went 3 pairs → 0 the same way.
+     Equal sets are the strongest two-names-for-one-product evidence there is, so they take the
+     strict-majority shape like any twin (`!a.Tokens.SetEquals(b.Tokens)` on the one-word test); every
+     one-word case from the fix still holds, the "Whole Milk N" flood still caps at 50. Pinned by the
+     peanut-butter triple. Also from that round: the header count had gone stale AGAIN (3158 beside item
+     67's 3162 — item 21's class, fourth occurrence), and the cap's doc overclaimed "stable from one load
+     to the next" (a new product ahead in name order shifts the cut; benign — a hidden pair keeps its row
+     and mood — but the sentence now says so). A dismissed pair keeping its cap slot (>50 pairs, all
+     dismissed rather than merged) is noted and accepted: a catalog that is itself the problem, and the
+     cluster-card follow-up shrinks that population.
+   - **3163 green, 0 warnings** (non-incremental Release; Core 1369 · AI 189 · Persistence 1010 · Pages 595;
+     read off the final run; +5 over the pre-gate 3158: the cap test, three one-word tests, the twin-in-a-
+     cluster test). Diff-scoped Stryker **100.00%** over the fix pass and the refinement. ⚠️ One UI test failed ONCE while the full suite ran
      concurrently with a background Stryker run and passed on every clean re-run — bUnit's waits under CPU
      starvation, not a product change; don't run the two together when the number matters. ⚠️ Also from this
      session: a `perl -0pi` substitution that reported "no match" on a CRLF file had in fact written its

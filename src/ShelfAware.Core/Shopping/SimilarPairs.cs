@@ -63,7 +63,9 @@ public static class SimilarPairs
     /// is C(n,2) pairs — and each new pair is a memory row the nudge service inserts on the list load. Fifty
     /// is far more than the page shows (three, plus an "…and N more" note); the ceiling only bites on a
     /// catalog that is itself the problem, and stops it from taking the process down with it. Scan order is
-    /// the caller's list order, so which pairs make the cut is stable from one load to the next.</summary>
+    /// the caller's list order, so which pairs make the cut is stable while the list doesn't change; a new
+    /// product can shift the cut, which loses nothing — a hidden pair keeps its memory row and first-seen
+    /// date and comes back with its mood intact.</summary>
     public const int MaxPairs = 50;
 
     public static IReadOnlyList<SimilarPair> Find(IReadOnlyList<Product> onList)
@@ -99,7 +101,11 @@ public static class SimilarPairs
 
                 // A one-word name ("Milk", "Grapes") is wholly contained in anything that mentions it, so
                 // its coverage is 1.0 against every such name and says nothing — only a shared head can.
-                var oneWord = a.Tokens.Count == 1 || b.Tokens.Count == 1;
+                // EXCEPT when the two core sets are EQUAL ("Salted Butter" / "Unsalted Butter" are both
+                // {butter}): that is the strongest two-names-for-one-product evidence there is, and it must
+                // survive a cluster like any other twin — with a "Peanut Butter" on the list it would
+                // otherwise vanish.
+                var oneWord = (a.Tokens.Count == 1 || b.Tokens.Count == 1) && !a.Tokens.SetEquals(b.Tokens);
                 if (coverage > MinCoverage && !oneWord)
                 {
                     // Two names for one product: most of the shorter name's words, and among them what the
