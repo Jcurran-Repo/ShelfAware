@@ -138,10 +138,6 @@ else
                     </li>
                 }
             </ul>
-            @if (dismissError is not null)
-            {
-                <p class="error" role="alert">@dismissError</p>
-            }
         </section>
     }
     @* The lookalike CLUSTER you told Eggs to leave alone — one row for the whole group ("the yogurts"),
@@ -162,11 +158,13 @@ else
                 <text>.</text>
                 <button type="button" class="linkish" @onclick="UndismissCluster" disabled="@dismissBusy">Bring the suggestion back</button>
             </p>
-            @if (dismissError is not null && dismissedPairs.Count == 0)
-            {
-                <p class="error" role="alert">@dismissError</p>
-            }
         </section>
+    }
+    @* ONE error slot for both dismissal panels, so a failed bring-back reports once, right below whichever
+       panels are showing, rather than inside one panel about the other's button. *@
+    @if (dismissError is not null && (dismissedPairs.Count > 0 || dismissedCluster is not null))
+    {
+        <p class="error dismissed-lookalikes-error" role="alert">@dismissError</p>
     }
     <p class="muted">@product.Category@(product.DefaultUnit is { } u ? $" · {u}" : "") · <a href="/products">All products</a></p>
     @if (product.Tags.Count > 0)
@@ -1263,7 +1261,7 @@ else
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Un-dismissing lookalike cluster {Head} failed.", dc.Head);
+            Logger.LogError(ex, "Un-dismissing the lookalike cluster of product {ProductId} failed.", product.Id);
             dismissError = "Couldn't bring that back just now — please try again.";
         }
         finally { dismissBusy = false; }

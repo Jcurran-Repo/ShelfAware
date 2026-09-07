@@ -212,8 +212,8 @@ public class LookalikeNudgePageTests : PageTestContext
         return p.Id;
     }
 
-    // Three dog treats, two of them Dentastix twins: a cluster (head "treat") that gets exactly ONE card. Returns the ids in name order.
-    private (int Dentastix, int DentastixBacon, int Jerky) SeedTreatCluster() =>
+    // Three dog treats, two of them Dentastix twins: a cluster (head "treat") that gets exactly ONE card. Returns the ids in seed order.
+    private (int Dentastix, int Jerky, int DentastixBacon) SeedTreatCluster() =>
         (SeedProduct("Dentastix Large Breed Dog Treats"), SeedProduct("Chicken Jerky Dog Treats"), SeedProduct("Dentastix Bacon Large Breed Dog Treats"));
 
     private async Task<List<Product>> LoadAll()
@@ -225,7 +225,7 @@ public class LookalikeNudgePageTests : PageTestContext
     [Fact]
     public void A_cluster_gets_one_card_naming_its_members_and_no_pair_cards()
     {
-        var (dentastix, dentastixBacon, jerky) = SeedTreatCluster();
+        var (dentastix, jerky, dentastixBacon) = SeedTreatCluster();
 
         var cut = RenderList();
 
@@ -285,20 +285,31 @@ public class LookalikeNudgePageTests : PageTestContext
     }
 
     [Fact]
-    public void Pair_and_cluster_cards_share_the_three_card_cap()
+    public async Task Pair_and_cluster_cards_share_the_three_card_cap_ranked_together()
     {
-        // Three pairs plus one cluster: four nudges of two kinds, ranked together — three cards, one behind
-        // the overflow note, whichever shape it is.
+        // Three pairs plus one cluster: four nudges of two kinds, ranked TOGETHER — three cards, one behind
+        // the overflow note, whichever shape it is. The cluster was first seen eight days ago (Nagging) while
+        // the pairs are Fresh, so it must be the FIRST card: a cluster merely appended after the cap, or
+        // left out of the ranking, would fail this.
         SeedPair("Brioche Bread", "Brioche Bread Loaf");
         SeedPair("Sourdough Boule", "Fresh Sourdough Boule");
         SeedPair("Cheddar Cheese", "Sharp Cheddar Cheese");
         SeedTreatCluster();
+        var eightDaysAgo = new DateTimeOffset(Today.AddDays(-8).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        await using (var db = Db.CreateDbContext())
+        {
+            db.LookalikeClusters.Add(new LookalikeCluster { Head = "treat", FirstSeenAt = eightDaysAgo });
+            await db.SaveChangesAsync();
+        }
 
         var cut = RenderList();
 
         cut.WaitForAssertion(() =>
         {
-            Assert.Equal(3, cut.FindAll(".nudge").Count);
+            var cards = cut.FindAll(".nudge");
+            Assert.Equal(3, cards.Count);
+            Assert.Contains("nudge-cluster", cards[0].ClassName);
+            Assert.Contains("nudge-nagging", cards[0].ClassName);
             Assert.Contains("1 more look-alike", cut.Find(".nudge-overflow").TextContent);
         });
     }

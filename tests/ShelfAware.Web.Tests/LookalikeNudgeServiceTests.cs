@@ -301,4 +301,25 @@ public class LookalikeNudgeServiceTests : IDisposable
 
         Assert.Null(await _service.DismissedClusterForProductAsync(dentastix.Id));
     }
+
+    [Fact]
+    public async Task An_untracked_product_whose_head_matches_a_dismissed_cluster_is_not_in_it()
+    {
+        // A fourth treat that is NOT tracked shares the head "treat" but is on no list and in no cluster;
+        // its page must not claim you dismissed a cluster it belongs to.
+        var list = await SeedListWithCluster();
+        await _service.DismissClusterAsync("treat", DateTimeOffset.Now);
+        int untrackedId;
+        await using (var db = _db.CreateDbContext())
+        {
+            var p = new Product { Name = "Bully Stick Dog Treats", IsTracked = false };
+            db.Products.Add(p);
+            await db.SaveChangesAsync();
+            untrackedId = p.Id;
+        }
+
+        Assert.Null(await _service.DismissedClusterForProductAsync(untrackedId));
+        // …while a real member still sees it.
+        Assert.NotNull(await _service.DismissedClusterForProductAsync(list.Single(p => p.Name == "Dentastix Large Breed Dog Treats").Id));
+    }
 }

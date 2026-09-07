@@ -104,7 +104,7 @@ music (jingle · song · lyric video), a self-host pointer, and a pre-launch wis
 page outside the auth wall, on its own AboutLayout; see item 62)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **3183 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **3184 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
 bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 60, 61, 62
 and 67; the count is re-read off each item's final run).
@@ -3845,8 +3845,10 @@ and 67; the count is re-read off each item's final run).
      only when two of its members are two names for one product on their own** (the first pair shape — most
      of the shorter name's words shared, neither a one-word name — OR equal core sets, one-word included, so
      "Salted Butter" / "Unsalted Butter" beside a "Peanut Butter" still earns the butters a card: his variant
-     case). Five flavoured yogurts (each pair exactly half) are a silent category, accepted. Family box: **5
-     pairs + 1 cluster** (the five dog treats; was 9 pairs, four of them dog-treat cross pairs). Demo: 6 pairs
+     case). Five flavoured yogurts (each pair exactly half) are a silent category, accepted. Family box (the
+     8/25 backup snapshot the whole arc was measured on): **5 pairs + 1 cluster** (the five dog treats; was
+     9 pairs, four of them dog-treat cross pairs); the LIVE family DB the same day reads 6 + 1 (a Canola /
+     Olive Oil pair and a sixth treat arrived since). Demo: 6 pairs
      + 1 cluster (the four sauces, holding the "Home Canned" / "Home-Canned" punctuation twins — a fitting
      showcase). ⚠️ An UNREPORTED cluster still gates every pair inside it — that gate is what stopped the
      per-pair spam in the first place; the twin bar only decides whether the group gets its ONE card.
@@ -3885,14 +3887,29 @@ and 67; the count is re-read off each item's final run).
      different — Marinara Sauce, Sriracha Hot Sauce, Sriracha Sauce" with the bring-back, which re-nudged the
      cluster on the list. Every step reversed afterwards (three pairs brought back, the test product deleted)
      and the sandbox re-measured identical to its start. Zero server or console errors.
-   - **Tests:** Core 29 (`SimilarPairsTests`, up from 22 — the twin bar, the silent category, the fold, the
+   - **Tests:** `SimilarPairsTests` 28 (up from 22 — the twin bar, the silent category, the fold, the
      straddle, `HeadOf`, `Find == Scan.Pairs`, cap-never-stops-clusters) + the cluster lines + the entity
-     default, service 17 (+6 cluster), pages 11 (+4: one card no pair buttons, permanent dismiss, member's
-     page bring-back, the shared cap), plus the schema-parity / isolation / export / delete pins.
+     default, service 16 (up from 9: +6 cluster, +1 the untracked-member guard), pages 11 (+4: one card no
+     pair buttons, permanent dismiss, member's page bring-back, the shared cap ranked together), plus the
+     schema-parity / isolation / export / delete pins.
+   - **The gate (two independent SHA-reading agents): security PASS WITH NOTES, code SHIP WITH FIXES — six
+     small things, all fixed the same session:** the doc counts above were WRONG on first writing (29/17
+     were filter-run totals, not the files' — item 21's class, fifth occurrence) and "5 pairs + 1 cluster"
+     stood beside "6 + 1" without saying one was the snapshot and one the live DB; the page-test fixture's
+     tuple labels were swapped by the yogurt→treat regex rename (Jerky/DentastixBacon); the shared-cap test
+     could not see whether clusters were RANKED with pairs (all Fresh, cluster sorts last by name, hidden
+     count read independently — a mutant dropping clusters from `VisibleNudges` passed it), so the cluster
+     is now Nagging and asserted FIRST; `DismissedClusterForProductAsync` showed a cluster on the page of an
+     UNTRACKED product whose head merely matched (membership guard now, pinned); a cluster bring-back error
+     rendered inside the PAIRS panel (one shared error slot under both panels now); and the un-dismiss
+     failure logged the head word where its pair sibling logs ids (log hygiene — user-derived text stays out
+     of the operator error log).
      Diff-scoped Stryker found three survivors on the first run (the twin scan's equivalent loop bound, the
      one-word guard on the SECOND member — no fixture had the one-word name last — and the entity's default
-     head, item 59's class), each fixed; **100.00%** after. **3183 green, 0 warnings** (non-incremental
-     Release; Core 1378 · AI 189 · Persistence 1017 · Pages 599; read off the final run). Live family box
+     head, item 59's class), each fixed; **100.00%** after. **3184 green, 0 warnings** (non-incremental
+     Release; Core 1378 · AI 189 · Persistence 1018 · Pages 599; read off the final run after the gate's
+     fix pass, whose two new pins — the ranking test and the untracked-member guard — were each
+     mutation-checked to a kill). Live family box
      (read-only, 134 tracked, 2026-09-07): **6 pairs + 1 cluster** — down from 36 pairs before item 67.
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval

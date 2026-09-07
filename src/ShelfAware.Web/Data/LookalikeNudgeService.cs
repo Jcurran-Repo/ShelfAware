@@ -200,10 +200,12 @@ public sealed class LookalikeNudgeService(
             .AnyAsync(r => r.Head == head && r.DismissedAt != null, ct);
         if (!dismissed) return null;
 
-        // The cluster as the grocery list would see it right now: the tracked catalog, by name.
+        // The cluster as the grocery list would see it right now: the tracked catalog, by name. The product
+        // must actually be a MEMBER — an untracked product whose head merely matches is on no list and in no
+        // cluster, and its page must not imply otherwise.
         var tracked = await db.Products.AsNoTracking().Where(p => p.IsTracked).OrderBy(p => p.Name).ToListAsync(ct);
         var cluster = SimilarPairs.Scan(tracked).Clusters.FirstOrDefault(c => c.Head == head);
-        if (cluster is null) return null;
+        if (cluster is null || !cluster.Members.Any(m => m.Id == productId)) return null;
 
         return new DismissedCluster(head, [.. cluster.Members.Where(m => m.Id != productId)]);
     }
