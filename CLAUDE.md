@@ -104,9 +104,10 @@ music (jingle · song · lyric video), a self-host pointer, and a pre-launch wis
 page outside the auth wall, on its own AboutLayout; see item 62)**.
 Extensive polish stretch done: design-system + dark mode (CSS vars) + site-wide a11y
 pass; LLM-assisted product matching in extraction; GitHub Actions CI (restore + build
-+ unit tests; Evals excluded — needs a live key). **2641 green xUnit tests across four
++ unit tests; Evals excluded — needs a live key). **3163 green xUnit tests across four
 projects** (pure engine · faked-IChatClient AI layer · persistence on in-memory SQLite ·
-bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 60, 61 and 62).
+bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 60, 61, 62
+and 67; the count is re-read off each item's final run).
 
 **Post-Phase-4 feature arc (all ✅ committed + pushed):**
 1. **Size loop closed in the buying UI** (`cc21250`) — recommended size + usual brand now show
@@ -3703,6 +3704,134 @@ bUnit pages/components — see items 31, 42, 43, 45, 46, 47, 48, 49, 50, 51, 52,
      +46 over master's 3038). ✅ **Pushed + PR #65 open** (2026-09-05); merging is Jordan's call, gated by
      master's required checks (Build & test + Core mutation on changed files). This closes the three-PR "Eggs
      flags two similar products" arc (PR #63 undoable merge · PR #64 descriptor normalizer · PR #65 the nudge).
+     **[The detector's rule was REPLACED the next day — item 67. The memory, mood, merge and dismiss all
+     stand; only `SimilarPairs.Find`'s signal changed.]**
+
+67. **The lookalike detector asks about one THING, not one shared word (2026-09-06, branch
+   `fix/lookalike-containment`; gate pending, UNPUSHED).** Jordan's report from the family box the day after
+   item 66 merged: Eggs was asking whether ~35 pairs were the same item and most weren't. **Measured before
+   touching anything** — the real detector run over a read-only backup snapshot of the family catalog:
+   **36 pairs on 124 tracked products, five real** ("Sliced Plain French Bread / Greek Plain Nonfat Yogurt",
+   "Vanilla Coke / Pure Vanilla Extract", "Rawhide … Cod Skin Stick Dog Treats / Halloween Mini Resin Ducks
+   Figurines"). The probe (a throwaway console over the Core assembly + `Microsoft.Data.Sqlite` on a COPY of
+   the snapshot) was the whole diagnostic and the regression check; do it again for any tuning here.
+   - ⚠️ **Why df == 2 was the wrong signal, not a weak one.** Item 66's rule paired any two products sharing
+     a word NOTHING ELSE on the list had. It was reasoned about as if "the list" were a short shopping list,
+     but the grocery page hands the detector EVERY tracked product, and on a real catalog most words occur
+     once or twice — so a word shared by exactly two products is evidence that the word appears twice, not
+     that the products are one thing. Every bad pair was a single coincidental adjective. It looked right on
+     the demo catalog and in unit fixtures because both were small.
+   - **The rule now: core food words + the HEAD word (the last core word — what the thing IS), in exactly
+     two shapes.** (1) *Two names for one product*: the shared words cover MORE than half of the shorter name
+     (`TokenContainment` > 0.5) and include a head of either — "Artesano Brioche Bakery Bread" / "Brioche
+     Style Bread Loaf". (2) *Two variants of one thing*: exactly half, and the SAME head — "Envy Apples" /
+     "Cosmic Crisp Apples", "Sweet Cream Salted Butter" / "Unsalted Butter" (salted/unsalted are trivial
+     modifiers). **Jordan's call: variants of one item ARE asked about** ("salted and unsalted butter is the
+     same thing, different variants"). NOT a signal: a shared modifier ("Ground Coffee / Ground Beef") and a
+     head that is only a modifier in the other name ("Green Seedless Grapes / Grape Tomatoes"). The ≥3-holders
+     cluster gate moved onto the HEAD and applies to the variant shape (five yogurts: not nudged); a strict-
+     majority pair inside a cluster still surfaces (the two Dentastix among five dog treats).
+   - ⚠️ **The detector sheds `DescriptorFilter` filler ("style") like the product matcher's fuzzy path** —
+     item 65 put that shed in `ProductMatcher.Tokens` only, and without it the REAL brioche pair read as
+     exactly half with differing heads (loaf/bread) and vanished. Found by the probe, not a test.
+   - ⚠️ **What was tried and rejected, with numbers, so it isn't retried:** the product matcher's own fuzzy
+     rule pairwise (3 pairs — misses the brioche pair, Jordan's headline case, because IDF makes the unique
+     words outweigh the shared ones); IDF-weighted containment (3 pairs, but "All Purpose Crushed Tomatoes /
+     All Purpose Cleaner Spray" scored 0.68 — two df-2 modifiers outweigh one unique head, and on a small
+     catalog df-2 barely differs from df-1); shared head WITHOUT the coverage floor (42 pairs). A synonym list
+     (loaf = bread) was deliberately not added — the head is a WORD, and guessing is what produced the
+     coincidence pairs.
+   - **`TokenContainment` (Core/Chat) is THE containment coefficient** — |A∩B| / min(|A|,|B|). It already
+     existed inline in `ExtractionScorer.TokenSimilarity` (the 0.6 name matcher from item 2); the scorer now
+     delegates to it (behaviour-preserving, its tests untouched) and the detector asks it of core-word sets.
+     Each caller keeps its own tokenizer — what a token IS stays the caller's rule; only the arithmetic is
+     shared.
+   - **Re-measured on the same catalogs:** family box **36 → 9** (six clearly real; three same-category
+     near-misses — garlic/onion powder, bay/oregano leaves, chicken dog-treat cross pairs — each one
+     dismiss); the four other households 5/5/3/1 → 3/3/1/1, every absurd pair gone; the demo catalog reads
+     6 (gains "Ground Beef / Quarter Cow Ground Beef", a genuine lookalike; keeps the Drink Mix variety-split
+     showcase; the page's cap of three + "…and 3 more" live-verified on the dev sandbox).
+   - **Fixtures that only paired under the old rule were changed, not the rule:** the invented "Brioche Loaf"
+     (no head shared with "Artesano Brioche Bread") became "Brioche Bread Loaf" in the persistence + page
+     suites; two overflow fixtures sharing only a modifier ("Sourdough Round / Sourdough Boule") became
+     variant-shaped pairs. `SimilarPairsTests` rewritten (17) to pin both shapes and every guard.
+   - ⚠️ **Diff-scoped Stryker (`dotnet stryker --since:master` from `tests/ShelfAware.Tests`, the PR gate's
+     exact command) found a real gap the by-hand pass missed:** 97.97% with three survivors — two equivalent
+     (the outer loop's `<`/`<=`, and the canonical-order `<`/`<=` on distinct ids; annotated in place) and
+     one REAL: with the `< MinCoverage` guard removed, a same-head pair sharing only that head out of three
+     words ("Sliced Plain French Bread / Artesano Brioche Bakery Bread") fell into the variant shape and no
+     test noticed. Pinned; **100.00%** on the re-run. Item 59's rule, proven again.
+   - **The `/pre-push` gate (two independent SHA-reading agents; security PASS WITH NOTES, code SHIP WITH
+     FIXES — every finding fixed the same session, each pinned by a test):**
+     - ⚠️ **[Security, MEDIUM — new to this branch] the strict-majority shape is unbounded.** The old rule
+       emitted at most one pair per word; the new first shape has no cluster gate by design, so a catalog of
+       n near-identical names is C(n,2) pairs AND C(n,2) `LookalikePair` inserts on one grocery-list load.
+       Probe-verified reachable: "Whole Milk 1" … "Whole Milk 9" pass the add form with no prompt (distinct
+       identity keys; the digit is dropped by `CoreTokens`, so all collapse to {whole, milk}); measured 12.5M
+       pairs / 2 s for 5,000 such products in the detector alone, and the tracked-entity insert would OOM the
+       shared process. **`SimilarPairs.MaxPairs` (50) is a hard ceiling in the detector**, scan order (the
+       page's by-name order, so stable across loads); the page shows three plus "…and N more", so nothing
+       visible is lost. Self-inflicted data, process-wide impact — hence fixed. A `LookalikePairs` retention
+       trim is a pre-existing gap, noted, not built.
+     - ⚠️ **[Code, MEDIUM] a ONE-WORD name took the strict-majority shape and bypassed both guards.** "Milk"
+       is wholly contained in anything mentioning milk, so its coverage is 1.0 against every such name: probed,
+       "Grapes / Grape Tomatoes" paired while the documented "Green Seedless Grapes / Grape Tomatoes" didn't,
+       and "Milk" among four milks gave four pairs — the per-pair spam the cluster gate exists to stop. A
+       one-word name is now ALWAYS judged by the variant shape (same head + cluster gate): "Milk / Whole Milk"
+       pairs, "Grapes / Grape Tomatoes" doesn't, "Milk" among four milks is gated. Brand-stripped one-word
+       products (Eggs, Bananas, Butter, Rice) are ordinary in this data model; the 36→9 measurement simply
+       hadn't hit one. **This also puts the salted-butter example in the shape the docs claimed** — "Unsalted
+       Butter" is the one word "butter" — which the reviewer had caught as a doc stating the wrong shape.
+     - [Code, LOW] `Sheds_filler_words_before_comparing` was VACUOUS — its fixture ("Greek Style Yogurt" /
+       "Greek Yogurt") scores 1.0 with or without the shed, so deleting the shed left it green (item 34's
+       class; Stryker can't see a removed `Where`). It now uses the real brioche pair, which the shed decides
+       (2 of 3 shed → pair; 2 of 4 kept, heads differ → none).
+     - [Code, LOW] **a THIRD inline containment copy** survived the "one definition" claim —
+       `AnthropicPantryChat.Containment` (the recipe-name resolver) was the same math byte for byte. It
+       delegates to `TokenContainment.Of` now; the top directive's "every caller in the same change",
+       caught one caller short.
+     - [Code, INFO] both `Stryker disable once Equality` annotations now state the bundled killable residual
+       (`>=`), per `docs/mutation-testing.md`'s convention; a stale "pair-unique word" comment in the page
+       tests fixed. Duplicate ids self-pair (unreachable: the sole caller passes distinct DB rows) — no fix.
+     - Clean, and named: tenancy boundary (Core-only diff; detector output ids ⊆ the household-scoped input;
+       memory rows through `IHouseholdDbFactory` + filter + stamping + `EnforceHousehold` + unique index;
+       export/delete/CountAll unchanged), pair names render encoded, the scorer refactor byte-equivalent over
+       225 probe pairs, every documented example re-probed against the code, performance ~1–3 ms per load at
+       real sizes.
+   - **Re-measured after the fix pass:** family box still 9; demo catalog 6 → 5 ("Canned Diced Tomatoes" is
+     the one word "tomatoes" once trivial modifiers go, so it no longer pairs with a tomato SAUCE — correct).
+   - ⚠️ **NEXT, decided the same day (Jordan: "clusters should only get one card"): a 3+ same-head cluster
+     gets exactly ONE Eggs card, replacing the pair cards inside it** — today a cluster gets none and a
+     strict-majority pair inside one (the two Dentastix among five dog treats) still gets its own card, which
+     is three dog-treat cards on the family box. Scope settled: one heads-up card per cluster ("you've got 5
+     dog treats — take a look", names linking to their product pages, one dismissal for the cluster), every
+     within-cluster pair folded into it; a NEW (household, head word) memory table through the full tenancy
+     drill (not the per-pair rows — a 40-product "sauce" cluster would be 780 of them); **a follow-up PR
+     after this fix merges**, deliberately not widened into this branch. Design notes in the
+     `lookalike-cluster-card` memory.
+   - ⚠️ **The fix pass's own re-review (item 39) caught the fix's regression: routing EVERY one-word pair to
+     the cluster gate also gated equal-core-set TWINS.** "Salted Butter" / "Unsalted Butter" are both the
+     one word {butter}, so with a "Peanut Butter" on the list (three butters) Jordan's own variant case
+     VANISHED — the `Salted_and_unsalted_butter…` test passed only because its fixture had no third butter.
+     Probed before/after by the reviewer: Eggs / Large Eggs / Chocolate Eggs went 3 pairs → 0 the same way.
+     Equal sets are the strongest two-names-for-one-product evidence there is, so they take the
+     strict-majority shape like any twin (`!a.Tokens.SetEquals(b.Tokens)` on the one-word test); every
+     one-word case from the fix still holds, the "Whole Milk N" flood still caps at 50. Pinned by the
+     peanut-butter triple. Also from that round: the header count had gone stale AGAIN (3158 beside item
+     67's 3162 — item 21's class, fourth occurrence), and the cap's doc overclaimed "stable from one load
+     to the next" (a new product ahead in name order shifts the cut; benign — a hidden pair keeps its row
+     and mood — but the sentence now says so). A dismissed pair keeping its cap slot (>50 pairs, all
+     dismissed rather than merged) is noted and accepted: a catalog that is itself the problem, and the
+     cluster-card follow-up shrinks that population.
+   - **3163 green, 0 warnings** (non-incremental Release; Core 1369 · AI 189 · Persistence 1010 · Pages 595;
+     read off the final run; +5 over the pre-gate 3158: the cap test, three one-word tests, the twin-in-a-
+     cluster test). Diff-scoped Stryker **100.00%** over the fix pass and the refinement. ⚠️ One UI test failed ONCE while the full suite ran
+     concurrently with a background Stryker run and passed on every clean re-run — bUnit's waits under CPU
+     starvation, not a product change; don't run the two together when the number matters. ⚠️ Also from this
+     session: a `perl -0pi` substitution that reported "no match" on a CRLF file had in fact written its
+     replacement at the TOP of `AnthropicPantryChat.cs` (14 build errors, caught by the clean build) — on
+     this repo's mixed line endings, use the Edit tool for source edits and `git diff` before trusting a
+     scripted rewrite (the same tripwire as the PS 5.1 encoding gotcha).
 
 Mid-session polish (committed): **safe-side rounding** — predicted run-out interval
 floors (due a touch early), buy-quantity ceils for whole-unit items (no more "1.5"

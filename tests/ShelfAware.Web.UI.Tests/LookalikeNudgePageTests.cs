@@ -20,7 +20,7 @@ public class LookalikeNudgePageTests : PageTestContext
         new() { PurchasedAt = Today.AddDays(-30), Quantity = 1m },
     ];
 
-    // Two tracked products sharing a pair-unique word — one lookalike pair. Overdue so they also sit on the
+    // Two tracked products that read as two names for one bread — one lookalike pair. Overdue so they also sit on the
     // visible list. Returns the ids lowest-first (so the first is the canonical "lower").
     private (int LowerId, int HigherId) SeedPair(string a, string b)
     {
@@ -32,8 +32,8 @@ public class LookalikeNudgePageTests : PageTestContext
         return first.Id < second.Id ? (first.Id, second.Id) : (second.Id, first.Id);
     }
 
-    // Jordan's breads: "Artesano Brioche Bread" (seeded first, so lower id) and "Brioche Loaf" share "brioche".
-    private (int BreadId, int LoafId) SeedLookalikePair() => SeedPair("Artesano Brioche Bread", "Brioche Loaf");
+    // Jordan's breads: "Artesano Brioche Bread" (seeded first, so lower id) and "Brioche Bread Loaf" share brioche + bread.
+    private (int BreadId, int LoafId) SeedLookalikePair() => SeedPair("Artesano Brioche Bread", "Brioche Bread Loaf");
 
     private IRenderedComponent<GroceryList> RenderList()
     {
@@ -58,7 +58,7 @@ public class LookalikeNudgePageTests : PageTestContext
             var nudge = cut.Find(".nudge");
             Assert.NotNull(nudge.QuerySelector(".eggs-mascot"));                 // the real Eggs, not a placeholder
             Assert.Contains("Artesano Brioche Bread", nudge.TextContent);
-            Assert.Contains("Brioche Loaf", nudge.TextContent);
+            Assert.Contains("Brioche Bread Loaf", nudge.TextContent);
             Assert.Contains("roll them into one", nudge.TextContent);            // the ask stays gentle
         });
     }
@@ -77,7 +77,7 @@ public class LookalikeNudgePageTests : PageTestContext
         {
             Assert.Empty(cut.FindAll(".nudge"));                                 // one product left ⇒ no pair
             var done = cut.Find(".nudge-done");
-            Assert.Contains("Merged Brioche Loaf into Artesano Brioche Bread", done.TextContent);
+            Assert.Contains("Merged Brioche Bread Loaf into Artesano Brioche Bread", done.TextContent);
         });
 
         await using (var raw = Db.CreateUnscopedContext())
@@ -91,7 +91,7 @@ public class LookalikeNudgePageTests : PageTestContext
         cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".nudge-done")));
 
         await using var db = Db.CreateUnscopedContext();
-        Assert.NotNull(await db.Products.IgnoreQueryFilters().FirstOrDefaultAsync(p => p.Name == "Brioche Loaf"));
+        Assert.NotNull(await db.Products.IgnoreQueryFilters().FirstOrDefaultAsync(p => p.Name == "Brioche Bread Loaf"));
     }
 
     [Fact]
@@ -99,9 +99,9 @@ public class LookalikeNudgePageTests : PageTestContext
     {
         // Four lookalike pairs (a catalog dense with near-twins). Only three cards show so the actual list
         // isn't buried; the fourth is behind a gentle overflow note.
-        SeedPair("Brioche Bread", "Brioche Loaf");
-        SeedPair("Sourdough Round", "Sourdough Boule");
-        SeedPair("Cheddar Block", "Cheddar Wedge");
+        SeedPair("Brioche Bread", "Brioche Bread Loaf");
+        SeedPair("Sourdough Boule", "Fresh Sourdough Boule");
+        SeedPair("Cheddar Cheese", "Sharp Cheddar Cheese");
         SeedPair("Roma Tomatoes", "Cherry Tomatoes");
 
         var cut = RenderList();
@@ -116,7 +116,7 @@ public class LookalikeNudgePageTests : PageTestContext
     [Fact]
     public void Dismissing_after_a_merge_clears_the_stale_merged_notice()
     {
-        SeedPair("Brioche Bread", "Brioche Loaf");
+        SeedPair("Brioche Bread", "Brioche Bread Loaf");
         SeedPair("Hand Soap", "Dish Soap");
         var cut = RenderList();
         cut.WaitForState(() => cut.FindAll(".nudge").Count == 2);
@@ -170,7 +170,7 @@ public class LookalikeNudgePageTests : PageTestContext
         cut.WaitForAssertion(() =>
         {
             var section = cut.Find(".dismissed-lookalikes");
-            Assert.Contains("Brioche Loaf", section.TextContent);               // names the OTHER product
+            Assert.Contains("Brioche Bread Loaf", section.TextContent);               // names the OTHER product
         });
 
         cut.Find(".dismissed-lookalikes button").Click(); // "Bring the suggestion back"

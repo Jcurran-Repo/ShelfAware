@@ -1,3 +1,4 @@
+using ShelfAware.Core.Chat;
 using ShelfAware.Core.Extraction;
 
 namespace ShelfAware.Core.Evaluation;
@@ -99,14 +100,9 @@ public static class ExtractionScorer
             };
     }
 
-    public static double TokenSimilarity(string a, string b)
-    {
-        var ta = Tokens(a);
-        var tb = Tokens(b);
-        if (ta.Count == 0 || tb.Count == 0) return 0;
-        var inter = ta.Count(tb.Contains);
-        return (double)inter / Math.Min(ta.Count, tb.Count);
-    }
+    /// <summary>Token containment of two names (see <see cref="TokenContainment"/>) over every word,
+    /// plural-folded — 0 when either side has no words.</summary>
+    public static double TokenSimilarity(string a, string b) => TokenContainment.Of(Tokens(a), Tokens(b));
 
     private static HashSet<string> Tokens(string s) =>
         new string(s.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : ' ').ToArray())

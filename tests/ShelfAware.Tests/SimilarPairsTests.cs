@@ -7,49 +7,15 @@ public class SimilarPairsTests
 {
     private static Product P(int id, string name) => new() { Id = id, Name = name };
 
-    [Fact]
-    public void Flags_two_products_that_share_a_pair_unique_food_word()
-    {
-        // Jordan's case: the two breads share only "brioche", which nothing else on the list owns.
-        IReadOnlyList<Product> onList = [P(1, "Artesano Brioche Bread"), P(2, "Brioche Loaf"), P(3, "Whole Milk")];
-
-        var pair = Assert.Single(SimilarPairs.Find(onList));
-
-        Assert.Equal(1, pair.LowerId); // canonical: smaller id first, regardless of scan order
-        Assert.Equal(2, pair.HigherId);
-    }
+    // ── Shape 1: two names for one product (a strict majority of the shorter name, including a head) ──
 
     [Fact]
-    public void Canonicalises_to_the_lower_id_regardless_of_scan_order()
+    public void Flags_two_names_for_one_product_that_share_most_words_and_a_head()
     {
-        // The higher-id product is listed FIRST; the pair must still name the smaller id as LowerId, so the
-        // pair has one identity for the dismissal/mood memory however the list happened to be ordered.
-        IReadOnlyList<Product> onList = [P(5, "Brioche Loaf"), P(2, "Artesano Brioche Bread")];
-
-        var pair = Assert.Single(SimilarPairs.Find(onList));
-
-        Assert.Equal(2, pair.LowerId);
-        Assert.Equal("Artesano Brioche Bread", pair.LowerName);
-        Assert.Equal(5, pair.HigherId);
-        Assert.Equal("Brioche Loaf", pair.HigherName);
-    }
-
-    [Fact]
-    public void Does_not_flag_a_category_head_shared_by_three_or_more()
-    {
-        // "chicken" is in all three (a category head), so it distinguishes nothing and is NOT a signal;
-        // breast/thighs/broth are each unique to one product. No lookalike pair — no spam.
-        IReadOnlyList<Product> onList = [P(1, "Chicken Breast"), P(2, "Chicken Thighs"), P(3, "Chicken Broth")];
-
-        Assert.Empty(SimilarPairs.Find(onList));
-    }
-
-    [Fact]
-    public void Flags_a_pair_that_shares_only_the_singular_of_a_plural_word()
-    {
-        // Their only shared food word differs by number ("Apples" vs "Apple"); the app folds plurals to one
-        // food everywhere, so these still surface (via IngredientMatcher.Singular).
-        IReadOnlyList<Product> onList = [P(1, "Gala Apples"), P(2, "Honeycrisp Apple"), P(3, "Whole Milk")];
+        // Jordan's real breads: brioche + bread shared (2 of the loaf's 3 core words — "style" is filler),
+        // and "bread" is the head of one of them.
+        IReadOnlyList<Product> onList =
+            [P(1, "Artesano Brioche Bakery Bread"), P(2, "Brioche Style Bread Loaf"), P(3, "Whole Milk")];
 
         var pair = Assert.Single(SimilarPairs.Find(onList));
 
@@ -58,17 +24,212 @@ public class SimilarPairsTests
     }
 
     [Fact]
-    public void Emits_a_pair_once_even_when_two_words_are_pair_unique()
+    public void A_majority_of_shared_words_that_are_all_modifiers_is_not_a_pair()
     {
-        // Both own "sourdough" AND "boule" (each shared by exactly these two; "fresh" is a trivial modifier
-        // that's stripped) — still ONE pair, not two.
+        // "all" + "purpose" are 2 of the tomatoes' 3 core words, but neither name's head (tomatoes / spray)
+        // is shared — two products that happen to wear the same adjectives, not one product.
+        IReadOnlyList<Product> onList = [P(1, "All Purpose Crushed Tomatoes"), P(2, "All Purpose Cleaner Spray")];
+
+        Assert.Empty(SimilarPairs.Find(onList));
+    }
+
+    [Fact]
+    public void Inside_a_cluster_a_pair_still_surfaces_when_it_shares_a_strict_majority()
+    {
+        // Five dog treats make "treats" a category head, yet the two Dentastix share 5 of 5 core words —
+        // two names for one product, cluster or not.
+        IReadOnlyList<Product> onList =
+        [
+            P(1, "Dentastix Bacon Flavor Large Breed Dog Treats"), P(2, "Dentastix Large Breed Dog Treats"),
+            P(3, "Chicken Jerky Dog Treats"), P(4, "Rawhide Sticks Dog Treats"), P(5, "Duck Wrapped Cod Dog Treats"),
+        ];
+
+        var pair = Assert.Single(SimilarPairs.Find(onList));
+
+        Assert.Equal((1, 2), (pair.LowerId, pair.HigherId));
+    }
+
+    // ── Shape 2: two variants of one thing (exactly half the words, the SAME head) ──
+
+    [Fact]
+    public void Flags_two_variants_that_share_their_head_word()
+    {
+        // Exactly half of each two-word name is shared, and it's the head ("apple", plural-folded via
+        // IngredientMatcher.Singular) — two varieties of one item, which the app treats as one product.
+        IReadOnlyList<Product> onList = [P(1, "Envy Apples"), P(2, "Cosmic Crisp Apple"), P(3, "Whole Milk")];
+
+        var pair = Assert.Single(SimilarPairs.Find(onList));
+
+        Assert.Equal((1, 2), (pair.LowerId, pair.HigherId));
+    }
+
+    [Fact]
+    public void Salted_and_unsalted_butter_are_two_variants_of_one_item()
+    {
+        // salted/unsalted are trivial modifiers, so "Unsalted Butter" is the one word "butter", wholly
+        // contained in the other — asked about, per Jordan's call.
+        IReadOnlyList<Product> onList = [P(1, "Sweet Cream Salted Butter"), P(2, "Unsalted Butter")];
+
+        Assert.Single(SimilarPairs.Find(onList));
+    }
+
+    [Fact]
+    public void A_shared_modifier_alone_is_not_a_pair()
+    {
+        // "ground" is half of each name, but the heads (coffee / beef) differ: same adjective, different thing.
+        IReadOnlyList<Product> onList = [P(1, "Ground Coffee"), P(2, "Ground Beef")];
+
+        Assert.Empty(SimilarPairs.Find(onList));
+    }
+
+    [Fact]
+    public void Sharing_only_the_head_of_a_longer_name_is_not_half()
+    {
+        // Same head ("bread"), but it is 1 of the 3 core words of each — under half. Two breads with nothing
+        // else in common are two breads, not two names for one; the variant shape needs half.
+        IReadOnlyList<Product> onList = [P(1, "Sliced Plain French Bread"), P(2, "Artesano Brioche Bakery Bread")];
+
+        Assert.Empty(SimilarPairs.Find(onList));
+    }
+
+    [Fact]
+    public void A_head_that_is_only_a_modifier_in_the_other_name_is_not_a_pair()
+    {
+        // "grape" heads the grapes but merely modifies the tomatoes; half of "Grape Tomatoes" is shared, yet
+        // the two are not variants of one thing.
+        IReadOnlyList<Product> onList = [P(1, "Green Seedless Grapes"), P(2, "Grape Tomatoes")];
+
+        Assert.Empty(SimilarPairs.Find(onList));
+    }
+
+    [Fact]
+    public void Does_not_flag_variants_inside_a_cluster()
+    {
+        // "yogurt" heads three products — a category, not a "these two specifically" signal. Per-pair would be
+        // three nudges about one shelf.
+        IReadOnlyList<Product> onList = [P(1, "Greek Yogurt"), P(2, "Vanilla Yogurt"), P(3, "Strawberry Yogurt")];
+
+        Assert.Empty(SimilarPairs.Find(onList));
+    }
+
+    [Fact]
+    public void Two_products_sharing_a_head_are_a_pair_right_up_to_the_cluster_size()
+    {
+        // The cluster gate is ≥ 3 holders of the head; exactly two is the variant shape.
+        IReadOnlyList<Product> onList = [P(1, "Greek Yogurt"), P(2, "Vanilla Yogurt"), P(3, "Whole Milk")];
+
+        Assert.Single(SimilarPairs.Find(onList));
+    }
+
+    [Fact]
+    public void A_one_word_name_pairs_only_with_a_same_head_name()
+    {
+        // "Milk" is wholly contained in every name that mentions milk, so containment says nothing about it;
+        // it pairs with "Whole Milk" (same head) but not with "Milk Chocolate Bar" (milk is a modifier there).
+        IReadOnlyList<Product> onList = [P(1, "Milk"), P(2, "Whole Milk"), P(3, "Milk Chocolate Bar")];
+
+        var pair = Assert.Single(SimilarPairs.Find(onList));
+
+        Assert.Equal((1, 2), (pair.LowerId, pair.HigherId));
+    }
+
+    [Fact]
+    public void A_one_word_name_does_not_pair_with_a_name_that_only_uses_it_as_a_modifier()
+    {
+        // Same semantics as the seedless-grapes case, with the adjectives gone: still not a pair.
+        IReadOnlyList<Product> onList = [P(1, "Grapes"), P(2, "Grape Tomatoes")];
+
+        Assert.Empty(SimilarPairs.Find(onList));
+    }
+
+    [Fact]
+    public void A_one_word_name_inside_a_cluster_is_gated_like_any_variant()
+    {
+        // Four milks: "Milk" would otherwise pair with each of the other three — the per-pair spam the cluster
+        // gate exists to stop, arriving through a one-word name.
+        IReadOnlyList<Product> onList = [P(1, "Milk"), P(2, "Whole Milk"), P(3, "Oat Milk"), P(4, "Almond Milk")];
+
+        Assert.Empty(SimilarPairs.Find(onList));
+    }
+
+    [Fact]
+    public void Twins_whose_core_words_are_identical_survive_a_cluster_even_when_one_is_a_single_word()
+    {
+        // "Salted Butter" and "Unsalted Butter" are both the one word {butter} — the strongest evidence there
+        // is. The one-word rule must not hand them to the cluster gate, or a "Peanut Butter" on the list
+        // (three butters) makes Jordan's own variant case vanish. Peanut Butter is NOT paired with either.
+        IReadOnlyList<Product> onList = [P(1, "Salted Butter"), P(2, "Unsalted Butter"), P(3, "Peanut Butter")];
+
+        var pair = Assert.Single(SimilarPairs.Find(onList));
+
+        Assert.Equal((1, 2), (pair.LowerId, pair.HigherId));
+    }
+
+    // ── General ──
+
+    [Fact]
+    public void Caps_the_pairs_it_returns_so_a_pathological_catalog_cannot_explode()
+    {
+        // Twelve products whose core words are all {whole, milk} (digits are dropped) pair with each other in
+        // every combination — C(12,2) = 66 — and every new pair becomes a memory row on the list load. The
+        // ceiling holds it to MaxPairs, in scan order, so the same pairs make the cut on every visit.
+        IReadOnlyList<Product> onList = [.. Enumerable.Range(1, 12).Select(i => P(i, $"Whole Milk {i}"))];
+
+        var first = SimilarPairs.Find(onList);
+        var again = SimilarPairs.Find(onList);
+
+        Assert.Equal(SimilarPairs.MaxPairs, first.Count);
+        Assert.Equal(first, again);
+        Assert.Equal((1, 2), (first[0].LowerId, first[0].HigherId));
+    }
+
+
+    [Fact]
+    public void Canonicalises_to_the_lower_id_regardless_of_scan_order()
+    {
+        // The higher-id product is listed FIRST; the pair must still name the smaller id as LowerId, so the
+        // pair has one identity for the dismissal/mood memory however the list happened to be ordered.
+        IReadOnlyList<Product> onList = [P(5, "Brioche Bread Loaf"), P(2, "Artesano Brioche Bread")];
+
+        var pair = Assert.Single(SimilarPairs.Find(onList));
+
+        Assert.Equal(2, pair.LowerId);
+        Assert.Equal("Artesano Brioche Bread", pair.LowerName);
+        Assert.Equal(5, pair.HigherId);
+        Assert.Equal("Brioche Bread Loaf", pair.HigherName);
+    }
+
+    [Fact]
+    public void Does_not_flag_a_category_head_shared_by_three_or_more_different_cuts()
+    {
+        // "chicken" is in all three, but as a modifier: the heads (breast / thighs / broth) all differ.
+        IReadOnlyList<Product> onList = [P(1, "Chicken Breast"), P(2, "Chicken Thighs"), P(3, "Chicken Broth")];
+
+        Assert.Empty(SimilarPairs.Find(onList));
+    }
+
+    [Fact]
+    public void Sheds_filler_words_before_comparing()
+    {
+        // "style" is throwaway filler (DescriptorFilter). Shed, the loaf is {brioche, bread, loaf} and shares
+        // 2 of 3 with the other bread (plus the head "bread") — a pair. Kept, it is four words sharing two:
+        // exactly half, with differing heads (loaf / bread) — no pair. So the shed decides this fixture.
+        IReadOnlyList<Product> onList = [P(1, "Brioche Style Bread Loaf"), P(2, "Artesano Brioche Bakery Bread")];
+
+        Assert.Single(SimilarPairs.Find(onList));
+    }
+
+    [Fact]
+    public void Emits_a_pair_once()
+    {
+        // The same two products are one pair however many words they share ("fresh" is trivial).
         IReadOnlyList<Product> onList = [P(1, "Sourdough Boule"), P(2, "Fresh Sourdough Boule")];
 
         Assert.Single(SimilarPairs.Find(onList));
     }
 
     [Fact]
-    public void Finds_nothing_when_no_food_word_is_shared_by_exactly_two()
+    public void Finds_nothing_when_nothing_overlaps()
     {
         IReadOnlyList<Product> onList = [P(1, "Whole Milk"), P(2, "Orange Juice"), P(3, "Paper Towels")];
 
@@ -76,11 +237,22 @@ public class SimilarPairsTests
     }
 
     [Fact]
-    public void Is_aggressive_by_design_a_shared_pair_unique_word_flags_even_arguably_different_items()
+    public void A_name_with_no_food_words_pairs_with_nothing()
     {
-        // "White Bread" and "Wheat Bread" share only "bread" (unique to the two of them here) — flagged,
-        // because the nudge is deliberately aggressive and per-pair dismissible: a false positive costs one
-        // permanent dismiss, not a silent merge.
+        // "4 oz" is all units and numbers — no core words, so it can't look like anything (and must not throw).
+        IReadOnlyList<Product> onList = [P(1, "4 oz"), P(2, "Whole Milk"), P(3, "Chocolate Milk")];
+
+        var pair = Assert.Single(SimilarPairs.Find(onList));
+
+        Assert.Equal((2, 3), (pair.LowerId, pair.HigherId));
+    }
+
+    [Fact]
+    public void Is_still_aggressive_by_design_two_types_with_one_head_are_asked_about()
+    {
+        // "White Bread" and "Wheat Bread" share only "bread" — but it's the head of both and nothing else on
+        // the list is a bread, so they're two variants of one thing to the detector. A false positive costs
+        // one permanent dismiss, not a silent merge.
         IReadOnlyList<Product> onList = [P(1, "White Bread"), P(2, "Wheat Bread")];
 
         Assert.Single(SimilarPairs.Find(onList));
