@@ -1,3 +1,4 @@
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -9,7 +10,7 @@ namespace ShelfAware.Llm.Tests;
 
 public class TagAdvisorTests
 {
-    private static AnthropicTagAdvisor Advisor(FakeChatClient chat) =>
+    private static AnthropicTagAdvisor Advisor(IChatClient chat) =>
         new(chat, Options.Create(new LlmOptions()), NullLogger<AnthropicTagAdvisor>.Instance);
 
     private static readonly string[] Existing = ["Condiment", "Soft Drink", "Paper Goods"];
@@ -48,6 +49,15 @@ public class TagAdvisorTests
     // the period on BOTH sides, so it passed either way and caught neither.
     [InlineData("Etc", "Etc.")]
     [InlineData("Soft Drink.", "Soft Drink")]
+    // ⚠️ And the shapes a LOCAL reading of the reply never knew about. "Which existing tag does
+    // this name mean?" belongs to TagVocabulary, which case-folds, collapses whitespace, forgives a
+    // trailing plural "s" and one character of typo. For one commit this advisor answered it privately
+    // and knew only about a period — so a model that pluralized, or doubled a space, coined a duplicate
+    // that Upload.razor's plain-code stage had already caught eight lines before the call that charged
+    // for the act. These cases fail against that private reading and pass against the shared one.
+    [InlineData("Soft Drinks", "Soft Drink")]
+    [InlineData("soft  drink", "Soft Drink")]
+    [InlineData("Sofr Drink", "Soft Drink")]
     public async Task A_reply_naming_an_existing_tag_matches_it_whichever_side_has_the_period(
         string reply, string expected)
     {
@@ -55,6 +65,46 @@ public class TagAdvisorTests
 
         Assert.Equal(expected, await Advisor(FakeChatClient.Returning(Responses.Text(reply)))
             .FindSynonymAsync("Miscellaneous", existing));
+    }
+
+    [Fact]
+    public async Task A_tag_spelled_two_ways_in_unicode_is_one_tag()
+    {
+        // The household typed a precomposed "\u00e9"; the model answered with an "e" plus a combining
+        // accent. One word to anyone reading them, two strings to an ordinal comparison — and two edits
+        // apart, so the near-duplicate pass does not rescue it either. Normalizing is part of what
+        // "the same tag" means, and it belongs in the one place that owns that question.
+        string[] existing = ["Caf\u00e9"];
+
+        Assert.Equal("Caf\u00e9", await Advisor(FakeChatClient.Returning(Responses.Text("Cafe\u0301")))
+            .FindSynonymAsync("Coffee Shop", existing));
+    }
+
+    [Fact]
+    public async Task A_provider_timeout_still_fails_open_even_though_it_arrives_as_a_cancellation()
+    {
+        // ⚠️ HttpClient's timeout throws TaskCanceledException — an OperationCanceledException — even
+        // when the caller passed no token, and no caller of this advisor passes one. An unconditional
+        // `catch (OperationCanceledException) { throw; }` therefore reclassified every real provider
+        // stall as caller intent and rethrew it into an @onclick handler with no catch and no
+        // ErrorBoundary behind it, tearing down the Blazor circuit and losing an in-progress receipt
+        // review — under a class summary promising "fails open so a flaky API never blocks tag creation".
+        var advisor = Advisor(new ThrowingChatClient(new TaskCanceledException("The request timed out.")));
+
+        Assert.Null(await advisor.FindSynonymAsync("Soda", Existing));
+    }
+
+    [Fact]
+    public async Task A_caller_that_cancelled_gets_its_cancellation_back()
+    {
+        // The other side of the same guard: the household closed the tab, and that is not this advisor's
+        // to absorb into a "degraded provider" log line.
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        var advisor = Advisor(new ThrowingChatClient(new OperationCanceledException(cts.Token)));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => advisor.FindSynonymAsync("Soda", Existing, cts.Token));
     }
 
     [Fact]

@@ -1181,7 +1181,7 @@ passes in this arc, three of them with a new defect in the money path.
 
 Also recorded rather than fixed: **every refund is a provider call the operator paid for**, and a few of
 them are reachable on purpose because household text goes into these prompts. `docs/subscription-plan.md`
-§4.y names the three, says why charging for them would be worse, and names the surface that would show it
+§4.y names them, says why charging for them would be worse, and names the surface that would show it
 if the balance ever tips (`CostPerCharge` on `/admin`).
 
 ### Eighth pass: what the gates found in the seventh (2026-09-19)
@@ -1233,6 +1233,51 @@ the gate rather than for any individual fix: *both* passes consolidated a rule i
 was written that could not tell the fix from the bug. Consolidation is right and the tests around it have
 to be written against the inputs that distinguish the readings, not against the input that made the
 original bug visible.
+
+
+### Ninth pass: what the gates found in the eighth (2026-09-19)
+
+Both gates recommended against merging the eighth pass. They converged on four of five findings, and the
+two they found independently are the two that matter.
+
+- **The rethrow I added to stop swallowing cancellation was wrong in every reachable case.** An
+  unconditional `catch (OperationCanceledException) { throw; }` also catches an `HttpClient` timeout,
+  which arrives as the same type — and **not one of the three call sites passes a token**
+  (`Upload.razor`, `ProductDetail.razor`, `Recipes.razor` all take the default), so 100% of real
+  cancellations there are provider timeouts. Each call site is a `try/finally` with no `catch`, and the
+  app has no `ErrorBoundary`, so the rethrow escaped an `@onclick` handler and tore down the Blazor
+  circuit — losing an in-progress receipt review, against three class summaries that promise "fails open
+  so a flaky API never blocks tag creation", and taking the operator's only degraded-provider log line
+  with it. Filtered on `cancellationToken.IsCancellationRequested` now, which is the form
+  `AiUsageMeter`, `ElevenLabsTextToSpeech` and `LocalTextToSpeech` already used. ⚠️ Billing was correct
+  throughout, which is why neither the suite nor I caught it: the defect was entirely in what a household
+  loses when a provider is slow.
+- **`ProviderReply.Names` was a THIRD answer to "which existing tag does this name mean?"** —
+  `TagVocabulary` says in its own remarks that it is *"THE one place the dedup/canonicalization policy
+  lives"*, and the private helper knew about a trailing period and nothing else. So a model that
+  pluralized ("Soft Drinks"), doubled a space, or slipped a character returned null and coined the
+  duplicate — one that `Upload.razor`'s plain-code stage, eight lines above the call that charged for the
+  act, would have caught. ⚠️ **This is item 41's cascade re-opened, in the commit whose own notes call
+  consolidation the lesson of the arc.** `Names` is deleted and the advisor asks `TagVocabulary`.
+- **The money predicate's deny-list was wrong in both halves at once.** It carried an arm for
+  `UnicodeCategory.Surrogate` that can never fire (a `Rune` cannot hold a surrogate) over the case that
+  arm was written to refuse: `EnumerateRunes` substitutes U+FFFD for ill-formed UTF-16, and U+FFFD's own
+  category is `OtherSymbol`, so mojibake fell through as content and was charged, rendered and spoken.
+  Bare combining marks and orphaned variation selectors went the same way. It is an **allow-list** now:
+  whatever a deny-list forgets is billed.
+- **Three stale counts, one of them written by that same commit into a new code comment.** §4.y gained a
+  fourth bullet under a heading reading "the three". The §6 failure, committed in the pass that documents
+  it. §4.y is no longer counted in prose anywhere.
+- **§4.y was understating the accepted exposure.** It omitted the two most expensive refunds in the app —
+  a receipt and a shelf census each retry once at `MaxOutputTokens = 8192` on household-supplied images,
+  twice the recipe importer's budget. And its cap claim was unconditional where the code's cap is not:
+  `EffectiveDailyCallLimit` is null on a box with no payments config and no explicit key.
+
+⚠️ **Three rounds running, the shared money predicate was wrong, and every time the comment above it
+argued for the narrower question.** It now has a direct test file of its own
+(`ProviderReplyTests`) pinning each category arm — it had none before, every input reached it through an
+advisor, and the mutation gate is scoped to Core and does not reach it. That absence is the single best
+explanation for why three consecutive versions shipped wrong.
 
 
 ## 10. Sequencing

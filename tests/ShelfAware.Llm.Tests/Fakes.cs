@@ -430,3 +430,20 @@ internal static class HttpResponses
     public static HttpResponseMessage Error(HttpStatusCode status, string body = "") =>
         new(status) { Content = new StringContent(body) };
 }
+
+/// <summary>A chat client that always throws the given exception — for the failure paths where WHICH
+/// exception arrives is the whole question.</summary>
+internal sealed class ThrowingChatClient(Exception failure) : IChatClient
+{
+    public Task<ChatResponse> GetResponseAsync(
+        IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+        throw failure;
+
+    public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+        IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+    public void Dispose() { }
+}

@@ -136,4 +136,27 @@ public class TagVocabularyTests
     {
         Assert.Null(TagVocabulary.FindNearDuplicate(candidate, Existing));
     }
+
+    [Fact]
+    public void Two_unicode_spellings_of_one_word_are_one_tag()
+    {
+        // A precomposed "\u00e9" against an "e" plus a combining accent: one word to anyone reading them,
+        // two strings to an ordinal comparison, and TWO edits apart \u2014 so the near-duplicate pass does
+        // not rescue it. Normalizing the key is part of what "the same tag" means, and this file owns
+        // that question for product tags and recipe tags alike.
+        Assert.Equal("Caf\u00e9", TagVocabulary.FindNearDuplicate("Cafe\u0301", ["Caf\u00e9"]));
+        Assert.Equal("Cafe\u0301", TagVocabulary.FindNearDuplicate("Caf\u00e9", ["Cafe\u0301"]));
+    }
+
+    [Fact]
+    public void A_tag_that_cannot_be_normalized_is_compared_as_written_rather_than_throwing()
+    {
+        // \u26a0\ufe0f Ill-formed UTF-16 (here a lone high surrogate, which is what a truncated emoji leaves
+        // behind) cannot be put in a normal form \u2014 string.Normalize throws ArgumentException. The dedup
+        // runs on household-typed text and on model replies, so it must degrade rather than throw: the
+        // fallback compares the string as written, which can only ever fail to find a near-duplicate and
+        // never find the wrong one. Pinned because the branch had no coverage when it was written.
+        Assert.Null(TagVocabulary.FindNearDuplicate("Soda\ud83d", ["Cleaning"]));
+        Assert.Equal("Soda\ud83d", TagVocabulary.FindNearDuplicate("Soda\ud83d", ["Soda\ud83d"]));
+    }
 }

@@ -54,11 +54,18 @@ public class AnthropicIngredientAlternativesAdvisor : IIngredientAlternativesAdv
             if (ProviderReply.IsNothingFound(reply)) return [];
             return Parse(reply, ingredientName);
         }
-        // ⚠️ Cancellation is not a provider failure and is not this advisor's to absorb: a household
-        // that closed the tab must not see it logged as a degraded API, and the act is refunded either
-        // way because nothing above settled. Rethrown rather than caught so the caller's own
-        // cancellation path runs — the fourth advisor in this set always did, and three did not.
-        catch (OperationCanceledException) { throw; }
+        // ⚠️ WHOSE cancellation, and the unconditional version of this line was wrong in every
+        // reachable case. A caller that cancelled is not this advisor's to absorb and is rethrown. A
+        // provider TIMEOUT arrives as the same type and is a degraded provider — the case the catch
+        // below exists for, whose log line is the operator's only signal that the dedup is silently
+        // failing open. Not one call site passes a token today (Upload.razor, ProductDetail.razor,
+        // Recipes.razor all take the CancellationToken.None default), so an unconditional rethrow
+        // reclassifies 100% of real cancellations as caller intent — and since those sites are a
+        // try/finally with no catch and the app has no ErrorBoundary, it escapes an @onclick handler
+        // and tears down the Blazor circuit, losing an in-progress receipt review. The token decides.
+        //
+        // Billing is the same either way: nothing above has settled, so the act refunds.
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Ingredient-alternatives suggestion failed for \"{Ingredient}\"; returning none.", ingredientName.Trim());

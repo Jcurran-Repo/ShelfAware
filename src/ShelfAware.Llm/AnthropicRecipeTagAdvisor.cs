@@ -68,7 +68,18 @@ public class AnthropicRecipeTagAdvisor : IRecipeTagAdvisor
             if (ProviderReply.IsNothingFound(reply)) return [];
             return Parse(reply);
         }
-        catch (OperationCanceledException) { throw; }
+        // ⚠️ WHOSE cancellation, and the unconditional version of this line was wrong in every
+        // reachable case. A caller that cancelled is not this advisor's to absorb and is rethrown. A
+        // provider TIMEOUT arrives as the same type and is a degraded provider — the case the catch
+        // below exists for, whose log line is the operator's only signal that the dedup is silently
+        // failing open. Not one call site passes a token today (Upload.razor, ProductDetail.razor,
+        // Recipes.razor all take the CancellationToken.None default), so an unconditional rethrow
+        // reclassifies 100% of real cancellations as caller intent — and since those sites are a
+        // try/finally with no catch and the app has no ErrorBoundary, it escapes an @onclick handler
+        // and tears down the Blazor circuit, losing an in-progress receipt review. The token decides.
+        //
+        // Billing is the same either way: nothing above has settled, so the act refunds.
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Recipe tag suggestion failed for \"{Recipe}\"; returning none.", recipeName.Trim());

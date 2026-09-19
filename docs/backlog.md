@@ -7,6 +7,24 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
 
 ## Open
 
+- **Tag dedup does not see through Unicode confusables.** `TagVocabulary.Normalize` now folds to one
+  Unicode normal form, so a precomposed "Café" and a decomposed one are the same tag. A Cyrillic "Ѕoda"
+  against "Soda" is still a new tag. That needs a confusable *skeleton* mapping rather than a normal
+  form, and the blast radius is small and household-local: the advisor can only ever return an element
+  of that household's own list, and the result is shown as a suggestion the user accepts or overrides,
+  never a silent write. Raised by the pre-merge security gate, 2026-09-19.
+- **A handful of invisible code points still read as an "answer" and are charged.** `ProviderReply`'s
+  allow-list excludes marks, punctuation, separators, controls and the replacement character, but a
+  Hangul filler (category `Lo`) and BRAILLE PATTERN BLANK (`So`) are categorically letters and symbols
+  while rendering as nothing. Left alone deliberately: a model emitting only one of those is not a shape
+  anyone has seen, and chasing every invisible code point by hand is how the deny-list this replaced got
+  it wrong. Revisit if a real reply ever lands in that gap. Raised by the pre-merge code gate, 2026-09-19.
+- **Advisor prompts interpolate the household's whole vocabulary with no cap.** `AnthropicTagAdvisor`
+  joins every existing tag into the prompt, the tag input on `/receipt` has no `maxlength`, and
+  `AnthropicRecipeTagAdvisor` and `AnthropicPantryChat` do the same with known tags and the full product
+  list. That is an unbounded per-call input-token cost the household controls, and it is what makes a
+  provider timeout reachable on purpose rather than by luck. Pre-existing; raised 2026-09-19.
+
 - **`docs/accuracy.png`** — the README's last remaining TODO (line ~190). ⚠️ **Check before acting:**
   the file exists at `docs/accuracy.png` and the README renders it; the old note claiming it was
   outstanding was itself stale. Verify what's actually missing before building anything.

@@ -43,38 +43,45 @@ internal static class ProviderReply
     /// <summary>Whether the answer was the model's "nothing fits" sentinel. ⚠️ A CONTENT question, never
     /// a billing one. Trailing punctuation is ignored because the model routinely appends a period, and
     /// "NONE." has to read as the sentinel rather than as a literal tag called "NONE" joining the
-    /// household's vocabulary.</summary>
-    public static bool IsNothingFound(string reply) => Sentence(reply).Equals("NONE", StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>Whether <paramref name="reply"/> names <paramref name="candidate"/>, ignoring case and a
-    /// trailing period on either side.
+    /// household's vocabulary.
     ///
-    /// <para>⚠️ Both sides, and the two attempts at this got it wrong in opposite directions. The prompt
-    /// asks for an existing name back "EXACTLY as written", so the household's own spelling is the thing
-    /// being matched — and a tag can legitimately end in a period ("Etc."), which a reply of "Etc" has to
-    /// find. The model also routinely appends one, so "Soft Drink." has to find "Soft Drink". Matching on
-    /// the raw reply alone misses the second; matching on the stripped reply alone misses the first. The
-    /// first fix here chose one, the second chose the other, and both shipped a comment explaining why
-    /// their half was the important one.</para></summary>
-    public static bool Names(string reply, string candidate) =>
-        string.Equals(candidate.Trim(), reply.Trim(), StringComparison.OrdinalIgnoreCase)
-        || string.Equals(Sentence(candidate), Sentence(reply), StringComparison.OrdinalIgnoreCase);
+    /// <para>⚠️ This is NOT "which existing name does the reply mean?" — that question belongs to
+    /// <see cref="ShelfAware.Core.Tagging.TagVocabulary"/>, which says in its own remarks that it is the
+    /// one place the dedup policy lives. A <c>Names</c> helper lived here for one commit and was a THIRD
+    /// reading of it, narrower than the one that already claimed to be the only one: it knew about a
+    /// trailing period and not about case-folding, collapsed whitespace, a plural "s" or a one-character
+    /// typo, so a reply of "Soft Drinks" coined a duplicate the plain-code stage had already caught eight
+    /// lines earlier in the same request. Asking whether a reply is the sentinel is a different question
+    /// and stays here.</para></summary>
+    public static bool IsNothingFound(string reply) =>
+        reply.Trim().TrimEnd('.', ' ').Equals("NONE", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>A reply with its trailing sentence punctuation and space taken off.</summary>
-    private static string Sentence(string text) => text.Trim().TrimEnd('.', ' ');
-
-    /// <summary>Whether one rune is something the household would read as content rather than as spacing
-    /// or punctuation. Letters, digits, marks and symbols yes; separators, controls, formats and every
-    /// punctuation class no.</summary>
-    private static bool IsContent(Rune rune) => Rune.GetUnicodeCategory(rune) switch
-    {
-        UnicodeCategory.SpaceSeparator or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator
-            or UnicodeCategory.Control or UnicodeCategory.Format
-            or UnicodeCategory.Surrogate or UnicodeCategory.PrivateUse or UnicodeCategory.OtherNotAssigned
-            or UnicodeCategory.ConnectorPunctuation or UnicodeCategory.DashPunctuation
-            or UnicodeCategory.OpenPunctuation or UnicodeCategory.ClosePunctuation
-            or UnicodeCategory.InitialQuotePunctuation or UnicodeCategory.FinalQuotePunctuation
-            or UnicodeCategory.OtherPunctuation => false,
-        _ => true,
-    };
+    /// <summary>Whether one rune is something the household would read as content rather than as spacing,
+    /// punctuation or a mark with nothing to sit on.
+    ///
+    /// <para>⚠️ An ALLOW-list, and the deny-list it replaced was wrong twice over in the one commit it
+    /// lived. It carried an arm for <see cref="UnicodeCategory.Surrogate"/> that can never fire — a
+    /// <see cref="Rune"/> cannot hold a surrogate code point, and <c>EnumerateRunes</c> substitutes
+    /// U+FFFD for every ill-formed subsequence — while U+FFFD's own category is <c>OtherSymbol</c>, so
+    /// the case the dead arm was written to refuse was the case that fell through and got charged. A
+    /// money predicate cannot be a list of what to exclude: whatever the list forgets is billed.</para>
+    ///
+    /// <para>⚠️ Marks are not content on their own. A reply of a bare combining accent renders as nothing
+    /// and would be charged for an empty bubble; attached to a letter it costs nothing to exclude, because
+    /// the letter it sits on already answers the question.</para></summary>
+    private static bool IsContent(Rune rune) =>
+        rune != Rune.ReplacementChar
+        && Rune.GetUnicodeCategory(rune) switch
+        {
+            UnicodeCategory.UppercaseLetter or UnicodeCategory.LowercaseLetter
+                or UnicodeCategory.TitlecaseLetter or UnicodeCategory.ModifierLetter
+                or UnicodeCategory.OtherLetter => true,
+            UnicodeCategory.DecimalDigitNumber or UnicodeCategory.LetterNumber
+                or UnicodeCategory.OtherNumber => true,
+            // A tick, an arrow and an emoji are all answers a household reads. Punctuation is what a model
+            // emits on the way to saying nothing, and every other category is spacing or invisible.
+            UnicodeCategory.MathSymbol or UnicodeCategory.CurrencySymbol
+                or UnicodeCategory.ModifierSymbol or UnicodeCategory.OtherSymbol => true,
+            _ => false,
+        };
 }

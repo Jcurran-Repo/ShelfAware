@@ -75,10 +75,24 @@ public static class TagVocabulary
     }
 
     // Lowercase, collapse whitespace, drop a trailing plural 's' so "Condiments" ≈ "condiment".
+    //
+    // ⚠️ And put it in one Unicode normal form first, because "Café" typed by the household and
+    // "Café" returned by a model can be different strings — a precomposed é against an e plus a
+    // combining accent. They are one word to anyone reading them, and an ordinal comparison calls them
+    // different, so the dedup declines and the tag cloud fragments on a difference nobody can see. The
+    // Levenshtein pass below does not rescue it either: the two spellings are two edits apart, not one.
     private static string Normalize(string s)
     {
-        var collapsed = string.Join(' ', s.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToLowerInvariant();
+        var collapsed = string.Join(' ', Fold(s).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToLowerInvariant();
         return collapsed.EndsWith('s') && collapsed.Length > 3 ? collapsed[..^1] : collapsed;
+    }
+
+    // Ill-formed UTF-16 cannot be normalized and throws. Comparing it as written is the honest fallback:
+    // it can only ever fail to find a near-duplicate, never find the wrong one.
+    private static string Fold(string s)
+    {
+        try { return s.Normalize(); }
+        catch (ArgumentException) { return s; }
     }
 
     // True when a and b differ by at most one single-character edit (insert/delete/substitute). The one

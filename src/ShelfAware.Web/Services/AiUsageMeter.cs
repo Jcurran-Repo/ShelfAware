@@ -132,8 +132,15 @@ public sealed class AiUsageMeter(
             // that fails, or that the model answers with silence, is refunded in full (docs/subscription-
             // plan.md §4.w), so it never draws the balance down however often it repeats — the provider
             // call still happened and was still paid for. For that shape these caps, not the credit gate,
-            // are the only bound, which is the argument for failing open here narrowly rather than for
-            // treating the caps as belt-and-braces. §4.y lists the three reachable cases.
+            // are the only bound WHERE A CAP IS IN FORCE — see EffectiveDailyCallLimit, which is null on a
+            // box with no Payments config and no explicit key. That is the argument for failing open here
+            // narrowly rather than for treating the caps as belt-and-braces. §4.y lists the reachable
+            // cases; it is deliberately not counted here, because the count in this comment was stale the
+            // day after it was written and a number a person maintains is a number that will be wrong.
+            //
+            // ⚠️ And this paragraph sits inside the branch that is SKIPPING those caps. That is the
+            // point: the fallback is safe for what the household is served and is the one place where the
+            // operator's only bound is the thing being skipped.
             logger.LogError(ex, "Reading today's AI usage for the daily caps failed; allowing the call (credit still gates it).");
             return;
         }

@@ -398,7 +398,7 @@ provider was paid whatever the household was not. Every refund is therefore a sm
 a few of them are reachable on purpose rather than only by accident, because the household's own words go
 into these prompts unescaped (a product name, a tag candidate, pasted recipe text).
 
-The three worth naming, all of them costing **the operator** and none of them able to over-charge a
+The five worth naming, all of them costing **the operator** and none of them able to over-charge a
 household or reach another household's balance:
 
 - **A chat turn that hits the turn limit having done nothing** is refunded, and a turn is up to five
@@ -408,10 +408,19 @@ household or reach another household's balance:
 - **A recipe import that answers unreadably twice** is refunded after two 4096-token vision calls.
 - **A prose advisor that returns nothing at all** is refunded, on acts of 32 to 128 output tokens.
 - **A chat turn whose model simply says nothing** is refunded after a *single* message — no tool calls,
-  no turn limit to reach, nothing to inject. It is the cheapest of the three and the easiest to repeat,
-  and it is bounded by the daily call limit (`Llm:DailyCallLimit`, `DefaultPaidDailyCallLimit = 1000`)
+  no turn limit to reach, nothing to inject. It is the cheapest of them and the easiest to repeat,
+  and it is bounded by the daily call limit **where one is in force** (`Llm:DailyCallLimit`, else
+  `DefaultPaidDailyCallLimit = 1000` *only when payments are configured* — on a self-host or demo box
+  with neither, `EffectiveDailyCallLimit` is null and there is no bound at all; an unlimited tier skips
+  the check outright, though it is never charged and so never refunds)
   rather than by the credit gate, because a fully-refunded act never draws the balance down. Named
-  explicitly because the other two need a misbehaving prompt and this one needs only a quiet model.
+  explicitly because the others need a misbehaving prompt and this one needs only a quiet model.
+- **A receipt or a shelf census that will not parse twice** is refunded after two vision calls at
+  `MaxOutputTokens = 8192` — twice the recipe importer's budget, on the same retry-once-then-fail shape
+  (`AnthropicReceiptExtractor:171`, `AnthropicShelfCensusReader:173`; `Answered()` is reached only on a
+  clean parse). **These are the most expensive refunds in the app**, and the household supplies the
+  image, so an unparseable photo is reachable on purpose. They were missing from this list until
+  2026-09-19, which made the accepted exposure read materially smaller than it is.
 
 Held open deliberately. Charging for them means charging for a turn the household demonstrably did not
 receive, which is the thing §4.w exists to stop, and it would pay the assistant to fail quietly rather
