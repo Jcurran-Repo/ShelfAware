@@ -7,17 +7,16 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
 
 ## Open
 
-- **A scope still opens at the provider boundary, not where success is known.** `AiActionScope.Begin`
-  fires on an act's first provider call, so any check that lives in the *caller* — "did the adaptation use
-  the swap", "did the plan persist the meals it promised" — runs after the credits have moved, and the only
-  correction left is a refund. Opening the scope in the caller instead would let an act settle on what it
-  actually delivered. That is a change to how **every** service opens a scope, so per CLAUDE.md's
-  co-creation rule it is **Jordan's call**, and it is not blocking anything: §4.w's rule plus the `Delivered`
-  settlements cover every act on file today. Raised by the pre-merge security gate, 2026-09-19, as "a
-  recipe adapt that ignores the chosen swap is still charged"; **that** case was resolved on 2026-09-19 by
-  deciding it rather than by moving the scope (`docs/subscription-plan.md` §4.z — asking is what is paid
-  for, so the variant is now saved and labelled instead of thrown away), which leaves the general question
-  standing on its own.
+- **The credit gate checks the balance but does not reserve it.** `EnsureManagedCallAllowedAsync` reads
+  the balance before the provider call; `RecordCreditConsumptionAsync` writes the draw after it. So several
+  acts started at once — two tabs, the roaming voice agent, a fast clicker — can all pass the same check
+  before any of them draws, and `RecordConsumptionAsync` writes its negative row with no floor. The result
+  is an **overdraft, not free credit**: the balance goes negative, the next gate refuses, and the household
+  has to fill the hole before spending again, so it self-corrects and errs toward the operator for exactly
+  one burst. Closing it properly means a reservation row at the gate and a release path on every exit of
+  every act, which is real work for a bounded, self-correcting exposure — parked deliberately, and named
+  here because it was previously nowhere. Found 2026-09-19 while writing up why the charge lands first
+  (`docs/subscription-plan.md` §4.w). **Revisit if a balance is ever seen materially negative.**
 
 - **Tag dedup does not see through Unicode confusables.** `TagVocabulary.Normalize` now folds to one
   Unicode normal form, so a precomposed "Café" and a decomposed one are the same tag. A Cyrillic "Ѕoda"

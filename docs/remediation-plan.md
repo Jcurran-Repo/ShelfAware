@@ -1475,8 +1475,8 @@ The variant is now saved, and the shortfall is named twice — in the message, a
 blurb, because a message is read once and the variant sits in the cookbook indefinitely. The retry
 invitation is replaced by a pre-filled `/bugs` link, which is the honest thing to offer when the model,
 not the household, is what went wrong. ⚠️ Note what this did *not* do: it did not move the scope. The
-general "open the scope where success is known" question the gate raised stays open in
-`docs/backlog.md`, standing on its own rather than riding on a case that had a better answer.
+general "open the scope where success is known" question the gate raised was left standing on its own
+rather than riding on a case that had a better answer — and Jordan then answered it outright, below.
 
 **2. A chat turn that asks the screen to jump to a step with no reader open, or past the end.**
 
@@ -1513,6 +1513,33 @@ only the refusal. And the state is **structured, not inferred from `screenContex
 prose written for a model to read, and "is there a reader open, and how long is the recipe" is a
 question the code has to answer — answering it by looking for words in a sentence meant for a model is
 exactly how two readings of one fact drift apart.
+
+
+**3. And the question underneath both of them: why charge before the act is known to have succeeded?**
+
+> *"I feel like charging ahead of time and then refunding will prevent abuse possible through only
+> charging when the call completes"*
+
+**Yes, and this closes the "open the scope where success is known" item outright.** The argument is
+better than the mechanical ones the plan had been leaning on. Under charge-on-success every *failure*
+path is free, and the failure paths are the ones a household can **steer** — §4.y lists them, reachable
+on purpose because household-authored text goes into these prompts unescaped. The subsidy is the small
+half. The large half is that nothing has been drawn down, so the credit gate is asking about a balance no
+in-flight act has claimed and will keep saying yes: a steerable failure becomes an unbounded free tier
+with a gate in front of it waving people through. Charging first inverts it — the money moves before
+anyone knows how the act turned out, so abuse costs the abuser's balance immediately, and the refund is
+what an **honest** failure gets back. The refund is the exception to the charge, not the other way round.
+
+Written into `docs/subscription-plan.md` §4.w, and the backlog item is closed.
+
+⚠️ **Writing it up found something that was in no document at all.** The gate **checks** the balance
+before the provider call and the draw **lands after** it, with no reservation in between — so acts
+started at once can all pass one check, and `RecordConsumptionAsync` writes its negative row with no
+floor. It is an **overdraft rather than free credit** (the balance goes negative, the next gate refuses,
+the household fills the hole before spending again), so it self-corrects and errs toward the operator for
+one burst; it is now an open backlog item rather than nothing. Note the shape: the hole was found by
+writing down *why* a design is the way it is, which is the third time in this arc that stating a rule
+carefully has been what exposed the gap in it.
 
 
 ## 10. Sequencing

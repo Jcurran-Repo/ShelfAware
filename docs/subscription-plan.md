@@ -350,6 +350,41 @@ the only honest correction left. The rule for when one is owed:
 > **The household pays when the assistant answered, whatever the answer said. It gets its credits back
 > when the call failed.**
 
+⚠️ **And charging first is not just an ordering detail — it is what makes the gate a gate** (Jordan,
+2026-09-19). The tempting alternative is to charge only once an act is known to have succeeded, which
+looks fairer and is much worse. Every *failure* path would become free, and the failure paths are
+precisely the ones a household can **steer**: §4.y lists them, and they are reachable on purpose because
+household-authored text goes into these prompts. Worse than the subsidy itself is what it does to the
+bound — nothing has been drawn down, so `EnsureManagedCallAllowedAsync` is asking about a balance that no
+in-flight act has claimed, and it will keep saying yes. A household that can reliably steer an act into
+failure would get an unbounded free tier with a credit gate in front of it waving them through. Charging
+first inverts that: the money moves before anyone knows how the act turned out, so abuse costs the
+abuser's balance immediately and the refund is a correction the *honest* failure gets back. **The refund
+is the exception to the charge, not the other way round.**
+
+That is also the answer to "shouldn't the scope open where success is KNOWN — in the caller?", raised by
+the pre-merge security gate on 2026-09-19 and carried in `docs/backlog.md` until this. **No**, and the
+abuse argument is a better reason than the mechanical ones. The mechanical ones still hold too: the
+claim taken at the first call is what makes five tool rounds cost one turn (two parallel rounds both
+finding themselves uncharged is exactly the race `TryClaimCharge`'s `Interlocked` exists to lose), and
+the gate can only refuse a 42-credit meal plan *before* its first batch because the act's whole price is
+known and claimed at the start rather than assembled at the end.
+
+⚠️ **Two things charging first does NOT close, both worth holding in view.**
+
+1. **The gate CHECKS the balance; it does not RESERVE it.** `EnsureManagedCallAllowedAsync` reads before
+   the provider call and `RecordCreditConsumptionAsync` writes after it, so several acts started at once —
+   two tabs, the roaming voice agent, a fast clicker — can all pass one check before any of them draws.
+   `RecordConsumptionAsync` writes its negative row unconditionally, with no floor, so the result is an
+   **overdraft rather than free credit**: the balance goes negative, the next gate refuses, and the
+   household has to fill the hole before it can spend again. It self-corrects and it errs toward the
+   operator for exactly one burst. A true reservation at the gate would close it and is real work (a
+   reservation row and a release path on every exit), so it is written down rather than done.
+2. **A steerable FAILURE still loops for free**, because the refund gives the credits back — which is the
+   whole of §4.y, bounded by the daily call limit rather than by the balance. Charging first does nothing
+   about this one, and shouldn't: the alternative is charging for turns the household demonstrably did
+   not receive.
+
 An honest *"there is no recipe in that photo"*, *"nothing substitutes for saffron"*, *"nothing on that
 shelf"* **is an answer**. It cost a real provider call, it is frequently the *right* answer, and refunding
 it would price the assistant's honesty — paying it more for inventing a recipe than for telling the truth
