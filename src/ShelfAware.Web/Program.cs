@@ -440,6 +440,9 @@ builder.Services.AddScoped<AiUsageMeter>();
 // The box-wide demo valve is operator-global (auth.db, no per-scope state), so singleton — injected into the
 // scoped metering chain below. Also exposed as IDemoValve so the AI surfaces' pre-check (AiErrorText) can ask
 // "is the box capped for today?" through the seam without depending on the concrete DB-backed meter.
+// The health probe caches its last answer for a few seconds, so it must be a singleton or the cache is
+// per-request and buys nothing. It holds no per-user state — it asks two databases whether they open.
+builder.Services.AddSingleton<HealthProbe>();
 builder.Services.AddSingleton<DemoUsageMeter>();
 builder.Services.AddSingleton<IDemoValve>(sp => sp.GetRequiredService<DemoUsageMeter>());
 builder.Services.AddScoped<IChatClient, MeteredChatClient>();
@@ -630,6 +633,31 @@ if (speechCacheDir is not null)
             "Auth:RequireEmailConfirmation is on with no explicit Auth:DailyAccountCreationLimit — applying "
             + "the default cap of {Cap} new accounts/day. Set Auth:DailyAccountCreationLimit to override.",
             effectiveCap);
+    }
+}
+
+// The managed demo box's box-wide AI valve. Nothing configured is the family / self-host posture and says
+// nothing at all; a configured valve narrates itself at INFO so the operator can read its real bound out of
+// the box's own log rather than out of a config file they think they remember. An INCOHERENT valve — the
+// alert without the cap, or an alert that can only fire after the cap — is a box whose operator believes
+// they have a bound and does not, so it warns. Both objections are provable from the two numbers alone
+// (DemoOptions.ConfigurationObjections), which is what keeps this from crying wolf on a box that isn't a
+// demo box: a rule that warns about nothing is one someone later stops reading.
+{
+    var demo = app.Services.GetRequiredService<IOptions<DemoOptions>>().Value;
+    foreach (var objection in demo.ConfigurationObjections())
+    {
+        app.Logger.LogWarning("Demo valve misconfigured: {Objection}", objection);
+    }
+
+    if (demo.DailyGlobalCallLimit is int globalCap)
+    {
+        app.Logger.LogInformation(
+            "Demo valve active: at most {Cap} host-key AI calls/day across all households{Alert}. "
+            + "A counter that can't be read allows calls for {FailOpen} reads, then refuses them.",
+            globalCap,
+            demo.AlertThreshold is int a ? $", warning at {a}" : " (no alert threshold)",
+            DemoUsageMeter.FailOpenReadLimit);
     }
 }
 
@@ -1220,6 +1248,23 @@ string IconSrc(string file)
 }
 var icon192Src = IconSrc("icon-192.png");
 var icon512Src = IconSrc("icon-512.png");
+
+// The health endpoint. ANONYMOUS on purpose: a monitor has no account, and an endpoint that needs one
+// cannot tell "the box is down" from "my credentials expired". See HealthProbe for what it does and
+// deliberately does not check, and why it says which check failed but never why.
+//
+// ⚠️ Results.Json, never an empty body: UseStatusCodePagesWithReExecute re-executes a body-less non-2xx
+// into /not-found (method preserved), which this repo has now been bitten by twice (the GraphQL 401 and
+// the rate-limiter 429). Writing a body starts the response, so the real status survives — and JSON is
+// the shape a monitor wants anyway.
+app.MapGet("/healthz", async (HealthProbe probe, CancellationToken ct) =>
+{
+    var report = await probe.CheckAsync(ct);
+    return report.Healthy
+        ? Results.Json(new { status = "ok" })
+        : Results.Json(new { status = "degraded", failing = report.Failing },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+}).AllowAnonymous();
 
 app.MapGet("/manifest.webmanifest", () => Results.Content($$"""
 {
