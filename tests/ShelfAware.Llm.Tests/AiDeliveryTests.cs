@@ -5,6 +5,7 @@ using ShelfAware.Core.Census;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Extraction;
 using ShelfAware.Core.Recipes;
+using ShelfAware.Core.Chat;
 
 namespace ShelfAware.Llm.Tests;
 
@@ -337,7 +338,10 @@ public class AiDeliveryTests
             [.. Enumerable.Repeat<Func<ChatResponse>>(
                 () => Responses.ToolCalls(Responses.Call("go_to_step", ("step", 3))), 12)]));
 
-        var result = await Chat(charging, new FakePantryStore()).HandleAsync("next step");
+        // A reader IS open — that is the whole case. go_to_step is offered only when one is, and a step it
+        // can reach is checked against the recipe's real length before anyone is told it moved.
+        var result = await Chat(charging, new FakePantryStore())
+            .HandleAsync("next step", cookAlong: new CookAlongState(8));
 
         Assert.True(result.Success);
         Assert.Equal(3, result.StepTarget);

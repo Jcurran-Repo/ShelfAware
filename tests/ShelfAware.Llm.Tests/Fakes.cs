@@ -48,6 +48,12 @@ internal sealed class FakeChatClient : IChatClient
     public int CallCount { get; private set; }
     public List<IReadOnlyList<ChatMessage>> ReceivedMessages { get; } = [];
 
+    /// <summary>The options each call carried. ⚠️ Recorded because WHICH TOOLS the model was offered is
+    /// now part of the contract: go_to_step is withheld unless a hands-free reader is open, since its only
+    /// consumer is that reader and offering it anywhere else let the model announce a move no code would
+    /// carry out. A fake that dropped the options could not tell an offered tool from a withheld one.</summary>
+    public List<ChatOptions?> ReceivedOptions { get; } = [];
+
     public FakeChatClient(params Func<ChatResponse>[] script) => _script = new(script);
 
     /// <summary>Queue plain responses to hand back in order.</summary>
@@ -59,6 +65,7 @@ internal sealed class FakeChatClient : IChatClient
     {
         CallCount++;
         ReceivedMessages.Add([.. messages]);
+        ReceivedOptions.Add(options);
         if (_script.Count == 0) throw new InvalidOperationException("FakeChatClient ran out of scripted responses.");
         return Task.FromResult(_script.Dequeue()());
     }

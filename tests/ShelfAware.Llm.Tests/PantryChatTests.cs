@@ -11,6 +11,10 @@ namespace ShelfAware.Llm.Tests;
 
 public class PantryChatTests
 {
+    /// <summary>A hands-free reader open on a recipe of the given length — what the cook-along passes so
+    /// the chat can range-check a step instead of announcing one it cannot take.</summary>
+    private static CookAlongState Reader(int steps) => new(steps);
+
     private static AnthropicPantryChat Chat(FakeChatClient client, FakePantryStore store) =>
         new(client, Options.Create(new LlmOptions()), store, NullLogger<AnthropicPantryChat>.Instance);
 
@@ -1094,7 +1098,7 @@ public class PantryChatTests
             () => Responses.ToolCalls(Responses.Call("go_to_step", ("step", 4))),
             () => Responses.Text("Moving to step 4."));
 
-        var result = await Chat(client, new FakePantryStore()).HandleAsync("up next");
+        var result = await Chat(client, new FakePantryStore()).HandleAsync("up next", cookAlong: Reader(8));
 
         Assert.True(result.Success);
         Assert.Equal(4, result.StepTarget);
@@ -1107,21 +1111,90 @@ public class PantryChatTests
             () => Responses.ToolCalls(Responses.Call("go_to_step", ("step", 0))),
             () => Responses.Text("Starting over."));
 
-        var result = await Chat(client, new FakePantryStore()).HandleAsync("take it from the top again");
+        var result = await Chat(client, new FakePantryStore()).HandleAsync("take it from the top again", cookAlong: Reader(8));
 
         Assert.Equal(0, result.StepTarget);
     }
 
-    // Only the reader knows how long its recipe is, so an out-of-range step rides out and IT decides.
-    // Guessing here would mean duplicating the recipe's length into the chat layer.
+    /// <summary>
+    /// ⚠️ This asserted the opposite until 2026-09-19, under the name
+    /// "go_to_step does not range check what it cannot know" — on the reasoning that only the reader knows
+    /// how long its recipe is, and guessing here would duplicate that length into the chat layer.
+    /// <para>What actually happened is that the reader dropped the out-of-range step SILENTLY and then
+    /// read back the model's sentence, which said "Moving to step 99". So the household was told the
+    /// screen had moved while it sat still, and was charged for being told. The recipe's length now rides
+    /// in on CookAlongState, so this is not a guess: the tool is told the truth by the one component that
+    /// knows it, and corrects the model before it can say anything.</para>
+    /// </summary>
     [Fact]
-    public async Task Go_to_step_does_not_range_check_what_it_cannot_know()
+    public async Task A_step_past_the_end_is_refused_with_the_real_length_instead_of_announced()
     {
         var client = new FakeChatClient(
             () => Responses.ToolCalls(Responses.Call("go_to_step", ("step", 99))),
-            () => Responses.Text("Moving."));
+            () => Responses.Text("That recipe only has 8 steps."));
 
-        Assert.Equal(99, (await Chat(client, new FakePantryStore()).HandleAsync("step 99")).StepTarget);
+        var result = await Chat(client, new FakePantryStore()).HandleAsync("step 99", cookAlong: Reader(8));
+
+        Assert.Null(result.StepTarget); // nothing claimed, because nothing can move
+        var toolReply = client.ReceivedMessages[^1]
+            .SelectMany(m => m.Contents.OfType<Microsoft.Extensions.AI.FunctionResultContent>())
+            .Select(r => r.Result?.ToString() ?? "")
+            .ToList();
+        Assert.Contains(toolReply, t => t.Contains("only has 8 steps"));
+    }
+
+    [Fact]
+    public async Task The_last_step_is_still_reachable()
+    {
+        // The boundary, so the refusal above cannot quietly become off-by-one and strand the final step.
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("go_to_step", ("step", 8))),
+            () => Responses.Text("Moving to step 8."));
+
+        Assert.Equal(8, (await Chat(client, new FakePantryStore()).HandleAsync("last one", cookAlong: Reader(8))).StepTarget);
+    }
+
+    /// <summary>⚠️ With no reader open the tool is not offered AT ALL, rather than offered and corrected.
+    /// go_to_step moves the hands-free reader and nothing else consumes it, so on the dashboard, the
+    /// push-to-talk button and the roaming agent its only possible outcome was the model announcing a
+    /// move no code anywhere would carry out — on a charged turn. Removing the invitation beats
+    /// apologising for accepting it.</summary>
+    [Fact]
+    public async Task The_step_tool_is_offered_only_when_a_reader_is_open()
+    {
+        // ⚠️ Asserted by COUNT, not by name. ToolUnion.AsAITool() wraps every tool in a type whose Name is
+        // the literal string "Tool", so a name-based assertion here reads identically for all fourteen —
+        // which is exactly how the first version of this gate passed while filtering nothing at all. The
+        // filter runs on Tool, before the conversion; the count is the one thing the wrapper preserves.
+        var without = new FakeChatClient(() => Responses.Text("Sure."));
+        await Chat(without, new FakePantryStore()).HandleAsync("next step");
+
+        var with = new FakeChatClient(() => Responses.Text("Sure."));
+        await Chat(with, new FakePantryStore()).HandleAsync("next step", cookAlong: Reader(8));
+
+        Assert.Equal(without.ReceivedOptions[0]!.Tools!.Count + 1, with.ReceivedOptions[0]!.Tools!.Count);
+    }
+
+    /// <summary>⚠️ And the behaviour behind the gate, because a count is a proxy. If the model calls the
+    /// step tool anyway — a replayed conversation, a future surface that forgets to pass the reader — it
+    /// is told there is nothing to move rather than being allowed to announce a move. The old handler
+    /// recorded the step unconditionally and replied "Moving to step 3", which the model then said out
+    /// loud on a dashboard where no reader has ever existed.</summary>
+    [Fact]
+    public async Task A_step_call_with_no_reader_open_is_refused_rather_than_announced()
+    {
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("go_to_step", ("step", 3))),
+            () => Responses.Text("There's no recipe open."));
+
+        var result = await Chat(client, new FakePantryStore()).HandleAsync("next step");
+
+        Assert.Null(result.StepTarget);
+        var toolReply = client.ReceivedMessages[^1]
+            .SelectMany(m => m.Contents.OfType<Microsoft.Extensions.AI.FunctionResultContent>())
+            .Select(r => r.Result?.ToString() ?? "")
+            .ToList();
+        Assert.Contains(toolReply, t => t.Contains("no recipe open"));
     }
 
     [Fact]
@@ -1131,7 +1204,7 @@ public class PantryChatTests
             () => Responses.ToolCalls(Responses.Call("go_to_step", ("step", -1))),
             () => Responses.Text("I couldn't do that."));
 
-        Assert.Null((await Chat(client, new FakePantryStore()).HandleAsync("go back a lot")).StepTarget);
+        Assert.Null((await Chat(client, new FakePantryStore()).HandleAsync("go back a lot", cookAlong: Reader(8))).StepTarget);
     }
 
     // Ordinary chat must never carry a step target — everything that isn't a cook-along ignores it, but a

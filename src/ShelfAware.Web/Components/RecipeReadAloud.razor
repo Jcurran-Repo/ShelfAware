@@ -597,26 +597,48 @@
     {
         await SetPhaseAsync(Phase.Thinking);
 
-        var result = await Chat.HandleAsync(question, history, CookContext(), _cts.Token);
-        history.Add(new ChatTurn(question, result.Reply));
+        // ⚠️ The recipe's LENGTH goes with the question, so the brain is told "that recipe only has
+        // eight steps" at the tool boundary instead of announcing step twelve and leaving this method to
+        // drop it. The drop used to be silent: the step fell outside the range check below, the model's
+        // sentence ("Moving to step 12") became lastReply, and we SPOKE it while the screen sat still.
+        var result = await Chat.HandleAsync(question, history, CookContext(), new CookAlongState(steps.Count), _cts.Token);
+        // ⚠️ ONE reading of "can we take this step", and one sentence that comes out of it. The
+        // range test lives here alone: the move below and the refusal beside it must not answer it
+        // separately, or a step this method declines is a step it also plays.
+        var target = result.StepTarget is { } asked && asked >= 0 && asked <= steps.Count ? asked : (int?)null;
+        // ⚠️ A step we cannot take is SAID, not swallowed. The brain is range-checked before it
+        // speaks now, so a refusal here means something got past that — and the one thing we must not do
+        // is read back a reply that claims the move happened. Belt and braces on purpose: this is the
+        // consumer, the only place that truly knows how long the recipe is, and the cost of being wrong
+        // here is telling someone with their hands in a pan that the screen moved when it did not.
+        var answer = result.StepTarget is { } unreachable && target is null
+            ? $"I can't go to step {unreachable} — this recipe has {steps.Count}."
+            : result.Reply;
+        // What we SAID is what goes in the history, not what the model claimed. Replaying "Moving to
+        // step 12" to the next turn would teach it the move had happened.
+        history.Add(new ChatTurn(question, answer));
         if (history.Count > MaxHistoryTurns) history.RemoveRange(0, history.Count - MaxHistoryTurns);
 
         // It understood a move the grammar missed. The step IS the answer — reading "sure, here's step
         // four" first would just be latency between them and the thing they asked for.
-        if (result.StepTarget is { } step && step >= 0 && step <= steps.Count)
+        if (target is { } step)
         {
             lastReply = null;
             await ResumeReadingAsync("playFrom", step);
             return true;
         }
 
-        lastReply = result.Reply;
+        lastReply = answer;
 
         // NavigateTo is deliberately ignored here. The brain can decide a question is best answered on
         // another page, but yanking someone to the grocery list mid-sear would end the cook-along they're
         // standing in. They can say "stop" if they want to leave.
         await SetPhaseAsync(Phase.Answering);
-        var speech = await Tts.SynthesizeAsync(result.Reply, null, _cts.Token);
+        // ⚠️ SPEAK what the screen says — `answer`, not `result.Reply`. The first version of the
+        // correction above wrote the honest sentence to lastReply and left this line reading the model's,
+        // so a household with its hands in a pan would have HEARD "moving to step twelve" while the
+        // caption beside it said the move was impossible. One story, one source.
+        var speech = await Tts.SynthesizeAsync(answer, null, _cts.Token);
         if (speech.Success && _voice is not null)
         {
             await _voice.InvokeVoidAsync("play", Convert.ToBase64String(speech.Audio), speech.MediaType);

@@ -8,8 +8,8 @@ namespace ShelfAware.Web.Tests;
 
 /// <summary>
 /// The recipe adapter on real EF/SQLite with a faked advisor: covers saving a variant, the content-based
-/// dedupe (re-adapting updates in place), the chosen-swap guard (a swap the model ignores is rejected,
-/// nothing saved), the curated substitutes riding along to the advisor, and re-rooting (adapting a
+/// dedupe (re-adapting updates in place), the chosen-swap guard (a swap the model ignores is SAVED and
+/// LABELLED, not discarded), the curated substitutes riding along to the advisor, and re-rooting (adapting a
 /// variant bases on its content but saves as a sibling under the original — never a chain).
 /// </summary>
 public class RecipeAdapterTests : IDisposable
@@ -106,22 +106,56 @@ public class RecipeAdapterTests : IDisposable
         Assert.Equal(new[] { "chicken breast", "chicken cutlet" }, tenderloins.AlsoWorksAs);
     }
 
+    /// <summary>
+    /// ⚠️ This test asserted the OPPOSITE until 2026-09-19, under the name
+    /// "a chosen swap the model ignores is rejected and saves nothing". The behaviour it pinned was:
+    /// discard the adaptation, tell the household "I couldn't make a {form} version this time — give it
+    /// another try", and keep the charge. That is paid work thrown away plus an invitation to pay again,
+    /// and nobody — household or operator — could see what the model had actually produced.
+    /// <para>Jordan's call: asking is what is paid for. They asked for the swap, so the act is charged;
+    /// what we owe them is the recipe, an honest label, and a way to report it. The variant is saved, the
+    /// message says it does not use the form they picked, the blurb carries that note so the row is still
+    /// self-describing later, and the page offers a pre-filled bug report.</para>
+    /// </summary>
     [Fact]
-    public async Task A_chosen_swap_the_model_ignores_is_rejected_and_saves_nothing()
+    public async Task A_chosen_swap_the_model_ignores_is_saved_labelled_rather_than_thrown_away()
     {
         var parentId = await SeedRecipe("Pan-Seared Chicken", "chicken breast");
-        // The user picked thighs, but the model came back with tenderloins — don't save a mislabeled variant.
+        // The user picked thighs, but the model came back with tenderloins.
         var adapter = Adapter(Suggestion("Chicken Tenderloin Skillet", "chicken tenderloins"), out var advisor);
 
         var result = await adapter.AdaptToOnHandAsync(parentId, new IngredientSwap("chicken breast", "chicken thighs"));
 
-        Assert.False(result.Success);
+        Assert.True(result.Success);
+        Assert.Equal("chicken thighs", result.SwapIgnored);
         Assert.Contains("chicken thighs", result.Message);
         Assert.Equal("Use chicken thighs in place of chicken breast.", advisor.LastPreference); // the pick reached the model
+
         await using var db = _db.CreateDbContext();
-        Assert.Empty(await db.Recipes.Where(r => r.ParentRecipeId == parentId).ToListAsync());
-        // Recorded only PAST the guards: a rejected adapt logs no RecipeAdapted entry either.
-        Assert.Empty(await db.ActivityEntries.Where(e => e.Kind == ActivityKind.RecipeAdapted).ToListAsync());
+        var variant = Assert.Single(await db.Recipes.Where(r => r.ParentRecipeId == parentId).ToListAsync());
+        Assert.Equal(result.VariantId, variant.Id);
+        // ⚠️ The label travels with the ROW. The message is read once; this variant sits in the cookbook
+        // indefinitely, and without this a household finds a tenderloin recipe where they asked for thighs
+        // with nothing to tell them which side got it wrong.
+        Assert.Contains("chicken thighs", variant.Blurb!);
+        // Undoable, because it saved something real this time.
+        Assert.Single(await db.ActivityEntries.Where(e => e.Kind == ActivityKind.RecipeAdapted).ToListAsync());
+    }
+
+    [Fact]
+    public async Task A_swap_the_model_honors_is_saved_with_no_label_and_no_apology()
+    {
+        // The other side, so the label cannot quietly become unconditional.
+        var parentId = await SeedRecipe("Seared Chicken", "chicken breast");
+        var adapter = Adapter(Suggestion("Seared Chicken Thighs", "chicken thighs"), out _);
+
+        var result = await adapter.AdaptToOnHandAsync(parentId, new IngredientSwap("chicken breast", "chicken thighs"));
+
+        Assert.True(result.Success);
+        Assert.Null(result.SwapIgnored);
+        await using var db = _db.CreateDbContext();
+        var variant = Assert.Single(await db.Recipes.Where(r => r.ParentRecipeId == parentId).ToListAsync());
+        Assert.DoesNotContain("doesn't use", variant.Blurb ?? "");
     }
 
     [Fact]

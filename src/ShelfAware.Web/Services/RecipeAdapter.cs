@@ -69,13 +69,19 @@ public class RecipeAdapter(
         if (!adapted.Landed())
             return new AdaptResult(false, $"Couldn't adapt {recipe.Name} right now.");
 
-        // Guard the chosen swap: if the model ignored it, don't save a mislabeled variant — ask for a retry.
+        // ⚠️ A swap the model ignored is LABELLED, not discarded. This used to return failure and invite a
+        // retry — "I couldn't make a {form} version this time — give it another try" — on an act that had
+        // already been charged: paid work thrown away, an invitation to pay again, and nobody able to see
+        // what the model actually made. Asking is what is paid for (§4.w), the household asked, so the
+        // variant is saved and the charge stands; what changes is that we say what it is. See
+        // AdaptResult.SwapIgnored.
         var adaptedMains = adapted.Ingredients.Where(i => i.IsMain).Select(i => i.Name).ToList();
-        if (swap is not null && !IngredientMatcher.IsMentionedIn(swap.ChosenForm, adaptedMains))
-        {
-            logger.LogWarning("Adapt for recipe {RecipeId} did not honor the chosen swap \"{Form}\".", recipeId, swap.ChosenForm);
-            return new AdaptResult(false, $"I couldn't make a {swap.ChosenForm} version this time — give it another try.");
-        }
+        var swapIgnored = swap is not null && !IngredientMatcher.IsMentionedIn(swap.ChosenForm, adaptedMains)
+            ? swap.ChosenForm
+            : null;
+        if (swapIgnored is not null)
+            logger.LogWarning("Adapt for recipe {RecipeId} did not honor the chosen swap \"{Form}\"; saving it labelled.",
+                recipeId, swapIgnored);
 
         // Re-adapting to the same result should UPDATE, not duplicate: drop any existing variant of this
         // parent whose main ingredients match (identity by content, not the AI's exact title — robust to
@@ -91,7 +97,13 @@ public class RecipeAdapter(
         var variant = new Recipe
         {
             Name = adapted.Name,
-            Blurb = adapted.Blurb,
+            // ⚠️ The label travels WITH the row, not only in the message that announced it. A message is
+            // read once; the variant sits in the cookbook indefinitely, and a household that asked for a
+            // chickpea version and finds a beef one months later has no way to know it was the model that
+            // ignored them rather than themselves misremembering.
+            Blurb = swapIgnored is null
+                ? adapted.Blurb
+                : $"{adapted.Blurb} (You asked for a {swapIgnored} version — this one doesn't use it.)".TrimStart(),
             SavedAt = DateTimeOffset.Now,
             ParentRecipeId = parentId,
             EstimatedCaloriesPerServing = adapted.CaloriesPerServing,
@@ -102,7 +114,8 @@ public class RecipeAdapter(
             Steps = adapted.Steps.Select((t, idx) => new RecipeStep { Order = idx + 1, Text = t }).ToList(),
         };
         db.Recipes.Add(variant);
-        // Undoable, only here past the guards (a failed or dishonoured adapt logs nothing). The entry keys
+        // Undoable, only here past the guards (a failed adapt logs nothing; a dishonoured swap DOES, because
+        // it saved a real variant the household will want to undo). The entry keys
         // on the variant's generated id (so undo can delete it), so the variant + the stale-variant removals
         // save inside a transaction to assign it, then the entry is staged and saved — one commit.
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -113,7 +126,11 @@ public class RecipeAdapter(
         await activityLog.TrimAsync(cancellationToken);
         logger.LogInformation("Adapted recipe {RecipeId} into variant {VariantId} (replaced {Removed} duplicate(s)).",
             recipeId, variant.Id, stale.Count);
-        return new AdaptResult(true, $"Saved \"{variant.Name}\" — a version of {familyName} using what you have.", variant.Id);
+        return swapIgnored is null
+            ? new AdaptResult(true, $"Saved \"{variant.Name}\" — a version of {familyName} using what you have.", variant.Id)
+            : new AdaptResult(true,
+                $"Saved \"{variant.Name}\", but it doesn't use {swapIgnored} — the assistant ignored the swap you picked.",
+                variant.Id, swapIgnored);
     }
 
     // A stable, order-independent signature of a recipe's main ingredients (grounded product name when it

@@ -1457,6 +1457,64 @@ findings guard, and `SourceTreeTests` pins the walk itself. **A control that rep
 earned is worse than no control**, and that is now the thing to look for first in any rule this arc adds.
 
 
+### Thirteenth pass: the two questions the gates could not answer (Jordan, 2026-09-19)
+
+The twelfth pass closed with two findings that were not defects to fix but calls to make, because each
+turned on what the household is *buying*. Both went to Jordan, and both answers are now in the code and in
+`docs/subscription-plan.md` §4.z. They resolved in opposite directions, which is the useful part.
+
+**1. A recipe adaptation that ignores the chosen swap — charge or refund?**
+
+> *"if the user asks for a swap, they asked, give them the failed recipe and a why, and offer to make a
+> bug report, but do not refund"*
+
+**Charge.** Asking is what is paid for, so the *charge* was never the defect. The defect was everything
+built around it: `RecipeAdapter` threw the paid-for variant away, told the household "give it another
+try" next to a button that charges again, and left nobody able to see what the model had actually made.
+The variant is now saved, and the shortfall is named twice — in the message, and in the variant's own
+blurb, because a message is read once and the variant sits in the cookbook indefinitely. The retry
+invitation is replaced by a pre-filled `/bugs` link, which is the honest thing to offer when the model,
+not the household, is what went wrong. ⚠️ Note what this did *not* do: it did not move the scope. The
+general "open the scope where success is known" question the gate raised stays open in
+`docs/backlog.md`, standing on its own rather than riding on a case that had a better answer.
+
+**2. A chat turn that asks the screen to jump to a step with no reader open, or past the end.**
+
+> *"if a user didnt ask for a generation we shouldnt be generating if thats an error for number 1 it
+> needs fixed"*
+
+Read against the question as asked, this is not a generation nobody asked for — the cook-along already
+gates stray noise with `CookAlongCommands.IsWorthAsking`, and by §4.w a turn that answered is charged.
+But the answer named the right thing anyway, because looking at it properly turned up a real defect one
+step over: **`go_to_step` was offered to the model on every surface and range-checked on none.** The
+handler recorded a step and replied "Moving to step 12"; the model repeated it; the only consumer —
+the reader — silently dropped anything past the end, or on the dashboard and the push-to-talk button
+did not exist at all. The household was told the screen had moved while it sat still.
+
+Fixed with `CookAlongState(int StepCount)` on `IPantryChat.HandleAsync`: the tool is **withheld from
+the model** unless a reader is open, and the step is checked against the real length before anyone is
+told anything. Both refusals are real answers the household reads, so the turn charges — correctly now.
+
+⚠️ **And the pass found one more in its own diff, which is the point of re-reading it.** The first
+version of the correction wrote the honest sentence to `lastReply` — the caption — and left the
+synthesizer one line below reading `result.Reply`, the model's. A household with its hands in a pan
+would have **heard** "moving to step twelve" while the caption beside it said the move was impossible:
+the same "two surfaces, two answers, one fact" shape CLAUDE.md's *one prediction, one story* rule exists
+for, introduced by the change that was fixing exactly that shape one layer up. Both now read one
+`answer` variable, and the range test that decides it lives in one place rather than being asked
+separately by the move and by the refusal. `A_step_the_recipe_does_not_have_is_refused_out_loud_rather_than_announced`
+asserts on what was **spoken**, because that is the half that was wrong.
+
+⚠️ **Two traps this one walked into, both worth the note.** `ToolUnion.AsAITool()` wraps every tool in a
+type whose `Name` is the literal string `"Tool"`, so my first filter — written *after* the conversion —
+matched nothing and would have shipped the tool on every surface under a test asserting it was gated.
+My own positive-side test caught it, which is the argument for pinning both sides of a gate rather than
+only the refusal. And the state is **structured, not inferred from `screenContext`**: that parameter is
+prose written for a model to read, and "is there a reader open, and how long is the recipe" is a
+question the code has to answer — answering it by looking for words in a sentence meant for a model is
+exactly how two readings of one fact drift apart.
+
+
 ## 10. Sequencing
 
 ```

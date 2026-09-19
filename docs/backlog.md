@@ -7,14 +7,17 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
 
 ## Open
 
-- **A recipe adapt that ignores the chosen swap is still charged.** `RecipeAdapter` rejects an
-  adaptation whose main ingredients don't mention the swap the household picked, tells them "I couldn't
-  make a {form} version this time — give it another try", and every retry costs another credit. The
-  null/unnamed half of this was fixed on 2026-09-19 in `AnthropicRecipeAdvisor`; this half cannot be,
-  because the advisor cannot see a check that lives in the caller. The real fix is for the scope to be
-  opened where the act's success is known — `RecipeAdapter` — rather than at the provider boundary, which
-  is a design change to how every service opens a scope and so is **Jordan's call**, per CLAUDE.md's
-  co-creation rule. Raised by the pre-merge security gate, 2026-09-19.
+- **A scope still opens at the provider boundary, not where success is known.** `AiActionScope.Begin`
+  fires on an act's first provider call, so any check that lives in the *caller* — "did the adaptation use
+  the swap", "did the plan persist the meals it promised" — runs after the credits have moved, and the only
+  correction left is a refund. Opening the scope in the caller instead would let an act settle on what it
+  actually delivered. That is a change to how **every** service opens a scope, so per CLAUDE.md's
+  co-creation rule it is **Jordan's call**, and it is not blocking anything: §4.w's rule plus the `Delivered`
+  settlements cover every act on file today. Raised by the pre-merge security gate, 2026-09-19, as "a
+  recipe adapt that ignores the chosen swap is still charged"; **that** case was resolved on 2026-09-19 by
+  deciding it rather than by moving the scope (`docs/subscription-plan.md` §4.z — asking is what is paid
+  for, so the variant is now saved and labelled instead of thrown away), which leaves the general question
+  standing on its own.
 
 - **Tag dedup does not see through Unicode confusables.** `TagVocabulary.Normalize` now folds to one
   Unicode normal form, so a precomposed "Café" and a decomposed one are the same tag. A Cyrillic "Ѕoda"

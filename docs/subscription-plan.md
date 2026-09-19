@@ -480,6 +480,49 @@ attribution was added to fix, pointing the other way. So the leak is held open o
 "round in the household's favour" call the denomination migration made. **Revisit if the allowance ever
 gets large enough that one act's charge is material.**
 
+### 4.z Asking is what is paid for — and a tool must not offer what it cannot do (Jordan, 2026-09-19)
+
+Two questions came out of the 2026-09-19 pre-merge gates, both of the shape "the household was charged
+for something that didn't happen". Jordan answered them differently, and the difference is the rule.
+
+**A recipe adaptation that ignores the swap the household picked is charged, and the variant is kept.**
+> *"if the user asks for a swap, they asked, give them the failed recipe and a why, and offer to make a
+> bug report, but do not refund"*
+
+`RecipeAdapter` used to check the adapted recipe's main ingredients for the chosen swap and, on a miss,
+return failure with *"I couldn't make a {form} version this time — give it another try"* — on an act the
+provider had already been paid for. That is three losses in one: real work thrown away, an invitation to
+spend another credit on the same roll of the dice, and nobody able to see what the model actually made.
+The household asked, the provider answered, so §4.w's rule already decides it: **the charge stands**. What
+changes is honesty. The variant is saved, the shortfall is named in the message *and* in the variant's own
+blurb (`AdaptResult.SwapIgnored`), and the screen offers a pre-filled bug report rather than a retry.
+
+⚠️ The label travels **with the row**, not only in the message that announced it. A message is read once;
+the variant sits in the cookbook indefinitely, and a household that asked for a chickpea version and finds
+a beef one months later has no way to tell whether the model ignored them or they misremembered.
+
+**A chat turn that claimed to move a cook-along it could not move was a defect, not a billing question.**
+> *"if a user didnt ask for a generation we shouldnt be generating if thats an error for number 1 it needs
+> fixed"*
+
+The gate asked whether to refund a turn that hit the turn limit with no reader open. The answer is that
+the turn should never have reached that state: `go_to_step` was offered to the model on **every** surface
+and range-checked on **none**. The handler recorded a step and replied *"Moving to step 12"*, the model
+repeated it, and the only consumer — the cook-along reader — silently dropped anything past the end of the
+recipe, or on the dashboard and the push-to-talk button did not exist at all. The household was told the
+screen had moved while it sat still, and paid for the telling.
+
+The fix is `CookAlongState`, passed to `IPantryChat.HandleAsync`: the tool is **withheld from the model**
+unless a reader is actually open, and the step is checked against the real `StepCount` before anyone is
+told anything. Both refusals are answers the household gets to read (*"There's no recipe open to move."*,
+*"That recipe only has 8 steps."*), so by §4.w the turn is charged — correctly now, because it answered.
+
+⚠️ Structured, not inferred from `screenContext`. That parameter is prose written for a model to read, and
+"is there a reader open, and how long is the recipe" is a question the **code** has to answer; answering it
+by looking for words in a sentence meant for a model is how the two drift apart. Held by
+`The_step_tool_is_offered_only_when_a_reader_is_open` and
+`A_step_past_the_end_is_refused_with_the_real_length_instead_of_announced`.
+
 ## 5. Founder tier (from the parked 2026-08-23 design)
 
 Tier #1 of this system; needs zero payment code. `Household.Tier` (auth.db — deliberately: no pantry

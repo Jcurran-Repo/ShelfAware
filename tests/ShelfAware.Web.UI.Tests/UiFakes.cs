@@ -161,6 +161,12 @@ internal sealed class FakePantryChat : IPantryChat
     public IReadOnlyList<ChatTurn>? LastHistory { get; private set; }
     public string? LastScreenContext { get; private set; }
 
+    /// <summary>⚠️ The reader that was open when the call was made, RECORDED rather than ignored — the
+    /// cook-along's contract is now partly about this: go_to_step is offered to the model only when a
+    /// reader is open, and range-checked against its length, so a fake that dropped the parameter would
+    /// let a surface stop sending it with every test still green.</summary>
+    public CookAlongState? LastCookAlong { get; private set; }
+
     /// <summary>When set, the next call awaits this — keeps the page's busy state observable
     /// (a real model call has latency; an instant fake would make the busy branch untestable).
     /// One-shot: consumed by the call it holds.</summary>
@@ -168,11 +174,12 @@ internal sealed class FakePantryChat : IPantryChat
 
     public async Task<ChatResult> HandleAsync(
         string userText, IReadOnlyList<ChatTurn>? history = null, string? screenContext = null,
-        CancellationToken cancellationToken = default)
+        CookAlongState? cookAlong = null, CancellationToken cancellationToken = default)
     {
         Asked.Add(userText);
         LastHistory = history?.ToList();
         LastScreenContext = screenContext;
+        LastCookAlong = cookAlong;
         if (Hold is { } gate)
         {
             Hold = null;

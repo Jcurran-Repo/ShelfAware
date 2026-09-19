@@ -23,6 +23,10 @@ namespace ShelfAware.Llm;
 public class AnthropicPantryChat : IPantryChat
 {
     private const int MaxTurns = 5;
+
+    /// <summary>The one tool whose only consumer is the hands-free reader, named once so the gate that
+    /// withholds it and the declaration that defines it cannot drift apart.</summary>
+    private const string GoToStep = "go_to_step";
     private static readonly string SystemPrompt = ReadEmbedded("Prompts.pantry-chat-system.txt");
 
     private readonly IChatClient _chat;
@@ -51,7 +55,7 @@ public class AnthropicPantryChat : IPantryChat
 
     public async Task<ChatResult> HandleAsync(
         string userText, IReadOnlyList<ChatTurn>? history = null, string? screenContext = null,
-        CancellationToken cancellationToken = default)
+        CookAlongState? cookAlong = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(userText)) return ChatResult.Fail("Type something to update.");
         await using var action = AiActionScope.Begin(ServiceAction.ChatTurn);
@@ -76,7 +80,7 @@ public class AnthropicPantryChat : IPantryChat
         {
             ModelId = _options.ChatModel,
             MaxOutputTokens = 1024,
-            Tools = BuildTools(),
+            Tools = BuildTools(cookAlong),
         };
         // Replay prior (user, assistant) exchanges so follow-ups resolve against what was just said,
         // then append the new user turn. Empty history = the original single-turn behaviour.
@@ -172,7 +176,7 @@ public class AnthropicPantryChat : IPantryChat
                     // is invisible by design to the household; the log line is the only signal an operator
                     // gets that a tool is limping, which is the same argument the provider catches make.
                     bool isError;
-                    (text, isError) = await ExecuteToolAsync(call, products, actions, nav, wrote, cancellationToken);
+                    (text, isError) = await ExecuteToolAsync(call, products, actions, nav, wrote, cookAlong, cancellationToken);
                     if (isError) _logger.LogWarning("Chat tool {Tool} reported a failure to the model: {Text}", call.Name, text);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -280,7 +284,7 @@ public class AnthropicPantryChat : IPantryChat
 
     private async Task<(string text, bool isError)> ExecuteToolAsync(
         FunctionCallContent call, IReadOnlyList<Product> products, List<string> actions, NavigationTarget nav,
-        TurnWrites wrote, CancellationToken ct)
+        TurnWrites wrote, CookAlongState? cookAlong, CancellationToken ct)
     {
         string? Str(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsString(v) : null;
         decimal? Dec(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsDecimal(v) : null;
@@ -655,8 +659,16 @@ public class AnthropicPantryChat : IPantryChat
             {
                 var step = Int("step");
                 if (step is null || step < 0) return ("Give the step number to move to.", true);
-                // Not range-checked here: only the reader on screen knows how long its recipe is, and it
-                // re-checks. Overreaching would mean duplicating the recipe's length into the chat layer.
+                // ⚠️ Range-checked HERE, against the reader that is actually open. This used to record
+                // the step unchecked, on the reasoning that "only the reader on screen knows how long its
+                // recipe is, and it re-checks" — but the reader re-checks SILENTLY: past the end it drops
+                // the step and reads back the model's sentence, which says "Moving to step 12". So the
+                // household heard the move happen while the screen sat still, and paid for it. The recipe's
+                // length now rides in on CookAlongState, so the model is corrected before it can say
+                // anything, and the tool is not offered at all when no reader is open.
+                if (cookAlong is null) return ("There's no recipe open to move.", true);
+                if (step > cookAlong.StepCount)
+                    return ($"That recipe only has {cookAlong.StepCount} steps.", true);
                 nav.Step = (int)step;
                 return step == 0 ? ("Starting the recipe over.", false) : ($"Moving to step {step}.", false);
             }
@@ -749,13 +761,13 @@ public class AnthropicPantryChat : IPantryChat
             "won't take effect yet — tell the user it'll register if they say so again once that stock date has passed.";
     }
 
-    private static IList<AITool> BuildTools()
+    private static IList<AITool> BuildTools(CookAlongState? cookAlong)
     {
         const string categoryEnum = """["Dairy","Meat","Produce","Pantry","Frozen","Beverage","Household","PetCare","PersonalCare","Other"]""";
 
         // Reuse the existing Anthropic tool definitions, wrapped as AITool via the SDK's AsAITool
         // helper so they flow through IChatClient. Tool calls come back as FunctionCallContent.
-        ToolUnion[] tools =
+        Tool[] tools =
         [
             MakeTool("record_signal",
                 "Record an explicit inventory statement about an existing product.",
@@ -856,7 +868,7 @@ public class AnthropicPantryChat : IPantryChat
             // and free, but it matches whole utterances — so a cough, a stutter, or a phrasing nobody
             // listed ("up next") fell through to here and got ANSWERED instead of obeyed. This turns a
             // grammar miss from the wrong outcome into a slower right one.
-            MakeTool("go_to_step",
+            MakeTool(GoToStep,
                 "Move the recipe reader to a step, while the user is cooking along hands-free (the context will say so, and which step they're on). Use this WHENEVER they are asking to move rather than asking a question — 'next', 'up next', 'go back', 'read that again', 'take me to step 3', 'carry on', 'skip ahead' — no matter how they phrase it, including when their words are garbled or run together. Steps are 1-based; use 0 to start over from the introduction. Do NOT use it to answer a question ABOUT a step ('what goes in at step 3') — answer those normally.",
                 """
                 {
@@ -905,7 +917,20 @@ public class AnthropicPantryChat : IPantryChat
                 ["recipe"]),
         ];
 
-        return tools.Select(t => t.AsAITool()).ToList();
+        // ⚠️ A tool that cannot do anything is not offered. go_to_step moves the hands-free reader and
+        // nothing else consumes it, so on the dashboard, the push-to-talk button and the roaming agent it
+        // was a tool whose only possible outcome was the model announcing a move that no code anywhere
+        // would carry out — and the act was charged for saying so. Offering it only when a reader is open
+        // removes the invitation rather than correcting the answer afterwards.
+        // ⚠️ Filtered as Tool, BEFORE the conversion, because ToolUnion.AsAITool() wraps each one in
+        // a type whose Name is the literal string "Tool" for every tool in the list. The first version of
+        // this filter ran after the conversion and so matched nothing: go_to_step was still offered on
+        // every surface, and the test asserting it was withheld passed vacuously. It was the test for the
+        // OTHER side — that the tool IS offered when a reader is open — that failed and gave it away.
+        return tools
+            .Where(t => cookAlong is not null || t.Name != GoToStep)
+            .Select(t => ((ToolUnion)t).AsAITool())
+            .ToList();
     }
 
     // Exact (case-insensitive) → unique substring either way → token containment (the eval harness's
@@ -945,7 +970,7 @@ public class AnthropicPantryChat : IPantryChat
             .Where(t => t is not ("the" or "a" or "an" or "and" or "with" or "of" or "recipe"))
             .ToHashSet();
 
-    private static ToolUnion MakeTool(string name, string description, string propertiesJson, string[]? required = null) =>
+    private static Tool MakeTool(string name, string description, string propertiesJson, string[]? required = null) =>
         new Tool
         {
             Name = name,

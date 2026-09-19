@@ -187,6 +187,17 @@
     @if (adaptNote is not null)
     {
         <p class="chat-reply" role="status">@adaptNote</p>
+        @* The assistant saved a real adaptation but ignored the swap that was picked. The recipe is
+           kept and the act is charged (asking is what is paid for), so the household gets the thing
+           they paid for plus an honest label — and a way to tell us, since a model ignoring an
+           explicit instruction is a bug worth seeing rather than something to shrug at. *@
+        @if (adaptSwapIgnored is not null)
+        {
+            <p class="muted small">
+                Asking is what gets charged, so this one is paid for — but it isn’t what you asked for.
+                <a href="@BugLinkForSwap(adaptSwapIgnored)">Tell us about it</a> and we’ll look at the prompt.
+            </p>
+        }
     }
     @if (imOutNote is not null)
     {
@@ -512,6 +523,16 @@
     private string? filterProductName;
     private int? adaptingId;      // the recipe currently being adapted (button shows a spinner)
     private string? adaptNote;    // result of the last Adapt
+    /// <summary>The form the model was told to use and didn't, when it saved a variant anyway — so the
+    /// page can say what happened and offer a report. See AdaptResult.SwapIgnored.</summary>
+    private string? adaptSwapIgnored;
+
+    /// <summary>A /bugs link with the report already written, for the swap the assistant ignored. ⚠️ It
+    /// pre-fills the form and stops there — /bugs still shows it, lets them edit it, and waits for them
+    /// to press the button. Nothing about this page's offer may file a report on a household's behalf.</summary>
+    private static string BugLinkForSwap(string form) =>
+        $"/bugs?from={Uri.EscapeDataString("/recipes")}&about={Uri.EscapeDataString(
+            $"I picked \"{form}\" as the swap when adapting a recipe, and the version that came back doesn't use it.")}";
     private int? openAltFor;      // RecipeIngredient.Id whose swap bubble-cloud is open (one at a time)
     private int? generatingAltFor; // RecipeIngredient.Id whose alternates are being generated
     private string? altUnavailable; // why the open cloud couldn't fetch AI swaps (no key / out of credits), or null
@@ -576,6 +597,7 @@
         if (adaptingId is not null) return;
         adaptingId = r.Id;
         adaptNote = null;
+        adaptSwapIgnored = null;
         var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, ServiceAction.RecipeAdapt);
         if (blocked is not null) { adaptNote = blocked; adaptingId = null; return; }
         try
@@ -641,12 +663,14 @@
         if (adaptingId is not null) return;
         adaptingId = r.Id;
         adaptNote = null;
+        adaptSwapIgnored = null;
         var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, ServiceAction.RecipeAdapt);
         if (blocked is not null) { adaptNote = blocked; adaptingId = null; return; }
         try
         {
             var result = await Adapter.AdaptToOnHandAsync(r.Id, new IngredientSwap(i.Name, form));
             adaptNote = result.Message;
+            adaptSwapIgnored = result.SwapIgnored;
             openAltFor = null;
             await LoadAsync();
         }
