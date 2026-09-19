@@ -31,11 +31,14 @@ public class PantryChatTests
         ],
         ["Sear the steak.", "Grill the zucchini."]);
 
-    private sealed class StubRecipeAdvisor(RecipeSuggestion suggestion) : IRecipeAdvisor
+    /// <summary>⚠️ Takes a NULLABLE suggestion, so the "couldn't reach the recipe assistant" branch can
+    /// be driven at all. It took a non-null one for the commit that introduced that branch, which meant
+    /// the only test double for this tool could not express the state the change existed to add.</summary>
+    private sealed class StubRecipeAdvisor(RecipeSuggestion? suggestion) : IRecipeAdvisor
     {
         public Task<IReadOnlyList<RecipeSuggestion>?> SuggestAsync(
             string request, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods, CancellationToken ct = default) =>
-            Task.FromResult<IReadOnlyList<RecipeSuggestion>?>([suggestion]);
+            Task.FromResult<IReadOnlyList<RecipeSuggestion>?>(suggestion is null ? null : [suggestion]);
 
         public Task<RecipeSuggestion?> AdaptAsync(
             RecipeToAdapt recipe, IReadOnlyList<PantryProduct> onHand, IReadOnlyList<string> excludedFoods,
@@ -779,6 +782,30 @@ public class PantryChatTests
             .Single(m => m.Role == ChatRole.Tool)
             .Contents.OfType<FunctionResultContent>().Single().Result?.ToString();
         Assert.Contains("resumed tracking", toolResult);
+    }
+
+    [Fact]
+    public async Task A_recipe_tool_whose_call_never_landed_says_so_instead_of_saying_there_is_no_recipe()
+    {
+        // ⚠️ "I couldn't reach the recipe assistant" and "I couldn't come up with one" are different
+        // answers, and until the advisor could return null the tool had no way to tell them apart: a
+        // provider timeout read to the household as the model having thought about it and declined. The
+        // branch shipped with no test because the only stub for this tool could not produce a null.
+        var store = new FakePantryStore(P(1, "Ribeye Steak"));
+        var client = new FakeChatClient(
+            () => Responses.ToolCalls(Responses.Call("add_recipe_to_list", ("recipe", "steak hibachi"))),
+            () => Responses.Text("Sorry about that."));
+
+        var result = await ChatWithRecipe(client, store, new StubRecipeAdvisor(null), new StubSettings("Auto"))
+            .HandleAsync("add everything for steak hibachi");
+
+        Assert.True(result.Success);       // the chat itself still works — the TOOL failed, not the turn
+        Assert.Empty(store.GroceryExtras); // and nothing was written off a call that never landed
+        var toolReply = client.ReceivedMessages[^1]
+            .SelectMany(m => m.Contents.OfType<Microsoft.Extensions.AI.FunctionResultContent>())
+            .Select(r => r.Result?.ToString() ?? "")
+            .ToList();
+        Assert.Contains(toolReply, t => t.Contains("couldn't reach the recipe assistant"));
     }
 
     [Fact]

@@ -50,10 +50,18 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
             ResponseFormat = ChatResponseFormat.ForJsonSchema(RecipeJson.Schema(), schemaName: "recipe_suggestions"),
         };
 
-        ChatResponse response;
+        // ⚠️ The PARSE is inside the try, like all four sibling services (AnthropicReceiptExtractor,
+        // AnthropicRecipeImporter, AnthropicShelfCensusReader, AnthropicMealPlanGenerator — the last says
+        // in as many words that a long structured reply "can come back TRUNCATED … which would otherwise
+        // throw and take the whole plan down"). MaxOutputTokens is 4096 for up to three full recipes with
+        // steps, so a cut-off reply is a live case, and JsonDocument.Parse throws on one. The commit that
+        // wrapped this class's transport call left the parse outside and made it the only service in the
+        // assembly guarding half of what its siblings guard.
+        List<RecipeSuggestion> suggestions;
         try
         {
-            response = await _chat.GetResponseAsync(messages, options, cancellationToken);
+            var response = await _chat.GetResponseAsync(messages, options, cancellationToken);
+            suggestions = RecipeJson.Parse(response.Text);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; } // whose cancellation: see ProviderCancellationSiteTests
         catch (Exception ex)
@@ -67,17 +75,20 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
             return null; // couldn't reach it — NOT the same as "no ideas", see IRecipeAdvisor
         }
 
-        var suggestions = RecipeJson.Parse(response.Text);
-        _logger.LogInformation("Recipe advisor returned {Count} suggestion(s) for {OnHand} on-hand item(s).", suggestions.Count, onHand.Count);
-        // ⚠️ Settled on ideas actually arriving, and the comment this replaced — "nothing I can make
-        // from that is an answer" — described a reply recipe-suggest-system.txt never asks for: rule 2
-        // says "Suggest 1-3 recipe ideas", with no way to decline. So an empty array is the model failing,
-        // and Recipes.razor turns it into "No ideas came back — try rephrasing" beside a live button that
-        // charges again. Identical to the adapt case below, left standing one method above it for a
-        // commit, with a test named No_recipe_worth_suggesting_is_an_answer pinning the old meaning.
-        if (suggestions.Count == 0) return suggestions;
+        // ⚠️ The SAME question AdaptAsync asks, through the same predicate. For one commit this method
+        // asked `suggestions.Count == 0` — present — while RecipeReply.Landed eight lines below meant
+        // present AND named, and RecipeJson.Parse keeps an unnamed entry (`name` falls back to ""). So a
+        // reply of [{"name":"  "}] was refunded by one method and charged in full by the other, and the
+        // screen drew a card with a blank title. The consolidated definition shipped narrower than the
+        // sites around it, which is the failure this arc keeps repeating — see CLAUDE.md item 41.
+        var landed = suggestions.Where(s => s.Landed()).ToList();
+        _logger.LogInformation("Recipe advisor returned {Count} usable suggestion(s) of {Parsed} parsed for {OnHand} on-hand item(s).",
+            landed.Count, suggestions.Count, onHand.Count);
+        // recipe-suggest-system.txt rule 2 says "Suggest 1-3 recipe ideas" with no way to decline, so
+        // nothing usable coming back is the model failing, not an honest "nothing here" — §4.w refunds it.
+        if (landed.Count == 0) return landed;
         action.Answered();
-        return suggestions;
+        return landed;
     }
 
     public async Task<RecipeSuggestion?> AdaptAsync(
@@ -117,10 +128,14 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
             ResponseFormat = ChatResponseFormat.ForJsonSchema(RecipeJson.Schema(), schemaName: "recipe_adaptation"),
         };
 
-        ChatResponse response;
+        // ⚠️ The parse is inside the try for the reason given in SuggestAsync above: a truncated reply
+        // throws out of JsonDocument.Parse, and every sibling service in this assembly wraps call+parse
+        // together.
+        RecipeSuggestion? adapted;
         try
         {
-            response = await _chat.GetResponseAsync(messages, options, cancellationToken);
+            var response = await _chat.GetResponseAsync(messages, options, cancellationToken);
+            adapted = RecipeJson.Parse(response.Text).FirstOrDefault();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; } // whose cancellation: see ProviderCancellationSiteTests
         catch (Exception ex)
@@ -129,7 +144,6 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
             return null; // RecipeAdapter reads null as "couldn't adapt", which is what happened
         }
 
-        var adapted = RecipeJson.Parse(response.Text).FirstOrDefault();
         _logger.LogInformation("Recipe advisor adapted \"{Name}\" (produced result: {HasResult}).", recipe.Name, adapted is not null);
         // ⚠️ Settled on a NAMED adaptation, not on the call returning. A reply that parses to nothing,
         // or to a variant with no name, is one RecipeAdapter turns into "Couldn't adapt {recipe} right

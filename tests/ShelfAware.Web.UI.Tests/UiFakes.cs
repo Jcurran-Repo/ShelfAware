@@ -244,7 +244,11 @@ internal sealed class FakeRecipeAdapter : IRecipeAdapter
 
 internal sealed class FakeSuggestionAdvisor : IRecipeAdvisor
 {
-    public IReadOnlyList<RecipeSuggestion> Suggestions { get; set; } = [];
+    /// <summary>⚠️ NULLABLE, matching IRecipeAdvisor. It was declared non-null for one commit — the one
+    /// that introduced the null to mean "couldn't reach the model" — so no page test could drive that
+    /// branch at all, and the screen it produces went untested while the suite stayed green. A fake that
+    /// cannot express the new state is how a partial conversion survives a review.</summary>
+    public IReadOnlyList<RecipeSuggestion>? Suggestions { get; set; } = [];
 
     /// <summary>When set, the next SuggestAsync throws it instead of answering — the page's
     /// keep-the-old-batch-on-failure rule needs a failing model call to exist.</summary>
@@ -261,7 +265,7 @@ internal sealed class FakeSuggestionAdvisor : IRecipeAdvisor
         LastExcluded = excludedFoods;
         return Throw is { } ex
             ? Task.FromException<IReadOnlyList<RecipeSuggestion>?>(ex)
-            : Task.FromResult<IReadOnlyList<RecipeSuggestion>?>(Suggestions);
+            : Task.FromResult(Suggestions);
     }
 
     public Task<RecipeSuggestion?> AdaptAsync(

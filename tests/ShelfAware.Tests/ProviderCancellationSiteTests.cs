@@ -33,11 +33,18 @@ namespace ShelfAware.Tests;
 /// <para>⚠️ And the FIRST version of this rule was itself too narrow, in three ways that each hid a
 /// live defect. It inspected only catch clauses that EXIST, so <c>AnthropicRecipeAdvisor</c> — the one
 /// provider call in the assembly with no <c>try</c> at all — passed it while <c>Recipes.razor</c> rethrew
-/// the escape bare and tore the circuit. It globbed <c>*.cs</c>, so no <c>.razor</c> file was reachable,
-/// although the sibling rule ten files away already lifts <c>@code</c> blocks for exactly that reason.
+/// the escape bare and tore the circuit. It globbed <c>*.cs</c>, so no <c>.razor</c> file was reachable.
 /// And its filter test was a substring match, so <c>when (!ct.IsCancellationRequested)</c> — the precise
-/// inversion — passed. All three are closed below. The lesson is that a rule written to end a class of
-/// defect gets read as covering the class, so whatever it cannot see has to be closed or written down.</para>
+/// inversion — passed. The lesson is that a rule written to end a class of defect gets read as covering
+/// the class, so whatever it cannot see has to be closed or written down.</para>
+///
+/// <para>⚠️ The SECOND version then made the same mistake one level up, which is why the razor scan
+/// below carries a reach guard of its own. It added <c>.razor</c> reading and a comment saying the gap
+/// was closed — but pointed it at a scope holding one directory (<c>ShelfAware.Llm</c>, which contains
+/// no <c>.razor</c> file) and four single files, so the loop body never executed once and the file it
+/// named twice by name was still unseen. Dead code that reads as coverage is worse than a written-down
+/// gap, because the next session stops looking. A scan now has to prove it REACHED something, not
+/// merely that it found nothing wrong.</para>
 /// </summary>
 public class ProviderCancellationSiteTests
 {
@@ -51,7 +58,7 @@ public class ProviderCancellationSiteTests
     /// correctly, because there the caller really did go away. The invariant worth holding is narrower
     /// and stronger — <b>a provider cancellation never leaves this boundary</b> — and once it holds, the
     /// layers above it are safe whatever they do with their own.</para></summary>
-    private static readonly string[] Scope =
+    private static readonly string[] BoundaryScope =
     [
         Path.Combine("src", "ShelfAware.Llm"),
         Path.Combine("src", "ShelfAware.Web", "Services", "RecipeAdapter.cs"),
@@ -60,8 +67,30 @@ public class ProviderCancellationSiteTests
         Path.Combine("src", "ShelfAware.Web", "Services", "ReceiptSelfEval.cs"),
     ];
 
-    /// <summary>The call that leaves the app for a model.</summary>
-    private const string ProviderCall = "GetResponseAsync";
+    /// <summary>Where a provider call may be MADE — the boundary, plus every page, because a page that
+    /// starts calling a provider directly is the thing the wrapping rule exists to catch.
+    /// <para>⚠️ Deliberately wider than <see cref="BoundaryScope"/>, and only the wrapping rule uses it.
+    /// The "whose cancellation" rule must NOT judge the pages: sixteen of them carry
+    /// <c>catch (Exception ex) when (ex is not OperationCanceledException)</c> around a DATABASE call,
+    /// where letting a cancellation past is right because the caller really is the only thing that can
+    /// raise one. At a provider boundary the same clause is the defect itself — a provider timeout
+    /// arrives as that exact type and the filter waves it straight out through the event handler — so
+    /// one scope cannot serve both rules, and widening the boundary scope to reach razor would have made
+    /// the rule fail on correct code and invited narrowing it back.</para>
+    /// <para>⚠️ Also deliberately NOT the <c>IChatClient</c> decorators (<c>MeteredChatClient</c>,
+    /// <c>ByokChatClient</c>): they pass a call through to the client beneath them, and the service that
+    /// OWNS the call is the one that must guard it. Requiring a try in each decorator would add catches
+    /// that can only re-report what the owner already handles.</para></summary>
+    private static readonly string[] CallScope =
+        [.. BoundaryScope, Path.Combine("src", "ShelfAware.Web", "Components")];
+
+    /// <summary>The calls that leave the app and wait on a provider. ⚠️ More than one name: the first
+    /// version knew only <c>GetResponseAsync</c> and so was blind to the three voice services in its own
+    /// scope directory, which reach ElevenLabs and Kokoro over <c>HttpClient.SendAsync</c>. All three
+    /// happened to be guarded, so the rule reported a green it had not earned — on the voice path, the
+    /// arc that previously shipped an open microphone.</summary>
+    private static readonly string[] ProviderCalls =
+        ["GetResponseAsync", "GetStreamingResponseAsync", "SendAsync"];
 
     [Fact]
     public void A_cancellation_caught_at_the_provider_boundary_asks_whose_it_was()
@@ -69,7 +98,7 @@ public class ProviderCancellationSiteTests
         var bare = new List<string>();
         var seen = 0;
 
-        foreach (var (file, tree) in Trees())
+        foreach (var (file, tree) in SourceTree.Of(BoundaryScope, includeRazor: false))
             foreach (var clause in tree.GetRoot().DescendantNodes().OfType<CatchClauseSyntax>())
             {
                 // ⚠️ A bare `catch { throw; }` and a `catch (Exception e) when (e is OperationCanceled…)`
@@ -108,17 +137,30 @@ public class ProviderCancellationSiteTests
     {
         var naked = new List<string>();
         var calls = 0;
+        var razorFiles = 0;
 
-        foreach (var (file, tree) in Trees())
+        foreach (var (file, tree) in SourceTree.Of(CallScope, includeRazor: true))
+        {
+            if (file.EndsWith(".razor", StringComparison.OrdinalIgnoreCase)) razorFiles++;
             foreach (var call in tree.GetRoot().DescendantNodes().OfType<InvocationExpressionSyntax>())
             {
-                if (call.Expression is not MemberAccessExpressionSyntax { Name.Identifier.ValueText: ProviderCall }) continue;
+                if (call.Expression is not MemberAccessExpressionSyntax access
+                    || !ProviderCalls.Contains(access.Name.Identifier.ValueText)) continue;
                 calls++;
                 if (!call.Ancestors().OfType<TryStatementSyntax>().Any(x => x.Catches.Any(CanReceiveCancellation)))
                     naked.Add($"{Path.GetFileName(file)}:{Line(call)}");
             }
+        }
 
-        Assert.True(calls > 5, $"Only {calls} provider call(s) found — the scan is broken, not the sources.");
+        Assert.True(calls > 10, $"Only {calls} provider call(s) found — the scan is broken, not the sources.");
+
+        // ⚠️ A REACH guard, not a findings guard, and the two are not the same assertion. No page calls a
+        // provider today, so counting provider calls in razor would be zero whether the scan read 65 files
+        // or none — which is exactly how the previous version passed while reading none. This asserts the
+        // scan got there. If pages stop existing, that is a real change and this should be the thing that
+        // says so.
+        Assert.True(razorFiles > 20, $"Only {razorFiles} .razor file(s) reached — the razor scan is broken, "
+                                   + "not the sources. A scan that reads nothing reports a green it has not earned.");
 
         Assert.True(naked.Count == 0,
             "A call to the provider is made with no catch that can read a cancellation, so an HttpClient "
@@ -126,6 +168,63 @@ public class ProviderCancellationSiteTests
             + "is no ErrorBoundary and the circuit dies with the household's unsaved work in it. Wrap it "
             + "and fail the act, the way every sibling service does:"
             + Environment.NewLine + string.Join(Environment.NewLine, naked));
+    }
+
+    /// <summary>
+    /// ⚠️ The rule's own classification, tested directly on literal snippets — because both previous
+    /// versions of this file were silently wrong in the predicates rather than in the walk, and neither
+    /// wrongness could fail anything: a predicate that is too permissive just stops reporting, and the
+    /// scan-based facts above go green either way. Each case is one thing the rule has actually been
+    /// caught believing, or one it must keep believing. Nothing here touches the sources.
+    /// </summary>
+    [Theory]
+    // The defect itself, in its three disguises — a named type, a bare catch-all rethrow, and a
+    // catch-all that singles cancellation out in its filter instead of its declaration.
+    [InlineData("catch (OperationCanceledException) { throw; }", false)]
+    [InlineData("catch (System.OperationCanceledException) { throw; }", false)]
+    [InlineData("catch (TaskCanceledException) { throw; }", false)]
+    [InlineData("catch (Exception e) when (e is OperationCanceledException) { throw; }", false)]
+    // The inversions. The first was found by hand; the second passed the version that claimed to have
+    // closed the first, because it is a binary expression whose left side is a plain read.
+    [InlineData("catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw; }", false)]
+    [InlineData("catch (OperationCanceledException) when (ct.IsCancellationRequested == false) { throw; }", false)]
+    [InlineData("catch (OperationCanceledException) when (ct.IsCancellationRequested != true) { throw; }", false)]
+    // A filter that asks some other question is no better than none.
+    [InlineData("catch (OperationCanceledException) when (attempt > 2) { throw; }", false)]
+    // The rule, and the forms of it that must keep passing.
+    [InlineData("catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }", true)]
+    [InlineData("catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }", true)]
+    [InlineData("catch (OperationCanceledException) when ((ct.IsCancellationRequested)) { throw; }", true)]
+    [InlineData("catch (OperationCanceledException) when (a.IsCancellationRequested || b.IsCancellationRequested) { throw; }", true)]
+    [InlineData("catch (OperationCanceledException) when (ct.IsCancellationRequested && !retried) { throw; }", true)]
+    public void The_rule_classifies_a_cancellation_catch_the_way_it_says_it_does(string snippet, bool passes)
+    {
+        var clause = Parse(snippet);
+        Assert.True(DeclaresCancellation(clause), "This snippet is one the 'whose was it?' rule must judge "
+                                                + "at all; if it stops declaring cancellation the rule walks past it.");
+        Assert.Equal(passes, AsksWhose(clause.Filter));
+    }
+
+    /// <summary>⚠️ The wrapping rule's separate question — can this clause RECEIVE a cancellation? A
+    /// service that fails the act in a catch-all is guarded; a filtered catch-all is not, because the
+    /// filter narrows what reaches it.</summary>
+    [Theory]
+    [InlineData("catch (Exception ex) { Log(ex); }", true)]
+    [InlineData("catch { Log(); }", true)]
+    [InlineData("catch (OperationCanceledException) { throw; }", true)]
+    [InlineData("catch (TaskCanceledException) { throw; }", true)]
+    [InlineData("catch (JsonException ex) { Log(ex); }", false)]
+    [InlineData("catch (Exception ex) when (ex is not OperationCanceledException) { Log(ex); }", false)]
+    [InlineData("catch (Exception ex) when (ex is HttpRequestException) { Log(ex); }", false)]
+    public void The_wrapping_rule_knows_which_catches_can_receive_a_cancellation(string snippet, bool receives) =>
+        Assert.Equal(receives, CanReceiveCancellation(Parse(snippet)));
+
+    /// <summary>The one catch clause in a snippet, parsed. Wrapped in just enough C# to be a tree.</summary>
+    private static CatchClauseSyntax Parse(string catchClause)
+    {
+        var tree = CSharpSyntaxTree.ParseText($"class C {{ void M() {{ try {{ }} {catchClause} }} }}");
+        Assert.DoesNotContain(tree.GetDiagnostics(), d => d.Severity == DiagnosticSeverity.Error);
+        return tree.GetRoot().DescendantNodes().OfType<CatchClauseSyntax>().Single();
     }
 
     /// <summary>Whether this catch singles cancellation OUT — the clause the "whose was it?" rule judges.
@@ -160,63 +259,20 @@ public class ProviderCancellationSiteTests
     {
         MemberAccessExpressionSyntax { Name.Identifier.ValueText: "IsCancellationRequested" } => true,
         ParenthesizedExpressionSyntax parens => Reads(parens.Expression),
-        // `a.IsCancellationRequested || b.IsCancellationRequested` is still asking the question; a
-        // negation or anything else is not, and is reported exactly as an absent filter would be.
-        BinaryExpressionSyntax binary => Reads(binary.Left) || Reads(binary.Right),
+        // `a.IsCancellationRequested || b.IsCancellationRequested` is still asking the question. ⚠️ ONLY
+        // `||` and `&&`, because the previous version accepted any binary operator and so let through the
+        // exact inversion its own comment said it had closed: `when (ct.IsCancellationRequested == false)`
+        // is a binary expression whose left side is a plain read, so it passed. `!ct.IsCancellation…` was
+        // rejected only because a prefix `!` is a different node type — the one inversion that had been
+        // checked by hand. Anything that is not a plain read joined by `||` or `&&` is reported exactly
+        // as an absent filter would be.
+        BinaryExpressionSyntax binary when binary.IsKind(SyntaxKind.LogicalOrExpression)
+                                        || binary.IsKind(SyntaxKind.LogicalAndExpression)
+            => Reads(binary.Left) || Reads(binary.Right),
         _ => false,
     };
 
     private static int Line(SyntaxNode node) =>
         node.SyntaxTree.GetLineSpan(node.Span).StartLinePosition.Line + 1;
 
-    private static IEnumerable<(string File, SyntaxTree Tree)> Trees()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "ShelfAware.slnx")))
-            dir = dir.Parent;
-        Assert.NotNull(dir); // no solution above the test assembly — the walk is wrong, not the sources
-
-        foreach (var entry in Scope)
-        {
-            var path = Path.Combine(dir!.FullName, entry);
-            var files = Directory.Exists(path)
-                ? Directory.EnumerateFiles(path, "*.cs", SearchOption.AllDirectories)
-                : [path];
-            foreach (var file in files)
-            {
-                if (file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
-                    || file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}")) continue;
-                Assert.True(File.Exists(file), $"{entry} is not on disk — the scope list is stale, so the "
-                                             + "rule is silently guarding less than it claims.");
-                yield return (file, CSharpSyntaxTree.ParseText(File.ReadAllText(file)));
-            }
-
-            // ⚠️ .razor too. The bare rethrow that actually tore a circuit lived in an @code block, and
-            // the first version of this scan globbed *.cs — so it could not see the file it most needed to,
-            // while the sibling rule ten files away had been lifting these blocks all along.
-            if (!Directory.Exists(path)) continue;
-            foreach (var file in Directory.EnumerateFiles(path, "*.razor", SearchOption.AllDirectories))
-                if (CodeBlockOf(File.ReadAllText(file)) is { } code)
-                    yield return (file, CSharpSyntaxTree.ParseText($"class RazorCodeBlock {{{code}}}"));
-        }
-    }
-
-    /// <summary>The body of a <c>.razor</c> file's <c>@code { … }</c> block, by brace matching, or null
-    /// when the file has none. Crude on purpose: it only has to find C# that would otherwise be
-    /// invisible, and a file whose block it misreads fails to parse rather than passing quietly.</summary>
-    private static string? CodeBlockOf(string razor)
-    {
-        var at = razor.IndexOf("@code", StringComparison.Ordinal);
-        if (at < 0) return null;
-        var open = razor.IndexOf('{', at);
-        if (open < 0) return null;
-
-        var depth = 0;
-        for (var i = open; i < razor.Length; i++)
-        {
-            if (razor[i] == '{') depth++;
-            else if (razor[i] == '}' && --depth == 0) return razor[(open + 1)..i];
-        }
-        return null;
-    }
 }

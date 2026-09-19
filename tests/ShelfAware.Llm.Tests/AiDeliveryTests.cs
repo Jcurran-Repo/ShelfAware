@@ -74,11 +74,11 @@ public class AiDeliveryTests
     [Fact]
     public async Task Suggestions_that_came_back_empty_are_refunded()
     {
-        // \u26a0\ufe0f The twin of the adapt case below, and it survived the commit that fixed that one \u2014
+        // ⚠️ The twin of the adapt case below, and it survived the commit that fixed that one —
         // eight lines away, on the identical fake reply, under a name asserting the opposite.
         // recipe-suggest-system.txt rule 2 says "Suggest 1-3 recipe ideas" and never offers the model a
         // way to decline, so an empty array is the model failing, not answering. Recipes.razor turns it
-        // into "No ideas came back \u2014 try rephrasing" beside a button that charges again.
+        // into "No ideas came back — try rephrasing" beside a button that charges again.
         var (charging, advisor) = Wire(RecipeAdvisor, """{ "recipes": [] }""");
 
         Assert.Empty(Assert.IsAssignableFrom<IReadOnlyList<RecipeSuggestion>>(
@@ -88,10 +88,48 @@ public class AiDeliveryTests
     }
 
     [Fact]
+    public async Task Suggestions_with_no_name_are_refunded_like_an_adaptation_with_no_name()
+    {
+        // ⚠️ The SAME question as the adapt case, through the same predicate — and it was not, for one
+        // commit. RecipeReply.Landed means present AND NAMED; SuggestAsync eight lines above it checked
+        // only `Count == 0`, i.e. present. RecipeJson.Parse keeps an unnamed entry (`name` falls back to
+        // ""), so this exact reply was refunded by one method and charged in full by the other, while
+        // Recipes.razor drew a card with a blank title and the chat said "For  you'd need: …".
+        //
+        // The consolidated definition shipped NARROWER than the sites around it, which is the failure
+        // this arc has now repeated in five consecutive rounds — see CLAUDE.md item 41.
+        var (charging, advisor) = Wire(RecipeAdvisor, """
+        { "recipes": [ { "name": "  ", "blurb": "", "ingredients": [], "steps": [] } ] }
+        """);
+
+        Assert.Empty(Assert.IsAssignableFrom<IReadOnlyList<RecipeSuggestion>>(
+            await advisor.SuggestAsync("anything", [], [])));
+        Assert.True(charging.Charged);
+        Assert.Equal(0, charging.RefundedFor);
+    }
+
+    [Fact]
+    public async Task A_nameless_suggestion_is_dropped_but_its_named_siblings_are_delivered_and_paid_for()
+    {
+        // The other half: filtering to what landed must not throw away a usable batch. One good idea in
+        // the reply is an answer, and §4.w pays for an answer.
+        var (charging, advisor) = Wire(RecipeAdvisor, """
+        { "recipes": [ { "name": "", "blurb": "", "ingredients": [], "steps": [] },
+                       { "name": "Chickpea Tacos", "blurb": "", "ingredients": [], "steps": [] } ] }
+        """);
+
+        var ideas = await advisor.SuggestAsync("anything", [], []);
+
+        Assert.Equal(["Chickpea Tacos"], Assert.IsAssignableFrom<IReadOnlyList<RecipeSuggestion>>(ideas).Select(i => i.Name));
+        Assert.True(charging.Charged);
+        Assert.Null(charging.RefundedFor);
+    }
+
+    [Fact]
     public async Task A_suggestion_call_that_never_landed_is_refunded_and_says_so()
     {
         // Null is the engine saying "couldn't reach it", which is why the page can stop inferring that
-        // from an escaping exception \u2014 the escape was tearing the circuit.
+        // from an escaping exception — the escape was tearing the circuit.
         var charging = new ChargingChatClient(new ThrowingChatClient(new HttpRequestException("no route")));
 
         Assert.Null(await RecipeAdvisor(charging).SuggestAsync("anything", [], []));
@@ -102,12 +140,12 @@ public class AiDeliveryTests
     [Fact]
     public async Task An_adaptation_that_came_back_empty_is_refunded()
     {
-        // \u26a0\ufe0f This test used to assert the opposite, under the name "a recipe that cannot be adapted
-        // to what is on hand is an answer" \u2014 and the name was the error. \u00a74.w pays for an honest
+        // ⚠️ This test used to assert the opposite, under the name "a recipe that cannot be adapted
+        // to what is on hand is an answer" — and the name was the error. §4.w pays for an honest
         // "nothing here", but recipe-adapt-system.txt never offers the model that answer: rule 1 says
         // output "a SINGLE adapted recipe in the recipes array" and rule 7 says return the recipe even
         // when nothing needs swapping. So an empty array is not the model declining, it is the model
-        // failing to do what was asked \u2014 and RecipeAdapter turns it into "Couldn't adapt {recipe} right
+        // failing to do what was asked — and RecipeAdapter turns it into "Couldn't adapt {recipe} right
         // now.", which invited the household to press the button again and be charged again.
         //
         // The lesson is narrower than the fix: a test can encode a MEANING the contract does not carry,

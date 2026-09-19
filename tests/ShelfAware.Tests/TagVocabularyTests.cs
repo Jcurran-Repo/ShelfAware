@@ -141,7 +141,7 @@ public class TagVocabularyTests
     public void Two_unicode_spellings_of_one_word_are_one_tag()
     {
         // A precomposed "\u00e9" against an "e" plus a combining accent: one word to anyone reading them,
-        // two strings to an ordinal comparison, and TWO edits apart \u2014 so the near-duplicate pass does
+        // two strings to an ordinal comparison, and TWO edits apart — so the near-duplicate pass does
         // not rescue it. Normalizing the key is part of what "the same tag" means, and this file owns
         // that question for product tags and recipe tags alike.
         Assert.Equal("Caf\u00e9", TagVocabulary.FindNearDuplicate("Cafe\u0301", ["Caf\u00e9"]));
@@ -151,8 +151,8 @@ public class TagVocabularyTests
     [Fact]
     public void A_tag_that_cannot_be_normalized_is_compared_as_written_rather_than_throwing()
     {
-        // \u26a0\ufe0f Ill-formed UTF-16 (here a lone high surrogate, which is what a truncated emoji leaves
-        // behind) cannot be put in a normal form \u2014 string.Normalize throws ArgumentException. The dedup
+        // ⚠️ Ill-formed UTF-16 (here a lone high surrogate, which is what a truncated emoji leaves
+        // behind) cannot be put in a normal form — string.Normalize throws ArgumentException. The dedup
         // runs on household-typed text and on model replies, so it must degrade rather than throw: the
         // fallback compares the string as written, which can only ever fail to find a near-duplicate and
         // never find the wrong one. Pinned because the branch had no coverage when it was written.
@@ -163,7 +163,7 @@ public class TagVocabularyTests
     [Fact]
     public void An_exact_match_beats_a_one_edit_neighbour_that_comes_first()
     {
-        // \u26a0\ufe0f The list order must not decide the answer. Checking both conditions in one pass let a
+        // ⚠️ The list order must not decide the answer. Checking both conditions in one pass let a
         // one-edit neighbour earlier in the household's tags win over an identical tag later: "Pans"
         // normalizes to "pan", which is one insertion from "pant", so ["Pants", "Pan"] answered "Pants"
         // for a tag the household already had as "Pan". Tolerable while this only read text a person
@@ -175,8 +175,8 @@ public class TagVocabularyTests
     [Fact]
     public void A_candidate_longer_than_a_tag_could_be_is_not_a_tag()
     {
-        // \u26a0\ufe0f A BOUND, not tidiness. Normalizing runs NFC, whose canonical ordering is quadratic in
-        // the length of one run of combining marks \u2014 and this method sits at stage one of Upload.AddTag,
+        // ⚠️ A BOUND, not tidiness. Normalizing runs NFC, whose canonical ordering is quadratic in
+        // the length of one run of combining marks — and this method sits at stage one of Upload.AddTag,
         // before the advisor and so before any credit gate or usage cap, reading a box with no other
         // limit than the 4 MB SignalR message size. Without the cap a tag is a free way to pin a core.
         var monster = "a" + new string('\u0301', TagVocabulary.MaxLength * 2);
@@ -194,7 +194,63 @@ public class TagVocabularyTests
         var atTheLimit = new string('x', TagVocabulary.MaxLength);
         Assert.Equal(atTheLimit, TagVocabulary.FindNearDuplicate(atTheLimit, [atTheLimit]));
         Assert.Equal(atTheLimit, TagVocabulary.Canonicalize(atTheLimit, [], []));
-        Assert.All(TagVocabulary.Seed, tag => Assert.True(tag.Length <= TagVocabulary.MaxLength,
+        Assert.All(TagVocabulary.Seed, tag => Assert.True(!TagVocabulary.IsOverLength(tag),
             $"Seed tag \"{tag}\" is longer than the cap, so the vocabulary cannot dedup against itself."));
+    }
+
+    /// <summary>
+    /// ⚠️ The mutant that was SUPPRESSED as equivalent, killed instead — because the equivalence claim
+    /// was false. The suppression said removing the vocabulary-side skip "changes what the loop COSTS,
+    /// not what it answers", on the reasoning that an entry longer than the cap cannot be within one edit
+    /// of a candidate inside it. But Normalize SHRINKS: it collapses interior whitespace runs and NFC
+    /// composes a base plus a combining mark into one character. So an over-cap RAW entry can normalize
+    /// to a key well inside the cap, and the skip is what decides the answer.
+    /// <para>A missing test presented as an equivalent mutant is the one thing a mutation gate cannot
+    /// catch, because the suppression is how you tell it not to look.</para>
+    /// </summary>
+    [Fact]
+    public void An_entry_whose_raw_form_is_over_the_cap_is_not_a_dedup_target()
+    {
+        // 1002 raw characters that normalize to "a b" — three.
+        var padded = "a" + new string(' ', TagVocabulary.MaxLength * 20) + "b";
+        Assert.True(TagVocabulary.IsOverLength(padded));
+
+        // Same normalized key, and the answer is still "genuinely new": the skip is observable, and this
+        // is the behaviour it buys. Deleting the `continue` makes this line return `padded`.
+        Assert.Null(TagVocabulary.FindNearDuplicate("a b", [padded]));
+
+        // ⚠️ The cost of that trade, asserted rather than left to a comment: a legacy entry stored in
+        // DECOMPOSED form before the cap existed is over the cap raw and inside it once composed, so it
+        // drops out of dedup for that household. Canonicalize caps what it writes, so only pre-cap rows
+        // can be in this state — noted in docs/backlog.md.
+        var decomposed = string.Concat(Enumerable.Repeat("é", TagVocabulary.MaxLength - 10));
+        Assert.True(TagVocabulary.IsOverLength(decomposed));
+        Assert.True(decomposed.Normalize().Length <= TagVocabulary.MaxLength);
+        Assert.Null(TagVocabulary.FindNearDuplicate(decomposed.Normalize(), [decomposed]));
+    }
+
+    /// <summary>⚠️ One question, one answer, measured on one string. Every site asks this predicate —
+    /// held by <see cref="TagLengthSiteTests"/> — and it trims first, because the padding is not part of
+    /// the tag and Canonicalize stores the trimmed form. Two sites disagreed on exactly this for one
+    /// commit, and a third was then written untrimmed in the advisor's prompt builder, so a stored tag of
+    /// 64 characters and a trailing space was a good tag everywhere but there.</summary>
+    [Theory]
+    [InlineData("Snack", false)]
+    [InlineData("", false)]
+    [InlineData("   ", false)]
+    public void The_cap_is_measured_on_the_trimmed_tag(string tag, bool over) =>
+        Assert.Equal(over, TagVocabulary.IsOverLength(tag));
+
+    [Fact]
+    public void The_cap_admits_a_tag_of_exactly_the_limit_padded_or_not()
+    {
+        var atTheLimit = new string('x', TagVocabulary.MaxLength);
+        Assert.False(TagVocabulary.IsOverLength(atTheLimit));
+        Assert.False(TagVocabulary.IsOverLength($"   {atTheLimit}   "));
+        Assert.True(TagVocabulary.IsOverLength(atTheLimit + "x"));
+
+        // ⚠️ And the copy says what the guard does. Both screens that carried this sentence said "under
+        // 64 characters" while the guard admits exactly 64 — a message contradicting the rule beside it.
+        Assert.Contains($"{TagVocabulary.MaxLength} characters or fewer", TagVocabulary.TooLongMessage);
     }
 }

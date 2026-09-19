@@ -165,7 +165,15 @@ public class AnthropicPantryChat : IPantryChat
                 string text;
                 try
                 {
-                    (text, _) = await ExecuteToolAsync(call, products, actions, nav, wrote, cancellationToken);
+                    // ⚠️ The isError flag is READ, not discarded. It was `(text, _)` at the only call site
+                    // in the file, so every `true` a tool handler returned was dead state — including a new
+                    // one added for "couldn't reach the recipe assistant", a genuine provider failure that
+                    // therefore left no trace anywhere. A tool that fails softly into the model's context
+                    // is invisible by design to the household; the log line is the only signal an operator
+                    // gets that a tool is limping, which is the same argument the provider catches make.
+                    bool isError;
+                    (text, isError) = await ExecuteToolAsync(call, products, actions, nav, wrote, cancellationToken);
+                    if (isError) _logger.LogWarning("Chat tool {Tool} reported a failure to the model: {Text}", call.Name, text);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {

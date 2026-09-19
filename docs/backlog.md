@@ -63,6 +63,34 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
   with the review-gate pass on phase 7 written up in its §9. What's left out of that arc is deliberate:
   draining logic out of `.razor` (D1) and EF Migrations (D3), both with reasons in §8.
 
+- **A pre-cap tag stored in decomposed form drops out of dedup.** `FindNearDuplicate` skips a vocabulary
+  entry whose RAW length is over `TagVocabulary.MaxLength`, measured raw on purpose — the cost it bounds
+  is the cost of normalizing, so a cap that normalized first to decide would have already paid it. But
+  `Normalize` shrinks (NFC composes, whitespace collapses), so a legacy tag written before the cap
+  existed — 33 decomposed "é" is 66 characters raw and 33 composed — is inside the cap once normalized
+  and is skipped anyway. That household's dedup stops seeing it and the tag cloud can fragment on a
+  difference nobody can see, which is the exact thing `Normalize` was added to prevent. `Canonicalize`
+  caps what it writes, so only pre-cap rows can be in this state. Pinned by
+  `An_entry_whose_raw_form_is_over_the_cap_is_not_a_dedup_target`. The fix is a one-off normalize-and-
+  rewrite pass over the tag column, which wants EF Migrations (D3) first.
+- **The advisor prompt caps each tag's length but not the tag COUNT.** `AnthropicTagAdvisor` interpolates
+  the whole vocabulary on every tag add, so a household with N tags sends N × 64 bytes per charged call,
+  unbounded in N. Self-inflicted and behind the credit gate, so not the denial of service the candidate
+  cap closed — but the "untrusted input to a charged call" axis is not fully shut until it is bounded.
+  A plain `.Take(…)` silently degrades dedup quality for exactly the households with the most tags, which
+  is the wrong trade; the honest fix is to send the nearest-N by the cheap matcher, which is a change to
+  what the advisor is asked, not just how much.
+- **The recipe request box has no cap, client or server.** `Recipes.razor`'s input goes straight into a
+  charged prompt in `AnthropicRecipeAdvisor`. One gate weaker than the tag path was, since it sits behind
+  `AiErrorText.BlockedReasonAsync`, but it is the same shape and should get the same treatment: a
+  server-side refusal with a visible reason, not just a `maxlength` attribute.
+- **Four pages cannot be read by the razor lift the build rules use.** `MainLayout`, `Accuracy`,
+  `GroceryList` and `MealPlanPage` each define a `RenderFragment` with a razor TEMPLATE expression
+  (`=> @<div>…`), which the razor compiler turns into C# but a plain brace-match lift cannot. They are
+  named in `SourceTree.Unliftable` and asserted to be exactly that set, so a fifth page fails the build
+  rather than dropping out of the scan — but they are genuinely unjudged today. None calls a provider.
+  If one ever needs judging, move the fragment into a component rather than widening the lift.
+
 ## Parked, with reasons
 
 - **CSV history importer** — Walmart won't export to Jordan's state, so there is no itemized source to

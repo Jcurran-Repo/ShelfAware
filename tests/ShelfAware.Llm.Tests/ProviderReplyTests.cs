@@ -1,7 +1,7 @@
 namespace ShelfAware.Llm.Tests;
 
 /// <summary>
-/// ⚠\uFE0F Direct cover for the predicate that decides whether an AI act is paid for or given back.
+/// ⚠️ Direct cover for the predicate that decides whether an AI act is paid for or given back.
 ///
 /// <para>It had no test of its own for three rounds, and was wrong in all three: it asked "is the reply
 /// empty once periods are stripped?" (so "." refunded and "!" was charged), then
@@ -19,8 +19,8 @@ public class ProviderReplyTests
     [Theory]
     // Letters and digits, across the planes — the uncontroversial half.
     [InlineData("yes")]
-    // \u26a0\ufe0f Uppercase has its own line because it has its own arm, and "NONE" \u2014 the single most common
-    // reply these four advisors get, and by \u00a74.w an answer that is PAID FOR \u2014 is all uppercase. Without
+    // ⚠️ Uppercase has its own line because it has its own arm, and "NONE" — the single most common
+    // reply these four advisors get, and by §4.w an answer that is PAID FOR — is all uppercase. Without
     // this case, deleting `UppercaseLetter` from the switch left every suite green while every NONE
     // refunded, because the advisors answer a sentinel and a refund with the same null.
     [InlineData("NONE")]

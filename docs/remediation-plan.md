@@ -1385,8 +1385,12 @@ finish a partial conversion, was itself partial** — in both of the shapes this
   The cap closed the front door and held the back one open. And it made the CPU problem a BILLING one:
   null escalates to the LLM stage, whose prompt interpolated the candidate and the whole vocabulary
   untruncated, so a 4 MB "tag" became a roughly one-million-token call charged as a single credit.
-  Capped on every side now, refused before the scope opens, and said out loud on the page instead of
-  dropped in silence at Confirm.
+  ⚠️ **And that sentence, as written in the tenth pass, was false where it mattered.** It read "capped
+  on every side now, refused before the scope opens". What the pass actually capped was the *vocabulary*
+  side — the half the household does not control — and the candidate, the half it types, still reached
+  `FindSynonymAsync` untruncated, because the only refusal sat in `AddNewTag`, which runs *after* the
+  charge. The security gate found it live in the eleventh pass. Closed in the twelfth, at the service
+  boundary rather than on the screen, so no caller can reopen it.
 - **The adapt predicate had become a tenth site.** `adapted is null || IsNullOrWhiteSpace(adapted.Name)`
   lived in two assemblies that cannot see each other — the one that keeps the charge and the one that
   writes "couldn't adapt" on the screen. `RecipeReply.Landed` in Core is the one definition. ⚠️ This is
@@ -1401,13 +1405,56 @@ finish a partial conversion, was itself partial** — in both of the shapes this
   within one commit of being written, because the same commit inserted lines above them — they name
   methods now.
 
-⚠️ **Five passes, one shape.** Every round of this arc has either consolidated a rule into a definition
+### Twelfth pass: what the gates found in the eleventh (2026-09-19)
+
+Both gates ran over `fa21784`. Between them they returned four blocking findings and one live
+billing hole, and the shape was the same one for the sixth round running.
+
+- ⚠️ **The billing hole the eleventh pass said it had closed was still open.** `Upload.AddTag` had no
+  length check anywhere between the cheap dedup and the paid advisor call — and the cap is what *routed*
+  an over-long tag there, since `FindNearDuplicate` correctly answers null for one and `AddTag` reads
+  null as "genuinely new". A 4 MB tag box (the SignalR limit; the input's `maxlength` is a client-side
+  hint) therefore became roughly a million input tokens on an act priced at one flat credit, per click.
+  Guarded now in `AnthropicTagAdvisor` *above* `AiActionScope.Begin`, so the service cannot be made
+  expensive by a caller that forgets, and refused on the screen as well.
+- ⚠️ **The razor scan added in the eleventh pass read zero files.** It was pointed at a scope holding one
+  directory — `ShelfAware.Llm`, which has no `.razor` file — so the loop body never ran, `CodeBlockOf`
+  was never called, and `Recipes.razor`, named twice by name in the rule's own doc, was still invisible.
+  The mechanism changed from "wrong glob" to "nothing in scope"; the comment saying it was closed did
+  not. **Dead code that reads as coverage is worse than a written-down gap**, because the next session
+  stops looking. The wrapping rule now has its own wider scope, and a *reach* guard — it asserts the scan
+  read the pages, not merely that it found nothing wrong in them.
+- **The rule knew one provider-call name.** Three voice services in its own scope directory reach their
+  providers over `HttpClient.SendAsync` and were invisible to it. All three were guarded, so the rule
+  reported a green it had not earned, on the voice path.
+- ⚠️ **`RecipeReply.Landed` was narrower than its neighbour.** It means *present and named*;
+  `SuggestAsync`, eight lines above `AdaptAsync` in the same file and the same commit, still checked
+  *present*. `RecipeJson.Parse` keeps an unnamed entry, so a nameless reply was refunded by one method
+  and charged in full by the other while the screen drew a blank card.
+- ⚠️ **A Stryker suppression whose stated reason was false.** It claimed the vocabulary-side skip was
+  unobservable because "an entry longer than the cap cannot be within one edit of a candidate that is
+  within it". `Normalize` *shrinks* — it collapses whitespace runs and NFC-composes — so an over-cap raw
+  entry can normalize inside the cap, and the skip decides the answer. A missing test was presented as
+  an equivalent mutant, which is the one thing a mutation gate cannot catch, because the suppression is
+  how you tell it not to look. The suppression is gone and the test that disproves it is in its place.
+- **Three fakes could not express the state the change existed to add.** They were updated to *compile*
+  against the nullable `SuggestAsync`, not to produce a null — so the branch had no test in any suite.
+- **Twenty-three comment lines carried `\u26a0\ufe0f` and `\u2014` literally.** C# does not process
+  escapes in comments; these were my bash-heredoc workaround leaking into the source.
+
+⚠️ **Six passes, one shape.** Every round of this arc has either consolidated a rule into a definition
 narrower than the sites it replaced, or converted some of the sites and not the rest. What has actually
-moved the needle is never the prose: it is `ProviderReplyTests`, `ProviderCancellationSiteTests` and
-`AiActionScopeSiteTests` — three places where the rule is a thing that fails a build rather than a
-paragraph someone has to remember. The memory note says it plainly: *rules that only live in prose get
-broken.* This arc is now five rounds of evidence for it, and the remaining prose-only rules in these
-files should be read as defects waiting for their turn.
+moved the needle is never the prose: it is `ProviderReplyTests`, `ProviderCancellationSiteTests`,
+`AiActionScopeSiteTests` and now `TagLengthSiteTests` and `SourceTreeTests` — places where the rule is a
+thing that fails a build rather than a paragraph someone has to remember. The memory note says it
+plainly: *rules that only live in prose get broken.*
+
+⚠️ **And the sharper lesson of this pass: a build rule is prose too, until something proves it ran.**
+The eleventh pass held its rule in code and the rule still shipped scanning nothing, under a comment
+asserting the opposite — and no count could have caught it, because zero findings is what both a healthy
+scan and a dead one produce. Every scan in this repo now carries a *reach* guard separate from its
+findings guard, and `SourceTreeTests` pins the walk itself. **A control that reports a green it has not
+earned is worse than no control**, and that is now the thing to look for first in any rule this arc adds.
 
 
 ## 10. Sequencing

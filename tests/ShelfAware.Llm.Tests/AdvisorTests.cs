@@ -1,6 +1,7 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using ShelfAware.Core.Tagging;
 
 namespace ShelfAware.Llm.Tests;
 
@@ -126,6 +127,54 @@ public class TagAdvisorTests
         // unrelated tags into one.
         Assert.Null(await Advisor(FakeChatClient.Returning(Responses.Text("NONE")))
             .FindSynonymAsync("Snack", ["None", "Soft Drink"]));
+    }
+
+    [Fact]
+    public async Task An_over_long_candidate_never_reaches_the_provider_or_opens_a_charge()
+    {
+        // ⚠️ The guard is HERE, at the boundary, and not only on the screen that calls it. The cap on
+        // TagVocabulary made FindNearDuplicate answer null for an over-long candidate, Upload.AddTag read
+        // null as "genuinely new", and control fell straight through to this method with no length check
+        // anywhere between — so a four-megabyte tag box (the SignalR message limit; the input's maxlength
+        // is a client-side hint) became roughly a million input tokens on an act priced at one flat
+        // credit, per click, repeatable. The cap the commit added is what ROUTED it here.
+        //
+        // Asserted on CallCount rather than on the return value: null is also what a "no synonym" answer
+        // looks like, so only "the provider was never asked" distinguishes the refusal from the answer.
+        var chat = new FakeChatClient();  // no scripted response: any call at all throws
+        var monster = new string('x', TagVocabulary.MaxLength + 1);
+
+        Assert.Null(await Advisor(chat).FindSynonymAsync(monster, Existing));
+        Assert.Equal(0, chat.CallCount);
+    }
+
+    [Fact]
+    public async Task A_candidate_at_the_cap_is_still_asked_about()
+    {
+        // The other side of the boundary, so the guard cannot quietly become "refuse anything long".
+        var atTheLimit = new string('x', TagVocabulary.MaxLength);
+        var chat = FakeChatClient.Returning(Responses.Text("NONE"));
+
+        Assert.Null(await Advisor(chat).FindSynonymAsync($"  {atTheLimit}  ", Existing));
+        Assert.Equal(1, chat.CallCount); // trimmed before measuring, like every other site
+    }
+
+    [Fact]
+    public async Task An_over_long_existing_tag_is_kept_out_of_the_prompt()
+    {
+        // ⚠️ Measured on the TRIMMED entry. This filter was written as `e.Length <= MaxLength` — the one
+        // copy of the arithmetic that was different — so a stored tag of exactly the cap plus a trailing
+        // space was a good tag to every other site and was dropped from the prompt here, leaving the
+        // model unable to match the very tag it should have matched.
+        var atTheLimit = new string('y', TagVocabulary.MaxLength);
+        var monster = new string('x', TagVocabulary.MaxLength + 1);
+        var chat = FakeChatClient.Returning(Responses.Text("NONE"));
+
+        await Advisor(chat).FindSynonymAsync("Soda", [$"{atTheLimit} ", monster, "Soft Drink"]);
+
+        var prompt = chat.ReceivedMessages[0].Last().Text;
+        Assert.Contains(atTheLimit, prompt);
+        Assert.DoesNotContain(monster, prompt);
     }
 
     [Fact]

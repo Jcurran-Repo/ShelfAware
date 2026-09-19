@@ -27,14 +27,27 @@ public class AnthropicTagAdvisor : ITagAdvisor
     public async Task<string?> FindSynonymAsync(string candidate, IReadOnlyList<string> existing, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(candidate) || existing.Count == 0) return null;
+        // ⚠️ Refused HERE, above the scope, and not only on the screen that calls it. The commit that
+        // added the cap filtered the vocabulary on the next line and left the candidate — the thing the
+        // household actually types — unbounded, and Upload.AddTag reaches this method with no length
+        // check of its own: FindNearDuplicate answers null for an over-long candidate, AddTag reads null
+        // as "genuinely new", and control falls straight through to this call. A four-megabyte tag box
+        // (the SignalR message limit, since maxlength is a client-side hint) therefore became roughly a
+        // million input tokens on an act priced at one flat credit, per click, repeatable — a cost
+        // amplifier on a box that pays for its own tokens. A guard on the screen alone is one edit away
+        // from being gone; this one no caller can reopen.
+        if (TagVocabulary.IsOverLength(candidate)) return null;
         await using var action = AiActionScope.Begin(ServiceAction.TagSuggest);
         try
         {
             var prompt =
                 $"A grocery app tags products. The user is creating a new tag: \"{candidate.Trim()}\".\n" +
-                // Entries past the cap are not tags (see TagVocabulary.MaxLength) and a stored one would
-                // otherwise ride into every prompt untruncated, on an act priced at a flat credit.
-                "Existing tags:\n- " + string.Join("\n- ", existing.Where(e => e.Length <= TagVocabulary.MaxLength)) + "\n\n" +
+                // Entries past the cap are not tags (see TagVocabulary.IsOverLength) and a stored one
+                // would otherwise ride into every prompt untruncated, on an act priced at a flat credit.
+                // ⚠️ The shared predicate. This line was written as `e.Length <= MaxLength` — untrimmed,
+                // where every other site measures the trimmed form — in the same commit whose comment in
+                // TagVocabulary said a third arithmetic here would be the same defect again.
+                "Existing tags:\n- " + string.Join("\n- ", existing.Where(e => !TagVocabulary.IsOverLength(e))) + "\n\n" +
                 "If the new tag means essentially the SAME thing as one of the existing tags (a synonym — " +
                 "e.g. \"Soda\" and \"Soft Drink\", \"Cleaner\" and \"Detergent\"), reply with that existing " +
                 "tag EXACTLY as written above and nothing else. If it is genuinely different, reply with only: NONE";

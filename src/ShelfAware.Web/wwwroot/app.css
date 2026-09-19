@@ -1950,6 +1950,15 @@ button.tag-chip {
     width: 6rem;
 }
 
+/* The refusal shown beside a receipt row's tag box ("that tag is too long"). Matches .tag-warning's
+   size and weight rather than a full-size <p>: it sits inside a compact grid row, right next to that
+   styled box, and an unstyled paragraph there reads as a layout fault rather than a note. */
+.tag-note {
+    margin-top: 0.3rem;
+    font-size: 0.74rem;
+    color: var(--ink-soft);
+}
+
 .tag-warning {
     margin-top: 0.3rem;
     font-size: 0.74rem;

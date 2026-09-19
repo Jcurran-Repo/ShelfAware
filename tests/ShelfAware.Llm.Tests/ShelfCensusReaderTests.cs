@@ -290,7 +290,7 @@ public class ShelfCensusReaderTests
     [Fact]
     public async Task A_cancellation_propagates_rather_than_reading_as_a_failed_photo()
     {
-        // \u26a0\ufe0f It has to be the CALLER's cancellation, and this test used to assert the opposite by
+        // ⚠️ It has to be the CALLER's cancellation, and this test used to assert the opposite by
         // accident: a parameterless OperationCanceledException with no token passed is the shape an
         // HttpClient TIMEOUT arrives in, so the old version pinned "a provider stall escapes the reader"
         // as the rule. See ProviderCancellationSiteTests for why that tears a circuit.

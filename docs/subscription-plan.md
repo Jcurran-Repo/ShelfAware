@@ -428,14 +428,21 @@ same one):
   `Answered()` is reached only on a clean parse). ⚠️ Named by METHOD, not by line: the three line
   references this paragraph carried were all stale within one commit of being written, because the same
   commit inserted lines above them. §6 again. The household supplies the image, so an unparseable photo is reachable on purpose.
-- **A recipe suggestion or adaptation that comes back empty** is refunded after a 4096-token call, and
+- **A recipe suggestion or adaptation that comes back empty, or with nothing NAMED in it,** is refunded
+  after a 4096-token call, and
   both are reachable on purpose, because the prompts carry household-authored text unescaped: the adapt
   prompt interpolates the recipe's name, blurb, every ingredient and every step, plus the swap the
   household picked from a list it curates itself. A saved recipe whose step text steers the model into
   an empty array makes every adapt of it refund. ⚠️ Both refunds are NEW as of 2026-09-19 — before that
   the act was charged and the screen still said "Couldn't adapt" / "try rephrasing" beside a button that
   charged again, which is the inverse and worse failure. The UI invites the repeat either way, so this is
-  the bullet to watch if `CostPerCharge` drifts.
+  the bullet to watch if `CostPerCharge` drifts. ⚠️ And "empty" meant two different things for a commit:
+  `AdaptAsync` refunded a reply that parsed to a variant with no NAME, and `SuggestAsync` — eight lines
+  above it, in the same file, in the same commit that introduced the shared `RecipeReply.Landed`
+  predicate — charged for one, because it asked `Count == 0` instead. `RecipeJson.Parse` keeps an unnamed
+  entry (`name` falls back to `""`), so the divergence was reachable and the screen drew a card with a
+  blank title beside a charge. Both halves ask the one predicate now, held by
+  `Suggestions_with_no_name_are_refunded_like_an_adaptation_with_no_name`.
 - **A meal plan whose batches come back empty** is the largest subsidy in the app, and it was missing
   from this list until 2026-09-19 — under a sentence calling the two vision acts above "the most
   expensive refunds", which was simply wrong. A plan is charged `units: setup.SlotCount` up front and

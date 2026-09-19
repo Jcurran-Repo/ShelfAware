@@ -678,16 +678,20 @@ else
         try
         {
             var added = await TagService.AddAsync(r.Id, newTag);
-            // \u26a0\ufe0f Three reasons for null, and the old copy claimed two. TagVocabulary refuses an
-        // over-long candidate as well, so a 65-character tag was reported back as "already there".
-        tagNote = added is not null ? null
-            : newTag.Trim().Length > TagVocabulary.MaxLength
-                ? $"That tag is too long \u2014 keep it under {TagVocabulary.MaxLength} characters."
+            // ⚠️ Three reasons for null, and the old copy claimed two. TagVocabulary refuses an
+            // over-long candidate as well, so a 65-character tag was reported back as "already there".
+            tagNote = added is not null ? null
+                : TagVocabulary.IsOverLength(newTag) ? TagVocabulary.TooLongMessage
                 : "That tag is already there (or blank).";
             newTag = "";
             await LoadAsync();
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        // ⚠️ No cancellation arm, for the reason Recipes.razor now carries: this handler passes no
+        // token to AddAsync, so its token is CancellationToken.None and nothing here has a caller
+        // cancellation to re-raise. The filter that used to sit here could only re-raise a SPONTANEOUS
+        // OperationCanceledException out of the data layer — straight out of an @onclick handler with no
+        // ErrorBoundary behind it, taking the circuit and the open recipe with it.
+        catch (Exception ex)
         {
             Logger.LogError(ex, "Adding a tag to recipe {RecipeId} failed.", r.Id);
             tagNote = "Couldn't add that tag — please try again.";

@@ -1048,17 +1048,18 @@
             // (HaveSuggested), so the pre-save card always agrees with what saving would show.
             // The previous batch stays on screen (and in storage) until this one actually succeeds.
             var fresh = (await Advisor.SuggestAsync(request, onHand.Select(p => p.Name).ToList(), excludedFoods.Select(f => f.Value).ToList()))?.ToList();
-            if (fresh is null)
+            // ⚠️ ONE story. Null (couldn't reach the model) and empty (reached it, nothing usable came
+            // back) are different events in the LOG and the engine refunds both — recipe-suggest-system.txt
+            // gives the model no way to decline, so an empty reply is it failing. This page said "No ideas
+            // came back — try rephrasing" for the empty case, which blames the household's wording for a
+            // failure the ledger had already recorded as ours: the settlement and the sentence beside it
+            // telling opposite stories, the shape CLAUDE.md's "one prediction, one story" is about.
+            // The page also used to tell the two apart by whether an exception ESCAPED, which meant a
+            // provider stall reached an @onclick handler with no ErrorBoundary behind it and took the
+            // circuit down. Both now arrive as values, and both say the same true thing.
+            if (fresh is not { Count: > 0 })
             {
-                // ⚠️ Null and empty are different answers and always were; this page used to tell them
-                // apart by whether an exception escaped, which meant a provider stall reached an @onclick
-                // handler with no ErrorBoundary behind it and took the circuit down. "Try rephrasing" is
-                // advice, and it is the wrong advice for someone whose provider just timed out.
                 suggestError = "Couldn't get ideas just now — please try again.";
-            }
-            else if (fresh.Count == 0)
-            {
-                suggestError = "No ideas came back — try rephrasing.";
             }
             else
             {

@@ -998,7 +998,13 @@ else if (phase == Phase.Done)
         line.Suggestion = null;
         line.PendingTag = null;
         var tag = (line.NewTag ?? "").Trim();
-        if (tag.Length == 0) return;
+        if (tag.Length == 0) { line.TagNote = null; return; }
+        // ⚠️ Refused BEFORE either dedup stage, not after both. This method used to check nothing: stage
+        // one answers null for an over-long tag (correctly — it is not a tag), AddTag read that as
+        // "genuinely new", and stage two spent a credit sending the whole thing to the model. The only
+        // refusal was in AddNewTag, which runs after the charge. See TagVocabulary.IsOverLength.
+        if (TagVocabulary.IsOverLength(tag)) { line.TagNote = TagVocabulary.TooLongMessage; return; }
+        line.TagNote = null;
         if (line.Tags.Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase))) { line.NewTag = ""; return; }
 
         var universe = allKnownTags.Concat(line.Tags).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -1050,13 +1056,13 @@ else if (phase == Phase.Done)
 
     private void AddNewTag(ReviewLine line, string tag)
     {
-        // \u26a0\ufe0f Refused here too, and said out loud rather than dropped. TagVocabulary caps what it will
+        // ⚠️ Refused here too, and said out loud rather than dropped. TagVocabulary caps what it will
         // treat as a tag, but Canonicalize's answer for an over-long one is null, which ApplyTags reads
-        // as "already have it" \u2014 so without this the chip appeared on the row, rode into every later
+        // as "already have it" — so without this the chip appeared on the row, rode into every later
         // lookup and every advisor prompt, and then vanished at Confirm with nothing said.
-        if (tag.Trim().Length > TagVocabulary.MaxLength)
+        if (TagVocabulary.IsOverLength(tag))
         {
-            line.TagNote = $"That tag is too long \u2014 keep it under {TagVocabulary.MaxLength} characters.";
+            line.TagNote = TagVocabulary.TooLongMessage;
             return;
         }
         line.TagNote = null;
