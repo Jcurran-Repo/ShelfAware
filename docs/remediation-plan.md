@@ -18,10 +18,10 @@ Two items are deliberately **not** in the arc, with reasons in §9. Read that be
 | 1 | The docs reset ✅ | F5, D8 | M | none — no code |
 | 2 | Pin the toolchain, unbreak the parse ✅ | F2, D7 | S | low |
 | 3 | The presentation layer ✅ | F3, D2 | M | low |
-| 4 | Errors stop leaking provider text | F4 | S | low |
-| 5 | The operational floor | F6, F7a, F7b, D6 | M | low |
-| 6 | Make the truth-claiming artifacts self-maintaining | F1, D9 | S | low |
-| 7 | The Shelf Aware credit | D5 | L | **high — money** |
+| 4 | Errors stop leaking provider text ✅ | F4 | S | low |
+| 5 | The operational floor ✅ | F6, F7a, F7b, D6 | M | low |
+| 6 | Make the truth-claiming artifacts self-maintaining ✅ | F1, D9 | S | low |
+| 7 | The Shelf Aware credit ✅ | D5 | L | **high — money** |
 | — | Logic out of `.razor` | D1 | XL | see §9 |
 | — | EF Migrations | D3 | L | see §9 |
 | — | One database | D4 | XL | **rejected — see §9** |
@@ -29,6 +29,11 @@ Two items are deliberately **not** in the arc, with reasons in §9. Read that be
 Phases 1–6 are independent and can land in any order. Phase 7 depends on nothing but deserves to go last
 because it is the only one that touches money, and because it is *cheapest to do before the first paying
 customer* — see §7.
+
+**All seven landed 2026-09-19** (`129695a`, `2144629`, `48a79ac`, `d5f7a8e`, `65b4a6b`+`ce4f280`, `62ecbb5`,
+`e1b9daf`). Each phase's section carries an "As built" note recording what the code does that the design
+above does not say. The two remaining items — draining logic out of `.razor` (D1) and EF Migrations (D3) —
+are deliberately not phases; §9 says why.
 
 ---
 
