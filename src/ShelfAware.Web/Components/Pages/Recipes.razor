@@ -1047,8 +1047,16 @@
             // model's matched_product only when POSITIVE; a null falls back to the plain-code matcher
             // (HaveSuggested), so the pre-save card always agrees with what saving would show.
             // The previous batch stays on screen (and in storage) until this one actually succeeds.
-            var fresh = (await Advisor.SuggestAsync(request, onHand.Select(p => p.Name).ToList(), excludedFoods.Select(f => f.Value).ToList())).ToList();
-            if (fresh.Count == 0)
+            var fresh = (await Advisor.SuggestAsync(request, onHand.Select(p => p.Name).ToList(), excludedFoods.Select(f => f.Value).ToList()))?.ToList();
+            if (fresh is null)
+            {
+                // ⚠️ Null and empty are different answers and always were; this page used to tell them
+                // apart by whether an exception escaped, which meant a provider stall reached an @onclick
+                // handler with no ErrorBoundary behind it and took the circuit down. "Try rephrasing" is
+                // advice, and it is the wrong advice for someone whose provider just timed out.
+                suggestError = "Couldn't get ideas just now — please try again.";
+            }
+            else if (fresh.Count == 0)
             {
                 suggestError = "No ideas came back — try rephrasing.";
             }
@@ -1061,9 +1069,10 @@
                     JsonSerializer.Serialize(new SuggestionSnapshot(suggestedFor, suggestedAt, suggestions)));
             }
         }
-        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
+            // No cancellation arm: this handler passes no token, so nothing here has a caller cancellation
+            // to re-raise, and the advisor no longer lets a provider one out. See ProviderCancellationSiteTests.
             Logger.LogError(ex, "Recipe suggestion failed for request \"{Request}\".", request);
             suggestError = "Couldn't get ideas just now — please try again.";
         }

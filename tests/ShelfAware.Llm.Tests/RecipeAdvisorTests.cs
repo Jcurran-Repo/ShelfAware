@@ -42,7 +42,9 @@ public class RecipeAdvisorTests
 
         var results = await advisor.SuggestAsync("mediterranean", ["Hass Avocados"], []);
 
-        var recipe = Assert.Single(results);
+        // NotNull, not just Single: null is the advisor's "couldn't reach the model", which is a
+        // different answer from "no ideas" and puts different words on the screen.
+        var recipe = Assert.Single(Assert.IsAssignableFrom<IReadOnlyList<RecipeSuggestion>>(results));
         Assert.Equal("Feta Avocado Toast", recipe.Name);
         Assert.Equal(3, recipe.Steps.Count);
         Assert.Equal("Toast the bread.", recipe.Steps[0]);
@@ -62,7 +64,8 @@ public class RecipeAdvisorTests
         // Structured outputs make this near-impossible, but the parse must not assume it.
         var advisor = Advisor(FakeChatClient.Returning(Responses.Text("{}")));
 
-        Assert.Empty(await advisor.SuggestAsync("anything", [], []));
+        Assert.Empty(Assert.IsAssignableFrom<IReadOnlyList<RecipeSuggestion>>(
+            await advisor.SuggestAsync("anything", [], [])));
     }
 
     [Fact]
@@ -119,7 +122,8 @@ public class RecipeAdvisorTests
         """;
         var advisor = Advisor(FakeChatClient.Returning(Responses.Text(json)));
 
-        var recipe = Assert.Single(await advisor.SuggestAsync("quick", [], []));
+        var recipe = Assert.Single(Assert.IsAssignableFrom<IReadOnlyList<RecipeSuggestion>>(
+            await advisor.SuggestAsync("quick", [], [])));
 
         Assert.Empty(recipe.Steps);
         Assert.Null(recipe.CaloriesPerServing); // absent in the response -> null, not a parse failure
@@ -134,7 +138,8 @@ public class RecipeAdvisorTests
         """;
         var advisor = Advisor(FakeChatClient.Returning(Responses.Text(json)));
 
-        var recipe = Assert.Single(await advisor.SuggestAsync("x", [], []));
+        var recipe = Assert.Single(Assert.IsAssignableFrom<IReadOnlyList<RecipeSuggestion>>(
+            await advisor.SuggestAsync("x", [], [])));
 
         Assert.Equal(2, recipe.Steps.Count);
         Assert.Equal("Chop the onion.", recipe.Steps[0]);

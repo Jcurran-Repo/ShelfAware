@@ -1,5 +1,6 @@
 @page "/cookbook/import"
 @implements IDisposable
+@using ShelfAware.Core.Tagging
 @using ShelfAware.Core.Recipes
 @inject IRecipeImporter Importer
 @inject IShelfPhotoLoader PhotoLoader
@@ -117,7 +118,7 @@ else if (phase == Phase.Review && draft is not null)
                         aria-label="Remove tag @tag">×</button></span>
             }
             <span class="cookbook-tag-add">
-                <input @bind="newTag" @bind:event="oninput" @onkeydown="AddTagOnEnter"
+                <input maxlength="@TagVocabulary.MaxLength" @bind="newTag" @bind:event="oninput" @onkeydown="AddTagOnEnter"
                        placeholder="add a tag" aria-label="Add a tag" />
                 <button type="button" class="secondary" @onclick="AddDraftTag"
                         disabled="@string.IsNullOrWhiteSpace(newTag)">Add</button>

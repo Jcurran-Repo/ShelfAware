@@ -65,7 +65,8 @@ public class RecipeAdapter(
             logger.LogError(ex, "Adapting recipe {RecipeId} failed.", recipeId);
             return new AdaptResult(false, "Couldn't reach the assistant to adapt that just now.");
         }
-        if (adapted is null || string.IsNullOrWhiteSpace(adapted.Name))
+        // One predicate with the settlement that pays for it — see RecipeReply.Landed.
+        if (!adapted.Landed())
             return new AdaptResult(false, $"Couldn't adapt {recipe.Name} right now.");
 
         // Guard the chosen swap: if the model ignored it, don't save a mislabeled variant — ask for a retry.

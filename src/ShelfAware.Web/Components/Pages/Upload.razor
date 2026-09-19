@@ -247,6 +247,10 @@ else if (phase == Phase.Review && receipt is not null)
                                 <input list="known-tags" placeholder="+ tag" size="9" maxlength="@TagVocabulary.MaxLength" @bind="line.NewTag" @bind:event="oninput" aria-label="Add a tag to @line.RawText" />
                                 <button type="button" @onclick="() => AddTag(line)" disabled="@(line.Checking || string.IsNullOrWhiteSpace(line.NewTag))">@(line.Checking ? "…" : "Add")</button>
                             </div>
+                            @if (line.TagNote is { } note)
+                            {
+                                <p class="tag-note" role="status">@note</p>
+                            }
                             @if (line.Suggestion is { } sug)
                             {
                                 <div class="tag-warning" role="status">
@@ -653,6 +657,7 @@ else if (phase == Phase.Done)
         public string? NewTag { get; set; }           // the in-progress "add tag" input
         public string? PendingTag { get; set; }        // a new tag awaiting the user's dedup decision
         public string? Suggestion { get; set; }        // the existing tag PendingTag looks like
+        public string? TagNote { get; set; }           // why the last tag add was refused, if it was
         public bool Checking { get; set; }             // an async synonym check is running
         public int ProductId { get; set; }            // 0 = create new
         public bool AliasMatched { get; set; }
@@ -1045,6 +1050,16 @@ else if (phase == Phase.Done)
 
     private void AddNewTag(ReviewLine line, string tag)
     {
+        // \u26a0\ufe0f Refused here too, and said out loud rather than dropped. TagVocabulary caps what it will
+        // treat as a tag, but Canonicalize's answer for an over-long one is null, which ApplyTags reads
+        // as "already have it" \u2014 so without this the chip appeared on the row, rode into every later
+        // lookup and every advisor prompt, and then vanished at Confirm with nothing said.
+        if (tag.Trim().Length > TagVocabulary.MaxLength)
+        {
+            line.TagNote = $"That tag is too long \u2014 keep it under {TagVocabulary.MaxLength} characters.";
+            return;
+        }
+        line.TagNote = null;
         if (!line.Tags.Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase))) line.Tags.Add(tag);
         if (!allKnownTags.Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase))) allKnownTags.Add(tag);
         line.NewTag = "";

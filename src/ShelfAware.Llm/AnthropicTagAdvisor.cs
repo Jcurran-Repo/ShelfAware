@@ -32,7 +32,9 @@ public class AnthropicTagAdvisor : ITagAdvisor
         {
             var prompt =
                 $"A grocery app tags products. The user is creating a new tag: \"{candidate.Trim()}\".\n" +
-                "Existing tags:\n- " + string.Join("\n- ", existing) + "\n\n" +
+                // Entries past the cap are not tags (see TagVocabulary.MaxLength) and a stored one would
+                // otherwise ride into every prompt untruncated, on an act priced at a flat credit.
+                "Existing tags:\n- " + string.Join("\n- ", existing.Where(e => e.Length <= TagVocabulary.MaxLength)) + "\n\n" +
                 "If the new tag means essentially the SAME thing as one of the existing tags (a synonym — " +
                 "e.g. \"Soda\" and \"Soft Drink\", \"Cleaner\" and \"Detergent\"), reply with that existing " +
                 "tag EXACTLY as written above and nothing else. If it is genuinely different, reply with only: NONE";

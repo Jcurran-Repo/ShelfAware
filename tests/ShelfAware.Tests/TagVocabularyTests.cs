@@ -181,7 +181,13 @@ public class TagVocabularyTests
         // limit than the 4 MB SignalR message size. Without the cap a tag is a free way to pin a core.
         var monster = "a" + new string('\u0301', TagVocabulary.MaxLength * 2);
 
-        Assert.Null(TagVocabulary.FindNearDuplicate(monster, ["Snack"]));
+        // ⚠️ Against an entry it WOULD otherwise match. The first version of this line compared the
+        // monster to "Snack", which never matched with or without the cap — an assertion that passed on
+        // the parent and passed with the guard deleted, in the test written to pin the guard.
+        Assert.Null(TagVocabulary.FindNearDuplicate(monster, [monster]));
+        // And every side, not just the candidate: an over-long entry in the VOCABULARY was re-normalized
+        // on every later lookup, which is the cost the cap exists to remove.
+        Assert.Null(TagVocabulary.FindNearDuplicate("Snack", [monster]));
         Assert.Null(TagVocabulary.Canonicalize(monster, [], [.. TagVocabulary.Seed]));
         // And the cap does not bite a real tag. A candidate exactly AT the limit is still read, so the
         // boundary is off-by-one-proof in the direction that would silently drop a legitimate tag.

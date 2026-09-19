@@ -1,5 +1,6 @@
 @page "/cookbook"
 @implements IAsyncDisposable
+@using ShelfAware.Core.Tagging
 @using ShelfAware.Core.Recipes
 @using ShelfAware.Core.Settings
 @inject IHouseholdDbFactory DbFactory
@@ -197,7 +198,7 @@
                                 disabled="@taggingBusy" aria-label="Remove tag @tag from @r.Name">×</button></span>
                     }
                     <span class="cookbook-tag-add">
-                        <input list="recipe-tag-vocab" placeholder="add a tag" @bind="newTag" @bind:event="oninput"
+                        <input list="recipe-tag-vocab" placeholder="add a tag" maxlength="@TagVocabulary.MaxLength" @bind="newTag" @bind:event="oninput"
                                @onkeydown="AddTagOnEnter" disabled="@taggingBusy" aria-label="Add a tag to @r.Name" />
                         <button type="button" class="secondary" @onclick="AddTag"
                                 disabled="@(taggingBusy || string.IsNullOrWhiteSpace(newTag))">Add</button>
@@ -677,7 +678,12 @@ else
         try
         {
             var added = await TagService.AddAsync(r.Id, newTag);
-            tagNote = added is null ? "That tag is already there (or blank)." : null;
+            // \u26a0\ufe0f Three reasons for null, and the old copy claimed two. TagVocabulary refuses an
+        // over-long candidate as well, so a 65-character tag was reported back as "already there".
+        tagNote = added is not null ? null
+            : newTag.Trim().Length > TagVocabulary.MaxLength
+                ? $"That tag is too long \u2014 keep it under {TagVocabulary.MaxLength} characters."
+                : "That tag is already there (or blank).";
             newTag = "";
             await LoadAsync();
         }

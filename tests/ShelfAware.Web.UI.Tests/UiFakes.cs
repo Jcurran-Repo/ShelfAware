@@ -253,13 +253,15 @@ internal sealed class FakeSuggestionAdvisor : IRecipeAdvisor
     public IReadOnlyList<string>? LastOnHand { get; private set; }
     public IReadOnlyList<string>? LastExcluded { get; private set; }
 
-    public Task<IReadOnlyList<RecipeSuggestion>> SuggestAsync(
+    public Task<IReadOnlyList<RecipeSuggestion>?> SuggestAsync(
         string request, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods,
         CancellationToken cancellationToken = default)
     {
         LastOnHand = onHand;
         LastExcluded = excludedFoods;
-        return Throw is { } ex ? Task.FromException<IReadOnlyList<RecipeSuggestion>>(ex) : Task.FromResult(Suggestions);
+        return Throw is { } ex
+            ? Task.FromException<IReadOnlyList<RecipeSuggestion>?>(ex)
+            : Task.FromResult<IReadOnlyList<RecipeSuggestion>?>(Suggestions);
     }
 
     public Task<RecipeSuggestion?> AdaptAsync(

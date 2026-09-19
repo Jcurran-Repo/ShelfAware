@@ -28,7 +28,7 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
         _logger = logger;
     }
 
-    public async Task<IReadOnlyList<RecipeSuggestion>> SuggestAsync(
+    public async Task<IReadOnlyList<RecipeSuggestion>?> SuggestAsync(
         string request, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods,
         CancellationToken cancellationToken = default)
     {
@@ -50,10 +50,33 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
             ResponseFormat = ChatResponseFormat.ForJsonSchema(RecipeJson.Schema(), schemaName: "recipe_suggestions"),
         };
 
-        var response = await _chat.GetResponseAsync(messages, options, cancellationToken);
+        ChatResponse response;
+        try
+        {
+            response = await _chat.GetResponseAsync(messages, options, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; } // whose cancellation: see ProviderCancellationSiteTests
+        catch (Exception ex)
+        {
+            // ⚠️ This class was the ONE service in the assembly whose provider calls sat in no try at all,
+            // and it stayed that way through a commit that converted nine sibling guards and added a build
+            // rule to hold them — because a rule that inspects catch clauses cannot see a missing one.
+            // Recipes.razor rethrew the escape unfiltered, so a slow provider tore the circuit out from
+            // under a household that had just typed a request.
+            _logger.LogError(ex, "Recipe suggestion call to the model failed.");
+            return null; // couldn't reach it — NOT the same as "no ideas", see IRecipeAdvisor
+        }
+
         var suggestions = RecipeJson.Parse(response.Text);
         _logger.LogInformation("Recipe advisor returned {Count} suggestion(s) for {OnHand} on-hand item(s).", suggestions.Count, onHand.Count);
-        action.Answered(); // "nothing I can make from that" is an answer; an unreadable reply throws above
+        // ⚠️ Settled on ideas actually arriving, and the comment this replaced — "nothing I can make
+        // from that is an answer" — described a reply recipe-suggest-system.txt never asks for: rule 2
+        // says "Suggest 1-3 recipe ideas", with no way to decline. So an empty array is the model failing,
+        // and Recipes.razor turns it into "No ideas came back — try rephrasing" beside a live button that
+        // charges again. Identical to the adapt case below, left standing one method above it for a
+        // commit, with a test named No_recipe_worth_suggesting_is_an_answer pinning the old meaning.
+        if (suggestions.Count == 0) return suggestions;
+        action.Answered();
         return suggestions;
     }
 
@@ -94,7 +117,18 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
             ResponseFormat = ChatResponseFormat.ForJsonSchema(RecipeJson.Schema(), schemaName: "recipe_adaptation"),
         };
 
-        var response = await _chat.GetResponseAsync(messages, options, cancellationToken);
+        ChatResponse response;
+        try
+        {
+            response = await _chat.GetResponseAsync(messages, options, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; } // whose cancellation: see ProviderCancellationSiteTests
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Recipe adaptation call to the model failed.");
+            return null; // RecipeAdapter reads null as "couldn't adapt", which is what happened
+        }
+
         var adapted = RecipeJson.Parse(response.Text).FirstOrDefault();
         _logger.LogInformation("Recipe advisor adapted \"{Name}\" (produced result: {HasResult}).", recipe.Name, adapted is not null);
         // ⚠️ Settled on a NAMED adaptation, not on the call returning. A reply that parses to nothing,
@@ -110,7 +144,7 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
         // charged. This method cannot see that check, and moving the scope out to RecipeAdapter so the
         // one place that knows whether the act delivered is the one place that settles it is a design
         // change rather than a fix — it is Jordan's call, per CLAUDE.md's co-creation rule.
-        if (adapted is null || string.IsNullOrWhiteSpace(adapted.Name)) return adapted;
+        if (!adapted.Landed()) return adapted;
         action.Answered();
         return adapted;
     }

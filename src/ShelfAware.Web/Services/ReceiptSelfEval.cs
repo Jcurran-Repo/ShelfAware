@@ -127,7 +127,7 @@ public sealed class ReceiptSelfEval(
             var detail = ExtractionScorer.Score(expected, result.Receipt.Lines);
             return ExtractionScorer.ToFixtureScore(name, expected.Count, result.Receipt.Lines.Count, detail);
         }
-        catch (OperationCanceledException) { throw; }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; } // whose cancellation: see ProviderCancellationSiteTests
         catch (Exception ex)
         {
             // One unreadable receipt must not sink the whole run — grade the rest, report this one.

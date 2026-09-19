@@ -63,9 +63,9 @@ internal sealed class FakeRecipeAdvisor(RecipeSuggestion? adaptResult) : IRecipe
     public IReadOnlyList<PantryProduct>? LastOnHand { get; private set; }
     public RecipeToAdapt? LastRecipe { get; private set; }
 
-    public Task<IReadOnlyList<RecipeSuggestion>> SuggestAsync(
+    public Task<IReadOnlyList<RecipeSuggestion>?> SuggestAsync(
         string request, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods, CancellationToken cancellationToken = default) =>
-        Task.FromResult<IReadOnlyList<RecipeSuggestion>>([]);
+        Task.FromResult<IReadOnlyList<RecipeSuggestion>?>([]);
 
     public Task<RecipeSuggestion?> AdaptAsync(
         RecipeToAdapt recipe, IReadOnlyList<PantryProduct> onHand, IReadOnlyList<string> excludedFoods,

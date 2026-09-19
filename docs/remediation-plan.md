@@ -1297,7 +1297,10 @@ itself a partial conversion.**
   rule was in the commit that broke it.
   - All nine are converted now, plus `RecipeAdapter` and `RecipeTagService`. More to the point, the
     argument moved out of prose: `ProviderCancellationSiteTests` fails the build on an unfiltered
-    cancellation catch anywhere at the provider boundary. The four advisors carried a ten-line copy of
+    cancellation catch at the provider boundary. ⚠️ That sentence over-claimed when it was written —
+    the rule then read `*.cs` under four hand-listed paths and judged only catches that existed, so it
+    could see neither `Recipes.razor`'s bare rethrow nor the provider call with no catch at all behind
+    it. Both are closed in the eleventh pass. The four advisors carried a ten-line copy of
     the same reasoning each, and **two of those copies named the wrong call sites** — which is the
     argument for a rule that cannot be re-typed rather than a paragraph that must be.
 - **A test asserted the behaviour the same commit called a bug.** `ShelfCensusReaderTests` pinned that a
@@ -1339,6 +1342,72 @@ part-way. The two things that actually changed the outcome were not better prose
 `ProviderReplyTests` (a direct test where there had been none) and `ProviderCancellationSiteTests` (a
 build rule where there had been a comment repeated four times, wrong twice). Rules that only live in
 prose get broken; that is already in this repo's memory, and it has now cost four rounds to relearn.
+
+
+### Eleventh pass: what the gates found in the tenth (2026-09-19)
+
+Both gates again said do not merge, and both led with the same thing: **the tenth pass, which existed to
+finish a partial conversion, was itself partial** — in both of the shapes this arc keeps producing.
+
+- ⚠️ **The tenth provider site had no `try` at all**, and the build rule written to stop exactly this
+  could not see it. `AnthropicRecipeAdvisor` was the one service in the assembly whose provider calls sat
+  in no guard; `Recipes.razor` rethrew the escape bare; so a slow provider on "Get ideas" tore down the
+  circuit of a household that had just typed a request and was holding a batch of suggestions. The rule
+  walked catch clauses, and **a missing catch produces no clause to walk** — its `seen > 5` vacuity guard
+  stayed healthy on the sixteen sites that did exist. It also globbed `*.cs`, so no `.razor` file was
+  reachable, while the sibling rule ten files away had been lifting `@code` blocks all along for that
+  precise reason. Two definitions of "which sources do we scan", the newer one narrower, with a live
+  violation behind the gap.
+  - Closed: a second rule now fails the build on a provider call not wrapped where a cancellation can be
+    read; the scan reads `.razor`; the clause test sees a bare `catch`, a `catch (Exception) when (e is
+    OperationCanceledException)` and a fully-qualified type name; and the filter test is a syntax read
+    rather than a substring, so `when (!token.IsCancellationRequested)` — the exact inversion — no longer
+    passes. ⚠️ The scope is deliberately NOT all of `src/ShelfAware.Web`: an endpoint handler and a page's
+    catch around a database call both rethrow correctly. The invariant is narrower and stronger — *a
+    provider cancellation never leaves the boundary* — and once it holds the layers above are safe.
+  - It found one more site on the first run, `ReceiptSelfEval`, which the gate had also named.
+- ⚠️ **The settlement fix stopped half-way inside the same class.** The tenth pass fixed `AdaptAsync` to
+  refuse the charge on a null or unnamed result — and left `SuggestAsync`, eight lines above, settling an
+  empty list, with a test called `No_recipe_worth_suggesting_is_an_answer` pinning the old meaning **on
+  the identical fake reply** as the rewritten adapt test beside it. `recipe-suggest-system.txt` rule 2
+  says "Suggest 1-3 recipe ideas" and never offers the model a way to decline, so an empty array is the
+  model failing, and the page says "No ideas came back — try rephrasing" next to a button that charges
+  again. Same contract error, same file, same commit.
+- **The engine could not say "I couldn't reach the model", so the page inferred it from an exception.**
+  `SuggestAsync` returns `IReadOnlyList<RecipeSuggestion>?` now: null is a call that never landed, empty
+  is a model with no ideas. They put different words on the screen, and "try rephrasing" is wrong advice
+  for someone whose provider just timed out. That the page had to read an *escaping exception* to tell
+  them apart is what made the escape load-bearing in the first place.
+- ⚠️ **My tag cap guarded the candidate and not the vocabulary**, so the denial of service it was added
+  to close stayed open by a different door. `FindNearDuplicate` normalizes every EXISTING entry, and the
+  cap made it answer null for an over-long candidate — which `Upload.AddTag` reads as "genuinely new",
+  so `AddNewTag` put the monster straight into the in-memory vocabulary that every later lookup walks.
+  The cap closed the front door and held the back one open. And it made the CPU problem a BILLING one:
+  null escalates to the LLM stage, whose prompt interpolated the candidate and the whole vocabulary
+  untruncated, so a 4 MB "tag" became a roughly one-million-token call charged as a single credit.
+  Capped on every side now, refused before the scope opens, and said out loud on the page instead of
+  dropped in silence at Confirm.
+- **The adapt predicate had become a tenth site.** `adapted is null || IsNullOrWhiteSpace(adapted.Name)`
+  lived in two assemblies that cannot see each other — the one that keeps the charge and the one that
+  writes "couldn't adapt" on the screen. `RecipeReply.Landed` in Core is the one definition. ⚠️ This is
+  the shape §4.w was written about, and the tenth pass added to it while quoting it.
+- **Two more one-line corrections of my own claims.** The comment I wrote saying "no caller of
+  `HandleAsync` passes a token" is false — the cook-along passes a real one — in the commit whose message
+  complained that two hand-written copies of that argument named the wrong call sites. And the cap test's
+  first assertion compared the monster to `"Snack"`, which never matched with or without the guard: an
+  assertion that passed on the parent and with the guard deleted, inside the test written to pin it.
+- **§4.y and three line references.** §4.y did not list the refunds the tenth pass created; it does now,
+  including why they are steerable. The three `File:line` references in that section were all stale
+  within one commit of being written, because the same commit inserted lines above them — they name
+  methods now.
+
+⚠️ **Five passes, one shape.** Every round of this arc has either consolidated a rule into a definition
+narrower than the sites it replaced, or converted some of the sites and not the rest. What has actually
+moved the needle is never the prose: it is `ProviderReplyTests`, `ProviderCancellationSiteTests` and
+`AiActionScopeSiteTests` — three places where the rule is a thing that fails a build rather than a
+paragraph someone has to remember. The memory note says it plainly: *rules that only live in prose get
+broken.* This arc is now five rounds of evidence for it, and the remaining prose-only rules in these
+files should be read as defects waiting for their turn.
 
 
 ## 10. Sequencing

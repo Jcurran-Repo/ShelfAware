@@ -7,7 +7,12 @@ namespace ShelfAware.Core.Recipes;
 /// </summary>
 public interface IRecipeAdvisor
 {
-    Task<IReadOnlyList<RecipeSuggestion>> SuggestAsync(
+    /// <summary>Recipe ideas for the request, an EMPTY list when the model had none to give, or NULL when
+    /// it could not be reached at all. ⚠️ Two different answers, because the screen says two different
+    /// things: "No ideas came back — try rephrasing" is advice, and it is wrong advice to give someone
+    /// whose provider just timed out. Recipes.razor had to infer the difference from whether an exception
+    /// escaped, which made a provider stall a torn circuit rather than a message.</summary>
+    Task<IReadOnlyList<RecipeSuggestion>?> SuggestAsync(
         string request,
         IReadOnlyList<string> onHand,
         IReadOnlyList<string> excludedFoods,
@@ -41,6 +46,22 @@ public record RecipeSuggestion(
     /// Derived — excluded from the persisted last-suggestions snapshot.</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public IEnumerable<SuggestedIngredient> ToGrab => Ingredients.Where(i => i.IsMain && !i.Have);
+}
+
+/// <summary>Whether a reply from the recipe advisor is something the household can actually be given.
+///
+/// <para>⚠️ ONE definition, in Core, because the two halves live in assemblies that cannot see each
+/// other: <c>AnthropicRecipeAdvisor</c> decides whether to keep the charge and <c>RecipeAdapter</c>
+/// decides whether the screen says "couldn't adapt". They were two hand-kept copies of
+/// <c>adapted is null || IsNullOrWhiteSpace(adapted.Name)</c> for one commit, which is the tenth site of
+/// the exact shape §4.w of <c>docs/subscription-plan.md</c> was written about — and the one that matters
+/// most, because when they drift the ledger says delivered while the screen says it failed.</para></summary>
+public static class RecipeReply
+{
+    /// <summary>An adaptation the caller can show: present, and named. A model that returned nothing, or
+    /// a variant with no name, produced something no surface can render.</summary>
+    public static bool Landed([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] this RecipeSuggestion? adapted) =>
+        adapted is not null && !string.IsNullOrWhiteSpace(adapted.Name);
 }
 
 /// <param name="IsMain">True = a real/main ingredient (counts toward makeability); false = seasoning/staple.</param>

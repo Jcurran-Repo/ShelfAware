@@ -72,13 +72,31 @@ public class AiDeliveryTests
     }
 
     [Fact]
-    public async Task No_recipe_worth_suggesting_is_an_answer()
+    public async Task Suggestions_that_came_back_empty_are_refunded()
     {
+        // \u26a0\ufe0f The twin of the adapt case below, and it survived the commit that fixed that one \u2014
+        // eight lines away, on the identical fake reply, under a name asserting the opposite.
+        // recipe-suggest-system.txt rule 2 says "Suggest 1-3 recipe ideas" and never offers the model a
+        // way to decline, so an empty array is the model failing, not answering. Recipes.razor turns it
+        // into "No ideas came back \u2014 try rephrasing" beside a button that charges again.
         var (charging, advisor) = Wire(RecipeAdvisor, """{ "recipes": [] }""");
 
-        Assert.Empty(await advisor.SuggestAsync("something with anchovies", [], []));
+        Assert.Empty(Assert.IsAssignableFrom<IReadOnlyList<RecipeSuggestion>>(
+            await advisor.SuggestAsync("something with anchovies", [], [])));
         Assert.True(charging.Charged);
-        Assert.Null(charging.RefundedFor);
+        Assert.Equal(0, charging.RefundedFor);
+    }
+
+    [Fact]
+    public async Task A_suggestion_call_that_never_landed_is_refunded_and_says_so()
+    {
+        // Null is the engine saying "couldn't reach it", which is why the page can stop inferring that
+        // from an escaping exception \u2014 the escape was tearing the circuit.
+        var charging = new ChargingChatClient(new ThrowingChatClient(new HttpRequestException("no route")));
+
+        Assert.Null(await RecipeAdvisor(charging).SuggestAsync("anything", [], []));
+        Assert.True(charging.Charged);
+        Assert.Equal(0, charging.RefundedFor);
     }
 
     [Fact]

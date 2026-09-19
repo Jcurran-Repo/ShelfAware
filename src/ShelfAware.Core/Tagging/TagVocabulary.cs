@@ -34,7 +34,11 @@ public static class TagVocabulary
     /// plural/typo), or null if it's genuinely new. Cheap and instant — the first dedup stage.</summary>
     public static string? FindNearDuplicate(string candidate, IEnumerable<string> existing)
     {
-        if (candidate.Length > MaxLength) return null; // not a tag — see MaxLength
+        if (candidate.Trim().Length > MaxLength) return null; // not a tag — see MaxLength
+        // ⚠️ Measured AFTER trimming, matching Canonicalize. They disagreed for one commit — this one
+        // measured the raw string, that one the trimmed — so a 64-character tag with a trailing space was
+        // "not a tag" here and a perfectly good tag there. Two arithmetics for one question, inside the
+        // file the repo designates as the single home for tag identity.
         var key = Normalize(candidate);
         if (key.Length == 0) return null;
 
@@ -48,6 +52,27 @@ public static class TagVocabulary
         var keys = new List<(string Tag, string Key)>();
         foreach (var tag in existing)
         {
+            // ⚠️ EVERY side, not just the candidate. The first version of this cap guarded the
+            // candidate only — and this loop normalizes each EXISTING entry, so one over-long entry in the
+            // vocabulary re-paid the quadratic cost on every later call. That was not hypothetical: the
+            // cap made FindNearDuplicate answer null for an over-long candidate, Upload.AddTag reads null
+            // as "genuinely new", and AddNewTag put the monster straight into the in-memory vocabulary
+            // every later lookup then walked. The cap closed the front door and held the back one open.
+            //
+            // Skipped rather than measured-after-normalizing, and it costs nothing: an entry longer than
+            // the cap cannot be within one edit of a candidate that is within it.
+            //
+            // Stryker disable once Statement: removing this `continue` is UNOBSERVABLE in the result and
+            // that is exactly what it is for — it changes what the loop COSTS, not what it answers. An
+            // entry past the cap normalizes to something no in-cap candidate can equal or be one edit
+            // from, so every assertion reads the same with or without it. What differs is that the
+            // mutant re-runs NFC over a run of combining marks whose ordering step is quadratic, on a
+            // path that runs before the credit gate. Killing it would need a test that observes wall
+            // time, which is a flaky test pinning a real guard — a worse trade than this line.
+            //
+            // ⚠️ Trimmed, matching the candidate check above and Canonicalize. Those two disagreed for
+            // one commit, and writing a third arithmetic here would have been the same defect again.
+            if (tag.Trim().Length > MaxLength) continue;
             var other = Normalize(tag);
             if (other == key) return tag;
             keys.Add((tag, other));

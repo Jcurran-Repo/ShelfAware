@@ -33,9 +33,9 @@ public class PantryChatTests
 
     private sealed class StubRecipeAdvisor(RecipeSuggestion suggestion) : IRecipeAdvisor
     {
-        public Task<IReadOnlyList<RecipeSuggestion>> SuggestAsync(
+        public Task<IReadOnlyList<RecipeSuggestion>?> SuggestAsync(
             string request, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods, CancellationToken ct = default) =>
-            Task.FromResult<IReadOnlyList<RecipeSuggestion>>([suggestion]);
+            Task.FromResult<IReadOnlyList<RecipeSuggestion>?>([suggestion]);
 
         public Task<RecipeSuggestion?> AdaptAsync(
             RecipeToAdapt recipe, IReadOnlyList<PantryProduct> onHand, IReadOnlyList<string> excludedFoods,

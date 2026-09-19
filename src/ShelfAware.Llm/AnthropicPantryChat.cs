@@ -102,12 +102,16 @@ public class AnthropicPantryChat : IPantryChat
             {
                 response = await _chat.GetResponseAsync(messages, chatOptions, cancellationToken);
             }
-            // ⚠️ WHOSE cancellation. An unconditional rethrow here also catches an HttpClient
-            // TIMEOUT, which is a provider failure and belongs in the catch below — and no caller of
-            // HandleAsync passes a token, so every cancellation reaching this line is one. Rethrown
-            // unfiltered it escapes past the plain copy below and blanks whichever surface invoked it,
-            // which the tool loop's own comment says it exists to prevent. ProviderCancellationSiteTests
-            // holds this for every provider call in the assembly.
+            // ⚠️ WHOSE cancellation. An unconditional rethrow here also catches an HttpClient TIMEOUT,
+            // which is a provider failure and belongs in the catch below; rethrown unfiltered it escapes
+            // past the plain copy and blanks whichever surface invoked it, which the tool loop's own
+            // comment says it exists to prevent. The filter is what tells the two apart.
+            //
+            // ⚠️ The version of this comment written on 2026-09-19 said "no caller of HandleAsync passes
+            // a token", which is FALSE: RecipeReadAloud's cook-along passes a real cancellable source and
+            // cancels it when the reader closes mid-turn. The three other callers pass nothing. The guard
+            // was right and the reason given for it was wrong — in a commit whose own message complained
+            // that two hand-written copies of this argument named the wrong call sites.
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw; // the caller really did cancel (e.g. circuit gone) — not a model failure
@@ -555,8 +559,10 @@ public class AnthropicPantryChat : IPantryChat
                 var honorExpirations = _settings is not null && await _settings.GetTrackExpirationDatesAsync(ct);
                 var onHand = PantryOnHand.EdibleInStock(products, today, honorExpirations).Select(p => p.Name).ToList();
                 var excluded = await _store.GetExcludedFoodsAsync(ct);
-                var recipe = (await _recipeAdvisor.SuggestAsync(request, onHand, excluded, ct)).FirstOrDefault();
-                if (recipe is null)
+                var ideas = await _recipeAdvisor.SuggestAsync(request, onHand, excluded, ct);
+                if (ideas is null)
+                    return ("I couldn't reach the recipe assistant just now. Please try again.", true);
+                if (ideas.FirstOrDefault() is not { } recipe)
                     return ($"I couldn't come up with a {request} recipe just now.", false);
 
                 // Buy only what they don't already have (Have = the model matched it to an on-hand product);
