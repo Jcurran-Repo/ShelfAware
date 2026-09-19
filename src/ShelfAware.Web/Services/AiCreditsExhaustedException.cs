@@ -7,7 +7,8 @@ namespace ShelfAware.Web.Services;
 /// <see cref="InvalidOperationException"/> and not a provider error — so the server-side refusal is
 /// unambiguous. ⚠️ The AI surfaces do NOT catch this by type (the AI services fail SOFT, swallowing it
 /// before a page could): the honest "out of credits / subscribe" message reaches the user through the
-/// PRE-CHECK (<see cref="AiErrorText.BlockedReasonAsync"/>), which asks the same entitlement up front and
+/// PRE-CHECK (<see cref="AiErrorText.BlockedReasonAsync"/>), which asks the same question of the same
+/// method — <see cref="Data.IEntitlements.CheckAiAsync"/>, named with the same act — up front and
 /// skips the doomed call. This exception is the enforcement backstop for any path that wasn't pre-checked.
 /// BYOK circuits are never gated, so it never fires for a visitor on their own key.
 /// </summary>

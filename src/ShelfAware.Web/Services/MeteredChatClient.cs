@@ -140,7 +140,7 @@ public sealed class MeteredChatClient(
     /// <summary>The managed-call gate, consulted BEFORE the provider call (phase 4b) — the CHECKS only; the
     /// reserve is <see cref="ReserveCallAsync"/>, next. BYOK circuits skip it entirely (their key, their
     /// wallet). For a managed household: the per-household caps, then the demo box-wide valve, then
-    /// <see cref="IEntitlements.IsAiAllowedAsync"/> — always true where billing is off (§7), and otherwise a
+    /// <see cref="IEntitlements.CheckAiAsync"/> — always true where billing is off (§7), and otherwise a
     /// Founder (unlimited) or a balance that covers THIS ACT'S price. Throws to refuse — the provider call
     /// never happens, and (because the reserve runs after) nothing is counted.
     ///
@@ -161,15 +161,12 @@ public sealed class MeteredChatClient(
 
         var act = AiActionScope.Current;
         if (act is { ChargeClaimed: true }) return; // bought and paid for; the rest of it is not a new spend
-        if (!await entitlements.IsAiAllowedAsync(PriceOfPendingAct(act), cancellationToken))
+        // The SAME question every surface pre-check asks (AiErrorText.BlockedReasonAsync), asked of the same
+        // method with the same act, so the two can never answer it differently. An unlabelled call passes a
+        // null act and asks for the floor: it has no price until its cost is known (CreditsForCostMicros).
+        if (!(await entitlements.CheckAiAsync(act?.Action, act?.Units ?? 1, cancellationToken)).Allowed)
             throw new AiCreditsExhaustedException();
     }
-
-    /// <summary>What the act this call belongs to will draw, for the gate above. An unlabelled call has no
-    /// price until its cost is known (<see cref="CreditPricing.CreditsForCostMicros"/>), so it asks for the
-    /// gate's floor of one credit — the same bar it has always had to clear.</summary>
-    private long PriceOfPendingAct(AiActionScope? act) =>
-        act is null ? 1 : CreditPricing.CreditsFor(billing.Value, act.Action, act.Units);
 
     /// <summary>Which of the two reserves DID NOT throw, so the matching release gives back ONLY those. A
     /// reserve write is best-effort (below) — if it silently fails, "releasing" it anyway would subtract a

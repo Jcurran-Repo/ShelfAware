@@ -978,7 +978,7 @@ app.MapPost("/api/receipts/extract", async (
     // call that MeteredChatClient would refuse anyway — the extractor fails soft, so the gate's exception
     // never reaches this handler (phase 4c, AiErrorText). A body is required or UseStatusCodePagesWithReExecute
     // rewrites the empty 402 into a misleading 400 (the webhook scar below).
-    var blocked = await AiErrorText.BlockedReasonAsync(entitlements, ai, demoValve, ct);
+    var blocked = await AiErrorText.BlockedReasonAsync(entitlements, ai, demoValve, ServiceAction.ReceiptExtraction, cancellationToken: ct);
     if (blocked is not null)
         return Results.Json(new { error = blocked }, statusCode: StatusCodes.Status402PaymentRequired);
 
@@ -1017,7 +1017,7 @@ app.MapPost("/api/pantry-photo/read", async (
     PhotoUploadIntake.ApplyByok(request, ai);
     // Say the true reason (no key / out of credits) rather than spend a doomed vision call the gate refuses —
     // same phase-4c pre-check as the receipt endpoint; a body avoids the empty-402 re-execution scar.
-    var blocked = await AiErrorText.BlockedReasonAsync(entitlements, ai, demoValve, ct);
+    var blocked = await AiErrorText.BlockedReasonAsync(entitlements, ai, demoValve, ServiceAction.CensusPhoto, cancellationToken: ct);
     if (blocked is not null)
         return Results.Json(new { error = blocked }, statusCode: StatusCodes.Status402PaymentRequired);
 

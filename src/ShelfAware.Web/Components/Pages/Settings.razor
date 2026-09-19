@@ -360,10 +360,11 @@
         <p class="founder-badge">★ You're a <strong>Founder</strong> — unlimited AI on the house, no caps.
             Thank you for helping build Reginald. 💛</p>
     }
-    @if (AiSettings.Managed && tier != HouseholdTier.Founder && Payments.Value.IsConfigured)
+    @if (AiSettings.Managed && !tier.IsUnlimited() && Payments.Value.IsConfigured)
     {
         <p><strong>Credit balance:</strong> @CreditPricing.FormatCredits(creditBalanceCredits)
-            <span class="muted"> — your AI credit; the actions below draw on it, and AI pauses at zero.</span></p>
+            <span class="muted"> — your AI credit; the actions below draw on it, and an action
+                pauses when the balance won't cover its price.</span></p>
     }
     @* The price list is PUBLIC, by design: an abstract unit with a hidden exchange rate is a casino chip,
        an abstract unit with a published price list is a product. Rendered from the SAME BillingOptions the

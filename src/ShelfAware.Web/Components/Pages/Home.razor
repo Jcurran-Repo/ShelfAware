@@ -449,7 +449,7 @@ else
         chatBusy = true;
         chatReply = null;
         // Phase 4c: don't attempt a call this circuit can't make — show why (out of credits / no key) and stop.
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, ServiceAction.ChatTurn);
         if (blocked is not null)
         {
             chatReply = blocked;

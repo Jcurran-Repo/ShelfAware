@@ -859,7 +859,7 @@ else if (phase == Phase.Done)
         pendingError = null;
         // Retry re-extracts on the CIRCUIT (not the pre-checked endpoint), so guard it here too: a blocked
         // circuit would otherwise read "Still couldn't read it" for what is really out-of-credits/no-key (4c).
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, ServiceAction.ReceiptExtraction);
         if (blocked is not null) { pendingError = blocked; retryingId = null; return; }
         try
         {

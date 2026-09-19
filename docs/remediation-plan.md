@@ -802,6 +802,45 @@ charged as one — and a third survivor was a harness defect worth knowing about
 BillingOptions Default` is built once per test host, and Stryker reuses that host across mutants, so no
 assertion against it can ever kill a mutant in `BillingOptions`' own field initialisers.
 
+### The fourth pass: the fix's own half-conversion
+
+Both gates ran again over that commit and both led with the same finding, which is worth recording because
+it is the repo's named failure mode *committed by the pass that was fixing an instance of it*. The
+enforcement gate learned to ask an act's real price. The fourteen SURFACE pre-checks did not — the new
+parameter was optional and sat behind the cancellation token, so the compiler asked nothing of them and
+thirteen went on asking whether the household had any credit at all.
+
+So the two halves of one question answered it differently. A household holding one credit was waved through
+by the page for a two-credit chat turn and refused by the gate, and because every AI service fails soft the
+refusal it read was **"Couldn't reach the assistant just now"** — the product looking broken to precisely
+the households closest to buying more credit. The receipt extractor's retry loop made the doomed call twice
+before saying it.
+
+And the refusal message itself had become false. `OutOfCredits` / `SubscribeToUse` were reachable only at a
+zero balance before; once the gate priced acts, they also fired at 41 credits against a 42-credit plan,
+telling a household with 41 credits that its trial was used up. The Settings copy promising "AI pauses at
+zero" was false for the same reason.
+
+What closed it:
+
+- **`IEntitlements.CheckAiAsync(act, units)`** is the one definition both halves ask, and it takes the ACT
+  rather than a credit count so neither side can price it differently. It returns the two numbers a refusal
+  needs, not a bare bool.
+- **`BlockedReasonAsync`'s act parameter is REQUIRED**, which is what made the compiler ask all fourteen
+  sites. That is the same mechanism that made the `IsAiAllowedAsync` half complete the first time round:
+  the parameter went first there, and that half was the one that didn't drift.
+- **A third message**: "This one needs 42 credits and you have 41 — add a credit pack in Settings, or ask
+  for something smaller." A spent household still gets the old wording, because there is nothing smaller to
+  suggest.
+- **`Every_surface_pre_check_names_a_published_action`** fails the build if a pre-check stops naming a
+  literal action, or names one the price list doesn't publish — verified by re-breaking a site.
+- **`The_pre_check_and_the_server_gate_answer_the_same_question`** asserts the biconditional over a grid of
+  balances and acts, which is the thing that was missing when the two drifted.
+
+Also fixed in the pass: a Founder saw the price for one render (`tier` defaulted to `Free` until the first
+await resolved — it is nullable now), and Settings re-derived "never charged" as `!= Founder` rather than
+asking `IsUnlimited()`.
+
 ⚠️ **Still open, and Jordan's call: a plan that under-delivers has still been charged in full.** The price
 is taken on the first provider call, so a plan that fails outright, or comes back short, has already cost
 up to 42 credits. Closing it means the act settles up at the end — a compensating ledger entry for the

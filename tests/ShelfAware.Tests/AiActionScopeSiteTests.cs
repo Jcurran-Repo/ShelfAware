@@ -183,6 +183,50 @@ public class AiActionScopeSiteTests
             + Environment.NewLine + string.Join(Environment.NewLine, computed));
     }
 
+    /// <summary>
+    /// ⚠️ Every SURFACE pre-check names the act it is about to run, and names one the price list knows.
+    ///
+    /// <para>The pre-check and the server-side gate are two halves of one question — "can this household
+    /// afford what it is about to do?" — and the whole reason the surface half exists is that the AI
+    /// services fail soft, so the gate's refusal never reaches a page. When the two disagree, the household
+    /// is waved through by the page and refused by the gate, and what it reads is the surface's generic
+    /// "couldn't reach the assistant": the product looks broken to precisely the households closest to
+    /// buying more credit.</para>
+    ///
+    /// <para>They disagreed for exactly one commit. The gate learned to ask an act's real price while the
+    /// pre-check kept a defaulted credit count, so thirteen of fourteen sites went on asking whether the
+    /// household had ANY credit — and a household holding one credit was waved through for a two-credit
+    /// chat turn. The parameter is required now, which is what made the compiler ask every site; this is
+    /// what keeps it asked once the compiler is satisfied.</para>
+    /// </summary>
+    [Fact]
+    public void Every_surface_pre_check_names_a_published_action()
+    {
+        var wrong = new List<string>();
+        var calls = 0;
+
+        foreach (var (file, tree) in Trees())
+            foreach (var call in CallsTo(tree, "BlockedReasonAsync"))
+            {
+                calls++;
+                // The act is the first ServiceAction-shaped argument, wherever the optional token sits.
+                var named = call.ArgumentList.Arguments
+                    .Select(a => ActionOfExpression(a.Expression))
+                    .FirstOrDefault(a => a is not null);
+                if (named is not { } action)
+                    wrong.Add($"{Path.GetFileName(file)}:{Line(call)} — names no literal ServiceAction");
+                else if (!CreditPricing.MeteredActions.Contains(action))
+                    wrong.Add($"{Path.GetFileName(file)}:{Line(call)} — {action} is not on the published price list");
+            }
+
+        Assert.True(calls > 10, $"Only {calls} pre-check call(s) found — the scan is broken, not the sources.");
+        Assert.True(wrong.Count == 0,
+            "A surface pre-check doesn't name the act it is about to run, so it asks a different question "
+            + "from the gate that will enforce it — which reads to the household as the assistant being "
+            + "broken rather than as a price they can do something about:"
+            + Environment.NewLine + string.Join(Environment.NewLine, wrong));
+    }
+
     // ------------------------------------------------------------------ the scan
 
     private sealed record Site(ServiceAction Action, string File, int Line, bool InAsyncMethod, bool HasUnitCount);
@@ -213,19 +257,25 @@ public class AiActionScopeSiteTests
     /// computed. Only the FIRST argument is the action — the second, when present, is how many of the
     /// action's units the act covers.</summary>
     private static ServiceAction? ActionOf(InvocationExpressionSyntax call) =>
-        call.ArgumentList.Arguments.FirstOrDefault()?.Expression is MemberAccessExpressionSyntax
+        ActionOfExpression(call.ArgumentList.Arguments.FirstOrDefault()?.Expression);
+
+    /// <summary>The literal <see cref="ServiceAction"/> an expression names, or null for anything else —
+    /// a variable, a computed value, or an argument that isn't an action at all.</summary>
+    private static ServiceAction? ActionOfExpression(ExpressionSyntax? expression) =>
+        expression is MemberAccessExpressionSyntax
             { Expression: IdentifierNameSyntax { Identifier.ValueText: nameof(ServiceAction) }, Name.Identifier.ValueText: var name }
         && Enum.TryParse<ServiceAction>(name, out var action)
             ? action
             : null;
 
     private static IEnumerable<InvocationExpressionSyntax> BeginCalls(SyntaxTree tree) =>
+        CallsTo(tree, nameof(AiActionScope.Begin))
+            .Where(i => ((MemberAccessExpressionSyntax)i.Expression).Expression
+                is IdentifierNameSyntax { Identifier.ValueText: nameof(AiActionScope) });
+
+    private static IEnumerable<InvocationExpressionSyntax> CallsTo(SyntaxTree tree, string method) =>
         tree.GetRoot().DescendantNodes().OfType<InvocationExpressionSyntax>()
-            .Where(i => i.Expression is MemberAccessExpressionSyntax
-            {
-                Name.Identifier.ValueText: nameof(AiActionScope.Begin),
-                Expression: IdentifierNameSyntax { Identifier.ValueText: nameof(AiActionScope) },
-            });
+            .Where(i => i.Expression is MemberAccessExpressionSyntax m && m.Name.Identifier.ValueText == method);
 
     private static int Line(SyntaxNode node) => node.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
 

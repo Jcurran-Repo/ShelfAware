@@ -432,7 +432,13 @@ public class MealPlanPagePriceTests : PageTestContext
 
         cut.FindAll("button").First(b => b.TextContent.Contains("Generate") || b.TextContent.Contains("Regenerate")).Click();
 
-        cut.WaitForAssertion(() => Assert.Contains(AiErrorText.SubscribeToUse, cut.Markup));
+        // ⚠️ And it says the TRUE thing. This household is not out of credits and its trial is not used up —
+        // it holds 41 of the 42 this plan needs, and a 30-day plan would have gone through. An earlier pass
+        // pinned "You've used up the free AI trial" here, which was the gate's old message surviving a
+        // change that made it false.
+        cut.WaitForAssertion(() => Assert.Contains("needs 42 credits", cut.Markup));
+        Assert.Contains("you have 41 credits", cut.Markup);
+        Assert.DoesNotContain(AiErrorText.SubscribeToUse, cut.Markup);
         Assert.Empty(_jobs.Started); // nothing was generated, so nothing was charged
     }
 

@@ -1,3 +1,4 @@
+using ShelfAware.Core.Billing;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Settings;
 using ShelfAware.Web.Auth;
@@ -13,9 +14,13 @@ internal sealed class FakeEntitlements(HouseholdTier tier = HouseholdTier.Free) 
     /// instance (RegisterAdditionalServices runs before the test body).</summary>
     public HouseholdTier Tier { get; set; } = tier;
 
-    /// <summary>Settable credit balance, in CREDITS; <see cref="IsAiAllowedAsync"/> mirrors the real
-    /// rule (Founder is unlimited, otherwise a balance that COVERS the price asked for).</summary>
+    /// <summary>Settable credit balance, in CREDITS; <see cref="CheckAiAsync"/> mirrors the real rule
+    /// (Founder is unlimited, otherwise a balance that COVERS the act's own price).</summary>
     public long BalanceCredits { get; set; }
+
+    /// <summary>The prices the fake charges against, so a test can script an act the balance can't cover
+    /// without restating the arithmetic. The real defaults, since the point is to behave like production.</summary>
+    public BillingOptions Billing { get; set; } = new();
 
     public ValueTask<HouseholdTier> GetTierAsync(CancellationToken cancellationToken = default) => new(Tier);
 
@@ -26,8 +31,13 @@ internal sealed class FakeEntitlements(HouseholdTier tier = HouseholdTier.Free) 
     // Consequence: don't write a "surface allowed because billing is off" test against this fake — it would
     // pass vacuously. That branch is covered directly on the real type (EntitlementsTests). Here the fake's
     // job is only to script allowed/blocked via Tier + BalanceCredits.
-    public ValueTask<bool> IsAiAllowedAsync(long creditsNeeded = 1, CancellationToken cancellationToken = default) =>
-        new(Tier.IsUnlimited() || BalanceCredits >= Math.Max(1, creditsNeeded));
+    public ValueTask<AiAllowance> CheckAiAsync(
+        ServiceAction? act, int units = 1, CancellationToken cancellationToken = default)
+    {
+        if (Tier.IsUnlimited()) return new(AiAllowance.Unlimited);
+        var needed = Math.Max(1, act is { } a ? CreditPricing.CreditsFor(Billing, a, units) : 1);
+        return new(new AiAllowance(BalanceCredits >= needed, needed, BalanceCredits));
+    }
 }
 
 /// <summary>A fixed household, standing in for the scope resolution (claim / circuit auth state) that only

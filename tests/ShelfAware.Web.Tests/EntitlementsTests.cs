@@ -56,6 +56,7 @@ public class EntitlementsTests : IDisposable
         new(new FixedHousehold(householdId), _auth,
             new CreditLedger(_auth, Microsoft.Extensions.Options.Options.Create(new ShelfAware.Core.Billing.BillingOptions())),
             Microsoft.Extensions.Options.Options.Create(new ShelfAware.Web.Billing.PaymentsOptions { Enabled = paymentsEnabled }),
+            Microsoft.Extensions.Options.Options.Create(new ShelfAware.Core.Billing.BillingOptions()),
             NullLogger<Entitlements>.Instance);
 
     [Fact]
@@ -111,6 +112,7 @@ public class EntitlementsTests : IDisposable
         var entitlements = new Entitlements(new FixedHousehold(id), flaky,
             new CreditLedger(_auth, Microsoft.Extensions.Options.Options.Create(new ShelfAware.Core.Billing.BillingOptions())),
             Microsoft.Extensions.Options.Options.Create(new ShelfAware.Web.Billing.PaymentsOptions { Enabled = true }),
+            Microsoft.Extensions.Options.Options.Create(new ShelfAware.Core.Billing.BillingOptions()),
             NullLogger<Entitlements>.Instance);
 
         // First call: the factory throws → Free, and the errored result is not cached.
@@ -160,7 +162,7 @@ public class EntitlementsTests : IDisposable
     public async Task No_signed_in_household_has_no_balance_and_no_AI()
     {
         Assert.Equal(0, await For(null).GetBalanceCreditsAsync());
-        Assert.False(await For(null).IsAiAllowedAsync());
+        Assert.False((await For(null).CheckAiAsync(ServiceAction.TagSuggest)).Allowed);
     }
 
     [Fact]
@@ -170,17 +172,17 @@ public class EntitlementsTests : IDisposable
         // is never consulted.
         var id = await SeedHouseholdAsync(HouseholdTier.Founder);
 
-        Assert.True(await For(id).IsAiAllowedAsync());
+        Assert.True((await For(id).CheckAiAsync(ServiceAction.TagSuggest)).Allowed);
     }
 
     [Fact]
     public async Task A_free_household_is_allowed_only_with_a_positive_balance()
     {
         var id = await SeedHouseholdAsync(HouseholdTier.Free);
-        Assert.False(await For(id).IsAiAllowedAsync()); // no grant, no balance
+        Assert.False((await For(id).CheckAiAsync(ServiceAction.TagSuggest)).Allowed); // no grant, no balance
 
         await Ledger().GrantAsync(id, 500_000, "Welcome grant");
-        Assert.True(await For(id).IsAiAllowedAsync()); // a leftover welcome grant is enough
+        Assert.True((await For(id).CheckAiAsync(ServiceAction.TagSuggest)).Allowed); // a leftover welcome grant is enough
     }
 
     [Fact]
@@ -188,7 +190,7 @@ public class EntitlementsTests : IDisposable
     {
         var id = await SeedHouseholdAsync(HouseholdTier.Aware, DateTimeOffset.Parse("2026-10-01T00:00:00Z"));
 
-        Assert.True(await For(id).IsAiAllowedAsync()); // the allowance is granted as the balance is checked
+        Assert.True((await For(id).CheckAiAsync(ServiceAction.TagSuggest)).Allowed); // the allowance is granted as the balance is checked
     }
 
     [Fact]
@@ -199,8 +201,8 @@ public class EntitlementsTests : IDisposable
         // that has a server key (which alone makes CircuitAiSettings.Managed true) but never enabled billing.
         var id = await SeedHouseholdAsync(HouseholdTier.Free);
 
-        Assert.False(await For(id, paymentsEnabled: true).IsAiAllowedAsync());  // billing ON → Free with no credit is gated
-        Assert.True(await For(id, paymentsEnabled: false).IsAiAllowedAsync());  // billing OFF → unlimited by default
+        Assert.False((await For(id, paymentsEnabled: true).CheckAiAsync(ServiceAction.TagSuggest)).Allowed);  // billing ON → Free with no credit is gated
+        Assert.True((await For(id, paymentsEnabled: false).CheckAiAsync(ServiceAction.TagSuggest)).Allowed);  // billing OFF → unlimited by default
     }
 
     [Fact]
@@ -213,8 +215,15 @@ public class EntitlementsTests : IDisposable
         var id = await SeedHouseholdAsync(HouseholdTier.Free);
         await Ledger().GrantAsync(id, 41, "Test grant");
 
-        Assert.True(await For(id).IsAiAllowedAsync(41));    // exactly enough is enough
-        Assert.False(await For(id).IsAiAllowedAsync(42));   // one short is refused, before anything is spent
+        Assert.True((await For(id).CheckAiAsync(ServiceAction.MealPlan, units: 121)).Allowed);    // 41 credits: exactly enough
+
+        var refused = await For(id).CheckAiAsync(ServiceAction.MealPlan, units: 124);             // 42: one short
+        Assert.False(refused.Allowed);
+        // ⚠️ And it carries WHY, because "you're out of credits" is false here and the household needs the
+        // two numbers to decide between shortening the plan and topping up.
+        Assert.Equal(42, refused.CreditsNeeded);
+        Assert.Equal(41, refused.BalanceCredits);
+        Assert.True(refused.ShortForThisAct);
     }
 
     [Fact]
@@ -225,7 +234,11 @@ public class EntitlementsTests : IDisposable
         // turn that into an open door.
         var id = await SeedHouseholdAsync(HouseholdTier.Free);
 
-        Assert.False(await For(id).IsAiAllowedAsync(0));
+        var refused = await For(id).CheckAiAsync(ServiceAction.TagSuggest);
+        Assert.False(refused.Allowed);
+        // Spent outright, not short for this one — so the surface says "top up", not "ask for something
+        // smaller", because there is nothing smaller than free.
+        Assert.False(refused.ShortForThisAct);
     }
 
     [Fact]
@@ -234,6 +247,6 @@ public class EntitlementsTests : IDisposable
         // Unlimited means the balance is never consulted, so the price cannot start consulting it either.
         var id = await SeedHouseholdAsync(HouseholdTier.Founder);
 
-        Assert.True(await For(id).IsAiAllowedAsync(42));
+        Assert.True((await For(id).CheckAiAsync(ServiceAction.MealPlan, units: 124)).Allowed);
     }
 }

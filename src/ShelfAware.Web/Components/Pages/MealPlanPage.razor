@@ -125,7 +125,7 @@
        reading "this plan is 42 credits" on the operator's own box is a surface stating something the
        engine will not do. role="status" because the number moves as Days and the meals change, and a
        screen-reader user changing 7 days to 31 should hear the price go from 3 to 42. *@
-    @if (AiSettings.Managed && Payments.Value.IsConfigured && !tier.IsUnlimited())
+    @if (AiSettings.Managed && Payments.Value.IsConfigured && tier is { } t && !t.IsUnlimited())
     {
         <p class="muted small mealplan-price" role="status">
             This plan is @CreditPricing.FormatCredits(
@@ -238,7 +238,11 @@ else if (!generating)
 
     // Only to decide whether the price sentence above applies to this household at all — a Founder is never
     // charged, so they are not told a price. Resolved once in OnInitializedAsync.
-    private HouseholdTier tier;
+    // ⚠️ NULLABLE, and not HouseholdTier.Free. Blazor renders as soon as the first lifecycle await yields,
+    // so a non-nullable field would read as Free (= 0) on that first pass and flash "This plan is 3 credits"
+    // at a Founder before the real tier landed — the exact disclosure the gate above exists to prevent.
+    // Unknown means "don't state a price yet", which is the only honest thing to say before the read.
+    private HouseholdTier? tier;
     private int? defaultCalories;
     private TimeEffort defaultEffort = TimeEffort.Standard;
     private bool invent, preferLeftovers;
@@ -326,7 +330,7 @@ else if (!generating)
         rerollingMealId = plannedMealId;
         error = null;
         note = null;
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, ServiceAction.MealReroll);
         if (blocked is not null) { error = blocked; rerollingMealId = null; return; }
         try
         {
@@ -501,8 +505,7 @@ else if (!generating)
         // forty-two on the first batch, and then had every remaining batch refused — a seven-meal plan
         // reported as a success and a hundred and seventeen meals paid for and never delivered.
         var blocked = await AiErrorText.BlockedReasonAsync(
-            Entitlements, AiSettings, DemoValve,
-            creditsNeeded: CreditPricing.CreditsFor(Billing.Value, ServiceAction.MealPlan, PlannedSlotCount));
+            Entitlements, AiSettings, DemoValve, ServiceAction.MealPlan, units: PlannedSlotCount);
         if (blocked is not null) { error = blocked; return; }
 
         // Kick off a DETACHED background job and watch it: the generation survives navigating away, and the

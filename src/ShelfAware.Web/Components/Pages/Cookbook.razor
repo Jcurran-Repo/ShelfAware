@@ -718,7 +718,7 @@ else
         taggingBusy = true;
         suggesting = true;
         tagNote = null;
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, ServiceAction.TagSuggest);
         if (blocked is not null) { tagNote = blocked; suggesting = false; taggingBusy = false; return; }
         try
         {
@@ -749,7 +749,7 @@ else
         bulkTagging = true;
         bulkDone = 0;
         tagNote = null;
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, ServiceAction.TagSuggest);
         if (blocked is not null) { tagNote = blocked; bulkTagging = false; taggingBusy = false; return; }
         var tagged = 0;
         try

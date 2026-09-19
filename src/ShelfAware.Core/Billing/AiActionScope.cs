@@ -83,7 +83,12 @@ public sealed class AiActionScope : IDisposable
     /// calls; a gate that asked "can they afford this act?" again on call two would refuse every remaining
     /// batch of a plan that was paid for, and the household would receive a fraction of what it bought while
     /// the page reported success. Read it, don't claim with it — <see cref="TryClaimCharge"/> is the only
-    /// thing that may take the charge, because only it is atomic.</para></summary>
+    /// thing that may take the charge, because only it is atomic.</para>
+    ///
+    /// <para>⚠️ A gate that skips the balance on this trusts <see cref="Current"/> to be the act the call
+    /// really belongs to. That holds for the same reason the charge itself does — the scope flows down from
+    /// the method that opened it — and fails under the second leak shape in this type's own remarks: work
+    /// started and not awaited inside a scope. Nothing does that today, and no scan can prove it.</para></summary>
     public bool ChargeClaimed => Volatile.Read(ref _claimed) == 1;
 
     /// <summary>Take this scope's ONE charge, atomically — true exactly once per scope, false for every
