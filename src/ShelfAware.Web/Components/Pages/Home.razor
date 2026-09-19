@@ -512,9 +512,10 @@ else
     {
         if (r.DueDate is not { } due) return "";
         var days = due.DayNumber - today.DayNumber;
+        // `_ when` guards, not bare relational patterns: Razor reads a leading `<` as markup (docs/environment.md).
         return days switch
         {
-            < 0 => $"{-days} day{Plural(-days)} overdue",
+            _ when days < 0 => $"{-days} day{Plural(-days)} overdue",
             0 => "Due today",
             _ => $"Due in {days} day{Plural(days)}"
         };

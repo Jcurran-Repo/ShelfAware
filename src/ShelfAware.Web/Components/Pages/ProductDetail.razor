@@ -1488,9 +1488,10 @@ else
 
     private static string Money(decimal amount) => amount.ToString("C");
 
+    // `_ when` guards, not bare relational patterns: Razor reads a leading `<` as markup (docs/environment.md).
     private static string Relative(int days) => days switch
     {
-        < 0 => $"{-days} day{(days == -1 ? "" : "s")} overdue",
+        _ when days < 0 => $"{-days} day{(days == -1 ? "" : "s")} overdue",
         0 => "today",
         _ => $"in {days} day{(days == 1 ? "" : "s")}"
     };

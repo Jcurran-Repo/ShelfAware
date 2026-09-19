@@ -21,8 +21,9 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
   and the rasterized PNGs. Fix the SVG(s) and the component together, then regenerate the PNGs. Full
   detail and the file list are in `docs/icons/README.md`.
 - **The remediation arc** — seven phases out of the 2026-09-18 audit, designed in
-  `docs/remediation-plan.md`. Phase 7 (the Shelf Aware credit) needs Jordan's sign-off on the anchor
-  before it starts.
+  `docs/remediation-plan.md`. Phases 1 and 2 are done; 3–6 are independent and unblocked. Phase 7 (the
+  Shelf Aware credit) has its anchor decided — 1 credit = $0.01 of cost — and is the one phase that
+  touches money, so it gets two independent gate passes.
 
 ## Parked, with reasons
 

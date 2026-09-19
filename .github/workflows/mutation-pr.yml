@@ -57,7 +57,10 @@ jobs:
         if: steps.scope.outputs.core == 'true'
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          # One declared toolchain: the repo's global.json, never a wildcard here. A workflow that
+          # names its own version drifts from what developers build with, and a green run then
+          # says nothing about whether the repo compiles anywhere else.
+          global-json-file: global.json
 
       - name: Restore
         if: steps.scope.outputs.core == 'true'

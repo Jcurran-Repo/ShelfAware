@@ -15,8 +15,8 @@ Two items are deliberately **not** in the arc, with reasons in §9. Read that be
 
 | # | Phase | Closes | Size | Risk |
 |---|---|---|---|---|
-| 1 | The docs reset | F5, D8 | M | none — no code |
-| 2 | Pin the toolchain, unbreak the parse | F2, D7 | S | low |
+| 1 | The docs reset ✅ | F5, D8 | M | none — no code |
+| 2 | Pin the toolchain, unbreak the parse ✅ | F2, D7 | S | low |
 | 3 | The presentation layer | F3, D2 | M | low |
 | 4 | Errors stop leaking provider text | F4 | S | low |
 | 5 | The operational floor | F6, F7a, F7b, D6 | M | low |
@@ -86,17 +86,41 @@ return days switch
 The same commit builds clean on whatever patch CI happened to draw. This is not theoretical — it is how
 the audit's build failed, at a SHA that CI reports green.
 
+⚠️ **Stated precisely, because the loose version is wrong.** The SDK this reproduces on is
+`10.0.112-0ubuntu1~24.04.1` — Canonical's packaging, from Ubuntu's own feed, which is what an
+apt-installed box gets. I could not reach Microsoft's release metadata from here, so I cannot say whether
+the parse difference is a patch-level upstream regression or an artifact of the distro build. What *is*
+established is the only thing the fix turns on: two toolchains that both call themselves "10.0.x" disagree
+about whether this repo compiles. Do not repeat this as "SDK 10.0.112 has a Razor bug" — that is a claim
+the evidence does not support.
+
 **The fix, both halves:**
 
-1. `global.json` pinning the SDK with `rollForward: latestPatch`, and CI reading the version from it rather
-   than from a wildcard in the workflow. One declared toolchain, used by every machine.
+1. `global.json` pinning the feature band with `rollForward: latestPatch` and `allowPrerelease: false`,
+   and all three workflows reading it via `global-json-file` rather than naming a wildcard of their own.
+   **What this buys:** one declared toolchain, single-sourced, so a workflow cannot drift from what
+   developers build with; a clear failure on a machine that only has .NET 9; and no silent preview SDK.
+   **What it does not buy:** a byte-identical patch everywhere — that needs `rollForward: disable` and an
+   exact version, which makes a fresh machine unable to build until it installs that precise patch. The
+   pin makes the requirement *declared*; item 2 below is what makes the build *robust*.
 2. Rewrite the five relational-pattern sites so they parse under any SDK — `_ when days < 0 =>` is
    equivalent, unambiguous, and verified to compile on 10.0.112. The sites:
    `Home.razor:517`, `GroceryList.razor:730`, `Products.razor:423`, `ProductDetail.razor:1493`,
    `SpendInsight.razor:194`.
 
-Four of those five disappear anyway in phase 3 — but the pin and the rewrite should land first, because
-until they do, a fresh machine cannot build the repo.
+3. **A test, not a paragraph.** `RazorSourceRulesTests` scans every `.razor` under `src/` and fails,
+   naming file and line, if an arm opens with a bare relational pattern. Without it the next person to
+   tidy `_ when days < 0 =>` back into `< 0 =>` re-breaks the build on some machines and passes on
+   others. This is §1's rule applied to its first case: a constraint that must hold goes somewhere that
+   can fail.
+
+Four of those five sites disappear anyway in phase 3 — but the pin, the rewrite and the guard land first,
+because until they do, a fresh machine cannot build the repo at all.
+
+**Result:** the full solution builds `0 Warning(s), 0 Error(s)` on a non-incremental Release build under
+the SDK that previously produced 273 errors, and all four suites pass — 3186 green, the one new test being
+the guard. The guard was mutation-checked: restoring a single bare pattern fails it with
+`GroceryList.razor:731`, and nothing else.
 
 ---
 
@@ -304,15 +328,32 @@ The ledger's stored unit changes from retail micros to credits. Existing rows co
 household on the family box is a Founder with an unmetered tier. After the first paying customer, this same
 change means converting someone's purchased balance — a thing you can only get wrong once.
 
-### 7.5 Open, for Jordan
+### 7.5 Decided, and still open
 
-1. **The anchor.** $0.01-of-cost per credit is proposed above because it makes the price list read in small
-   whole numbers and keeps §3's economics intact. A cheaper credit (say $0.001) gives finer granularity at
-   the price of four-digit balances. This is a product-feel call, not a technical one.
-2. **The two placeholders.** TTS-per-read and realtime-per-minute cannot be priced honestly until EL
+**DECIDED (Jordan, 2026-09-19): the anchor is one cent of cost per credit.**
+
+> **1 credit = $0.01 of Jordan's cost = $0.0165 retail** at the existing 1.65× markup.
+
+Concretely, and these are the numbers phase 7 implements:
+
+| | Credits |
+|---|---|
+| Welcome grant (one-time, per household) | **100** |
+| Aware monthly allowance (no rollover) | **100 / month** |
+| $5 credit pack | **303** |
+| $10 credit pack | **606** |
+| $20 credit pack | **1,212** |
+
+Pack sizes are `floor(pack dollars ÷ $0.0165)` — deliberately computed from the anchor rather than rounded
+to a marketing number, so there is exactly one exchange rate in the system and no pack quietly carries a
+better one. If round numbers are wanted later (300 / 600 / 1,200), that is a *discount* decision and should
+be recorded as one, not smuggled in as rounding.
+
+**Still open:**
+1. **The two placeholders.** TTS-per-read and realtime-per-minute cannot be priced honestly until EL
    invoices are measured against real usage — §8's standing open item. They ship as config with a comment
    saying they are estimates, and get corrected from evidence.
-3. **Naming.** "Credits" is the safe default. If they get a Shelf Aware name, the abstraction is more
+2. **Naming.** "Credits" is the safe default. If they get a Shelf Aware name, the abstraction is more
    obviously deliberate — but it also has to survive being said out loud.
 
 ---
@@ -377,7 +418,7 @@ price for the three properties above. **Keep two databases.**
 5. operational floor   ──┤
 6. truth automation    ──┘
 
-7. the credit unit        ← after Jordan signs off on §7.5
+7. the credit unit        ← unblocked: anchor decided 2026-09-19 (§7.5)
    (then, separately)
    EF Migrations          ← its own arc, after 7
    logic out of .razor    ← continuous, never a phase
