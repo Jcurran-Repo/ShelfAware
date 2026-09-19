@@ -1,7 +1,7 @@
 {
-  "GeneratedAt": "2026-09-19T01:54:03.1431321+00:00",
-  "CommitSha": "62ecbb5853894b6777404eb35202eb4a08151c10",
-  "Branch": "claude/project-thread-u1g6wv",
+  "GeneratedAt": "2026-09-19T02:29:07.2326069+00:00",
+  "CommitSha": "",
+  "Branch": "",
   "Warnings": 0,
   "MutationScore": 100,
   "Projects": [
@@ -14,22 +14,22 @@
     },
     {
       "Name": "Engine",
-      "Total": 1441,
-      "Passed": 1441,
+      "Total": 1440,
+      "Passed": 1440,
       "Failed": 0,
       "Skipped": 0
     },
     {
       "Name": "Pages",
-      "Total": 604,
-      "Passed": 604,
+      "Total": 605,
+      "Passed": 605,
       "Failed": 0,
       "Skipped": 0
     },
     {
       "Name": "Persistence",
-      "Total": 1055,
-      "Passed": 1055,
+      "Total": 1069,
+      "Passed": 1069,
       "Failed": 0,
       "Skipped": 0
     }

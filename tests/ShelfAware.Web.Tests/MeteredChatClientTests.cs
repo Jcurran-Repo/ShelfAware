@@ -174,7 +174,8 @@ public class MeteredChatClientTests : IDisposable
         string keyMode, int? dailyCalls = null, long? dailyTokens = null, int? dailyMints = null,
         HouseholdTier tier = HouseholdTier.Free, long balanceCredits = 1_000, bool paymentsEnabled = true,
         int? demoCap = null, bool factoryThrows = false, bool meterReserveFailsFirst = false,
-        int? demoReserveFailsOnCall = null, ILogger<MeteredChatClient>? clientLogger = null)
+        int? demoReserveFailsOnCall = null, bool ledgerFailsFirst = false,
+        ILogger<MeteredChatClient>? clientLogger = null)
     {
         var llm = Options.Create(new LlmOptions
         {
@@ -209,7 +210,11 @@ public class MeteredChatClientTests : IDisposable
             demoFactory, Options.Create(new DemoOptions { DailyGlobalCallLimit = demoCap }), NullLogger<DemoUsageMeter>.Instance);
         var client = new MeteredChatClient(byok, settings, meter, demoMeter, Options.Create(new BillingOptions()),
             payments,
-            new CreditLedger(_authDb, Options.Create(new BillingOptions())),
+            // ledgerFailsFirst faults ONLY the first money write, to pin that a failed charge is handed back
+            // to the action rather than swallowing it along with every later round's chance to pay.
+            new CreditLedger(
+                ledgerFailsFirst ? new FailNthAuthDbFactory(_authDb, 1) : _authDb,
+                Options.Create(new BillingOptions())),
             new ServiceMarginMeter(_authDb, NullLogger<ServiceMarginMeter>.Instance),
             entitlements, new FakeCurrentHousehold("hh-test"),
             clientLogger ?? NullLogger<MeteredChatClient>.Instance);
@@ -391,6 +396,25 @@ public class MeteredChatClientTests : IDisposable
 
         Assert.Equal(3, (await meter.GetTodayAsync()).Calls);  // three real provider calls, all recorded
         Assert.Equal(-2, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceCreditsAsync("hh-test")); // one charge
+    }
+
+    [Fact]
+    public async Task A_failed_money_write_costs_that_call_not_the_whole_action()
+    {
+        // ⚠️ The claim is taken BEFORE the ledger row is written, because that is what stops two parallel
+        // rounds of one turn both charging. The cost of getting that order right is this case: if a failed
+        // write kept the claim, every remaining round of the action would find it spent and the household
+        // would get a five-round chat turn for nothing. The claim goes back, so round two pays.
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free, ledgerFailsFirst: true);
+
+        using (AiActionScope.Begin(ServiceAction.ChatTurn))
+        {
+            await AskAsync(client);   // charge claimed, money write fails, claim handed back
+            await AskAsync(client);   // this one pays
+            await AskAsync(client);   // and this one doesn't, because the action is paid for
+        }
+
+        Assert.Equal(-2, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceCreditsAsync("hh-test"));
     }
 
     [Fact]

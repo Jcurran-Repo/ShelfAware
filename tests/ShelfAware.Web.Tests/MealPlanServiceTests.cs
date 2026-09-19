@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using ShelfAware.Core.Billing;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.MealPlanning;
 using ShelfAware.Core.Recipes;
@@ -29,6 +30,48 @@ public class MealPlanServiceTests : IDisposable
 
     private static async Task SaveSettings(MealPlanService service, MealPlanSettings settings) =>
         await service.SaveSettingsAsync(settings);
+
+    [Fact]
+    public async Task A_whole_plan_is_charged_once_however_many_batches_it_takes()
+    {
+        // ⚠️ THE over-billing defect, and the test that would have caught it. The scope used to sit inside
+        // the generator, so each batch opened a FRESH one with its own unclaimed charge: a 31-day plan of
+        // four meals a day is 124 slots, 18 batches, and was billed eighteen times for the thing the price
+        // list calls "A meal plan — 2 credits". Nobody noticed because nothing here throws, nothing logs,
+        // and the whole suite stayed green — the only evidence was a balance falling faster than published.
+        var gen = new FakeMealPlanGenerator(
+            [Meal("Tacos"), Meal("Chili"), Meal("Stew"), Meal("Pasta"), Meal("Curry"), Meal("Soup"), Meal("Pie")],
+            [Meal("Roast"), Meal("Hash"), Meal("Bake")]);
+        var service = Service(gen);
+        await SaveSettings(service, new MealPlanSettings { Days = 10 });
+
+        await service.GenerateAsync();
+
+        Assert.True(gen.Calls.Count > 1, "the horizon needs to span more than one batch for this to mean anything");
+        Assert.All(gen.Charges, c => Assert.Equal(ServiceAction.MealPlan, c.Action));
+        Assert.Equal(1, gen.Charges.Count(c => c.WouldCharge));
+    }
+
+    [Fact]
+    public async Task Swapping_one_meal_is_charged_as_a_swap_not_as_a_whole_plan()
+    {
+        // A reroll is one slot and one call, so billing it as "A meal plan" both overcharges and writes a
+        // ledger line describing something the household didn't do. Its own action, its own price.
+        var gen = new FakeMealPlanGenerator([Meal("Tacos")], [Meal("Chili")]);
+        var service = Service(gen);
+        await SaveSettings(service, new MealPlanSettings { Days = 1 });
+        await service.GenerateAsync();
+
+        await using var db = _db.CreateDbContext();
+        var mealId = await db.PlannedMeals.Select(m => m.Id).SingleAsync();
+        gen.Charges.Clear();
+
+        await service.RerollAsync(mealId);
+
+        var charge = Assert.Single(gen.Charges);
+        Assert.Equal(ServiceAction.MealReroll, charge.Action);
+        Assert.True(charge.WouldCharge);
+    }
 
     [Fact]
     public async Task Generate_assembles_a_plan_with_plan_generated_recipes_dated_by_slot()
@@ -390,9 +433,16 @@ internal sealed class FakeMealPlanGenerator : IMealPlanGenerator
     public FakeMealPlanGenerator(params IReadOnlyList<RecipeSuggestion>[] batchResults) =>
         _results = new Queue<IReadOnlyList<RecipeSuggestion>>(batchResults);
 
+    /// <summary>The ambient <see cref="AiActionScope"/> each call ran under, and whether that call would
+    /// have been THE charge. A real generator never sees these — the metering layer reads the same ambient
+    /// scope from underneath — which is what makes them the honest stand-in for "what got billed".</summary>
+    public List<(ServiceAction? Action, bool WouldCharge)> Charges { get; } = [];
+
     public Task<IReadOnlyList<RecipeSuggestion>> GenerateAsync(MealPlanBatch batch, CancellationToken cancellationToken = default)
     {
         Calls.Add(batch);
+        var scope = AiActionScope.Current;
+        Charges.Add((scope?.Action, scope?.TryClaimCharge() ?? false));
         return Task.FromResult(_results.Count > 0 ? _results.Dequeue() : (IReadOnlyList<RecipeSuggestion>)[]);
     }
 }

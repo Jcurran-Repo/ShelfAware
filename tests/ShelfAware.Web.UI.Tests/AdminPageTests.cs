@@ -190,7 +190,10 @@ public class AdminPageTests : PageTestContext
             db.ServiceMargin.Add(new ServiceMarginDay
             {
                 Day = today, Action = ServiceAction.ChatTurn,
-                Calls = 9, Charges = 3, CreditsCharged = 6, CostMicros = 90_000,
+                // ⚠️ Nine calls cost 90,000 but only 30,000 of it was BILLABLE — six of the nine were the
+                // operator's own (a Founder is never charged). This is the shape every box here actually
+                // has, and it is the shape that made the old column lie.
+                Calls = 9, Charges = 3, CreditsCharged = 6, CostMicros = 90_000, BillableCostMicros = 30_000,
             });
             db.SaveChanges();
         }
@@ -209,9 +212,12 @@ public class AdminPageTests : PageTestContext
             Assert.Equal("9", cells[1]);   // calls
             Assert.Equal("3", cells[2]);   // charges
             Assert.Equal("6", cells[3]);   // credits
-            // ⚠️ Cost per CHARGE, not per call: the charge is the thing that has a price, so this is the
-            // column that sits beside the price list and says whether it is right. 90,000 ÷ 3 = 30,000.
-            Assert.Equal(AiPricing.FormatMicros(30_000), cells[5]);
+            Assert.Equal(AiPricing.FormatMicros(90_000), cells[4]);   // what every call cost
+            Assert.Equal(AiPricing.FormatMicros(30_000), cells[5]);   // the part somebody was billed for
+            // ⚠️ Cost per CHARGE, and out of the BILLABLE cost: 30,000 ÷ 3 = 10,000. Dividing the full
+            // 90,000 by the three charges would say 30,000 — three times what a chat turn costs — on the
+            // one column written to tell the operator whether the price list is right.
+            Assert.Equal(AiPricing.FormatMicros(10_000), cells[6]);
         });
     }
 
@@ -225,7 +231,7 @@ public class AdminPageTests : PageTestContext
             db.ServiceMargin.Add(new ServiceMarginDay
             {
                 Day = DateOnly.FromDateTime(DateTime.Today), Action = ServiceAction.TagSuggest,
-                Calls = 4, Charges = 0, CreditsCharged = 0, CostMicros = 360,
+                Calls = 4, Charges = 0, CreditsCharged = 0, CostMicros = 360, BillableCostMicros = 0,
             });
             db.SaveChanges();
         }
@@ -238,7 +244,7 @@ public class AdminPageTests : PageTestContext
                 .Single(sec => sec.QuerySelector("h2")?.TextContent.Contains("Margin by service") == true)
                 .QuerySelectorAll("tbody td").Select(c => c.TextContent.Trim()).ToArray();
             Assert.Equal("0", cells[2]);
-            Assert.Equal("—", cells[5]);
+            Assert.Equal("—", cells[6]);
         });
     }
 

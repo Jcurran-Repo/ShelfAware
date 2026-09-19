@@ -20,10 +20,19 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
   `x=256` centre line), and the coordinates are duplicated across the SVG sources, `EggsMascot.razor`,
   and the rasterized PNGs. Fix the SVG(s) and the component together, then regenerate the PNGs. Full
   detail and the file list are in `docs/icons/README.md`.
-- **The remediation arc** — seven phases out of the 2026-09-18 audit, designed in
-  `docs/remediation-plan.md`. Phases 1 and 2 are done; 3–6 are independent and unblocked. Phase 7 (the
-  Shelf Aware credit) has its anchor decided — 1 credit = $0.01 of cost — and is the one phase that
-  touches money, so it gets two independent gate passes.
+- ⚠️ **Speech is neither metered nor gated** (found by the phase-7 security gate, 2026-09-19).
+  `ElevenLabsTextToSpeech` and `ElevenLabsSpeechToText` are typed `HttpClient`s, not `IChatClient`s, so
+  they never reach `MeteredChatClient`: nothing records their cost, nothing charges for them, and
+  `RecipeReadAloud.razor` has no `AiErrorText.BlockedReasonAsync` gate (unlike `PushToTalk.razor`). A
+  household at **zero balance** can still burn the host's ElevenLabs quota. The published prices for
+  `TtsSynthesis` and `RealtimeMinute` have been WITHDRAWN from the Settings price list
+  (`CreditPricing.MeteredActions`) so no false statement stands, but the spend gap is still open.
+  Wiring it needs two things the app can't see from inside: a real ElevenLabs invoice to price a read
+  against (the 3-credit figure is an estimate, never a measurement), and a charge point that isn't an
+  `IChatClient`. Jordan's call whether to wire it or leave speech free.
+- **The remediation arc** — all seven phases landed 2026-09-19, designed in `docs/remediation-plan.md`,
+  with the review-gate pass on phase 7 written up in its §8. What's left out of that arc is deliberate:
+  draining logic out of `.razor` (D1) and EF Migrations (D3), both with reasons in §9.
 
 ## Parked, with reasons
 

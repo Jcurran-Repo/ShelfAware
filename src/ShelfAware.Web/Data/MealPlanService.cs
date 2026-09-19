@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using ShelfAware.Core.Billing;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.MealPlanning;
 using ShelfAware.Core.Recipes;
@@ -69,6 +70,11 @@ public sealed class MealPlanService(
     /// total) for the background job's status.</summary>
     public async Task<MealPlanResult> GenerateAsync(Action<int, int>? onProgress = null, CancellationToken ct = default)
     {
+        // ⚠️ The charging boundary is HERE, around the whole plan, not inside the generator around a batch.
+        // The household asked for a plan; that a 31-day horizon takes eighteen provider calls is our
+        // arrangement, not theirs. With the scope in the generator a 124-slot plan was charged eighteen
+        // times for a thing the price list calls two credits (docs/remediation-plan.md §8).
+        using var action = AiActionScope.Begin(ServiceAction.MealPlan);
         var setup = await LoadSettingsAsync(ct);
         var slots = SlotsFor(setup); // always ≥ 1 — Days clamps to [1,31] and Slots defaults to dinner
         var chunks = slots.Chunk(BatchSize).ToList();
@@ -162,6 +168,9 @@ public sealed class MealPlanService(
     /// stays in the library (nothing is deleted). One AI call, so it runs inline on the circuit.</summary>
     public async Task<RerollResult> RerollAsync(int plannedMealId, CancellationToken ct = default)
     {
+        // A reroll is its OWN action, not a meal plan: one slot, its own price, and a ledger line that says
+        // what the household actually did.
+        using var action = AiActionScope.Begin(ServiceAction.MealReroll);
         var setup = await LoadSettingsAsync(ct);
         var context = await LoadContextAsync(setup, ct);
         await using var db = await dbFactory.CreateDbContextAsync(ct);

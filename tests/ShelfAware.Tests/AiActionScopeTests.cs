@@ -85,6 +85,23 @@ public class AiActionScopeTests
     }
 
     [Fact]
+    public void A_released_claim_lets_the_next_call_in_the_action_pay_instead()
+    {
+        // ⚠️ The claim is taken BEFORE the money is written — that is what stops two parallel rounds both
+        // charging — so a write that fails having spent the claim would make every REMAINING round of the
+        // action free too. One failed row would cost the whole action's charge, not one call's.
+        using var scope = AiActionScope.Begin(ServiceAction.ChatTurn);
+
+        Assert.True(scope.TryClaimCharge());
+        Assert.False(scope.TryClaimCharge());   // as it should be while the claim stands
+
+        scope.ReleaseCharge();
+
+        Assert.True(scope.TryClaimCharge());    // the next round can pay
+        Assert.False(scope.TryClaimCharge());   // and having paid, it is claimed again
+    }
+
+    [Fact]
     public async Task An_action_begun_in_a_side_task_does_not_leak_into_its_caller()
     {
         // The other half of "flows DOWN only". Two households' work runs on one server; an action

@@ -49,6 +49,20 @@ public class BillingCatalogTests
     }
 
     [Fact]
+    public void The_packs_agree_with_the_default_anchor_and_say_so_when_a_config_change_breaks_that()
+    {
+        // ⚠️ The test above pins the literals against `new BillingOptions()` — the COMPILED defaults, which
+        // is not the anchor the charge path reads. An operator who edits Billing:CreditMarkup changes what a
+        // dollar buys everywhere except in the catalog, and then sells $5 of credit at a rate that no longer
+        // applies: at a 3.0 markup a credit retails for $0.03, so $5 buys 166, and the pack still grants 303.
+        // An 82% over-grant, agreeing with nothing, failing nothing. Program.cs refuses to start on it.
+        Assert.True(BillingCatalog.PacksMatchTheAnchor(new BillingOptions()));
+
+        Assert.False(BillingCatalog.PacksMatchTheAnchor(new BillingOptions { CreditMarkup = 3.0m }));
+        Assert.False(BillingCatalog.PacksMatchTheAnchor(new BillingOptions { CostDollarsPerCredit = 0.005m }));
+    }
+
+    [Fact]
     public void Packs_are_the_three_in_ascending_order() =>
         Assert.Equal(
             new[] { BillingProduct.CreditPack5, BillingProduct.CreditPack10, BillingProduct.CreditPack20 },

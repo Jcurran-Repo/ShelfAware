@@ -18,7 +18,8 @@ public enum ServiceAction
     /// <summary>Reading one receipt (however many pages or retries it takes).</summary>
     ReceiptExtraction = 0,
 
-    /// <summary>Reading one shelf photo into a census.</summary>
+    /// <summary>Reading one census — however many shelf photos the household uploaded for it. The act is
+    /// the count they asked for, not each picture.</summary>
     CensusPhoto = 1,
 
     /// <summary>One chat or voice turn, including every tool round it needs.</summary>
@@ -33,7 +34,8 @@ public enum ServiceAction
     /// <summary>Reading one recipe out of a photo or a paste.</summary>
     RecipeImport = 5,
 
-    /// <summary>Generating one meal plan.</summary>
+    /// <summary>Generating one meal plan — the WHOLE plan, however many batches it takes. A long horizon
+    /// is generated several slots at a time, and the household asked for a plan, not for a batch.</summary>
     MealPlan = 6,
 
     /// <summary>The ✨ tag suggestion on a product or a recipe.</summary>
@@ -51,6 +53,11 @@ public enum ServiceAction
 
     /// <summary>One minute of the realtime (live agent) voice session.</summary>
     RealtimeMinute = 11,
+
+    /// <summary>Swapping ONE meal in an existing plan. Its own action rather than a whole
+    /// <see cref="MealPlan"/>: it is one small call, and a ledger line reading "A meal plan" for a swapped
+    /// dinner tells the household something that did not happen.</summary>
+    MealReroll = 12,
 }
 
 /// <summary>
@@ -88,6 +95,36 @@ public static class CreditPricing
             : options.CreditsForUnknownAction;
         return Math.Max(0, credits);
     }
+
+    /// <summary>The actions a charge is actually WIRED to — the ones some service opens an
+    /// <see cref="AiActionScope"/> for. Exactly the set the public price list may quote, because a price
+    /// published for an act nothing charges is a statement the engine does not honour (the repo's
+    /// "one prediction, one story" rule, applied to money).
+    ///
+    /// <para>⚠️ <see cref="ServiceAction.TtsSynthesis"/> and <see cref="ServiceAction.RealtimeMinute"/> are
+    /// deliberately ABSENT: neither speech path goes through the metering layer, so both were published at a
+    /// price no household could ever be charged. They keep their enum values and their estimated prices in
+    /// <see cref="BillingOptions.CreditPrices"/> — the estimates are the pending work, not dead weight — and
+    /// they rejoin this set on the day they are wired.</para>
+    ///
+    /// <para>⚠️ Kept honest by <c>MeteredActionsAreWiredTests</c>, which SCANS the source for
+    /// <c>AiActionScope.Begin(ServiceAction.X)</c> and fails the build when this set and the call sites
+    /// disagree in either direction. A hand-maintained list of what the code does is a list that goes
+    /// stale; this one cannot.</para></summary>
+    public static readonly IReadOnlySet<ServiceAction> MeteredActions = new HashSet<ServiceAction>
+    {
+        ServiceAction.ReceiptExtraction,
+        ServiceAction.CensusPhoto,
+        ServiceAction.ChatTurn,
+        ServiceAction.RecipeSuggest,
+        ServiceAction.RecipeAdapt,
+        ServiceAction.RecipeImport,
+        ServiceAction.MealPlan,
+        ServiceAction.MealReroll,
+        ServiceAction.TagSuggest,
+        ServiceAction.SubstituteSuggest,
+        ServiceAction.IngredientAlternatives,
+    };
 
     /// <summary>What one credit RETAILS for, in micros: the anchor's cost-dollars × the markup (default
     /// $0.01 × 1.65 = 16,500 micros). This is the ONE exchange rate between credits and money — pack sizes
@@ -149,13 +186,6 @@ public static class CreditPricing
         return (long)Math.Ceiling(costMicros / perCredit);
     }
 
-    /// <summary>RETAIL micros → credits, rounded to nearest. The one-time conversion of ledger rows written
-    /// before credits existed (every entry was denominated in retail micros); also what turns a pack's face
-    /// value into the credit it grants. Rounded rather than floored because it converts a balance somebody
-    /// already holds — the nearest whole credit is the fairest reading of it.</summary>
-    public static long CreditsFromRetailMicros(BillingOptions options, long retailMicros) =>
-        (long)Math.Round((decimal)retailMicros / RetailMicrosPerCredit(options), MidpointRounding.AwayFromZero);
-
     /// <summary>The human name of an action — the ledger's "where did my credits go?" line and the public
     /// price list's row label, from ONE definition so a customer reading their ledger and a customer reading
     /// the price list see the same words for the same thing. An unnamed value falls back to its enum name
@@ -169,6 +199,7 @@ public static class CreditPricing
         ServiceAction.RecipeAdapt => "Adapting a recipe",
         ServiceAction.RecipeImport => "Importing a recipe",
         ServiceAction.MealPlan => "A meal plan",
+        ServiceAction.MealReroll => "Swapping one meal",
         ServiceAction.TagSuggest => "Suggesting tags",
         ServiceAction.SubstituteSuggest => "Suggesting stand-ins",
         ServiceAction.IngredientAlternatives => "Ingredient swaps",

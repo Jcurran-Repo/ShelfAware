@@ -24,7 +24,7 @@ public class ServiceMarginMeterTests : IDisposable
     [Fact]
     public async Task One_call_becomes_one_line_with_its_cost_and_its_charge()
     {
-        await _meter.RecordAsync(ServiceAction.ReceiptExtraction, costMicros: 4_200, creditsCharged: 1);
+        await _meter.RecordAsync(ServiceAction.ReceiptExtraction, costMicros: 4_200, creditsCharged: 1, billable: true);
 
         var line = Assert.Single(await _meter.ReadAsync(days: 1));
         Assert.Equal(ServiceAction.ReceiptExtraction, line.Action);
@@ -37,9 +37,9 @@ public class ServiceMarginMeterTests : IDisposable
     [Fact]
     public async Task Repeat_calls_add_onto_the_days_row_rather_than_stacking_rows()
     {
-        await _meter.RecordAsync(ServiceAction.ChatTurn, costMicros: 350, creditsCharged: 2);
-        await _meter.RecordAsync(ServiceAction.ChatTurn, costMicros: 700, creditsCharged: 0);
-        await _meter.RecordAsync(ServiceAction.ChatTurn, costMicros: 150, creditsCharged: 0);
+        await _meter.RecordAsync(ServiceAction.ChatTurn, costMicros: 350, creditsCharged: 2, billable: true);
+        await _meter.RecordAsync(ServiceAction.ChatTurn, costMicros: 700, creditsCharged: 0, billable: true);
+        await _meter.RecordAsync(ServiceAction.ChatTurn, costMicros: 150, creditsCharged: 0, billable: true);
 
         await using var db = _authDb.CreateDbContext();
         Assert.Single(await db.ServiceMargin.AsNoTracking().ToListAsync()); // one row per day+action
@@ -59,7 +59,7 @@ public class ServiceMarginMeterTests : IDisposable
         // A Founder's call, a billing-off box, a free-priced action: all cost the host real money, and the
         // question this table answers is about the ACTION, not about who ran it. Charges stays 0 so margin
         // is read from what was actually billed.
-        await _meter.RecordAsync(ServiceAction.TagSuggest, costMicros: 90, creditsCharged: 0);
+        await _meter.RecordAsync(ServiceAction.TagSuggest, costMicros: 90, creditsCharged: 0, billable: false);
 
         var line = Assert.Single(await _meter.ReadAsync(days: 1));
         Assert.Equal(1, line.Calls);
@@ -71,9 +71,9 @@ public class ServiceMarginMeterTests : IDisposable
     [Fact]
     public async Task Actions_are_kept_apart_and_listed_dearest_first()
     {
-        await _meter.RecordAsync(ServiceAction.TagSuggest, costMicros: 90, creditsCharged: 0);
-        await _meter.RecordAsync(ServiceAction.CensusPhoto, costMicros: 9_000, creditsCharged: 1);
-        await _meter.RecordAsync(ServiceAction.ChatTurn, costMicros: 1_000, creditsCharged: 2);
+        await _meter.RecordAsync(ServiceAction.TagSuggest, costMicros: 90, creditsCharged: 0, billable: false);
+        await _meter.RecordAsync(ServiceAction.CensusPhoto, costMicros: 9_000, creditsCharged: 1, billable: true);
+        await _meter.RecordAsync(ServiceAction.ChatTurn, costMicros: 1_000, creditsCharged: 2, billable: true);
 
         var lines = await _meter.ReadAsync(days: 1);
 
@@ -116,7 +116,7 @@ public class ServiceMarginMeterTests : IDisposable
             });
             await db.SaveChangesAsync();
         }
-        await _meter.RecordAsync(ServiceAction.ChatTurn, costMicros: 350, creditsCharged: 2);
+        await _meter.RecordAsync(ServiceAction.ChatTurn, costMicros: 350, creditsCharged: 2, billable: true);
 
         Assert.Equal(350, Assert.Single(await _meter.ReadAsync(days: 7)).CostMicros);       // today only
         Assert.Equal(10_349, Assert.Single(await _meter.ReadAsync(days: 31)).CostMicros);   // both
@@ -130,7 +130,54 @@ public class ServiceMarginMeterTests : IDisposable
         await using var db = _authDb.CreateDbContext();
         await db.Database.ExecuteSqlRawAsync(@"DROP TABLE ""ServiceMargin"";");
 
-        await _meter.RecordAsync(ServiceAction.ChatTurn, costMicros: 350, creditsCharged: 2); // no throw
+        await _meter.RecordAsync(ServiceAction.ChatTurn, costMicros: 350, creditsCharged: 2, billable: true); // no throw
+    }
+
+    [Fact]
+    public async Task Cost_per_charge_counts_only_what_a_billed_household_actually_cost()
+    {
+        // ⚠️ THE finding this column exists to answer. The operator is a Founder on every box here, so most
+        // calls cost money and bill nobody. Recording one cost and dividing it by the billed count reported
+        // a chat turn as costing eleven times what it does — on the one panel written to tell the operator
+        // whether the price list is right.
+        for (var i = 0; i < 10; i++)
+            await _meter.RecordAsync(ServiceAction.ChatTurn, costMicros: 1_000, creditsCharged: 0, billable: false);
+        await _meter.RecordAsync(ServiceAction.ChatTurn, costMicros: 1_000, creditsCharged: 2, billable: true);
+
+        var line = Assert.Single(await _meter.ReadAsync(days: 1));
+        Assert.Equal(11, line.Calls);
+        Assert.Equal(1, line.Charges);
+        Assert.Equal(11_000, line.CostMicros);          // every call — what the box actually spent
+        Assert.Equal(1_000, line.BillableCostMicros);   // only the one somebody was on the hook for
+        Assert.Equal(1_000, line.CostPerCharge);        // not 11_000
+    }
+
+    [Fact]
+    public async Task The_silent_rounds_of_a_paid_action_count_toward_what_that_charge_cost()
+    {
+        // Billable is not "was charged": four of a five-round chat turn draw nothing, and their cost is
+        // precisely what the one charge had to cover. Leaving them out would report the turn as costing a
+        // fifth of what it does, which is the same defect pointing the other way.
+        await _meter.RecordAsync(ServiceAction.ChatTurn, costMicros: 500, creditsCharged: 2, billable: true);
+        for (var i = 0; i < 4; i++)
+            await _meter.RecordAsync(ServiceAction.ChatTurn, costMicros: 500, creditsCharged: 0, billable: true);
+
+        var line = Assert.Single(await _meter.ReadAsync(days: 1));
+        Assert.Equal(2_500, line.BillableCostMicros);
+        Assert.Equal(2_500, line.CostPerCharge);
+    }
+
+    [Fact]
+    public async Task With_nothing_billed_there_is_no_cost_per_charge_to_report()
+    {
+        // A Founder-only box. The honest answer is "no evidence yet", not a number computed by dividing by
+        // zero charges or by quietly substituting the call count.
+        await _meter.RecordAsync(ServiceAction.ChatTurn, costMicros: 1_000, creditsCharged: 0, billable: false);
+
+        var line = Assert.Single(await _meter.ReadAsync(days: 1));
+        Assert.Equal(1_000, line.CostMicros);
+        Assert.Equal(0, line.BillableCostMicros);
+        Assert.Null(line.CostPerCharge);
     }
 
     [Fact]
@@ -139,7 +186,7 @@ public class ServiceMarginMeterTests : IDisposable
         // ⚠️ The reason this table can live in auth.db with no query filter and no tenancy drill: it is
         // box-wide operator data by construction. A household id arriving on it later would make it tenant
         // data that export and delete-my-data would both owe something to, silently.
-        await _meter.RecordAsync(ServiceAction.ChatTurn, costMicros: 350, creditsCharged: 2);
+        await _meter.RecordAsync(ServiceAction.ChatTurn, costMicros: 350, creditsCharged: 2, billable: true);
 
         Assert.DoesNotContain(
             typeof(ServiceMarginDay).GetProperties(),

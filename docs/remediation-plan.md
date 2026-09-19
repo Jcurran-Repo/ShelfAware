@@ -549,7 +549,7 @@ charged, cost. Box-wide operator data in auth.db with no household id — pinned
 a household id arriving on it later would silently make it tenant data that export and delete-my-data both
 owe something to. It records in EVERY key mode and at EVERY tier (a Founder's calls cost real money and bill
 nobody), so margin is read from `Charges`, never `Calls`. Rendered on `/admin` as "Margin by service", with
-cost-per-CHARGE beside the price list and an em dash where nobody was charged.
+cost-per-CHARGE (on `/admin`; the price list is in Settings) and an em dash where nobody was charged.
 
 **`CreditDenominationMigration` converts the existing ledger once**, at the anchor, in ONE transaction. ⚠️ The
 transaction is why it is a class of its own rather than an `AdditiveSchema` line: the ALTER and the UPDATE
@@ -635,6 +635,58 @@ a transaction, which §4 already documents honestly as a bounded, logged, best-e
 price for the three properties above. **Keep two databases.**
 
 ---
+
+## 8. What the review gates found (2026-09-19)
+
+Phase 7 went through both gates — a code review and a security review, on different models, reading
+`dd80ec4..e1b9daf` by SHA. Neither found a tenancy break, an injection, or a fault in the one-shot ledger
+migration. Between them they found **five money-correctness defects that a fully green 3,297-test suite
+could not see**, every one of them the same shape the repo's top directive names: a surface stating
+something the engine does not do.
+
+**Every one is now held by a test that fails when the defect returns**, which is the only part of this
+section worth trusting in six months.
+
+| What was wrong | Where | Now held by |
+|---|---|---|
+| A 31-day meal plan was charged **18×**: the scope sat inside the generator, so each 7-slot batch opened a fresh one with its own unclaimed charge | `MealPlanService` / `AnthropicMealPlanGenerator` | `A_whole_plan_is_charged_once_however_many_batches_it_takes` |
+| A reroll of one dinner was charged — and ledger-labelled — as a whole meal plan | `MealPlanService.RerollAsync` | `Swapping_one_meal_is_charged_as_a_swap_not_as_a_whole_plan` |
+| "Reading a recipe aloud — 3 credits" and "A minute of live voice — 12" were published and charged by **nothing**; neither speech path enters the metering layer | `Settings.razor` / `BillingOptions.CreditPrices` | `The_published_price_list_quotes_exactly_the_actions_something_charges_for` (a source scan) |
+| The published copy promised tool rounds were free, while a chat turn that generates or adapts a recipe deliberately charges both | `Settings.razor` copy vs `AiActionScope` | the copy now says what the engine does |
+| `/admin`'s "Cost / charge" divided EVERY call's cost by only the CHARGED calls — several times an action's true cost on any box whose main user is a Founder, which is every box here | `ServiceMarginMeter` / `Admin.razor` | `Cost_per_charge_counts_only_what_a_billed_household_actually_cost` |
+
+And three robustness findings, all about a number the operator could set wrong:
+
+- **A zero anchor would have inflated the irreversible migration ~165×.** `RetailMicrosPerCredit` clamps to
+  1 where its two siblings return 0 — right everywhere except in a one-shot conversion, where dividing by
+  one micro turns a $1.65 grant into 1,650,000 credits with no second boot to undo it. Now: `BillingOptions`
+  is validated at boot (`ValidateOnStart`), and the migration refuses independently.
+- **Pack sizes were literals pinned against the COMPILED defaults**, not the configured anchor, so editing
+  `Billing:CreditMarkup` sold $5 of credit at a rate that no longer applied. `BillingCatalog.PacksMatchTheAnchor`
+  is now a startup check against the live options.
+- **A failed ledger write cost the whole action, not one call.** The claim is taken before the write (which
+  is what stops two parallel rounds both charging), so a failure that kept it made every remaining round
+  free. `AiActionScope.ReleaseCharge` hands it back.
+
+### What it cost to find
+
+Two subtractions and one admission came out of this round, and they are the honest part:
+
+- `CreditPricing.CreditsFromRetailMicros` was **deleted**. It had no production caller — the migration does
+  the same conversion in SQL — so it was a second definition of one rule with a test standing between them.
+  The rounding table now runs against the SQLite that actually converts the money.
+- `SettingsPageTests.The_price_list_is_published_beside_the_balance` asserted two labels and the word
+  "free" and **no price at all**, under a comment claiming it stopped prices drifting. It now asserts the
+  numbers.
+- Two shapes leak an `AiActionScope` and end in a FREE call rather than an over-charge: `Begin` from a
+  non-`async` method, and fire-and-forget started inside a scope. Neither exists in the code today, and
+  neither would announce itself if it did. `AiActionScopeSiteTests` scans for the first; the second is only
+  written down.
+
+⚠️ **Still open, and Jordan's call:** text-to-speech is live, costs real ElevenLabs money, and is neither
+metered nor gated — a household at zero balance can still have recipes read aloud. Its published price is
+withdrawn (above), which removes the false statement but not the gap. Wiring it needs a real invoice to
+price against; see `docs/backlog.md`.
 
 ## 9. Sequencing
 

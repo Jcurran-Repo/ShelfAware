@@ -649,9 +649,38 @@ public class SettingsBillingPanelTests : SettingsTestBase
 
         var section = Section(RenderSettings(), "AI usage");
 
-        Assert.Contains(CreditPricing.Describe(ServiceAction.ReceiptExtraction), section.TextContent);
-        Assert.Contains(CreditPricing.Describe(ServiceAction.ChatTurn), section.TextContent);
-        Assert.Contains("free", section.TextContent); // the zero-priced actions say so rather than showing "0"
+        var rows = section.QuerySelectorAll(".price-list tbody tr")
+            .Select(r => r.QuerySelectorAll("td").Select(c => c.TextContent.Trim()).ToArray())
+            .ToDictionary(c => c[0], c => c[1]);
+
+        // ⚠️ Assert the NUMBER, not just the label. This test used to check that two action names and the
+        // word "free" appeared somewhere in the section, which is a test that cannot fail when a price is
+        // quoted wrongly — exactly the drift its own comment claims to prevent.
+        var billing = new BillingOptions();
+        Assert.Equal(
+            CreditPricing.CreditsFor(billing, ServiceAction.ChatTurn).ToString(),
+            rows[CreditPricing.Describe(ServiceAction.ChatTurn)]);
+        Assert.Equal(
+            CreditPricing.CreditsFor(billing, ServiceAction.ReceiptExtraction).ToString(),
+            rows[CreditPricing.Describe(ServiceAction.ReceiptExtraction)]);
+        // The zero-priced actions say so in words rather than showing a bare "0", which reads as an error.
+        Assert.Equal("free", rows[CreditPricing.Describe(ServiceAction.TagSuggest)]);
+    }
+
+    [Fact]
+    public void The_price_list_quotes_no_price_for_something_nothing_charges_for()
+    {
+        // ⚠️ Reading a recipe aloud was published at 3 credits and charged by NOTHING — speech never enters
+        // the metering layer — so a household read a price it could not be charged, on the one surface built
+        // to make the credit legible. The list now renders CreditPricing.MeteredActions, which a source
+        // scan holds equal to the actual charge sites (AiActionScopeSiteTests).
+        Entitlements.BalanceCredits = 150;
+
+        var section = Section(RenderSettings(), "AI usage");
+
+        Assert.DoesNotContain(CreditPricing.Describe(ServiceAction.TtsSynthesis), section.TextContent);
+        Assert.DoesNotContain(CreditPricing.Describe(ServiceAction.RealtimeMinute), section.TextContent);
+        Assert.Contains(CreditPricing.Describe(ServiceAction.MealPlan), section.TextContent);
     }
 
     [Fact]

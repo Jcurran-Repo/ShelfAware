@@ -362,8 +362,28 @@ builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection(LlmOptio
 builder.Services.Configure<DemoOptions>(builder.Configuration.GetSection(DemoOptions.SectionName));
 // Billing tunables — model rates, credit markup, welcome-grant size — as operator config (defaults in
 // BillingOptions), so pricing can be retuned in appsettings without a rebuild.
-builder.Services.Configure<ShelfAware.Core.Billing.BillingOptions>(
-    builder.Configuration.GetSection(ShelfAware.Core.Billing.BillingOptions.SectionName));
+builder.Services.AddOptions<ShelfAware.Core.Billing.BillingOptions>()
+    .Bind(builder.Configuration.GetSection(ShelfAware.Core.Billing.BillingOptions.SectionName))
+    // ⚠️ The anchor is validated at BOOT, not defended at each use, because one of its uses is irreversible.
+    // CreditDenominationMigration converts the pre-credit ledger by dividing by the retail price of a credit,
+    // once, on the first boot that sees the old schema. At an anchor of 0 that divisor clamps to 1 micro and
+    // a $1.65 welcome grant becomes 1,650,000 credits — a balance nobody can spend down, with no second boot
+    // to undo it. A box that cannot price a credit must not start.
+    .Validate(o => o.CostDollarsPerCredit > 0,
+        "Billing:CostDollarsPerCredit must be greater than zero — it is what one credit costs, and every " +
+        "grant, pack size and ledger conversion divides by it.")
+    .Validate(o => o.CreditMarkup > 0,
+        "Billing:CreditMarkup must be greater than zero — it is the multiplier from a credit's cost to its " +
+        "retail price.")
+    // The pack sizes in BillingCatalog are product decisions (a printed face value somebody buys), so they
+    // are literals rather than derived — but a literal that no longer matches the anchor means the operator
+    // is selling $5 of credit at a rate they've since changed, and eating or shorting the difference. Fail
+    // fast naming both numbers rather than discover it in a month's reconciliation.
+    .Validate(ShelfAware.Web.Billing.BillingCatalog.PacksMatchTheAnchor,
+        "Billing:CostDollarsPerCredit / Billing:CreditMarkup no longer produce BillingCatalog's pack sizes. " +
+        "A pack's size is a product decision: update BillingCatalog (and the provider's price ids) " +
+        "deliberately, or restore the anchor.")
+    .ValidateOnStart();
 // The /about wishlist: only SupporterPaymentUrl matters, and only to reveal the (config-gated) "back it
 // early" supporter button. Absent section = the reserve's tier picker + email still work; no button.
 builder.Services.Configure<ShelfAware.Web.Wishlist.WishlistOptions>(

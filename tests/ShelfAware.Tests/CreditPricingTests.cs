@@ -1,3 +1,4 @@
+using System.Globalization;
 using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Tests;
@@ -150,15 +151,9 @@ public class CreditPricingTests
         Assert.Equal(0, CreditPricing.CreditsForCostMicros(Default, -50));
     }
 
-    // ------------------------------------------------------------------ reading the old money back
-
-    [Theory]
-    [InlineData(16_500L, 1L)]
-    [InlineData(1_650_000L, 100L)]  // the pre-credit welcome grant
-    [InlineData(8_250L, 1L)]        // half a credit rounds to one, away from zero
-    [InlineData(-16_500L, -1L)]     // a consumption keeps its sign
-    public void Retail_micros_convert_back_to_credits(long micros, long credits) =>
-        Assert.Equal(credits, CreditPricing.CreditsFromRetailMicros(Default, micros));
+    // Reading the old retail-micros money back into credits is the migration's SQL, and its rounding table
+    // is asserted against real SQLite in CreditDenominationMigrationTests — not here against a C# twin of
+    // the same arithmetic, which would be a second definition of one rule.
 
     // ------------------------------------------------------------------ what a person reads
 
@@ -183,6 +178,21 @@ public class CreditPricingTests
     [InlineData(2L, "2 credits")]
     [InlineData(-1L, "-1 credit")]   // a negative one is still ONE of them
     [InlineData(1_212L, "1,212 credits")]
-    public void Credits_are_written_the_way_they_are_read(long credits, string text) =>
-        Assert.Equal(text, CreditPricing.FormatCredits(credits));
+    public void Credits_are_written_the_way_they_are_read(long credits, string text)
+    {
+        // ⚠️ The culture is pinned for the assertion, not left to the machine. `N0` groups by the AMBIENT
+        // culture, so the separator in "1,212" is the test host's, not the code's — on a de-DE agent this
+        // test would fail with "1.212" and blame a change nobody made. (The app itself is English-only, so
+        // the ambient culture is en-US everywhere it runs; AiPricing.FormatMicros has the same shape.)
+        var original = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = new CultureInfo("en-US");
+        try
+        {
+            Assert.Equal(text, CreditPricing.FormatCredits(credits));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = original;
+        }
+    }
 }

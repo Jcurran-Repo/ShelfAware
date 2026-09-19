@@ -891,6 +891,25 @@ input:focus, select:focus {
     margin: 0 0 0.75rem;
 }
 
+/* The public credit price list (Settings billing panel). Collapsed by default because it answers a
+   question most visits don't ask, but it is PUBLISHED rather than hidden — an abstract unit with a secret
+   exchange rate is a casino chip. Narrow: it is two short columns, and a full-width table of eleven rows
+   reads as a spreadsheet rather than as a price list. */
+.price-list {
+    margin: 0.75rem 0 0;
+    max-width: 24rem;
+}
+
+.price-list > summary {
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.price-list td:last-child,
+.price-list th:last-child {
+    text-align: right;
+}
+
 /* ---- Guided walkthrough (Components/Layout/GuidedTour.razor) ----
    Docked bottom-LEFT because the voice assistant owns bottom-right; the two are the only fixed-position
    furniture in the app and must not stack. It's a fixed element, so it doesn't know about the nav rail's

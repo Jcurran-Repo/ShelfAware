@@ -33,7 +33,11 @@ public class AnthropicMealPlanGenerator : IMealPlanGenerator
     public async Task<IReadOnlyList<RecipeSuggestion>> GenerateAsync(
         MealPlanBatch batch, CancellationToken cancellationToken = default)
     {
-        using var action = AiActionScope.Begin(ServiceAction.MealPlan);
+        // ⚠️ NO AiActionScope here, deliberately. This generates ONE BATCH of a plan (MealPlanService chunks
+        // a long horizon into several calls), and the user-visible act is the plan, not the batch. The scope
+        // lives at MealPlanService.GenerateAsync/RerollAsync — which also lets a reroll be charged and
+        // LABELLED as a reroll rather than as a whole plan. A scope opened here charged a 31-day plan
+        // eighteen times; see docs/remediation-plan.md §8.
         var messages = new List<ChatMessage>
         {
             new(ChatRole.System, SystemPrompt),

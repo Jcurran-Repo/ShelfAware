@@ -19,8 +19,12 @@ namespace ShelfAware.Web.Data;
 ///
 /// <para>The old <c>AmountMicros</c> column is KEPT, mapped to <see cref="CreditLedgerEntry.LegacyAmountMicros"/>
 /// — the receipt for this conversion, so the arithmetic behind every converted balance can be audited rather
-/// than taken on trust. It also keeps a migrated schema identical to a freshly created one, which the
-/// AdditiveSchema parity tests pin.</para>
+/// than taken on trust. It also keeps a migrated database's COLUMN SET the same as a fresh one's, so no
+/// later read has to know which kind of database it is on. Not a byte-for-byte schema match: the ALTER
+/// writes <c>AmountCredits INTEGER NOT NULL DEFAULT 0</c> (a default is the only way SQLite will add a NOT
+/// NULL column to a populated table) where EnsureCreated emits it without one, and nothing compares a
+/// migrated CreditLedger against a fresh one. The AdditiveSchema parity tests cover the tables
+/// <see cref="AdditiveSchema"/> creates — they do not reach this migration.</para>
 ///
 /// <para>Idempotent (the column exists → nothing to do) and a no-op on a fresh database, where
 /// <c>EnsureCreated</c> already built the table with both columns and there are no rows to convert.
@@ -41,13 +45,29 @@ public static class CreditDenominationMigration
             if (!TableExists(conn, "CreditLedger")) return;
             if (ColumnExists(conn, "CreditLedger", "AmountCredits")) return; // already converted
 
+            // ⚠️ Refuse rather than convert at a nonsense rate. RetailMicrosPerCredit CLAMPS to 1 so that
+            // ordinary arithmetic stays defined, which is right everywhere except here: this runs ONCE and
+            // cannot be undone, so at a zero anchor it would divide by 1 micro and turn a $1.65 welcome
+            // grant into 1,650,000 credits, permanently. Program.cs validates the anchor at boot so this
+            // should be unreachable — but "unreachable" is a claim about today's startup code, and the cost
+            // of being wrong about it is a ledger nobody can put back.
+            if (billing.CostDollarsPerCredit <= 0 || billing.CreditMarkup <= 0)
+                throw new InvalidOperationException(
+                    "Refusing to re-denominate the credit ledger: Billing:CostDollarsPerCredit and " +
+                    "Billing:CreditMarkup must both be greater than zero. The conversion is one-shot and " +
+                    "irreversible, so it will not run at a rate that cannot be right.");
+
             var retailMicrosPerCredit = CreditPricing.RetailMicrosPerCredit(billing);
 
             using var tx = conn.BeginTransaction();
             Execute(conn, tx, "ALTER TABLE CreditLedger ADD COLUMN AmountCredits INTEGER NOT NULL DEFAULT 0;");
-            // ROUND(x) in SQLite rounds half away from zero, matching CreditPricing.CreditsFromRetailMicros
-            // — the same reading of an existing balance a C# conversion would give. Signed throughout, so a
-            // consumption or an expiry converts to a negative credit count exactly as it should.
+            // ROUND(x) in SQLite rounds half away from zero — a balance somebody already holds should
+            // convert to the NEAREST whole credit, not be floored down. Signed throughout, so a consumption
+            // or an expiry converts to a negative credit count exactly as it should.
+            // ⚠️ This SQL is the ONE statement of the retail→credit rule. There used to be a C# twin
+            // (CreditPricing.CreditsFromRetailMicros) that nothing but tests called, which is two definitions
+            // of one rule with a test standing between them; the rounding table is now asserted through this
+            // statement in CreditDenominationMigrationTests, against the SQLite that actually runs it.
             Execute(conn, tx,
                 $"UPDATE CreditLedger SET AmountCredits = CAST(ROUND(CAST(AmountMicros AS REAL) / {retailMicrosPerCredit}) AS INTEGER);");
             tx.Commit();

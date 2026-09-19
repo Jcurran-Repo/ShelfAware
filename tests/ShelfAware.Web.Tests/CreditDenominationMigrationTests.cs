@@ -86,7 +86,51 @@ public class CreditDenominationMigrationTests : IDisposable
 
         var row = await db.CreditLedger.AsNoTracking().SingleAsync();
         Assert.Equal(1_650_000, row.LegacyAmountMicros);
-        Assert.Equal(CreditPricing.CreditsFromRetailMicros(Billing, 1_650_000), row.AmountCredits);
+        Assert.Equal(100, row.AmountCredits);
+    }
+
+    [Theory]
+    [InlineData(16_500L, 1L)]       // one credit at the anchor's retail price
+    [InlineData(1_650_000L, 100L)]  // the pre-credit welcome grant
+    [InlineData(8_250L, 1L)]        // half a credit rounds UP — to the nearest, not floored
+    [InlineData(-8_250L, -1L)]      // and away from zero on the negative side too
+    [InlineData(-16_500L, -1L)]     // a consumption keeps its sign
+    [InlineData(4_000L, 0L)]        // ⚠️ a small positive row CAN round to nothing — see below
+    public async Task Retail_micros_convert_to_the_nearest_whole_credit(long micros, long expected)
+    {
+        // ⚠️ Asserted through the real ALTER + UPDATE rather than against a C# twin of the same arithmetic.
+        // A twin is a second definition of one rule, and a test that compares them passes whichever way they
+        // are both wrong; SQLite's ROUND is what actually converts these households' money.
+        // The last case is the honest edge: rounding to nearest means a row worth under half a credit
+        // becomes zero. No such row exists — every entry the old ledger could hold (grant, pack, allowance,
+        // a consumption at the old per-call cost) is at least 8,250 micros — but the property is "nearest",
+        // not "never down", and a test that only showed the flattering direction would say otherwise.
+        await using var db = _db.CreateDbContext();
+        await GiveItTheOldSchemaAsync(db);
+        await SeedOldRowAsync(db, "hh-a", CreditEntryKind.Grant, micros);
+
+        CreditDenominationMigration.Apply(db, Billing);
+
+        var row = await db.CreditLedger.AsNoTracking().SingleAsync();
+        Assert.Equal(expected, row.AmountCredits);
+    }
+
+    [Fact]
+    public async Task It_refuses_to_convert_at_an_anchor_that_cannot_be_right()
+    {
+        // ⚠️ The one irreversible write in the app. At a zero anchor RetailMicrosPerCredit clamps to 1 — the
+        // clamp is right everywhere else, because it keeps ordinary arithmetic defined — and dividing by one
+        // micro would turn this $1.65 grant into 1,650,000 credits, with no second boot to put it back.
+        // Program.cs refuses to start on such a config; this is the second lock on the same door.
+        await using var db = _db.CreateDbContext();
+        await GiveItTheOldSchemaAsync(db);
+        await SeedOldRowAsync(db, "hh-a", CreditEntryKind.Grant, 1_650_000);
+
+        var broken = new BillingOptions { CostDollarsPerCredit = 0m };
+        Assert.Throws<InvalidOperationException>(() => CreditDenominationMigration.Apply(db, broken));
+
+        // And it refused BEFORE touching anything, so the next boot at a sane anchor still converts.
+        Assert.False(await HasCreditsColumnAsync(db));
     }
 
     [Fact]

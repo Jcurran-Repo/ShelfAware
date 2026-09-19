@@ -40,6 +40,18 @@ public sealed class ServiceMarginDay
     public long CreditsCharged { get; set; }
 
     /// <summary>What those calls cost in provider micros — stamped at call time from the configured rates
-    /// (<see cref="AiPricing.CostMicros"/>), so a later rate change never rewrites a past day.</summary>
+    /// (<see cref="AiPricing.CostMicros"/>), so a later rate change never rewrites a past day.
+    /// EVERY call, including the ones nobody was billed for.</summary>
     public long CostMicros { get; set; }
+
+    /// <summary>The part of <see cref="CostMicros"/> incurred by calls on a BILLABLE path — a managed box
+    /// with billing on, a household, a tier that spends credit. The rest is the operator's own use: a
+    /// Founder's calls and a BYOK visitor's cost money (the host's or their own) but bill nobody.
+    ///
+    /// <para>⚠️ This column exists so "cost per charge" has ONE population. <see cref="CostMicros"/> counts
+    /// every call while <see cref="Charges"/> counts only billed actions, so dividing one by the other on a
+    /// box where the operator is a Founder reports several times an action's true cost — and that ratio is
+    /// the number /admin uses to say whether a price is right. Dividing THIS by <see cref="Charges"/> asks
+    /// one question of one population: what did the actions we billed for actually cost us?</para></summary>
+    public long BillableCostMicros { get; set; }
 }

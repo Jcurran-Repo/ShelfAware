@@ -237,18 +237,30 @@ public sealed class MeteredChatClient(
         }
         catch (Exception ex) { logger.LogError(ex, "Recording AI usage failed; this call's tokens/cost went unrecorded."); }
 
-        long charged = 0;
+        var consumption = CreditConsumption.None;
         try
         {
-            charged = await RecordCreditConsumptionAsync(costMicros, model, CancellationToken.None);
+            consumption = await RecordCreditConsumptionAsync(costMicros, model, CancellationToken.None);
         }
-        catch (Exception ex) { logger.LogError(ex, "Recording credit consumption failed; this call didn't draw the balance."); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex, "Recording credit consumption failed; this call didn't draw the balance.");
+        }
 
         // Reconciliation, box-wide and household-free: what this call COST against what it was CHARGED.
         // Recorded in every key mode and at every tier (see ServiceMarginMeter) — the question it answers is
         // "is this action's price right?", which is about the action, not about who ran it. Its own
-        // best-effort, so a reconciliation hiccup can't undo the two writes above.
-        await margin.RecordAsync(AiActionScope.Current?.Action, costMicros, charged, CancellationToken.None);
+        // best-effort INSIDE the meter, and wrapped here too: this runs from a finally (the streaming tail),
+        // and an escaping exception there would destroy an answer the household has already been charged for.
+        try
+        {
+            await margin.RecordAsync(
+                AiActionScope.Current?.Action, costMicros, consumption.Credits, consumption.Billable, CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex, "Recording the service-margin row failed; this call is missing from reconciliation.");
+        }
     }
 
     /// <summary>Draw the household's credit balance down by the PRICE OF THE ACTION this call belongs to —
@@ -271,24 +283,29 @@ public sealed class MeteredChatClient(
     /// old cost-denominated charge via <see cref="CreditPricing.CreditsForCostMicros"/>, so a missing label
     /// over-charges visibly instead of opening a hole. The tier and household reads happen BEFORE the claim,
     /// so a call that was never going to be charged doesn't spend its scope's one charge.</para></summary>
-    /// <returns>The credits actually charged for this call — 0 when nothing was drawn (a free action, a
-    /// later round of an action already paid for, a Founder, a BYOK circuit, or a billing-off box), which is
-    /// what the reconciliation row records alongside the cost.</returns>
-    private async Task<long> RecordCreditConsumptionAsync(long costMicros, string? model, CancellationToken cancellationToken)
+    /// <returns>Whether this call was on a billable path at all, and the credits it actually drew — 0 for a
+    /// free action and for every later round of an action already paid for. Both go to the reconciliation
+    /// row: the credits say what was billed, the billable flag says whose cost that billing has to cover.
+    /// </returns>
+    private async Task<CreditConsumption> RecordCreditConsumptionAsync(long costMicros, string? model, CancellationToken cancellationToken)
     {
-        if (!settings.Managed || !payments.Value.IsConfigured) return 0;
-        if ((await entitlements.GetTierAsync(cancellationToken)).IsUnlimited()) return 0;
+        if (!settings.Managed || !payments.Value.IsConfigured) return CreditConsumption.None;
+        if ((await entitlements.GetTierAsync(cancellationToken)).IsUnlimited()) return CreditConsumption.None;
 
         var householdId = await currentHousehold.GetIdAsync(cancellationToken);
-        if (householdId is null) return 0;
+        if (householdId is null) return CreditConsumption.None;
 
+        // Past this point the call is BILLABLE whatever happens next: this household spends credit, and its
+        // cost is what the action's price has to cover. The four silent rounds of a paid chat turn are each
+        // billable and each charge nothing.
         long credits;
         string? reason;
-        if (AiActionScope.Current is { } action)
+        var claimed = AiActionScope.Current;
+        if (claimed is not null)
         {
-            if (!action.TryClaimCharge()) return 0; // a later round of an action already paid for
-            credits = CreditPricing.CreditsFor(billing.Value, action.Action);
-            reason = CreditPricing.Describe(action.Action);
+            if (!claimed.TryClaimCharge()) return CreditConsumption.Free; // a later round of an action already paid for
+            credits = CreditPricing.CreditsFor(billing.Value, claimed.Action);
+            reason = CreditPricing.Describe(claimed.Action);
         }
         else
         {
@@ -296,8 +313,32 @@ public sealed class MeteredChatClient(
             reason = model;
         }
 
-        await ledger.RecordConsumptionAsync(householdId, credits, reason, cancellationToken);
-        return credits;
+        try
+        {
+            await ledger.RecordConsumptionAsync(householdId, credits, reason, cancellationToken);
+        }
+        catch
+        {
+            // ⚠️ Hand the claim back before rethrowing. The claim is taken BEFORE the write (that is what
+            // keeps two parallel rounds from both charging), so a write that fails having spent the claim
+            // would make every REMAINING round of the action free too — one failed row losing the whole
+            // action's charge. Releasing it lets the next round of the same action pay instead.
+            claimed?.ReleaseCharge();
+            throw;
+        }
+        return new CreditConsumption(true, credits);
+    }
+
+    /// <summary>What one metered call did to the household's balance: whether it was on a billable path, and
+    /// what it actually drew. Two facts rather than one, because they are not the same question — see
+    /// <see cref="ServiceMarginDay.BillableCostMicros"/>.</summary>
+    private readonly record struct CreditConsumption(bool Billable, long Credits)
+    {
+        /// <summary>Nothing to bill: a BYOK circuit, a billing-off box, a Founder, or no household.</summary>
+        public static CreditConsumption None => new(false, 0);
+
+        /// <summary>Billable, but drew nothing — a free action, or a later round of one already paid for.</summary>
+        public static CreditConsumption Free => new(true, 0);
     }
 
     public object? GetService(Type serviceType, object? serviceKey = null) =>

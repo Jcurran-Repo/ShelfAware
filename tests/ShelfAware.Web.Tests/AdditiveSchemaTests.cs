@@ -707,7 +707,7 @@ public class AdditiveSchemaTests : IDisposable
 
         db.CreditLedger.Add(new CreditLedgerEntry
         {
-            HouseholdId = "hh-1", Kind = CreditEntryKind.Grant, AmountCredits = 1_650_000, Reason = "Welcome grant",
+            HouseholdId = "hh-1", Kind = CreditEntryKind.Grant, AmountCredits = 100, Reason = "Welcome grant",
         });
         await db.SaveChangesAsync();
         Assert.Single(await db.CreditLedger.ToListAsync());

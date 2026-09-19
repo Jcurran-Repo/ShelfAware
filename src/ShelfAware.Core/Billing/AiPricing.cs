@@ -50,6 +50,7 @@ public sealed class BillingOptions
         [ServiceAction.RecipeAdapt] = 2,
         [ServiceAction.RecipeImport] = 2,
         [ServiceAction.MealPlan] = 2,
+        [ServiceAction.MealReroll] = 1,
         [ServiceAction.TagSuggest] = 0,
         [ServiceAction.SubstituteSuggest] = 0,
         [ServiceAction.IngredientAlternatives] = 0,
