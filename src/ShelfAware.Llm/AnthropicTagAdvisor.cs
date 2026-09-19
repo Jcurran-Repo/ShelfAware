@@ -40,16 +40,20 @@ public class AnthropicTagAdvisor : ITagAdvisor
             var options = new ChatOptions { ModelId = _options.ExtractionModel, MaxOutputTokens = 32 };
             var response = await _chat.GetResponseAsync(prompt, options, cancellationToken);
 
-            var reply = ProviderReply.Normalize(response.Text);
+            var reply = response.Text.Trim();
             if (!ProviderReply.IsAnAnswer(reply)) return null;
             // ⚠️ Settled on the REPLY, before anything is made of it. "None of your tags mean this" is
             // the model's considered answer to what the household asked, and an answer is paid for; only a
             // provider that said nothing at all is refunded.
-            //
-            // There is no IsNothingFound branch here, unlike the three advisors that share this rule:
-            // "NONE" simply matches no existing tag, which is already what this returns. A sentinel test
-            // would be a second place deciding the same thing.
             action.Answered();
+            if (ProviderReply.IsNothingFound(reply)) return null;
+
+            // ⚠️ The sentinel is checked even though "NONE" matches no tag in almost every household —
+            // almost. Nothing stops one naming a tag "None", and then the model's way of saying "these
+            // are different" comes back as a synonym for whatever was typed. The MATCH below reads the
+            // reply as it came rather than the normalized form: these are the household's own spellings
+            // and the prompt asks for one back exactly as written, so a tag ending in a period has to
+            // stay matchable.
             return existing.FirstOrDefault(t => string.Equals(t, reply, StringComparison.OrdinalIgnoreCase));
         }
         catch (Exception ex)

@@ -36,6 +36,30 @@ public class TagAdvisorTests
     }
 
     [Fact]
+    public async Task A_tag_that_ends_in_a_period_is_still_matched_by_its_own_spelling()
+    {
+        // ⚠️ The money question ("did the model answer at all?") strips trailing periods, because a model
+        // that replies "NONE." means NONE. The MATCH must not: these are the household's own tag
+        // spellings, and normalizing here would make a tag ending in a period unmatchable — the dedup
+        // would then coin the near-duplicate it exists to prevent. Two questions, two readings.
+        string[] existing = ["Etc.", "Soft Drink"];
+
+        Assert.Equal("Etc.", await Advisor(FakeChatClient.Returning(Responses.Text("etc.")))
+            .FindSynonymAsync("Miscellaneous", existing));
+    }
+
+    [Fact]
+    public async Task NONE_means_no_synonym_even_when_a_tag_is_literally_called_None()
+    {
+        // ⚠️ The sentinel used to be handled here by accident — "NONE" matched no tag, so null came back
+        // on its own. Nothing stops a household naming a tag "None", and then the model's way of saying
+        // "these are different" would be returned as a synonym for whatever was typed, collapsing two
+        // unrelated tags into one.
+        Assert.Null(await Advisor(FakeChatClient.Returning(Responses.Text("NONE")))
+            .FindSynonymAsync("Snack", ["None", "Soft Drink"]));
+    }
+
+    [Fact]
     public async Task NONE_means_no_synonym()
     {
         Assert.Null(await Advisor(FakeChatClient.Returning(Responses.Text("NONE")))

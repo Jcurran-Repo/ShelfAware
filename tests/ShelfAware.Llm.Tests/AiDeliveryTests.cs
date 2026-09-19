@@ -242,6 +242,41 @@ public class AiDeliveryTests
         Assert.Equal(0, charging.RefundedFor);
     }
 
+    [Fact]
+    public async Task A_turn_that_ran_out_of_steps_having_moved_the_screen_keeps_its_charge()
+    {
+        // ⚠️ go_to_step moves a hands-free cook-along and sets NOTHING else — no actions line, no URL. The
+        // first version of the guard beside that exit read nav.Url alone while the exit itself carried
+        // three navigation facts out, so this turn moved the reader on screen and was refunded in full
+        // for work the household watched happen. One NavigationTarget.Moved answers it now.
+        var charging = new ChargingChatClient(new FakeChatClient(
+            [.. Enumerable.Repeat<Func<ChatResponse>>(
+                () => Responses.ToolCalls(Responses.Call("go_to_step", ("step", 3))), 12)]));
+
+        var result = await Chat(charging, new FakePantryStore()).HandleAsync("next step");
+
+        Assert.True(result.Success);
+        Assert.Equal(3, result.StepTarget);
+        Assert.True(charging.Charged);
+        Assert.Null(charging.RefundedFor);
+    }
+
+    [Fact]
+    public async Task A_turn_that_stopped_without_saying_anything_is_refunded()
+    {
+        // ⚠️ The chat's final-reply exit was a FIFTH site answering "did the model say anything?" its own
+        // way — unconditional, one method above the guard that exists to stop exactly that. A round with
+        // no tool calls and no text is a model that stopped; the household is told "Done." when nothing
+        // was done, and that is not a turn to charge for.
+        var charging = new ChargingChatClient(FakeChatClient.Returning(Responses.Text("   ")));
+
+        var result = await Chat(charging, new FakePantryStore()).HandleAsync("hello?");
+
+        Assert.Equal("Done.", result.Reply);
+        Assert.True(charging.Charged);
+        Assert.Equal(0, charging.RefundedFor);
+    }
+
     // ---- and the act that got nothing back still comes back ---------------------------------------
 
     [Fact]
@@ -282,10 +317,13 @@ public class AiDeliveryTests
     public async Task All_four_prose_advisors_draw_the_empty_reply_line_in_the_same_place()
     {
         // ⚠️ The regression this pins is not "does one of them get it right" but "do they agree". A reply
-        // of "." is punctuation and no answer. Three of them used to test the raw reply and the fourth
-        // tested it with trailing periods stripped, so this exact input refunded in one and was paid for
-        // in the other three — under a doc paragraph claiming they drew the line in the same place. They
-        // share ProviderReply now; this fails the moment one of them stops asking it.
+        // that is only punctuation is no answer. Three of them used to test the raw reply and the fourth
+        // tested it with trailing periods stripped, so "." refunded in one and was paid for in the other
+        // three — under a doc paragraph claiming they drew the line in the same place.
+        //
+        // ⚠️ And "!" alongside ".", because the first shared definition drew the line at "empty once
+        // periods and spaces are stripped" — a parser's convenience promoted into a billing predicate,
+        // under which "." refunded and "!" was charged in full. Both are a model that said nothing.
         var opts = Options.Create(new LlmOptions());
         var refunds = new List<int?>();
 
@@ -301,10 +339,13 @@ public class AiDeliveryTests
                 NullLogger<AnthropicTagAdvisor>.Instance).FindSynonymAsync("Snack", ExistingTags),
         })
         {
-            var charging = new ChargingChatClient(FakeChatClient.Returning(Responses.Text(" . ")));
-            await run(charging);
-            Assert.True(charging.Charged);
-            refunds.Add(charging.RefundedFor);
+            foreach (var silence in new[] { " . ", "!", "\u2026", "" })
+            {
+                var charging = new ChargingChatClient(FakeChatClient.Returning(Responses.Text(silence)));
+                await run(charging);
+                Assert.True(charging.Charged);
+                refunds.Add(charging.RefundedFor);
+            }
         }
 
         Assert.All(refunds, r => Assert.Equal(0, r));

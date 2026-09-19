@@ -291,6 +291,16 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
             // enforces "once" for the caller that exists (AiActionScope.DisposeAsync takes the settlement
             // with an Interlocked.Exchange) and the metering layer bounds the amount — but both live in
             // the caller, and this is the layer that writes the money.
+            //
+            // ⚠️ The already-reversed check catches a REPEAT and two things it does not catch are worth
+            // knowing. It is a read and then a write with no transaction around them and no unique index
+            // on ReversesEntryId, so two concurrent reversals of one charge would both read "not yet" and
+            // both insert — a race the scope's Interlocked take already prevents, which is why this stays
+            // the cheap check rather than growing into a partial unique index. And a reversal written
+            // before the column existed carries a null ReversesEntryId (see the unspent-allowance sum,
+            // which leaves those out for the same reason), so a charge undone back then can be undone
+            // again. Both are narrow; a guard sitting where this one sits will be read as total unless it
+            // says otherwise.
             var charge = await db.CreditLedger
                 .Where(e => e.Id == reversesEntryId
                     && e.HouseholdId == householdId

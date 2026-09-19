@@ -128,7 +128,13 @@ public class AnthropicPantryChat : IPantryChat
             {
                 var text = response.Text.Trim();
                 _logger.LogInformation("Pantry chat completed on turn {Turn} with {ActionCount} action(s) applied.", turn + 1, actions.Count);
-                action.Answered(); // the household got an answer; how many rounds it took is our arrangement
+                // ⚠️ Asked of ProviderReply, not of `text.Length`, and it is the same question the four
+                // advisors ask — this exit was the fifth site answering it privately, one method above the
+                // guard that exists to stop exactly that. A final round with no tool calls and no text is
+                // a model that stopped without saying anything; the household is told "Done." when nothing
+                // was done, and that is not a turn to charge for. Writes have already settled at the
+                // write, and a navigation this exit carries out counts as much here as at the turn limit.
+                if (ProviderReply.IsAnAnswer(text) || nav.Moved) action.Answered();
                 return ChatResult.Ok(text.Length > 0 ? text : "Done.", actions, nav.Url, nav.HandsOff, nav.Step);
             }
 
@@ -177,16 +183,17 @@ public class AnthropicPantryChat : IPantryChat
 
         _logger.LogWarning("Pantry chat hit the {MaxTurns}-turn limit without a final reply ({ActionCount} action(s) applied).", MaxTurns, actions.Count);
         // ⚠️ Settled when something reached the household, and NOT otherwise. Running out of turns is not
-        // an answer; what makes this exit worth paying for is what it carries out with it — the actions it
-        // lists and the navigation it performs. A turn whose every tool call came back as validation text
-        // ("No product matches X") arrives here with neither, tells the household "Stopped after several
-        // steps without finishing", and must not be charged for saying so.
+        // an answer; what this exit is worth paying for is what it carries out — the navigation it
+        // performs, which ChatResult.Ok hands to the screen. A turn whose every tool call came back as
+        // validation text ("No product matches X") arrives here having carried out nothing, tells the
+        // household "Stopped after several steps without finishing", and must not be charged for it.
         //
-        // ⚠️ `actions`, which the FAILURE exit above is forbidden to use, and the difference is real rather
-        // than an inconsistency between two exits. Read-only tools put their lines in this list too, and
-        // that exit discards the navigation and returns a failure, so its actions reached nobody. This exit
-        // returns Ok and carries nav out, so they did. Writes have already settled at the write.
-        if (actions.Count > 0 || nav.Url is not null) action.Answered();
+        // ⚠️ `actions.Count` is NOT consulted, and the first version of this line consulted it under a
+        // paragraph explaining why it could. It cannot do any work: every actions.Add in this file sits
+        // beside either a wrote.Mark() or a nav write, so a non-empty list means the act has already
+        // settled or is about to on the line below. A term that can never change an outcome, with a
+        // rationale attached, is worse than no term — the rationale is what the next reader trusts.
+        if (nav.Moved) action.Answered();
         return ChatResult.Ok(
             actions.Count > 0 ? $"Applied: {string.Join(", ", actions)}." : "Stopped after several steps without finishing.",
             actions, nav.Url, nav.HandsOff, nav.Step);
@@ -197,7 +204,20 @@ public class AnthropicPantryChat : IPantryChat
     /// <see cref="HandsOff"/> marks a navigation that starts its own audio on the destination
     /// (read_recipe), so a persistent listening agent knows to stop rather than talk over it.
     /// <see cref="Step"/> moves a hands-free cook-along that's already on screen.</summary>
-    private sealed class NavigationTarget { public string? Url; public bool HandsOff; public int? Step; }
+    private sealed class NavigationTarget
+    {
+        public string? Url;
+        public bool HandsOff;
+        public int? Step;
+
+        /// <summary>⚠️ Whether this turn MOVED the screen — asked in one place because two places asked it
+        /// and disagreed. The exits carry all three fields out; the turn-limit exit's settlement read only
+        /// <see cref="Url"/>, so a hands-free cook-along whose rounds were <c>go_to_step</c> calls moved
+        /// the reader on screen, ran out of turns, and was refunded in full for work the household watched
+        /// happen. <see cref="HandsOff"/> is not part of it: it qualifies a <see cref="Url"/> navigation
+        /// rather than being one.</summary>
+        public bool Moved => Url is not null || Step is not null;
+    }
 
     /// <summary>Settles the act at each write this turn makes — marked beside the write, never inferred.
     ///

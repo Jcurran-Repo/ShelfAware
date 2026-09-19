@@ -433,12 +433,14 @@ public sealed class MeteredChatClient(
                     CreditPricing.DescribeReversal(pricedAt, act.Action, delivered, act.Units), chargeId,
                     cancellationToken))
             {
-                // ⚠️ Reachable, and it was not always: the ledger now refuses a reversal whose charge is
-                // not this household's, is smaller than the amount asked for, or has already been given
-                // back. Those refusals log their own reason at Error; this line says the give-back did not
-                // happen, which is what an operator chasing a household's missing credits needs to see
-                // beside them. Reporting a give-back the ledger never wrote is the one thing they would
-                // believe without checking.
+                // ⚠️ Unreachable from here, and the comment before this one claimed otherwise — the
+                // ledger grew three refusals (a charge that isn't this household's, an amount larger than
+                // it drew, one already given back) and this said they had made the branch live. None of
+                // them can fire from this caller: the id and household come from the same charge, the
+                // amount is priced from the table that priced the charge, and the scope runs a settlement
+                // once. It stays because the alternative is a log asserting a give-back the ledger never
+                // wrote, which is the one thing an operator chasing missing credits would believe without
+                // checking — and because the refusals log their own reason, so the pair would read right.
                 logger.LogError("The reversal of {Credits} credit(s) for {Action} on household "
                     + "{HouseholdId} wrote no row.", giveBack, act.Action, householdId);
                 return;

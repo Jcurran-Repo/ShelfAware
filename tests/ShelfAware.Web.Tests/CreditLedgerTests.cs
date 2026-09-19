@@ -489,12 +489,17 @@ public class CreditLedgerTests : IDisposable
     }
 
     [Fact]
-    public async Task A_charge_is_given_back_once_however_many_times_it_is_asked_for()
+    public async Task A_charge_already_given_back_is_not_given_back_a_second_time()
     {
         // ⚠️ The scope enforces "once" for the caller that exists — DisposeAsync takes the settlement with
         // an Interlocked.Exchange — but that is a mechanism in the caller, and a second reversal is a
         // household paid twice for one act with nothing downstream able to net them. ReversesEntryId was
         // added for the allowance attribution; it is what makes this backstop possible at all.
+        //
+        // ⚠️ The name says SECOND TIME, not "however many times it is asked for", which is what it said
+        // first. This exercises the sequential case only — the check is a read and then a write with no
+        // transaction, so two concurrent asks could both pass it, and a test whose name promises more
+        // than it runs is how a gap gets believed to be covered.
         var id = await SeedHouseholdAsync(HouseholdTier.Aware);
         await _ledger.GrantAsync(id, 100, "credit pack");
         var charge = await _ledger.RecordConsumptionAsync(id, 10, "one chat turn");

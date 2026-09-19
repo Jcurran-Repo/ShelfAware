@@ -1053,11 +1053,13 @@ What that took was not seven `if`s deleted. It was the nine-sites problem again:
   successful parse and were therefore *already right by accident* (the receipt extractor and the census
   reader ignore how many lines came back). One `AiActionScope.Answered()` now, at every site asking that
   question — the partial-conversion rule from `CLAUDE.md`, which this branch has already paid for once.
-  ⚠️ **Three single-unit `Delivered(1)` calls deliberately remain**, and the first write-up of this pass
-  said "every caller" without saying so. They settle on a different fact: the meal-plan reroll settles on
-  the write being *durable* (after the commit, per that class's own rule), `TurnWrites.Mark` settles on a
-  pantry write landing, and the chat's turn-limit exit settles on what it carried out. None of them is
-  "the provider answered", and renaming them would be a worse kind of uniformity.
+  ⚠️ **Two single-unit `Delivered(1)` calls deliberately remain**, and the first write-up of this pass
+  said "every caller" without saying so — then the correction said *three*, counting the chat's turn-limit
+  exit, which the same commit had already changed to `Answered()`. A correction that is itself wrong is
+  the §6 failure with an extra step. The two are the meal-plan reroll, which settles on its write being
+  *durable* (after the commit, per that class's own rule), and `TurnWrites.Mark`, which settles on a
+  pantry write landing. Neither is "the provider answered", and renaming them would be a worse kind of
+  uniformity.
 - **`Answered()` is `Delivered(Units)`, and on a per-unit act that is a real money bug** — a meal plan
   that produced three meals out of twelve would keep the credits for nine that never arrived. Held by a
   new build rule (`An_act_priced_by_the_unit_counts_what_it_delivered`) rather than by a runtime throw,
@@ -1134,6 +1136,54 @@ because a money commit earns a long list.
 
 **What it cost to find:** nothing shipped, again — the fourth pass in a row where that is true, and the
 fourth in a row that had a green four-suite run and a 100% mutation score over it when the gates started.
+
+### Seventh pass: what the gates found in the sixth (2026-09-19)
+
+The fix pass introduced one of its own, which is now the pattern rather than the exception — four fix
+passes in this arc, three of them with a new defect in the money path.
+
+- **The turn-limit settlement I had just written read one of the three navigation facts its own exit
+  carried out.** `go_to_step` moves a hands-free cook-along and sets `nav.Step` and nothing else — no
+  actions line, no URL — so a cook-along turn that ran out of steps moved the reader on screen and was
+  refunded in full for work the household watched happen. ⚠️ It is the repo's oldest failure shape, in a
+  guard written *in the commit that quotes that rule*: the `ChatResult.Ok` two lines below said three
+  things had been carried out and the guard beside it asked about one. `NavigationTarget.Moved` answers
+  it in one place now.
+- **Normalizing the reply for the money question also normalized it for the tag MATCH.** A household tag
+  that legitimately ends in a period could no longer be matched back by its own spelling, so the dedup
+  would coin the near-duplicate it exists to prevent. Two questions, two readings, one test each.
+- **The new "already given back" backstop reads stronger than it is** — a read and then a write, with no
+  transaction and no unique index on `ReversesEntryId`, so it catches a repeat and not a simultaneous
+  duplicate. The race it misses is the one the scope's `Interlocked` take already prevents, so the check
+  stays as it is and the comment now says what it holds instead of implying more.
+- **The build rule's escape check was narrower than its own remarks** (a cast or a `!` walked past it).
+  Widened, and the remaining hole — a lambda closing over the scope — is written down rather than
+  papered over. Its new "units: 1 is fine" exemption read the argument positionally, which decides
+  whether a money guard applies; it reads the argument by name now.
+- **The guard I had just written carried a term that could not do any work.** Every `actions.Add` in the
+  chat sits beside a write or a navigation, so `actions.Count > 0` could never change the outcome — and
+  it came with eight lines explaining why this exit was allowed to consult it. A dead term with a
+  rationale attached is worse than a dead term: the rationale is what the next reader trusts. Gone, and
+  the exit asks only whether it navigated.
+- **The chat's final-reply exit was a FIFTH site answering "did the model say anything?"** — one method
+  above the guard introduced to stop that, settling unconditionally. A round with no tool calls and no
+  text tells the household "Done." when nothing was done, and charged for it.
+- **The shared answer rule drew the line in the wrong place.** `IsAnAnswer` asked "is the reply empty
+  once periods and spaces are stripped?" — a parser's convenience promoted into a billing predicate, so
+  `"."` refunded and `"!"` was charged in full. It asks whether anything the model said carries a letter
+  or a digit now. ⚠️ Worth keeping: centralising a rule makes every caller agree, which is worth nothing
+  if the rule they agree on is wrong. The first version of the shared definition was less correct than
+  three of the four sites it replaced.
+- **`AnthropicTagAdvisor` had no sentinel branch**, on the reasoning that "NONE" matches no tag — true
+  until a household names a tag "None", after which the model's way of saying "these are different" comes
+  back as a synonym. And the comment asserted the protection it lacked.
+- **A correction that was itself wrong.** The sixth pass said three bare `Delivered(1)` calls remained,
+  counting the turn-limit exit that the same commit had changed to `Answered()`. Two remain.
+
+Also recorded rather than fixed: **every refund is a provider call the operator paid for**, and a few of
+them are reachable on purpose because household text goes into these prompts. `docs/subscription-plan.md`
+§4.y names the three, says why charging for them would be worse, and names the surface that would show it
+if the balance ever tips (`CostPerCharge` on `/admin`).
 
 ## 10. Sequencing
 

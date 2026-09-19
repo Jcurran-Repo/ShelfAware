@@ -304,12 +304,16 @@ public class AiActionScopeSiteTests
         foreach (var (file, tree) in Trees())
             foreach (var call in BeginCalls(tree))
             {
-                // One unit is the default and needs no argument, so a second argument is the per-unit
+                // One unit is the default and needs no argument, so a units argument is the per-unit
                 // count — unless it says 1, which is the default written out and settles like any one-unit
                 // act. Refusing Answered() there would be the rule crying about correct code.
-                if (call.ArgumentList.Arguments.Count < 2) continue;
-                if (call.ArgumentList.Arguments[1].Expression is LiteralExpressionSyntax { Token.ValueText: "1" })
-                    continue;
+                //
+                // ⚠️ By NAME where it is named, not by position. Every rule in this file reads Begin's
+                // arguments positionally, which holds only while nobody writes Begin(units: 3, action: x)
+                // — legal C# that would hand this one the wrong expression, and this one decides whether
+                // a money guard applies.
+                if (UnitsArgument(call) is not { } units) continue;
+                if (units is LiteralExpressionSyntax { Token.ValueText: "1" }) continue;
                 byTheUnit++;
                 var owner = EnclosingBody(call);
                 var scope = ScopeNameOf(call);
@@ -338,12 +342,36 @@ public class AiActionScopeSiteTests
             + Environment.NewLine + string.Join(Environment.NewLine, escaped));
     }
 
-    /// <summary>Whether the scope bound to <paramref name="scope"/> is handed to anything else in this
-    /// body — passed as an argument, or captured into an object. Settling it is a member ACCESS on the
-    /// name, which is why those don't count here.</summary>
+    /// <summary>The expression giving a Begin call's unit count, or null when it takes the default of
+    /// one. Named where the site names it; otherwise the second positional argument.</summary>
+    private static ExpressionSyntax? UnitsArgument(InvocationExpressionSyntax call)
+    {
+        var args = call.ArgumentList.Arguments;
+        var named = args.FirstOrDefault(a => a.NameColon?.Name.Identifier.ValueText == "units");
+        if (named is not null) return named.Expression;
+        return args.Count >= 2 && args[1].NameColon is null ? args[1].Expression : null;
+    }
+
+    /// <summary>Whether the scope bound to <paramref name="scope"/> is passed as an ARGUMENT anywhere in
+    /// this body — to a method or into a constructor — through a cast, a <c>!</c> or parentheses as well
+    /// as bare. Settling it is a member access on the name, which is why those don't count.
+    ///
+    /// <para>⚠️ It does not catch every way a scope could leave: a lambda that closes over it and is then
+    /// passed along is invisible here. Said plainly because a rule whose remarks claim more than it does
+    /// is the failure this whole file exists to prevent, and the honest boundary is more use to the next
+    /// reader than an assurance that isn't true.</para></summary>
     private static bool Escapes(SyntaxNode owner, string scope) =>
         owner.DescendantNodes().OfType<ArgumentSyntax>()
-            .Any(a => a.Expression is IdentifierNameSyntax id && id.Identifier.ValueText == scope);
+            .Any(a => Unwrap(a.Expression) is IdentifierNameSyntax id && id.Identifier.ValueText == scope);
+
+    private static ExpressionSyntax Unwrap(ExpressionSyntax expression) => expression switch
+    {
+        ParenthesizedExpressionSyntax p => Unwrap(p.Expression),
+        CastExpressionSyntax c => Unwrap(c.Expression),
+        PostfixUnaryExpressionSyntax u when u.IsKind(SyntaxKind.SuppressNullableWarningExpression) =>
+            Unwrap(u.Operand),
+        _ => expression,
+    };
 
     /// <summary>How this body settles the scope bound to <paramref name="scope"/> — one name per call,
     /// empty when it never settles at all.</summary>

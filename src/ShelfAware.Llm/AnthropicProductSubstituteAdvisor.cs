@@ -47,7 +47,7 @@ public class AnthropicProductSubstituteAdvisor : IProductSubstituteAdvisor
             var options = new ChatOptions { ModelId = _options.ExtractionModel, MaxOutputTokens = 128 };
             var response = await _chat.GetResponseAsync(prompt, options, cancellationToken);
 
-            var reply = ProviderReply.Normalize(response.Text);
+            var reply = response.Text.Trim();
             if (!ProviderReply.IsAnAnswer(reply)) return [];
             // ⚠️ Settled BEFORE the sentinel, not after the parse. "NONE" is the model's considered
             // answer to a question the household asked, and an answer is paid for; only a provider

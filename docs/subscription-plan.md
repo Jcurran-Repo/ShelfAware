@@ -375,11 +375,36 @@ charged by the meal and must count what it persisted, or a batch that made three
 keep the credits for nine that never arrived. It also refuses to let a per-unit scope leave the method
 that opened it, because a scope handed to a helper settles where no scan can see it.
 
-Three acts still settle with a bare `Delivered(1)`, on purpose: they are answering a different question.
-The meal-plan reroll settles on its write being **durable** (after the commit, never before), the chat's
-`TurnWrites` settles on a pantry **write landing** so that every exit is paid correctly without having to
-remember, and the chat's turn-limit exit settles on **what it carried out** — the actions it lists and the
-navigation it performs. Running out of turns having done none of those is not an answer and is refunded.
+Two acts still settle with a bare `Delivered(1)`, on purpose: they are answering a different question.
+The meal-plan reroll settles on its write being **durable** (after the commit, never before), and the
+chat's `TurnWrites` settles on a pantry **write landing**, so every exit of a turn is paid correctly
+without each one having to remember. The chat's two other exits — a final reply and the turn limit —
+settle with `Answered()` on the shared rule: the model said something, or the turn carried a navigation
+out to the screen. Running out of turns having done neither is not an answer and is refunded.
+
+### 4.y A refunded act still cost the operator a provider call (accepted, 2026-09-19)
+
+The rule in §4.w charges for an answer and refunds a failure, and a failure is not free to serve: the
+provider was paid whatever the household was not. Every refund is therefore a small operator subsidy, and
+a few of them are reachable on purpose rather than only by accident, because the household's own words go
+into these prompts unescaped (a product name, a tag candidate, pasted recipe text).
+
+The three worth naming, all of them costing **the operator** and none of them able to over-charge a
+household or reach another household's balance:
+
+- **A chat turn that hits the turn limit having done nothing** is refunded, and a turn is up to five
+  provider calls each carrying the full product list and the replayed history — the most expensive shape
+  the app produces. A household that keeps the assistant calling read-only tools and never answering gets
+  those five calls for no credits.
+- **A recipe import that answers unreadably twice** is refunded after two 4096-token vision calls.
+- **A prose advisor that returns nothing at all** is refunded, on acts of 32 to 128 output tokens.
+
+Held open deliberately. Charging for them means charging for a turn the household demonstrably did not
+receive, which is the thing §4.w exists to stop, and it would pay the assistant to fail quietly rather
+than plainly. The exposure is bounded per act and shows up where it should — the margin rows on `/admin`
+are the surface that would drift, and `CostPerCharge` is the number to watch. **Revisit if those rows
+start showing cost with no charges beside it**, at which point the answer is a per-household daily cap on
+refunded acts rather than a change to what "delivered" means.
 
 ### 4.x A refund that lands after its month keeps rolling (accepted, 2026-09-19)
 
