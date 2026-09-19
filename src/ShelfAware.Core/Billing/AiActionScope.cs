@@ -45,23 +45,32 @@ public sealed class AiActionScope : IDisposable
     private readonly AiActionScope? _enclosing;
     private int _claimed;
 
-    private AiActionScope(ServiceAction action)
+    private AiActionScope(ServiceAction action, int units)
     {
         Action = action;
+        Units = units;
         _enclosing = Ambient.Value;
     }
 
     /// <summary>What the calls inside this scope are for.</summary>
     public ServiceAction Action { get; }
 
+    /// <summary>How many of the action's OWN units this act covers — meals for a meal plan, 1 for
+    /// everything charged per act. Most actions are one thing the household asked for and cost roughly the
+    /// same each time; a meal plan is not, because the household picks the horizon, and a flat price on
+    /// something whose size the customer chooses is wrong in whichever direction they choose it. See
+    /// <see cref="CreditPricing.CreditsFor"/>.</summary>
+    public int Units { get; }
+
     /// <summary>The innermost open scope, or null when an AI call was made outside one.</summary>
     public static AiActionScope? Current => Ambient.Value;
 
     /// <summary>Open a scope for <paramref name="action"/>. Dispose it (a <c>using</c>) to restore the
-    /// enclosing one.</summary>
-    public static AiActionScope Begin(ServiceAction action)
+    /// enclosing one. <paramref name="units"/> is how many of the action's own units this act covers, and
+    /// is 1 for everything priced per act — see <see cref="Units"/>.</summary>
+    public static AiActionScope Begin(ServiceAction action, int units = 1)
     {
-        var scope = new AiActionScope(action);
+        var scope = new AiActionScope(action, Math.Max(1, units));
         Ambient.Value = scope;
         return scope;
     }

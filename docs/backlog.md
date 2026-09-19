@@ -30,6 +30,16 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
   Wiring it needs two things the app can't see from inside: a real ElevenLabs invoice to price a read
   against (the 3-credit figure is an estimate, never a measurement), and a charge point that isn't an
   `IChatClient`. Jordan's call whether to wire it or leave speech free.
+- ⚠️ **The credit gate asks "any credit left?", not "enough for THIS?"** (2026-09-19, surfaced by pricing
+  the meal plan per meal). `Entitlements.IsAiAllowedAsync` returns `GetBalanceCreditsAsync() > 0`, and
+  `AiErrorText.BlockedReasonAsync` mirrors it, so a household with 1 credit can start a 42-credit meal
+  plan and finish it owing 41. The overrun is bounded by one action and the ledger records it honestly,
+  so nothing is lost or mis-stated — but the household is told "you're out of credits" only after the
+  spend, not before it. The fix belongs at the gate, ONCE, for every action: the price of the act about
+  to run is knowable (`CreditPricing.CreditsFor`), so the check can be "balance covers this" instead of
+  "balance is non-zero". Doing it per surface would be the partial conversion CLAUDE.md warns about —
+  fourteen call sites answering the same question their own way. Not urgent: no deployed box has a
+  `Payments` section, so nothing is charged today.
 - **The remediation arc** — all seven phases landed 2026-09-19, designed in `docs/remediation-plan.md`,
   with the review-gate pass on phase 7 written up in its §9. What's left out of that arc is deliberate:
   draining logic out of `.razor` (D1) and EF Migrations (D3), both with reasons in §8.

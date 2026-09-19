@@ -35,6 +35,25 @@ public sealed class MealPlanSettings
     /// frequent-small-meals pattern). A guard on the line-up, not a target.</summary>
     public const int MaxMealsPerDay = 7;
 
+    /// <summary>The most meals one plan can hold, whatever the horizon asks for: 31 days x 4 meals. A guard
+    /// against a misconfigured horizon turning into dozens of AI calls — beyond this the plan is capped and
+    /// says so rather than silently spending.</summary>
+    public const int MaxSlots = 124;
+
+    /// <summary>The most days one plan can cover.</summary>
+    public const int MaxDays = 31;
+
+    /// <summary>How many meals this plan actually asks for — <see cref="Days"/> x the meals a day, capped.
+    /// ⚠️ ONE definition: the generator batches this many slots, and the page quotes a PRICE from it before
+    /// the household presses Generate (a meal plan is charged by the meal). Two answers to "how big is this
+    /// plan?" would mean a quoted price the charge then disagreed with.</summary>
+    public int SlotCount => SlotCountFor(Days, Meals.Count);
+
+    /// <summary>The same count from the pieces a setup FORM holds, before it is a
+    /// <see cref="MealPlanSettings"/>.</summary>
+    public static int SlotCountFor(int days, int mealsPerDay) =>
+        Math.Min(MaxSlots, Math.Clamp(days, 1, MaxDays) * Math.Max(1, mealsPerDay));
+
     /// <summary>How many days the plan covers.</summary>
     public int Days { get; init; } = 7;
 

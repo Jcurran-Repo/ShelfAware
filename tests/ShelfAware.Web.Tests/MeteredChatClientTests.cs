@@ -418,6 +418,26 @@ public class MeteredChatClientTests : IDisposable
     }
 
     [Fact]
+    public async Task A_unit_priced_action_draws_what_its_size_says_still_once()
+    {
+        // ⚠️ Both halves at the same time: ONE charge for the whole act (three provider calls, one ledger
+        // row) and a charge that reflects how much was asked for (10 meals at one credit per three = 4).
+        // Getting only the first is how a 124-meal plan came to cost the same as one dinner.
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free);
+
+        using (AiActionScope.Begin(ServiceAction.MealPlan, units: 10))
+        {
+            await AskAsync(client);
+            await AskAsync(client);
+            await AskAsync(client);
+        }
+
+        await using var db = _authDb.CreateDbContext();
+        Assert.Single(db.CreditLedger.Where(e => e.HouseholdId == "hh-test"));
+        Assert.Equal(-4, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceCreditsAsync("hh-test"));
+    }
+
+    [Fact]
     public async Task A_free_priced_action_records_usage_but_charges_nothing()
     {
         // Some actions are priced at 0 deliberately (tag/substitute suggestions ride along with work the

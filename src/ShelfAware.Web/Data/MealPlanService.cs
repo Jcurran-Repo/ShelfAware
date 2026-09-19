@@ -28,9 +28,9 @@ public sealed class MealPlanService(
     // whole plan stays varied.
     private const int BatchSize = 7;
 
-    // Guards against a misconfigured horizon turning into dozens of AI calls. A month of four meals a day
-    // is 124 slots; beyond that we cap and say so rather than silently spend.
-    private const int MaxSlots = 124;
+    // ⚠️ The cap and the day clamp live on MealPlanSettings, beside SlotCount, because the meal-plan PAGE
+    // needs the same arithmetic to quote a price before Generate is pressed — a plan is charged by the meal.
+    // Two answers to "how big is this plan?" would mean a quoted price the charge then disagreed with.
 
     public async Task<MealPlanSettings> LoadSettingsAsync(CancellationToken ct = default)
     {
@@ -70,14 +70,17 @@ public sealed class MealPlanService(
     /// total) for the background job's status.</summary>
     public async Task<MealPlanResult> GenerateAsync(Action<int, int>? onProgress = null, CancellationToken ct = default)
     {
-        // ⚠️ The charging boundary is HERE, around the whole plan, not inside the generator around a batch.
-        // The household asked for a plan; that a 31-day horizon takes eighteen provider calls is our
-        // arrangement, not theirs. With the scope in the generator a 124-slot plan was charged eighteen
-        // times for a thing the price list calls two credits (docs/remediation-plan.md §9).
-        using var action = AiActionScope.Begin(ServiceAction.MealPlan);
         var setup = await LoadSettingsAsync(ct);
         var slots = SlotsFor(setup); // always ≥ 1 — Days clamps to [1,31] and Slots defaults to dinner
         var chunks = slots.Chunk(BatchSize).ToList();
+
+        // ⚠️ The charging boundary is HERE, around the whole plan, not inside the generator around a batch:
+        // with the scope in the generator a 124-slot plan was charged eighteen times, once per batch
+        // (docs/remediation-plan.md §9). It opens AFTER the slots are counted because the price depends on
+        // them — the household picks the horizon, so a plan is charged by the MEAL rather than at a flat
+        // rate that over-charges a week and under-recovers a month. Everything that can spend money happens
+        // below this line; loading the setup does not.
+        using var action = AiActionScope.Begin(ServiceAction.MealPlan, units: slots.Count);
         var context = await LoadContextAsync(setup, ct);
         onProgress?.Invoke(0, chunks.Count);
 
@@ -261,7 +264,7 @@ public sealed class MealPlanService(
     // prompts a snack as a snack and a dinner as a dinner. Days is clamped and the total is capped (MaxSlots).
     private static IReadOnlyList<PlannedSlot> SlotsFor(MealPlanSettings setup)
     {
-        var days = Math.Clamp(setup.Days, 1, 31);
+        var days = Math.Clamp(setup.Days, 1, MealPlanSettings.MaxDays);
         var meals = setup.Meals.Count > 0 ? setup.Meals : [new MealEntry { Slot = MealSlot.Dinner }];
         var slots = new List<PlannedSlot>();
         for (var day = 0; day < days; day++)
@@ -269,7 +272,7 @@ public sealed class MealPlanService(
             foreach (var meal in meals)
             {
                 slots.Add(new PlannedSlot(day, meal.Slot, setup.CaloriesFor(meal), setup.EffortFor(meal)));
-                if (slots.Count >= MaxSlots) return slots;
+                if (slots.Count >= MealPlanSettings.MaxSlots) return slots;
             }
         }
         return slots;

@@ -52,13 +52,35 @@ public sealed class BillingOptions
         [ServiceAction.RecipeSuggest] = 2,
         [ServiceAction.RecipeAdapt] = 2,
         [ServiceAction.RecipeImport] = 2,
-        [ServiceAction.MealPlan] = 2,
+        [ServiceAction.MealPlan] = 1,   // ⚠️ per THREE meals, not per plan — see UnitsPerPrice
         [ServiceAction.MealReroll] = 1,
         [ServiceAction.TagSuggest] = 0,
         [ServiceAction.SubstituteSuggest] = 0,
         [ServiceAction.IngredientAlternatives] = 0,
         [ServiceAction.TtsSynthesis] = 3,
         [ServiceAction.RealtimeMinute] = 12,
+    };
+
+    /// <summary>How many of an action's own units one <see cref="CreditPrices"/> entry covers. 1 for
+    /// everything charged per act, and absent means 1 — so this dictionary holds only the exceptions.
+    ///
+    /// ⚠️ <see cref="ServiceAction.MealPlan"/> is the exception that exists: the household picks the
+    /// horizon, so one "meal plan" is anywhere from one dinner to 124 meals and 18 provider calls. A flat
+    /// price is wrong in whichever direction they choose — it over-charges a week and under-recovers a
+    /// month. Priced per MEAL because that is the thing the household actually chose. The rate comes from
+    /// §7.2's measured band: a batch of seven full recipes costs about as much as one recipe-suggest call
+    /// (~$0.01–0.03, i.e. 1–3 credits at the anchor), so one credit per three meals sits in the
+    /// upper-middle of it rather than at the flattering end.</summary>
+    public Dictionary<ServiceAction, int> UnitsPerPrice { get; set; } = new()
+    {
+        [ServiceAction.MealPlan] = 3,
+    };
+
+    /// <summary>The name of an action's unit, for the published price list ("1 credit per 3 meals").
+    /// Absent for everything charged per act, which is almost everything.</summary>
+    public Dictionary<ServiceAction, string> UnitNouns { get; set; } = new()
+    {
+        [ServiceAction.MealPlan] = "meals",
     };
 
     /// <summary>The price for a <see cref="ServiceAction"/> missing from <see cref="CreditPrices"/> — an

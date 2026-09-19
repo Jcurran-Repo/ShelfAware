@@ -4,7 +4,10 @@
 @using ShelfAware.Core.MealPlanning
 @using ShelfAware.Core.Recipes
 @using ShelfAware.Web.Data
+@using ShelfAware.Core.Billing
 @inject MealPlanService Planner
+@inject Microsoft.Extensions.Options.IOptions<BillingOptions> Billing
+@inject Microsoft.Extensions.Options.IOptions<ShelfAware.Web.Billing.PaymentsOptions> Payments
 @inject IMealPlanJobs Jobs
 @inject ICurrentHousehold Household
 @inject IEntitlements Entitlements
@@ -110,6 +113,20 @@
                 disabled="@(meals.Count >= MealPlanSettings.MaxMealsPerDay)">+ Add a meal</button>
     </div>
 
+    @* ⚠️ The price BEFORE the button, which is the thing an abstract credit buys that a dollar balance
+       can't: a meal plan is charged by the meal, so a household changing Days or adding a meal watches the
+       number move. Quoted from MealPlanSettings.SlotCount and CreditPricing — the same two the charge
+       reads — because a quote the charge then disagrees with is worse than no quote. Shown only where the
+       credit system is on, matching the Settings price list's gate exactly. *@
+    @if (AiSettings.Managed && Payments.Value.IsConfigured)
+    {
+        <p class="muted small mealplan-price">
+            This plan is @CreditPricing.FormatCredits(
+                CreditPricing.CreditsFor(Billing.Value, ServiceAction.MealPlan, PlannedSlotCount))
+            — @PlannedSlotCount meal@(PlannedSlotCount == 1 ? "" : "s")@(PlannedSlotCount >= MealPlanSettings.MaxSlots
+                ? $", the most one plan can hold" : "").
+        </p>
+    }
     <button @onclick="Generate" disabled="@generating">
         @(generating
             ? (progressTotal > 0 ? $"Planning… ({progressDone} of {progressTotal})" : "Planning…")
@@ -203,6 +220,11 @@ else if (!generating)
 @code {
     // Mutable form state (MealPlanSettings is init-only, so the form binds to locals and builds it on submit).
     private int days = 7;
+
+    /// <summary>How many meals the CURRENT form would ask for — what the plan will be charged by. Reads
+    /// MealPlanSettings' own arithmetic rather than repeating it here, so the quote above the button and
+    /// the charge below it cannot answer "how big is this plan?" differently.</summary>
+    private int PlannedSlotCount => MealPlanSettings.SlotCountFor(days, meals.Count);
     private int? defaultCalories;
     private TimeEffort defaultEffort = TimeEffort.Standard;
     private bool invent, preferLeftovers;

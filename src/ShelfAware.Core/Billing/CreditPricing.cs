@@ -82,18 +82,51 @@ public static class CreditPricing
 {
     private const decimal MicrosPerDollar = 1_000_000m;
 
-    /// <summary>What one <see cref="ServiceAction"/> costs, in whole credits. An action the operator hasn't
-    /// priced falls back to <see cref="BillingOptions.CreditsForUnknownAction"/> — deliberately the ordinary
-    /// paid price rather than zero, so a newly added action OVER-charges visibly (a customer complains, which
-    /// is recoverable) instead of reading as free (which silently eats margin, the same reasoning as
+    /// <summary>What one <see cref="ServiceAction"/> costs, in whole credits, for an act covering
+    /// <paramref name="units"/> of the action's own units (see <see cref="AiActionScope.Units"/>). Almost
+    /// everything is priced per act and leaves <paramref name="units"/> at 1; a meal plan is priced per
+    /// meal, because the household picks how many.
+    ///
+    /// <para>An action the operator hasn't priced falls back to
+    /// <see cref="BillingOptions.CreditsForUnknownAction"/> — deliberately the ordinary paid price rather
+    /// than zero, so a newly added action OVER-charges visibly (a customer complains, which is recoverable)
+    /// instead of reading as free (which silently eats margin, the same reasoning as
     /// <see cref="BillingOptions.FallbackRate"/>). A configured NEGATIVE price is clamped to zero: a price
-    /// list cannot pay people to use the app.</summary>
-    public static int CreditsFor(BillingOptions options, ServiceAction action)
+    /// list cannot pay people to use the app.</para>
+    ///
+    /// <para>Units are billed in whole PRICES, rounded up: at one credit per three meals, a ten-meal plan
+    /// is four credits. Rounding down would make a two-meal plan free, and an act that ran is never free
+    /// unless its price says so.</para></summary>
+    public static int CreditsFor(BillingOptions options, ServiceAction action, int units = 1)
     {
         var credits = options.CreditPrices.TryGetValue(action, out var configured)
             ? configured
             : options.CreditsForUnknownAction;
-        return Math.Max(0, credits);
+        credits = Math.Max(0, credits);
+        if (credits == 0) return 0; // free is free, however much of it was asked for
+
+        var per = UnitsPerPrice(options, action);
+        var blocks = (int)Math.Ceiling(Math.Max(1, units) / (double)per);
+        return credits * blocks;
+    }
+
+    /// <summary>How many of an action's units one price covers — 1 unless the operator says otherwise, and
+    /// never less, so a misconfigured zero cannot divide by nothing or make every unit its own charge.</summary>
+    public static int UnitsPerPrice(BillingOptions options, ServiceAction action) =>
+        options.UnitsPerPrice.TryGetValue(action, out var per) ? Math.Max(1, per) : 1;
+
+    /// <summary>How the price list quotes an action: "2" for something charged per act, "1 per 3 meals" for
+    /// something charged per unit, "free" for a zero price. ONE definition, because Settings shows it and a
+    /// household's ledger has to agree with what Settings showed them.</summary>
+    public static string QuotePrice(BillingOptions options, ServiceAction action)
+    {
+        var price = CreditsFor(options, action);       // one unit's worth
+        if (price == 0) return "free";
+
+        var per = UnitsPerPrice(options, action);
+        if (per == 1 || !options.UnitNouns.TryGetValue(action, out var noun) || string.IsNullOrWhiteSpace(noun))
+            return price.ToString();
+        return $"{price} per {per} {noun}";
     }
 
     /// <summary>The actions a charge is actually WIRED to — the ones some service opens an

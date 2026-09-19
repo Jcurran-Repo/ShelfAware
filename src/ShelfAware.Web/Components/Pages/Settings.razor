@@ -374,10 +374,11 @@
     {
         <details class="price-list">
             <summary>What things cost</summary>
-            <p class="muted small">One price per action, whatever it takes under the hood — a chat turn that
-                looks things up five times still costs one chat turn, and a month-long meal plan costs one
-                meal plan. If you ask chat to do a priced job for you — come up with recipes, adapt one —
-                that job is charged too, the same as if you'd asked for it from its own page.</p>
+            <p class="muted small">One price per action, whatever it takes under the hood — a chat turn
+                that looks things up five times still costs one chat turn. A meal plan is the exception, and
+                priced by the meal, because you choose how many. If you ask chat to do a priced job for you
+                — come up with recipes, adapt one — that job is charged too, the same as if you'd asked for
+                it from its own page.</p>
             <table>
                 <caption class="sr-only">Credit price per action</caption>
                 <thead><tr><th scope="col">Action</th><th scope="col">Credits</th></tr></thead>
@@ -387,10 +388,9 @@
                    fails the build if that set and the AiActionScope.Begin sites ever disagree. *@
                 @foreach (var action in Enum.GetValues<ServiceAction>().Where(CreditPricing.MeteredActions.Contains))
                 {
-                    var price = CreditPricing.CreditsFor(Billing.Value, action);
                     <tr>
                         <td>@CreditPricing.Describe(action)</td>
-                        <td>@(price == 0 ? "free" : price.ToString())</td>
+                        <td>@CreditPricing.QuotePrice(Billing.Value, action)</td>
                     </tr>
                 }
                 </tbody>

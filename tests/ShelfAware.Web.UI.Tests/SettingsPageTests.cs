@@ -665,6 +665,12 @@ public class SettingsBillingPanelTests : SettingsTestBase
             rows[CreditPricing.Describe(ServiceAction.ReceiptExtraction)]);
         // The zero-priced actions say so in words rather than showing a bare "0", which reads as an error.
         Assert.Equal("free", rows[CreditPricing.Describe(ServiceAction.TagSuggest)]);
+        // ⚠️ And a unit-priced action quotes its RATE, not a number that would be wrong for every plan but
+        // the shortest. The household picks the horizon, so the list has to say what it costs per meal.
+        Assert.Equal(
+            CreditPricing.QuotePrice(billing, ServiceAction.MealPlan),
+            rows[CreditPricing.Describe(ServiceAction.MealPlan)]);
+        Assert.Equal("1 per 3 meals", rows[CreditPricing.Describe(ServiceAction.MealPlan)]);
     }
 
     [Fact]

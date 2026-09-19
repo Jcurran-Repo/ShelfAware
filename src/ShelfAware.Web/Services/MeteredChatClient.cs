@@ -314,7 +314,7 @@ public sealed class MeteredChatClient(
         if (claimed is not null)
         {
             if (!claimed.TryClaimCharge()) return CreditConsumption.Free; // a later round of an action already paid for
-            credits = CreditPricing.CreditsFor(billing.Value, claimed.Action);
+            credits = CreditPricing.CreditsFor(billing.Value, claimed.Action, claimed.Units);
             reason = CreditPricing.Describe(claimed.Action);
         }
         else

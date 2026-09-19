@@ -53,6 +53,43 @@ public class MealPlanServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task The_plans_price_counts_every_meal_it_was_asked_for()
+    {
+        // ⚠️ One charge, but not a flat one. The household picks the horizon, so the scope carries the meal
+        // count and the price follows it — otherwise a month of four meals a day (124 slots, eighteen
+        // provider calls) costs the same as one dinner. The count is the SLOTS asked for, settled before
+        // any provider call, not the meals that came back: a batch that returns short is our problem.
+        var gen = new FakeMealPlanGenerator([Meal("Tacos"), Meal("Chili"), Meal("Stew")]);
+        var service = Service(gen);
+        await SaveSettings(service, new MealPlanSettings
+        {
+            Days = 3,
+            Meals = [new MealEntry { Slot = MealSlot.Breakfast }, new MealEntry { Slot = MealSlot.Dinner }],
+        });
+
+        await service.GenerateAsync();
+
+        Assert.All(gen.Charges, c => Assert.Equal(6, c.Units)); // 3 days x 2 slots
+    }
+
+    [Fact]
+    public async Task A_reroll_is_one_meal_however_long_the_plan_is()
+    {
+        var gen = new FakeMealPlanGenerator([Meal("Tacos"), Meal("Chili"), Meal("Stew")], [Meal("Pie")]);
+        var service = Service(gen);
+        await SaveSettings(service, new MealPlanSettings { Days = 3 });
+        await service.GenerateAsync();
+
+        await using var db = _db.CreateDbContext();
+        var mealId = await db.PlannedMeals.Select(m => m.Id).FirstAsync();
+        gen.Charges.Clear();
+
+        await service.RerollAsync(mealId);
+
+        Assert.Equal(1, Assert.Single(gen.Charges).Units);
+    }
+
+    [Fact]
     public async Task Swapping_one_meal_is_charged_as_a_swap_not_as_a_whole_plan()
     {
         // A reroll is one slot and one call, so billing it as "A meal plan" both overcharges and writes a
@@ -436,13 +473,13 @@ internal sealed class FakeMealPlanGenerator : IMealPlanGenerator
     /// <summary>The ambient <see cref="AiActionScope"/> each call ran under, and whether that call would
     /// have been THE charge. A real generator never sees these — the metering layer reads the same ambient
     /// scope from underneath — which is what makes them the honest stand-in for "what got billed".</summary>
-    public List<(ServiceAction? Action, bool WouldCharge)> Charges { get; } = [];
+    public List<(ServiceAction? Action, int Units, bool WouldCharge)> Charges { get; } = [];
 
     public Task<IReadOnlyList<RecipeSuggestion>> GenerateAsync(MealPlanBatch batch, CancellationToken cancellationToken = default)
     {
         Calls.Add(batch);
         var scope = AiActionScope.Current;
-        Charges.Add((scope?.Action, scope?.TryClaimCharge() ?? false));
+        Charges.Add((scope?.Action, scope?.Units ?? 0, scope?.TryClaimCharge() ?? false));
         return Task.FromResult(_results.Count > 0 ? _results.Dequeue() : (IReadOnlyList<RecipeSuggestion>)[]);
     }
 }

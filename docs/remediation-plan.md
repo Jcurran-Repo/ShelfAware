@@ -722,13 +722,34 @@ metered nor gated — a household at zero balance can still have recipes read al
 withdrawn (above), which removes the false statement but not the gap. Wiring it needs a real invoice to
 price against; see `docs/backlog.md`.
 
-⚠️ **Also Jordan's call, and new:** a meal plan is now charged ONCE, which is right — but its cost is the
-household's to choose. A 31-day, four-meals-a-day horizon is 124 slots, 18 provider calls, on the order of
-$0.20–$0.35, for a flat 2 credits ($0.02 of intended cost). The old per-batch charge was wrong; a flat price
-on an act whose call count the customer sets is wrong the other way. Options: price the plan per week
-planned and say so on the list ("2 credits per week"), band it by horizon, or check the balance covers the
-whole plan before starting. Not urgent — no deployed box has a `Payments` section, so nothing is charged
-today — but it wants deciding before the first paying customer.
+**Decided (Jordan, 2026-09-19): a meal plan is charged by the MEAL.** The open question above — a plan
+charged once, on an act whose size the household picks — is closed: *"A meal plan should charge based on the
+number of meals being generated."* The unit is one planned meal, priced 1 credit per 3 meals, so a week of
+dinners is 3 credits and a 31-day four-meals-a-day plan is 42. That sits in the upper-middle of the measured
+band: a batch of seven full recipes costs about what one recipe-suggest call does (~$0.01–0.03, 1–3 credits
+at the anchor), so the price recovers the work without pricing a plan out of reach.
+
+Three things the shape of that change had to get right, and all three are held by a test rather than by this
+paragraph:
+
+- **The charging boundary moved down**, below the line that counts the slots, because the price now depends
+  on them (`MealPlanService.GenerateAsync`). Loading the setup spends nothing; everything under the scope
+  can. The eighteen-times defect stays fixed — the scope is still around the whole plan, not the batch.
+- **Plan size got ONE definition.** `MealPlanSettings.SlotCountFor` answers "how big is this plan?" for the
+  page quoting the price and for the service opening the scope. Two answers would mean a quote the charge
+  then contradicted, which is the "one prediction, one story" rule wearing a different hat.
+- **The unit is what the household asked for, not what we spent.** `AiActionScope.Begin(action, units:)` is
+  only legal for an action the price list prices by the unit — `AiActionScopeSiteTests` fails the build
+  otherwise — so nobody can quietly start passing a provider round count and turn a per-act price into a
+  per-call one.
+
+`CreditPricing.QuotePrice` renders the rate ("1 per 3 meals") on the Settings price list, and the meal-plan
+page quotes the whole plan's price above the Generate button before it is pressed. Rerolling one meal
+(`ServiceAction.MealReroll`) is its own 1-credit act, since it is one provider call for one slot.
+
+⚠️ **Not done, and deliberately: nothing checks the balance covers the plan before starting.** A 42-credit
+plan can still begin on a 5-credit balance and land the household in the red. That is the same gap every
+other action has and wants fixing once, at the gate, rather than per action; it is in `docs/backlog.md`.
 
 ## 10. Sequencing
 

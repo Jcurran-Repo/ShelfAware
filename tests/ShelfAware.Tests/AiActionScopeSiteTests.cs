@@ -126,6 +126,33 @@ public class AiActionScopeSiteTests
     }
 
     /// <summary>
+    /// ⚠️ A scope may only be opened with a UNIT COUNT for an action that is actually priced by the unit.
+    /// For every other action a price covers one unit, so passing five would charge five times — a chat
+    /// turn is one thing the household asked for however many rounds it took, and the count is not the
+    /// place to express that.
+    /// </summary>
+    [Fact]
+    public void Only_an_action_priced_by_the_unit_is_begun_with_a_count()
+    {
+        var options = new BillingOptions();
+        var wrong = new List<string>();
+
+        foreach (var (file, tree) in Trees())
+            foreach (var call in BeginCalls(tree))
+            {
+                if (call.ArgumentList.Arguments.Count < 2) continue;
+                if (ActionOf(call) is not { } action) continue; // reported by the rule below
+                if (CreditPricing.UnitsPerPrice(options, action) == 1)
+                    wrong.Add($"{Path.GetFileName(file)}:{Line(call)} — {action} is priced per act");
+            }
+
+        Assert.True(wrong.Count == 0,
+            "A scope was opened with a unit count for an action whose price covers ONE unit, so the count "
+            + "multiplies the charge. Either price the action per unit (BillingOptions.UnitsPerPrice) or "
+            + "drop the count:" + Environment.NewLine + string.Join(Environment.NewLine, wrong));
+    }
+
+    /// <summary>
     /// ⚠️ The action must be a literal <c>ServiceAction.X</c>, not a variable. The two rules above read the
     /// source, so a computed action is one this file cannot see: it would be charged without ever being
     /// published, and its boundary would never be counted. Nothing computes one today; this is what keeps
@@ -137,7 +164,7 @@ public class AiActionScopeSiteTests
         var computed = new List<string>();
         foreach (var (file, tree) in Trees())
             foreach (var call in BeginCalls(tree))
-                if (call.ArgumentList.Arguments is not [{ Expression: MemberAccessExpressionSyntax { Expression: IdentifierNameSyntax { Identifier.ValueText: nameof(ServiceAction) } } }])
+                if (ActionOf(call) is null)
                     computed.Add($"{Path.GetFileName(file)}:{Line(call)} — {call}");
 
         Assert.True(computed.Count == 0,
@@ -160,10 +187,7 @@ public class AiActionScopeSiteTests
             files++;
             foreach (var call in BeginCalls(tree))
             {
-                if (call.ArgumentList.Arguments is not [{ Expression: MemberAccessExpressionSyntax
-                    { Expression: IdentifierNameSyntax { Identifier.ValueText: nameof(ServiceAction) }, Name.Identifier.ValueText: var name } }])
-                    continue; // reported by No_scope_is_begun_from_a_computed_action
-                if (!Enum.TryParse<ServiceAction>(name, out var action)) continue;
+                if (ActionOf(call) is not { } action) continue; // reported by No_scope_is_begun_from_a_computed_action
                 sites.Add(new Site(action, file, Line(call), IsInsideAsync(call)));
             }
         }
@@ -174,6 +198,16 @@ public class AiActionScopeSiteTests
         Assert.True(sites.Count > 5, $"Only {sites.Count} Begin site(s) found — the scan is broken, not the sources.");
         return sites;
     }
+
+    /// <summary>The literal <see cref="ServiceAction"/> a Begin call names, or null when it names something
+    /// computed. Only the FIRST argument is the action — the second, when present, is how many of the
+    /// action's units the act covers.</summary>
+    private static ServiceAction? ActionOf(InvocationExpressionSyntax call) =>
+        call.ArgumentList.Arguments.FirstOrDefault()?.Expression is MemberAccessExpressionSyntax
+            { Expression: IdentifierNameSyntax { Identifier.ValueText: nameof(ServiceAction) }, Name.Identifier.ValueText: var name }
+        && Enum.TryParse<ServiceAction>(name, out var action)
+            ? action
+            : null;
 
     private static IEnumerable<InvocationExpressionSyntax> BeginCalls(SyntaxTree tree) =>
         tree.GetRoot().DescendantNodes().OfType<InvocationExpressionSyntax>()

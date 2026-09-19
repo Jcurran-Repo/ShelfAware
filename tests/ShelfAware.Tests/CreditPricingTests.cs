@@ -155,6 +155,83 @@ public class CreditPricingTests
     // is asserted against real SQLite in CreditDenominationMigrationTests — not here against a C# twin of
     // the same arithmetic, which would be a second definition of one rule.
 
+    // ------------------------------------------------------------------ priced by the unit
+
+    [Theory]
+    [InlineData(1, 1)]     // one dinner still costs a whole credit — an act that ran is never free
+    [InlineData(3, 1)]     // exactly one block
+    [InlineData(4, 2)]     // rounds UP: a part-used block is a charged block
+    [InlineData(7, 3)]     // a week of dinners
+    [InlineData(124, 42)]  // the cap: 31 days x 4 meals, the horizon that used to cost a flat 2
+    public void A_meal_plan_is_priced_by_the_meal_because_the_household_picks_how_many(int meals, int credits)
+    {
+        // ⚠️ A flat price on an act whose size the customer chooses is wrong in whichever direction they
+        // choose it. At a flat 2 credits, 124 meals — eighteen provider calls, ~$0.20-0.35 — cost $0.02 of
+        // intended cost, and a single rerolled week paid the same as a month.
+        Assert.Equal(credits, CreditPricing.CreditsFor(Default, ServiceAction.MealPlan, meals));
+    }
+
+    [Fact]
+    public void Every_other_action_is_priced_per_act_and_asks_for_one()
+    {
+        // ⚠️ A unit is not a provider ROUND. A chat turn costing one price however many tool rounds it took
+        // is the claim's job and always true; units are how much the household ASKED FOR, and for every
+        // action but the meal plan the answer is "one of these, please". So the price is the flat price...
+        foreach (var action in CreditPricing.MeteredActions.Where(a => a != ServiceAction.MealPlan))
+        {
+            Assert.Equal(1, CreditPricing.UnitsPerPrice(Default, action));
+            Assert.Equal(
+                CreditPricing.CreditsFor(Default, action),
+                CreditPricing.CreditsFor(Default, action, units: 1));
+        }
+
+        // ...and asking for five of them really would cost five, which is why no caller passes a count for
+        // an action priced per act. AiActionScopeSiteTests is what holds that; this says what it prevents.
+        Assert.Equal(10, CreditPricing.CreditsFor(Default, ServiceAction.ChatTurn, units: 5));
+    }
+
+    [Fact]
+    public void A_free_action_stays_free_however_much_of_it_was_asked_for() =>
+        Assert.Equal(0, CreditPricing.CreditsFor(Default, ServiceAction.TagSuggest, units: 1000));
+
+    [Fact]
+    public void A_nonsense_unit_count_is_read_as_one_rather_than_as_nothing()
+    {
+        // Zero or negative units would otherwise make an act that really ran cost nothing — the direction
+        // a pricing hole hides in. It is also what a bug upstream would produce, so it must not be free.
+        Assert.Equal(1, CreditPricing.CreditsFor(Default, ServiceAction.MealPlan, units: 0));
+        Assert.Equal(1, CreditPricing.CreditsFor(Default, ServiceAction.MealPlan, units: -5));
+    }
+
+    [Fact]
+    public void A_misconfigured_block_size_never_divides_by_nothing()
+    {
+        var broken = new BillingOptions();
+        broken.UnitsPerPrice[ServiceAction.MealPlan] = 0;
+
+        Assert.Equal(1, CreditPricing.UnitsPerPrice(broken, ServiceAction.MealPlan));
+        Assert.Equal(7, CreditPricing.CreditsFor(broken, ServiceAction.MealPlan, units: 7)); // one per meal
+    }
+
+    [Theory]
+    [InlineData(ServiceAction.ChatTurn, "2")]
+    [InlineData(ServiceAction.TagSuggest, "free")]
+    [InlineData(ServiceAction.MealPlan, "1 per 3 meals")]
+    public void The_price_list_quotes_a_unit_price_as_a_rate(ServiceAction action, string quote) =>
+        // ONE definition of how a price reads, because Settings shows it and a household's ledger has to
+        // agree with what Settings showed them.
+        Assert.Equal(quote, CreditPricing.QuotePrice(Default, action));
+
+    [Fact]
+    public void A_unit_priced_action_with_no_noun_quotes_the_bare_number()
+    {
+        // The noun is display copy, not pricing. Losing it should make the row terser, never wrong.
+        var nameless = new BillingOptions();
+        nameless.UnitNouns.Remove(ServiceAction.MealPlan);
+
+        Assert.Equal("1", CreditPricing.QuotePrice(nameless, ServiceAction.MealPlan));
+    }
+
     // ------------------------------------------------------------------ what a person reads
 
     [Fact]
