@@ -236,7 +236,7 @@ public class StripePaymentProviderTests
         Assert.Equal("sub_1", e.SubscriptionId);
         Assert.Equal(BillingProduct.SubscriptionMonthly, e.Product);
         Assert.NotNull(e.PeriodEnd);        // a provisional period the subscription.updated event corrects
-        Assert.Null(e.AmountMicros);        // a subscription grants no credit here
+        Assert.Null(e.AmountCredits);        // a subscription grants no credit here
     }
 
     [Fact]
@@ -253,7 +253,7 @@ public class StripePaymentProviderTests
 
         Assert.Equal(PaymentEventKind.CheckoutCompleted, e.Kind);
         Assert.Equal(BillingProduct.CreditPack10, e.Product);
-        Assert.Equal(10_000_000, e.AmountMicros); // face value ($10), NOT amount_total (1099 = $10.99 with tax)
+        Assert.Equal(606, e.AmountCredits); // the pack's face value in CREDITS, NOT amount_total (1099 = $10.99 with tax)
         Assert.Null(e.SubscriptionId);
         Assert.Null(e.PeriodEnd);
     }
@@ -305,7 +305,7 @@ public class StripePaymentProviderTests
 
         Assert.Equal(PaymentEventKind.CheckoutCompleted, e.Kind);
         Assert.Equal(BillingProduct.CreditPack10, e.Product);
-        Assert.Equal(10_000_000, e.AmountMicros); // grants the face value now that it's settled
+        Assert.Equal(606, e.AmountCredits); // grants the pack's credits now that it's settled
     }
 
     [Fact]

@@ -290,9 +290,29 @@ public class ShelfCensusReaderTests
     [Fact]
     public async Task A_cancellation_propagates_rather_than_reading_as_a_failed_photo()
     {
-        var client = new FakeChatClient(() => throw new OperationCanceledException());
+        // ⚠️ It has to be the CALLER's cancellation, and this test used to assert the opposite by
+        // accident: a parameterless OperationCanceledException with no token passed is the shape an
+        // HttpClient TIMEOUT arrives in, so the old version pinned "a provider stall escapes the reader"
+        // as the rule. See ProviderCancellationSiteTests for why that tears a circuit.
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        var client = new FakeChatClient(() => throw new OperationCanceledException(cts.Token));
 
-        await Assert.ThrowsAsync<OperationCanceledException>(() => Reader(client).ReadAsync(OnePhoto));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => Reader(client).ReadAsync(OnePhoto, cancellationToken: cts.Token));
+    }
+
+    [Fact]
+    public async Task A_provider_timeout_reads_as_a_failed_photo_rather_than_escaping()
+    {
+        // The other side: no caller token, so this cancellation is the provider's. The household holding
+        // the phone gets the plain copy the catch below it was written for.
+        var client = new FakeChatClient(() => throw new TaskCanceledException("The request timed out."));
+
+        var result = await Reader(client).ReadAsync(OnePhoto);
+
+        Assert.False(result.Success);
+        Assert.Equal("Couldn't reach the AI just now \u2014 please try again.", result.Error);
     }
 
     // ---- What the model is actually sent ----

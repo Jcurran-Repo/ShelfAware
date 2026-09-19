@@ -72,7 +72,7 @@ public sealed record CheckoutSession(string Url);
 /// key the handler dedupes on (a provider retries a webhook until it gets a 2xx). The remaining fields are
 /// populated per <see cref="Kind"/>: a checkout carries the customer/subscription ids + what was bought;
 /// a renewal/update carries the new period + cancel flag; a refund carries the amount. Whatever a given
-/// event doesn't speak to stays null/false. Money is retail micros (§4), the ledger's unit.</summary>
+/// event doesn't speak to stays null/false. Money is CREDITS (docs/remediation-plan.md §7), the ledger's unit.</summary>
 public sealed record PaymentWebhookEvent(
     string EventId,
     PaymentEventKind Kind,
@@ -82,7 +82,7 @@ public sealed record PaymentWebhookEvent(
     BillingProduct? Product = null,
     DateTimeOffset? PeriodEnd = null,
     bool CancelAtPeriodEnd = false,
-    long? AmountMicros = null);
+    long? AmountCredits = null);
 
 /// <summary>Whether a webhook's signature verified — the endpoint's 400-vs-2xx decision. Separate from
 /// "is there something to act on" because a REAL provider (unlike the fake, which only ever sends events we

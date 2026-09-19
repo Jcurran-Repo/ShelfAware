@@ -4,6 +4,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Recipes;
+using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Llm;
 
@@ -82,6 +83,7 @@ public class AnthropicRecipeImporter : IRecipeImporter
     private async Task<RecipeImportResult> ExtractAsync(
         string systemPrompt, List<AIContent> userContent, string model, CancellationToken cancellationToken)
     {
+        await using var action = AiActionScope.Begin(ServiceAction.RecipeImport);
         var options = new ChatOptions
         {
             ModelId = model,
@@ -111,7 +113,7 @@ public class AnthropicRecipeImporter : IRecipeImporter
             {
                 response = await _chat.GetResponseAsync(messages, options, cancellationToken);
             }
-            catch (OperationCanceledException) { throw; } // caller cancelled — not a failure
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; } // whose cancellation: see ProviderCancellationSiteTests
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Recipe import call failed.");
@@ -119,11 +121,24 @@ public class AnthropicRecipeImporter : IRecipeImporter
             }
 
             rawJson = response.Text;
-            try { return Parse(rawJson); }
+            try
+            {
+                var parsed = Parse(rawJson);
+                // ⚠️ Settled even on "found: false". That is the model's own anti-hallucination floor —
+                // it looked at the photo and reported honestly that there is no recipe in it, which is a
+                // better outcome than an invented one and is what the call was for. The retry loop above
+                // is what covers the case the household really got nothing out of: an unreadable reply
+                // throws past this line and the act closes having delivered zero.
+                action.Answered();
+                return parsed;
+            }
             catch (Exception ex) { lastError = ex.Message; } // any invalid shape is retryable
         }
 
-        _logger.LogWarning("Recipe import couldn't be parsed after a retry: {Error}", lastError);
+        // Error, not Warning: the same rule as the extractor and the census — a user-visible failure
+        // the operator cannot see is a support ticket with no evidence. (The transport catch above
+        // already returns plain copy; this is the parse path catching up with it.)
+        _logger.LogError("Recipe import couldn't be parsed after a retry: {Error}", lastError);
         return RecipeImportResult.Fail("Couldn't read a recipe from that — try a clearer photo or paste the text.");
     }
 
@@ -133,9 +148,21 @@ public class AnthropicRecipeImporter : IRecipeImporter
         var root = doc.RootElement;
 
         var name = GetNullableString(root, "name");
-        // The model says so itself when there's nothing to extract — the anti-hallucination floor.
-        if (!root.GetProperty("found").GetBoolean() || string.IsNullOrWhiteSpace(name))
+        var found = root.GetProperty("found").GetBoolean();
+
+        // The model says so itself when there's nothing to extract — the anti-hallucination floor. An
+        // honest "there is no recipe in that photo" IS an answer and is paid for; see AiActionScope.Answered.
+        if (!found)
             return RecipeImportResult.Fail("No recipe found — try a clearer photo, or paste the recipe text.");
+
+        // ⚠️ "Found a recipe" and then no name for it is a reply we could not READ, not an answer, and the
+        // difference is money: the two used to share the branch above, so a self-contradicting reply
+        // returned quietly, settled the act and charged the household while the screen said "No recipe
+        // found". Thrown instead, it takes the §5 validate-then-retry path every other invalid shape
+        // takes — one more attempt with the fault named, and a refund if that one is no better. The
+        // message becomes the retry prompt, so it says what was wrong rather than that something was.
+        if (string.IsNullOrWhiteSpace(name))
+            throw new InvalidOperationException("\"found\" was true but \"name\" was null or blank.");
 
         var ingredients = new List<ImportedIngredient>();
         foreach (var item in root.GetProperty("ingredients").EnumerateArray())

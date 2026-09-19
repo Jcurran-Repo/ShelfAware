@@ -51,7 +51,10 @@ public class HouseholdWelcomeGrantTests : IDisposable
         await using var read = _authDb.CreateDbContext();
         var grant = Assert.Single(await read.CreditLedger.Where(e => e.HouseholdId == household.Id).ToListAsync());
         Assert.Equal(CreditEntryKind.Grant, grant.Kind);
-        Assert.Equal(AiPricing.WelcomeGrantRetailMicros(new BillingOptions()), grant.AmountMicros); // $1 × 1.65
+        // $1.00 of COST at the $0.01 anchor = 100 credits. A grant is denominated in what it costs to
+        // honour, not in what it would retail for — see CreditPricing's remarks on the two directions.
+        Assert.Equal(CreditPricing.WelcomeGrantCredits(new BillingOptions()), grant.AmountCredits);
+        Assert.Equal(100, grant.AmountCredits);
     }
 
     [Fact]

@@ -23,7 +23,14 @@ jobs:
   mutation-diff:
     name: Core mutation (changed files)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Usually seconds-to-minutes: --since mutates only the Core files this PR changed. But Stryker
+    # re-tests the FULL Core mutant set whenever a non-C# file in the test project changes — a
+    # .csproj edit (e.g. a new PackageReference) can change how every test runs, so diff-scoping is
+    # no longer safe. That fallback is the same work the weekly full-Core gate does, so it gets the
+    # weekly gate's 90-minute headroom (mutation.yml); 30 minutes was not enough for it and the job
+    # was cancelled mid-run. The ceiling only bites that fallback — the common diff-scoped run still
+    # finishes in minutes far below it.
+    timeout-minutes: 90
     env:
       # The PR base commit, a GitHub-computed 40-hex SHA (never attacker-controllable). Declared here
       # rather than interpolated into a run: block — GitHub's script-injection hardening idiom — and so
@@ -57,7 +64,10 @@ jobs:
         if: steps.scope.outputs.core == 'true'
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          # One declared toolchain: the repo's global.json, never a wildcard here. A workflow that
+          # names its own version drifts from what developers build with, and a green run then
+          # says nothing about whether the repo compiles anywhere else.
+          global-json-file: global.json
 
       - name: Restore
         if: steps.scope.outputs.core == 'true'

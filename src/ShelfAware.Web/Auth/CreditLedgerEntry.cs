@@ -6,7 +6,7 @@ namespace ShelfAware.Web.Auth;
 /// §4) join with payments (phase 3). <see cref="Allowance"/> (the recurring Aware monthly grant) and
 /// <see cref="Expiry"/> (its no-rollover sweep) are phase 4. The enum is
 /// extensible — a new kind is additive, and nothing switches on it exhaustively (the balance is a plain sum
-/// of <see cref="CreditLedgerEntry.AmountMicros"/>, kind is for display/audit).</summary>
+/// of <see cref="CreditLedgerEntry.AmountCredits"/>, kind is for display/audit).</summary>
 public enum CreditEntryKind
 {
     Grant = 0,
@@ -24,12 +24,22 @@ public enum CreditEntryKind
     /// enforcement (§4). Its magnitude is exactly the prior allowance's unspent remainder, so the
     /// persisting balance (welcome grant + purchases) is untouched.</summary>
     Expiry = 5,
+
+    /// <summary>Credits handed BACK (positive) for an act that was charged and did not deliver — the model
+    /// returned nothing usable, a batch came back empty, the act failed outright. Distinct from
+    /// <see cref="Refund"/>, which is negative and reverses a PURCHASE (the household's money went back, so
+    /// its credits must too); this one goes the other way. Distinct from <see cref="Grant"/> because a
+    /// grant persists across billing periods and this does not: it undoes a draw on whatever it was drawn
+    /// from. ⚠️ Which is why it is counted alongside <see cref="Consumption"/> in the unspent-allowance
+    /// arithmetic — a reversal that was not counted there would leave an allowance looking more spent than
+    /// it is, and the period-end sweep would let the difference persist past its month.</summary>
+    Reversal = 6,
 }
 
 /// <summary>
 /// One movement in a household's credit ledger — the append-only money record (docs/subscription-plan.md
 /// §4: "the auth-side LEDGER is THE money record; the pantry AiUsage row is display-only"). Balance is the
-/// SUM of <see cref="AmountMicros"/> for a household, so nothing mutates a running total in place (the
+/// SUM of <see cref="AmountCredits"/> for a household, so nothing mutates a running total in place (the
 /// read-modify-write races the invite-code work already taught).
 ///
 /// Lives in auth.db beside accounts and the subscription (this is money/credential-adjacent, and it must
@@ -47,10 +57,38 @@ public sealed class CreditLedgerEntry
 
     public CreditEntryKind Kind { get; set; }
 
-    /// <summary>Signed RETAIL micros (millionths of a dollar, at retail = cost × markup): POSITIVE for a
-    /// grant, NEGATIVE for consumption. The household's balance is the sum of these — never stored, always
-    /// derived — so a movement can only ever be appended, never edited.</summary>
-    public long AmountMicros { get; set; }
+    /// <summary>Signed SHELF AWARE CREDITS: POSITIVE for a grant, allowance or purchase, NEGATIVE for
+    /// consumption, an expiry sweep or a refund. The household's balance is the sum of these — never stored,
+    /// always derived — so a movement can only ever be appended, never edited.
+    ///
+    /// ⚠️ Credits, not dollars, since 2026-09-19. A credit is an abstract unit Shelf Aware issues and prices
+    /// per <see cref="ShelfAware.Core.Billing.ServiceAction"/>; what it costs JORDAN varies by service, which
+    /// is the whole point (docs/remediation-plan.md §7). The ledger used to be denominated in retail micros —
+    /// Jordan's own provider bill — which could not price a realtime voice minute at all and made margin per
+    /// service invisible by construction. Rows written before the change were converted once at the anchor;
+    /// see <see cref="Data.CreditDenominationMigration"/> and <see cref="LegacyAmountMicros"/>.</summary>
+    public long AmountCredits { get; set; }
+
+    /// <summary>For a <see cref="CreditEntryKind.Reversal"/>: the <see cref="Id"/> of the
+    /// <see cref="CreditEntryKind.Consumption"/> row it hands back. Null on every other kind.
+    ///
+    /// <para>⚠️ It exists because a reversal can land in a LATER billing period than the charge it undoes —
+    /// a 124-meal plan is eighteen provider calls, and the monthly allowance posts on any entitlement check
+    /// in between. Without this link the unspent-allowance sum nets the reversal against whichever allowance
+    /// happens to precede it by Id, which is the wrong month: the sweep then measures a month as less spent
+    /// than it was and takes the difference out of PURCHASED credit — the household's own money, silently.
+    /// A clamp bounds that loss; only the link removes it.</para></summary>
+    public long? ReversesEntryId { get; set; }
+
+    /// <summary>HISTORICAL. The retail micros this entry was originally denominated in, kept as the receipt
+    /// for the 2026-09-19 conversion to credits — so the arithmetic that produced every converted balance
+    /// can be audited rather than taken on trust. Zero on every entry written after the conversion; nothing
+    /// reads it but a human. Mapped to the original <c>AmountMicros</c> column, so a migrated database and a
+    /// freshly created one still have identical schemas (the parity the AdditiveSchema tests pin) — dropping
+    /// a SQLite column is a structural rebuild, and rebuilding the MONEY table to delete an audit trail is
+    /// the wrong trade twice over.</summary>
+    [System.ComponentModel.DataAnnotations.Schema.Column("AmountMicros")]
+    public long LegacyAmountMicros { get; set; }
 
     /// <summary>A short human-readable reason ("Welcome grant", or the action a consumption paid for) —
     /// for the ledger view and support ("where did my dollar go?"). Not machine-load-bearing.</summary>

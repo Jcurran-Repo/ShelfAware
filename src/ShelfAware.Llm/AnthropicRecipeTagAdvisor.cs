@@ -2,6 +2,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Recipes;
+using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Llm;
 
@@ -34,6 +35,7 @@ public class AnthropicRecipeTagAdvisor : IRecipeTagAdvisor
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(recipeName)) return [];
+        await using var action = AiActionScope.Begin(ServiceAction.TagSuggest);
         try
         {
             var ingredients = ingredientNames.Count > 0 ? string.Join(", ", ingredientNames) : "(not listed)";
@@ -57,13 +59,16 @@ public class AnthropicRecipeTagAdvisor : IRecipeTagAdvisor
             var response = await _chat.GetResponseAsync(prompt, options, cancellationToken);
 
             var reply = response.Text.Trim();
-            // Match the sentinel the way Parse normalizes each token — the model routinely appends a period,
-            // and "NONE." must read as the no-tags signal, not a literal "NONE" tag polluting the cloud.
-            var sentinel = reply.TrimEnd('.', ' ');
-            if (sentinel.Length == 0 || sentinel.Equals("NONE", StringComparison.OrdinalIgnoreCase)) return [];
+            if (!ProviderReply.IsAnAnswer(reply)) return [];
+            // ⚠️ Settled BEFORE the sentinel, not after the parse. "NONE" is the model's considered
+            // answer to a question the household asked, and an answer is paid for; only a provider
+            // that said nothing at all is refunded. Everything below this line is us INTERPRETING
+            // a reply we were given.
+            action.Answered();
+            if (ProviderReply.IsNothingFound(reply)) return [];
             return Parse(reply);
         }
-        catch (OperationCanceledException) { throw; }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; } // whose cancellation: see ProviderCancellationSiteTests
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Recipe tag suggestion failed for \"{Recipe}\"; returning none.", recipeName.Trim());

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using Microsoft.Extensions.AI;
+using ShelfAware.Core.Billing;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.Recipes;
@@ -47,6 +48,12 @@ internal sealed class FakeChatClient : IChatClient
     public int CallCount { get; private set; }
     public List<IReadOnlyList<ChatMessage>> ReceivedMessages { get; } = [];
 
+    /// <summary>The options each call carried. ⚠️ Recorded because WHICH TOOLS the model was offered is
+    /// now part of the contract: go_to_step is withheld unless a hands-free reader is open, since its only
+    /// consumer is that reader and offering it anywhere else let the model announce a move no code would
+    /// carry out. A fake that dropped the options could not tell an offered tool from a withheld one.</summary>
+    public List<ChatOptions?> ReceivedOptions { get; } = [];
+
     public FakeChatClient(params Func<ChatResponse>[] script) => _script = new(script);
 
     /// <summary>Queue plain responses to hand back in order.</summary>
@@ -58,8 +65,48 @@ internal sealed class FakeChatClient : IChatClient
     {
         CallCount++;
         ReceivedMessages.Add([.. messages]);
+        ReceivedOptions.Add(options);
         if (_script.Count == 0) throw new InvalidOperationException("FakeChatClient ran out of scripted responses.");
         return Task.FromResult(_script.Dequeue()());
+    }
+
+    public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+        IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    public object? GetService(Type serviceType, object? serviceKey = null) => null;
+    public void Dispose() { }
+}
+
+/// <summary>
+/// Wraps a chat client and charges the ambient <see cref="AiActionScope"/> on its first call, the way
+/// <c>MeteredChatClient</c> does in the app — so a test can see what an act SETTLED FOR without reaching
+/// into the service that opened it.
+///
+/// <para>⚠️ It has to be a decorator rather than a flag on <see cref="FakeChatClient"/>, because the act
+/// under test is the one the SERVICE opened: <see cref="AiActionScope.Current"/> read from inside the
+/// provider call is the service's own nested scope, and a settlement installed on a scope the test opened
+/// would report on the wrong act entirely.</para>
+/// </summary>
+internal sealed class ChargingChatClient(IChatClient inner) : IChatClient
+{
+    /// <summary>What the act settled for: null while nothing has been given back (the charge stands), or
+    /// the number of units the act reported delivering when it refunded.</summary>
+    public int? RefundedFor { get; private set; }
+
+    /// <summary>Whether a charge was ever recorded — false means the act never reached a provider call.</summary>
+    public bool Charged { get; private set; }
+
+    public Task<ChatResponse> GetResponseAsync(
+        IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        if (AiActionScope.Current is { } act && !Charged && act.TryClaimCharge())
+        {
+            Charged = true;
+            act.ChargeRecorded(1, (delivered, _) => { RefundedFor = delivered; return Task.CompletedTask; });
+        }
+
+        return inner.GetResponseAsync(messages, options, cancellationToken);
     }
 
     public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
@@ -389,4 +436,21 @@ internal static class HttpResponses
 
     public static HttpResponseMessage Error(HttpStatusCode status, string body = "") =>
         new(status) { Content = new StringContent(body) };
+}
+
+/// <summary>A chat client that always throws the given exception — for the failure paths where WHICH
+/// exception arrives is the whole question.</summary>
+internal sealed class ThrowingChatClient(Exception failure) : IChatClient
+{
+    public Task<ChatResponse> GetResponseAsync(
+        IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+        throw failure;
+
+    public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+        IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+    public void Dispose() { }
 }

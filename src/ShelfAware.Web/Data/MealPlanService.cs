@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using ShelfAware.Core.Billing;
 using ShelfAware.Core.Domain;
 using ShelfAware.Core.MealPlanning;
 using ShelfAware.Core.Recipes;
@@ -22,14 +23,18 @@ public sealed class MealPlanService(
     IAppSettings settings,
     ILogger<MealPlanService> logger)
 {
+    // ⚠️ WHEN AN ACT HERE HAS DELIVERED: once its result is durable, never before. Both paths charge up
+    // front and settle on the way out, so reporting delivery beside the provider's answer — the tempting
+    // place, since that is where the meals arrive — would charge a household for a plan or a reroll whose
+    // write then failed, and settle nothing, because the act looked complete. GenerateAsync settles after
+    // PersistAsync and RerollAsync after CommitAsync, and the rule is stated here rather than on one of
+    // them because the version that lived on GenerateAsync alone was contradicted by RerollAsync in the
+    // same commit that wrote it.
+
     // A generation call is capped near this many slots so the model returns full recipes within its output
     // budget; a longer horizon is generated over several calls, each told the names already planned so the
     // whole plan stays varied.
     private const int BatchSize = 7;
-
-    // Guards against a misconfigured horizon turning into dozens of AI calls. A month of four meals a day
-    // is 124 slots; beyond that we cap and say so rather than silently spend.
-    private const int MaxSlots = 124;
 
     public async Task<MealPlanSettings> LoadSettingsAsync(CancellationToken ct = default)
     {
@@ -72,6 +77,14 @@ public sealed class MealPlanService(
         var setup = await LoadSettingsAsync(ct);
         var slots = SlotsFor(setup); // always ≥ 1 — Days clamps to [1,31] and Slots defaults to dinner
         var chunks = slots.Chunk(BatchSize).ToList();
+
+        // ⚠️ The charging boundary is HERE, around the whole plan, not inside the generator around a batch:
+        // with the scope in the generator a 124-slot plan was charged eighteen times, once per batch
+        // (docs/remediation-plan.md §9). It opens AFTER the slots are counted because the price depends on
+        // them — the household picks the horizon, so a plan is charged by the MEAL rather than at a flat
+        // rate that over-charges a week and under-recovers a month. Everything that can spend money happens
+        // below this line; loading the setup does not.
+        await using var action = AiActionScope.Begin(ServiceAction.MealPlan, units: setup.SlotCount);
         var context = await LoadContextAsync(setup, ct);
         onProgress?.Invoke(0, chunks.Count);
 
@@ -104,6 +117,11 @@ public sealed class MealPlanService(
             return MealPlanResult.Failed("Couldn't generate any meals just now — please try again.");
 
         var planId = await PersistAsync(setup, planned, ct);
+        // ⚠️ The plan was CHARGED for every meal it asked for, on its first provider call. Here is where it
+        // finds out how many actually arrived, so this is where the difference goes back. A month-long plan
+        // whose model wobbled on three batches is not a month-long plan, and the household should not be
+        // holding a bill for one. Settled after PersistAsync, per the rule at the top of this class.
+        action.Delivered(planned.Count);
         logger.LogInformation("Generated a meal plan of {Count} meal(s) over {Days} day(s).", planned.Count, setup.Days);
         return MealPlanResult.Ok(planId, planned.Count);
     }
@@ -162,6 +180,9 @@ public sealed class MealPlanService(
     /// stays in the library (nothing is deleted). One AI call, so it runs inline on the circuit.</summary>
     public async Task<RerollResult> RerollAsync(int plannedMealId, CancellationToken ct = default)
     {
+        // A reroll is its OWN action, not a meal plan: one slot, its own price, and a ledger line that says
+        // what the household actually did.
+        await using var action = AiActionScope.Begin(ServiceAction.MealReroll);
         var setup = await LoadSettingsAsync(ct);
         var context = await LoadContextAsync(setup, ct);
         await using var db = await dbFactory.CreateDbContextAsync(ct);
@@ -199,6 +220,9 @@ public sealed class MealPlanService(
             meal.Recipe = BuildRecipe(suggestion);  // a fresh recipe joins the library
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+        // Settled after the commit, per the rule at the top of this class: this write can still fail,
+        // and a meal the household cannot see is a meal it did not receive.
+        action.Delivered(1); // one slot asked for, one meal back — a reroll has no partial
         return RerollResult.Ok(suggestion.Name);
     }
 
@@ -249,18 +273,26 @@ public sealed class MealPlanService(
 
     // Every meal to fill, day-major (day 0's meals, then day 1's…) so a BatchSize chunk spans roughly a week.
     // Each meal resolves its own calorie + effort target (its override, or the plan default) so the generator
-    // prompts a snack as a snack and a dinner as a dinner. Days is clamped and the total is capped (MaxSlots).
+    // prompts a snack as a snack and a dinner as a dinner.
+    //
+    // ⚠️ HOW MANY there are is not decided here. setup.SlotCount is the one definition of a plan's size, and
+    // the meal-plan page quotes a PRICE from the same one before Generate is pressed — a plan is charged by
+    // the meal. This loop used to re-derive the count with its own day clamp, its own empty-meals fallback
+    // and its own cap: three lines that happened to agree with SlotCount and were pinned to it by nothing.
+    // That is the exact shape CLAUDE.md calls this repo's most expensive failure — two sites answering one
+    // question, agreeing today, one of them edited later — and here the disagreement would be a household
+    // quoted one price and charged another. So this fills a count it is given and computes none.
     private static IReadOnlyList<PlannedSlot> SlotsFor(MealPlanSettings setup)
     {
-        var days = Math.Clamp(setup.Days, 1, 31);
+        var total = setup.SlotCount;
         var meals = setup.Meals.Count > 0 ? setup.Meals : [new MealEntry { Slot = MealSlot.Dinner }];
-        var slots = new List<PlannedSlot>();
-        for (var day = 0; day < days; day++)
+        var slots = new List<PlannedSlot>(total);
+        for (var day = 0; slots.Count < total; day++)
         {
             foreach (var meal in meals)
             {
+                if (slots.Count >= total) break;
                 slots.Add(new PlannedSlot(day, meal.Slot, setup.CaloriesFor(meal), setup.EffortFor(meal)));
-                if (slots.Count >= MaxSlots) return slots;
             }
         }
         return slots;

@@ -46,7 +46,7 @@ else
             <button type="button" class="icon-btn" @onclick="StartRename" aria-label="Rename @product.Name" title="Rename @product.Name"><span aria-hidden="true">✏️</span></button>
             <button type="button" class="icon-btn" @onclick="OpenMerge" aria-label="Merge @product.Name into another product" title="Merge @product.Name into another product"><span aria-hidden="true">⇆</span></button>
         }
-        <span class="chip chip-@ChipClass(prediction.Status)">@StatusLabel(prediction.Status)</span>
+        <span class="chip chip-@PredictionDisplay.ChipClass(prediction.Status)">@PredictionDisplay.Label(prediction.Status)</span>
     </div>
     @if (renameError is not null)
     {
@@ -185,7 +185,7 @@ else
                Stocked chip one glance-width from that explanation. *@
             <dt>@(prediction.SuppressedByCount ? "Rhythm would ask" : "Next buy")</dt>
             <dd>@(estimate.NextBuyDate is { } d
-                    ? prediction.SuppressedByCount ? $"{d:MMM d, yyyy}" : $"{d:MMM d, yyyy} ({Relative(estimate.DaysUntil!.Value)})"
+                    ? prediction.SuppressedByCount ? $"{d:MMM d, yyyy}" : $"{d:MMM d, yyyy} ({PredictionDisplay.Relative(estimate.DaysUntil!.Value)})"
                     : "still learning")@(prediction.DueCappedByExpiration ? " · 🏷️ capped by the expiration date" : "")</dd>
             <dt>Rebuy rhythm</dt>
             <dd>@(prediction.RebuyIntervalDays is { } rb ? $"~every {Math.Round(rb)} days" : "—")</dd>
@@ -254,7 +254,7 @@ else
             else if (prediction.ExpiresOn is { } labelAhead)
             {
                 <p class="muted"><span aria-hidden="true">🏷️</span> Expires <strong>@labelAhead.ToString("MMM d, yyyy")</strong>
-                    (@Relative(labelAhead.DayNumber - DateOnly.FromDateTime(DateTime.Today).DayNumber)) — the next-buy
+                    (@PredictionDisplay.Relative(labelAhead.DayNumber - DateOnly.FromDateTime(DateTime.Today).DayNumber)) — the next-buy
                     date can't project past this, and once it passes the item marks itself out.</p>
             }
             else
@@ -1457,7 +1457,7 @@ else
         subNote = null;
         // Suggesting is optional polish on top of the curated list, so a blocked circuit just says why rather
         // than leaving the ✨ button spin and add nothing (phase 4c).
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, ServiceAction.SubstituteSuggest);
         if (blocked is not null) { subNote = blocked; suggesting = false; return; }
         try
         {
@@ -1488,26 +1488,4 @@ else
 
     private static string Money(decimal amount) => amount.ToString("C");
 
-    private static string Relative(int days) => days switch
-    {
-        < 0 => $"{-days} day{(days == -1 ? "" : "s")} overdue",
-        0 => "today",
-        _ => $"in {days} day{(days == 1 ? "" : "s")}"
-    };
-
-    private static string ChipClass(PredictionStatus s) => s switch
-    {
-        PredictionStatus.Overdue => "overdue",
-        PredictionStatus.DueSoon => "duesoon",
-        PredictionStatus.Stocked => "stocked",
-        _ => "unknown"
-    };
-
-    private static string StatusLabel(PredictionStatus s) => s switch
-    {
-        PredictionStatus.Overdue => "Overdue",
-        PredictionStatus.DueSoon => "Due soon",
-        PredictionStatus.Stocked => "Stocked",
-        _ => "Still learning"
-    };
 }

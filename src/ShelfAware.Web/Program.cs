@@ -11,6 +11,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using System.Threading.RateLimiting;
 using System.Text.Json;
+using ShelfAware.Core.Billing;
 using ShelfAware.Core.Census;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
@@ -359,10 +360,20 @@ builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection(LlmOptio
 // The managed demo box's box-wide daily AI valve (docs §10). All null by default, so the family / self-host
 // box (no "Demo" section) is unbounded and untouched; only a managed public demo box sets these.
 builder.Services.Configure<DemoOptions>(builder.Configuration.GetSection(DemoOptions.SectionName));
-// Billing tunables — model rates, credit markup, welcome-grant size — as operator config (defaults in
-// BillingOptions), so pricing can be retuned in appsettings without a rebuild.
-builder.Services.Configure<ShelfAware.Core.Billing.BillingOptions>(
-    builder.Configuration.GetSection(ShelfAware.Core.Billing.BillingOptions.SectionName));
+// Billing tunables — model rates, the credit anchor, welcome-grant size — as operator config (defaults in
+// BillingOptions), so rates can be retuned in appsettings without a rebuild. ⚠️ With ONE exception, stated
+// where it lives: BillingCatalog's pack sizes are compiled literals, so on a box that sells packs, retuning
+// the anchor without updating them refuses to start rather than selling $5 of credit at a rate that no
+// longer applies (BillingOptionsValidation.PackRule).
+builder.Services.AddOptions<ShelfAware.Core.Billing.BillingOptions>()
+    .Bind(builder.Configuration.GetSection(ShelfAware.Core.Billing.BillingOptions.SectionName))
+    .ValidateOnStart();
+// The rules are a named function, not lambdas in this file, so they are testable — a validator nothing
+// exercises gets deleted in a refactor without anyone noticing it was load-bearing. See
+// BillingOptionsValidation for why the anchor is checked at boot rather than defended at each use.
+builder.Services.AddSingleton<IValidateOptions<ShelfAware.Core.Billing.BillingOptions>>(
+    new ShelfAware.Web.Billing.BillingOptionsValidator(
+        sellsCredits: builder.Configuration.GetValue<bool>("Payments:Enabled")));
 // The /about wishlist: only SupporterPaymentUrl matters, and only to reveal the (config-gated) "back it
 // early" supporter button. Absent section = the reserve's tier picker + email still work; no button.
 builder.Services.Configure<ShelfAware.Web.Wishlist.WishlistOptions>(
@@ -440,8 +451,12 @@ builder.Services.AddScoped<AiUsageMeter>();
 // The box-wide demo valve is operator-global (auth.db, no per-scope state), so singleton — injected into the
 // scoped metering chain below. Also exposed as IDemoValve so the AI surfaces' pre-check (AiErrorText) can ask
 // "is the box capped for today?" through the seam without depending on the concrete DB-backed meter.
+// The health probe caches its last answer for a few seconds, so it must be a singleton or the cache is
+// per-request and buys nothing. It holds no per-user state — it asks two databases whether they open.
+builder.Services.AddSingleton<HealthProbe>();
 builder.Services.AddSingleton<DemoUsageMeter>();
 builder.Services.AddSingleton<IDemoValve>(sp => sp.GetRequiredService<DemoUsageMeter>());
+builder.Services.AddSingleton<ServiceMarginMeter>();
 builder.Services.AddScoped<IChatClient, MeteredChatClient>();
 
 // Per-circuit bus wiring the layout voice agent to the pages (data-changed refresh + resume hand-off).
@@ -633,6 +648,31 @@ if (speechCacheDir is not null)
     }
 }
 
+// The managed demo box's box-wide AI valve. Nothing configured is the family / self-host posture and says
+// nothing at all; a configured valve narrates itself at INFO so the operator can read its real bound out of
+// the box's own log rather than out of a config file they think they remember. An INCOHERENT valve — the
+// alert without the cap, or an alert that can only fire after the cap — is a box whose operator believes
+// they have a bound and does not, so it warns. Both objections are provable from the two numbers alone
+// (DemoOptions.ConfigurationObjections), which is what keeps this from crying wolf on a box that isn't a
+// demo box: a rule that warns about nothing is one someone later stops reading.
+{
+    var demo = app.Services.GetRequiredService<IOptions<DemoOptions>>().Value;
+    foreach (var objection in demo.ConfigurationObjections())
+    {
+        app.Logger.LogWarning("Demo valve misconfigured: {Objection}", objection);
+    }
+
+    if (demo.DailyGlobalCallLimit is int globalCap)
+    {
+        app.Logger.LogInformation(
+            "Demo valve active: at most {Cap} host-key AI calls/day across all households{Alert}. "
+            + "A counter that can't be read allows calls for {FailOpen} reads, then refuses them.",
+            globalCap,
+            demo.AlertThreshold is int a ? $", warning at {a}" : " (no alert threshold)",
+            DemoUsageMeter.FailOpenReadLimit);
+    }
+}
+
 using (var scope = app.Services.CreateScope())
 {
     // Accounts + households (auth.db) — always a from-scratch EnsureCreated (the file is new per
@@ -648,6 +688,9 @@ using (var scope = app.Services.CreateScope())
         // auth.db — the rebuild copies them by name, so it needs them to exist first. One-off; see the
         // class docs for why it's the exception to AdditiveSchema's additive-only rule.
         NullableInviteCodeMigration.Apply(authDb);
+        // Also strictly after the additive pass (which creates CreditLedger on a DB that predates it).
+        // One-off money migration: retail micros → Shelf Aware credits, in one transaction — see the class.
+        CreditDenominationMigration.Apply(authDb, app.Services.GetRequiredService<IOptions<BillingOptions>>().Value);
     }
 
     var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<ShelfAwareDbContext>>();
@@ -935,7 +978,7 @@ app.MapPost("/api/receipts/extract", async (
     // call that MeteredChatClient would refuse anyway — the extractor fails soft, so the gate's exception
     // never reaches this handler (phase 4c, AiErrorText). A body is required or UseStatusCodePagesWithReExecute
     // rewrites the empty 402 into a misleading 400 (the webhook scar below).
-    var blocked = await AiErrorText.BlockedReasonAsync(entitlements, ai, demoValve, ct);
+    var blocked = await AiErrorText.BlockedReasonAsync(entitlements, ai, demoValve, ServiceAction.ReceiptExtraction, cancellationToken: ct);
     if (blocked is not null)
         return Results.Json(new { error = blocked }, statusCode: StatusCodes.Status402PaymentRequired);
 
@@ -974,7 +1017,7 @@ app.MapPost("/api/pantry-photo/read", async (
     PhotoUploadIntake.ApplyByok(request, ai);
     // Say the true reason (no key / out of credits) rather than spend a doomed vision call the gate refuses —
     // same phase-4c pre-check as the receipt endpoint; a body avoids the empty-402 re-execution scar.
-    var blocked = await AiErrorText.BlockedReasonAsync(entitlements, ai, demoValve, ct);
+    var blocked = await AiErrorText.BlockedReasonAsync(entitlements, ai, demoValve, ServiceAction.CensusPhoto, cancellationToken: ct);
     if (blocked is not null)
         return Results.Json(new { error = blocked }, statusCode: StatusCodes.Status402PaymentRequired);
 
@@ -1178,7 +1221,7 @@ if (fakePayments)
             Product: prod,
             PeriodEnd: isPack ? null : DateTimeOffset.Now.Add(period),
             CancelAtPeriodEnd: false,
-            AmountMicros: isPack ? BillingCatalog.RetailMicrosFor(prod) : null);
+            AmountCredits: isPack ? BillingCatalog.CreditsFor(prod) : null);
         await handler.HandleAsync(completed, ct);
         return Results.Redirect(isPack ? "/settings?checkout=credits" : "/settings?checkout=subscribed");
     }).RequireAuthorization();
@@ -1220,6 +1263,23 @@ string IconSrc(string file)
 }
 var icon192Src = IconSrc("icon-192.png");
 var icon512Src = IconSrc("icon-512.png");
+
+// The health endpoint. ANONYMOUS on purpose: a monitor has no account, and an endpoint that needs one
+// cannot tell "the box is down" from "my credentials expired". See HealthProbe for what it does and
+// deliberately does not check, and why it says which check failed but never why.
+//
+// ⚠️ Results.Json, never an empty body: UseStatusCodePagesWithReExecute re-executes a body-less non-2xx
+// into /not-found (method preserved), which this repo has now been bitten by twice (the GraphQL 401 and
+// the rate-limiter 429). Writing a body starts the response, so the real status survives — and JSON is
+// the shape a monitor wants anyway.
+app.MapGet("/healthz", async (HealthProbe probe, CancellationToken ct) =>
+{
+    var report = await probe.CheckAsync(ct);
+    return report.Healthy
+        ? Results.Json(new { status = "ok" })
+        : Results.Json(new { status = "degraded", failing = report.Failing },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+}).AllowAnonymous();
 
 app.MapGet("/manifest.webmanifest", () => Results.Content($$"""
 {

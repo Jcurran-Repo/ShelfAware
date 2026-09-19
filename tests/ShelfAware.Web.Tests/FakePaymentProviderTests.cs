@@ -25,7 +25,7 @@ public class FakePaymentProviderTests
         Product: BillingProduct.SubscriptionMonthly,
         PeriodEnd: new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero),
         CancelAtPeriodEnd: false,
-        AmountMicros: null);
+        AmountCredits: null);
 
     /// <summary>A rejection is InvalidSignature with no event — the fake never returns the
     /// verified-but-ignore outcome (that's a real-provider firehose concern).</summary>

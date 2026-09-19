@@ -10,6 +10,36 @@ namespace ShelfAware.Core.Tagging;
 /// </summary>
 public static class TagVocabulary
 {
+    /// <summary>The longest a tag may be. ⚠️ A BOUND, not a style preference. Normalizing a candidate
+    /// puts it in a Unicode normal form, and NFC's canonical-ordering step is quadratic in the length of
+    /// a single run of combining marks — so without a cap, a tag is a free, unauthenticated way to pin a
+    /// core for as long as you like. The path has no other brake on it: the tag box carries whatever the
+    /// SignalR message size allows (4 MB), <c>FindNearDuplicate</c> runs at stage one of
+    /// <c>Upload.AddTag</c> — before the advisor, so before any credit gate or usage cap — and the
+    /// column has no length, so one stored monster is re-normalized on every later call for that
+    /// household. 64 is past every real tag ("Storage Bags" is 12) and short enough that the quadratic
+    /// term cannot matter.</summary>
+    public const int MaxLength = 64;
+
+    /// <summary>Whether this text is too long to be a tag — THE one place that question is answered, and
+    /// the only place <see cref="MaxLength"/> may be compared against (held by <c>TagLengthSiteTests</c>).
+    /// <para>⚠️ It exists because the same arithmetic was written seven times and one copy was different.
+    /// Two sites in this file disagreed for a commit — one measured the raw string, one the trimmed — so a
+    /// 64-character tag with a trailing space was "not a tag" here and a good tag there. The commit that
+    /// reconciled them then wrote an eighth copy in <c>AnthropicTagAdvisor</c>, untrimmed again, under a
+    /// comment in this file saying a third arithmetic would be the same defect. That is the shape
+    /// CLAUDE.md's item 41 is on file for: the count only falls when the RULE moves into one place.</para>
+    /// <para>⚠️ Trims first. Callers pass raw user input, and the padding is not part of the tag —
+    /// <see cref="Canonicalize"/> stores the trimmed form, so measuring the untrimmed one would refuse a
+    /// tag the store would have accepted.</para></summary>
+    public static bool IsOverLength(string candidate) => candidate.Trim().Length > MaxLength;
+
+    /// <summary>What to tell someone who typed one, so three screens can't word the same refusal three
+    /// ways. ⚠️ "or fewer", not "under": <see cref="IsOverLength"/> admits a tag of exactly
+    /// <see cref="MaxLength"/>, and the copy this replaced said "under 64 characters" on both screens
+    /// that carried it — a message that contradicted the guard it described.</summary>
+    public static string TooLongMessage => $"That tag is too long — keep it to {MaxLength} characters or fewer.";
+
     /// <summary>Starter tags. Descriptive, orthogonal to the store-aisle Category; users can add more.</summary>
     public static readonly IReadOnlyList<string> Seed =
     [
@@ -23,15 +53,64 @@ public static class TagVocabulary
     /// plural/typo), or null if it's genuinely new. Cheap and instant — the first dedup stage.</summary>
     public static string? FindNearDuplicate(string candidate, IEnumerable<string> existing)
     {
-        var key = Normalize(candidate);
+        var trimmed = candidate.Trim();
+        if (IsOverLength(trimmed)) return null; // not a tag — see IsOverLength
+        // ⚠️ Normalizes the string the cap MEASURED, not the one the caller passed. Those were different
+        // for one commit: the cap read Trim().Length while Normalize ran on the raw argument, so four
+        // megabytes of padding around sixty real characters passed the cap and was then NFC-normalized,
+        // split and re-joined at full length — the allocation the cap exists to prevent, waved through by
+        // the cap itself. One string, measured and used.
+        var key = Normalize(trimmed);
         if (key.Length == 0) return null;
+
+        // ⚠️ TWO passes, because one pass answers the wrong question. Checking both conditions per
+        // element means a one-edit neighbour EARLIER in the list beats an identical tag later: with
+        // ["Pants", "Pan"] a candidate of "Pans" normalizes to "pan", matches "pant" by one insertion,
+        // and the household is offered "Pants" for a tag it already has as "Pan". Harmless while this
+        // only ever read text a person typed; it stopped being harmless when the LLM advisor started
+        // asking this question about a MODEL's reply, where naming the wrong existing tag is a wrong
+        // answer rather than a missed one.
+        var keys = new List<(string Tag, string Key)>();
         foreach (var tag in existing)
         {
-            var other = Normalize(tag);
+            // ⚠️ EVERY side, not just the candidate. The first version of this cap guarded the
+            // candidate only — and this loop normalizes each EXISTING entry, so one over-long entry in the
+            // vocabulary re-paid the quadratic cost on every later call. That was not hypothetical: the
+            // cap made FindNearDuplicate answer null for an over-long candidate, Upload.AddTag reads null
+            // as "genuinely new", and AddNewTag put the monster straight into the in-memory vocabulary
+            // every later lookup then walked. The cap closed the front door and held the back one open.
+            //
+            // ⚠️ This skip CHANGES THE ANSWER, and it is a deliberate trade rather than a free one. The
+            // suppression that used to sit here claimed the opposite — "an entry longer than the cap
+            // cannot be within one edit of a candidate that is within it", so removing the `continue` was
+            // said to be unobservable. That is false, because Normalize SHRINKS: it collapses interior
+            // whitespace runs and NFC composes a base plus a combining mark into one character. An entry
+            // of "a", a thousand spaces, "b" is 1002 raw characters and normalizes to "a b" — a candidate
+            // of "a b" matches it exactly, and this line is what makes the method answer "genuinely new"
+            // instead. A missing test was presented as an equivalent mutant; the test that disproves it
+            // is An_entry_whose_raw_form_is_over_the_cap_is_not_a_dedup_target.
+            //
+            // The trade is taken anyway, and measured RAW on purpose: the cost this bounds is the cost of
+            // normalizing at all, so a cap that had to normalize first to decide would have already paid
+            // it. A stored tag can only get here through Canonicalize, which caps the raw form before it
+            // writes — so in a household with no pre-cap rows this loop never skips anything. What it
+            // protects against is a legacy row written before the cap existed, where the column has no
+            // length and one 4 MB monster would otherwise be re-normalized on every later call for that
+            // household. The cost of the trade is a legacy entry in decomposed form (33 decomposed "é" is
+            // 66 raw characters, 33 after NFC) quietly dropping out of dedup for that household — noted
+            // in docs/backlog.md rather than hidden here.
+            //
+            // ⚠️ The shared predicate, like every other site — see IsOverLength for why writing the
+            // arithmetic out here a third time was the defect this file kept reintroducing.
+            var entry = tag.Trim();
+            if (IsOverLength(entry)) continue;
+            var other = Normalize(entry);
             if (other == key) return tag;
-            // One-edit typo or a trailing-letter slip on an otherwise-identical tag.
-            if (Math.Abs(other.Length - key.Length) <= 1 && LevenshteinAtMost1(key, other)) return tag;
+            keys.Add((tag, other));
         }
+        // One-edit typo or a trailing-letter slip on an otherwise-identical tag.
+        foreach (var (tag, other) in keys)
+            if (Math.Abs(other.Length - key.Length) <= 1 && LevenshteinAtMost1(key, other)) return tag;
         return null;
     }
 
@@ -45,7 +124,7 @@ public static class TagVocabulary
     public static string? Canonicalize(string candidate, IReadOnlyList<string> existing, List<string> vocabulary)
     {
         var tag = candidate.Trim();
-        if (tag.Length == 0) return null;
+        if (tag.Length == 0 || IsOverLength(tag)) return null; // see IsOverLength: a 4 MB "tag" is not a tag
         // Resolve against the vocabulary in order: an exact (case-insensitive) match, then a near-dup of
         // a known tag, then the candidate itself when it is genuinely new.
         var canonical = vocabulary.FirstOrDefault(v => string.Equals(v, tag, StringComparison.OrdinalIgnoreCase));
@@ -75,10 +154,24 @@ public static class TagVocabulary
     }
 
     // Lowercase, collapse whitespace, drop a trailing plural 's' so "Condiments" ≈ "condiment".
+    //
+    // ⚠️ And put it in one Unicode normal form first, because "Café" typed by the household and
+    // "Café" returned by a model can be different strings — a precomposed é against an e plus a
+    // combining accent. They are one word to anyone reading them, and an ordinal comparison calls them
+    // different, so the dedup declines and the tag cloud fragments on a difference nobody can see. The
+    // Levenshtein pass below does not rescue it either: the two spellings are two edits apart, not one.
     private static string Normalize(string s)
     {
-        var collapsed = string.Join(' ', s.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToLowerInvariant();
+        var collapsed = string.Join(' ', Fold(s).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToLowerInvariant();
         return collapsed.EndsWith('s') && collapsed.Length > 3 ? collapsed[..^1] : collapsed;
+    }
+
+    // Ill-formed UTF-16 cannot be normalized and throws. Comparing it as written is the honest fallback:
+    // it can only ever fail to find a near-duplicate, never find the wrong one.
+    private static string Fold(string s)
+    {
+        try { return s.Normalize(); }
+        catch (ArgumentException) { return s; }
     }
 
     // True when a and b differ by at most one single-character edit (insert/delete/substitute). The one

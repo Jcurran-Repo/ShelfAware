@@ -10,6 +10,7 @@ using ShelfAware.Core.Prediction;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Settings;
 using ShelfAware.Core.Shopping;
+using ShelfAware.Core.Billing;
 using Category = ShelfAware.Core.Domain.Category;
 
 namespace ShelfAware.Llm;
@@ -22,6 +23,10 @@ namespace ShelfAware.Llm;
 public class AnthropicPantryChat : IPantryChat
 {
     private const int MaxTurns = 5;
+
+    /// <summary>The one tool whose only consumer is the hands-free reader, named once so the gate that
+    /// withholds it and the declaration that defines it cannot drift apart.</summary>
+    private const string GoToStep = "go_to_step";
     private static readonly string SystemPrompt = ReadEmbedded("Prompts.pantry-chat-system.txt");
 
     private readonly IChatClient _chat;
@@ -50,9 +55,10 @@ public class AnthropicPantryChat : IPantryChat
 
     public async Task<ChatResult> HandleAsync(
         string userText, IReadOnlyList<ChatTurn>? history = null, string? screenContext = null,
-        CancellationToken cancellationToken = default)
+        CookAlongState? cookAlong = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(userText)) return ChatResult.Fail("Type something to update.");
+        await using var action = AiActionScope.Begin(ServiceAction.ChatTurn);
 
         var products = await _store.GetProductsAsync(cancellationToken);
         var knownTags = await _store.GetKnownTagsAsync(cancellationToken);
@@ -74,7 +80,7 @@ public class AnthropicPantryChat : IPantryChat
         {
             ModelId = _options.ChatModel,
             MaxOutputTokens = 1024,
-            Tools = BuildTools(),
+            Tools = BuildTools(cookAlong),
         };
         // Replay prior (user, assistant) exchanges so follow-ups resolve against what was just said,
         // then append the new user turn. Empty history = the original single-turn behaviour.
@@ -91,6 +97,7 @@ public class AnthropicPantryChat : IPantryChat
 
         var actions = new List<string>();
         var nav = new NavigationTarget(); // set by open_page / read_recipe; carried out on ChatResult
+        var wrote = new TurnWrites(action); // ⚠️ NOT set by either of those — see the type
 
         for (var turn = 0; turn < MaxTurns; turn++)
         {
@@ -99,14 +106,35 @@ public class AnthropicPantryChat : IPantryChat
             {
                 response = await _chat.GetResponseAsync(messages, chatOptions, cancellationToken);
             }
-            catch (OperationCanceledException)
+            // ⚠️ WHOSE cancellation. An unconditional rethrow here also catches an HttpClient TIMEOUT,
+            // which is a provider failure and belongs in the catch below; rethrown unfiltered it escapes
+            // past the plain copy and blanks whichever surface invoked it, which the tool loop's own
+            // comment says it exists to prevent. The filter is what tells the two apart.
+            //
+            // ⚠️ The version of this comment written on 2026-09-19 said "no caller of HandleAsync passes
+            // a token", which is FALSE: RecipeReadAloud's cook-along passes a real cancellable source and
+            // cancels it when the reader closes mid-turn. The three other callers pass nothing. The guard
+            // was right and the reason given for it was wrong — in a commit whose own message complained
+            // that two hand-written copies of this argument named the wrong call sites.
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                throw; // the caller cancelled (e.g. circuit gone) — not a model failure
+                throw; // the caller really did cancel (e.g. circuit gone) — not a model failure
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Pantry chat call to the model failed on turn {Turn}.", turn + 1);
-                return ChatResult.Fail($"Sorry — I couldn't reach the assistant just now. ({ex.Message})");
+                // No settlement here, deliberately. A turn that already wrote to the pantry on an earlier
+                // round has settled at the write (TurnWrites.Mark), so the charge stands for work the
+                // household can see; a turn that wrote nothing settles nothing and is refunded in full.
+                // Both are already true by the time this line runs, and a Delivered call here would be a
+                // second place answering a question that is already answered — which is how the two
+                // cancellation exits below came to be wrong.
+                // ⚠️ The exception text goes to the LOG above and NOT into this reply. An
+                // HttpRequestException's message can name an internal host, a proxy URL or a provider
+                // account detail, and this string is rendered verbatim in the chat box and in PushToTalk.
+                // The other five services at this boundary were converted on 2026-09-19 and this one was
+                // missed; ProviderErrorCopyTests now covers it too.
+                return ChatResult.Fail("Sorry — I couldn't reach the assistant just now. Please try again.");
             }
 
             var calls = response.Messages.SelectMany(m => m.Contents).OfType<FunctionCallContent>().ToList();
@@ -114,7 +142,22 @@ public class AnthropicPantryChat : IPantryChat
             {
                 var text = response.Text.Trim();
                 _logger.LogInformation("Pantry chat completed on turn {Turn} with {ActionCount} action(s) applied.", turn + 1, actions.Count);
-                return ChatResult.Ok(text.Length > 0 ? text : "Done.", actions, nav.Url, nav.HandsOff, nav.Step);
+                // ⚠️ Asked of ProviderReply, not of `text.Length`, and it is the same question the four
+                // advisors ask — this exit was the fifth site answering it privately, one method above the
+                // guard that exists to stop exactly that. A final round with no tool calls and no text is
+                // a model that stopped without saying anything; the household is told "Done." when nothing
+                // was done, and that is not a turn to charge for. Writes have already settled at the
+                // write, and a navigation this exit carries out counts as much here as at the turn limit.
+                //
+                // ⚠️ Asked ONCE and used twice, because the line below was a sixth site asking it
+                // privately — `text.Length > 0` — and the two answers disagreed on exactly the inputs
+                // this whole definition exists for. A reply of "." billed as nothing and rendered as the
+                // household's answer: a bare period in the chat box, spoken aloud on the voice surfaces,
+                // beside a refund saying the model never spoke. Found by writing the test a review asked
+                // for on the guard above, which is the only way this class is ever found.
+                var answered = ProviderReply.IsAnAnswer(text);
+                if (answered || nav.Moved) action.Answered();
+                return ChatResult.Ok(answered ? text : "Done.", actions, nav.Url, nav.HandsOff, nav.Step);
             }
 
             // Carry the assistant's tool-call turn back into the history, then answer each call.
@@ -126,11 +169,19 @@ public class AnthropicPantryChat : IPantryChat
                 string text;
                 try
                 {
-                    (text, _) = await ExecuteToolAsync(call, products, actions, nav, cancellationToken);
+                    // ⚠️ The isError flag is READ, not discarded. It was `(text, _)` at the only call site
+                    // in the file, so every `true` a tool handler returned was dead state — including a new
+                    // one added for "couldn't reach the recipe assistant", a genuine provider failure that
+                    // therefore left no trace anywhere. A tool that fails softly into the model's context
+                    // is invisible by design to the household; the log line is the only signal an operator
+                    // gets that a tool is limping, which is the same argument the provider catches make.
+                    bool isError;
+                    (text, isError) = await ExecuteToolAsync(call, products, actions, nav, wrote, cookAlong, cancellationToken);
+                    if (isError) _logger.LogWarning("Chat tool {Tool} reported a failure to the model: {Text}", call.Name, text);
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    throw; // caller cancelled (e.g. circuit gone) — not a tool failure
+                    throw; // the caller really did cancel — not a tool failure
                 }
                 catch (Exception ex)
                 {
@@ -161,6 +212,18 @@ public class AnthropicPantryChat : IPantryChat
         }
 
         _logger.LogWarning("Pantry chat hit the {MaxTurns}-turn limit without a final reply ({ActionCount} action(s) applied).", MaxTurns, actions.Count);
+        // ⚠️ Settled when something reached the household, and NOT otherwise. Running out of turns is not
+        // an answer; what this exit is worth paying for is what it carries out — the navigation it
+        // performs, which ChatResult.Ok hands to the screen. A turn whose every tool call came back as
+        // validation text ("No product matches X") arrives here having carried out nothing, tells the
+        // household "Stopped after several steps without finishing", and must not be charged for it.
+        //
+        // ⚠️ `actions.Count` is NOT consulted, and the first version of this line consulted it under a
+        // paragraph explaining why it could. It cannot do any work: every actions.Add in this file sits
+        // beside either a wrote.Mark() or a nav write, so a non-empty list means the act has already
+        // settled or is about to on the line below. A term that can never change an outcome, with a
+        // rationale attached, is worse than no term — the rationale is what the next reader trusts.
+        if (nav.Moved) action.Answered();
         return ChatResult.Ok(
             actions.Count > 0 ? $"Applied: {string.Join(", ", actions)}." : "Stopped after several steps without finishing.",
             actions, nav.Url, nav.HandsOff, nav.Step);
@@ -171,10 +234,57 @@ public class AnthropicPantryChat : IPantryChat
     /// <see cref="HandsOff"/> marks a navigation that starts its own audio on the destination
     /// (read_recipe), so a persistent listening agent knows to stop rather than talk over it.
     /// <see cref="Step"/> moves a hands-free cook-along that's already on screen.</summary>
-    private sealed class NavigationTarget { public string? Url; public bool HandsOff; public int? Step; }
+    private sealed class NavigationTarget
+    {
+        public string? Url;
+        public bool HandsOff;
+        public int? Step;
+
+        /// <summary>⚠️ Whether this turn told the screen to MOVE — asked in one place because two places
+        /// asked it and disagreed. The exits carry all three fields out; the turn-limit exit's settlement
+        /// read only <see cref="Url"/>, so a hands-free cook-along whose rounds were <c>go_to_step</c>
+        /// calls moved the reader on screen, ran out of turns, and was refunded in full for work the
+        /// household watched happen. <see cref="HandsOff"/> is not part of it: it qualifies a
+        /// <see cref="Url"/> navigation rather than being one.
+        ///
+        /// <para>⚠️ "Told to", not "did", and the gap is real for <see cref="Step"/> alone: a step is not
+        /// range-checked here (only the reader on screen knows how long its recipe is) and there may be no
+        /// reader open at all, in which case the destination drops it. A turn that asked for a step it
+        /// could not have, and then ran out of turns, is charged for a screen that never moved. It is the
+        /// narrow side of a choice: reading <see cref="Step"/> as nothing refunds every cook-along turn
+        /// that ends at the limit, which is the common case and the one a household would notice.</para></summary>
+        public bool Moved => Url is not null || Step is not null;
+    }
+
+    /// <summary>Settles the act at each write this turn makes — marked beside the write, never inferred.
+    ///
+    /// <para>⚠️ It exists because the actions list cannot answer this. That list is what the turn will tell
+    /// the household it did, and the read-only tools write their lines into it too ("opened reports",
+    /// "reading Chili"). Billing read it once, and a turn that navigated and then lost the provider was
+    /// charged for work it never did — the failure exit discards the navigation as well, so the household
+    /// got nothing at all. Two questions, two answers, and this one is not asked from the actions list.</para>
+    ///
+    /// <para>⚠️ Settling AT THE WRITE, rather than on the way out, is the whole point. A turn has four ways
+    /// out — a final reply, the turn limit, a provider failure and a cancelled circuit — and a write is
+    /// worth paying for at every one of them, so asking each exit to remember that is three chances to
+    /// forget. It was forgotten twice: the cancellation exits refunded the whole turn while its pantry
+    /// writes stood, which a household can trigger at will by closing the tab. Marked here, a turn that
+    /// wrote is paid for however it ends. The two exits that still settle for themselves are settling
+    /// something else — an answer given, or a turn limit that carried actions out — not this.
+    /// <c>Delivered</c> is last-write-wins and clamped, and a chat turn is one unit, so marking repeatedly
+    /// is a no-op.</para></summary>
+    private sealed class TurnWrites(AiActionScope act)
+    {
+        /// <summary>This turn just persisted something the household can see. ⚠️ Called from every write,
+        /// including the ones that do not go through <c>IPantryStore</c> — <c>adapt_recipe</c> saves a
+        /// recipe variant through <c>IRecipeAdapter</c>, and the first version of this counted
+        /// <c>_store.</c> calls and missed exactly that one.</summary>
+        public void Mark() => act.Delivered(1);
+    }
 
     private async Task<(string text, bool isError)> ExecuteToolAsync(
-        FunctionCallContent call, IReadOnlyList<Product> products, List<string> actions, NavigationTarget nav, CancellationToken ct)
+        FunctionCallContent call, IReadOnlyList<Product> products, List<string> actions, NavigationTarget nav,
+        TurnWrites wrote, CookAlongState? cookAlong, CancellationToken ct)
     {
         string? Str(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsString(v) : null;
         decimal? Dec(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsDecimal(v) : null;
@@ -198,6 +308,7 @@ public class AnthropicPantryChat : IPantryChat
                 if (product is null)
                     return ($"No product matches \"{name}\". Call create_product first if it's new.", true);
                 await _store.RecordSignalAsync(product.Id, kind, ct);
+                wrote.Mark();
                 actions.Add($"{kind} → {product.Name}");
                 // ⚠️ "Recorded" alone is a lie when the signal can't take effect: §6.6 gives a same-day
                 // tie to the stock, so an OutNow OR a RunningLow filed while the last stock-back is today
@@ -223,6 +334,7 @@ public class AnthropicPantryChat : IPantryChat
                 var date = DateOnly.TryParse(Str("date"), out var d) ? d : DateOnly.FromDateTime(DateTime.Today);
                 var qty = Dec("quantity") is { } q && q > 0 ? q : 1m;
                 var result = await _store.AddPurchaseAsync(product.Id, date, qty, cancellationToken: ct);
+                wrote.Mark();
                 actions.Add($"purchase → {product.Name}");
                 return ($"Logged {qty:0.##} × {product.Name} on {date:yyyy-MM-dd}." +
                     (result.Retracked ? " It was untracked; this purchase resumed tracking — mention that to the user." : ""), false);
@@ -285,6 +397,7 @@ public class AnthropicPantryChat : IPantryChat
                     return ($"No product matches \"{name}\".", true);
                 var tracked = Bool("tracked") ?? false;
                 await _store.SetTrackingAsync(product.Id, tracked, ct);
+                wrote.Mark();
                 actions.Add($"{(tracked ? "tracking" : "untracked")} → {product.Name}");
                 return ($"{(tracked ? "Now tracking" : "Stopped tracking")} {product.Name}.", false);
             }
@@ -309,6 +422,7 @@ public class AnthropicPantryChat : IPantryChat
                 }
                 if (!await _store.SetExpirationAsync(product.Id, expiresOn, ct))
                     return ($"{product.Name} has no recorded purchases to carry a date.", true);
+                wrote.Mark();
                 actions.Add($"expiration → {product.Name}");
                 return (expiresOn is { } e
                     ? $"Noted — {product.Name} expires {e:yyyy-MM-dd}; after that date it's marked out automatically."
@@ -324,6 +438,7 @@ public class AnthropicPantryChat : IPantryChat
                 if (Bool("stop_counting") == true)
                 {
                     await _store.SetQuantityAsync(product.Id, 0, stopCounting: true, cancellationToken: ct);
+                    wrote.Mark();
                     actions.Add($"stopped counting {product.Name}");
                     return ($"Stopped counting {product.Name} — it goes back to running on its usual rhythm.", false);
                 }
@@ -340,6 +455,7 @@ public class AnthropicPantryChat : IPantryChat
                             : ($"{product.Name} has no count yet to adjust — say how many there are and I'll start from that.", true))
                         : ($"Couldn't set a count for {product.Name}.", true);
 
+                wrote.Mark();
                 actions.Add($"count → {product.Name}");
                 // Deliberately not echoing a computed total for a relative move: this method doesn't
                 // read the result back, and stating a number the engine might have clamped would be
@@ -390,6 +506,7 @@ public class AnthropicPantryChat : IPantryChat
                 }
                 var tags = StrList("tags") ?? [];
                 await _store.CreateProductAsync(name, category, tags, cancellationToken: ct);
+                wrote.Mark();
                 actions.Add($"created {name}");
                 return ($"Created {name} ({category}){(tags.Count > 0 ? $", tagged {string.Join(", ", tags)}" : "")}.", false);
             }
@@ -416,7 +533,7 @@ public class AnthropicPantryChat : IPantryChat
                         return ($"Couldn't think of any substitutes for {product.Name}.", false);
                 }
                 var added = await _store.AddSubstitutesAsync(product.Id, ideas, ct);
-                if (added.Count > 0) actions.Add($"substitutes → {product.Name}");
+                if (added.Count > 0) { actions.Add($"substitutes → {product.Name}"); wrote.Mark(); }
                 return (added.Count > 0
                     ? $"Added \"also works as\" for {product.Name}: {string.Join(", ", added)}."
                     : $"{product.Name} already has those substitutes.", false);
@@ -431,7 +548,7 @@ public class AnthropicPantryChat : IPantryChat
                 var tags = StrList("tags") ?? [];
                 if (tags.Count == 0) return ("Pass at least one tag.", true);
                 var added = await _store.AddTagsAsync(product.Id, tags, ct);
-                if (added.Count > 0) actions.Add($"tags → {product.Name}");
+                if (added.Count > 0) { actions.Add($"tags → {product.Name}"); wrote.Mark(); }
                 return (added.Count > 0
                     ? $"Tagged {product.Name}: {string.Join(", ", added)}."
                     : $"{product.Name} already has those tags (or near-duplicates of them).", false);
@@ -454,8 +571,10 @@ public class AnthropicPantryChat : IPantryChat
                 var honorExpirations = _settings is not null && await _settings.GetTrackExpirationDatesAsync(ct);
                 var onHand = PantryOnHand.EdibleInStock(products, today, honorExpirations).Select(p => p.Name).ToList();
                 var excluded = await _store.GetExcludedFoodsAsync(ct);
-                var recipe = (await _recipeAdvisor.SuggestAsync(request, onHand, excluded, ct)).FirstOrDefault();
-                if (recipe is null)
+                var ideas = await _recipeAdvisor.SuggestAsync(request, onHand, excluded, ct);
+                if (ideas is null)
+                    return ("I couldn't reach the recipe assistant just now. Please try again.", true);
+                if (ideas.FirstOrDefault() is not { } recipe)
                     return ($"I couldn't come up with a {request} recipe just now.", false);
 
                 // Buy only what they don't already have (Have = the model matched it to an on-hand product);
@@ -476,7 +595,7 @@ public class AnthropicPantryChat : IPantryChat
                 // A shopping-list add is NOT an "I'm out" signal — extras only, never RecordSignal (keeps the
                 // burn-rate/rebuy prediction honest).
                 var addedToList = await _store.AddGroceryExtrasAsync(missing, ct);
-                if (addedToList.Count > 0) actions.Add($"list += {addedToList.Count} for {recipe.Name}");
+                if (addedToList.Count > 0) { actions.Add($"list += {addedToList.Count} for {recipe.Name}"); wrote.Mark(); }
                 return (addedToList.Count > 0
                     ? $"Added {string.Join(", ", addedToList)} to your grocery list for {recipe.Name}."
                     : $"Everything for {recipe.Name} was already on your list.", false);
@@ -540,8 +659,16 @@ public class AnthropicPantryChat : IPantryChat
             {
                 var step = Int("step");
                 if (step is null || step < 0) return ("Give the step number to move to.", true);
-                // Not range-checked here: only the reader on screen knows how long its recipe is, and it
-                // re-checks. Overreaching would mean duplicating the recipe's length into the chat layer.
+                // ⚠️ Range-checked HERE, against the reader that is actually open. This used to record
+                // the step unchecked, on the reasoning that "only the reader on screen knows how long its
+                // recipe is, and it re-checks" — but the reader re-checks SILENTLY: past the end it drops
+                // the step and reads back the model's sentence, which says "Moving to step 12". So the
+                // household heard the move happen while the screen sat still, and paid for it. The recipe's
+                // length now rides in on CookAlongState, so the model is corrected before it can say
+                // anything, and the tool is not offered at all when no reader is open.
+                if (cookAlong is null) return ("There's no recipe open to move.", true);
+                if (step > cookAlong.StepCount)
+                    return ($"That recipe only has {cookAlong.StepCount} steps.", true);
                 nav.Step = (int)step;
                 return step == 0 ? ("Starting the recipe over.", false) : ($"Moving to step {step}.", false);
             }
@@ -595,6 +722,7 @@ public class AnthropicPantryChat : IPantryChat
                 if (adaptResult.Success)
                 {
                     actions.Add($"adapted {match.Name}");
+                    wrote.Mark(); // saves a recipe VARIANT — a real, household-visible write, via the adapter
                     nav.Url = "/recipes"; // show the new variant; keep listening (not a hand-off)
                 }
                 return (adaptResult.Message, !adaptResult.Success);
@@ -633,13 +761,13 @@ public class AnthropicPantryChat : IPantryChat
             "won't take effect yet — tell the user it'll register if they say so again once that stock date has passed.";
     }
 
-    private static IList<AITool> BuildTools()
+    private static IList<AITool> BuildTools(CookAlongState? cookAlong)
     {
         const string categoryEnum = """["Dairy","Meat","Produce","Pantry","Frozen","Beverage","Household","PetCare","PersonalCare","Other"]""";
 
         // Reuse the existing Anthropic tool definitions, wrapped as AITool via the SDK's AsAITool
         // helper so they flow through IChatClient. Tool calls come back as FunctionCallContent.
-        ToolUnion[] tools =
+        Tool[] tools =
         [
             MakeTool("record_signal",
                 "Record an explicit inventory statement about an existing product.",
@@ -740,7 +868,7 @@ public class AnthropicPantryChat : IPantryChat
             // and free, but it matches whole utterances — so a cough, a stutter, or a phrasing nobody
             // listed ("up next") fell through to here and got ANSWERED instead of obeyed. This turns a
             // grammar miss from the wrong outcome into a slower right one.
-            MakeTool("go_to_step",
+            MakeTool(GoToStep,
                 "Move the recipe reader to a step, while the user is cooking along hands-free (the context will say so, and which step they're on). Use this WHENEVER they are asking to move rather than asking a question — 'next', 'up next', 'go back', 'read that again', 'take me to step 3', 'carry on', 'skip ahead' — no matter how they phrase it, including when their words are garbled or run together. Steps are 1-based; use 0 to start over from the introduction. Do NOT use it to answer a question ABOUT a step ('what goes in at step 3') — answer those normally.",
                 """
                 {
@@ -789,7 +917,20 @@ public class AnthropicPantryChat : IPantryChat
                 ["recipe"]),
         ];
 
-        return tools.Select(t => t.AsAITool()).ToList();
+        // ⚠️ A tool that cannot do anything is not offered. go_to_step moves the hands-free reader and
+        // nothing else consumes it, so on the dashboard, the push-to-talk button and the roaming agent it
+        // was a tool whose only possible outcome was the model announcing a move that no code anywhere
+        // would carry out — and the act was charged for saying so. Offering it only when a reader is open
+        // removes the invitation rather than correcting the answer afterwards.
+        // ⚠️ Filtered as Tool, BEFORE the conversion, because ToolUnion.AsAITool() wraps each one in
+        // a type whose Name is the literal string "Tool" for every tool in the list. The first version of
+        // this filter ran after the conversion and so matched nothing: go_to_step was still offered on
+        // every surface, and the test asserting it was withheld passed vacuously. It was the test for the
+        // OTHER side — that the tool IS offered when a reader is open — that failed and gave it away.
+        return tools
+            .Where(t => cookAlong is not null || t.Name != GoToStep)
+            .Select(t => ((ToolUnion)t).AsAITool())
+            .ToList();
     }
 
     // Exact (case-insensitive) → unique substring either way → token containment (the eval harness's
@@ -829,7 +970,7 @@ public class AnthropicPantryChat : IPantryChat
             .Where(t => t is not ("the" or "a" or "an" or "and" or "with" or "of" or "recipe"))
             .ToHashSet();
 
-    private static ToolUnion MakeTool(string name, string description, string propertiesJson, string[]? required = null) =>
+    private static Tool MakeTool(string name, string description, string propertiesJson, string[]? required = null) =>
         new Tool
         {
             Name = name,

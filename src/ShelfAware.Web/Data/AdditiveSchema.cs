@@ -167,6 +167,12 @@ public static class AdditiveSchema
         // subscription, so it survives a pantry "delete my data". A new table — existing rows unaffected.
         EnsureTable(db, table: "CreditLedger");
 
+        // 2026-09-19: which consumption a Reversal row hands back (remediation phase 7). Existing rows land
+        // on NULL, which is exactly right: every row written before this existed is a kind that never
+        // reverses anything. ⚠️ The unspent-allowance sum reads it — a Reversal it cannot attribute is left
+        // out of that sum rather than guessed at, which is the direction that cannot eat purchased credit.
+        EnsureColumn(db, table: "CreditLedger", column: "ReversesEntryId", definition: "INTEGER NULL");
+
         // 2026-08-24: household entitlement tiers (docs/subscription-plan.md phase 1 — the Founder tier
         // + the subscription seam). Tier is an enum → INTEGER, so existing rows land on Free (0) with no
         // FounderSince, which behaves exactly as a pre-tier household did.
@@ -209,6 +215,18 @@ public static class AdditiveSchema
         // 2026-09-05: the managed demo box's box-wide daily AI counters (§10) — operator data, like the
         // error log. A new table — existing rows unaffected, and unwritten unless a Demo cap is configured.
         EnsureTable(db, table: "DemoUsage");
+
+        // 2026-09-19: per-day, per-action reconciliation of credits charged against provider cost (the
+        // Shelf Aware credit, docs/remediation-plan.md §7) — operator data, box-wide, like DemoUsage above.
+        // A new table — existing rows unaffected.
+        EnsureTable(db, table: "ServiceMargin");
+
+        // 2026-09-19: the part of a day's cost that a household was actually on the hook for, split out from
+        // the all-calls total so /admin's cost-per-charge divides one population (docs/remediation-plan.md
+        // §9). EnsureTable above returns early when the table exists, so a box booted off the branch between
+        // these two commits would never get the column — and ServiceMarginMeter's best-effort catch would
+        // swallow the "no such column" forever while /admin threw. One line, and the drill is the drill.
+        EnsureColumn(db, table: "ServiceMargin", column: "BillableCostMicros", definition: "INTEGER NOT NULL DEFAULT 0");
     }
 
     /// <summary>Create <paramref name="table"/> (and its indexes) on a DB built before it existed. The

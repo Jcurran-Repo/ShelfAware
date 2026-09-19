@@ -118,16 +118,24 @@ public class RecipesSuggestAndAdaptTests : PageTestContext
         Assert.Equal(storedBefore, await AppSettings.GetAsync(SettingKeys.LastRecipeSuggestions));
     }
 
-    [Fact]
-    public void An_empty_answer_reads_as_try_rephrasing_not_as_success()
+    // ⚠️ ONE story for both. The engine refunds an empty reply and a failed call alike —
+    // recipe-suggest-system.txt gives the model no way to decline, so nothing coming back is it failing.
+    // This test used to pin "No ideas came back — try rephrasing" for the empty case, which blamed the
+    // household's wording for a failure the ledger had already recorded as ours: the settlement and the
+    // sentence beside it telling opposite stories. Both rows now assert the same true sentence, and the
+    // null row is the one no test could reach at all while the fake's property was non-nullable.
+    [Theory]
+    [InlineData(true)]  // the model answered, with nothing usable in it
+    [InlineData(false)] // the call never landed — null, not an escaping exception
+    public void Nothing_usable_coming_back_reads_as_our_failure_whichever_way_it_failed(bool empty)
     {
-        SuggestionAdvisor.Suggestions = [];
+        SuggestionAdvisor.Suggestions = empty ? [] : null;
         var cut = RenderRecipes();
 
         Suggest(cut, "unicorn stew");
 
         cut.WaitForAssertion(() =>
-            Assert.Equal("No ideas came back — try rephrasing.", cut.Find("p.error").TextContent.Trim()));
+            Assert.Equal("Couldn't get ideas just now — please try again.", cut.Find("p.error").TextContent.Trim()));
         Assert.Empty(cut.FindAll(".recipe-card"));
     }
 

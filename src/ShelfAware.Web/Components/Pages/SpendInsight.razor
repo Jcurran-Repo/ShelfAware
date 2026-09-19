@@ -189,10 +189,11 @@ else
     private static string Money(decimal amount) => amount.ToString("C");
 
     // Grocery semantics: a price increase costs more (red), a decrease is cheaper (green).
+    // `_ when` guards, not bare relational patterns: Razor reads a leading `<` as markup (docs/environment.md).
     private static string TrendColor(Ticker t) => t.PrevDelta switch
     {
-        > 0 => "var(--overdue-line)",
-        < 0 => "var(--stocked-line)",
+        _ when t.PrevDelta > 0 => "var(--overdue-line)",
+        _ when t.PrevDelta < 0 => "var(--stocked-line)",
         _ => "var(--accent)"
     };
 

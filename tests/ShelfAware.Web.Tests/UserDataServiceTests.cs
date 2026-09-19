@@ -46,25 +46,25 @@ public class UserDataServiceTests : IDisposable
     [Fact]
     public async Task ExportAsync_includes_the_credit_ledger()
     {
-        await Ledger.GrantAsync(HouseholdId, 1_650_000, "Welcome grant");
-        await Ledger.RecordConsumptionAsync(HouseholdId, 150_000, "chat");
+        await Ledger.GrantAsync(HouseholdId, 100, "Welcome grant");
+        await Ledger.RecordConsumptionAsync(HouseholdId, 2, "chat");
 
         var export = await Service().ExportAsync();
 
-        Assert.Equal(2, export.CreditLedger.Count);                              // the money record is theirs
-        Assert.Equal(1_500_000, export.CreditLedger.Sum(e => e.AmountMicros));   // 1,650,000 − 150,000
+        Assert.Equal(2, export.CreditLedger.Count);                    // the money record is theirs
+        Assert.Equal(98, export.CreditLedger.Sum(e => e.AmountCredits)); // 100 − 2
     }
 
     [Fact]
     public async Task DeleteAllAsync_leaves_the_credit_ledger_alone()
     {
-        await Ledger.GrantAsync(HouseholdId, 1_650_000, "Welcome grant");
+        await Ledger.GrantAsync(HouseholdId, 100, "Welcome grant");
         await Seed(); // pantry content too, which the delete DOES take
 
         await Service().DeleteAllAsync();
 
         // The pantry is wiped, but the balance survives — destroying credit would be destroying money.
-        Assert.Equal(1_650_000, await Ledger.GetBalanceMicrosAsync(HouseholdId));
+        Assert.Equal(100, await Ledger.GetBalanceCreditsAsync(HouseholdId));
     }
 
     [Fact]

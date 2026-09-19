@@ -18,6 +18,7 @@ using ShelfAware.Web.Components.Pages;
 using ShelfAware.Web.Data;
 using ShelfAware.Web.Services;
 using ShelfAware.Web.Tests;
+using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Web.UI.Tests;
 
@@ -578,7 +579,7 @@ public class SettingsManagedModeTests : SettingsTestBase
         // #5: the credit balance is a BILLING feature. On a managed box with billing OFF (self-host / dev /
         // family — §7 "unlimited by default"), nothing spends credits, so the panel is hidden even with a
         // balance present. (Mutation guard for the Payments.IsConfigured condition on the balance line.)
-        Entitlements.BalanceMicros = 1_500_000;
+        Entitlements.BalanceCredits = 1_500_000;
 
         var section = Section(RenderSettings(), "AI usage");
 
@@ -625,15 +626,67 @@ public class SettingsBillingPanelTests : SettingsTestBase
     [Fact]
     public void A_managed_household_with_billing_sees_its_credit_balance()
     {
-        // With billing ON, the balance shows. Settings reads it via IEntitlements.GetBalanceMicrosAsync
+        // With billing ON, the balance shows. Settings reads it via IEntitlements.GetBalanceCreditsAsync
         // (the ONE definition that runs the lazy allowance) — so the test drives the fake's balance, not
         // raw ledger rows, which is exactly the wiring #5 corrected.
-        Entitlements.BalanceMicros = 1_500_000;
+        Entitlements.BalanceCredits = 150;
 
         var section = Section(RenderSettings(), "AI usage");
 
         Assert.Contains("Credit balance", section.TextContent);
-        Assert.Contains(1.50m.ToString("C2"), section.TextContent); // $1.50, same culture both sides
+        // In CREDITS, not dollars: the unit the household spends is the unit it is shown. Asserted through
+        // CreditPricing.FormatCredits so the page and the test can't disagree about how a credit is written.
+        Assert.Contains(CreditPricing.FormatCredits(150), section.TextContent);
+    }
+
+    [Fact]
+    public void The_price_list_is_published_beside_the_balance()
+    {
+        // ⚠️ An abstract unit with a hidden exchange rate is a casino chip. The price of every action is
+        // shown to the household that spends on it, from the SAME BillingOptions the charge reads — so a
+        // price can't be quoted here and charged differently there.
+        Entitlements.BalanceCredits = 150;
+
+        var section = Section(RenderSettings(), "AI usage");
+
+        var rows = section.QuerySelectorAll(".price-list tbody tr")
+            .Select(r => r.QuerySelectorAll("td").Select(c => c.TextContent.Trim()).ToArray())
+            .ToDictionary(c => c[0], c => c[1]);
+
+        // ⚠️ Assert the NUMBER, not just the label. This test used to check that two action names and the
+        // word "free" appeared somewhere in the section, which is a test that cannot fail when a price is
+        // quoted wrongly — exactly the drift its own comment claims to prevent.
+        var billing = new BillingOptions();
+        Assert.Equal(
+            CreditPricing.CreditsFor(billing, ServiceAction.ChatTurn).ToString(),
+            rows[CreditPricing.Describe(ServiceAction.ChatTurn)]);
+        Assert.Equal(
+            CreditPricing.CreditsFor(billing, ServiceAction.ReceiptExtraction).ToString(),
+            rows[CreditPricing.Describe(ServiceAction.ReceiptExtraction)]);
+        // The zero-priced actions say so in words rather than showing a bare "0", which reads as an error.
+        Assert.Equal("free", rows[CreditPricing.Describe(ServiceAction.TagSuggest)]);
+        // ⚠️ And a unit-priced action quotes its RATE, not a number that would be wrong for every plan but
+        // the shortest. The household picks the horizon, so the list has to say what it costs per meal.
+        Assert.Equal(
+            CreditPricing.QuotePrice(billing, ServiceAction.MealPlan),
+            rows[CreditPricing.Describe(ServiceAction.MealPlan)]);
+        Assert.Equal("1 per 3 meals", rows[CreditPricing.Describe(ServiceAction.MealPlan)]);
+    }
+
+    [Fact]
+    public void The_price_list_quotes_no_price_for_something_nothing_charges_for()
+    {
+        // ⚠️ Reading a recipe aloud was published at 3 credits and charged by NOTHING — speech never enters
+        // the metering layer — so a household read a price it could not be charged, on the one surface built
+        // to make the credit legible. The list now renders CreditPricing.MeteredActions, which a source
+        // scan holds equal to the actual charge sites (AiActionScopeSiteTests).
+        Entitlements.BalanceCredits = 150;
+
+        var section = Section(RenderSettings(), "AI usage");
+
+        Assert.DoesNotContain(CreditPricing.Describe(ServiceAction.TtsSynthesis), section.TextContent);
+        Assert.DoesNotContain(CreditPricing.Describe(ServiceAction.RealtimeMinute), section.TextContent);
+        Assert.Contains(CreditPricing.Describe(ServiceAction.MealPlan), section.TextContent);
     }
 
     [Fact]

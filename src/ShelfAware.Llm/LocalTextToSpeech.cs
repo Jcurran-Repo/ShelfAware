@@ -104,8 +104,11 @@ public class LocalTextToSpeech : ITextToSpeech
         }
         catch (Exception ex)
         {
+            // Exception text to the log, plain copy to the screen — see AnthropicReceiptExtractor. The
+            // sidecar is local, so this most often means it is down; the message says what the person
+            // can do, and the log says which of the two it was.
             _logger.LogError(ex, "Text-to-speech call to the local sidecar failed.");
-            return TextToSpeechResult.Fail(ex.Message);
+            return TextToSpeechResult.Fail("Couldn't reach text-to-speech just now — please try again.");
         }
     }
 

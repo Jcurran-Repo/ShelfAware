@@ -5,6 +5,7 @@ using ShelfAware.Web.Billing;
 using ShelfAware.Web.Data;
 using ShelfAware.Web.Diagnostics;
 using ShelfAware.Web.Wishlist;
+using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Web.Tests;
 
@@ -172,6 +173,101 @@ public class AdditiveSchemaTests : IDisposable
 
         db.DemoUsage.Add(new DemoUsageDay { Day = new DateOnly(2026, 9, 5), Calls = 3 });
         await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task Creates_the_ServiceMargin_table_on_an_older_auth_db_with_the_fresh_schema()
+    {
+        // The per-action reconciliation table (2026-09-19, the credit unit): box-wide operator data in
+        // auth.db, so it rides EnsureTable like its DemoUsage/ErrorLog neighbours rather than the pantry
+        // drill. ⚠️ Its unique index is part of the shape being pinned — the upsert's race handling keys
+        // on the constraint, so a rebuild that dropped the index would turn a race into silent duplicate
+        // rows instead of a caught one.
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await TableSchemaAsync(db, "ServiceMargin");
+        Assert.NotEmpty(fresh);
+
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE ServiceMargin;");
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent
+
+        Assert.Equal(fresh, await TableSchemaAsync(db, "ServiceMargin"));
+
+        db.ServiceMargin.Add(new ServiceMarginDay
+        {
+            Day = new DateOnly(2026, 9, 19), Action = ServiceAction.ChatTurn,
+            Calls = 3, Charges = 1, CreditsCharged = 2, CostMicros = 1_200, BillableCostMicros = 400,
+        });
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task Adds_the_billable_cost_column_to_a_ServiceMargin_table_that_predates_it()
+    {
+        // ⚠️ EnsureTable above returns early when the table EXISTS, so it can never add a column to one —
+        // which is why this needs its own EnsureColumn line, and why that line needs this test. A box booted
+        // between the two commits on this branch would otherwise hit "no such column: BillableCostMicros"
+        // forever: ServiceMarginMeter's best-effort catch swallows it (reconciliation silently stops), and
+        // /admin throws outright.
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await ColumnTypesAsync(db, "ServiceMargin");
+
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE ServiceMargin DROP COLUMN BillableCostMicros;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "ServiceMargin"));
+
+        // And a row round-trips through the migrated column.
+        db.ServiceMargin.Add(new ServiceMarginDay
+        {
+            Day = new DateOnly(2026, 9, 19), Action = ServiceAction.ChatTurn,
+            Calls = 3, Charges = 1, CreditsCharged = 2, CostMicros = 1_200, BillableCostMicros = 400,
+        });
+        await db.SaveChangesAsync();
+        Assert.Equal(400, (await db.ServiceMargin.AsNoTracking().SingleAsync()).BillableCostMicros);
+    }
+
+    [Fact]
+    public async Task Adds_the_reversal_link_to_a_CreditLedger_table_that_predates_it()
+    {
+        // Same shape as the column above, same reason. A box booted before the refund existed has a
+        // CreditLedger with no ReversesEntryId, and EnsureTable cannot add one to a table that exists.
+        // ⚠️ The consequence is worse here than losing reconciliation: every read of the ledger goes
+        // through EF, so a missing column means "no such column: ReversesEntryId" on the balance itself —
+        // the household's money, on every page that shows it.
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await ColumnTypesAsync(db, "CreditLedger");
+
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE CreditLedger DROP COLUMN ReversesEntryId;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "CreditLedger"));
+
+        // A legacy row reads back with no link, which is what every pre-refund row is.
+        db.CreditLedger.Add(new CreditLedgerEntry
+        {
+            HouseholdId = "hh-a", Kind = CreditEntryKind.Consumption, AmountCredits = -2, Reason = "chat",
+        });
+        await db.SaveChangesAsync();
+        Assert.Null((await db.CreditLedger.AsNoTracking().SingleAsync()).ReversesEntryId);
+
+        // And a reversal round-trips carrying the charge it undoes.
+        var charge = (await db.CreditLedger.AsNoTracking().SingleAsync()).Id;
+        db.CreditLedger.Add(new CreditLedgerEntry
+        {
+            HouseholdId = "hh-a", Kind = CreditEntryKind.Reversal, AmountCredits = 2,
+            Reason = "refunded", ReversesEntryId = charge,
+        });
+        await db.SaveChangesAsync();
+        Assert.Equal(charge, (await db.CreditLedger.AsNoTracking()
+            .SingleAsync(e => e.Kind == CreditEntryKind.Reversal)).ReversesEntryId);
     }
 
     [Fact]
@@ -679,7 +775,7 @@ public class AdditiveSchemaTests : IDisposable
 
         db.CreditLedger.Add(new CreditLedgerEntry
         {
-            HouseholdId = "hh-1", Kind = CreditEntryKind.Grant, AmountMicros = 1_650_000, Reason = "Welcome grant",
+            HouseholdId = "hh-1", Kind = CreditEntryKind.Grant, AmountCredits = 100, Reason = "Welcome grant",
         });
         await db.SaveChangesAsync();
         Assert.Single(await db.CreditLedger.ToListAsync());

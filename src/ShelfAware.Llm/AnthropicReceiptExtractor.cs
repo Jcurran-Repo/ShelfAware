@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using ShelfAware.Core.Billing;
 using ShelfAware.Core.Extraction;
 using Category = ShelfAware.Core.Domain.Category;
 
@@ -70,6 +71,7 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
         CancellationToken cancellationToken = default)
     {
         if (attachments.Count == 0) return ExtractionResult.Fail("No attachments provided.");
+        await using var action = AiActionScope.Begin(ServiceAction.ReceiptExtraction);
 
         _logger.LogInformation("Extracting receipt from {AttachmentCount} attachment(s) ({ProductHints} product hints, {TagHints} tag hints).",
             attachments.Count, knownProductNames?.Count ?? 0, knownTags?.Count ?? 0);
@@ -127,16 +129,23 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
             {
                 response = await _chat.GetResponseAsync(messages, options, cancellationToken);
             }
-            catch (OperationCanceledException)
+            // ⚠️ WHOSE cancellation — a timeout is a provider failure and belongs below, where the
+            // plain copy is. Unfiltered, it escapes the endpoint too, and the audit images written before
+            // this call are then orphaned with no receipt row pointing at them.
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                throw; // the caller cancelled — not an extraction failure
+                throw; // the caller really did cancel — not an extraction failure
             }
             catch (Exception ex)
             {
                 // API/transport errors (auth, rate limit, network) — not fixable by a retry
                 // here; the SDK already retries retryable statuses internally.
+                // The exception text goes to the LOG, never to the screen: it can name an internal
+                // host, a path, or a provider account detail, and it reads as a crash to the person
+                // holding the receipt. The operator still sees it — a LogError is captured into the
+                // error log and rendered on /admin.
                 _logger.LogError(ex, "Extraction call to the model failed.");
-                return ExtractionResult.Fail(ex.Message, rawJson);
+                return ExtractionResult.Fail("Couldn't reach the AI just now — please try again.", rawJson);
             }
 
             rawJson = response.Text;
@@ -145,6 +154,7 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
                 var receipt = ParseReceipt(rawJson);
                 _logger.LogInformation("Extraction succeeded: {LineCount} line(s), merchant {Merchant}.",
                     receipt.Lines.Count, receipt.Merchant ?? "(none)");
+                action.Answered(); // a receipt that read clean with no lines on it still read
                 return ExtractionResult.Ok(receipt, rawJson);
             }
             catch (Exception ex)
@@ -157,8 +167,11 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
             }
         }
 
-        _logger.LogWarning("Extraction failed after a retry: {Error}", lastError);
-        return ExtractionResult.Fail($"The extraction output could not be parsed after a retry: {lastError}", rawJson);
+        // Error, not Warning: the person watching this saw it fail, so the operator must be able to
+        // see why without asking them for the wording. lastError is deserializer text — it belongs
+        // in the log with the raw output, not in the sentence the page shows.
+        _logger.LogError("Extraction failed after a retry: {Error}", lastError);
+        return ExtractionResult.Fail("Couldn't read that receipt — try again, or use a clearer photo.", rawJson);
     }
 
     private static ExtractedReceipt ParseReceipt(string json)

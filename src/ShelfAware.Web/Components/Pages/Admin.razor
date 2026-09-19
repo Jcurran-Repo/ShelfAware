@@ -14,6 +14,7 @@
 @inject ReportResolutionService Actions
 @inject AdminHouseholdService HouseholdAdmin
 @inject AdminAiSpendReader AiSpend
+@inject ServiceMarginMeter ServiceMargin
 @inject ICiStatusProvider Ci
 @inject ITestStatusProvider TestStatus
 @inject IOptions<AdminOptions> AdminConfig
@@ -118,6 +119,59 @@ else
                     </div>
                 }
             </div>
+        </section>
+    }
+    @* The number that did not exist before the Shelf Aware credit: what each ACTION was charged against what
+       it COST. While credits and cost were the same number this was unaskable — you would have had to leave
+       the model to discover a chat turn was underpriced. Box-wide and household-free, so it says nothing about
+       any one household. An "unlabelled" row is a defect, not a category: every AI service opens an action
+       scope, so a call arriving without one is a service somebody forgot to label. *@
+    @if (serviceMargin.Count > 0)
+    {
+        <section class="panel">
+            <h2>Margin by service</h2>
+            <p class="muted">The last 30 days. <strong>Credits</strong> is what households were charged
+                (0 for Founder and BYOK calls, which cost but bill nobody). <strong>Cost</strong> is what
+                every call cost at the rates in force when it ran, billed or not — the box's real spend.
+                <strong>Billable cost</strong> is the part of it incurred by households who were on the
+                hook, which is the only cost a price has to cover; dividing it by the charges gives
+                <strong>cost / charge</strong>. A price is wrong when it and that last column keep
+                disagreeing in the same direction. A free action never has a charge to divide by, so its
+                last cell stays blank — read its billable cost against its calls instead.</p>
+            <table>
+                <caption class="sr-only">Credits charged against provider cost, per action, last 30 days</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">Action</th>
+                        <th scope="col">Calls</th>
+                        <th scope="col">Charges</th>
+                        <th scope="col">Credits</th>
+                        <th scope="col">Cost</th>
+                        <th scope="col">Billable cost</th>
+                        <th scope="col">Cost / charge</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var line in serviceMargin)
+                {
+                    <tr>
+                        <td>@line.Label</td>
+                        <td>@line.Calls</td>
+                        <td>@line.Charges</td>
+                        <td>@line.CreditsCharged</td>
+                        <td>@AiPricing.FormatMicros(line.CostMicros)</td>
+                        <td>@AiPricing.FormatMicros(line.BillableCostMicros)</td>
+                        @* Per CHARGE, not per call — the charge is the thing that has a price, so this is the
+                           column that says whether the price list is right. It divides the BILLABLE cost, not
+                           the total: this box's heaviest user is a Founder, who is never charged, so dividing
+                           every call's cost by only the billed ones would report an action as costing several
+                           times what it does. No charges yet means there is nothing to compare, and the cell
+                           says so rather than dividing by zero or implying a margin nobody was billed. *@
+                        <td>@(line.CostPerCharge is { } per ? AiPricing.FormatMicros(per) : "—")</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
         </section>
     }
     @if (Ci.Enabled)
@@ -719,6 +773,7 @@ else
     private IReadOnlyList<WishlistContact>? wishlistContacts;
     private string? wishlistCopyStatus;
     private AiSpendReport? aiSpend;
+    private IReadOnlyList<ServiceMarginLine> serviceMargin = [];
     private DemoUsageDay? demoUsage;
     private CiStatus? ciStatus;
     private bool ciLoaded;
@@ -815,6 +870,7 @@ else
             wishlistSummary = await Reader.GetWishlistSummaryAsync();
             wishlistContacts = await Reader.ListWishlistContactsAsync();
             aiSpend = await AiSpend.GetAsync();
+            serviceMargin = await ServiceMargin.ReadAsync(days: 30);
             demoUsage = await DemoUsage.GetTodayAsync(); // null unless a Demo cap is configured (panel is gated on IsConfigured)
             testStatus = TestStatus.Read();
             return true;

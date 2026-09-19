@@ -244,9 +244,13 @@ else if (phase == Phase.Review && receipt is not null)
                                 }
                             </div>
                             <div class="tag-add">
-                                <input list="known-tags" placeholder="+ tag" size="9" @bind="line.NewTag" @bind:event="oninput" aria-label="Add a tag to @line.RawText" />
+                                <input list="known-tags" placeholder="+ tag" size="9" maxlength="@TagVocabulary.MaxLength" @bind="line.NewTag" @bind:event="oninput" aria-label="Add a tag to @line.RawText" />
                                 <button type="button" @onclick="() => AddTag(line)" disabled="@(line.Checking || string.IsNullOrWhiteSpace(line.NewTag))">@(line.Checking ? "…" : "Add")</button>
                             </div>
+                            @if (line.TagNote is { } note)
+                            {
+                                <p class="tag-note" role="status">@note</p>
+                            }
                             @if (line.Suggestion is { } sug)
                             {
                                 <div class="tag-warning" role="status">
@@ -653,6 +657,7 @@ else if (phase == Phase.Done)
         public string? NewTag { get; set; }           // the in-progress "add tag" input
         public string? PendingTag { get; set; }        // a new tag awaiting the user's dedup decision
         public string? Suggestion { get; set; }        // the existing tag PendingTag looks like
+        public string? TagNote { get; set; }           // why the last tag add was refused, if it was
         public bool Checking { get; set; }             // an async synonym check is running
         public int ProductId { get; set; }            // 0 = create new
         public bool AliasMatched { get; set; }
@@ -859,7 +864,7 @@ else if (phase == Phase.Done)
         pendingError = null;
         // Retry re-extracts on the CIRCUIT (not the pre-checked endpoint), so guard it here too: a blocked
         // circuit would otherwise read "Still couldn't read it" for what is really out-of-credits/no-key (4c).
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, ServiceAction.ReceiptExtraction);
         if (blocked is not null) { pendingError = blocked; retryingId = null; return; }
         try
         {
@@ -993,7 +998,13 @@ else if (phase == Phase.Done)
         line.Suggestion = null;
         line.PendingTag = null;
         var tag = (line.NewTag ?? "").Trim();
-        if (tag.Length == 0) return;
+        if (tag.Length == 0) { line.TagNote = null; return; }
+        // ⚠️ Refused BEFORE either dedup stage, not after both. This method used to check nothing: stage
+        // one answers null for an over-long tag (correctly — it is not a tag), AddTag read that as
+        // "genuinely new", and stage two spent a credit sending the whole thing to the model. The only
+        // refusal was in AddNewTag, which runs after the charge. See TagVocabulary.IsOverLength.
+        if (TagVocabulary.IsOverLength(tag)) { line.TagNote = TagVocabulary.TooLongMessage; return; }
+        line.TagNote = null;
         if (line.Tags.Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase))) { line.NewTag = ""; return; }
 
         var universe = allKnownTags.Concat(line.Tags).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -1045,6 +1056,16 @@ else if (phase == Phase.Done)
 
     private void AddNewTag(ReviewLine line, string tag)
     {
+        // ⚠️ Refused here too, and said out loud rather than dropped. TagVocabulary caps what it will
+        // treat as a tag, but Canonicalize's answer for an over-long one is null, which ApplyTags reads
+        // as "already have it" — so without this the chip appeared on the row, rode into every later
+        // lookup and every advisor prompt, and then vanished at Confirm with nothing said.
+        if (TagVocabulary.IsOverLength(tag))
+        {
+            line.TagNote = TagVocabulary.TooLongMessage;
+            return;
+        }
+        line.TagNote = null;
         if (!line.Tags.Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase))) line.Tags.Add(tag);
         if (!allKnownTags.Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase))) allKnownTags.Add(tag);
         line.NewTag = "";

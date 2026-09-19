@@ -33,7 +33,7 @@ else
         <form class="stacked" @onsubmit="SubmitAsync" @formname="bug-report">
             <label class="field">
                 <span>What happened</span>
-                <textarea @bind="body" @bind:event="oninput" maxlength="4000" rows="5"
+                <textarea @bind="body" @bind:event="oninput" maxlength="@MaxBody" rows="5"
                           aria-label="Describe what looked wrong" disabled="@busy"></textarea>
             </label>
             <label class="field">
@@ -194,9 +194,20 @@ else
     /// form can pre-fill it. Visible and editable; never captured silently.</summary>
     [SupplyParameterFromQuery(Name = "from")] public string? From { get; set; }
 
+    /// <summary>A starting sentence for the report, when the app itself offered to file one — today only
+    /// the recipe adapt that ignored a chosen swap. Pre-fills the box and nothing else.
+    /// <para>⚠️ Pre-fill, never submit. The household still reads it, edits it, and presses the button,
+    /// exactly as with <see cref="From"/> and the diagnostic snapshot: this page's whole contract is that
+    /// nothing is captured or filed silently, and an app-offered report must not be the one exception.
+    /// Capped at the same length the textarea enforces so a crafted link cannot paste an essay.</para></summary>
+    [SupplyParameterFromQuery(Name = "about")] public string? About { get; set; }
+
     /// <summary>The "Somewhere else…" sentinel — leads with a character no app path can, so it can
     /// never collide with a SiteNav href.</summary>
     private const string Elsewhere = "~elsewhere";
+
+    /// <summary>The textarea's own maxlength, shared so a pre-fill cannot exceed what a typist could.</summary>
+    private const int MaxBody = 4000;
 
     private List<BugReport>? reports;
     private string body = "";
@@ -236,6 +247,7 @@ else
                 where = From;
             }
         }
+        if (About is { Length: > 0 } offered) body = offered.Length > MaxBody ? offered[..MaxBody] : offered;
         await LoadAsync();
     }
 

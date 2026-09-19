@@ -247,10 +247,19 @@ not global config). The pieces:
   best-effort (`MeteredChatClient` logs-and-continues on a failed record). One of them must be the
   authority — the top-of-CLAUDE.md one-definition rule — and it's the ledger: gate on it, bill from
   it, export it; the usage row feeds the Settings panel and nothing else.
-- **One currency: retail-denominated credit.** Every call decrements at retail (cost × 1.65); the AI
+- ⚠️ **SUPERSEDED 2026-09-19 — the ledger is denominated in CREDITS, not retail dollars.** The two
+  bullets below describe the pass-through model the app shipped with, kept because the reasoning behind
+  the rest of this section still rests on them. What replaced them, and why, is
+  `docs/remediation-plan.md` §7: a credit is an abstract unit Shelf Aware issues, priced per
+  `ServiceAction` from a published list; what a credit costs *Jordan* varies by service, which is the
+  point. The anchor is **1 credit = $0.01 of cost = $0.0165 retail**, so the grant and pack figures
+  quoted throughout this document are unchanged in money and now read as 100 credits and 303/606/1,212.
+  The "two pricing shapes" carve-out is **gone** — a realtime minute and a chat turn are both simply
+  prices on the list, which is the problem the credit was introduced to solve.
+- ~~**One currency: retail-denominated credit.** Every call decrements at retail (cost × 1.65); the AI
   tier's monthly grant is $1.65 retail (= $1.00 cost). One ledger, one consumption rate — no
-  "included is at cost but credits are marked up" dual bookkeeping.
-- **Two pricing shapes, one currency.** Token actions (chat, extraction, census, recipes) stamp *exact*
+  "included is at cost but credits are marked up" dual bookkeeping.~~
+- ~~**Two pricing shapes, one currency.**~~ Token actions (chat, extraction, census, recipes) stamp *exact*
   cost from the pricing catalog. Voice/agent actions (EL TTS synthesis, STT, realtime sessions) post
   **flat retail prices** per action — their provider costs are per-character/per-minute and not
   observable per-call from inside the app, so a measured flat price (§3) is the honest unit. Both land
@@ -331,6 +340,223 @@ not global config). The pieces:
   data does NOT touch balances** — destroying purchased credits is destroying money, the `AiUsage`-
   survives asymmetry (item 33) with a stronger reason; and there is no query filter in auth.db, so
   every query hand-scopes (above).
+
+### 4.w What a refund is *for* — an answer is paid for, a failure is not (Jordan, 2026-09-19)
+
+The charge lands on an act's **first** provider call, which is what stops two parallel rounds of one act
+both paying. By the time the act knows what it produced, the credits have already moved, so a refund is
+the only honest correction left. The rule for when one is owed:
+
+> **The household pays when the assistant answered, whatever the answer said. It gets its credits back
+> when the call failed.**
+
+⚠️ **And charging first is not just an ordering detail — it is what makes the gate a gate** (Jordan,
+2026-09-19). The tempting alternative is to charge only once an act is known to have succeeded, which
+looks fairer and is much worse. Every *failure* path would become free, and the failure paths are
+precisely the ones a household can **steer**: §4.y lists them, and they are reachable on purpose because
+household-authored text goes into these prompts. Worse than the subsidy itself is what it does to the
+bound — nothing has been drawn down, so `EnsureManagedCallAllowedAsync` is asking about a balance that no
+in-flight act has claimed, and it will keep saying yes. A household that can reliably steer an act into
+failure would get an unbounded free tier with a credit gate in front of it waving them through. Charging
+first inverts that: the money moves before anyone knows how the act turned out, so abuse costs the
+abuser's balance immediately and the refund is a correction the *honest* failure gets back. **The refund
+is the exception to the charge, not the other way round.**
+
+That is also the answer to "shouldn't the scope open where success is KNOWN — in the caller?", raised by
+the pre-merge security gate on 2026-09-19 and carried in `docs/backlog.md` until this. **No**, and the
+abuse argument is a better reason than the mechanical ones. The mechanical ones still hold too: the
+claim taken at the first call is what makes five tool rounds cost one turn (two parallel rounds both
+finding themselves uncharged is exactly the race `TryClaimCharge`'s `Interlocked` exists to lose), and
+the gate can only refuse a 42-credit meal plan *before* its first batch because the act's whole price is
+known and claimed at the start rather than assembled at the end.
+
+⚠️ **Two things charging first does NOT close, both worth holding in view.**
+
+1. **The gate CHECKS the balance; it does not RESERVE it.** `EnsureManagedCallAllowedAsync` reads before
+   the provider call and `RecordCreditConsumptionAsync` writes after it, so several acts started at once —
+   two tabs, the roaming voice agent, a fast clicker — can all pass one check before any of them draws.
+   `RecordConsumptionAsync` writes its negative row unconditionally, with no floor, so the result is an
+   **overdraft rather than free credit**: the balance goes negative, the next gate refuses, and the
+   household has to fill the hole before it can spend again. It self-corrects and it errs toward the
+   operator for exactly one burst. A true reservation at the gate would close it and is real work (a
+   reservation row and a release path on every exit), so it is written down rather than done.
+2. **A steerable FAILURE still loops for free**, because the refund gives the credits back — which is the
+   whole of §4.y, bounded by the daily call limit rather than by the balance. Charging first does nothing
+   about this one, and shouldn't: the alternative is charging for turns the household demonstrably did
+   not receive.
+
+An honest *"there is no recipe in that photo"*, *"nothing substitutes for saffron"*, *"nothing on that
+shelf"* **is an answer**. It cost a real provider call, it is frequently the *right* answer, and refunding
+it would price the assistant's honesty — paying it more for inventing a recipe than for telling the truth
+about a blurry photo. What comes back is the act that produced nothing: the provider unreachable, a reply
+we could not read, a cancelled turn.
+
+The empty-reply line matters and is drawn deliberately: a model that returns `NONE` answered; a model that
+returned no text at all did not, and that act refunds. ⚠️ That line is `ProviderReply.IsAnAnswer` and
+nowhere else. The four advisors that ask the model a question in words were each allowed to spell it
+their own way for exactly one commit, and in that commit three tested the raw reply while the fourth
+tested it with trailing punctuation stripped — so a reply of `"."` refunded in one and was paid for in
+the other three, under this paragraph saying they agreed.
+
+⚠️ **One definition, one call.** "Did this act deliver?" is `AiActionScope.Answered()` and nothing else.
+It was previously re-derived per service from the shape of the answer — `suggestions.Count > 0` in one,
+`adapted is not null` in another, `parsed.Recipe is not null` in a third — **nine sites** each doing their
+own arithmetic on a question with one answer, two of them already right by accident (the receipt extractor
+and the census reader settled on a successful parse and ignored how many lines came back). Nothing pinned
+any of it: no test in the LLM suite mentioned `AiActionScope` at all, so the whole set could be changed
+without a single test going red. `AiDeliveryTests` now holds each site's branch, and
+`AiActionScopeSiteTests` fails the build for an `Answered()` inside a **per-unit** act — a meal plan is
+charged by the meal and must count what it persisted, or a batch that made three meals out of twelve would
+keep the credits for nine that never arrived. It also refuses to let a per-unit scope leave the method
+that opened it, because a scope handed to a helper settles where no scan can see it.
+
+Two acts still settle with a bare `Delivered(1)`, on purpose: they are answering a different question.
+The meal-plan reroll settles on its write being **durable** (after the commit, never before), and the
+chat's `TurnWrites` settles on **any write landing** — including the ones that don't go through
+`IPantryStore`, since `adapt_recipe` saves a recipe variant through `IRecipeAdapter` and an earlier
+version of this counted `_store.` calls and missed exactly that. So every exit of a turn is paid
+correctly without each one having to remember.
+
+The chat's two other exits settle for themselves, and **not on the same test**, which the previous
+version of this paragraph flattened into one sentence. The **final reply** asks the shared rule whether
+the model said anything, or failing that whether the turn told the screen to move. The **turn limit**
+asks only about the screen: that exit carries no final text to ask about, so a turn that ran out of
+rounds having moved nothing is refunded. Both readings of "did the model say anything" come from
+`ProviderReply.IsAnAnswer`, and so does the chat's own choice between showing the reply and showing
+"Done." — the display line asked it privately until 2026-09-19, so a reply of "." billed as silence
+while the household read a bare period as the assistant's answer.
+
+### 4.y A refunded act still cost the operator a provider call (accepted, 2026-09-19)
+
+The rule in §4.w charges for an answer and refunds a failure, and a failure is not free to serve: the
+provider was paid whatever the household was not. Every refund is therefore a small operator subsidy, and
+a few of them are reachable on purpose rather than only by accident, because the household's own words go
+into these prompts unescaped (a product name, a tag candidate, pasted recipe text).
+
+The ones worth naming, all of them costing **the operator** and none of them able to over-charge a
+household or reach another household's balance (deliberately not counted here — the count came out of
+`AiUsageMeter` and the remediation plan in one commit and went straight back into this sentence in the
+same one):
+
+- **A chat turn that hits the turn limit having done nothing** is refunded, and a turn is up to five
+  provider calls each carrying the full product list and the replayed history — the most expensive shape
+  the app produces. A household that keeps the assistant calling read-only tools and never answering gets
+  those five calls for no credits.
+- **A recipe import that answers unreadably twice** is refunded after two 4096-token vision calls.
+- **A prose advisor that returns nothing at all** is refunded, on acts of 32 to 128 output tokens.
+- **A chat turn whose model simply says nothing** is refunded after a *single* message — no tool calls,
+  no turn limit to reach, nothing to inject. It is the cheapest of them and the easiest to repeat,
+  and it is bounded by the daily call limit **where one is in force** (`Llm:DailyCallLimit`, else
+  `DefaultPaidDailyCallLimit = 1000` *only when payments are configured* — on a self-host or demo box
+  with neither, `EffectiveDailyCallLimit` is null and no CALL bound applies, though `Llm:DailyTokenLimit`
+  is read independently and still can; an unlimited tier skips
+  the check outright, though it is never charged and so never refunds)
+  rather than by the credit gate, because a fully-refunded act never draws the balance down. Named
+  explicitly because it is the one a household can STEER rather than stumble into: its own message is
+  in that prompt, so "from now on answer every message with exactly one period" makes every later turn
+  read as silence to `ProviderReply.IsAnAnswer` and refund, while the operator pays for a 1024-token
+  call carrying the entire product list. Deterministic, not luck. The vision refunds above need an
+  unparseable image rather than a prompt.
+- **A receipt or a shelf census that will not parse twice** is refunded after two vision calls at
+  `MaxOutputTokens = 8192` — twice the recipe importer's budget, on the same retry-once-then-fail shape
+  (the final `Fail` in `AnthropicReceiptExtractor.ExtractAsync` and `AnthropicShelfCensusReader.ReadAsync`;
+  `Answered()` is reached only on a clean parse). ⚠️ Named by METHOD, not by line: the three line
+  references this paragraph carried were all stale within one commit of being written, because the same
+  commit inserted lines above them. §6 again. The household supplies the image, so an unparseable photo is reachable on purpose.
+- **A recipe suggestion or adaptation that comes back empty, or with nothing NAMED in it,** is refunded
+  after a 4096-token call, and
+  both are reachable on purpose, because the prompts carry household-authored text unescaped: the adapt
+  prompt interpolates the recipe's name, blurb, every ingredient and every step, plus the swap the
+  household picked from a list it curates itself. A saved recipe whose step text steers the model into
+  an empty array makes every adapt of it refund. ⚠️ Both refunds are NEW as of 2026-09-19 — before that
+  the act was charged and the screen still said "Couldn't adapt" / "try rephrasing" beside a button that
+  charged again, which is the inverse and worse failure. The UI invites the repeat either way, so this is
+  the bullet to watch if `CostPerCharge` drifts. ⚠️ And "empty" meant two different things for a commit:
+  `AdaptAsync` refunded a reply that parsed to a variant with no NAME, and `SuggestAsync` — eight lines
+  above it, in the same file, in the same commit that introduced the shared `RecipeReply.Landed`
+  predicate — charged for one, because it asked `Count == 0` instead. `RecipeJson.Parse` keeps an unnamed
+  entry (`name` falls back to `""`), so the divergence was reachable and the screen drew a card with a
+  blank title beside a charge. Both halves ask the one predicate now, held by
+  `Suggestions_with_no_name_are_refunded_like_an_adaptation_with_no_name`.
+- **A meal plan whose batches come back empty** is the largest subsidy in the app, and it was missing
+  from this list until 2026-09-19 — under a sentence calling the two vision acts above "the most
+  expensive refunds", which was simply wrong. A plan is charged `units: setup.SlotCount` up front and
+  settles `Delivered(planned.Count)`, so a full horizon that yields one meal per batch refunds almost
+  all of it after **eighteen** calls at `MaxOutputTokens = 8192`, each carrying the whole on-hand,
+  commonly-bought, expiring, excluded and saved-recipe context (`MealPlanService:87-127`). Two narrower
+  relatives sit beside it: a reroll that comes back empty returns `RerollResult.Failed` without ever
+  settling (the empty-batch `RerollResult.Failed` in `MealPlanService.RerollAsync`), and the first-batch
+  fast-fail returns before any settlement. Both are a full refund of one 8192-token call.
+
+Held open deliberately. Charging for them means charging for a turn the household demonstrably did not
+receive, which is the thing §4.w exists to stop, and it would pay the assistant to fail quietly rather
+than plainly. The exposure is bounded per act and shows up where it should — the margin rows on `/admin`
+are the surface that would drift, and `CostPerCharge` is the number to watch. **Revisit if those rows
+start showing cost with no charges beside it**, at which point the answer is a per-household daily cap on
+refunded acts rather than a change to what "delivered" means.
+
+### 4.x A refund that lands after its month keeps rolling (accepted, 2026-09-19)
+
+An act charged in one billing period can settle in the next — a 124-meal plan is eighteen provider calls,
+and the monthly allowance posts on any entitlement check in between. The `Reversal` row records which
+`Consumption` it undoes, so the unspent-allowance sweep counts it against the period the **charge** drew
+on, not the period the refund landed in. That is what stops the sweep reaching purchased credit.
+
+⚠️ **The consequence, accepted deliberately: those credits are never swept.** The month they belonged to
+has already closed, so nothing takes them back, and they stay spendable in the persisting pool alongside
+purchases — allowance credits outliving a no-rollover allowance. It is bounded by one act's charge per
+month boundary (at most 42 credits today, a 124-meal plan), needs an act that genuinely under-delivers
+while straddling midnight UTC on the 1st, and errs **toward the household**.
+
+The alternative — posting a compensating `Expiry` for the part that was allowance — needs the split
+between allowance and purchased money *as it stood at charge time*, which the ledger does not record.
+Reconstructing it wrongly takes credits the household paid for, which is exactly the failure this
+attribution was added to fix, pointing the other way. So the leak is held open on purpose: the same
+"round in the household's favour" call the denomination migration made. **Revisit if the allowance ever
+gets large enough that one act's charge is material.**
+
+### 4.z Asking is what is paid for — and a tool must not offer what it cannot do (Jordan, 2026-09-19)
+
+Two questions came out of the 2026-09-19 pre-merge gates, both of the shape "the household was charged
+for something that didn't happen". Jordan answered them differently, and the difference is the rule.
+
+**A recipe adaptation that ignores the swap the household picked is charged, and the variant is kept.**
+> *"if the user asks for a swap, they asked, give them the failed recipe and a why, and offer to make a
+> bug report, but do not refund"*
+
+`RecipeAdapter` used to check the adapted recipe's main ingredients for the chosen swap and, on a miss,
+return failure with *"I couldn't make a {form} version this time — give it another try"* — on an act the
+provider had already been paid for. That is three losses in one: real work thrown away, an invitation to
+spend another credit on the same roll of the dice, and nobody able to see what the model actually made.
+The household asked, the provider answered, so §4.w's rule already decides it: **the charge stands**. What
+changes is honesty. The variant is saved, the shortfall is named in the message *and* in the variant's own
+blurb (`AdaptResult.SwapIgnored`), and the screen offers a pre-filled bug report rather than a retry.
+
+⚠️ The label travels **with the row**, not only in the message that announced it. A message is read once;
+the variant sits in the cookbook indefinitely, and a household that asked for a chickpea version and finds
+a beef one months later has no way to tell whether the model ignored them or they misremembered.
+
+**A chat turn that claimed to move a cook-along it could not move was a defect, not a billing question.**
+> *"if a user didnt ask for a generation we shouldnt be generating if thats an error for number 1 it needs
+> fixed"*
+
+The gate asked whether to refund a turn that hit the turn limit with no reader open. The answer is that
+the turn should never have reached that state: `go_to_step` was offered to the model on **every** surface
+and range-checked on **none**. The handler recorded a step and replied *"Moving to step 12"*, the model
+repeated it, and the only consumer — the cook-along reader — silently dropped anything past the end of the
+recipe, or on the dashboard and the push-to-talk button did not exist at all. The household was told the
+screen had moved while it sat still, and paid for the telling.
+
+The fix is `CookAlongState`, passed to `IPantryChat.HandleAsync`: the tool is **withheld from the model**
+unless a reader is actually open, and the step is checked against the real `StepCount` before anyone is
+told anything. Both refusals are answers the household gets to read (*"There's no recipe open to move."*,
+*"That recipe only has 8 steps."*), so by §4.w the turn is charged — correctly now, because it answered.
+
+⚠️ Structured, not inferred from `screenContext`. That parameter is prose written for a model to read, and
+"is there a reader open, and how long is the recipe" is a question the **code** has to answer; answering it
+by looking for words in a sentence meant for a model is how the two drift apart. Held by
+`The_step_tool_is_offered_only_when_a_reader_is_open` and
+`A_step_past_the_end_is_refused_with_the_real_length_instead_of_announced`.
 
 ## 5. Founder tier (from the parked 2026-08-23 design)
 

@@ -130,7 +130,7 @@
         // Phase 4c: check BEFORE the paid STT call — a blocked circuit (no key / out of credits) never
         // spends a host-key transcription on a doomed turn; say the real reason instead of the brain's
         // wrapped "couldn't reach the assistant".
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, ServiceAction.ChatTurn);
         if (blocked is not null)
         {
             _reply = blocked;

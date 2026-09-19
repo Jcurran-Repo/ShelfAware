@@ -161,6 +161,12 @@ internal sealed class FakePantryChat : IPantryChat
     public IReadOnlyList<ChatTurn>? LastHistory { get; private set; }
     public string? LastScreenContext { get; private set; }
 
+    /// <summary>⚠️ The reader that was open when the call was made, RECORDED rather than ignored — the
+    /// cook-along's contract is now partly about this: go_to_step is offered to the model only when a
+    /// reader is open, and range-checked against its length, so a fake that dropped the parameter would
+    /// let a surface stop sending it with every test still green.</summary>
+    public CookAlongState? LastCookAlong { get; private set; }
+
     /// <summary>When set, the next call awaits this — keeps the page's busy state observable
     /// (a real model call has latency; an instant fake would make the busy branch untestable).
     /// One-shot: consumed by the call it holds.</summary>
@@ -168,11 +174,12 @@ internal sealed class FakePantryChat : IPantryChat
 
     public async Task<ChatResult> HandleAsync(
         string userText, IReadOnlyList<ChatTurn>? history = null, string? screenContext = null,
-        CancellationToken cancellationToken = default)
+        CookAlongState? cookAlong = null, CancellationToken cancellationToken = default)
     {
         Asked.Add(userText);
         LastHistory = history?.ToList();
         LastScreenContext = screenContext;
+        LastCookAlong = cookAlong;
         if (Hold is { } gate)
         {
             Hold = null;
@@ -244,7 +251,11 @@ internal sealed class FakeRecipeAdapter : IRecipeAdapter
 
 internal sealed class FakeSuggestionAdvisor : IRecipeAdvisor
 {
-    public IReadOnlyList<RecipeSuggestion> Suggestions { get; set; } = [];
+    /// <summary>⚠️ NULLABLE, matching IRecipeAdvisor. It was declared non-null for one commit — the one
+    /// that introduced the null to mean "couldn't reach the model" — so no page test could drive that
+    /// branch at all, and the screen it produces went untested while the suite stayed green. A fake that
+    /// cannot express the new state is how a partial conversion survives a review.</summary>
+    public IReadOnlyList<RecipeSuggestion>? Suggestions { get; set; } = [];
 
     /// <summary>When set, the next SuggestAsync throws it instead of answering — the page's
     /// keep-the-old-batch-on-failure rule needs a failing model call to exist.</summary>
@@ -253,13 +264,15 @@ internal sealed class FakeSuggestionAdvisor : IRecipeAdvisor
     public IReadOnlyList<string>? LastOnHand { get; private set; }
     public IReadOnlyList<string>? LastExcluded { get; private set; }
 
-    public Task<IReadOnlyList<RecipeSuggestion>> SuggestAsync(
+    public Task<IReadOnlyList<RecipeSuggestion>?> SuggestAsync(
         string request, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods,
         CancellationToken cancellationToken = default)
     {
         LastOnHand = onHand;
         LastExcluded = excludedFoods;
-        return Throw is { } ex ? Task.FromException<IReadOnlyList<RecipeSuggestion>>(ex) : Task.FromResult(Suggestions);
+        return Throw is { } ex
+            ? Task.FromException<IReadOnlyList<RecipeSuggestion>?>(ex)
+            : Task.FromResult(Suggestions);
     }
 
     public Task<RecipeSuggestion?> AdaptAsync(

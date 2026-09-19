@@ -1,3 +1,4 @@
+using ShelfAware.Core.Billing;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Settings;
 using ShelfAware.Web.Auth;
@@ -13,21 +14,30 @@ internal sealed class FakeEntitlements(HouseholdTier tier = HouseholdTier.Free) 
     /// instance (RegisterAdditionalServices runs before the test body).</summary>
     public HouseholdTier Tier { get; set; } = tier;
 
-    /// <summary>Settable credit balance in retail micros; <see cref="IsAiAllowedAsync"/> mirrors the real
-    /// rule (Founder is unlimited, otherwise a positive balance).</summary>
-    public long BalanceMicros { get; set; }
+    /// <summary>Settable credit balance, in CREDITS; <see cref="CheckAiAsync"/> mirrors the real rule
+    /// (Founder is unlimited, otherwise a balance that COVERS the act's own price).</summary>
+    public long BalanceCredits { get; set; }
+
+    /// <summary>The prices the fake charges against, so a test can script an act the balance can't cover
+    /// without restating the arithmetic. The real defaults, since the point is to behave like production.</summary>
+    public BillingOptions Billing { get; set; } = new();
 
     public ValueTask<HouseholdTier> GetTierAsync(CancellationToken cancellationToken = default) => new(Tier);
 
-    public ValueTask<long> GetBalanceMicrosAsync(CancellationToken cancellationToken = default) => new(BalanceMicros);
+    public ValueTask<long> GetBalanceCreditsAsync(CancellationToken cancellationToken = default) => new(BalanceCredits);
 
     // ⚠️ Deliberately omits the real Entitlements' billing-off short-circuit (!Payments.IsConfigured → true),
     // so this fake is MORE restrictive than production (a billing-off box reads allowed there, blocked here).
     // Consequence: don't write a "surface allowed because billing is off" test against this fake — it would
     // pass vacuously. That branch is covered directly on the real type (EntitlementsTests). Here the fake's
-    // job is only to script allowed/blocked via Tier + BalanceMicros.
-    public ValueTask<bool> IsAiAllowedAsync(CancellationToken cancellationToken = default) =>
-        new(Tier.IsUnlimited() || BalanceMicros > 0);
+    // job is only to script allowed/blocked via Tier + BalanceCredits.
+    public ValueTask<AiAllowance> CheckAiAsync(
+        ServiceAction? act, int units = 1, CancellationToken cancellationToken = default)
+    {
+        if (Tier.IsUnlimited()) return new(AiAllowance.Unlimited);
+        var needed = Math.Max(1, act is { } a ? CreditPricing.CreditsFor(Billing, a, units) : 1);
+        return new(new AiAllowance(BalanceCredits >= needed, needed, BalanceCredits));
+    }
 }
 
 /// <summary>A fixed household, standing in for the scope resolution (claim / circuit auth state) that only
@@ -53,9 +63,9 @@ internal sealed class FakeRecipeAdvisor(RecipeSuggestion? adaptResult) : IRecipe
     public IReadOnlyList<PantryProduct>? LastOnHand { get; private set; }
     public RecipeToAdapt? LastRecipe { get; private set; }
 
-    public Task<IReadOnlyList<RecipeSuggestion>> SuggestAsync(
+    public Task<IReadOnlyList<RecipeSuggestion>?> SuggestAsync(
         string request, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods, CancellationToken cancellationToken = default) =>
-        Task.FromResult<IReadOnlyList<RecipeSuggestion>>([]);
+        Task.FromResult<IReadOnlyList<RecipeSuggestion>?>([]);
 
     public Task<RecipeSuggestion?> AdaptAsync(
         RecipeToAdapt recipe, IReadOnlyList<PantryProduct> onHand, IReadOnlyList<string> excludedFoods,

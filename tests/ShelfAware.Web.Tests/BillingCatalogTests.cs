@@ -1,3 +1,4 @@
+using ShelfAware.Core.Billing;
 using ShelfAware.Web.Billing;
 
 namespace ShelfAware.Web.Tests;
@@ -23,13 +24,43 @@ public class BillingCatalogTests
         Assert.Equal(isSub, BillingCatalog.IsSubscription(product));
 
     [Theory]
-    [InlineData(BillingProduct.CreditPack5, 5_000_000L)]
-    [InlineData(BillingProduct.CreditPack10, 10_000_000L)]
-    [InlineData(BillingProduct.CreditPack20, 20_000_000L)]
+    [InlineData(BillingProduct.CreditPack5, 303L)]
+    [InlineData(BillingProduct.CreditPack10, 606L)]
+    [InlineData(BillingProduct.CreditPack20, 1_212L)]
     [InlineData(BillingProduct.SubscriptionMonthly, 0L)] // a subscription fee is not a credit grant
     [InlineData(BillingProduct.SubscriptionAnnual, 0L)]
-    public void RetailMicrosFor_gives_the_pack_face_value(BillingProduct product, long micros) =>
-        Assert.Equal(micros, BillingCatalog.RetailMicrosFor(product));
+    public void CreditsFor_gives_the_pack_face_value(BillingProduct product, long credits) =>
+        Assert.Equal(credits, BillingCatalog.CreditsFor(product));
+
+    [Theory]
+    [InlineData(BillingProduct.CreditPack5, 5)]
+    [InlineData(BillingProduct.CreditPack10, 10)]
+    [InlineData(BillingProduct.CreditPack20, 20)]
+    public void Every_pack_is_exactly_what_its_dollars_buy(BillingProduct product, int dollars)
+    {
+        // ⚠️ The catalog states the face values as literals — a product decision shouldn't move when an
+        // operator edits a config rate — so this is what stops them DRIFTING from the anchor they were
+        // derived from. Every pack must carry the same exchange rate: floor(dollars ÷ a credit's retail
+        // price). If a pack is ever meant to be cheaper per credit, that is a DISCOUNT, and it belongs in
+        // the record as one rather than arriving as a silently failing assertion here.
+        Assert.Equal(
+            CreditPricing.PackCredits(new BillingOptions(), dollars),
+            BillingCatalog.CreditsFor(product));
+    }
+
+    [Fact]
+    public void The_packs_agree_with_the_default_anchor_and_say_so_when_a_config_change_breaks_that()
+    {
+        // ⚠️ The test above pins the literals against `new BillingOptions()` — the COMPILED defaults, which
+        // is not the anchor the charge path reads. An operator who edits Billing:CreditMarkup changes what a
+        // dollar buys everywhere except in the catalog, and then sells $5 of credit at a rate that no longer
+        // applies: at a 3.0 markup a credit retails for $0.03, so $5 buys 166, and the pack still grants 303.
+        // An 82% over-grant, agreeing with nothing, failing nothing. Program.cs refuses to start on it.
+        Assert.True(BillingCatalog.PacksMatchTheAnchor(new BillingOptions()));
+
+        Assert.False(BillingCatalog.PacksMatchTheAnchor(new BillingOptions { CreditMarkup = 3.0m }));
+        Assert.False(BillingCatalog.PacksMatchTheAnchor(new BillingOptions { CostDollarsPerCredit = 0.005m }));
+    }
 
     [Fact]
     public void Packs_are_the_three_in_ascending_order() =>

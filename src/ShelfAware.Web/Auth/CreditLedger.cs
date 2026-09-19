@@ -18,13 +18,13 @@ namespace ShelfAware.Web.Auth;
 /// </summary>
 public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOptions<BillingOptions> billing, ILogger<CreditLedger>? logger = null)
 {
-    /// <summary>The household's balance in retail micros = the sum of its ledger entries (empty → 0).</summary>
-    public async Task<long> GetBalanceMicrosAsync(string householdId, CancellationToken cancellationToken = default)
+    /// <summary>The household's balance in CREDITS = the sum of its ledger entries (empty → 0).</summary>
+    public async Task<long> GetBalanceCreditsAsync(string householdId, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         return await db.CreditLedger
             .Where(e => e.HouseholdId == householdId)
-            .SumAsync(e => e.AmountMicros, cancellationToken);
+            .SumAsync(e => e.AmountCredits, cancellationToken);
     }
 
     /// <summary>The billing period an allowance belongs to: the first instant of <paramref name="now"/>'s
@@ -91,27 +91,27 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
 
             // No rollover: sweep the prior allowance's unspent remainder BEFORE posting the new one.
             // ⚠️ ORDER IS LOAD-BEARING: the Expiry MUST be Added before the new Allowance below, so it gets a
-            // LOWER Id. UnspentAllowanceMicrosAsync finds the latest allowance by max Id and nets Expiry rows
+            // LOWER Id. UnspentAllowanceCreditsAsync finds the latest allowance by max Id and nets Expiry rows
             // with a GREATER Id against it; if the Expiry landed after the new Allowance, next month it would
             // be netted against THAT allowance and the sweep would silently double-count (a wrong rollover).
             // Do not reorder these two Adds.
-            var unspent = await UnspentAllowanceMicrosAsync(db, householdId, cancellationToken);
+            var unspent = await UnspentAllowanceCreditsAsync(db, householdId, cancellationToken);
             if (unspent > 0)
                 db.CreditLedger.Add(new CreditLedgerEntry
                 {
                     HouseholdId = householdId,
                     Kind = CreditEntryKind.Expiry,
-                    AmountMicros = -unspent,
+                    AmountCredits = -unspent,
                     Reason = "Monthly allowance expired (no rollover)",
                 });
 
-            var allowance = AiPricing.MonthlyAllowanceRetailMicros(billing.Value);
+            var allowance = CreditPricing.MonthlyAllowanceCredits(billing.Value);
             if (allowance > 0)
                 db.CreditLedger.Add(new CreditLedgerEntry
                 {
                     HouseholdId = householdId,
                     Kind = CreditEntryKind.Allowance,
-                    AmountMicros = allowance,
+                    AmountCredits = allowance,
                     Reason = "Monthly allowance",
                 });
 
@@ -128,19 +128,29 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
         }
     }
 
-    /// <summary>The unspent remainder of the household's CURRENT (most recent) allowance: its amount minus
-    /// the consumption AND any prior expiry since it was granted (spend-allowance-first, so all later
-    /// consumption draws it down first). Zero when there's no prior allowance, or when it's already been
-    /// exhausted. ⚠️ The Expiry term is what stops a re-sweep: if a previous period already swept this
+    /// <summary>The unspent remainder of the household's CURRENT (most recent) allowance, in credits: its
+    /// amount, minus the consumption and any prior expiry since it was granted, plus any reversal that put
+    /// credits back (spend-allowance-first, so all later consumption draws it down first). Zero when
+    /// there's no prior allowance, or when it's already been exhausted.
+    ///
+    /// <para>⚠️ The Expiry term is what stops a re-sweep: if a previous period already swept this
     /// allowance (an Expiry row after it — which happens when the current month grants nothing, e.g.
     /// <c>MonthlyAllowanceDollars: 0</c>, so no NEWER Allowance becomes "the latest"), that Expiry nets the
-    /// remainder to ≤ 0 and it is not swept again from persisting purchases.</summary>
-    private static async Task<long> UnspentAllowanceMicrosAsync(AuthDbContext db, string householdId, CancellationToken cancellationToken)
+    /// remainder to ≤ 0 and it is not swept again from persisting purchases.</para>
+    ///
+    /// <para>⚠️ The Reversal term is the same argument for credits coming BACK: an allowance credit that was
+    /// charged and then refunded is unspent again within its own period, and leaving it out would let the
+    /// household bank it past its month. That holds for a refund of a charge against the CURRENT allowance,
+    /// which is what the term counts. A refund of an older period's charge is deliberately NOT counted —
+    /// that month has closed, nothing sweeps it, and those credits do keep rolling. It is bounded, it errs
+    /// toward the household, and the alternative takes purchased credit; see docs/subscription-plan.md
+    /// §4.x for why it is held open rather than closed.</para></summary>
+    private static async Task<long> UnspentAllowanceCreditsAsync(AuthDbContext db, string householdId, CancellationToken cancellationToken)
     {
         var lastAllowance = await db.CreditLedger
             .Where(e => e.HouseholdId == householdId && e.Kind == CreditEntryKind.Allowance)
             .OrderByDescending(e => e.Id)
-            .Select(e => new { e.Id, e.AmountMicros })
+            .Select(e => new { e.Id, e.AmountCredits })
             .FirstOrDefaultAsync(cancellationToken);
         if (lastAllowance is null) return 0;
 
@@ -150,9 +160,33 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
             .Where(e => e.HouseholdId == householdId
                 && (e.Kind == CreditEntryKind.Consumption || e.Kind == CreditEntryKind.Expiry)
                 && e.Id > lastAllowance.Id)
-            .SumAsync(e => e.AmountMicros, cancellationToken);
-        var unspent = lastAllowance.AmountMicros + drawnSince;
-        return unspent > 0 ? unspent : 0;
+            .SumAsync(e => e.AmountCredits, cancellationToken);
+
+        // ⚠️ Reversals are counted by WHICH CHARGE they undo, not by where they landed. A reversal is
+        // positive where the two above are negative, so it nets a consumption back out — but only if that
+        // consumption drew on THIS allowance. An act can straddle the boundary (a 124-meal plan is eighteen
+        // provider calls, and the allowance posts on any entitlement check in between), and a refund of
+        // last month's charge counted against this month's allowance makes this month look less spent than
+        // it was: the sweep then takes the difference out of PURCHASED credit. Keying on ReversesEntryId
+        // rather than on the reversal's own id is the whole point — the reversal's own position is exactly
+        // the misleading fact. A reversal we cannot attribute (a legacy row, before the column existed) is
+        // left out, which is the direction that can only under-sweep.
+        var returnedSince = await db.CreditLedger
+            .Where(e => e.HouseholdId == householdId
+                && e.Kind == CreditEntryKind.Reversal
+                && e.ReversesEntryId != null && e.ReversesEntryId > lastAllowance.Id)
+            .SumAsync(e => e.AmountCredits, cancellationToken);
+
+        var unspent = lastAllowance.AmountCredits + drawnSince + returnedSince;
+        // Clamped at both ends. The lower bound is the original guard (a fully-spent allowance sweeps
+        // nothing). The upper bound is belt-and-braces now that reversals are attributed: an allowance
+        // cannot have more of itself left than was granted, whatever the rows say. ⚠️ It is NOT the fix for
+        // the straddling reversal — the first version of this made that claim and it was false, because a
+        // misattributed reversal SMALLER than the grant clears the clamp untouched and eats purchased
+        // credit just the same. The attribution above is the fix; this only bounds a sum gone wrong some
+        // other way. Math.Max guards the clamp itself: min > max throws, and a non-positive allowance row
+        // could only arrive by hand-editing, which is not worth a crash inside the grant path.
+        return Math.Clamp(unspent, 0, Math.Max(0, lastAllowance.AmountCredits));
     }
 
     /// <summary>A household's ledger entries, oldest first (by Id — SQLite can't ORDER BY a
@@ -168,36 +202,166 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
             .ToListAsync(cancellationToken);
     }
 
-    /// <summary>Append a CONSUMPTION entry (stored negative) — an AI call drawing the balance down.
-    /// <paramref name="retailMicros"/> is the positive retail amount; a non-positive amount (a free or
-    /// cached call) records nothing.</summary>
-    public async Task RecordConsumptionAsync(
-        string householdId, long retailMicros, string? reason, CancellationToken cancellationToken = default)
+    /// <summary>Append a CONSUMPTION entry (stored negative) — a charged action drawing the balance down.
+    /// <paramref name="credits"/> is the positive price; a non-positive price (a FREE action per the price
+    /// list, or a cached call that did no work) records nothing, which is what keeps the ledger a record of
+    /// money rather than a log of everything that happened.
+    ///
+    /// <para>⚠️ It throws ONLY when the row provably did not land. The caller
+    /// (<see cref="Services.MeteredChatClient"/>) hands the action's one charge back on a throw so a later
+    /// round can pay instead, and a throw raised AFTER the INSERT committed — a connection reset on the
+    /// context's dispose, say — would make that retry a SECOND ledger line for one act. The ledger is
+    /// append-only with no idempotency key, so nothing would net them. This method is the only place that
+    /// knows which side of the commit a failure came from, so it is where the distinction belongs.</para>
+    /// </summary>
+    /// <returns>The new row's id when one was written; null when the price was not chargeable. The id
+    /// is what a later <see cref="ReverseConsumptionAsync"/> points at, so a refund can be attributed to
+    /// the period the charge actually drew on rather than to whichever allowance precedes it.</returns>
+    public async Task<long?> RecordConsumptionAsync(
+        string householdId, long credits, string? reason, CancellationToken cancellationToken = default)
     {
-        if (retailMicros <= 0) return;
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        db.CreditLedger.Add(new CreditLedgerEntry
+        if (credits <= 0) return null;
+        long? committed = null;
+        try
         {
-            HouseholdId = householdId,
-            Kind = CreditEntryKind.Consumption,
-            AmountMicros = -retailMicros,
-            Reason = reason,
-        });
-        await db.SaveChangesAsync(cancellationToken);
+            await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+            var entry = new CreditLedgerEntry
+            {
+                HouseholdId = householdId,
+                Kind = CreditEntryKind.Consumption,
+                AmountCredits = -credits,
+                Reason = reason,
+            };
+            db.CreditLedger.Add(entry);
+            await db.SaveChangesAsync(cancellationToken);
+            // Read AFTER SaveChanges, which is where the store assigns it — and before anything that can
+            // fail, so the swallow below still reports the row that landed rather than losing its id.
+            committed = entry.Id;
+        }
+        catch (Exception ex) when (committed is not null)
+        {
+            // The money is recorded; what failed is the tidying after it (dispose, a connection reset).
+            // Swallowed DELIBERATELY and not silently: reporting it as a failure would tell the caller to
+            // retry the charge, which is the one outcome worse than the exception — the household would pay
+            // twice for one action. Logged, because a connection that dies on dispose is worth knowing about.
+            logger?.LogWarning(ex, "The consumption row for household {HouseholdId} was written, but the "
+                + "context failed afterwards; reporting it as charged so the action is not billed twice.", householdId);
+        }
+        return committed;
+    }
+
+    /// <summary>Append a REVERSAL entry (positive) — credits handed back for an act that was charged and
+    /// did not deliver. <paramref name="credits"/> is the positive amount coming back; non-positive records
+    /// nothing.
+    ///
+    /// <para>⚠️ "Once per charge" is enforced in TWO places, on purpose. The scope that owns the charge
+    /// runs this at most once — <see cref="Core.Billing.AiActionScope.DisposeAsync"/> takes the settlement
+    /// callback with an <c>Interlocked.Exchange</c>, exactly as <c>TryClaimCharge</c> takes the charge —
+    /// and that is the mechanism. The check below is the backstop, and it exists because the ledger is
+    /// append-only with no way to net two rows afterwards: a second reversal is money minted and nothing
+    /// downstream can undo it. <c>ReversesEntryId</c> is the key that makes the backstop possible at all,
+    /// and it was added for the allowance attribution rather than for this — it earns its keep twice.</para>
+    ///
+    /// <para>The same commit-side distinction as <see cref="RecordConsumptionAsync"/>, for the same reason
+    /// pointing the other way: a post-commit failure reported as a failure would invite a retry, and a
+    /// second reversal would pay the household twice for one undelivered act.</para></summary>
+    /// <returns>true when a row was written. false has two meanings and an operator needs both: there
+    /// was nothing to give back (a non-positive amount), or the give-back was REFUSED by one of the guards
+    /// below — a charge that isn't this household's, an amount larger than it drew, or one already
+    /// reversed. Every refusal logs at Error; "nothing to give back" is silent.</returns>
+    public async Task<bool> ReverseConsumptionAsync(
+        string householdId, long credits, string? reason, long reversesEntryId,
+        CancellationToken cancellationToken = default)
+    {
+        if (credits <= 0) return false;
+        var committed = false;
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+
+            // ⚠️ The charge is checked before anything is written, because the unspent-allowance sum ACTS
+            // on this id: one naming some other household's row, or a row that isn't a consumption, would
+            // be compared against this household's latest allowance and could make an allowance look
+            // unspent that isn't — letting the period-end sweep reach purchased credit. One caller passes
+            // its own charge's id today; this is what stops the second caller getting it wrong silently.
+            //
+            // ⚠️ And there are three ways to get it wrong, not one. Naming the wrong row is the first;
+            // giving back MORE than the charge and giving it back TWICE both mint credit, and neither can
+            // be netted afterwards because the ledger is append-only with no idempotency key. The scope
+            // enforces "once" for the caller that exists (AiActionScope.DisposeAsync takes the settlement
+            // with an Interlocked.Exchange) and the metering layer bounds the amount — but both live in
+            // the caller, and this is the layer that writes the money.
+            //
+            // ⚠️ The already-reversed check catches a REPEAT and two things it does not catch are worth
+            // knowing. It is a read and then a write with no transaction around them and no unique index
+            // on ReversesEntryId, so two concurrent reversals of one charge would both read "not yet" and
+            // both insert — a race the scope's Interlocked take already prevents, which is why this stays
+            // the cheap check rather than growing into a partial unique index. And a reversal written
+            // before the column existed carries a null ReversesEntryId (see the unspent-allowance sum,
+            // which leaves those out for the same reason), so a charge undone back then can be undone
+            // again. Both are narrow; a guard sitting where this one sits will be read as total unless it
+            // says otherwise.
+            var charge = await db.CreditLedger
+                .Where(e => e.Id == reversesEntryId
+                    && e.HouseholdId == householdId
+                    && e.Kind == CreditEntryKind.Consumption)
+                .Select(e => (long?)e.AmountCredits)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (charge is not { } drawn)
+            {
+                logger?.LogError("Refusing to reverse {Credits} credit(s) for household {HouseholdId}: "
+                    + "entry {EntryId} is not a consumption of theirs.", credits, householdId, reversesEntryId);
+                return false;
+            }
+
+            // A consumption is stored negative, so the charge's size is its magnitude.
+            if (credits > -drawn)
+            {
+                logger?.LogError("Refusing to reverse {Credits} credit(s) for household {HouseholdId}: "
+                    + "entry {EntryId} only drew {Drawn}.", credits, householdId, reversesEntryId, -drawn);
+                return false;
+            }
+
+            if (await db.CreditLedger.AnyAsync(e => e.Kind == CreditEntryKind.Reversal
+                    && e.ReversesEntryId == reversesEntryId
+                    && e.HouseholdId == householdId, cancellationToken))
+            {
+                logger?.LogError("Refusing to reverse {Credits} credit(s) for household {HouseholdId}: "
+                    + "entry {EntryId} has already been given back.", credits, householdId, reversesEntryId);
+                return false;
+            }
+
+            db.CreditLedger.Add(new CreditLedgerEntry
+            {
+                HouseholdId = householdId,
+                Kind = CreditEntryKind.Reversal,
+                AmountCredits = credits,
+                Reason = reason,
+                ReversesEntryId = reversesEntryId,
+            });
+            await db.SaveChangesAsync(cancellationToken);
+            committed = true;
+        }
+        catch (Exception ex) when (committed)
+        {
+            logger?.LogWarning(ex, "The reversal row for household {HouseholdId} was written, but the "
+                + "context failed afterwards; reporting it as given back so the act is not refunded twice.", householdId);
+        }
+        return committed;
     }
 
     /// <summary>Append a GRANT entry (positive) — the welcome grant on a standalone context, or an admin
     /// comp later. A non-positive amount records nothing.</summary>
     public async Task GrantAsync(
-        string householdId, long amountMicros, string? reason, CancellationToken cancellationToken = default)
+        string householdId, long credits, string? reason, CancellationToken cancellationToken = default)
     {
-        if (amountMicros <= 0) return;
+        if (credits <= 0) return;
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         db.CreditLedger.Add(new CreditLedgerEntry
         {
             HouseholdId = householdId,
             Kind = CreditEntryKind.Grant,
-            AmountMicros = amountMicros,
+            AmountCredits = credits,
             Reason = reason,
         });
         await db.SaveChangesAsync(cancellationToken);
@@ -205,41 +369,41 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
 
     /// <summary>The welcome-grant entry for a new household — a FACTORY, so a registration can add it to
     /// its OWN context (atomic with creating the household) while "what the welcome grant is" stays a
-    /// single definition. Amount is the configured cost-dollars × markup (0 → no entry worth adding).</summary>
+    /// single definition. Amount is the configured cost-dollars at the anchor (0 → no entry worth adding).</summary>
     public static CreditLedgerEntry? WelcomeGrant(string householdId, BillingOptions options)
     {
-        var amount = AiPricing.WelcomeGrantRetailMicros(options);
-        return amount <= 0 ? null : new CreditLedgerEntry
+        var credits = CreditPricing.WelcomeGrantCredits(options);
+        return credits <= 0 ? null : new CreditLedgerEntry
         {
             HouseholdId = householdId,
             Kind = CreditEntryKind.Grant,
-            AmountMicros = amount,
+            AmountCredits = credits,
             Reason = "Welcome grant",
         };
     }
 
-    /// <summary>A credit-PACK purchase entry (positive retail micros) — a FACTORY so the webhook handler
+    /// <summary>A credit-PACK purchase entry (positive credits) — a FACTORY so the webhook handler
     /// adds it to its own context, atomic with the tier/period write and the idempotency row, while the
     /// entry's shape stays defined here. Non-positive → null (nothing worth recording).</summary>
-    public static CreditLedgerEntry? Purchase(string householdId, long retailMicros, string? reason) =>
-        retailMicros <= 0 ? null : new CreditLedgerEntry
+    public static CreditLedgerEntry? Purchase(string householdId, long credits, string? reason) =>
+        credits <= 0 ? null : new CreditLedgerEntry
         {
             HouseholdId = householdId,
             Kind = CreditEntryKind.Purchase,
-            AmountMicros = retailMicros,
+            AmountCredits = credits,
             Reason = reason,
         };
 
     /// <summary>A REFUND reversal entry (stored NEGATIVE) — a FACTORY, same batching reason as
-    /// <see cref="Purchase"/>. <paramref name="retailMicros"/> is the positive amount being reversed; the
+    /// <see cref="Purchase"/>. <paramref name="credits"/> is the positive amount being reversed; the
     /// balance may go negative as a result (§4: a refund after credits were spent nets against future
     /// purchases). Non-positive → null.</summary>
-    public static CreditLedgerEntry? Refund(string householdId, long retailMicros, string? reason) =>
-        retailMicros <= 0 ? null : new CreditLedgerEntry
+    public static CreditLedgerEntry? Refund(string householdId, long credits, string? reason) =>
+        credits <= 0 ? null : new CreditLedgerEntry
         {
             HouseholdId = householdId,
             Kind = CreditEntryKind.Refund,
-            AmountMicros = -retailMicros,
+            AmountCredits = -credits,
             Reason = reason,
         };
 }

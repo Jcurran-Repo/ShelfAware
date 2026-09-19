@@ -1,5 +1,6 @@
 @page "/cookbook/import"
 @implements IDisposable
+@using ShelfAware.Core.Tagging
 @using ShelfAware.Core.Recipes
 @inject IRecipeImporter Importer
 @inject IShelfPhotoLoader PhotoLoader
@@ -117,12 +118,16 @@ else if (phase == Phase.Review && draft is not null)
                         aria-label="Remove tag @tag">×</button></span>
             }
             <span class="cookbook-tag-add">
-                <input @bind="newTag" @bind:event="oninput" @onkeydown="AddTagOnEnter"
+                <input maxlength="@TagVocabulary.MaxLength" @bind="newTag" @bind:event="oninput" @onkeydown="AddTagOnEnter"
                        placeholder="add a tag" aria-label="Add a tag" />
                 <button type="button" class="secondary" @onclick="AddDraftTag"
                         disabled="@string.IsNullOrWhiteSpace(newTag)">Add</button>
             </span>
         </div>
+        @if (tagNote is not null)
+        {
+            <p class="muted small" role="status">@tagNote</p>
+        }
 
         @if (error is not null)
         {
@@ -165,6 +170,7 @@ else if (phase == Phase.Done)
     // Review-phase draft
     private Draft? draft;
     private string newTag = "";
+    private string? tagNote;
     private bool saving;
     private string? savedName;
 
@@ -232,7 +238,7 @@ else if (phase == Phase.Done)
         phase = Phase.Reading;
         // Importing IS the AI call (photo → vision, text → parse), so a blocked circuit has nothing to do but
         // say why (no key / out of credits) rather than fail with a generic "something went wrong" (4c).
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, pageCts.Token);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, ServiceAction.RecipeImport, cancellationToken: pageCts.Token);
         if (blocked is not null) { error = blocked; phase = Phase.Error; importing = false; return; }
         try
         {
@@ -281,8 +287,16 @@ else if (phase == Phase.Done)
     private void AddDraftTag()
     {
         var tag = newTag.Trim();
+        if (draft is null || tag.Length == 0) { newTag = ""; tagNote = null; return; }
+        // ⚠️ Said out loud, not dropped — the third screen to need this and the one that was missed. The
+        // commit that fixed Upload and Cookbook gave this input a maxlength attribute and stopped there,
+        // and maxlength is a client-side hint: an over-long tag still became a chip on the draft, rendered
+        // as if it had been accepted, and then vanished at Save when Canonicalize answered null and
+        // ApplyTags skipped it. Silent data loss on the one screen whose whole job is a draft the
+        // household is reviewing. See TagVocabulary.IsOverLength.
+        if (TagVocabulary.IsOverLength(tag)) { tagNote = TagVocabulary.TooLongMessage; return; }
         newTag = "";
-        if (draft is null || tag.Length == 0) return;
+        tagNote = null;
         if (!draft.Tags.Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase)))
             draft.Tags.Add(tag);
     }

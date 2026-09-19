@@ -15,10 +15,27 @@ public interface IPantryChat
     /// recipes listed on screen, in display order), or null. Lets the model resolve on-screen references
     /// — "read me the second one", "that one" — to a concrete name it can act on. The roaming voice agent
     /// fills this from the page it's currently on.</param>
+    /// <param name="cookAlong">The hands-free recipe reader currently on screen, or null when there is
+    /// none. Structured rather than inferred from <paramref name="screenContext"/>, which is prose written
+    /// for the model to read: whether a step can be moved to is a question the code has to answer, and
+    /// answering it by looking for words in a sentence meant for a model is how the two drift apart.</param>
     Task<ChatResult> HandleAsync(
         string userText, IReadOnlyList<ChatTurn>? history = null, string? screenContext = null,
-        CancellationToken cancellationToken = default);
+        CookAlongState? cookAlong = null, CancellationToken cancellationToken = default);
 }
+
+/// <summary>The hands-free recipe reader that is open right now.
+///
+/// <para>⚠️ It exists so the chat cannot ANNOUNCE a move it has no way to make. <c>go_to_step</c> was
+/// offered to the model on every surface and range-checked on none: the handler recorded the step and
+/// replied "Moving to step 12", the model repeated it, and the only consumer — the reader — silently
+/// dropped anything past the end of the recipe or, on the dashboard and the push-to-talk button, did not
+/// exist at all. So the household was told the screen had moved while it sat still, and was charged for
+/// it. The tool is now offered only when this is present, and the step is checked against
+/// <see cref="StepCount"/> before anyone is told anything.</para></summary>
+/// <param name="StepCount">How many steps the open recipe has. Step 0 is the introduction, so the legal
+/// range is 0..StepCount inclusive.</param>
+public record CookAlongState(int StepCount);
 
 /// <summary>One completed exchange in a multi-turn voice conversation (v2.1). The assistant's reply
 /// text carries enough context that replaying (user, assistant) pairs lets the model resolve

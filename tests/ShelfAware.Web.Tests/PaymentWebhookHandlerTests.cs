@@ -72,7 +72,7 @@ public class PaymentWebhookHandlerTests : IDisposable
         return await db.Households.AsNoTracking().SingleAsync(h => h.Id == id);
     }
 
-    private Task<long> BalanceAsync(string householdId) => new CreditLedger(_auth, Microsoft.Extensions.Options.Options.Create(new ShelfAware.Core.Billing.BillingOptions())).GetBalanceMicrosAsync(householdId);
+    private Task<long> BalanceAsync(string householdId) => new CreditLedger(_auth, Microsoft.Extensions.Options.Options.Create(new ShelfAware.Core.Billing.BillingOptions())).GetBalanceCreditsAsync(householdId);
 
     private static readonly DateTimeOffset PeriodEnd = new(2026, 10, 1, 0, 0, 0, TimeSpan.Zero);
 
@@ -101,7 +101,7 @@ public class PaymentWebhookHandlerTests : IDisposable
         var household = await SeedAsync(h => h.Tier = HouseholdTier.Aware); // packs are subscribers-only
         var evt = new PaymentWebhookEvent("evt_pack", PaymentEventKind.CheckoutCompleted,
             HouseholdId: household.Id, BillingCustomerId: "cus_1",
-            Product: BillingProduct.CreditPack10, AmountMicros: 10_000_000);
+            Product: BillingProduct.CreditPack10, AmountCredits: 10_000_000);
 
         var outcome = await Handler().HandleAsync(evt);
 
@@ -188,7 +188,7 @@ public class PaymentWebhookHandlerTests : IDisposable
         // No household or subscription id — a refund carries the customer; resolve by it. The refund
         // exceeds the balance, so it goes negative (§4: nets against future purchases).
         var evt = new PaymentWebhookEvent("evt_refund", PaymentEventKind.Refunded,
-            BillingCustomerId: "cus_r", AmountMicros: 10_000_000);
+            BillingCustomerId: "cus_r", AmountCredits: 10_000_000);
 
         var outcome = await Handler().HandleAsync(evt);
 
@@ -217,7 +217,7 @@ public class PaymentWebhookHandlerTests : IDisposable
     {
         var household = await SeedAsync(h => h.Tier = HouseholdTier.Aware);
         var evt = new PaymentWebhookEvent("evt_dup", PaymentEventKind.CheckoutCompleted,
-            HouseholdId: household.Id, Product: BillingProduct.CreditPack10, AmountMicros: 10_000_000);
+            HouseholdId: household.Id, Product: BillingProduct.CreditPack10, AmountCredits: 10_000_000);
 
         Assert.Equal(WebhookOutcome.Applied, await Handler().HandleAsync(evt));
         Assert.Equal(WebhookOutcome.AlreadyProcessed, await Handler().HandleAsync(evt)); // same id again

@@ -21,4 +21,32 @@ public sealed class DemoOptions
     /// reads "· reached" while the day's count is at/over it; it is NOT routed to /admin's <em>error log</em>,
     /// which is for Error-level events only — a routine heads-up isn't an error. Null = no alert.</summary>
     public int? AlertThreshold { get; set; }
+
+    /// <summary>⚠️ THE one reading of "is this Demo section internally coherent?", so the startup narration
+    /// and any surface that ever reports valve health ask the same question rather than each re-deriving it.
+    /// Empty when there is nothing to object to — which is the family / self-host case (nothing configured
+    /// is a coherent posture, not a fault), so this never cries wolf on a box that isn't a demo box.
+    /// <para>Both objections describe a box whose operator BELIEVES they have a valve and does not: the
+    /// alert without the cap gives a heads-up with no bound behind it, and an alert at or above the cap can
+    /// never fire before the cap has already closed the box. Each is provable from the two numbers alone.</para></summary>
+    public IReadOnlyList<string> ConfigurationObjections()
+    {
+        var objections = new List<string>();
+
+        if (AlertThreshold is not null && DailyGlobalCallLimit is null)
+        {
+            objections.Add(
+                "Demo:AlertThreshold is set but Demo:DailyGlobalCallLimit is not — this box warns about "
+                + "traffic it will never stop. Set a call limit, or remove the threshold.");
+        }
+
+        if (AlertThreshold is int alert && DailyGlobalCallLimit is int cap && alert >= cap)
+        {
+            objections.Add(
+                $"Demo:AlertThreshold ({alert}) is at or above Demo:DailyGlobalCallLimit ({cap}) — the "
+                + "heads-up can only arrive once the box is already capped. Set the threshold below the limit.");
+        }
+
+        return objections;
+    }
 }

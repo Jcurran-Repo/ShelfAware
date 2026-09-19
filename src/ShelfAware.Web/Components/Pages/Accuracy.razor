@@ -280,7 +280,7 @@ else
         selfEvalProgress = "Starting…";
         // A run is one vision call PER verified receipt; the grader fails soft per-receipt, so an exhausted
         // balance would read "grading failed" on every row. Say the real reason up front and don't start (4c).
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, ServiceAction.ReceiptExtraction);
         if (blocked is not null) { selfEvalError = blocked; selfEvalRunning = false; return; }
         try
         {

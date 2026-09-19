@@ -30,6 +30,22 @@ public sealed class DemoUsageMeter(
 {
     private DemoOptions Opt => options.Value;
 
+    /// <summary>⚠️ How many CONSECUTIVE counter reads may fail before the valve stops failing open.
+    /// <para>Failing open is right for a BLIP — an auth.db hiccup must not block a legitimate call, nor tear
+    /// down a circuit through the pre-check. It is wrong without end: the justification for it names the host
+    /// key's own console spend limit as the backstop, and that backstop lives outside this repo, outside CI,
+    /// and outside anything here that would notice if it were removed or raised. A demo box that cannot count
+    /// what it is spending must not keep spending indefinitely on the strength of a promise nothing can check.
+    /// So the fail-open is bounded in DURATION rather than removed: transient stays open, sustained closes,
+    /// and the first successful read reopens it with no intervention.</para>
+    /// <para>Counted in READS, not user actions — an AI surface asks twice per action (the pre-check, then the
+    /// gate), so this is roughly five actions' worth of a genuinely unreadable counter.</para></summary>
+    internal const int FailOpenReadLimit = 10;
+
+    /// <summary>Consecutive <see cref="IsCallBlockedAsync"/> read failures. Process-wide (this is a singleton),
+    /// reset to zero by any successful read.</summary>
+    private int _consecutiveReadFailures;
+
     /// <summary>Any box-wide cap OR the alert is configured. When false every method is a no-op and no row
     /// is ever written — the family / self-host posture. Public so /admin can decide whether to show the
     /// usage panel at all (a box with no Demo config has nothing to show).</summary>
@@ -55,7 +71,8 @@ public sealed class DemoUsageMeter(
 
     /// <summary>THE one reading of "is the box-wide LLM cap hit right now?" — shared by the throwing gate
     /// and the non-throwing pre-check so a surface and the server-side gate never disagree. False (with no
-    /// DB read) when no cap is configured, and — failing open — when the read itself errors.</summary>
+    /// DB read) when no cap is configured, and — failing open — when the read itself errors, up to
+    /// <see cref="FailOpenReadLimit"/> consecutive failures; past that it fails CLOSED.</summary>
     private async Task<bool> IsCallBlockedAsync(CancellationToken ct)
     {
         if (Opt.DailyGlobalCallLimit is not int cap) return false;
@@ -64,7 +81,10 @@ public sealed class DemoUsageMeter(
             await using var db = await dbFactory.CreateDbContextAsync(ct);
             // Coalesce the absent row to 0 so a cap of 0 blocks the FIRST call (an emergency kill switch),
             // rather than admitting one before a row exists (null >= 0 is false).
-            return IsAtCap((await TodayAsync(db, ct))?.Calls ?? 0, cap);
+            var blocked = IsAtCap((await TodayAsync(db, ct))?.Calls ?? 0, cap);
+            // The counter is readable again: reopen the bounded fail-open with no intervention.
+            Interlocked.Exchange(ref _consecutiveReadFailures, 0);
+            return blocked;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -72,9 +92,22 @@ public sealed class DemoUsageMeter(
             // blocked" — matching the per-household gate (AiUsageMeter.EnsureLlmCallAllowedAsync). This read
             // feeds BOTH the server gate AND the pre-check (AiErrorText), and the pre-check runs BEFORE each
             // AI surface's own try/catch: an infra blip must not tear down the circuit, nor block a legitimate
-            // call, and the key's own console spend limit is the hard backstop the valve only makes polite.
-            // Returning one value keeps the gate and the pre-check in agreement.
-            logger.LogError(ex, "Reading the box-wide demo AI counter failed; allowing the call (the key's spend limit is the backstop).");
+            // call. Returning one value keeps the gate and the pre-check in agreement.
+            // ⚠️ But only up to FailOpenReadLimit consecutive failures — see that constant for why an
+            // unbounded fail-open is not a posture this box can defend.
+            var failures = Interlocked.Increment(ref _consecutiveReadFailures);
+            if (failures >= FailOpenReadLimit)
+            {
+                logger.LogError(ex,
+                    "Reading the box-wide demo AI counter has failed {Failures} times in a row; refusing host-key "
+                    + "calls until it reads again, because a box that can't count its spending must not keep spending.",
+                    failures);
+                return true;
+            }
+
+            logger.LogError(ex,
+                "Reading the box-wide demo AI counter failed ({Failures} in a row); allowing the call. "
+                + "Calls are refused once this reaches {Limit}.", failures, FailOpenReadLimit);
             return false;
         }
     }

@@ -4,6 +4,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Census;
+using ShelfAware.Core.Billing;
 using Category = ShelfAware.Core.Domain.Category;
 
 namespace ShelfAware.Llm;
@@ -78,6 +79,7 @@ public class AnthropicShelfCensusReader : IShelfCensusReader
         CancellationToken cancellationToken = default)
     {
         if (photos.Count == 0) return ShelfCensusResult.Fail("No photos provided.");
+        await using var action = AiActionScope.Begin(ServiceAction.CensusPhoto);
 
         _logger.LogInformation("Reading a shelf census from {PhotoCount} photo(s) ({ProductHints} product hints).",
             photos.Count, knownProductNames?.Count ?? 0);
@@ -130,16 +132,18 @@ public class AnthropicShelfCensusReader : IShelfCensusReader
             {
                 response = await _chat.GetResponseAsync(messages, options, cancellationToken);
             }
-            catch (OperationCanceledException)
+            // ⚠️ WHOSE cancellation — see AnthropicReceiptExtractor; a timeout belongs below.
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                throw; // the caller cancelled — not a read failure
+                throw; // the caller really did cancel — not a read failure
             }
             catch (Exception ex)
             {
                 // API/transport errors (auth, rate limit, network) — the SDK already retried what's
                 // retryable, so a second attempt here would only cost the visitor another call.
+                // Exception text to the log, plain copy to the screen — see AnthropicReceiptExtractor.
                 _logger.LogError(ex, "Shelf census call to the model failed.");
-                return ShelfCensusResult.Fail(ex.Message, rawJson);
+                return ShelfCensusResult.Fail("Couldn't reach the AI just now — please try again.", rawJson);
             }
 
             rawJson = response.Text;
@@ -152,6 +156,7 @@ public class AnthropicShelfCensusReader : IShelfCensusReader
                     items.Count(i => i.Evidence == CensusEvidence.Label),
                     items.Count(i => i.Evidence == CensusEvidence.Appearance),
                     items.Count(i => i.Evidence == CensusEvidence.Unidentified));
+                action.Answered(); // an empty shelf is a true census of an empty shelf
                 return ShelfCensusResult.Ok(items, rawJson);
             }
             catch (Exception ex)
@@ -163,8 +168,10 @@ public class AnthropicShelfCensusReader : IShelfCensusReader
             }
         }
 
-        _logger.LogWarning("Shelf census failed after a retry: {Error}", lastError);
-        return ShelfCensusResult.Fail($"The photo couldn't be read after a retry: {lastError}", rawJson);
+        // Error, not Warning: a user-visible failure the operator cannot see is a support ticket with
+        // no evidence — and a census keeps no audit copy, so this is the only record of the attempt.
+        _logger.LogError("Shelf census failed after a retry: {Error}", lastError);
+        return ShelfCensusResult.Fail("Couldn't read that photo — try again, or take a clearer one.", rawJson);
     }
 
     private static List<CensusItem> ParseItems(string json)

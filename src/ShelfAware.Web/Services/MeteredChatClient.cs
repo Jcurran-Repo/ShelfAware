@@ -23,6 +23,7 @@ public sealed class MeteredChatClient(
     IOptions<BillingOptions> billing,
     IOptions<PaymentsOptions> payments,
     CreditLedger ledger,
+    ServiceMarginMeter margin,
     IEntitlements entitlements,
     ICurrentHousehold currentHousehold,
     ILogger<MeteredChatClient> logger) : IChatClient
@@ -139,9 +140,17 @@ public sealed class MeteredChatClient(
     /// <summary>The managed-call gate, consulted BEFORE the provider call (phase 4b) — the CHECKS only; the
     /// reserve is <see cref="ReserveCallAsync"/>, next. BYOK circuits skip it entirely (their key, their
     /// wallet). For a managed household: the per-household caps, then the demo box-wide valve, then
-    /// <see cref="IEntitlements.IsAiAllowedAsync"/> — always true where billing is off (§7), and otherwise a
-    /// Founder (unlimited) or a positive balance (running the lazy monthly allowance first). Throws to
-    /// refuse — the provider call never happens, and (because the reserve runs after) nothing is counted.</summary>
+    /// <see cref="IEntitlements.CheckAiAsync"/> — always true where billing is off (§7), and otherwise a
+    /// Founder (unlimited) or a balance that covers THIS ACT'S price. Throws to refuse — the provider call
+    /// never happens, and (because the reserve runs after) nothing is counted.
+    ///
+    /// <para>⚠️ Two things this asks that a bare "any credit left?" did not, and a meal plan needs both.
+    /// It asks for the price of the act about to run, so a household holding 5 credits is refused a
+    /// 42-credit plan BEFORE a single batch is generated rather than after the first one has drained them.
+    /// And it does not ask at all once the act's charge is already claimed: a plan charges its whole price
+    /// on the first of eighteen calls, so re-asking on call two would refuse the rest of a plan the
+    /// household has paid for in full — the plan would persist seven meals of the hundred and twenty-four
+    /// it bought, and the page would report success.</para></summary>
     private async Task EnsureManagedCallAllowedAsync(CancellationToken cancellationToken)
     {
         if (!settings.Managed) return;
@@ -149,7 +158,13 @@ public sealed class MeteredChatClient(
         // The demo box's BOX-WIDE daily valve (a no-op unless a Demo cap is configured) — the wallet bound
         // the per-household cap above can't give under open registration. Throws the come-back message.
         await demoMeter.EnsureCallAllowedAsync(cancellationToken);
-        if (!await entitlements.IsAiAllowedAsync(cancellationToken))
+
+        var act = AiActionScope.Current;
+        if (act is { ChargeClaimed: true }) return; // bought and paid for; the rest of it is not a new spend
+        // The SAME question every surface pre-check asks (AiErrorText.BlockedReasonAsync), asked of the same
+        // method with the same act, so the two can never answer it differently. An unlabelled call passes a
+        // null act and asks for the floor: it has no price until its cost is known (CreditsForCostMicros).
+        if (!(await entitlements.CheckAiAsync(act?.Action, act?.Units ?? 1, cancellationToken)).Allowed)
             throw new AiCreditsExhaustedException();
     }
 
@@ -230,39 +245,252 @@ public sealed class MeteredChatClient(
             return;
         }
 
+        // ⚠️ The three writes below each swallow EVERYTHING, cancellation included, which is the opposite of
+        // the house rule and deliberate here. This whole tail runs from a `finally` after the household
+        // already has its answer, and every call passes CancellationToken.None — there is no cancellation to
+        // honour, and an exception escaping a `finally` would replace a delivered answer with a crash. The
+        // rule is "let cancellation propagate so work can stop"; there is no work left to stop.
         try
         {
             await meter.RecordLlmUsageAsync(inputTokens, outputTokens, costMicros, CancellationToken.None);
         }
         catch (Exception ex) { logger.LogError(ex, "Recording AI usage failed; this call's tokens/cost went unrecorded."); }
 
+        var consumption = CreditConsumption.None;
+        // ⚠️ ONE read of the date, shared by the charge's stamp and the margin row it lands on. Reading
+        // it twice — once here and once inside the meter — reproduces the very defect the reversal's day
+        // stamp was added to fix: straddle midnight between the two statements and the charge is recorded
+        // on one day while its reversal aims at the other, leaving both permanently wrong. The window is
+        // milliseconds rather than minutes, and it is the same one-fact-two-derivations shape either way.
+        var today = DateOnly.FromDateTime(DateTime.Today);
         try
         {
-            await RecordCreditConsumptionAsync(costMicros, model, CancellationToken.None);
+            consumption = await RecordCreditConsumptionAsync(costMicros, model, today, CancellationToken.None);
         }
-        catch (Exception ex) { logger.LogError(ex, "Recording credit consumption failed; this call didn't draw the balance."); }
+        catch (Exception ex)
+        {
+            // ⚠️ Billable, drew nothing — NOT `None`. The throw can only come from past every "is this
+            // household on the hook?" gate, so the call WAS billable and its cost is part of what the
+            // action's charge has to cover. Recording it as unbillable would quietly leave it out of
+            // /admin's cost-per-charge and flatter the margin on exactly the calls where money went wrong.
+            consumption = CreditConsumption.Free;
+            logger.LogError(ex, "Recording credit consumption failed; this call didn't draw the balance.");
+        }
+
+        // Reconciliation, box-wide and household-free: what this call COST against what it was CHARGED.
+        // Recorded in every key mode and at every tier (see ServiceMarginMeter) — the question it answers is
+        // "is this action's price right?", which is about the action, not about who ran it. Its own
+        // best-effort INSIDE the meter, and wrapped here too: this runs from a finally (the streaming tail),
+        // and an escaping exception there would destroy an answer the household has already been charged for.
+        try
+        {
+            await margin.RecordAsync(
+                AiActionScope.Current?.Action, today, costMicros, consumption.Credits, consumption.Billable, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Recording the service-margin row failed; this call is missing from reconciliation.");
+        }
     }
 
-    /// <summary>Draw the household's credit balance down by this call's RETAIL cost — but only for a
-    /// household that actually spends host credits: a MANAGED deployment with BILLING enabled (BYOK visitors
-    /// ride their own key; a managed box with no <c>Payments</c> config is unlimited-by-default per §7, so
-    /// the credit system doesn't apply and nothing is drawn) and a NON-unlimited tier (a Founder's cost is
-    /// recorded above for the operator, but they never spend credit). ⚠️ The billing-off skip mirrors
+    /// <summary>Draw the household's credit balance down by the PRICE OF THE ACTION this call belongs to —
+    /// but only for a household that actually spends host credits: a MANAGED deployment with BILLING enabled
+    /// (BYOK visitors ride their own key; a managed box with no <c>Payments</c> config is unlimited-by-default
+    /// per §7, so the credit system doesn't apply and nothing is drawn) and a NON-unlimited tier (a Founder's
+    /// cost is recorded above for the operator, but they never spend credit). ⚠️ The billing-off skip mirrors
     /// <see cref="IEntitlements.IsAiAllowedAsync"/>'s <c>!IsConfigured</c> short-circuit — the credit system
     /// is on or off as ONE thing (gate, pre-check, display, AND this recorder), so a billing-off box never
     /// accrues an invisible negative balance that flipping billing on would later enforce. This RECORDS
     /// consumption; the balance ENFORCEMENT is <see cref="EnsureManagedCallAllowedAsync"/> (phase 4b), which
-    /// runs BEFORE the call — so this post-call hot path reads no balance.</summary>
-    private async Task RecordCreditConsumptionAsync(long costMicros, string? model, CancellationToken cancellationToken)
+    /// runs BEFORE the call — so this post-call hot path reads no balance.
+    ///
+    /// <para>⚠️ ONE charge per <see cref="AiActionScope"/>, claimed atomically, so a chat turn that needs five
+    /// tool rounds costs a chat turn rather than five of them. The variance between the price and what the
+    /// rounds actually cost is Jordan's — and in exchange the UI can state a price BEFORE the button is
+    /// pressed, which a cost-denominated balance can never do.</para>
+    ///
+    /// <para>⚠️ A call with no scope (an AI service nobody has labelled) is NOT free: it falls back to the
+    /// old cost-denominated charge via <see cref="CreditPricing.CreditsForCostMicros"/>, so a missing label
+    /// over-charges visibly instead of opening a hole. The tier and household reads happen BEFORE the claim,
+    /// so a call that was never going to be charged doesn't spend its scope's one charge.</para></summary>
+    /// <returns>Whether this call was on a billable path at all, and the credits it actually drew — 0 for a
+    /// free action and for every later round of an action already paid for. Both go to the reconciliation
+    /// row: the credits say what was billed, the billable flag says whose cost that billing has to cover.
+    /// </returns>
+    private async Task<CreditConsumption> RecordCreditConsumptionAsync(
+        long costMicros, string? model, DateOnly today, CancellationToken cancellationToken)
     {
-        if (!settings.Managed || !payments.Value.IsConfigured || costMicros <= 0) return;
-        if ((await entitlements.GetTierAsync(cancellationToken)).IsUnlimited()) return;
+        if (!settings.Managed || !payments.Value.IsConfigured) return CreditConsumption.None;
+        if ((await entitlements.GetTierAsync(cancellationToken)).IsUnlimited()) return CreditConsumption.None;
 
         var householdId = await currentHousehold.GetIdAsync(cancellationToken);
-        if (householdId is null) return;
+        if (householdId is null) return CreditConsumption.None;
 
-        var retailMicros = AiPricing.ToRetailMicros(billing.Value, costMicros);
-        await ledger.RecordConsumptionAsync(householdId, retailMicros, model, cancellationToken);
+        // Past this point the call is BILLABLE whatever happens next: this household spends credit, and its
+        // cost is what the action's price has to cover. The four silent rounds of a paid chat turn are each
+        // billable and each charge nothing.
+        long credits;
+        string? reason;
+        var claimed = AiActionScope.Current;
+        if (claimed is not null)
+        {
+            if (!claimed.TryClaimCharge()) return CreditConsumption.Free; // a later round of an action already paid for
+            credits = CreditPricing.CreditsFor(billing.Value, claimed.Action, claimed.Units);
+            reason = CreditPricing.DescribeCharge(billing.Value, claimed.Action, claimed.Units);
+        }
+        else
+        {
+            credits = CreditPricing.CreditsForCostMicros(billing.Value, costMicros);
+            reason = model;
+        }
+
+        long? chargeId;
+        try
+        {
+            chargeId = await ledger.RecordConsumptionAsync(householdId, credits, reason, cancellationToken);
+        }
+        catch
+        {
+            // ⚠️ Hand the claim back before rethrowing. The claim is taken BEFORE the write (that is what
+            // keeps two parallel rounds from both charging), so a write that fails having spent the claim
+            // would make every REMAINING round of the action free too — one failed row losing the whole
+            // action's charge. Releasing it lets the next round of the same action pay instead.
+            // Safe to do unconditionally ONLY because RecordConsumptionAsync throws exclusively when the row
+            // provably did not land; a failure after the INSERT committed is absorbed there and returns
+            // normally. Releasing on a landed write would bill one action twice, which is the one outcome
+            // worse than not billing it at all — see that method's remarks.
+            claimed?.ReleaseCharge();
+            throw;
+        }
+
+        // ⚠️ OUTSIDE that try, and it must stay outside. The row has landed by here, and the catch above
+        // releases the claim unconditionally — which is correct only while RecordConsumptionAsync is the
+        // only thing that can throw in there, because it throws exclusively when the row did NOT land.
+        // ChargeRecorded can throw (a charge arriving against a closed scope), and inside the try that
+        // throw would release a claim over money already taken: the next call on that flow would claim
+        // again and bill the household a SECOND time for one act. Which is the one outcome the catch's own
+        // remarks name as worse than not billing at all. Its failure is logged and swallowed instead: the
+        // charge stands and the refund is unreachable, which is recoverable from the ledger, where losing
+        // the claim is not.
+        try
+        {
+            // Handed over only once the row has LANDED, so an act that was never charged — a Founder, a
+            // BYOK circuit, a box with billing off, a free price — settles to nothing rather than being
+            // paid credits it never spent.
+            // ⚠️ Everything the give-back needs is STAMPED here, at charge time, and closed over: the row
+            // it undoes, the amount, and the price the charge was computed at. Re-reading any of them when
+            // the act closes would let a config edit mid-act price the refund differently from the charge —
+            // the same rule RecordUsageAsync states for cost, applied to the correction.
+            // ⚠️ The null-id case is logged rather than passed over. It cannot happen today — the ledger
+            // returns null only for a non-positive price, which `credits > 0` has already excluded — but
+            // the consequence if it ever does is a charge with the refund permanently unreachable and
+            // nothing said, which is the shape this whole arc keeps finding.
+            if (claimed is not null && credits > 0 && chargeId is null)
+                logger.LogError("A charge of {Credits} credit(s) for household {HouseholdId} landed without "
+                    + "a row id, so it cannot be given back.", credits, householdId);
+            if (claimed is not null && credits > 0 && chargeId is { } id)
+            {
+                var pricedAt = billing.Value;
+                claimed.ChargeRecorded(credits, (delivered, ct) =>
+                    ReverseUndeliveredAsync(householdId, claimed, credits, id, pricedAt, today, delivered, ct));
+            }
+        }
+        catch (Exception ex)
+        {
+            // Not narrowed to InvalidOperationException: anything thrown here is past the landed row, and
+            // letting it escape would reach RecordUsageAsync's catch, which reports the call as having
+            // drawn nothing — a statement the ledger contradicts.
+            logger.LogError(ex, "A charge of {Credits} credit(s) for household {HouseholdId} on ledger row "
+                + "{ChargeId} for {Action} landed but could not be made refundable; it will not be given "
+                + "back if the act under-delivers.", credits, householdId, chargeId, claimed?.Action);
+        }
+        return new CreditConsumption(true, credits);
+    }
+
+    /// <summary>Give back the part of an act's charge that covered units it never delivered — the whole
+    /// charge when it delivered nothing at all. Priced from the SAME <see cref="CreditPricing.CreditsFor"/>
+    /// the charge read, over the units that actually arrived, so the household is left holding exactly what
+    /// it would have been charged had the act asked for what it got.
+    ///
+    /// <para>⚠️ Failures here are logged and swallowed, and that is a deliberate exception to this repo's
+    /// rule against swallowing. This runs on the act's own path, after the household already has its
+    /// answer: a dead auth.db must not turn a delivered act into an error the surface reports as a
+    /// failure — which would be the second time we told the household something went wrong about work that
+    /// went right. What it costs is a household left charged for an undelivered unit, logged at Error and
+    /// visible in the ledger, which is recoverable; the alternative is not.</para></summary>
+    private async Task ReverseUndeliveredAsync(
+        string householdId, AiActionScope act, long charged, long chargeId, BillingOptions pricedAt,
+        DateOnly chargedOn, int delivered, CancellationToken cancellationToken)
+    {
+        // delivered == 0 is its own case: CreditsFor floors the unit count at one, deliberately, so that a
+        // bug upstream over-charges rather than zeroing a charge. Here nothing arrived, so nothing is kept.
+        var keep = delivered <= 0 ? 0 : CreditPricing.CreditsFor(pricedAt, act.Action, delivered);
+        var giveBack = charged - keep;
+        if (giveBack <= 0) return;
+        try
+        {
+            if (!await ledger.ReverseConsumptionAsync(householdId, giveBack,
+                    CreditPricing.DescribeReversal(pricedAt, act.Action, delivered, act.Units), chargeId,
+                    cancellationToken))
+            {
+                // ⚠️ Unreachable from here, and the comment before this one claimed otherwise — the
+                // ledger grew three refusals (a charge that isn't this household's, an amount larger than
+                // it drew, one already given back) and this said they had made the branch live. None of
+                // them can fire from this caller: the id and household come from the same charge, the
+                // amount is priced from the table that priced the charge, and the scope runs a settlement
+                // once. It stays because the alternative is a log asserting a give-back the ledger never
+                // wrote, which is the one thing an operator chasing missing credits would believe without
+                // checking — and because the refusals log their own reason, so the pair would read right.
+                logger.LogError("The reversal of {Credits} credit(s) for {Action} on household "
+                    + "{HouseholdId} wrote no row.", giveBack, act.Action, householdId);
+                return;
+            }
+            logger.LogInformation(
+                "Gave back {Credits} credit(s) of {Charged} to household {HouseholdId} for {Action}: "
+                + "{Delivered} of {Asked} unit(s) delivered.",
+                giveBack, charged, householdId, act.Action, delivered, act.Units);
+        }
+        catch (Exception ex)
+        {
+            // ⚠️ No `catch (OperationCanceledException) { throw; }` here, and that is the house rule
+            // deliberately not applied — the same call this file's RecordUsageAsync already makes, for the
+            // same reason. The only caller is AiActionScope.DisposeAsync, which passes CancellationToken.None,
+            // so there is no cancellation to honour: the clause could only rethrow a spontaneous one from
+            // the SQLite layer, out of a `finally`, replacing a delivered answer with a crash — which is
+            // precisely what the paragraph above says must not happen.
+            logger.LogError(ex,
+                "Couldn't give back {Credits} credit(s) to household {HouseholdId} for an undelivered "
+                + "{Action}; they stay charged for work they did not receive.",
+                giveBack, householdId, act.Action);
+            return;
+        }
+
+        // The ledger has moved, so the operator's reconciliation has to move with it — otherwise /admin
+        // reports this action earning credits the household no longer holds. Best-effort inside the meter,
+        // and wrapped here too for the same reason margin.RecordAsync is: this runs from a `finally`, and
+        // RecordReversalAsync deliberately rethrows cancellation, which would escape into the act's own
+        // `await using` and replace a delivered answer with a crash.
+        try
+        {
+            await margin.RecordReversalAsync(act.Action, chargedOn, giveBack, wholeCharge: keep == 0, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Recording the margin reversal for {Action} failed; reconciliation "
+                + "over-states what it earned by {Credits} credit(s).", act.Action, giveBack);
+        }
+    }
+
+    /// <summary>What one metered call did to the household's balance: whether it was on a billable path, and
+    /// what it actually drew. Two facts rather than one, because they are not the same question — see
+    /// <see cref="ServiceMarginDay.BillableCostMicros"/>.</summary>
+    private readonly record struct CreditConsumption(bool Billable, long Credits)
+    {
+        /// <summary>Nothing to bill: a BYOK circuit, a billing-off box, a Founder, or no household.</summary>
+        public static CreditConsumption None => new(false, 0);
+
+        /// <summary>Billable, but drew nothing — a free action, or a later round of one already paid for.</summary>
+        public static CreditConsumption Free => new(true, 0);
     }
 
     public object? GetService(Type serviceType, object? serviceKey = null) =>

@@ -249,6 +249,44 @@ public class RecipeReadAloudTests : VoiceTestBase
     }
 
     [Fact]
+    public async Task The_reader_tells_the_brain_how_long_the_recipe_is()
+    {
+        GiveWorkingEars();
+        Stt.Say("what goes in next");
+        Chat.Next = new ChatResult { Success = true, Reply = "The ribs do." };
+        var cut = RenderReader(handsFree: true);
+        cut.WaitForState(() => Tts.Spoken.Count == 3);
+
+        await cut.Instance.OnStepFinished(1);
+
+        // The length rides in STRUCTURED, not as words inside the screen context — whether a step can
+        // be reached is a question the code answers, and the chat gates go_to_step on this being here.
+        Assert.Equal(Ribs.Steps.Count, Chat.LastCookAlong?.StepCount);
+    }
+
+    [Fact]
+    public async Task A_step_the_recipe_does_not_have_is_refused_out_loud_rather_than_announced()
+    {
+        GiveWorkingEars();
+        Stt.Say("jump to step twelve");
+        // The brain is range-checked at the tool boundary now, so this shape should be unreachable —
+        // this pins the reader's own belt-and-braces, because it is the half that has the length.
+        Chat.Next = new ChatResult { Success = true, Reply = "Moving to step 12.", StepTarget = 12 };
+        var cut = RenderReader(handsFree: true);
+        cut.WaitForState(() => Tts.Spoken.Count == 3);
+
+        await cut.Instance.OnStepFinished(1);
+
+        // It did NOT move, and — the part that matters — it did not read back the claim that it had.
+        Assert.Equal(1, JSInterop.Invocations.Count(i => i.Identifier == "playFrom")); // the start, nothing else
+        Assert.DoesNotContain(Tts.Spoken, s => s.Text == "Moving to step 12.");
+        // ⚠️ One story: what the caption says is what the speaker says. The first version of this
+        // correction wrote the honest sentence to the caption and left the synthesizer reading the
+        // model's, so someone with their hands in a pan would have HEARD the move happen.
+        Assert.Equal("I can't go to step 12 — this recipe has 2.", Tts.Spoken[^1].Text);
+    }
+
+    [Fact]
     public async Task Hold_on_ignores_the_room_and_a_command_releases_it()
     {
         GiveWorkingEars();

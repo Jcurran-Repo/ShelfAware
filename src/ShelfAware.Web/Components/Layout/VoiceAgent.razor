@@ -163,7 +163,7 @@
                 // credits) never spends a host-key STT call on a doomed turn. Say the real reason and stand
                 // down; re-checked each turn, so mid-session exhaustion is caught too. `error` clears on the
                 // next StartListeningAsync, so a top-up + restart clears this.
-                var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
+                var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, ServiceAction.ChatTurn);
                 if (blocked is not null)
                 {
                     error = blocked;

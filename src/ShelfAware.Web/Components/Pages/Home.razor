@@ -84,7 +84,7 @@ else
             @foreach (var p in runningLow)
             {
                 var r = predictions[p.Id];
-                <li class="card accent-@ChipClass(r.Status)">
+                <li class="card accent-@PredictionDisplay.ChipClass(r.Status)">
                     <div class="card-body">
                         <div class="card-top">
                             <a class="card-name" href="/product/@p.Id">@p.Name</a>
@@ -94,7 +94,7 @@ else
                             {
                                 <span class="muted copy-note">@cn.Text</span>
                             }
-                            <span class="chip chip-@ChipClass(r.Status)">@StatusLabel(r.Status)</span>
+                            <span class="chip chip-@PredictionDisplay.ChipClass(r.Status)">@PredictionDisplay.Label(r.Status)</span>
                         </div>
                         @{
                             var size = SizeFormat.Normalize(r.RecommendedSize);
@@ -230,7 +230,7 @@ else
                         var r = predictions[p.Id];
                         <tr>
                             <td>@p.Name</td>
-                            <td><span class="chip chip-@ChipClass(r.Status)">@StatusLabel(r.Status)</span></td>
+                            <td><span class="chip chip-@PredictionDisplay.ChipClass(r.Status)">@PredictionDisplay.Label(r.Status)</span></td>
                             <td class="muted">@(r.Status == PredictionStatus.Unknown ? LearningHint(p) : r.Basis)</td>
                         </tr>
                     }
@@ -449,7 +449,7 @@ else
         chatBusy = true;
         chatReply = null;
         // Phase 4c: don't attempt a call this circuit can't make — show why (out of credits / no key) and stop.
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, ServiceAction.ChatTurn);
         if (blocked is not null)
         {
             chatReply = blocked;
@@ -491,36 +491,10 @@ else
 
     private static string Days(double? d) => d is { } v ? ((int)Math.Round(v)).ToString() : "?";
 
-    private static string ChipClass(PredictionStatus s) => s switch
-    {
-        PredictionStatus.Overdue => "overdue",
-        PredictionStatus.DueSoon => "duesoon",
-        PredictionStatus.Stocked => "stocked",
-        _ => "unknown"
-    };
-
-    private static string StatusLabel(PredictionStatus s) => s switch
-    {
-        PredictionStatus.Overdue => "Overdue",
-        PredictionStatus.DueSoon => "Due soon",
-        PredictionStatus.Stocked => "Stocked",
-        _ => "Still learning"
-    };
-
     // Translate the predicted run-out date into plain urgency — the answer to the app's one question.
-    private string Urgency(PredictionResult r)
-    {
-        if (r.DueDate is not { } due) return "";
-        var days = due.DayNumber - today.DayNumber;
-        return days switch
-        {
-            < 0 => $"{-days} day{Plural(-days)} overdue",
-            0 => "Due today",
-            _ => $"Due in {days} day{Plural(days)}"
-        };
-    }
-
-    private static string Plural(int n) => n == 1 ? "" : "s";
+    // The phrasing itself is PredictionDisplay's; this only resolves "how many days from today".
+    private string Urgency(PredictionResult r) =>
+        r.DueDate is { } due ? PredictionDisplay.Urgency(due.DayNumber - today.DayNumber) : "";
 
     // Honest thin-data message: how many more purchases until the engine can predict (needs ≥ 2
     // distinct purchase dates, §6.2). PURCHASES only — since the two-stream model, restocks anchor the
@@ -531,6 +505,6 @@ else
         var needed = 2 - distinctDates;
         return needed <= 0
             ? "still learning"
-            : $"{needed} more purchase{Plural(needed)} to start predicting";
+            : $"{needed} more purchase{PredictionDisplay.Plural(needed)} to start predicting";
     }
 }

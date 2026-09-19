@@ -34,6 +34,10 @@ public class AuthDbContext(DbContextOptions<AuthDbContext> options) : IdentityDb
     /// error log: a box-wide wallet valve no household owns. One row per day (see <see cref="DemoUsageDay"/>).</summary>
     public DbSet<DemoUsageDay> DemoUsage => Set<DemoUsageDay>();
 
+    /// <summary>Per-day, per-action reconciliation of credits charged against provider cost — operator data,
+    /// box-wide, no household attribution. See <see cref="ServiceMarginDay"/>.</summary>
+    public DbSet<ServiceMarginDay> ServiceMargin => Set<ServiceMarginDay>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -80,5 +84,11 @@ public class AuthDbContext(DbContextOptions<AuthDbContext> options) : IdentityDb
         // One row per day; unique so the meter's race-safe upsert (increment-or-insert) has the constraint
         // its concurrent-insert fallback relies on.
         modelBuilder.Entity<DemoUsageDay>().HasIndex(d => d.Day).IsUnique();
+
+        // One row per day per action; unique for the same reason — it is the constraint the meter's
+        // concurrent-insert fallback relies on. ⚠️ Action is nullable and SQLite counts NULLs as DISTINCT,
+        // so this does NOT collapse unlabelled rows; the reader GROUPs, which is what makes that harmless
+        // (the same NULL-distinctness the invite-code index depends on, here merely tolerated).
+        modelBuilder.Entity<ServiceMarginDay>().HasIndex(d => new { d.Day, d.Action }).IsUnique();
     }
 }

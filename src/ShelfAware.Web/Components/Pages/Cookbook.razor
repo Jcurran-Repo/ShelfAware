@@ -1,5 +1,6 @@
 @page "/cookbook"
 @implements IAsyncDisposable
+@using ShelfAware.Core.Tagging
 @using ShelfAware.Core.Recipes
 @using ShelfAware.Core.Settings
 @inject IHouseholdDbFactory DbFactory
@@ -197,7 +198,7 @@
                                 disabled="@taggingBusy" aria-label="Remove tag @tag from @r.Name">×</button></span>
                     }
                     <span class="cookbook-tag-add">
-                        <input list="recipe-tag-vocab" placeholder="add a tag" @bind="newTag" @bind:event="oninput"
+                        <input list="recipe-tag-vocab" placeholder="add a tag" maxlength="@TagVocabulary.MaxLength" @bind="newTag" @bind:event="oninput"
                                @onkeydown="AddTagOnEnter" disabled="@taggingBusy" aria-label="Add a tag to @r.Name" />
                         <button type="button" class="secondary" @onclick="AddTag"
                                 disabled="@(taggingBusy || string.IsNullOrWhiteSpace(newTag))">Add</button>
@@ -677,11 +678,20 @@ else
         try
         {
             var added = await TagService.AddAsync(r.Id, newTag);
-            tagNote = added is null ? "That tag is already there (or blank)." : null;
+            // ⚠️ Three reasons for null, and the old copy claimed two. TagVocabulary refuses an
+            // over-long candidate as well, so a 65-character tag was reported back as "already there".
+            tagNote = added is not null ? null
+                : TagVocabulary.IsOverLength(newTag) ? TagVocabulary.TooLongMessage
+                : "That tag is already there (or blank).";
             newTag = "";
             await LoadAsync();
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        // ⚠️ No cancellation arm, for the reason Recipes.razor now carries: this handler passes no
+        // token to AddAsync, so its token is CancellationToken.None and nothing here has a caller
+        // cancellation to re-raise. The filter that used to sit here could only re-raise a SPONTANEOUS
+        // OperationCanceledException out of the data layer — straight out of an @onclick handler with no
+        // ErrorBoundary behind it, taking the circuit and the open recipe with it.
+        catch (Exception ex)
         {
             Logger.LogError(ex, "Adding a tag to recipe {RecipeId} failed.", r.Id);
             tagNote = "Couldn't add that tag — please try again.";
@@ -718,7 +728,7 @@ else
         taggingBusy = true;
         suggesting = true;
         tagNote = null;
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, ServiceAction.TagSuggest);
         if (blocked is not null) { tagNote = blocked; suggesting = false; taggingBusy = false; return; }
         try
         {
@@ -749,7 +759,7 @@ else
         bulkTagging = true;
         bulkDone = 0;
         tagNote = null;
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
+        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve, ServiceAction.TagSuggest);
         if (blocked is not null) { tagNote = blocked; bulkTagging = false; taggingBusy = false; return; }
         var tagged = 0;
         try

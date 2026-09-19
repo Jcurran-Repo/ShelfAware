@@ -116,7 +116,8 @@ public sealed class DemoUsageMeterTests : IDisposable
     {
         // MED: IsCallBlockedAsync feeds the pre-check that runs BEFORE each AI surface's own try, so a
         // transient auth.db read failure must NOT throw (that tears down the circuit) — it fails open (not
-        // blocked), the key's own spend limit being the backstop. Same posture as AiUsageMeter's gate read.
+        // blocked). Same posture as AiUsageMeter's gate read. ⚠️ Open only for a BLIP: the sibling tests
+        // below pin the bound and the automatic reopen.
         var log = new CapturingLogger();
         var meter = new DemoUsageMeter(
             new ThrowingAuthDbFactory(), Options.Create(new DemoOptions { DailyGlobalCallLimit = 5 }), log);
@@ -125,6 +126,49 @@ public sealed class DemoUsageMeterTests : IDisposable
         await meter.EnsureCallAllowedAsync();               // the gate doesn't throw either
 
         Assert.NotEmpty(log.Errors); // the failure was logged, not silently swallowed
+    }
+
+    [Fact]
+    public async Task A_sustained_read_failure_eventually_fails_closed()
+    {
+        // ⚠️ The bound on the fail-open. A box that cannot count what it is spending must not keep spending
+        // forever on the strength of a backstop that lives outside this repo. Each read up to the limit is
+        // allowed (a blip must not block a legitimate call); the one that reaches it refuses.
+        var log = new CapturingLogger();
+        var meter = new DemoUsageMeter(
+            new ThrowingAuthDbFactory(), Options.Create(new DemoOptions { DailyGlobalCallLimit = 5 }), log);
+
+        for (var read = 1; read < DemoUsageMeter.FailOpenReadLimit; read++)
+        {
+            Assert.Null(await meter.CallBlockedMessageAsync());
+        }
+
+        // The read that reaches the limit closes the valve — and closes it politely, with the same
+        // come-back-tomorrow sentence a real cap gives, not an exception through the pre-check.
+        Assert.Equal(DemoLimits.DailyCapReachedMessage, await meter.CallBlockedMessageAsync());
+        await Assert.ThrowsAsync<DemoDailyCapException>(() => meter.EnsureCallAllowedAsync());
+        Assert.NotEmpty(log.Errors);
+    }
+
+    [Fact]
+    public async Task A_successful_read_reopens_the_bounded_fail_open()
+    {
+        // Recovery needs no intervention: one readable counter resets the streak. Asserted by making it
+        // fail AGAIN afterwards and seeing it allow — if the reset were missing, the valve would still be
+        // closed from the first burst, so this pins the reset rather than merely re-reading a healthy DB.
+        var flaky = new FlakyAuthDbFactory(_authDb);
+        var meter = new DemoUsageMeter(
+            flaky, Options.Create(new DemoOptions { DailyGlobalCallLimit = 5 }), NullLogger<DemoUsageMeter>.Instance);
+
+        flaky.Failing = true;
+        for (var read = 0; read < DemoUsageMeter.FailOpenReadLimit; read++) await meter.CallBlockedMessageAsync();
+        Assert.Equal(DemoLimits.DailyCapReachedMessage, await meter.CallBlockedMessageAsync()); // closed
+
+        flaky.Failing = false;
+        Assert.Null(await meter.CallBlockedMessageAsync()); // the counter reads → open again
+
+        flaky.Failing = true;
+        Assert.Null(await meter.CallBlockedMessageAsync()); // and the streak restarted from zero
     }
 
     [Fact]
@@ -180,6 +224,21 @@ public sealed class DemoUsageMeterTests : IDisposable
         public AuthDbContext CreateDbContext() => throw new InvalidOperationException("auth.db unavailable");
         public Task<AuthDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
             => throw new InvalidOperationException("auth.db unavailable");
+    }
+
+    /// <summary>An auth.db factory whose failure can be switched on and off, so a test can watch the valve
+    /// close under a sustained failure and reopen on the first read that works.</summary>
+    private sealed class FlakyAuthDbFactory(IDbContextFactory<AuthDbContext> inner) : IDbContextFactory<AuthDbContext>
+    {
+        public bool Failing { get; set; }
+
+        public AuthDbContext CreateDbContext() =>
+            Failing ? throw new InvalidOperationException("auth.db unavailable") : inner.CreateDbContext();
+
+        public Task<AuthDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) =>
+            Failing
+                ? throw new InvalidOperationException("auth.db unavailable")
+                : inner.CreateDbContextAsync(cancellationToken);
     }
 
     private sealed class OptionsAuthDbFactory(DbContextOptions<AuthDbContext> options) : IDbContextFactory<AuthDbContext>

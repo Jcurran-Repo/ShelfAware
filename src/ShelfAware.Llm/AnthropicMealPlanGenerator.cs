@@ -32,6 +32,12 @@ public class AnthropicMealPlanGenerator : IMealPlanGenerator
     public async Task<IReadOnlyList<RecipeSuggestion>> GenerateAsync(
         MealPlanBatch batch, CancellationToken cancellationToken = default)
     {
+        // ⚠️ NO AiActionScope here, deliberately. This generates ONE BATCH of a plan (MealPlanService chunks
+        // a long horizon into several calls), and the user-visible act is the plan, not the batch. The scope
+        // lives at MealPlanService.GenerateAsync/RerollAsync — which also lets a reroll be charged and
+        // LABELLED as a reroll rather than as a whole plan. A scope opened here charged a 31-day plan
+        // eighteen times; see docs/remediation-plan.md §9. A test holds this — AiActionScopeSiteTests'
+        // Each_action_has_exactly_one_place_its_charge_begins fails the build if a scope reappears here.
         var messages = new List<ChatMessage>
         {
             new(ChatRole.System, SystemPrompt),
@@ -62,7 +68,10 @@ public class AnthropicMealPlanGenerator : IMealPlanGenerator
                 }
                 _logger.LogWarning("Meal-plan batch returned no meals (attempt {Attempt} of 2).", attempt);
             }
-            catch (OperationCanceledException) { throw; }
+            // ⚠️ WHOSE cancellation. MealPlanPage's reroll runs this inline on the circuit and
+            // passes no token, so an unfiltered rethrow turns a provider timeout into a torn circuit and
+            // the household loses the plan edits it had on screen.
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; } // whose cancellation: see ProviderCancellationSiteTests
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Meal-plan batch failed (attempt {Attempt} of 2) — {Action}.",
