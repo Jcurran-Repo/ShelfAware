@@ -1,4 +1,4 @@
-# Backlog — what's open
+﻿# Backlog — what's open
 
 Carried out of `CLAUDE.md` on 2026-09-19. Everything here is deliberate: either parked with a reason,
 or small-and-not-yet-worth-a-branch. Shipped items are struck from the list rather than accumulating
@@ -30,16 +30,6 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
   Wiring it needs two things the app can't see from inside: a real ElevenLabs invoice to price a read
   against (the 3-credit figure is an estimate, never a measurement), and a charge point that isn't an
   `IChatClient`. Jordan's call whether to wire it or leave speech free.
-- ⚠️ **A meal plan still charges for meals it does not deliver.** Closed in part on 2026-09-19: the credit
-  gate now asks whether the balance covers the act's own price, so a household is refused a plan it cannot
-  afford before any of it runs. What is NOT closed is non-delivery. The whole plan's price is taken on the
-  first of up to eighteen provider calls, so a plan that then fails outright, or returns short because the
-  model wobbled, has already been charged in full — up to 42 credits for nothing, where before it was 2 and
-  therefore noise. Fixing it needs the act to settle up at the end (a compensating ledger entry for the
-  shortfall) or to charge on delivery, and either is a money-path decision rather than a patch; the refund
-  must also be keyed to a charge that really happened, since on a Founder or billing-off box nothing was
-  charged and a naive refund would mint credit. Not urgent — no deployed box has a `Payments` section, so
-  nothing is charged today — but it wants deciding before the first paying customer.
 - **The remediation arc** — all seven phases landed 2026-09-19, designed in `docs/remediation-plan.md`,
   with the review-gate pass on phase 7 written up in its §9. What's left out of that arc is deliberate:
   draining logic out of `.razor` (D1) and EF Migrations (D3), both with reasons in §8.
@@ -63,6 +53,19 @@ first live deploy). Set the droplet's timezone (`timedatectl set-timezone`, or `
 env) and keep `LANG` in the env file. Runbook step 2 covers both.
 
 ## Recently closed
+
+- **A meal plan charging for meals it does not deliver** — closed 2026-09-19, in two passes. The first
+  fixed the gate: it asks whether the balance covers *this act's* price, so a household is refused a plan
+  it cannot afford before any of it runs. The second (Jordan's call: "any call that fails should probably
+  be refunded") made every act settle up. An act now declares how many units it asked for and reports how
+  many it delivered; disposing it reverses the difference as a `Reversal` ledger entry priced by the same
+  `CreditPricing` call that charged it, so a 124-meal plan that returns 7 meals keeps 3 credits of its 42
+  and gives 39 back. The refund is keyed to a charge that really happened — `ChargeRecorded` is only
+  handed a settlement when the meter actually wrote one — so a Founder or a billing-off box, which never
+  charged, cannot mint credit by failing. `UnspentAllowanceCreditsAsync` counts reversals alongside
+  consumption, so a refunded allowance credit still expires with its month rather than outliving it.
+  A build rule (`Every_act_reports_what_it_delivered`) fails the build if a new charging site forgets to
+  say what it delivered, which would silently refund the whole act.
 
 - **Phase-5 cloud deploy** — LIVE on a DigitalOcean droplet since 2026-08-11 (not Azure), via
   `docs/deploy-droplet.md` + `deploy/`. The demo link points at https://demo.shelfaware.net.

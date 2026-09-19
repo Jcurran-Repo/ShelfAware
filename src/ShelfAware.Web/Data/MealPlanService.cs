@@ -76,7 +76,7 @@ public sealed class MealPlanService(
         // them — the household picks the horizon, so a plan is charged by the MEAL rather than at a flat
         // rate that over-charges a week and under-recovers a month. Everything that can spend money happens
         // below this line; loading the setup does not.
-        using var action = AiActionScope.Begin(ServiceAction.MealPlan, units: setup.SlotCount);
+        await using var action = AiActionScope.Begin(ServiceAction.MealPlan, units: setup.SlotCount);
         var context = await LoadContextAsync(setup, ct);
         onProgress?.Invoke(0, chunks.Count);
 
@@ -109,6 +109,11 @@ public sealed class MealPlanService(
             return MealPlanResult.Failed("Couldn't generate any meals just now — please try again.");
 
         var planId = await PersistAsync(setup, planned, ct);
+        // ⚠️ The plan was CHARGED for every meal it asked for, on its first provider call. Here is where it
+        // finds out how many actually arrived, so this is where the difference goes back. A month-long plan
+        // whose model wobbled on three batches is not a month-long plan, and the household should not be
+        // holding a bill for one. Settled after PersistAsync, so what it is paying for is what it can see.
+        action.Delivered(planned.Count);
         logger.LogInformation("Generated a meal plan of {Count} meal(s) over {Days} day(s).", planned.Count, setup.Days);
         return MealPlanResult.Ok(planId, planned.Count);
     }
@@ -169,7 +174,7 @@ public sealed class MealPlanService(
     {
         // A reroll is its OWN action, not a meal plan: one slot, its own price, and a ledger line that says
         // what the household actually did.
-        using var action = AiActionScope.Begin(ServiceAction.MealReroll);
+        await using var action = AiActionScope.Begin(ServiceAction.MealReroll);
         var setup = await LoadSettingsAsync(ct);
         var context = await LoadContextAsync(setup, ct);
         await using var db = await dbFactory.CreateDbContextAsync(ct);
@@ -195,6 +200,7 @@ public sealed class MealPlanService(
         if (meals.Count == 0)
             return RerollResult.Failed("Couldn't come up with a different meal just now — please try again.");
         var suggestion = meals[0];
+        action.Delivered(1); // one slot asked for, one meal back — a reroll has no partial
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         // Library dedup is best-effort: two rerolls racing from two tabs can't see each other's uncommitted

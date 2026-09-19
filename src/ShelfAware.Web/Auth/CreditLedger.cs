@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Billing;
@@ -148,7 +148,12 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
         // down by spending AND by an expiry that already swept it — never re-sweeping the same allowance.
         var drawnSince = await db.CreditLedger
             .Where(e => e.HouseholdId == householdId
-                && (e.Kind == CreditEntryKind.Consumption || e.Kind == CreditEntryKind.Expiry)
+                // ⚠️ Reversal belongs here with them. It is POSITIVE where those two are negative, so it
+                // nets a consumption back out — and leaving it out would make an allowance that was charged
+                // and refunded look spent, so the period-end sweep would take less than the remainder and
+                // the difference would quietly persist past its month.
+                && (e.Kind == CreditEntryKind.Consumption || e.Kind == CreditEntryKind.Expiry
+                    || e.Kind == CreditEntryKind.Reversal)
                 && e.Id > lastAllowance.Id)
             .SumAsync(e => e.AmountCredits, cancellationToken);
         var unspent = lastAllowance.AmountCredits + drawnSince;
@@ -207,6 +212,46 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
             // twice for one action. Logged, because a connection that dies on dispose is worth knowing about.
             logger?.LogWarning(ex, "The consumption row for household {HouseholdId} was written, but the "
                 + "context failed afterwards; reporting it as charged so the action is not billed twice.", householdId);
+        }
+        return committed;
+    }
+
+    /// <summary>Append a REVERSAL entry (positive) — credits handed back for an act that was charged and
+    /// did not deliver. <paramref name="credits"/> is the positive amount coming back; non-positive records
+    /// nothing.
+    ///
+    /// <para>⚠️ Deliberately NOT idempotent, because nothing here could make it so: the ledger is
+    /// append-only with no key to net two rows against. The scope that owns the charge runs this at most
+    /// once — <see cref="Core.Billing.AiActionScope.DisposeAsync"/> takes the settlement callback with an
+    /// <c>Interlocked.Exchange</c>, exactly as <c>TryClaimCharge</c> takes the charge — and that is where
+    /// "once" is enforced.</para>
+    ///
+    /// <para>The same commit-side distinction as <see cref="RecordConsumptionAsync"/>, for the same reason
+    /// pointing the other way: a post-commit failure reported as a failure would invite a retry, and a
+    /// second reversal would pay the household twice for one undelivered act.</para></summary>
+    /// <returns>true when a row was written; false when there was nothing to give back.</returns>
+    public async Task<bool> ReverseConsumptionAsync(
+        string householdId, long credits, string? reason, CancellationToken cancellationToken = default)
+    {
+        if (credits <= 0) return false;
+        var committed = false;
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+            db.CreditLedger.Add(new CreditLedgerEntry
+            {
+                HouseholdId = householdId,
+                Kind = CreditEntryKind.Reversal,
+                AmountCredits = credits,
+                Reason = reason,
+            });
+            await db.SaveChangesAsync(cancellationToken);
+            committed = true;
+        }
+        catch (Exception ex) when (committed)
+        {
+            logger?.LogWarning(ex, "The reversal row for household {HouseholdId} was written, but the "
+                + "context failed afterwards; reporting it as given back so the act is not refunded twice.", householdId);
         }
         return committed;
     }

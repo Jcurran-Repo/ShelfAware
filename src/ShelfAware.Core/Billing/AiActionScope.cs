@@ -6,7 +6,7 @@ namespace ShelfAware.Core.Billing;
 /// tool rounds is still one <see cref="ServiceAction.ChatTurn"/>).
 ///
 /// <para>Every AI service opens one around its whole operation:
-/// <c>using var _ = AiActionScope.Begin(ServiceAction.ReceiptExtraction);</c> — one line, no constructor
+/// <c>await using var _ = AiActionScope.Begin(ServiceAction.ReceiptExtraction);</c> — one line, no constructor
 /// parameter, no DI. That matters because the alternative was threading a charging collaborator through ten
 /// service constructors and every test that builds one, to carry a fact that is really a property of the
 /// OPERATION rather than of the service.</para>
@@ -38,12 +38,14 @@ namespace ShelfAware.Core.Billing;
 /// written down and nothing more — a scan cannot tell which awaits inside a scope are fire-and-forget. If
 /// you start work you do not await from inside a scope, that work is charged to it.</para>
 /// </summary>
-public sealed class AiActionScope : IDisposable
+public sealed class AiActionScope : IAsyncDisposable
 {
     private static readonly AsyncLocal<AiActionScope?> Ambient = new();
 
     private readonly AiActionScope? _enclosing;
     private int _claimed;
+    private Func<int, CancellationToken, Task>? _settle;
+    private int _delivered;
 
     private AiActionScope(ServiceAction action, int units)
     {
@@ -65,8 +67,8 @@ public sealed class AiActionScope : IDisposable
     /// <summary>The innermost open scope, or null when an AI call was made outside one.</summary>
     public static AiActionScope? Current => Ambient.Value;
 
-    /// <summary>Open a scope for <paramref name="action"/>. Dispose it (a <c>using</c>) to restore the
-    /// enclosing one. <paramref name="units"/> is how many of the action's own units this act covers, and
+    /// <summary>Open a scope for <paramref name="action"/>. Dispose it (an <c>await using</c>) to settle
+    /// what it delivered and restore the enclosing one. <paramref name="units"/> is how many of the action's own units this act covers, and
     /// is 1 for everything priced per act — see <see cref="Units"/>.</summary>
     public static AiActionScope Begin(ServiceAction action, int units = 1)
     {
@@ -101,6 +103,72 @@ public sealed class AiActionScope : IDisposable
     /// runs in six, which is coverage claimed and not held (see AiActionScopeTests). Don't "simplify" it.</para></summary>
     public bool TryClaimCharge() => Interlocked.Exchange(ref _claimed, 1) == 0;
 
+    /// <summary>What this act was actually charged, or 0 if nothing was — a Founder, a BYOK visitor, a box
+    /// with billing off, a free-priced action, or an act whose provider calls all failed before the money
+    /// write. Set once, by the metering layer, when the charge has landed.</summary>
+    public long ChargedCredits { get; private set; }
+
+    /// <summary>Told by the metering layer that a charge of <paramref name="credits"/> has LANDED, and
+    /// handed the means to reverse it. <paramref name="settle"/> takes how many of the act's units were
+    /// delivered and gives back whatever was charged for the rest.
+    ///
+    /// <para>⚠️ The money layer lives above this assembly and this type must not learn about ledgers, so the
+    /// reversal arrives as a delegate rather than a dependency — the same reasoning that makes the scope
+    /// ambient rather than a collaborator threaded through ten service constructors.</para></summary>
+    public void ChargeRecorded(long credits, Func<int, CancellationToken, Task> settle)
+    {
+        ChargedCredits = credits;
+        Interlocked.Exchange(ref _settle, settle);
+    }
+
+    /// <summary>Report what this act DELIVERED. Anything it was charged for beyond this comes back when
+    /// the scope closes — everything, when nothing arrived.
+    ///
+    /// <para>⚠️ The default is NOTHING, and every act must say otherwise:
+    /// <c>AiActionScopeSiteTests</c> fails the build for a scope-opening method that never calls this. The
+    /// default is that way round because the paths that skip it are the ones that threw, and an act that
+    /// threw delivered nothing. An act that forgets is caught by the build rather than by a household.</para>
+    ///
+    /// <para>Why a refund at all, rather than charging later: the charge lands on the FIRST provider call of
+    /// an act that may take eighteen, which is what stops two parallel rounds both paying. By the time an
+    /// act knows what it delivered, the money has already moved, so handing it back is the only honest
+    /// correction left.</para></summary>
+    public void Delivered(int units) => _delivered = Math.Clamp(units, 0, Units);
+
+    /// <summary>What this act has reported delivering so far — nothing until it says otherwise.</summary>
+    public int UnitsDelivered => _delivered;
+
+    /// <summary>Close the act: give back whatever was charged for units it never delivered, then restore the
+    /// enclosing scope.
+    ///
+    /// <para>⚠️ <see cref="IAsyncDisposable"/> and NOT <see cref="IDisposable"/>, deliberately. Settling
+    /// writes to the ledger, so it has to be awaited — and if a plain <c>Dispose</c> existed, a site written
+    /// as <c>using var</c> would compile, restore the scope, and silently skip the refund. Removing it makes
+    /// the compiler ask every site, which is the only mechanism that has actually held a conversion in this
+    /// codebase; the two that were left optional both drifted within a commit.</para>
+    ///
+    /// <para>Settles at most once, taken the way <see cref="TryClaimCharge"/> takes the charge: the ledger is
+    /// append-only with no idempotency key, so a second reversal would pay the household twice for one act
+    /// and nothing downstream could net them. A no-op when nothing was charged, which is every unlimited
+    /// tier, every BYOK circuit and every box with billing off.</para></summary>
+    /// <para>⚠️ NOT an <c>async</c> method, and it must not become one. An <c>AsyncLocal</c> written inside
+    /// an async method does not flow back to its caller — that is the same "flows DOWN only" property this
+    /// type's own remarks describe, and it applies to the restore as much as to the open. Written as
+    /// <c>async</c>, the assignment below is lost, the scope survives its act, and the NEXT unlabelled AI
+    /// call on that circuit is charged to it. Two tests here caught exactly that. So the restore happens
+    /// synchronously, before anything is awaited, and the settlement is handed back as a task for the
+    /// caller's <c>await using</c> to await — which also means the scope is restored even when settling
+    /// throws, without needing a <c>finally</c> to say so.</para>
+    public ValueTask DisposeAsync()
+    {
+        var settle = Interlocked.Exchange(ref _settle, null);
+        var owed = settle is not null && _delivered < Units;
+
+        Ambient.Value = _enclosing;
+
+        return owed ? new ValueTask(settle!(_delivered, CancellationToken.None)) : ValueTask.CompletedTask;
+    }
+
     /// <summary>Give the claim back, so a LATER call in this action can charge instead. Called only when a
     /// claim was taken and then the money write failed.
     ///
@@ -110,5 +178,4 @@ public sealed class AiActionScope : IDisposable
     /// fix is to undo the claim on the one path that can take it without spending it.</para></summary>
     public void ReleaseCharge() => Interlocked.Exchange(ref _claimed, 0);
 
-    public void Dispose() => Ambient.Value = _enclosing;
 }

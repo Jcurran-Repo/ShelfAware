@@ -35,7 +35,7 @@ public class AnthropicRecipeTagAdvisor : IRecipeTagAdvisor
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(recipeName)) return [];
-        using var action = AiActionScope.Begin(ServiceAction.TagSuggest);
+        await using var action = AiActionScope.Begin(ServiceAction.TagSuggest);
         try
         {
             var ingredients = ingredientNames.Count > 0 ? string.Join(", ", ingredientNames) : "(not listed)";
@@ -63,7 +63,9 @@ public class AnthropicRecipeTagAdvisor : IRecipeTagAdvisor
             // and "NONE." must read as the no-tags signal, not a literal "NONE" tag polluting the cloud.
             var sentinel = reply.TrimEnd('.', ' ');
             if (sentinel.Length == 0 || sentinel.Equals("NONE", StringComparison.OrdinalIgnoreCase)) return [];
-            return Parse(reply);
+            var tags = Parse(reply);
+            if (tags.Count > 0) action.Delivered(1); // NONE, or nothing parseable, delivers nothing
+            return tags;
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)

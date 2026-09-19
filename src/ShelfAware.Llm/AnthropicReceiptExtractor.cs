@@ -71,7 +71,7 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
         CancellationToken cancellationToken = default)
     {
         if (attachments.Count == 0) return ExtractionResult.Fail("No attachments provided.");
-        using var action = AiActionScope.Begin(ServiceAction.ReceiptExtraction);
+        await using var action = AiActionScope.Begin(ServiceAction.ReceiptExtraction);
 
         _logger.LogInformation("Extracting receipt from {AttachmentCount} attachment(s) ({ProductHints} product hints, {TagHints} tag hints).",
             attachments.Count, knownProductNames?.Count ?? 0, knownTags?.Count ?? 0);
@@ -151,6 +151,7 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
                 var receipt = ParseReceipt(rawJson);
                 _logger.LogInformation("Extraction succeeded: {LineCount} line(s), merchant {Merchant}.",
                     receipt.Lines.Count, receipt.Merchant ?? "(none)");
+                action.Delivered(1);
                 return ExtractionResult.Ok(receipt, rawJson);
             }
             catch (Exception ex)

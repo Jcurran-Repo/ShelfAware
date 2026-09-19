@@ -227,6 +227,44 @@ public class AiActionScopeSiteTests
             + Environment.NewLine + string.Join(Environment.NewLine, wrong));
     }
 
+    /// <summary>
+    /// ⚠️ Every act says what it DELIVERED, so a charge for work that never arrived comes back.
+    ///
+    /// <para>The charge lands on an act's FIRST provider call, which is what stops two parallel rounds both
+    /// paying — so by the time an act knows whether it produced anything, the household's credits have
+    /// already moved. <see cref="AiActionScope.Delivered"/> is the correction, and it defaults to NOTHING:
+    /// an act that never calls it refunds in full, which is right for the paths that threw and wrong for
+    /// every path that worked. So the call has to exist, and this is what says so.</para>
+    ///
+    /// <para>The rule is deliberately shallow — the call must appear in the same method that opened the
+    /// scope. It cannot tell a <c>Delivered(1)</c> on the right branch from one on the wrong branch; that is
+    /// each service's own tests. What it does hold is the case that has no symptom at all: a service added
+    /// later that charges and never settles, which no screen shows and no green suite catches.</para>
+    /// </summary>
+    [Fact]
+    public void Every_act_reports_what_it_delivered()
+    {
+        var silent = new List<string>();
+
+        foreach (var (file, tree) in Trees())
+            foreach (var call in BeginCalls(tree))
+            {
+                var owner = EnclosingBody(call);
+                if (owner is null) continue; // not in a method body at all — the async rule reports it
+                var settles = owner.DescendantNodes().OfType<InvocationExpressionSyntax>()
+                    .Any(i => i.Expression is MemberAccessExpressionSyntax
+                        { Name.Identifier.ValueText: nameof(AiActionScope.Delivered) });
+                if (!settles)
+                    silent.Add($"{Path.GetFileName(file)}:{Line(call)} — {ActionOf(call)?.ToString() ?? "?"}");
+            }
+
+        Assert.True(silent.Count == 0,
+            "An act opens a charging scope and never says what it delivered, so every run of it refunds in "
+            + "full — or, if the default is ever flipped, charges for work that never arrived. Call "
+            + "Delivered(n) on the path that produced something:"
+            + Environment.NewLine + string.Join(Environment.NewLine, silent));
+    }
+
     // ------------------------------------------------------------------ the scan
 
     private sealed record Site(ServiceAction Action, string File, int Line, bool InAsyncMethod, bool HasUnitCount);
@@ -278,6 +316,16 @@ public class AiActionScopeSiteTests
             .Where(i => i.Expression is MemberAccessExpressionSyntax m && m.Name.Identifier.ValueText == method);
 
     private static int Line(SyntaxNode node) => node.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+
+    /// <summary>The method, local function or lambda a call sits in — the body a scope's whole life is
+    /// spent inside, so the body its settlement has to appear in.</summary>
+    private static SyntaxNode? EnclosingBody(SyntaxNode node)
+    {
+        for (var n = node.Parent; n is not null; n = n.Parent)
+            if (n is MethodDeclarationSyntax or LocalFunctionStatementSyntax or AnonymousFunctionExpressionSyntax)
+                return n;
+        return null;
+    }
 
     /// <summary>The nearest enclosing thing that has its own <c>ExecutionContext</c> prologue — a method, a
     /// local function, or a lambda — and whether it is <c>async</c>. Exact, where the old line walk guessed.</summary>

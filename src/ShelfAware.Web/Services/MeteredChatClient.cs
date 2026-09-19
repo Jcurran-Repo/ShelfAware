@@ -1,4 +1,4 @@
-using Microsoft.Extensions.AI;
+﻿using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Billing;
 using ShelfAware.Web.Auth;
@@ -340,6 +340,13 @@ public sealed class MeteredChatClient(
         try
         {
             await ledger.RecordConsumptionAsync(householdId, credits, reason, cancellationToken);
+            // The act can now give this back if it turns out to have delivered less than it charged for.
+            // Handed over only once the row has LANDED, so an act that was never charged — a Founder, a
+            // BYOK circuit, a box with billing off, a free price — settles to nothing rather than being
+            // paid credits it never spent.
+            if (claimed is not null && credits > 0)
+                claimed.ChargeRecorded(credits, (delivered, ct) =>
+                    ReverseUndeliveredAsync(householdId, claimed, credits, delivered, ct));
         }
         catch
         {
@@ -355,6 +362,42 @@ public sealed class MeteredChatClient(
             throw;
         }
         return new CreditConsumption(true, credits);
+    }
+
+    /// <summary>Give back the part of an act's charge that covered units it never delivered — the whole
+    /// charge when it delivered nothing at all. Priced from the SAME <see cref="CreditPricing.CreditsFor"/>
+    /// the charge read, over the units that actually arrived, so the household is left holding exactly what
+    /// it would have been charged had the act asked for what it got.
+    ///
+    /// <para>⚠️ Failures here are logged and swallowed, and that is a deliberate exception to this repo's
+    /// rule against swallowing. This runs on the act's own path, after the household already has its
+    /// answer: a dead auth.db must not turn a delivered act into an error the surface reports as a
+    /// failure — which would be the second time we told the household something went wrong about work that
+    /// went right. What it costs is a household left charged for an undelivered unit, logged at Error and
+    /// visible in the ledger, which is recoverable; the alternative is not.</para></summary>
+    private async Task ReverseUndeliveredAsync(
+        string householdId, AiActionScope act, long charged, int delivered, CancellationToken cancellationToken)
+    {
+        // delivered == 0 is its own case: CreditsFor floors the unit count at one, deliberately, so that a
+        // bug upstream over-charges rather than zeroing a charge. Here nothing arrived, so nothing is kept.
+        var keep = delivered <= 0 ? 0 : CreditPricing.CreditsFor(billing.Value, act.Action, delivered);
+        var giveBack = charged - keep;
+        if (giveBack <= 0) return;
+        try
+        {
+            await ledger.ReverseConsumptionAsync(householdId, giveBack,
+                CreditPricing.DescribeReversal(billing.Value, act.Action, delivered, act.Units), cancellationToken);
+            logger.LogInformation(
+                "Gave back {Credits} credit(s) of {Charged} for {Action}: {Delivered} of {Asked} unit(s) delivered.",
+                giveBack, charged, act.Action, delivered, act.Units);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogError(ex,
+                "Couldn't give back {Credits} credit(s) for an undelivered {Action}; the household stays "
+                + "charged for work it did not receive.", giveBack, act.Action);
+        }
     }
 
     /// <summary>What one metered call did to the household's balance: whether it was on a billable path, and

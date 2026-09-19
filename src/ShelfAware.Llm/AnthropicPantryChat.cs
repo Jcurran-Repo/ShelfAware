@@ -54,7 +54,7 @@ public class AnthropicPantryChat : IPantryChat
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(userText)) return ChatResult.Fail("Type something to update.");
-        using var action = AiActionScope.Begin(ServiceAction.ChatTurn);
+        await using var action = AiActionScope.Begin(ServiceAction.ChatTurn);
 
         var products = await _store.GetProductsAsync(cancellationToken);
         var knownTags = await _store.GetKnownTagsAsync(cancellationToken);
@@ -116,6 +116,7 @@ public class AnthropicPantryChat : IPantryChat
             {
                 var text = response.Text.Trim();
                 _logger.LogInformation("Pantry chat completed on turn {Turn} with {ActionCount} action(s) applied.", turn + 1, actions.Count);
+                action.Delivered(1); // the household got an answer; how many rounds it took is our arrangement
                 return ChatResult.Ok(text.Length > 0 ? text : "Done.", actions, nav.Url, nav.HandsOff, nav.Step);
             }
 
@@ -163,6 +164,9 @@ public class AnthropicPantryChat : IPantryChat
         }
 
         _logger.LogWarning("Pantry chat hit the {MaxTurns}-turn limit without a final reply ({ActionCount} action(s) applied).", MaxTurns, actions.Count);
+        // ⚠️ Delivered even though it ran out of turns: the actions it applied are real and the household is
+        // told what happened. A charge for work that landed is not a charge for nothing.
+        action.Delivered(1);
         return ChatResult.Ok(
             actions.Count > 0 ? $"Applied: {string.Join(", ", actions)}." : "Stopped after several steps without finishing.",
             actions, nav.Url, nav.HandsOff, nav.Step);

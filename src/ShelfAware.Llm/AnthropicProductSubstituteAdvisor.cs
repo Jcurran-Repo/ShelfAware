@@ -31,7 +31,7 @@ public class AnthropicProductSubstituteAdvisor : IProductSubstituteAdvisor
         string productName, string category, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(productName)) return [];
-        using var action = AiActionScope.Begin(ServiceAction.SubstituteSuggest);
+        await using var action = AiActionScope.Begin(ServiceAction.SubstituteSuggest);
         try
         {
             var prompt =
@@ -49,7 +49,9 @@ public class AnthropicProductSubstituteAdvisor : IProductSubstituteAdvisor
 
             var reply = response.Text.Trim();
             if (reply.Length == 0 || reply.Equals("NONE", StringComparison.OrdinalIgnoreCase)) return [];
-            return Parse(reply, productName);
+            var substitutes = Parse(reply, productName);
+            if (substitutes.Count > 0) action.Delivered(1);
+            return substitutes;
         }
         catch (Exception ex)
         {

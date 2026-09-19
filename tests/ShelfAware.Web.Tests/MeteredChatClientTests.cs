@@ -377,8 +377,11 @@ public class MeteredChatClientTests : IDisposable
         // the test uses ChatTurn (2 credits), where the flat price and the cost-derived fallback differ.
         var (client, _) = Build("Managed", tier: HouseholdTier.Free);
 
-        using (AiActionScope.Begin(ServiceAction.ChatTurn))
+        await using (var act = AiActionScope.Begin(ServiceAction.ChatTurn))
+        {
             await AskAsync(client);
+            act.Delivered(1); // an act that delivered keeps its charge; see the reversal tests below
+        }
 
         Assert.Equal(-CreditPricing.CreditsFor(new BillingOptions(), ServiceAction.ChatTurn),
             await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceCreditsAsync("hh-test"));
@@ -392,11 +395,12 @@ public class MeteredChatClientTests : IDisposable
         // list would be a lie — "a chat turn is 2 credits" would mean 2 × however many tools it used.
         var (client, meter) = Build("Managed", tier: HouseholdTier.Free);
 
-        using (AiActionScope.Begin(ServiceAction.ChatTurn))
+        await using (var act = AiActionScope.Begin(ServiceAction.ChatTurn))
         {
             await AskAsync(client);
             await AskAsync(client);
             await AskAsync(client);
+            act.Delivered(1);
         }
 
         Assert.Equal(3, (await meter.GetTodayAsync()).Calls);  // three real provider calls, all recorded
@@ -412,11 +416,12 @@ public class MeteredChatClientTests : IDisposable
         // would get a five-round chat turn for nothing. The claim goes back, so round two pays.
         var (client, _) = Build("Managed", tier: HouseholdTier.Free, ledgerFailsFirst: true);
 
-        using (AiActionScope.Begin(ServiceAction.ChatTurn))
+        await using (var act = AiActionScope.Begin(ServiceAction.ChatTurn))
         {
             await AskAsync(client);   // charge claimed, money write fails, claim handed back
             await AskAsync(client);   // this one pays
             await AskAsync(client);   // and this one doesn't, because the action is paid for
+            act.Delivered(1);
         }
 
         Assert.Equal(-2, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceCreditsAsync("hh-test"));
@@ -430,11 +435,12 @@ public class MeteredChatClientTests : IDisposable
         // Getting only the first is how a 124-meal plan came to cost the same as one dinner.
         var (client, _) = Build("Managed", tier: HouseholdTier.Free);
 
-        using (AiActionScope.Begin(ServiceAction.MealPlan, units: 10))
+        await using (var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 10))
         {
             await AskAsync(client);
             await AskAsync(client);
             await AskAsync(client);
+            act.Delivered(10); // all ten meals arrived, so nothing comes back
         }
 
         await using var db = _authDb.CreateDbContext();
@@ -451,7 +457,7 @@ public class MeteredChatClientTests : IDisposable
         var (client, meter) = Build("Managed", tier: HouseholdTier.Free);
         Assert.Equal(0, CreditPricing.CreditsFor(new BillingOptions(), ServiceAction.TagSuggest)); // the premise
 
-        using (AiActionScope.Begin(ServiceAction.TagSuggest))
+        await using (AiActionScope.Begin(ServiceAction.TagSuggest))
             await AskAsync(client);
 
         Assert.Equal(350, (await meter.GetTodayAsync()).CostMicros); // the cost is still ours, and still recorded
@@ -467,7 +473,7 @@ public class MeteredChatClientTests : IDisposable
         // per action, what we spent against what we charged.
         var (client, _) = Build("Managed", tier: HouseholdTier.Free);
 
-        using (AiActionScope.Begin(ServiceAction.ReceiptExtraction))
+        await using (AiActionScope.Begin(ServiceAction.ReceiptExtraction))
             await AskAsync(client);
 
         var margin = await new ServiceMarginMeter(_authDb, NullLogger<ServiceMarginMeter>.Instance).ReadAsync(days: 1);
@@ -493,7 +499,7 @@ public class MeteredChatClientTests : IDisposable
         // action's true cost — the defect the column was added to fix, on the one box it applies to.
         var (client, _) = Build(keyMode, tier: tier, paymentsEnabled: paymentsEnabled);
 
-        using (AiActionScope.Begin(ServiceAction.ReceiptExtraction))
+        await using (AiActionScope.Begin(ServiceAction.ReceiptExtraction))
             await AskAsync(client);
 
         var line = Assert.Single(await new ServiceMarginMeter(_authDb, NullLogger<ServiceMarginMeter>.Instance).ReadAsync(days: 1));
@@ -510,7 +516,7 @@ public class MeteredChatClientTests : IDisposable
         // number. The old code recorded it the same as a Founder's call, which answers a different question.
         var (client, _) = Build("Managed", tier: HouseholdTier.Free);
 
-        using (AiActionScope.Begin(ServiceAction.TagSuggest))
+        await using (AiActionScope.Begin(ServiceAction.TagSuggest))
             await AskAsync(client);
 
         var line = Assert.Single(await new ServiceMarginMeter(_authDb, NullLogger<ServiceMarginMeter>.Instance).ReadAsync(days: 1));
@@ -526,7 +532,7 @@ public class MeteredChatClientTests : IDisposable
         // money went wrong, which is the same defect the column exists to prevent, pointing the other way.
         var (client, _) = Build("Managed", tier: HouseholdTier.Free, ledgerFailsFirst: true);
 
-        using (AiActionScope.Begin(ServiceAction.ChatTurn))
+        await using (AiActionScope.Begin(ServiceAction.ChatTurn))
         {
             await AskAsync(client);   // write fails
             await AskAsync(client);   // this one pays
@@ -1214,7 +1220,7 @@ public class MeteredChatClientTests : IDisposable
         // household to -1, had every remaining batch refused, persisted seven of the hundred and twenty-four
         // meals it had been paid for, and reported success. Refusing it here is what makes that unreachable.
         var (client, _) = Build("server", balanceCredits: 41);
-        using var _act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124);
+        await using var _act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124);
 
         await Assert.ThrowsAsync<AiCreditsExhaustedException>(() => AskAsync(client));
         Assert.Equal(0, _provider.Calls);        // refused BEFORE the provider — nothing was spent
@@ -1227,7 +1233,7 @@ public class MeteredChatClientTests : IDisposable
         // The other side of the boundary, because a gate that refuses one credit too eagerly is its own
         // defect: a household holding exactly the quoted price can buy exactly the quoted plan.
         var (client, _) = Build("server", balanceCredits: 42);
-        using var _act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124);
+        await using var _act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124);
 
         await AskAsync(client);
 
@@ -1243,7 +1249,7 @@ public class MeteredChatClientTests : IDisposable
         // balance the plan itself emptied. If the gate asks again, the household is refused the plan it just
         // bought and the page happily reports the fraction that got through.
         var (client, _) = Build("server", balanceCredits: 42);
-        using var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124);
+        await using var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124);
 
         await AskAsync(client);                  // batch 1 — charges the whole 42
         _entitlements.BalanceCredits = 0;        // which is what it leaves behind
@@ -1260,7 +1266,7 @@ public class MeteredChatClientTests : IDisposable
         // "A meal plan" meant one amount until a plan was priced by the meal. Now two honest rows can read
         // -3 and -42, and a household checking either against what it asked for has nothing to check with.
         var (client, _) = Build("server", balanceCredits: 1_000);
-        using var _act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124);
+        await using var _act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124);
 
         await AskAsync(client);
 
@@ -1272,7 +1278,7 @@ public class MeteredChatClientTests : IDisposable
     {
         // A reroll is one meal and is priced per act, so the size would be noise. Same for a plan of one.
         var (client, _) = Build("server", balanceCredits: 1_000);
-        using var _act = AiActionScope.Begin(ServiceAction.MealReroll);
+        await using var _act = AiActionScope.Begin(ServiceAction.MealReroll);
 
         await AskAsync(client);
 
@@ -1283,5 +1289,111 @@ public class MeteredChatClientTests : IDisposable
     {
         await using var db = _authDb.CreateDbContext();
         return await db.CreditLedger.AsNoTracking().OrderBy(e => e.Id).ToListAsync();
+    }
+
+    // ------------------------------------------------------------------ an act that didn't deliver
+
+    [Fact]
+    public async Task An_act_that_delivered_nothing_gets_its_whole_charge_back()
+    {
+        // ⚠️ Jordan's rule: any call that fails should be refunded. The provider answered — so the charge
+        // landed, as it must, on the first call of an act that might take eighteen — but nothing usable
+        // came out of it. The household ends level.
+        var (client, _) = Build("server", balanceCredits: 1_000);
+        await using (var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124))
+        {
+            await AskAsync(client);
+            Assert.Equal(-42, Assert.Single(await LedgerRowsAsync()).AmountCredits);
+            act.Delivered(0); // the model wobbled on every batch
+        }
+
+        var rows = await LedgerRowsAsync();
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(42, rows[1].AmountCredits);
+        Assert.Equal(CreditEntryKind.Reversal, rows[1].Kind);
+        Assert.Equal(0, rows.Sum(r => r.AmountCredits)); // charged and given back — nothing net
+    }
+
+    [Fact]
+    public async Task An_act_that_delivered_part_of_what_it_charged_for_gives_back_the_rest()
+    {
+        // 124 meals asked for at 1 credit per 3 = 42 charged. Seven arrived, which is 3 credits' worth, so
+        // 39 come back. The household is left holding exactly what a seven-meal plan would have cost.
+        var (client, _) = Build("server", balanceCredits: 1_000);
+        await using (var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124))
+        {
+            await AskAsync(client);
+            act.Delivered(7);
+        }
+
+        var rows = await LedgerRowsAsync();
+        Assert.Equal(-42, rows[0].AmountCredits);
+        Assert.Equal(39, rows[1].AmountCredits);
+        Assert.Equal(-3, rows.Sum(r => r.AmountCredits));
+        Assert.Equal(
+            CreditPricing.CreditsFor(new BillingOptions(), ServiceAction.MealPlan, 7),
+            -rows.Sum(r => r.AmountCredits));   // exactly a seven-meal plan's price
+    }
+
+    [Fact]
+    public async Task An_act_that_delivered_everything_it_charged_for_gives_nothing_back()
+    {
+        var (client, _) = Build("server", balanceCredits: 1_000);
+        await using (var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124))
+        {
+            await AskAsync(client);
+            act.Delivered(124);
+        }
+
+        Assert.Equal(-42, Assert.Single(await LedgerRowsAsync()).AmountCredits); // one row, no reversal
+    }
+
+    [Fact]
+    public async Task A_reversal_says_on_the_ledger_what_it_is_undoing()
+    {
+        // The ledger is the household's own record of where its credits went. A bare "Refund" beside a
+        // "-42 A meal plan (124 meals)" leaves them counting.
+        var (client, _) = Build("server", balanceCredits: 1_000);
+        await using (var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124))
+        {
+            await AskAsync(client);
+            act.Delivered(7);
+        }
+
+        Assert.Equal("A meal plan — refunded, 117 of 124 meals never came back",
+            (await LedgerRowsAsync())[1].Reason);
+    }
+
+    [Fact]
+    public async Task An_act_nobody_was_charged_for_is_never_paid_a_refund()
+    {
+        // ⚠️ The one way this mechanism could MINT credit. A Founder's act costs the host real money and
+        // charges the household nothing, so there is nothing to give back — and a refund keyed to the act
+        // rather than to a charge that landed would hand a Founder 42 credits for a plan that failed.
+        var (client, _) = Build("server", tier: HouseholdTier.Founder, balanceCredits: 0);
+        await using (var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124))
+        {
+            await AskAsync(client);
+            act.Delivered(0);
+        }
+
+        Assert.Empty(await LedgerRowsAsync());
+    }
+
+    [Fact]
+    public async Task An_act_settles_once_however_many_times_it_is_told_to()
+    {
+        // The ledger is append-only with no idempotency key, so a second reversal would pay the household
+        // twice for one act and nothing downstream could net them.
+        var (client, _) = Build("server", balanceCredits: 1_000);
+        var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124);
+        await AskAsync(client);
+        act.Delivered(0);
+        await act.DisposeAsync();
+        await act.DisposeAsync();
+
+        var rows = await LedgerRowsAsync();
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(1, rows.Count(r => r.Kind == CreditEntryKind.Reversal));
     }
 }

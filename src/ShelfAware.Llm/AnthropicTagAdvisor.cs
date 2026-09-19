@@ -27,7 +27,7 @@ public class AnthropicTagAdvisor : ITagAdvisor
     public async Task<string?> FindSynonymAsync(string candidate, IReadOnlyList<string> existing, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(candidate) || existing.Count == 0) return null;
-        using var action = AiActionScope.Begin(ServiceAction.TagSuggest);
+        await using var action = AiActionScope.Begin(ServiceAction.TagSuggest);
         try
         {
             var prompt =
@@ -41,7 +41,9 @@ public class AnthropicTagAdvisor : ITagAdvisor
             var response = await _chat.GetResponseAsync(prompt, options, cancellationToken);
 
             var reply = response.Text.Trim();
-            return existing.FirstOrDefault(t => string.Equals(t, reply, StringComparison.OrdinalIgnoreCase));
+            var match = existing.FirstOrDefault(t => string.Equals(t, reply, StringComparison.OrdinalIgnoreCase));
+            if (match is not null) action.Delivered(1); // a reply matching no existing tag delivers nothing
+            return match;
         }
         catch (Exception ex)
         {

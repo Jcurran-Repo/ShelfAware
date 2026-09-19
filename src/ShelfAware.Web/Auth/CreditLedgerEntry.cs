@@ -20,6 +20,16 @@ public enum CreditEntryKind
     /// spends the allowance before the persisting money (welcome grant + purchases).</summary>
     Allowance = 4,
 
+    /// <summary>Credits handed BACK (positive) for an act that was charged and did not deliver — the model
+    /// returned nothing usable, a batch came back empty, the act failed outright. Distinct from
+    /// <see cref="Refund"/>, which is negative and reverses a PURCHASE (the household's money went back, so
+    /// its credits must too); this one goes the other way. Distinct from <see cref="Grant"/> because a
+    /// grant persists across billing periods and this does not: it undoes a draw on whatever it was drawn
+    /// from. ⚠️ Which is why it is counted alongside <see cref="Consumption"/> in the unspent-allowance
+    /// arithmetic — a reversal that was not counted there would leave an allowance looking more spent than
+    /// it is, and the period-end sweep would let the difference persist past its month.</summary>
+    Reversal = 6,
+
     /// <summary>A period-end sweep of an unspent <see cref="Allowance"/> (negative) — no-rollover
     /// enforcement (§4). Its magnitude is exactly the prior allowance's unspent remainder, so the
     /// persisting balance (welcome grant + purchases) is untouched.</summary>

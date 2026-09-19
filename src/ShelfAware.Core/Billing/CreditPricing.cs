@@ -147,6 +147,19 @@ public static class CreditPricing
         return $"{described} ({units} {noun})";
     }
 
+    /// <summary>How a REVERSAL reads on a household's ledger: what came back, and why. ⚠️ The ledger is the
+    /// household's own record of where its credits went, so a row putting credits back has to say what it
+    /// is undoing — a bare "Refund" beside a "-42 A meal plan (124 meals)" leaves them counting.</summary>
+    public static string DescribeReversal(BillingOptions options, ServiceAction action, int delivered, int asked)
+    {
+        var described = Describe(action);
+        if (delivered <= 0) return $"{described} — refunded, nothing came back";
+        var per = UnitsPerPrice(options, action);
+        if (per == 1 || !options.UnitNouns.TryGetValue(action, out var noun) || string.IsNullOrWhiteSpace(noun))
+            return $"{described} — refunded";
+        return $"{described} — refunded, {Math.Max(0, asked - delivered)} of {asked} {noun} never came back";
+    }
+
     /// <summary>The actions a charge is actually WIRED to — the ones some service opens an
     /// <see cref="AiActionScope"/> for. Exactly the set the public price list may quote, because a price
     /// published for an act nothing charges is a statement the engine does not honour (the repo's

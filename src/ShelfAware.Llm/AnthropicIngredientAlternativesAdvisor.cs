@@ -30,7 +30,7 @@ public class AnthropicIngredientAlternativesAdvisor : IIngredientAlternativesAdv
     public async Task<IReadOnlyList<string>> SuggestAsync(string ingredientName, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(ingredientName)) return [];
-        using var action = AiActionScope.Begin(ServiceAction.IngredientAlternatives);
+        await using var action = AiActionScope.Begin(ServiceAction.IngredientAlternatives);
         try
         {
             var prompt =
@@ -46,7 +46,9 @@ public class AnthropicIngredientAlternativesAdvisor : IIngredientAlternativesAdv
 
             var reply = response.Text.Trim();
             if (reply.Length == 0 || reply.Equals("NONE", StringComparison.OrdinalIgnoreCase)) return [];
-            return Parse(reply, ingredientName);
+            var alternatives = Parse(reply, ingredientName);
+            if (alternatives.Count > 0) action.Delivered(1);
+            return alternatives;
         }
         catch (Exception ex)
         {

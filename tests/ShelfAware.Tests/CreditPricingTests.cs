@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Tests;
@@ -311,5 +311,77 @@ public class CreditPricingTests
         nameless.UnitNouns.Remove(ServiceAction.MealPlan);
 
         Assert.Equal("A meal plan", CreditPricing.DescribeCharge(nameless, ServiceAction.MealPlan, units: 124));
+    }
+
+    // ---- how a reversal reads (the settlement's half of the ledger) ----
+
+    [Fact]
+    public void A_reversal_says_how_much_of_what_was_paid_for_never_came_back()
+    {
+        // ⚠️ The household's ledger is its own record of where its credits went, so the row putting credits
+        // back has to be checkable against the row that took them. A bare "Refund" beside "-42 A meal plan
+        // (124 meals)" leaves them doing the subtraction, and the numbers they'd need are exactly the two
+        // the engine already has.
+        Assert.Equal(
+            "A meal plan — refunded, 117 of 124 meals never came back",
+            CreditPricing.DescribeReversal(Default, ServiceAction.MealPlan, delivered: 7, asked: 124));
+    }
+
+    [Fact]
+    public void A_reversal_of_an_act_that_delivered_nothing_says_so_plainly()
+    {
+        // The common case by far — a call that failed outright — and "0 of 124 meals never came back" is
+        // arithmetically true and reads like a bug. Worth its own wording.
+        Assert.Equal(
+            "A meal plan — refunded, nothing came back",
+            CreditPricing.DescribeReversal(Default, ServiceAction.MealPlan, delivered: 0, asked: 124));
+
+        // Same wording for a delivered count that could only be a defect upstream: the row must not
+        // start claiming a negative number of meals arrived.
+        Assert.Equal(
+            "A meal plan — refunded, nothing came back",
+            CreditPricing.DescribeReversal(Default, ServiceAction.MealPlan, delivered: -3, asked: 124));
+    }
+
+    [Theory]
+    [InlineData(ServiceAction.MealReroll)]   // priced per act, so there is no shortfall to count
+    [InlineData(ServiceAction.ChatTurn)]
+    [InlineData(ServiceAction.ReceiptExtraction)]
+    public void A_reversal_of_an_act_priced_whole_just_says_it_was_refunded(ServiceAction action) =>
+        // An act priced per act is all-or-nothing: it delivered or it didn't, and a count of units would be
+        // stating a size the price list never charged by.
+        Assert.Equal(
+            $"{CreditPricing.Describe(action)} — refunded",
+            CreditPricing.DescribeReversal(Default, action, delivered: 1, asked: 1));
+
+    [Fact]
+    public void A_reversal_falls_back_to_the_bare_name_when_the_unit_has_none()
+    {
+        // Same degradation as DescribeCharge and QuotePrice: the noun is display copy, so losing it makes
+        // the row terser and never wrong.
+        var nameless = new BillingOptions();
+        nameless.UnitNouns.Remove(ServiceAction.MealPlan);
+
+        Assert.Equal(
+            "A meal plan — refunded",
+            CreditPricing.DescribeReversal(nameless, ServiceAction.MealPlan, delivered: 7, asked: 124));
+
+        var blank = new BillingOptions();
+        blank.UnitNouns[ServiceAction.MealPlan] = "   ";
+
+        Assert.Equal(
+            "A meal plan — refunded",
+            CreditPricing.DescribeReversal(blank, ServiceAction.MealPlan, delivered: 7, asked: 124));
+    }
+
+    [Fact]
+    public void A_reversal_never_reports_more_delivered_than_was_asked_for()
+    {
+        // The scope clamps Delivered to Units, so this shouldn't reach here — but the shortfall is
+        // subtraction, and an unclamped one would print "-6 of 124 meals never came back" on a household's
+        // own financial record. A ledger row is not the place to discover an upstream defect.
+        Assert.Equal(
+            "A meal plan — refunded, 0 of 124 meals never came back",
+            CreditPricing.DescribeReversal(Default, ServiceAction.MealPlan, delivered: 130, asked: 124));
     }
 }

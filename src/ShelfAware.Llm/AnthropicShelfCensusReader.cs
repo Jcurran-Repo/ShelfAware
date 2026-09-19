@@ -79,7 +79,7 @@ public class AnthropicShelfCensusReader : IShelfCensusReader
         CancellationToken cancellationToken = default)
     {
         if (photos.Count == 0) return ShelfCensusResult.Fail("No photos provided.");
-        using var action = AiActionScope.Begin(ServiceAction.CensusPhoto);
+        await using var action = AiActionScope.Begin(ServiceAction.CensusPhoto);
 
         _logger.LogInformation("Reading a shelf census from {PhotoCount} photo(s) ({ProductHints} product hints).",
             photos.Count, knownProductNames?.Count ?? 0);
@@ -155,6 +155,7 @@ public class AnthropicShelfCensusReader : IShelfCensusReader
                     items.Count(i => i.Evidence == CensusEvidence.Label),
                     items.Count(i => i.Evidence == CensusEvidence.Appearance),
                     items.Count(i => i.Evidence == CensusEvidence.Unidentified));
+                action.Delivered(1);
                 return ShelfCensusResult.Ok(items, rawJson);
             }
             catch (Exception ex)

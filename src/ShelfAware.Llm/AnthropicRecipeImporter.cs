@@ -83,7 +83,7 @@ public class AnthropicRecipeImporter : IRecipeImporter
     private async Task<RecipeImportResult> ExtractAsync(
         string systemPrompt, List<AIContent> userContent, string model, CancellationToken cancellationToken)
     {
-        using var action = AiActionScope.Begin(ServiceAction.RecipeImport);
+        await using var action = AiActionScope.Begin(ServiceAction.RecipeImport);
         var options = new ChatOptions
         {
             ModelId = model,
@@ -121,7 +121,14 @@ public class AnthropicRecipeImporter : IRecipeImporter
             }
 
             rawJson = response.Text;
-            try { return Parse(rawJson); }
+            try
+            {
+                var parsed = Parse(rawJson);
+                // "found: false" is the model's own anti-hallucination floor — a successful call that
+                // produced no recipe, which is an act the household got nothing out of.
+                if (parsed.Recipe is not null) action.Delivered(1);
+                return parsed;
+            }
             catch (Exception ex) { lastError = ex.Message; } // any invalid shape is retryable
         }
 

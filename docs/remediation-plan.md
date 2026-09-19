@@ -1,4 +1,4 @@
-# Remediation plan — the 2026-09-18 audit and the architecture retrospective
+﻿# Remediation plan — the 2026-09-18 audit and the architecture retrospective
 
 Jordan's ask (2026-09-18): *"Id like you to fix the findings AND the what youd do differently... feel free
 to split it up as needed and design first."* This is the design.
@@ -841,11 +841,58 @@ Also fixed in the pass: a Founder saw the price for one render (`tier` defaulted
 await resolved — it is nullable now), and Settings re-derived "never charged" as `!= Founder` rather than
 asking `IsUnlimited()`.
 
-⚠️ **Still open, and Jordan's call: a plan that under-delivers has still been charged in full.** The price
-is taken on the first provider call, so a plan that fails outright, or comes back short, has already cost
-up to 42 credits. Closing it means the act settles up at the end — a compensating ledger entry for the
-shortfall — or charges on delivery, and the refund has to be keyed to a charge that actually happened, or a
-Founder's plan would mint credit out of a charge that never existed. It is in `docs/backlog.md`.
+Left open by this pass, and put to Jordan: **a plan that under-delivers has still been charged in full.**
+The price is taken on the first provider call, so a plan that fails outright, or comes back short, has
+already cost up to 42 credits. He answered *"yeah any call that fails should probably be refunded"*, which
+is the fifth pass below.
+
+### The fifth pass: an act settles up for what it didn't deliver
+
+The decision is one sentence — an act that was charged and did not deliver gives the credits back — and
+almost all of the work was in making that sentence true in one place rather than thirteen.
+
+**Where the shortfall is known.** Only the service running the act knows how much of it arrived; the meter
+sees provider calls and cannot tell a short plan from a full one. So the act carries both numbers.
+`AiActionScope` already knew `Units` (what was asked for, and what it was priced on); it now also takes
+`Delivered(n)` and settles the difference when it is disposed.
+
+**Where the money is known.** Only `MeteredChatClient` knows whether a charge was actually written, and
+for how much. It hands the scope a settlement callback at the moment it writes the ledger row
+(`ChargeRecorded`), so the refund is keyed to a charge that really happened. This is what stops a Founder,
+or a box with no `Payments` section, minting credit by failing: nothing was charged, no callback was
+handed over, and disposal settles nothing.
+
+**What comes back.** The kept amount is `CreditPricing.CreditsFor(options, action, delivered)` — the same
+call that priced the charge, not a ratio of it — so the refund cannot disagree with the charge by
+arithmetic. Seven meals of a hundred-and-twenty-four keeps 3 credits of the 42 and returns 39. An act that
+delivered nothing returns all of it.
+
+**The pieces:**
+
+- **`CreditEntryKind.Reversal`** — positive, and deliberately NOT `Refund`, which is negative and reverses
+  a *purchase*. ⚠️ `UnspentAllowanceCreditsAsync` counts `Reversal` alongside `Consumption` and `Expiry`:
+  a refunded allowance credit has to expire with its month, or a household could bank an allowance by
+  provoking failures.
+- **`AiActionScope` is `IAsyncDisposable` and NOT `IDisposable`** — that is the mechanism again, the same
+  one §"the fourth pass" names. Dropping the sync interface made the compiler ask every one of the twelve
+  charging sites to become `await using`, so none could keep the old non-settling shape.
+- ⚠️ **`DisposeAsync` is not an `async` method, and must not become one.** An `AsyncLocal` written inside
+  an `async` method does not flow back to its caller — the ambient scope would never be restored, and the
+  next unlabelled provider call would be charged as this act. The restore happens synchronously and the
+  settlement is handed back as a task for the caller's `await using` to await. This was found the hard
+  way: the first version was `async`, and two tests caught it. ⚠️ And for the same reason the test asserting
+  it calls `DisposeAsync()` straight from the test body — a lambda handed to `Assert.ThrowsAsync` would run
+  the restore inside that lambda's copied execution context and the assertion would pass over a real leak.
+- **`Every_act_reports_what_it_delivered`** fails the build if a scope is begun without a `Delivered` call
+  in the same body. Without it a new charging site would silently refund every act in full, which is the
+  more expensive direction of this bug.
+- **`CreditPricing.DescribeCharge` / `DescribeReversal`** put the ledger's wording in one place, so the
+  reversal line names the same act as the charge line: *"A meal plan — refunded, 117 of 124 meals never
+  came back"*.
+- **The reversal never takes the act down with it.** `ReverseUndeliveredAsync` logs a failed give-back at
+  `Error` rather than throwing, because a household that got its plan should not see it fail over a refund
+  it doesn't know it is owed. Cancellation still propagates.
+
 
 ## 10. Sequencing
 

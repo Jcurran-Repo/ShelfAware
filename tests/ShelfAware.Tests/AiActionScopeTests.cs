@@ -1,4 +1,4 @@
-using ShelfAware.Core.Billing;
+﻿using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Tests;
 
@@ -11,22 +11,22 @@ namespace ShelfAware.Tests;
 public class AiActionScopeTests
 {
     [Fact]
-    public void There_is_no_ambient_action_until_one_is_begun() =>
+    public async Task There_is_no_ambient_action_until_one_is_begun() =>
         Assert.Null(AiActionScope.Current);
 
     [Fact]
-    public void A_begun_scope_is_the_ambient_one()
+    public async Task A_begun_scope_is_the_ambient_one()
     {
-        using (AiActionScope.Begin(ServiceAction.ReceiptExtraction))
+        await using (AiActionScope.Begin(ServiceAction.ReceiptExtraction))
             Assert.Equal(ServiceAction.ReceiptExtraction, AiActionScope.Current?.Action);
     }
 
     [Fact]
-    public void Disposing_restores_what_was_there_before_it()
+    public async Task Disposing_restores_what_was_there_before_it()
     {
-        using (AiActionScope.Begin(ServiceAction.ChatTurn))
+        await using (AiActionScope.Begin(ServiceAction.ChatTurn))
         {
-            using (AiActionScope.Begin(ServiceAction.RecipeAdapt))
+            await using (AiActionScope.Begin(ServiceAction.RecipeAdapt))
                 Assert.Equal(ServiceAction.RecipeAdapt, AiActionScope.Current?.Action);
 
             // ⚠️ Restores the ENCLOSING scope, not null. A chat turn that adapts a recipe through a tool
@@ -40,9 +40,9 @@ public class AiActionScopeTests
     }
 
     [Fact]
-    public void An_action_can_be_charged_exactly_once()
+    public async Task An_action_can_be_charged_exactly_once()
     {
-        using var scope = AiActionScope.Begin(ServiceAction.ChatTurn);
+        await using var scope = AiActionScope.Begin(ServiceAction.ChatTurn);
 
         Assert.True(scope.TryClaimCharge());   // the first provider round pays
         Assert.False(scope.TryClaimCharge());  // every later round rides along free
@@ -50,14 +50,14 @@ public class AiActionScopeTests
     }
 
     [Fact]
-    public void A_nested_action_claims_separately_from_the_one_around_it()
+    public async Task A_nested_action_claims_separately_from_the_one_around_it()
     {
         // Both are real acts the household asked for, so both are charged — the claim is per SCOPE, not
         // per outermost action. The inner one paying must not consume the outer one's claim.
-        using var outer = AiActionScope.Begin(ServiceAction.ChatTurn);
+        await using var outer = AiActionScope.Begin(ServiceAction.ChatTurn);
         Assert.True(outer.TryClaimCharge());
 
-        using var inner = AiActionScope.Begin(ServiceAction.RecipeAdapt);
+        await using var inner = AiActionScope.Begin(ServiceAction.RecipeAdapt);
         Assert.True(inner.TryClaimCharge());
     }
 
@@ -73,7 +73,7 @@ public class AiActionScopeTests
     {
         // The whole point of an AMBIENT scope: the services that declare an action don't hand it down as
         // a parameter — it has to reach a provider call several awaits deep without anyone passing it.
-        using (AiActionScope.Begin(ServiceAction.CensusPhoto))
+        await using (AiActionScope.Begin(ServiceAction.CensusPhoto))
         {
             await Task.Yield();
             await Task.Run(async () =>
@@ -85,12 +85,12 @@ public class AiActionScopeTests
     }
 
     [Fact]
-    public void A_released_claim_lets_the_next_call_in_the_action_pay_instead()
+    public async Task A_released_claim_lets_the_next_call_in_the_action_pay_instead()
     {
         // ⚠️ The claim is taken BEFORE the money is written — that is what stops two parallel rounds both
         // charging — so a write that fails having spent the claim would make every REMAINING round of the
         // action free too. One failed row would cost the whole action's charge, not one call's.
-        using var scope = AiActionScope.Begin(ServiceAction.ChatTurn);
+        await using var scope = AiActionScope.Begin(ServiceAction.ChatTurn);
 
         Assert.True(scope.TryClaimCharge());
         Assert.False(scope.TryClaimCharge());   // as it should be while the claim stands
@@ -106,9 +106,9 @@ public class AiActionScopeTests
     {
         // The other half of "flows DOWN only". Two households' work runs on one server; an action
         // escaping upward would label — and price — a call that belongs to something else entirely.
-        await Task.Run(() =>
+        await Task.Run(async () =>
         {
-            using var _ = AiActionScope.Begin(ServiceAction.MealPlan);
+            await using var _ = AiActionScope.Begin(ServiceAction.MealPlan);
         });
 
         Assert.Null(AiActionScope.Current);
@@ -117,23 +117,23 @@ public class AiActionScopeTests
     // ------------------------------------------------------------------ the unit count
 
     [Fact]
-    public void An_act_covers_one_unit_unless_it_says_otherwise()
+    public async Task An_act_covers_one_unit_unless_it_says_otherwise()
     {
         // Almost every action is one thing the household asked for, so the count is the boring default and
         // CreditPricing.CreditsFor prices it per act. Only an action the price list prices BY THE UNIT may
         // pass a count at all — AiActionScopeSiteTests fails the build otherwise.
-        using var scope = AiActionScope.Begin(ServiceAction.ChatTurn);
+        await using var scope = AiActionScope.Begin(ServiceAction.ChatTurn);
 
         Assert.Equal(1, scope.Units);
     }
 
     [Fact]
-    public void The_count_an_act_was_opened_with_is_the_count_it_is_charged_for()
+    public async Task The_count_an_act_was_opened_with_is_the_count_it_is_charged_for()
     {
         // ⚠️ This is the whole per-meal price. A 21-meal plan carrying a Units of 1 is charged 1 credit for
         // seven credits of work, and nothing downstream could tell: the ledger line, the margin row and the
         // Settings quote would all agree with each other and all be wrong.
-        using var scope = AiActionScope.Begin(ServiceAction.MealPlan, units: 21);
+        await using var scope = AiActionScope.Begin(ServiceAction.MealPlan, units: 21);
 
         Assert.Equal(21, scope.Units);
     }
@@ -141,24 +141,24 @@ public class AiActionScopeTests
     [Theory]
     [InlineData(0)]
     [InlineData(-3)]
-    public void An_act_covering_nothing_still_covers_one(int units)
+    public async Task An_act_covering_nothing_still_covers_one(int units)
     {
         // A plan of no meals can't happen — SlotsFor always returns at least one — but the clamp is here
         // rather than at the call site so that a count arriving from somewhere new can never price an act
         // at zero, or (negatively) pay the household to run it.
-        using var scope = AiActionScope.Begin(ServiceAction.MealPlan, units: units);
+        await using var scope = AiActionScope.Begin(ServiceAction.MealPlan, units: units);
 
         Assert.Equal(1, scope.Units);
     }
 
     [Fact]
-    public void An_act_knows_whether_its_one_charge_has_been_taken()
+    public async Task An_act_knows_whether_its_one_charge_has_been_taken()
     {
         // ⚠️ This is what lets the credit gate tell "this household is about to spend" from "this household
         // already has". A meal plan pays its whole price on the first of eighteen calls, so a gate that
         // re-asked "can they afford this act?" on call two would refuse the rest of a plan they had paid
         // for in full — and the page would report the fraction that got through as a success.
-        using var scope = AiActionScope.Begin(ServiceAction.MealPlan, units: 21);
+        await using var scope = AiActionScope.Begin(ServiceAction.MealPlan, units: 21);
         Assert.False(scope.ChargeClaimed);
 
         Assert.True(scope.TryClaimCharge());
@@ -169,15 +169,123 @@ public class AiActionScopeTests
     }
 
     [Fact]
-    public void Asking_whether_the_charge_is_claimed_does_not_claim_it()
+    public async Task Asking_whether_the_charge_is_claimed_does_not_claim_it()
     {
         // It is a READ. If it took the charge the way TryClaimCharge does, every gated call would consume
         // the act's one charge before the money write ever ran, and nothing would ever be billed.
-        using var scope = AiActionScope.Begin(ServiceAction.ChatTurn);
+        await using var scope = AiActionScope.Begin(ServiceAction.ChatTurn);
 
         Assert.False(scope.ChargeClaimed);
         Assert.False(scope.ChargeClaimed);
 
         Assert.True(scope.TryClaimCharge()); // still there to be taken
+    }
+
+    // ------------------------------------------------------------------ settling what was delivered
+
+    [Fact]
+    public async Task An_act_that_says_nothing_is_taken_to_have_delivered_nothing()
+    {
+        // ⚠️ The default, and it is this way round on purpose. The paths that skip Delivered() are the ones
+        // that threw, and an act that threw delivered nothing. An act that merely FORGETS is caught by
+        // AiActionScopeSiteTests at build time rather than by a household reading its ledger.
+        var settled = -1;
+        await using (var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124))
+            act.ChargeRecorded(42, (delivered, _) => { settled = delivered; return Task.CompletedTask; });
+
+        Assert.Equal(0, settled);
+    }
+
+    [Fact]
+    public async Task What_an_act_delivered_is_what_it_settles_for()
+    {
+        var settled = -1;
+        await using (var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124))
+        {
+            act.ChargeRecorded(42, (delivered, _) => { settled = delivered; return Task.CompletedTask; });
+            act.Delivered(7);
+        }
+
+        Assert.Equal(7, settled);
+    }
+
+    [Fact]
+    public async Task An_act_that_delivered_everything_it_asked_for_settles_nothing()
+    {
+        // Nothing to give back, so nothing is written — the ledger stays a record of money moving, not a
+        // log of every act that went well.
+        var settled = false;
+        await using (var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124))
+        {
+            act.ChargeRecorded(42, (_, _) => { settled = true; return Task.CompletedTask; });
+            act.Delivered(124);
+        }
+
+        Assert.False(settled);
+    }
+
+    [Fact]
+    public async Task An_act_cannot_claim_to_have_delivered_more_than_it_asked_for()
+    {
+        // ⚠️ A count above Units is clamped to Units, which reads as "delivered in full" and settles
+        // nothing. Left unclamped it would price the refund BELOW zero — a reversal that charged the
+        // household a second time, from a bug in a service rather than anywhere near the money code.
+        var settled = -1;
+        await using (var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 7))
+        {
+            act.ChargeRecorded(3, (delivered, _) => { settled = delivered; return Task.CompletedTask; });
+            act.Delivered(9_999);
+
+            Assert.Equal(7, act.UnitsDelivered); // clamped to what was asked for
+        }
+
+        Assert.Equal(-1, settled); // never called: nothing was owed back
+    }
+
+    [Fact]
+    public async Task A_negative_delivery_reads_as_nothing_delivered()
+    {
+        var settled = -1;
+        await using (var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 7))
+        {
+            act.ChargeRecorded(3, (delivered, _) => { settled = delivered; return Task.CompletedTask; });
+            act.Delivered(-4);
+        }
+
+        Assert.Equal(0, settled);
+    }
+
+    [Fact]
+    public async Task An_act_nobody_charged_settles_nothing()
+    {
+        // A Founder, a BYOK circuit, a box with billing off: no charge landed, so ChargeRecorded was never
+        // called and there is nothing to give back. A refund here would MINT credit out of a charge that
+        // never existed.
+        await using var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124);
+        act.Delivered(0);
+
+        Assert.Equal(0, act.ChargedCredits); // and disposal below settles nothing, with nothing to settle to
+    }
+
+    [Fact]
+    public async Task The_enclosing_act_is_restored_even_when_settling_throws()
+    {
+        // ⚠️ An ambient scope outliving its act would charge the NEXT unlabelled call to it — a worse
+        // outcome than a refund that has to be chased in the log.
+        await using var outer = AiActionScope.Begin(ServiceAction.ChatTurn);
+
+        var inner = AiActionScope.Begin(ServiceAction.MealPlan, units: 4);
+        inner.ChargeRecorded(2, (_, _) => Task.FromException(new InvalidOperationException("auth.db is gone")));
+
+        // ⚠️ Called straight from the test body, and the restore asserted BEFORE the settlement is
+        // awaited. Both halves are deliberate: DisposeAsync restores synchronously (see its comment),
+        // and wrapping this call in the `async` lambda Assert.ThrowsAsync wants would run the restore
+        // inside that lambda's copied execution context, where an AsyncLocal write does not flow back
+        // out to here — the assertion below would then read the ambient scope this test never touched
+        // and pass over a real leak.
+        var settling = inner.DisposeAsync();
+        Assert.Same(outer, AiActionScope.Current);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await settling);
     }
 }
