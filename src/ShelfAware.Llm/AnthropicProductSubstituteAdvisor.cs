@@ -57,6 +57,11 @@ public class AnthropicProductSubstituteAdvisor : IProductSubstituteAdvisor
             if (ProviderReply.IsNothingFound(reply)) return [];
             return Parse(reply, productName);
         }
+        // ⚠️ Cancellation is not a provider failure and is not this advisor's to absorb: a household
+        // that closed the tab must not see it logged as a degraded API, and the act is refunded either
+        // way because nothing above settled. Rethrown rather than caught so the caller's own
+        // cancellation path runs — the fourth advisor in this set always did, and three did not.
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Substitute suggestion failed for \"{Product}\"; returning none.", productName.Trim());

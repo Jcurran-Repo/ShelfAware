@@ -50,12 +50,19 @@ public class AnthropicTagAdvisor : ITagAdvisor
 
             // ⚠️ The sentinel is checked even though "NONE" matches no tag in almost every household —
             // almost. Nothing stops one naming a tag "None", and then the model's way of saying "these
-            // are different" comes back as a synonym for whatever was typed. The MATCH below reads the
-            // reply as it came rather than the normalized form: these are the household's own spellings
-            // and the prompt asks for one back exactly as written, so a tag ending in a period has to
-            // stay matchable.
-            return existing.FirstOrDefault(t => string.Equals(t, reply, StringComparison.OrdinalIgnoreCase));
+            // are different" comes back as a synonym for whatever was typed.
+            //
+            // The exact spelling wins where there is one, so a household with both "Etc" and "Etc." gets
+            // back the one the model actually named; ProviderReply.Names is the looser second pass, and
+            // its remarks say why a single reading of the reply cannot serve here.
+            return existing.FirstOrDefault(t => string.Equals(t, reply, StringComparison.OrdinalIgnoreCase))
+                ?? existing.FirstOrDefault(t => ProviderReply.Names(reply, t));
         }
+        // ⚠️ Cancellation is not a provider failure and is not this advisor's to absorb: a household
+        // that closed the tab must not see it logged as a degraded API, and the act is refunded either
+        // way because nothing above settled. Rethrown rather than caught so the caller's own
+        // cancellation path runs — the fourth advisor in this set always did, and three did not.
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             // Fail open — never block tag creation on an API hiccup — but leave a trail so a

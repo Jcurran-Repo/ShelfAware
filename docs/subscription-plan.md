@@ -377,10 +377,19 @@ that opened it, because a scope handed to a helper settles where no scan can see
 
 Two acts still settle with a bare `Delivered(1)`, on purpose: they are answering a different question.
 The meal-plan reroll settles on its write being **durable** (after the commit, never before), and the
-chat's `TurnWrites` settles on a pantry **write landing**, so every exit of a turn is paid correctly
-without each one having to remember. The chat's two other exits — a final reply and the turn limit —
-settle with `Answered()` on the shared rule: the model said something, or the turn carried a navigation
-out to the screen. Running out of turns having done neither is not an answer and is refunded.
+chat's `TurnWrites` settles on **any write landing** — including the ones that don't go through
+`IPantryStore`, since `adapt_recipe` saves a recipe variant through `IRecipeAdapter` and an earlier
+version of this counted `_store.` calls and missed exactly that. So every exit of a turn is paid
+correctly without each one having to remember.
+
+The chat's two other exits settle for themselves, and **not on the same test**, which the previous
+version of this paragraph flattened into one sentence. The **final reply** asks the shared rule whether
+the model said anything, or failing that whether the turn told the screen to move. The **turn limit**
+asks only about the screen: that exit carries no final text to ask about, so a turn that ran out of
+rounds having moved nothing is refunded. Both readings of "did the model say anything" come from
+`ProviderReply.IsAnAnswer`, and so does the chat's own choice between showing the reply and showing
+"Done." — the display line asked it privately until 2026-09-19, so a reply of "." billed as silence
+while the household read a bare period as the assistant's answer.
 
 ### 4.y A refunded act still cost the operator a provider call (accepted, 2026-09-19)
 
@@ -398,6 +407,11 @@ household or reach another household's balance:
   those five calls for no credits.
 - **A recipe import that answers unreadably twice** is refunded after two 4096-token vision calls.
 - **A prose advisor that returns nothing at all** is refunded, on acts of 32 to 128 output tokens.
+- **A chat turn whose model simply says nothing** is refunded after a *single* message — no tool calls,
+  no turn limit to reach, nothing to inject. It is the cheapest of the three and the easiest to repeat,
+  and it is bounded by the daily call limit (`Llm:DailyCallLimit`, `DefaultPaidDailyCallLimit = 1000`)
+  rather than by the credit gate, because a fully-refunded act never draws the balance down. Named
+  explicitly because the other two need a misbehaving prompt and this one needs only a quiet model.
 
 Held open deliberately. Charging for them means charging for a turn the household demonstrably did not
 receive, which is the thing §4.w exists to stop, and it would pay the assistant to fail quietly rather

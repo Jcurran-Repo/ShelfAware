@@ -134,8 +134,16 @@ public class AnthropicPantryChat : IPantryChat
                 // a model that stopped without saying anything; the household is told "Done." when nothing
                 // was done, and that is not a turn to charge for. Writes have already settled at the
                 // write, and a navigation this exit carries out counts as much here as at the turn limit.
-                if (ProviderReply.IsAnAnswer(text) || nav.Moved) action.Answered();
-                return ChatResult.Ok(text.Length > 0 ? text : "Done.", actions, nav.Url, nav.HandsOff, nav.Step);
+                //
+                // ⚠️ Asked ONCE and used twice, because the line below was a sixth site asking it
+                // privately — `text.Length > 0` — and the two answers disagreed on exactly the inputs
+                // this whole definition exists for. A reply of "." billed as nothing and rendered as the
+                // household's answer: a bare period in the chat box, spoken aloud on the voice surfaces,
+                // beside a refund saying the model never spoke. Found by writing the test a review asked
+                // for on the guard above, which is the only way this class is ever found.
+                var answered = ProviderReply.IsAnAnswer(text);
+                if (answered || nav.Moved) action.Answered();
+                return ChatResult.Ok(answered ? text : "Done.", actions, nav.Url, nav.HandsOff, nav.Step);
             }
 
             // Carry the assistant's tool-call turn back into the history, then answer each call.
@@ -210,12 +218,19 @@ public class AnthropicPantryChat : IPantryChat
         public bool HandsOff;
         public int? Step;
 
-        /// <summary>⚠️ Whether this turn MOVED the screen — asked in one place because two places asked it
-        /// and disagreed. The exits carry all three fields out; the turn-limit exit's settlement read only
-        /// <see cref="Url"/>, so a hands-free cook-along whose rounds were <c>go_to_step</c> calls moved
-        /// the reader on screen, ran out of turns, and was refunded in full for work the household watched
-        /// happen. <see cref="HandsOff"/> is not part of it: it qualifies a <see cref="Url"/> navigation
-        /// rather than being one.</summary>
+        /// <summary>⚠️ Whether this turn told the screen to MOVE — asked in one place because two places
+        /// asked it and disagreed. The exits carry all three fields out; the turn-limit exit's settlement
+        /// read only <see cref="Url"/>, so a hands-free cook-along whose rounds were <c>go_to_step</c>
+        /// calls moved the reader on screen, ran out of turns, and was refunded in full for work the
+        /// household watched happen. <see cref="HandsOff"/> is not part of it: it qualifies a
+        /// <see cref="Url"/> navigation rather than being one.
+        ///
+        /// <para>⚠️ "Told to", not "did", and the gap is real for <see cref="Step"/> alone: a step is not
+        /// range-checked here (only the reader on screen knows how long its recipe is) and there may be no
+        /// reader open at all, in which case the destination drops it. A turn that asked for a step it
+        /// could not have, and then ran out of turns, is charged for a screen that never moved. It is the
+        /// narrow side of a choice: reading <see cref="Step"/> as nothing refunds every cook-along turn
+        /// that ends at the limit, which is the common case and the one a household would notice.</para></summary>
         public bool Moved => Url is not null || Step is not null;
     }
 

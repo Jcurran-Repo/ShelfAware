@@ -1151,7 +1151,7 @@ passes in this arc, three of them with a new defect in the money path.
   it in one place now.
 - **Normalizing the reply for the money question also normalized it for the tag MATCH.** A household tag
   that legitimately ends in a period could no longer be matched back by its own spelling, so the dedup
-  would coin the near-duplicate it exists to prevent. Two questions, two readings, one test each.
+  would coin the near-duplicate it exists to prevent.
 - **The new "already given back" backstop reads stronger than it is** — a read and then a write, with no
   transaction and no unique index on `ReversesEntryId`, so it catches a repeat and not a simultaneous
   duplicate. The race it misses is the one the scope's `Interlocked` take already prevents, so the check
@@ -1170,10 +1170,9 @@ passes in this arc, three of them with a new defect in the money path.
   text tells the household "Done." when nothing was done, and charged for it.
 - **The shared answer rule drew the line in the wrong place.** `IsAnAnswer` asked "is the reply empty
   once periods and spaces are stripped?" — a parser's convenience promoted into a billing predicate, so
-  `"."` refunded and `"!"` was charged in full. It asks whether anything the model said carries a letter
-  or a digit now. ⚠️ Worth keeping: centralising a rule makes every caller agree, which is worth nothing
-  if the rule they agree on is wrong. The first version of the shared definition was less correct than
-  three of the four sites it replaced.
+  `"."` refunded and `"!"` was charged in full. ⚠️ Worth keeping: centralising a rule makes every caller
+  agree, which is worth nothing if the rule they agree on is wrong. The first version of the shared
+  definition was less correct than three of the four sites it replaced.
 - **`AnthropicTagAdvisor` had no sentinel branch**, on the reasoning that "NONE" matches no tag — true
   until a household names a tag "None", after which the model's way of saying "these are different" comes
   back as a synonym. And the comment asserted the protection it lacked.
@@ -1184,6 +1183,57 @@ Also recorded rather than fixed: **every refund is a provider call the operator 
 them are reachable on purpose because household text goes into these prompts. `docs/subscription-plan.md`
 §4.y names the three, says why charging for them would be worse, and names the surface that would show it
 if the balance ever tips (`CostPerCharge` on `/admin`).
+
+### Eighth pass: what the gates found in the seventh (2026-09-19)
+
+Both gates ran over the seventh pass. The headline is that **three of the six findings are the same
+finding**: a rule was moved into one place, and the one place was narrower than what it replaced.
+
+- **The tag match was fixed in the wrong direction, and the test agreed with it.** The seventh pass
+  stopped normalizing the reply so a tag ending in "." could be found — and thereby stopped finding a
+  clean tag when the model appended a period, which is the *routine* case the file's own neighbouring
+  comment says happens ("the model routinely appends a period"). It traded a rare miss for a common one
+  and shipped a comment explaining why its half mattered. ⚠️ The test written to pin it put the period
+  on **both** sides, so it passed either way: a test that cannot distinguish the fix from the bug. One
+  definition now reads both sides (`ProviderReply.Names`), under a four-case `[Theory]` that fails on
+  each direction separately.
+- **The money predicate could not see an emoji.** `Any(char.IsLetterOrDigit)` enumerates UTF-16 code
+  units and is false for *both halves* of a surrogate pair, so a model that answered `"👍"` had its
+  reply rendered in the chat box, spoken on the voice surfaces, and refunded in full — as were `"✓"`,
+  `"→"` and every reply written in an astral script. ⚠️ **This is the second consecutive pass in which
+  the shared definition was wrong**, and both times the comment above it argued for the narrower
+  question. The predicate reads runes now and asks whether the reply contains anything the household
+  would read as content: symbols yes, punctuation no.
+- **And the test the gate asked for found a sixth site one line below the fifth.** Pinning the chat's
+  final-reply exit to `"."` and `"!"` failed immediately — not on the settlement, which was right, but on
+  the display beside it: `text.Length > 0 ? text : "Done."` billed `"."` as silence while handing the
+  household a bare period as the assistant's answer. Asked once, used twice now. ⚠️ The seventh pass's
+  commit message claimed "every new rule verified by breaking it and watching a test fail"; this rule was
+  verified on whitespace only, where the private reading and the shared one agree.
+- **The build rule's own reader had an unexercised branch.** `UnitsArgument` was converted to name-first
+  for the per-unit guard, but the twin rule two hundred lines away still counted arguments positionally —
+  two answers to "does this site name a unit count?" in one file, agreeing only because the repo has
+  exactly one per-unit site today. Converted together; and since that one site writes `units:` by name,
+  *breaking the positional fallback left all nine rules green*, so the reader is now pinned directly by a
+  `[Theory]` over the five legal shapes of the call.
+- **Three doc claims asserted what the code did not do**, all written in the same pass that changed the
+  code: `TurnWrites` settles on any write and not a *pantry* write (`adapt_recipe` goes through
+  `IRecipeAdapter`, which an earlier version got wrong and the doc re-introduced); the turn-limit exit
+  never asks whether the model said anything; and the seventh pass's own bullet above claimed a fix that
+  made the failure more reachable. Corrected in place rather than appended to — see §6 on artifacts that
+  claim to be true, which this arc has now hit five times.
+- **Cancellation, swallowed in three of four advisors.** `AnthropicRecipeTagAdvisor` rethrows
+  `OperationCanceledException`; the other three logged it as a degraded provider. Same four-file set the
+  pass was cleaning up, and CLAUDE.md names it explicitly. Billing was correct either way (nothing had
+  settled, so the act refunded); the log line was not.
+
+⚠️ **The pattern across passes seven and eight is worth stating plainly**, because it is the argument for
+the gate rather than for any individual fix: *both* passes consolidated a rule into one definition, and
+*both* times the single definition was less correct than the sites it replaced, and *both* times a test
+was written that could not tell the fix from the bug. Consolidation is right and the tests around it have
+to be written against the inputs that distinguish the readings, not against the input that made the
+original bug visible.
+
 
 ## 10. Sequencing
 

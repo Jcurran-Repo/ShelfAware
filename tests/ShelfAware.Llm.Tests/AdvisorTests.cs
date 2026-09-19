@@ -35,16 +35,35 @@ public class TagAdvisorTests
         Assert.Null(await advisor.FindSynonymAsync("Soda", Existing));
     }
 
-    [Fact]
-    public async Task A_tag_that_ends_in_a_period_is_still_matched_by_its_own_spelling()
+    [Theory]
+    // The model returns the household's spelling as asked.
+    [InlineData("etc.", "Etc.")]
+    [InlineData("soft drink", "Soft Drink")]
+    // ⚠️ Both directions, because two fixes in a row each closed one and opened the other. A tag can
+    // legitimately end in a period, and a reply that drops it still names that tag; the model also
+    // routinely ADDS one, and a reply that appends it still names a tag that has none. Matching on the
+    // raw reply alone misses the second, matching on the stripped reply alone misses the first, and a
+    // miss here is silent: the dedup returns "no synonym" and the caller coins the near-duplicate the
+    // whole advisor exists to prevent, having charged for the act. The first test written for this had
+    // the period on BOTH sides, so it passed either way and caught neither.
+    [InlineData("Etc", "Etc.")]
+    [InlineData("Soft Drink.", "Soft Drink")]
+    public async Task A_reply_naming_an_existing_tag_matches_it_whichever_side_has_the_period(
+        string reply, string expected)
     {
-        // ⚠️ The money question ("did the model answer at all?") strips trailing periods, because a model
-        // that replies "NONE." means NONE. The MATCH must not: these are the household's own tag
-        // spellings, and normalizing here would make a tag ending in a period unmatchable — the dedup
-        // would then coin the near-duplicate it exists to prevent. Two questions, two readings.
         string[] existing = ["Etc.", "Soft Drink"];
 
-        Assert.Equal("Etc.", await Advisor(FakeChatClient.Returning(Responses.Text("etc.")))
+        Assert.Equal(expected, await Advisor(FakeChatClient.Returning(Responses.Text(reply)))
+            .FindSynonymAsync("Miscellaneous", existing));
+    }
+
+    [Fact]
+    public async Task An_exact_spelling_wins_over_the_looser_match()
+    {
+        // A household with both spellings gets back the one the model actually named.
+        string[] existing = ["Etc", "Etc."];
+
+        Assert.Equal("Etc.", await Advisor(FakeChatClient.Returning(Responses.Text("Etc.")))
             .FindSynonymAsync("Miscellaneous", existing));
     }
 

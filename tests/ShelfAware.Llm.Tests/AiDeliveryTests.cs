@@ -261,20 +261,64 @@ public class AiDeliveryTests
         Assert.Null(charging.RefundedFor);
     }
 
-    [Fact]
-    public async Task A_turn_that_stopped_without_saying_anything_is_refunded()
+    [Theory]
+    [InlineData("   ")]
+    [InlineData(" . ")]
+    [InlineData("!")]
+    [InlineData("\u2026")]
+    public async Task A_turn_that_stopped_without_saying_anything_is_refunded(string silence)
     {
         // ⚠️ The chat's final-reply exit was a FIFTH site answering "did the model say anything?" its own
         // way — unconditional, one method above the guard that exists to stop exactly that. A round with
         // no tool calls and no text is a model that stopped; the household is told "Done." when nothing
         // was done, and that is not a turn to charge for.
-        var charging = new ChargingChatClient(FakeChatClient.Returning(Responses.Text("   ")));
+        //
+        // ⚠️ The punctuation cases are the ones that make this a rule rather than a coincidence. With
+        // whitespace alone, swapping the shared predicate back for a private `text.Length > 0` leaves the
+        // whole suite green — the fifth site could drift straight back to its own answer with nothing to
+        // catch it. "." and "!" and "…" are exactly the inputs the four advisors are held to one line on.
+        var charging = new ChargingChatClient(FakeChatClient.Returning(Responses.Text(silence)));
 
         var result = await Chat(charging, new FakePantryStore()).HandleAsync("hello?");
 
         Assert.Equal("Done.", result.Reply);
         Assert.True(charging.Charged);
         Assert.Equal(0, charging.RefundedFor);
+    }
+
+    [Theory]
+    [InlineData("\U0001F44D")]
+    [InlineData("\u2713")]
+    [InlineData("\u2192 \U0001F389")]
+    public async Task A_turn_whose_whole_answer_is_a_symbol_is_paid_for(string reply)
+    {
+        // ⚠️ The predicate's second version asked Any(char.IsLetterOrDigit), which reads UTF-16 code
+        // units — and neither half of a surrogate pair is a letter. A model that answered "👍" had its reply
+        // rendered in the chat box, spoken on the voice surfaces, and refunded in full. A tick and an arrow
+        // failed the same test without needing a surrogate at all. A symbol is content; punctuation is not,
+        // and the line between them is what IsAnAnswer is for.
+        var charging = new ChargingChatClient(FakeChatClient.Returning(Responses.Text(reply)));
+
+        var result = await Chat(charging, new FakePantryStore()).HandleAsync("did that work?");
+
+        Assert.Equal(reply, result.Reply);
+        Assert.True(charging.Charged);
+        Assert.Null(charging.RefundedFor);
+    }
+
+    [Fact]
+    public async Task An_advisor_reply_that_is_a_symbol_is_paid_for_like_any_other_answer()
+    {
+        // The same rune question at an advisor, so the five sites are held to one line from both ends.
+        // The reply names no tag, so the dedup declines — declining on an answer is still an answer.
+        var charging = new ChargingChatClient(FakeChatClient.Returning(Responses.Text("\U0001F44D")));
+
+        var match = await new AnthropicTagAdvisor(charging, Options.Create(new LlmOptions()),
+            NullLogger<AnthropicTagAdvisor>.Instance).FindSynonymAsync("Snack", ExistingTags);
+
+        Assert.Null(match);
+        Assert.True(charging.Charged);
+        Assert.Null(charging.RefundedFor);
     }
 
     // ---- and the act that got nothing back still comes back ---------------------------------------

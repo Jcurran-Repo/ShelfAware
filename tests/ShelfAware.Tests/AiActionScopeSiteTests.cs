@@ -305,8 +305,13 @@ public class AiActionScopeSiteTests
             foreach (var call in BeginCalls(tree))
             {
                 // One unit is the default and needs no argument, so a units argument is the per-unit
-                // count — unless it says 1, which is the default written out and settles like any one-unit
-                // act. Refusing Answered() there would be the rule crying about correct code.
+                // count — unless it says 1, which is the default written out. Answered() is Delivered(Units),
+                // so on a literal 1 it claims exactly the one unit the act was charged for and is correct;
+                // refusing it there would be the rule crying about correct code.
+                //
+                // ⚠️ The exemption reaches only a PER-UNIT action written with a literal 1. A per-act action
+                // carrying any count at all is already failed by An_action_is_begun_with_a_count_exactly_when_
+                // it_is_priced_by_the_unit, which is the rule that makes this one's job small.
                 //
                 // ⚠️ By NAME where it is named, not by position. Every rule in this file reads Begin's
                 // arguments positionally, which holds only while nobody writes Begin(units: 3, action: x)
@@ -340,6 +345,30 @@ public class AiActionScopeSiteTests
             + "longer see how it settles and an Answered() in the helper would claim every unit the act "
             + "was charged for. Settle a per-unit act in its own method:"
             + Environment.NewLine + string.Join(Environment.NewLine, escaped));
+    }
+
+    /// <summary>
+    /// ⚠️ The reader the two money rules share, held to every legal shape of the call rather than to
+    /// the one shape the repo happens to use today.
+    ///
+    /// <para>Both rules above scan the real sources, and the only per-unit site in them writes
+    /// <c>units: setup.SlotCount</c> — so the NAMED branch is the only one they exercise. Breaking the
+    /// positional fallback left all nine rules green, which means a site written <c>Begin(action, n)</c>
+    /// tomorrow would be read as a one-unit act by the guard whose job is to stop exactly that, and
+    /// nothing would say so. An unexercised branch inside a money rule is the rule's own failure shape.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("AiActionScope.Begin(ServiceAction.ChatTurn)", null)]
+    [InlineData("AiActionScope.Begin(ServiceAction.MealPlan, 4)", "4")]
+    [InlineData("AiActionScope.Begin(ServiceAction.MealPlan, units: 4)", "4")]
+    [InlineData("AiActionScope.Begin(units: 4, action: ServiceAction.MealPlan)", "4")]
+    [InlineData("AiActionScope.Begin(action: ServiceAction.MealPlan, units: 4)", "4")]
+    public void The_unit_count_is_read_wherever_the_call_puts_it(string call, string? expected)
+    {
+        var parsed = CSharpSyntaxTree.ParseText($"class C {{ void M() {{ var x = {call}; }} }}")
+            .GetRoot().DescendantNodes().OfType<InvocationExpressionSyntax>().First();
+
+        Assert.Equal(expected, UnitsArgument(parsed)?.ToString());
     }
 
     /// <summary>The expression giving a Begin call's unit count, or null when it takes the default of
@@ -465,7 +494,7 @@ public class AiActionScopeSiteTests
             foreach (var call in BeginCalls(tree))
             {
                 if (ActionOf(call) is not { } action) continue; // reported by No_scope_is_begun_from_a_computed_action
-                sites.Add(new Site(action, file, Line(call), IsInsideAsync(call), call.ArgumentList.Arguments.Count >= 2));
+                sites.Add(new Site(action, file, Line(call), IsInsideAsync(call), UnitsArgument(call) is not null));
             }
         }
 
@@ -477,8 +506,13 @@ public class AiActionScopeSiteTests
     }
 
     /// <summary>The literal <see cref="ServiceAction"/> a Begin call names, or null when it names something
-    /// computed. Only the FIRST argument is the action — the second, when present, is how many of the
-    /// action's units the act covers.</summary>
+    /// computed.
+    ///
+    /// <para>⚠️ Positional, and that holds only because <see cref="No_scope_is_begun_from_a_computed_action"/>
+    /// fails the build on a site whose first argument is not a literal action — <c>Begin(units: 3, action: x)</c>
+    /// is legal C# that would land here as "computed" and be reported loudly rather than read wrongly. The
+    /// unit count is NOT read this way: see <see cref="UnitsArgument"/>, which asks by name first because
+    /// it decides whether a money guard applies and had no such rule standing behind it.</para></summary>
     private static ServiceAction? ActionOf(InvocationExpressionSyntax call) =>
         ActionOfExpression(call.ArgumentList.Arguments.FirstOrDefault()?.Expression);
 

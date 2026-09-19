@@ -126,6 +126,14 @@ public sealed class AiUsageMeter(
             // middleware, so that is unreachable. If it ever occurred, failing open here changes nothing: the
             // reserve swallows the same error and proceeds UNCOUNTED, and the credit gate needs a household
             // too (short-circuiting to allowed only when billing is off) — so nothing is over-served.
+            //
+            // ⚠️ One qualification, since 2026-09-19: "the credit balance is the real money bound" is
+            // true of what the HOUSEHOLD is served and no longer true of what the OPERATOR spends. An act
+            // that fails, or that the model answers with silence, is refunded in full (docs/subscription-
+            // plan.md §4.w), so it never draws the balance down however often it repeats — the provider
+            // call still happened and was still paid for. For that shape these caps, not the credit gate,
+            // are the only bound, which is the argument for failing open here narrowly rather than for
+            // treating the caps as belt-and-braces. §4.y lists the three reachable cases.
             logger.LogError(ex, "Reading today's AI usage for the daily caps failed; allowing the call (credit still gates it).");
             return;
         }
