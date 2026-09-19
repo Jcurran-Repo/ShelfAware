@@ -256,6 +256,59 @@ integrity check on the copy). The droplet — the box that will take paying cust
 - A droplet backup script that is the same shape as the family one, because that one has already been
   through a review that caught a data-loss chain and four fail-safe defects. Reuse the reviewed design.
 
+### As built (2026-09-19)
+
+**(a) The fail-open is bounded in DURATION rather than removed.** Failing open is right for a blip —
+an auth.db hiccup must not block a legitimate call, nor tear down a circuit through the pre-check — and
+wrong without end, because the justification names a backstop this repo cannot see. So
+`DemoUsageMeter.FailOpenReadLimit` (10 consecutive failed reads) closes the valve, politely, with the
+same come-back-tomorrow sentence a real cap gives; the first successful read reopens it with no
+intervention. Only a box that has configured a cap ever reads the counter, so family and self-host boxes
+are untouched.
+
+**(b) A misconfigured valve says so at startup.** `DemoOptions.ConfigurationObjections()` is the one
+reading of "is this section coherent?", so startup and any future surface ask the same question. It
+objects to exactly two states, both provable from the two numbers alone: an alert with no cap (a
+heads-up with nothing behind it), and an alert at or above the cap (it can only arrive once the box is
+already closed). Nothing configured objects to nothing — a rule that fires on a coherent box is one an
+operator learns to scroll past, and then the real misconfiguration scrolls past with it. A configured
+valve narrates its real bound at Information.
+
+**(c) `/healthz`, anonymous, behind `HealthProbe`.** A monitor has no account, and an endpoint that
+needs one cannot tell "the box is down" from "my credentials expired". It answers `{"status":"ok"}` or a
+503 naming which database is unreachable — by neutral name only, never the reason; that goes to the log,
+same rule as phase 4, applied to the one surface that answers without a login. It deliberately does not
+touch the AI provider: an anonymous endpoint that triggers an outbound call would bill the host key for
+being scraped. The answer is cached for five seconds, which is what lets it stay unmetered — rate-limiting
+a health check is how a monitor learns to report an outage that isn't happening.
+
+⚠️ `HealthProbe` is the app's **sanctioned second use of the raw `IDbContextFactory`** for the pantry
+context. It issues `CanConnectAsync` and nothing else: no row read, no tenant table touched, nothing
+derived from anyone's data, so there is no filter for it to be missing. Confining it to one named class
+rather than inlining it in `Program.cs` is the move `AdminReportReader` makes for its
+`IgnoreQueryFilters` — a sanctioned exception belongs somewhere a reviewer can find it.
+
+**(d) `deploy/backup-droplet.sh` + `install-droplet-backup.sh`.** The family design, ported: `VACUUM
+INTO` over a read-only connection, `PRAGMA integrity_check` against the copy, dated snapshots pruned by
+the date in the folder NAME (a folder that doesn't parse is left alone, never guessed at), rolling
+`rsync` mirrors confined to dedicated per-tree directories, `--dry-run` that rehearses everything, one
+log line per run either way, and `rclone --backup-dir` for offsite so a bad local night cannot erase good
+remote copies. A systemd timer runs a COPY installed outside the repo, because the 03:30 run must not
+depend on which branch is checked out.
+
+This replaced an inline snippet in the droplet runbook that was a second, divergent definition of what to
+back up — and it had already drifted: it missed `recipe-images` entirely, so every recipe photo on the
+box was outside the backup.
+
+⚠️ **Two defects were found by rehearsing rather than by reading**, both in code I had just written:
+the `--dry-run` flag reached `rsync` through `$(… && echo -n)`, which prints *nothing* (it is the
+suppress-newline flag), so a rehearsal would have mirrored for real; and a run that failed after the
+first database left a correctly-named `db-<stamp>/` holding one of two, indistinguishable from a good
+snapshot until someone restored from it and found no accounts. Snapshots are now built under
+`.incomplete` and renamed only once both databases verify. Rehearsed end to end: a live run against a
+database being written, a restore-read of the copy, retention against planted old and malformed folders,
+the wrong-`--data-dir` failure, and every argument guard.
+
 **Why this is the D6 item.** `docs/subscription-plan.md` §9 already names this set as the *ops launch gate*,
 deliberately deferred until promised customers exist. That call was right at the time. The retrospective
 point is narrower: the health endpoint and the backup script are each an afternoon, and they are the kind

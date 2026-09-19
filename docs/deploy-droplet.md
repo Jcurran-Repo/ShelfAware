@@ -212,31 +212,38 @@ Same box, three differences, all in `/etc/shelfaware/env`:
 
 ## Backups
 
-Everything that matters is under `/var/lib/shelfaware`. A nightly cron as root
-(`apt install -y sqlite3` once):
+Everything that matters is under `/var/lib/shelfaware`. `deploy/backup-droplet.sh` is the
+nightly backup; `deploy/install-droplet-backup.sh` puts it on a systemd timer. Both need
+`sqlite3` and `rsync` (`apt install -y sqlite3 rsync`).
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-src=/var/lib/shelfaware
-d=/root/backups/$(date +%F); mkdir -p "$d"
-sqlite3 "$src/shelfaware.db" ".backup '$d/shelfaware.db'"
-sqlite3 "$src/auth.db" ".backup '$d/auth.db'"
-# tts-cache appears only once someone actually uses voice — archive what exists, and
-# don't pre-create it as root or the app can't write it later. (receipts/ exists from
-# the app's first boot, so on a live box the list is never empty.)
-dirs=()
-for f in receipts tts-cache keys; do
-    if [ -d "$src/$f" ]; then dirs+=("$f"); fi
-done
-if [ ${#dirs[@]} -gt 0 ]; then
-    tar -czf "$d/files.tar.gz" -C "$src" "${dirs[@]}"
-fi
+# once, as root, from the uploaded deploy/ directory
+./install-droplet-backup.sh --keep-days 14
+
+# rehearse it before you trust it — writes nothing, deletes nothing
+/usr/local/lib/shelfaware/backup-droplet.sh \
+    --data-dir /var/lib/shelfaware --dest /var/backups/shelfaware --keep-days 14 --dry-run
 ```
 
-`sqlite3 .backup` is WAL-safe while the app runs; the folders are plain files. DO's
-droplet snapshots make a fine second layer, not a substitute — they're
-crash-consistent, not application-aware.
+What it does, and why each part is the way it is, is written at the top of the script. The
+short version: it snapshots both databases with `VACUUM INTO` over a **read-only** connection
+(WAL-safe while the app runs, and the copy is a self-contained `.db` with no `-wal`/`-shm`
+beside it), runs `PRAGMA integrity_check` **against the copy**, keeps dated snapshots for
+`--keep-days`, and holds a rolling mirror of `receipts`, `recipe-images`, `keys` and
+`tts-cache`. It writes one line per run to `backup-log.txt`, success or failure.
+
+⚠️ **This is same-disk only until you set up rclone**, which protects you against a bad write
+and not at all against losing the droplet. One-time: install rclone, run `rclone config`
+(interactive — a human does this once), then re-run the installer with
+`--rclone-remote yourremote:shelfaware-backups`. The offsite step then runs inside the nightly
+job, with `--backup-dir`, so a bad local night can't erase good offsite copies.
+
+To restore: stop the service, copy the chosen `db-*` snapshot's two `.db` files into
+`/var/lib/shelfaware` (deleting any `-wal`/`-shm` beside them — those belong to the database
+you are replacing), restore the `files/` trees, `chown -R shelfaware:shelfaware`, start.
+
+DO's droplet snapshots make a fine second layer, not a substitute — they're crash-consistent,
+not application-aware.
 
 ## If you use Nginx instead of Caddy
 
