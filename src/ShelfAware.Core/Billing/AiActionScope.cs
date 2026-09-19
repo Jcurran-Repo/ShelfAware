@@ -128,11 +128,21 @@ public sealed class AiActionScope : IAsyncDisposable
     public void ChargeRecorded(long credits, Func<int, CancellationToken, Task> settle)
     {
         ArgumentNullException.ThrowIfNull(settle);
+
+        // ⚠️ Install FIRST, then check and take it back — not check-then-install. Checking first leaves a
+        // window: DisposeAsync can run entirely between the read and the write, take a null settlement,
+        // and close, after which this would attach a callback to a closed scope with no exception and no
+        // refund — the silent outcome the guard exists to prevent, reached through the window instead of
+        // around it. Installing first means DisposeAsync either takes this settlement (and settles it) or
+        // has already closed, in which case the exchange below finds it and we take it back.
+        Interlocked.Exchange(ref _settle, settle);
         if (Volatile.Read(ref _closed) == 1)
+        {
+            Interlocked.Exchange(ref _settle, null);
             throw new InvalidOperationException(
                 $"A charge of {credits} credit(s) was recorded against a {Action} act that has already "
                 + "closed, so it could never be given back. The call that charged it outlived its scope.");
-        Interlocked.Exchange(ref _settle, settle);
+        }
     }
 
     /// <summary>Report what this act DELIVERED. Anything it was charged for beyond this comes back when

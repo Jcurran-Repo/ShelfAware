@@ -34,6 +34,13 @@ public class CreditDenominationMigrationTests : IDisposable
                 "CreatedAt" TEXT NOT NULL
             );
             """);
+
+        // ⚠️ Then the additive pass, because that is the order boot uses and this test is about the order:
+        // AdditiveSchema.Apply runs first and adds the columns that are pure additions (ReversesEntryId),
+        // and CreditDenominationMigration runs strictly after it. It deliberately does NOT add
+        // AmountCredits — adding that one first would disarm the migration's own "have I run?" guard, which
+        // is exactly what the assertions below check.
+        AdditiveSchema.Apply(db);
     }
 
     private static Task SeedOldRowAsync(AuthDbContext db, string household, CreditEntryKind kind, long micros) =>

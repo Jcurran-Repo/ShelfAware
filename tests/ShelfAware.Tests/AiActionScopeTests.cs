@@ -314,6 +314,24 @@ public class AiActionScopeTests
     }
 
     [Fact]
+    public async Task A_refused_late_charge_does_not_hand_the_act_s_claim_back()
+    {
+        // ⚠️ The claim must SURVIVE the refusal. The metering layer releases an act's one charge when the
+        // money write throws, which is right because that write throws only when the row did not land —
+        // but this refusal happens AFTER a row has landed. If it released the claim too, the next call on
+        // that flow would claim again and bill the household a second time for one act: the one outcome
+        // the charge path names as worse than not billing at all. The scope's job here is to stay claimed.
+        var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 4);
+        Assert.True(act.TryClaimCharge());
+        await act.DisposeAsync();
+
+        Assert.Throws<InvalidOperationException>(() => act.ChargeRecorded(2, (_, _) => Task.CompletedTask));
+
+        Assert.True(act.ChargeClaimed);   // still taken, so nothing else can pay for this act
+        Assert.False(act.HasSettlement);  // and the refused callback was not left installed
+    }
+
+    [Fact]
     public async Task An_act_cannot_record_a_charge_with_no_way_to_give_it_back()
     {
         // A null settlement would read downstream as "nothing was charged" — indistinguishable from a

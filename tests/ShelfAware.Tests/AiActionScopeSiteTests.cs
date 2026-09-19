@@ -245,10 +245,12 @@ public class AiActionScopeSiteTests
     public void Every_act_reports_what_it_delivered()
     {
         var silent = new List<string>();
+        var seen = 0;
 
         foreach (var (file, tree) in Trees())
             foreach (var call in BeginCalls(tree))
             {
+                seen++;
                 var owner = EnclosingBody(call);
                 if (owner is null) continue; // not in a method body at all — the async rule reports it
                 // ⚠️ Pinned to the NAME the scope was bound to, not just any `.Delivered(...)` in the body.
@@ -264,6 +266,9 @@ public class AiActionScopeSiteTests
                 if (!settles)
                     silent.Add($"{Path.GetFileName(file)}:{Line(call)} — {ActionOf(call)?.ToString() ?? "?"}");
             }
+
+        // Same non-vacuity guard as the rules above, for the same reason.
+        Assert.True(seen > 5, $"Only {seen} Begin site(s) found — the scan is broken, not the sources.");
 
         Assert.True(silent.Count == 0,
             "An act opens a charging scope and never says what it delivered, so every run of it refunds in "
@@ -290,18 +295,30 @@ public class AiActionScopeSiteTests
     public void Every_scope_is_opened_with_await_using()
     {
         var loose = new List<string>();
+        var seen = 0;
 
         foreach (var (file, tree) in Trees())
             foreach (var call in BeginCalls(tree))
             {
-                var held = call.Ancestors().Any(a => a switch
-                {
-                    UsingStatementSyntax u => u.AwaitKeyword != default,
-                    LocalDeclarationStatementSyntax l => l.UsingKeyword != default && l.AwaitKeyword != default,
-                    _ => false,
-                });
+                seen++;
+                // ⚠️ The DECLARATION that holds this call, not any ancestor. `Ancestors().Any(...)` is the
+                // obvious spelling and it is wrong: a Begin sitting loose inside an unrelated
+                // `await using (var db = ...) { ... }` block has that block as an ancestor and would pass,
+                // which is precisely the leak this rule exists to catch.
+                var held = call.Ancestors().OfType<VariableDeclaratorSyntax>().FirstOrDefault() is { } declarator
+                    && declarator.Initializer?.Value == call
+                    && declarator.Parent?.Parent is LocalDeclarationStatementSyntax
+                        { UsingKeyword.RawKind: not 0, AwaitKeyword.RawKind: not 0 }
+                    // …or the block form, `await using (AiActionScope.Begin(...))`, where the scope has no
+                    // name. It settles nothing, so Every_act_reports_what_it_delivered reports it — but it
+                    // IS disposed, so it is not this rule's finding.
+                    || call.Parent is UsingStatementSyntax { AwaitKeyword.RawKind: not 0 };
                 if (!held) loose.Add($"{Path.GetFileName(file)}:{Line(call)} — {ActionOf(call)?.ToString() ?? "?"}");
             }
+
+        // Without this the rule passes vacuously the moment the walk or the parse breaks — green would be
+        // what the defect produces, which is the trap this suite has been caught by before.
+        Assert.True(seen > 5, $"Only {seen} Begin site(s) found — the scan is broken, not the sources.");
 
         Assert.True(loose.Count == 0,
             "An act opens a charging scope without `await using`, so it is never disposed: the settlement "

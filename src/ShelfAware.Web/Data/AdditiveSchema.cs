@@ -167,6 +167,12 @@ public static class AdditiveSchema
         // subscription, so it survives a pantry "delete my data". A new table — existing rows unaffected.
         EnsureTable(db, table: "CreditLedger");
 
+        // 2026-09-19: which consumption a Reversal row hands back (remediation phase 7). Existing rows land
+        // on NULL, which is exactly right: every row written before this existed is a kind that never
+        // reverses anything. ⚠️ The unspent-allowance sum reads it — a Reversal it cannot attribute is left
+        // out of that sum rather than guessed at, which is the direction that cannot eat purchased credit.
+        EnsureColumn(db, table: "CreditLedger", column: "ReversesEntryId", definition: "INTEGER NULL");
+
         // 2026-08-24: household entitlement tiers (docs/subscription-plan.md phase 1 — the Founder tier
         // + the subscription seam). Tier is an enum → INTEGER, so existing rows land on Free (0) with no
         // FounderSince, which behaves exactly as a pre-tier household did.

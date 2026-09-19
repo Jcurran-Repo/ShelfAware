@@ -337,16 +337,10 @@ public sealed class MeteredChatClient(
             reason = model;
         }
 
+        long? chargeId;
         try
         {
-            await ledger.RecordConsumptionAsync(householdId, credits, reason, cancellationToken);
-            // The act can now give this back if it turns out to have delivered less than it charged for.
-            // Handed over only once the row has LANDED, so an act that was never charged — a Founder, a
-            // BYOK circuit, a box with billing off, a free price — settles to nothing rather than being
-            // paid credits it never spent.
-            if (claimed is not null && credits > 0)
-                claimed.ChargeRecorded(credits, (delivered, ct) =>
-                    ReverseUndeliveredAsync(householdId, claimed, credits, delivered, ct));
+            chargeId = await ledger.RecordConsumptionAsync(householdId, credits, reason, cancellationToken);
         }
         catch
         {
@@ -360,6 +354,39 @@ public sealed class MeteredChatClient(
             // worse than not billing it at all — see that method's remarks.
             claimed?.ReleaseCharge();
             throw;
+        }
+
+        // ⚠️ OUTSIDE that try, and it must stay outside. The row has landed by here, and the catch above
+        // releases the claim unconditionally — which is correct only while RecordConsumptionAsync is the
+        // only thing that can throw in there, because it throws exclusively when the row did NOT land.
+        // ChargeRecorded can throw (a charge arriving against a closed scope), and inside the try that
+        // throw would release a claim over money already taken: the next call on that flow would claim
+        // again and bill the household a SECOND time for one act. Which is the one outcome the catch's own
+        // remarks name as worse than not billing at all. Its failure is logged and swallowed instead: the
+        // charge stands and the refund is unreachable, which is recoverable from the ledger, where losing
+        // the claim is not.
+        try
+        {
+            // Handed over only once the row has LANDED, so an act that was never charged — a Founder, a
+            // BYOK circuit, a box with billing off, a free price — settles to nothing rather than being
+            // paid credits it never spent.
+            // ⚠️ Everything the give-back needs is STAMPED here, at charge time, and closed over: the row
+            // it undoes, the amount, and the price the charge was computed at. Re-reading any of them when
+            // the act closes would let a config edit mid-act price the refund differently from the charge —
+            // the same rule RecordUsageAsync states for cost, applied to the correction.
+            if (claimed is not null && credits > 0 && chargeId is { } id)
+            {
+                var pricedAt = billing.Value;
+                var chargedOn = DateOnly.FromDateTime(DateTime.Today);
+                claimed.ChargeRecorded(credits, (delivered, ct) =>
+                    ReverseUndeliveredAsync(householdId, claimed, credits, id, pricedAt, chargedOn, delivered, ct));
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            logger.LogError(ex, "A charge of {Credits} credit(s) for household {HouseholdId} landed but "
+                + "could not be made refundable; it will not be given back if the act under-delivers.",
+                credits, householdId);
         }
         return new CreditConsumption(true, credits);
     }
@@ -376,17 +403,19 @@ public sealed class MeteredChatClient(
     /// went right. What it costs is a household left charged for an undelivered unit, logged at Error and
     /// visible in the ledger, which is recoverable; the alternative is not.</para></summary>
     private async Task ReverseUndeliveredAsync(
-        string householdId, AiActionScope act, long charged, int delivered, CancellationToken cancellationToken)
+        string householdId, AiActionScope act, long charged, long chargeId, BillingOptions pricedAt,
+        DateOnly chargedOn, int delivered, CancellationToken cancellationToken)
     {
         // delivered == 0 is its own case: CreditsFor floors the unit count at one, deliberately, so that a
         // bug upstream over-charges rather than zeroing a charge. Here nothing arrived, so nothing is kept.
-        var keep = delivered <= 0 ? 0 : CreditPricing.CreditsFor(billing.Value, act.Action, delivered);
+        var keep = delivered <= 0 ? 0 : CreditPricing.CreditsFor(pricedAt, act.Action, delivered);
         var giveBack = charged - keep;
         if (giveBack <= 0) return;
         try
         {
             if (!await ledger.ReverseConsumptionAsync(householdId, giveBack,
-                    CreditPricing.DescribeReversal(billing.Value, act.Action, delivered, act.Units), cancellationToken))
+                    CreditPricing.DescribeReversal(pricedAt, act.Action, delivered, act.Units), chargeId,
+                    cancellationToken))
             {
                 // Unreachable while giveBack > 0 is checked above — but the alternative is a log line
                 // asserting a give-back the ledger never wrote, which is the one thing an operator chasing
@@ -416,8 +445,19 @@ public sealed class MeteredChatClient(
         }
 
         // The ledger has moved, so the operator's reconciliation has to move with it — otherwise /admin
-        // reports this action earning credits the household no longer holds. Best-effort inside the meter.
-        await margin.RecordReversalAsync(act.Action, giveBack, wholeCharge: keep == 0, CancellationToken.None);
+        // reports this action earning credits the household no longer holds. Best-effort inside the meter,
+        // and wrapped here too for the same reason margin.RecordAsync is: this runs from a `finally`, and
+        // RecordReversalAsync deliberately rethrows cancellation, which would escape into the act's own
+        // `await using` and replace a delivered answer with a crash.
+        try
+        {
+            await margin.RecordReversalAsync(act.Action, chargedOn, giveBack, wholeCharge: keep == 0, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Recording the margin reversal for {Action} failed; reconciliation "
+                + "over-states what it earned by {Credits} credit(s).", act.Action, giveBack);
+        }
     }
 
     /// <summary>What one metered call did to the household's balance: whether it was on a billable path, and

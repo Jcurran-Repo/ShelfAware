@@ -557,17 +557,33 @@ public class MeteredChatClientTests : IDisposable
         // best customer on the box. The calls stay counted, because they really happened and really cost
         // money; only what was billed for them comes back out.
         var (client, _) = Build("Managed", tier: HouseholdTier.Free);
+        var meter = new ServiceMarginMeter(_authDb, NullLogger<ServiceMarginMeter>.Instance);
 
         await using (var act = AiActionScope.Begin(ServiceAction.ReceiptExtraction))
+        {
             await AskAsync(client);   // never says it delivered, so the whole charge comes back
 
-        var line = Assert.Single(await new ServiceMarginMeter(_authDb, NullLogger<ServiceMarginMeter>.Instance).ReadAsync(days: 1));
+            // ⚠️ Asserted INSIDE the scope, before the settlement runs. Every assertion after it is a zero,
+            // and a test whose evidence is all zeroes passes just as happily on a charge that never
+            // happened — which is most of the ways this could break. This pins the movement.
+            var charged = Assert.Single(await meter.ReadAsync(days: 1));
+            Assert.Equal(1, charged.Charges);
+            Assert.Equal(1, charged.CreditsCharged);
+        }
+
+        var line = Assert.Single(await meter.ReadAsync(days: 1));
         Assert.Equal(1, line.Calls);              // the provider call happened and cost real money
         Assert.Equal(350, line.CostMicros);       // which is still on the operator
         Assert.Equal(0, line.Charges);            // but it earned nothing
         Assert.Equal(0, line.CreditsCharged);
 
-        // And the two surfaces agree: the ledger nets to zero too.
+        // And the ledger tells the same story in two rows rather than none: charged, then handed back.
+        await using var db = _authDb.CreateDbContext();
+        var rows = await db.CreditLedger.Where(e => e.HouseholdId == "hh-test").OrderBy(e => e.Id).ToListAsync();
+        Assert.Collection(rows,
+            e => { Assert.Equal(CreditEntryKind.Consumption, e.Kind); Assert.Equal(-1, e.AmountCredits); },
+            e => { Assert.Equal(CreditEntryKind.Reversal, e.Kind); Assert.Equal(1, e.AmountCredits);
+                   Assert.Equal(rows[0].Id, e.ReversesEntryId); });   // and it points at the charge it undoes
         Assert.Equal(0, await new CreditLedger(_authDb, Microsoft.Extensions.Options.Options.Create(new BillingOptions()))
             .GetBalanceCreditsAsync("hh-test"));
     }

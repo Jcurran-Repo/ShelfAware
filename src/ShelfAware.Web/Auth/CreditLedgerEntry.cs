@@ -69,6 +69,17 @@ public sealed class CreditLedgerEntry
     /// see <see cref="Data.CreditDenominationMigration"/> and <see cref="LegacyAmountMicros"/>.</summary>
     public long AmountCredits { get; set; }
 
+    /// <summary>For a <see cref="CreditEntryKind.Reversal"/>: the <see cref="Id"/> of the
+    /// <see cref="CreditEntryKind.Consumption"/> row it hands back. Null on every other kind.
+    ///
+    /// <para>⚠️ It exists because a reversal can land in a LATER billing period than the charge it undoes —
+    /// a 124-meal plan is eighteen provider calls, and the monthly allowance posts on any entitlement check
+    /// in between. Without this link the unspent-allowance sum nets the reversal against whichever allowance
+    /// happens to precede it by Id, which is the wrong month: the sweep then measures a month as less spent
+    /// than it was and takes the difference out of PURCHASED credit — the household's own money, silently.
+    /// A clamp bounds that loss; only the link removes it.</para></summary>
+    public long? ReversesEntryId { get; set; }
+
     /// <summary>HISTORICAL. The retail micros this entry was originally denominated in, kept as the receipt
     /// for the 2026-09-19 conversion to credits — so the arithmetic that produced every converted balance
     /// can be audited rather than taken on trust. Zero on every entry written after the conversion; nothing

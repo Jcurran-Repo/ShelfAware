@@ -28,7 +28,7 @@ public class CreditLedgerTests : IDisposable
             new DisposeThrowsAuthDbFactory(_authDb),
             Microsoft.Extensions.Options.Options.Create(new BillingOptions()));
 
-        Assert.True(await ledger.RecordConsumptionAsync("hh-a", 2, "chat"));   // reported as charged
+        Assert.NotNull(await ledger.RecordConsumptionAsync("hh-a", 2, "chat"));   // reported as charged
         Assert.Equal(-2, await _ledger.GetBalanceCreditsAsync("hh-a"));        // and it really is
     }
 
@@ -319,9 +319,10 @@ public class CreditLedgerTests : IDisposable
     {
         var id = await SeedHouseholdAsync(HouseholdTier.Aware);
         await _ledger.EnsureCurrentAllowanceAsync(id, Oct);
-        await _ledger.RecordConsumptionAsync(id, 42, "A meal plan (124 meals)");
+        var charge = await _ledger.RecordConsumptionAsync(id, 42, "A meal plan (124 meals)");
+        Assert.NotNull(charge);
 
-        Assert.True(await _ledger.ReverseConsumptionAsync(id, 39, "A meal plan — refunded"));
+        Assert.True(await _ledger.ReverseConsumptionAsync(id, 39, "A meal plan — refunded", charge!.Value));
 
         Assert.Equal(Allowance - 3, await _ledger.GetBalanceCreditsAsync(id)); // kept the 7 meals it got
     }
@@ -337,9 +338,11 @@ public class CreditLedgerTests : IDisposable
         var id = await SeedHouseholdAsync(HouseholdTier.Aware);
         await _ledger.EnsureCurrentAllowanceAsync(id, Oct);
 
-        Assert.False(await _ledger.ReverseConsumptionAsync(id, credits, "nothing owed"));
+        var charge = await _ledger.RecordConsumptionAsync(id, 5, "something");
 
-        Assert.Equal(Allowance, await _ledger.GetBalanceCreditsAsync(id));
+        Assert.False(await _ledger.ReverseConsumptionAsync(id, credits, "nothing owed", charge!.Value));
+
+        Assert.Equal(Allowance - 5, await _ledger.GetBalanceCreditsAsync(id)); // the charge stands, untouched
         await using var db = _authDb.CreateDbContext();
         Assert.DoesNotContain(await db.CreditLedger.Where(e => e.HouseholdId == id).ToListAsync(),
             e => e.Kind == CreditEntryKind.Reversal);
@@ -355,8 +358,8 @@ public class CreditLedgerTests : IDisposable
         // a household could bank an allowance by provoking failures.
         var id = await SeedHouseholdAsync(HouseholdTier.Aware);
         await _ledger.EnsureCurrentAllowanceAsync(id, Oct);                 // +A
-        await _ledger.RecordConsumptionAsync(id, 42, "A meal plan");        // A − 42
-        await _ledger.ReverseConsumptionAsync(id, 39, "refunded");          // A − 3
+        var charge = await _ledger.RecordConsumptionAsync(id, 42, "A meal plan");   // A − 42
+        await _ledger.ReverseConsumptionAsync(id, 39, "refunded", charge!.Value);   // A − 3
 
         await _ledger.EnsureCurrentAllowanceAsync(id, Nov);                 // sweep A − 3, grant +A
 
@@ -364,16 +367,18 @@ public class CreditLedgerTests : IDisposable
     }
 
     [Fact]
-    public async Task A_reversal_does_not_let_the_sweep_reach_purchased_credit()
+    public async Task A_reversal_of_a_charge_that_dipped_into_a_pack_unwinds_in_the_same_order()
     {
-        // The other direction of the same term: consumption that dipped PAST the allowance into a pack, then
-        // partly refunded. The sweep must still take only what is left of the allowance — a reversal must
-        // never make "unspent" exceed what was granted and let the sweep eat the pack.
+        // The reversal term within ONE period: consumption that dipped past the allowance into a pack, then
+        // partly refunded. Spend-allowance-first, so the refund unwinds pack-first.
+        // (Named for what it holds. It used to be called "…does not let the sweep reach purchased credit",
+        // which is the defect in A_reversal_of_last_months_charge_… below — and this arrangement passes
+        // whether or not that defect is present, so the name was a coverage claim it did not hold.)
         var id = await SeedHouseholdAsync(HouseholdTier.Aware);
         await _ledger.GrantAsync(id, 50, "credit pack");
         await _ledger.EnsureCurrentAllowanceAsync(id, Oct);                  // +A, on top of the pack
-        await _ledger.RecordConsumptionAsync(id, Allowance + 20, "big");     // all of A, then 20 of the pack
-        await _ledger.ReverseConsumptionAsync(id, 39, "refunded");           // 39 back
+        var charge = await _ledger.RecordConsumptionAsync(id, Allowance + 20, "big"); // all of A, then 20 of the pack
+        await _ledger.ReverseConsumptionAsync(id, 39, "refunded", charge!.Value);     // 39 back
 
         await _ledger.EnsureCurrentAllowanceAsync(id, Nov);
 
@@ -381,6 +386,31 @@ public class CreditLedgerTests : IDisposable
         // whole again and the remaining 19 is allowance once more. The sweep takes that 19 and nothing else,
         // leaving the pack at its full 50 plus a fresh allowance — the pack is never reached.
         Assert.Equal(50 + Allowance, await _ledger.GetBalanceCreditsAsync(id));
+    }
+
+    [Fact]
+    public async Task A_reversal_of_last_months_charge_does_not_make_this_month_look_unspent()
+    {
+        // ⚠️ THE reason a Reversal row records which consumption it undoes. An act straddles the boundary:
+        // charged in October, settles in November. Counted by where it LANDED, that refund makes November
+        // look less spent than it was — so December's sweep measures a remainder that isn't there and takes
+        // it out of the PACK. The household loses money it paid for, silently, and the clamp does not catch
+        // it because the bogus remainder is smaller than the grant.
+        var id = await SeedHouseholdAsync(HouseholdTier.Aware);
+        await _ledger.GrantAsync(id, 500, "credit pack");
+        await _ledger.EnsureCurrentAllowanceAsync(id, Oct);                          // +A1
+        var oct = await _ledger.RecordConsumptionAsync(id, Allowance + 20, "a long plan"); // all of A1, then 20 of the pack
+
+        await _ledger.EnsureCurrentAllowanceAsync(id, Nov);                          // A1 spent out: sweep 0, +A2
+        await _ledger.ReverseConsumptionAsync(id, 39, "refunded", oct!.Value);        // October's act settles
+        await _ledger.RecordConsumptionAsync(id, Allowance, "November's own use");    // A2 spent in full
+
+        await _ledger.EnsureCurrentAllowanceAsync(id, Dec);                          // must sweep NOTHING
+
+        // 500 pack − 20 dipped + 39 back = 519, plus December's fresh allowance. Attributed to October,
+        // the 39 belongs to an allowance already gone, so it rides in the persisting pool and November —
+        // which really was spent to the last credit — sweeps zero.
+        Assert.Equal(519 + Allowance, await _ledger.GetBalanceCreditsAsync(id));
     }
 
     [Fact]
@@ -394,9 +424,9 @@ public class CreditLedgerTests : IDisposable
         var id = await SeedHouseholdAsync(HouseholdTier.Aware);
         await _ledger.GrantAsync(id, 500, "credit pack");
         await _ledger.EnsureCurrentAllowanceAsync(id, Oct);           // +A1
-        await _ledger.RecordConsumptionAsync(id, 42, "a long plan");  // charged against A1
+        var charge = await _ledger.RecordConsumptionAsync(id, 42, "a long plan"); // charged against A1
         await _ledger.EnsureCurrentAllowanceAsync(id, Nov);           // rollover mid-act: sweep A1, grant +A2
-        await _ledger.ReverseConsumptionAsync(id, 39, "refunded");    // the act finally settles, against A2
+        await _ledger.ReverseConsumptionAsync(id, 39, "refunded", charge!.Value); // the act settles after it
 
         await _ledger.EnsureCurrentAllowanceAsync(id, Dec);           // A2 was untouched, so sweep exactly A2
 

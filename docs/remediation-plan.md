@@ -906,7 +906,7 @@ ambient restore, the reversal arithmetic and the allowance interaction were all 
 all stood. What they found instead is worth recording, because it is the same shape as the fourth pass's
 finding, committed by the pass that was fixing an instance of it.
 
-⚠️ **The refund was applied to acts that did not fail.** Six sites reported delivery only when the result
+⚠️ **The refund was applied to acts that did not fail.** Seven sites reported delivery only when the result
 was non-empty, so a model that correctly answered *"there is no recipe in this photo"* — its own
 anti-hallucination floor, a successful call the host paid for — refunded the household in full. That is
 not "any call that fails is refunded"; it is "refunded unless it produced rows", and the difference is
@@ -914,8 +914,11 @@ that the second one is free on demand. Upload something unreadable, get the cred
 credit balance, which is the *designed* money bound, stops bounding those acts entirely, leaving only
 `AiUsageMeter`'s 1000-calls-a-day abuse cap. Worse, `AiUsageMeter`'s own comment reasons that failing its
 cap open is safe *because* "the real MONEY bound is the household's credit balance" — a sentence the
-settlement commit quietly made false. **Four of the six sites are priced at zero today, so only the recipe
-trio bit; the other three were latent, waiting for an operator to price a tag suggestion above free.**
+settlement commit quietly made false. **Four of the seven are priced at zero today** (`TagSuggest`,
+`SubstituteSuggest`, `IngredientAlternatives` twice over), **so only the recipe trio bites** —
+`RecipeSuggest`, `RecipeAdapt` and `RecipeImport`, 2 credits each. The other four are latent, waiting for
+an operator to price a tag suggestion above free. `ReceiptExtraction` and `CensusPhoto` are clean: both
+deliver on any parse success, zero rows included.
 
 The root cause is one conflation: *the act failed* and *the act answered, and the answer was empty* are
 different things, and only the first is a refund. Put to Jordan as a decision rather than patched, because
@@ -968,6 +971,62 @@ which one a household should pay for is a product call, not an engineering one.
 **What it cost to find:** nothing shipped. Every item above was caught by reading the diff against the
 question *"who pays for this, and does the screen beside it agree?"* — and every one of them was under a
 fully green four-suite run, a clean non-incremental build, and a 100% scoped mutation score.
+
+### The sixth pass: the fix pass needed its own
+
+Both gates read the fix commit, and this is the part worth keeping. **The fixes introduced two new
+defects**, which is the cascade `CLAUDE.md` describes — rounds of 5 → 3 → 8 findings on the census branch —
+happening again, to a pass that was itself closing a round of findings.
+
+⚠️ **`ChargeRecorded` was given the power to throw, inside the `try` whose `catch` hands the act's charge
+back.** That catch's own comment states the invariant it rests on: releasing is safe *only* because
+`RecordConsumptionAsync` throws exclusively when the row did not land. The new throw fires after it lands.
+So on the leaked-scope shape the guard was written for, the sequence became: charge the household, refuse
+the settlement, release the claim, and let the next call claim and charge **again** — unbounded, and with
+the exception swallowed upstream as "this call didn't draw the balance", which is the opposite of what
+happened. A guard against a silent free call became a repeated over-charge. It is out of that `try` now,
+and a test holds that a refused late charge keeps its claim.
+
+⚠️ **The clamp did not close the hole its own comment claimed.** `Math.Clamp(unspent, 0, granted)` bounds
+the total, and the damage is done by a *misattributed* reversal **smaller** than the grant, which clears the
+clamp untouched. Both gates walked the same sequence by hand and got the same answer: an act charged in
+October, settling in November, still lets December's sweep take credit out of a purchased pack. And the
+test named for that defect passed identically with and without the clamp — a coverage claim not held, in
+the branch's own vocabulary.
+
+The real fix is attribution: a `Reversal` row now records **which consumption it hands back**
+(`CreditLedgerEntry.ReversesEntryId`), `RecordConsumptionAsync` returns the id of the row it wrote, and the
+unspent-allowance sum counts a reversal by the period its **charge** drew on rather than by where the
+reversal happened to land. The clamp stays as a bound on a sum gone wrong some other way, with a comment
+that no longer overstates it. A reversal that cannot be attributed is left out, which is the only direction
+that cannot eat purchased credit.
+
+Also in the pass:
+
+- **`actions.Count > 0` was the wrong predicate** for "this chat turn did something". That list is what the
+  turn will *tell* the household it did, and the read-only tools put their lines in it too ("opened
+  reports", "reading Chili") — so a turn that navigated and then lost the provider was charged 2 credits
+  for a turn that wrote nothing and, because the failure exit discards the navigation, showed nothing
+  either. `TurnWrites` is set beside each of the ten store writes and nowhere else.
+- **The margin reversal was landing on the wrong day and could go negative.** It took the correction off
+  *today's* row when the charge might sit on yesterday's — correcting the wrong day against the right
+  number, leaving both permanently wrong — and `CostPerCharge` reads null below zero charges, so the
+  operator's "is this price right?" answer would have quietly disappeared for that action. The charge's own
+  day is stamped into the settlement now, the decrements are floored, and a reversal that finds no row says
+  so instead of vanishing.
+- **The refund re-priced itself from live config** while the charge had been stamped at charge time, so a
+  price edit mid-act could make the give-back disagree with the charge. The price now rides in the
+  settlement with everything else it needs.
+- **The `await using` rule could be satisfied by an unrelated `await using` block** somewhere up the
+  ancestor chain, and neither it nor the settlement rule had the non-vacuity guard the rest of the file
+  carries. Both anchored and guarded, and both verified by planting each shape and watching the build fail.
+- **A new test asserted only zeroes**, which "nothing happened" satisfies just as well as "charged, then
+  refunded". It pins the charge inside the scope now and reads both ledger rows back.
+
+**What it cost to find:** nothing shipped, again. But the lesson is the one already written at the top of
+`CLAUDE.md` and worth the second entry: a fix pass is not a safe pass. Two of these were *created* by the
+round that was fixing the previous round's findings, and both were in the money path, and both had a green
+four-suite run and a 100% mutation score over them.
 
 ## 10. Sequencing
 

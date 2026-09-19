@@ -121,21 +121,33 @@ public sealed class ServiceMarginMeter(
     /// <para>Calls are NOT decremented: the provider calls really happened and really cost money. Only what
     /// the household was billed for them changes.</para></summary>
     public async Task RecordReversalAsync(
-        ServiceAction? action, long creditsGivenBack, bool wholeCharge, CancellationToken ct = default)
+        ServiceAction? action, DateOnly chargedOn, long creditsGivenBack, bool wholeCharge, CancellationToken ct = default)
     {
         if (creditsGivenBack <= 0) return;
         var charges = wholeCharge ? 1 : 0;
         try
         {
             await using var db = await dbFactory.CreateDbContextAsync(ct);
-            var day = DateOnly.FromDateTime(DateTime.Today);
-            // No insert-if-missing counterpart, deliberately: a reversal always follows a charge, so the row
-            // exists. If the act straddled midnight the charge sits on yesterday's row and this no-ops —
-            // a day boundary in the reconciliation table, not lost money; the ledger is still exact.
-            await db.ServiceMargin.Where(d => d.Day == day && d.Action == action)
+            // ⚠️ chargedOn, NOT today. An act can run across midnight — a 124-meal plan is eighteen provider
+            // calls — so the charge can sit on yesterday's row while the settlement runs on today's. Taking
+            // it off today's row corrects the wrong day against the right number and leaves BOTH days
+            // permanently wrong, in opposite directions. And there is usually a row there to hit: the same
+            // actions run every day on a live box, so the "it would just no-op" reasoning the first version
+            // of this comment gave was only true of an idle one.
+            //
+            // ⚠️ Floored, because this row is a running total that other households also write. A reversal
+            // whose matching charge never reached this table — RecordAsync is best-effort and gives up on a
+            // lost insert race — would otherwise push Charges negative, and CostPerCharge reads null at
+            // Charges <= 0: the operator's "is this price right?" answer would silently disappear for that
+            // action, which is the one surface that would have shown any of this.
+            var touched = await db.ServiceMargin.Where(d => d.Day == chargedOn && d.Action == action)
                 .ExecuteUpdateAsync(s => s
-                    .SetProperty(d => d.Charges, d => d.Charges - charges)
-                    .SetProperty(d => d.CreditsCharged, d => d.CreditsCharged - creditsGivenBack), ct);
+                    .SetProperty(d => d.Charges, d => d.Charges > charges ? d.Charges - charges : 0)
+                    .SetProperty(d => d.CreditsCharged,
+                        d => d.CreditsCharged > creditsGivenBack ? d.CreditsCharged - creditsGivenBack : 0), ct);
+            if (touched == 0)
+                logger.LogWarning("No margin row for {Action} on {Day} to reverse {Credits} credit(s) "
+                    + "against; reconciliation over-states what that action earned.", action, chargedOn, creditsGivenBack);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)

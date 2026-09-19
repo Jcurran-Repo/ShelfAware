@@ -92,7 +92,8 @@ public class AnthropicPantryChat : IPantryChat
         messages.Add(new ChatMessage(ChatRole.User, userText));
 
         var actions = new List<string>();
-        var nav = new NavigationTarget(); // set by open_page / read_recipe; carried out on ChatResult
+        var nav = new NavigationTarget();
+        var wrote = new TurnWrites(); // set by open_page / read_recipe; carried out on ChatResult
 
         for (var turn = 0; turn < MaxTurns; turn++)
         {
@@ -108,12 +109,17 @@ public class AnthropicPantryChat : IPantryChat
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Pantry chat call to the model failed on turn {Turn}.", turn + 1);
-                // ⚠️ Delivered when earlier rounds already APPLIED something. A turn can write to the pantry
-                // on round one and lose the provider on round two, and those writes are real and already
-                // committed — refunding the turn in full would hand back the credits for work the household
-                // can see in its own pantry. Same rule as the turn-limit exit below, deliberately: a charge
-                // for work that landed is not a charge for nothing.
-                if (actions.Count > 0) action.Delivered(1);
+                // ⚠️ Delivered when earlier rounds already WROTE something. A turn can change the pantry on
+                // round one and lose the provider on round two, and those writes are real and already
+                // committed — refunding in full would hand back the credits for work the household can see
+                // in its own pantry. Same rule as the turn-limit exit below: a charge for work that landed
+                // is not a charge for nothing.
+                //
+                // ⚠️ `wrote`, NOT `actions.Count`. The actions list is what the turn will TELL the household
+                // it did, and the read-only tools put their lines in it too ("opened reports", "reading
+                // Chili"). A turn that navigated and then lost the provider delivered nothing at all — this
+                // exit discards the navigation as well — so counting those would charge for an empty turn.
+                if (wrote.Any) action.Delivered(1);
                 return ChatResult.Fail($"Sorry — I couldn't reach the assistant just now. ({ex.Message})");
             }
 
@@ -135,7 +141,7 @@ public class AnthropicPantryChat : IPantryChat
                 string text;
                 try
                 {
-                    (text, _) = await ExecuteToolAsync(call, products, actions, nav, cancellationToken);
+                    (text, _) = await ExecuteToolAsync(call, products, actions, nav, wrote, cancellationToken);
                 }
                 catch (OperationCanceledException)
                 {
@@ -185,8 +191,18 @@ public class AnthropicPantryChat : IPantryChat
     /// <see cref="Step"/> moves a hands-free cook-along that's already on screen.</summary>
     private sealed class NavigationTarget { public string? Url; public bool HandsOff; public int? Step; }
 
+    /// <summary>Whether this turn CHANGED anything — set beside each store write, never inferred.
+    ///
+    /// <para>⚠️ It exists because the actions list cannot answer this. That list is what the turn will tell
+    /// the household it did, and the read-only tools write their lines into it too ("opened reports",
+    /// "reading Chili"). Billing read it once, and a turn that navigated and then lost the provider was
+    /// charged for work it never did — the failure exit discards the navigation as well, so the household
+    /// got nothing at all. Two questions, two answers.</para></summary>
+    private sealed class TurnWrites { public bool Any; }
+
     private async Task<(string text, bool isError)> ExecuteToolAsync(
-        FunctionCallContent call, IReadOnlyList<Product> products, List<string> actions, NavigationTarget nav, CancellationToken ct)
+        FunctionCallContent call, IReadOnlyList<Product> products, List<string> actions, NavigationTarget nav,
+        TurnWrites wrote, CancellationToken ct)
     {
         string? Str(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsString(v) : null;
         decimal? Dec(string key) => call.Arguments is { } a && a.TryGetValue(key, out var v) ? AsDecimal(v) : null;
@@ -210,6 +226,7 @@ public class AnthropicPantryChat : IPantryChat
                 if (product is null)
                     return ($"No product matches \"{name}\". Call create_product first if it's new.", true);
                 await _store.RecordSignalAsync(product.Id, kind, ct);
+                wrote.Any = true;
                 actions.Add($"{kind} → {product.Name}");
                 // ⚠️ "Recorded" alone is a lie when the signal can't take effect: §6.6 gives a same-day
                 // tie to the stock, so an OutNow OR a RunningLow filed while the last stock-back is today
@@ -235,6 +252,7 @@ public class AnthropicPantryChat : IPantryChat
                 var date = DateOnly.TryParse(Str("date"), out var d) ? d : DateOnly.FromDateTime(DateTime.Today);
                 var qty = Dec("quantity") is { } q && q > 0 ? q : 1m;
                 var result = await _store.AddPurchaseAsync(product.Id, date, qty, cancellationToken: ct);
+                wrote.Any = true;
                 actions.Add($"purchase → {product.Name}");
                 return ($"Logged {qty:0.##} × {product.Name} on {date:yyyy-MM-dd}." +
                     (result.Retracked ? " It was untracked; this purchase resumed tracking — mention that to the user." : ""), false);
@@ -297,6 +315,7 @@ public class AnthropicPantryChat : IPantryChat
                     return ($"No product matches \"{name}\".", true);
                 var tracked = Bool("tracked") ?? false;
                 await _store.SetTrackingAsync(product.Id, tracked, ct);
+                wrote.Any = true;
                 actions.Add($"{(tracked ? "tracking" : "untracked")} → {product.Name}");
                 return ($"{(tracked ? "Now tracking" : "Stopped tracking")} {product.Name}.", false);
             }
@@ -321,6 +340,7 @@ public class AnthropicPantryChat : IPantryChat
                 }
                 if (!await _store.SetExpirationAsync(product.Id, expiresOn, ct))
                     return ($"{product.Name} has no recorded purchases to carry a date.", true);
+                wrote.Any = true;
                 actions.Add($"expiration → {product.Name}");
                 return (expiresOn is { } e
                     ? $"Noted — {product.Name} expires {e:yyyy-MM-dd}; after that date it's marked out automatically."
@@ -336,6 +356,7 @@ public class AnthropicPantryChat : IPantryChat
                 if (Bool("stop_counting") == true)
                 {
                     await _store.SetQuantityAsync(product.Id, 0, stopCounting: true, cancellationToken: ct);
+                    wrote.Any = true;
                     actions.Add($"stopped counting {product.Name}");
                     return ($"Stopped counting {product.Name} — it goes back to running on its usual rhythm.", false);
                 }
@@ -352,6 +373,7 @@ public class AnthropicPantryChat : IPantryChat
                             : ($"{product.Name} has no count yet to adjust — say how many there are and I'll start from that.", true))
                         : ($"Couldn't set a count for {product.Name}.", true);
 
+                wrote.Any = true;
                 actions.Add($"count → {product.Name}");
                 // Deliberately not echoing a computed total for a relative move: this method doesn't
                 // read the result back, and stating a number the engine might have clamped would be
@@ -402,6 +424,7 @@ public class AnthropicPantryChat : IPantryChat
                 }
                 var tags = StrList("tags") ?? [];
                 await _store.CreateProductAsync(name, category, tags, cancellationToken: ct);
+                wrote.Any = true;
                 actions.Add($"created {name}");
                 return ($"Created {name} ({category}){(tags.Count > 0 ? $", tagged {string.Join(", ", tags)}" : "")}.", false);
             }
@@ -428,7 +451,7 @@ public class AnthropicPantryChat : IPantryChat
                         return ($"Couldn't think of any substitutes for {product.Name}.", false);
                 }
                 var added = await _store.AddSubstitutesAsync(product.Id, ideas, ct);
-                if (added.Count > 0) actions.Add($"substitutes → {product.Name}");
+                if (added.Count > 0) { actions.Add($"substitutes → {product.Name}"); wrote.Any = true; }
                 return (added.Count > 0
                     ? $"Added \"also works as\" for {product.Name}: {string.Join(", ", added)}."
                     : $"{product.Name} already has those substitutes.", false);
@@ -443,7 +466,7 @@ public class AnthropicPantryChat : IPantryChat
                 var tags = StrList("tags") ?? [];
                 if (tags.Count == 0) return ("Pass at least one tag.", true);
                 var added = await _store.AddTagsAsync(product.Id, tags, ct);
-                if (added.Count > 0) actions.Add($"tags → {product.Name}");
+                if (added.Count > 0) { actions.Add($"tags → {product.Name}"); wrote.Any = true; }
                 return (added.Count > 0
                     ? $"Tagged {product.Name}: {string.Join(", ", added)}."
                     : $"{product.Name} already has those tags (or near-duplicates of them).", false);
@@ -488,7 +511,7 @@ public class AnthropicPantryChat : IPantryChat
                 // A shopping-list add is NOT an "I'm out" signal — extras only, never RecordSignal (keeps the
                 // burn-rate/rebuy prediction honest).
                 var addedToList = await _store.AddGroceryExtrasAsync(missing, ct);
-                if (addedToList.Count > 0) actions.Add($"list += {addedToList.Count} for {recipe.Name}");
+                if (addedToList.Count > 0) { actions.Add($"list += {addedToList.Count} for {recipe.Name}"); wrote.Any = true; }
                 return (addedToList.Count > 0
                     ? $"Added {string.Join(", ", addedToList)} to your grocery list for {recipe.Name}."
                     : $"Everything for {recipe.Name} was already on your list.", false);

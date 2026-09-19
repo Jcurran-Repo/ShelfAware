@@ -155,23 +155,35 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
         // down by spending AND by an expiry that already swept it — never re-sweeping the same allowance.
         var drawnSince = await db.CreditLedger
             .Where(e => e.HouseholdId == householdId
-                // ⚠️ Reversal belongs here with them. It is POSITIVE where those two are negative, so it
-                // nets a consumption back out — and leaving it out would make an allowance that was charged
-                // and refunded look spent, so the period-end sweep would take less than the remainder and
-                // the difference would quietly persist past its month.
-                && (e.Kind == CreditEntryKind.Consumption || e.Kind == CreditEntryKind.Expiry
-                    || e.Kind == CreditEntryKind.Reversal)
+                && (e.Kind == CreditEntryKind.Consumption || e.Kind == CreditEntryKind.Expiry)
                 && e.Id > lastAllowance.Id)
             .SumAsync(e => e.AmountCredits, cancellationToken);
-        var unspent = lastAllowance.AmountCredits + drawnSince;
-        // ⚠️ Clamped ABOVE by what was actually granted, not just below by zero. An act can straddle the
-        // period boundary — a 124-meal plan is eighteen provider calls, and the allowance posts on any
-        // entitlement check in between — so its Reversal can land with a higher Id than the NEW allowance
-        // and read as credit returned to a month that never paid it out. Unclamped, the sweep would then
-        // compute an unspent larger than the grant and take the difference out of purchased credit: the
-        // household's own money, silently. The refunded credits stay in the balance either way; the clamp
-        // only stops them being counted as part of an allowance they didn't come from.
-        return Math.Clamp(unspent, 0, lastAllowance.AmountCredits);
+
+        // ⚠️ Reversals are counted by WHICH CHARGE they undo, not by where they landed. A reversal is
+        // positive where the two above are negative, so it nets a consumption back out — but only if that
+        // consumption drew on THIS allowance. An act can straddle the boundary (a 124-meal plan is eighteen
+        // provider calls, and the allowance posts on any entitlement check in between), and a refund of
+        // last month's charge counted against this month's allowance makes this month look less spent than
+        // it was: the sweep then takes the difference out of PURCHASED credit. Keying on ReversesEntryId
+        // rather than on the reversal's own id is the whole point — the reversal's own position is exactly
+        // the misleading fact. A reversal we cannot attribute (a legacy row, before the column existed) is
+        // left out, which is the direction that can only under-sweep.
+        var returnedSince = await db.CreditLedger
+            .Where(e => e.HouseholdId == householdId
+                && e.Kind == CreditEntryKind.Reversal
+                && e.ReversesEntryId != null && e.ReversesEntryId > lastAllowance.Id)
+            .SumAsync(e => e.AmountCredits, cancellationToken);
+
+        var unspent = lastAllowance.AmountCredits + drawnSince + returnedSince;
+        // Clamped at both ends. The lower bound is the original guard (a fully-spent allowance sweeps
+        // nothing). The upper bound is belt-and-braces now that reversals are attributed: an allowance
+        // cannot have more of itself left than was granted, whatever the rows say. ⚠️ It is NOT the fix for
+        // the straddling reversal — the first version of this made that claim and it was false, because a
+        // misattributed reversal SMALLER than the grant clears the clamp untouched and eats purchased
+        // credit just the same. The attribution above is the fix; this only bounds a sum gone wrong some
+        // other way. Math.Max guards the clamp itself: min > max throws, and a non-positive allowance row
+        // could only arrive by hand-editing, which is not worth a crash inside the grant path.
+        return Math.Clamp(unspent, 0, Math.Max(0, lastAllowance.AmountCredits));
     }
 
     /// <summary>A household's ledger entries, oldest first (by Id — SQLite can't ORDER BY a
@@ -199,26 +211,31 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
     /// append-only with no idempotency key, so nothing would net them. This method is the only place that
     /// knows which side of the commit a failure came from, so it is where the distinction belongs.</para>
     /// </summary>
-    /// <returns>true when a row was written; false when the price was not chargeable.</returns>
-    public async Task<bool> RecordConsumptionAsync(
+    /// <returns>The new row's id when one was written; null when the price was not chargeable. The id
+    /// is what a later <see cref="ReverseConsumptionAsync"/> points at, so a refund can be attributed to
+    /// the period the charge actually drew on rather than to whichever allowance precedes it.</returns>
+    public async Task<long?> RecordConsumptionAsync(
         string householdId, long credits, string? reason, CancellationToken cancellationToken = default)
     {
-        if (credits <= 0) return false;
-        var committed = false;
+        if (credits <= 0) return null;
+        long? committed = null;
         try
         {
             await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-            db.CreditLedger.Add(new CreditLedgerEntry
+            var entry = new CreditLedgerEntry
             {
                 HouseholdId = householdId,
                 Kind = CreditEntryKind.Consumption,
                 AmountCredits = -credits,
                 Reason = reason,
-            });
+            };
+            db.CreditLedger.Add(entry);
             await db.SaveChangesAsync(cancellationToken);
-            committed = true;
+            // Read AFTER SaveChanges, which is where the store assigns it — and before anything that can
+            // fail, so the swallow below still reports the row that landed rather than losing its id.
+            committed = entry.Id;
         }
-        catch (Exception ex) when (committed)
+        catch (Exception ex) when (committed is not null)
         {
             // The money is recorded; what failed is the tidying after it (dispose, a connection reset).
             // Swallowed DELIBERATELY and not silently: reporting it as a failure would tell the caller to
@@ -245,7 +262,8 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
     /// second reversal would pay the household twice for one undelivered act.</para></summary>
     /// <returns>true when a row was written; false when there was nothing to give back.</returns>
     public async Task<bool> ReverseConsumptionAsync(
-        string householdId, long credits, string? reason, CancellationToken cancellationToken = default)
+        string householdId, long credits, string? reason, long reversesEntryId,
+        CancellationToken cancellationToken = default)
     {
         if (credits <= 0) return false;
         var committed = false;
@@ -258,6 +276,7 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
                 Kind = CreditEntryKind.Reversal,
                 AmountCredits = credits,
                 Reason = reason,
+                ReversesEntryId = reversesEntryId,
             });
             await db.SaveChangesAsync(cancellationToken);
             committed = true;
