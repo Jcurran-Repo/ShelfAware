@@ -136,13 +136,29 @@ public sealed class AiActionScope : IAsyncDisposable
         // around it. Installing first means DisposeAsync either takes this settlement (and settles it) or
         // has already closed, in which case the exchange below finds it and we take it back.
         Interlocked.Exchange(ref _settle, settle);
-        if (Volatile.Read(ref _closed) == 1)
-        {
-            Interlocked.Exchange(ref _settle, null);
+        if (Volatile.Read(ref _closed) == 0) return;
+
+        // ⚠️ The scope closed, and there are two ways that happened — only one of them is a problem.
+        // Either DisposeAsync took this settlement on its way out and ran it, in which case the refund
+        // happened and there is nothing to report; or it closed before this was installed, in which case
+        // nothing will ever run it. Taking it back is what distinguishes them: a non-null means it is
+        // still here, so nobody took it. Throwing on both would make the operator's "charged but
+        // un-refundable" log fire on refunds that did happen, and a log an operator can't trust is worse
+        // than none — they would comp the household a second time.
+        //
+        // ⚠️ Written as "throw on the harmful case", not "return early on the benign one", and the
+        // difference is testable coverage rather than taste. The benign case is only reachable when a
+        // concurrent DisposeAsync lands between the install above and the close-check that follows it — a
+        // window of two instructions that no deterministic test can open. An early `return` there is
+        // therefore a statement nothing executes, and the mutation gate rightly says so; a racing test is
+        // the shape this file already rejected once (see AiActionScopeTests on TryClaimCharge: a killer
+        // that lands four runs in six is coverage claimed and not held). Said this way round the benign
+        // case is the absence of a statement, and every line here is exercised.
+        var stranded = Interlocked.Exchange(ref _settle, null);
+        if (stranded is not null)
             throw new InvalidOperationException(
                 $"A charge of {credits} credit(s) was recorded against a {Action} act that has already "
                 + "closed, so it could never be given back. The call that charged it outlived its scope.");
-        }
     }
 
     /// <summary>Report what this act DELIVERED. Anything it was charged for beyond this comes back when
@@ -163,6 +179,28 @@ public sealed class AiActionScope : IAsyncDisposable
     /// could otherwise read a stale zero here and refund an act that fully delivered. A batched site wanting
     /// a running total must sum before it calls, not call per batch.</para></summary>
     public void Delivered(int units) => Volatile.Write(ref _delivered, Math.Clamp(units, 0, Units));
+
+    /// <summary>Report that this act got an answer back and read it — WHATEVER that answer said. An
+    /// honest "there is no recipe in that photo", "no substitutes for this", "nothing on that shelf" is an
+    /// answer: the provider call happened, the household asked a question and got a true reply, and it is
+    /// paid for (Jordan, 2026-09-19). What comes back is the act that FAILED — the provider was
+    /// unreachable, the reply could not be read, the turn was cancelled — where the household asked and
+    /// got nothing.
+    ///
+    /// <para>⚠️ This exists so that "did it deliver?" is asked in ONE place. It used to be re-derived per
+    /// service from the shape of the answer — <c>suggestions.Count &gt; 0</c> here,
+    /// <c>adapted is not null</c> there, <c>parsed.Recipe is not null</c> in a third — nine sites each
+    /// doing their own arithmetic on a question that has one answer. Two of them were already right by
+    /// accident (the receipt extractor and the census reader settle on a successful parse and ignore how
+    /// many lines came back), which is exactly the shape this repo keeps paying for: sites that agree
+    /// today and drift apart the next time one of them is edited.</para>
+    ///
+    /// <para>⚠️ For an act of ONE unit. A multi-unit act — a meal plan — knows how many of the things it
+    /// was paid for actually arrived, and must say so with <see cref="Delivered"/>; this would claim the
+    /// whole horizon on a batch that produced three meals out of twelve. <c>AiActionScopeSiteTests</c>
+    /// fails the build for an <c>Answered()</c> inside a method that opens its scope with a
+    /// <c>units:</c> argument, because that is a rule prose would not hold.</para></summary>
+    public void Answered() => Delivered(Units);
 
     /// <summary>What this act has reported delivering so far — nothing until it says otherwise.</summary>
     public int UnitsDelivered => Volatile.Read(ref _delivered);

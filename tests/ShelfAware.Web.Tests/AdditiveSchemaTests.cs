@@ -232,6 +232,45 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Adds_the_reversal_link_to_a_CreditLedger_table_that_predates_it()
+    {
+        // Same shape as the column above, same reason. A box booted before the refund existed has a
+        // CreditLedger with no ReversesEntryId, and EnsureTable cannot add one to a table that exists.
+        // ⚠️ The consequence is worse here than losing reconciliation: every read of the ledger goes
+        // through EF, so a missing column means "no such column: ReversesEntryId" on the balance itself —
+        // the household's money, on every page that shows it.
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await ColumnTypesAsync(db, "CreditLedger");
+
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE CreditLedger DROP COLUMN ReversesEntryId;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "CreditLedger"));
+
+        // A legacy row reads back with no link, which is what every pre-refund row is.
+        db.CreditLedger.Add(new CreditLedgerEntry
+        {
+            HouseholdId = "hh-a", Kind = CreditEntryKind.Consumption, AmountCredits = -2, Reason = "chat",
+        });
+        await db.SaveChangesAsync();
+        Assert.Null((await db.CreditLedger.AsNoTracking().SingleAsync()).ReversesEntryId);
+
+        // And a reversal round-trips carrying the charge it undoes.
+        var charge = (await db.CreditLedger.AsNoTracking().SingleAsync()).Id;
+        db.CreditLedger.Add(new CreditLedgerEntry
+        {
+            HouseholdId = "hh-a", Kind = CreditEntryKind.Reversal, AmountCredits = 2,
+            Reason = "refunded", ReversesEntryId = charge,
+        });
+        await db.SaveChangesAsync();
+        Assert.Equal(charge, (await db.CreditLedger.AsNoTracking()
+            .SingleAsync(e => e.Kind == CreditEntryKind.Reversal)).ReversesEntryId);
+    }
+
+    [Fact]
     public async Task Creates_the_ErrorLog_table_on_an_older_auth_db_with_the_fresh_schema()
     {
         // The auth-side twin of the pantry table tests: the error log lives in auth.db (operator

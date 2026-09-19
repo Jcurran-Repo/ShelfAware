@@ -48,10 +48,14 @@ public class AnthropicProductSubstituteAdvisor : IProductSubstituteAdvisor
             var response = await _chat.GetResponseAsync(prompt, options, cancellationToken);
 
             var reply = response.Text.Trim();
-            if (reply.Length == 0 || reply.Equals("NONE", StringComparison.OrdinalIgnoreCase)) return [];
-            var substitutes = Parse(reply, productName);
-            if (substitutes.Count > 0) action.Delivered(1);
-            return substitutes;
+            if (reply.Length == 0) return [];
+            // ⚠️ Settled BEFORE the sentinel, not after the parse. "NONE" is the model's considered
+            // answer to a question the household asked, and an answer is paid for; only a provider
+            // that said nothing at all is refunded. Everything below this line is us INTERPRETING
+            // a reply we were given.
+            action.Answered();
+            if (reply.Equals("NONE", StringComparison.OrdinalIgnoreCase)) return [];
+            return Parse(reply, productName);
         }
         catch (Exception ex)
         {

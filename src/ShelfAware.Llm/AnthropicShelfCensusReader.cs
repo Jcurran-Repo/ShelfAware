@@ -155,7 +155,7 @@ public class AnthropicShelfCensusReader : IShelfCensusReader
                     items.Count(i => i.Evidence == CensusEvidence.Label),
                     items.Count(i => i.Evidence == CensusEvidence.Appearance),
                     items.Count(i => i.Evidence == CensusEvidence.Unidentified));
-                action.Delivered(1);
+                action.Answered(); // an empty shelf is a true census of an empty shelf
                 return ShelfCensusResult.Ok(items, rawJson);
             }
             catch (Exception ex)

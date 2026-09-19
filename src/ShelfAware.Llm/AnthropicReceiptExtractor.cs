@@ -151,7 +151,7 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
                 var receipt = ParseReceipt(rawJson);
                 _logger.LogInformation("Extraction succeeded: {LineCount} line(s), merchant {Merchant}.",
                     receipt.Lines.Count, receipt.Merchant ?? "(none)");
-                action.Delivered(1);
+                action.Answered(); // a receipt that read clean with no lines on it still read
                 return ExtractionResult.Ok(receipt, rawJson);
             }
             catch (Exception ex)

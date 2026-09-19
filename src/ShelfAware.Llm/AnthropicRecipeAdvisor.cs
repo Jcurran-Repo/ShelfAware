@@ -53,7 +53,7 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
         var response = await _chat.GetResponseAsync(messages, options, cancellationToken);
         var suggestions = RecipeJson.Parse(response.Text);
         _logger.LogInformation("Recipe advisor returned {Count} suggestion(s) for {OnHand} on-hand item(s).", suggestions.Count, onHand.Count);
-        if (suggestions.Count > 0) action.Delivered(1); // an unparseable answer is an act that delivered nothing
+        action.Answered(); // "nothing I can make from that" is an answer; an unreadable reply throws above
         return suggestions;
     }
 
@@ -97,7 +97,7 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
         var response = await _chat.GetResponseAsync(messages, options, cancellationToken);
         var adapted = RecipeJson.Parse(response.Text).FirstOrDefault();
         _logger.LogInformation("Recipe advisor adapted \"{Name}\" (produced result: {HasResult}).", recipe.Name, adapted is not null);
-        if (adapted is not null) action.Delivered(1);
+        action.Answered(); // including "this can't be adapted to what you have"
         return adapted;
     }
 

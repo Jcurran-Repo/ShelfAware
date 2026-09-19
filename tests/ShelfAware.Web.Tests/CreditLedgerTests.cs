@@ -417,10 +417,12 @@ public class CreditLedgerTests : IDisposable
     public async Task A_reversal_landing_after_the_month_rolls_over_does_not_inflate_the_new_month()
     {
         // ⚠️ An act can straddle the boundary: a 124-meal plan is eighteen provider calls, and the allowance
-        // posts on any entitlement check in between. The Reversal then lands with a higher Id than the NEW
-        // allowance, so it reads as credit returned to a month that never paid it out. Without the clamp the
-        // sweep computes an unspent LARGER than what was granted and takes the difference out of purchased
-        // credit — the household's own money, silently.
+        // posts on any entitlement check in between. The Reversal then LANDS after the new allowance, so
+        // read by its own position it looks like credit returned to a month that never paid it out. What
+        // stops that is the attribution — the row records which consumption it undoes, and October's charge
+        // is not November's — not the clamp, which this sequence does not reach. (The comment here used to
+        // credit the clamp, and it was wrong: a bogus remainder smaller than the grant clears it untouched.
+        // See A_reversal_of_last_months_charge_does_not_make_this_month_look_unspent.)
         var id = await SeedHouseholdAsync(HouseholdTier.Aware);
         await _ledger.GrantAsync(id, 500, "credit pack");
         await _ledger.EnsureCurrentAllowanceAsync(id, Oct);           // +A1
@@ -432,5 +434,38 @@ public class CreditLedgerTests : IDisposable
 
         // The pack is untouched, and the refunded 39 rode into December rather than being swept twice.
         Assert.Equal(500 + 39 + Allowance, await _ledger.GetBalanceCreditsAsync(id));
+    }
+
+    [Fact]
+    public async Task A_reversal_is_refused_when_it_names_another_household_s_charge()
+    {
+        // ⚠️ auth.db has no household query filter, so every read and write hand-scopes — and this id is
+        // not just stored, it is ACTED on: the unspent-allowance sum compares it against THIS household's
+        // latest allowance. An id from somewhere else could make an allowance look unspent that isn't and
+        // let the period-end sweep reach purchased credit.
+        var mine = await SeedHouseholdAsync(HouseholdTier.Aware);
+        var theirs = await SeedHouseholdAsync(HouseholdTier.Aware);
+        var theirCharge = await _ledger.RecordConsumptionAsync(theirs, 10, "their chat turn");
+
+        Assert.False(await _ledger.ReverseConsumptionAsync(mine, 10, "not mine to undo", theirCharge!.Value));
+
+        Assert.Equal(0, await _ledger.GetBalanceCreditsAsync(mine));   // nothing minted
+        Assert.Equal(-10, await _ledger.GetBalanceCreditsAsync(theirs)); // and nothing taken back from them
+    }
+
+    [Fact]
+    public async Task A_reversal_is_refused_when_it_names_something_that_is_not_a_charge()
+    {
+        // A grant, an allowance, an expiry, or an id that names nothing at all. Reversing one would put
+        // credits back against a row that never took any.
+        var id = await SeedHouseholdAsync(HouseholdTier.Aware);
+        await _ledger.GrantAsync(id, 500, "credit pack");
+        await using var db = _authDb.CreateDbContext();
+        var grant = await db.CreditLedger.Where(e => e.HouseholdId == id).Select(e => e.Id).SingleAsync();
+
+        Assert.False(await _ledger.ReverseConsumptionAsync(id, 50, "undoing a grant?", grant));
+        Assert.False(await _ledger.ReverseConsumptionAsync(id, 50, "undoing thin air?", 999_999));
+
+        Assert.Equal(500, await _ledger.GetBalanceCreditsAsync(id));
     }
 }

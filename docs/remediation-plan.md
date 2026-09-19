@@ -1007,16 +1007,25 @@ Also in the pass:
   turn will *tell* the household it did, and the read-only tools put their lines in it too ("opened
   reports", "reading Chili") — so a turn that navigated and then lost the provider was charged 2 credits
   for a turn that wrote nothing and, because the failure exit discards the navigation, showed nothing
-  either. `TurnWrites` is set beside each of the ten store writes and nowhere else.
+  either. `TurnWrites` is marked beside each write instead.
+
+  ⚠️ **And the first version of that got it wrong in the way this repo keeps getting it wrong.** The rule
+  was implemented as "the `_store` write calls", which is ten sites — but the question is *"did the
+  household get something it can see afterwards"*, and `adapt_recipe` saves a recipe variant through
+  `IRecipeAdapter`, not through `IPantryStore`. Eleven writes, ten converted, and this paragraph asserted
+  the conversion was complete. A turn that adapted a recipe then refunded in full, which the *previous*
+  predicate had charged correctly — a regression created by the fix.
 - **The margin reversal was landing on the wrong day and could go negative.** It took the correction off
   *today's* row when the charge might sit on yesterday's — correcting the wrong day against the right
   number, leaving both permanently wrong — and `CostPerCharge` reads null below zero charges, so the
   operator's "is this price right?" answer would have quietly disappeared for that action. The charge's own
   day is stamped into the settlement now, the decrements are floored, and a reversal that finds no row says
   so instead of vanishing.
-- **The refund re-priced itself from live config** while the charge had been stamped at charge time, so a
-  price edit mid-act could make the give-back disagree with the charge. The price now rides in the
-  settlement with everything else it needs.
+- **The refund re-priced itself from live config** while the charge had been stamped at charge time. ⚠️ Not
+  actually reachable, and the first version of this line claimed it was: `billing` is `IOptions<T>`, whose
+  `.Value` is resolved once for the process, so there is no mid-act edit to disagree with. The capture is
+  still the right shape — it survives a later move to `IOptionsMonitor` — but it closed nothing, and a
+  changelog that claims a fix nobody needed is the §6 problem in miniature.
 - **The `await using` rule could be satisfied by an unrelated `await using` block** somewhere up the
   ancestor chain, and neither it nor the settlement rule had the non-vacuity guard the rest of the file
   carries. Both anchored and guarded, and both verified by planting each shape and watching the build fail.
@@ -1027,6 +1036,47 @@ Also in the pass:
 `CLAUDE.md` and worth the second entry: a fix pass is not a safe pass. Two of these were *created* by the
 round that was fixing the previous round's findings, and both were in the money path, and both had a green
 four-suite run and a 100% mutation score over them.
+
+### Fifth pass: what an act has to do to keep its money (Jordan, 2026-09-19)
+
+The open question from the refund design — *does a successful call that honestly answers "there's nothing
+here" charge the household?* — is decided: **yes**. The household pays when the assistant answered,
+whatever the answer said; the refund is for the act that **failed**. §4.w of `docs/subscription-plan.md`
+carries the rule and the reasoning (refunding an honest "no recipe in that photo" prices the assistant's
+honesty — it would pay more for inventing a recipe than for telling the truth about a blurry photo).
+
+What that took was not seven `if`s deleted. It was the nine-sites problem again:
+
+- **"Did this act deliver?" was answered nine times, each with its own arithmetic** —
+  `suggestions.Count > 0`, `adapted is not null`, `parsed.Recipe is not null`, `tags.Count > 0`,
+  `match is not null`, `substitutes.Count > 0`, `alternatives.Count > 0`, and two that settled on a
+  successful parse and were therefore *already right by accident* (the receipt extractor and the census
+  reader ignore how many lines came back). One `AiActionScope.Answered()` now, converted at **every**
+  caller in this change — the partial-conversion rule from `CLAUDE.md`, which this branch has already
+  paid for once.
+- **`Answered()` is `Delivered(Units)`, and on a per-unit act that is a real money bug** — a meal plan
+  that produced three meals out of twelve would keep the credits for nine that never arrived. Held by a
+  new build rule (`An_act_priced_by_the_unit_counts_what_it_delivered`) rather than by a runtime throw,
+  because a throw on the money path turns a billing mistake into a failed meal plan for the household
+  that asked for one. Verified by planting `Answered()` on the meal plan and watching the build fail.
+- **Three of the four prose advisors settled *after* the `NONE` sentinel's early `return`** — so the
+  first version of this change shipped comments saying "NONE is an answer" over code that still refunded
+  every one of them. Caught by writing the test before believing the diff.
+- **Nothing pinned any of it.** Before this pass, no test in `ShelfAware.Llm.Tests` mentioned
+  `AiActionScope`: all nine services could have their settlement branch changed, or deleted, with the
+  four suites still green. `AiDeliveryTests` holds each site now, and ten of its eleven cases were
+  verified by restoring the old condition and watching them go red.
+- **The empty-reply line is drawn deliberately.** `NONE` is an answer; no text at all is not, and that
+  act refunds. One test proves the line exists rather than leaving it to read as an accident.
+
+Also in the pass: the last mutation survivor from the fourth round is gone, and not by suppressing it. The
+late-charge guard was written as *"return early on the benign case, then throw"*, and the benign case is
+only reachable when a concurrent `DisposeAsync` lands between two adjacent instructions — a window no
+deterministic test can open, so the `return` was a statement nothing executed. Inverted to *"throw on the
+harmful case"*, the behaviour is identical and the benign case is the absence of a statement, so every
+line is exercised. Worth writing down as a general move: an untestable early-out is often a guard written
+the wrong way round, not a case that needs a racing test. (This file rejected a racing test once already —
+a killer that lands four runs in six is coverage claimed and not held.)
 
 ## 10. Sequencing
 

@@ -256,6 +256,35 @@ public class AiActionScopeTests
     }
 
     [Fact]
+    public async Task An_act_that_answered_keeps_its_charge_whatever_the_answer_said()
+    {
+        // Jordan, 2026-09-19: the household pays for an honest "there is no recipe in that photo". The
+        // provider call happened and a true answer came back, which is what the credit bought — and the
+        // alternative prices the assistant's honesty, paying it to invent a recipe rather than say there
+        // isn't one. What still comes back is the act that FAILED: no answer at all.
+        var settled = false;
+        await using (var act = AiActionScope.Begin(ServiceAction.RecipeImport))
+        {
+            act.ChargeRecorded(2, (_, _) => { settled = true; return Task.CompletedTask; });
+            act.Answered();
+        }
+
+        Assert.False(settled);
+    }
+
+    [Fact]
+    public async Task Answering_settles_the_whole_act_it_was_charged_for()
+    {
+        // ⚠️ Answered() is Delivered(Units), not Delivered(1) — the distinction only shows on a multi-unit
+        // act, which is why no service may call it there (AiActionScopeSiteTests holds that). Pinned here
+        // so the meaning cannot quietly become "one unit" and leave that build rule guarding nothing.
+        await using var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 12);
+        act.Answered();
+
+        Assert.Equal(12, act.UnitsDelivered);
+    }
+
+    [Fact]
     public async Task An_act_nobody_charged_settles_nothing()
     {
         // A Founder, a BYOK circuit, a box with billing off: no charge landed, so ChargeRecorded was never
@@ -316,11 +345,13 @@ public class AiActionScopeTests
     [Fact]
     public async Task A_refused_late_charge_does_not_hand_the_act_s_claim_back()
     {
-        // ⚠️ The claim must SURVIVE the refusal. The metering layer releases an act's one charge when the
-        // money write throws, which is right because that write throws only when the row did not land —
-        // but this refusal happens AFTER a row has landed. If it released the claim too, the next call on
-        // that flow would claim again and bill the household a second time for one act: the one outcome
-        // the charge path names as worse than not billing at all. The scope's job here is to stay claimed.
+        // The scope's HALF of the double-bill guard: refusing a late charge must not disturb the claim.
+        // ⚠️ The defect itself lived in the metering layer, not here — this type has never touched
+        // `_claimed` in ChargeRecorded, so this assertion passed on the broken version too. It is here to
+        // stop that changing. What actually holds the defect is
+        // MeteredChatClientTests.A_call_that_outlives_its_act_is_charged_once_and_not_once_per_call,
+        // which fails on the release-inside-the-try shape; a test that cannot fail on the bug it is named
+        // for is a coverage claim, which is the thing this branch keeps catching itself doing.
         var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 4);
         Assert.True(act.TryClaimCharge());
         await act.DisposeAsync();

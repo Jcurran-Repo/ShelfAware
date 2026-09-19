@@ -62,10 +62,14 @@ public class AnthropicRecipeTagAdvisor : IRecipeTagAdvisor
             // Match the sentinel the way Parse normalizes each token — the model routinely appends a period,
             // and "NONE." must read as the no-tags signal, not a literal "NONE" tag polluting the cloud.
             var sentinel = reply.TrimEnd('.', ' ');
-            if (sentinel.Length == 0 || sentinel.Equals("NONE", StringComparison.OrdinalIgnoreCase)) return [];
-            var tags = Parse(reply);
-            if (tags.Count > 0) action.Delivered(1); // NONE, or nothing parseable, delivers nothing
-            return tags;
+            if (sentinel.Length == 0) return [];
+            // ⚠️ Settled BEFORE the sentinel, not after the parse. "NONE" is the model's considered
+            // answer to a question the household asked, and an answer is paid for; only a provider
+            // that said nothing at all is refunded. Everything below this line is us INTERPRETING
+            // a reply we were given.
+            action.Answered();
+            if (sentinel.Equals("NONE", StringComparison.OrdinalIgnoreCase)) return [];
+            return Parse(reply);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)

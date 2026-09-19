@@ -341,6 +341,55 @@ not global config). The pieces:
   survives asymmetry (item 33) with a stronger reason; and there is no query filter in auth.db, so
   every query hand-scopes (above).
 
+### 4.w What a refund is *for* — an answer is paid for, a failure is not (Jordan, 2026-09-19)
+
+The charge lands on an act's **first** provider call, which is what stops two parallel rounds of one act
+both paying. By the time the act knows what it produced, the credits have already moved, so a refund is
+the only honest correction left. The rule for when one is owed:
+
+> **The household pays when the assistant answered, whatever the answer said. It gets its credits back
+> when the call failed.**
+
+An honest *"there is no recipe in that photo"*, *"nothing substitutes for saffron"*, *"nothing on that
+shelf"* **is an answer**. It cost a real provider call, it is frequently the *right* answer, and refunding
+it would price the assistant's honesty — paying it more for inventing a recipe than for telling the truth
+about a blurry photo. What comes back is the act that produced nothing: the provider unreachable, a reply
+we could not read, a cancelled turn.
+
+The empty-reply line matters and is drawn deliberately: a model that returns `NONE` answered; a model that
+returned no text at all did not, and that act refunds.
+
+⚠️ **One definition, one call.** "Did this act deliver?" is `AiActionScope.Answered()` and nothing else.
+It was previously re-derived per service from the shape of the answer — `suggestions.Count > 0` in one,
+`adapted is not null` in another, `parsed.Recipe is not null` in a third — **nine sites** each doing their
+own arithmetic on a question with one answer, two of them already right by accident (the receipt extractor
+and the census reader settled on a successful parse and ignored how many lines came back). Nothing pinned
+any of it: no test in the LLM suite mentioned `AiActionScope` at all, so the whole set could be changed
+without a single test going red. `AiDeliveryTests` now holds each site's branch, and
+`AiActionScopeSiteTests` fails the build for an `Answered()` inside a **per-unit** act — a meal plan is
+charged by the meal and must count what it persisted, or a batch that made three meals out of twelve would
+keep the credits for nine that never arrived.
+
+### 4.x A refund that lands after its month keeps rolling (accepted, 2026-09-19)
+
+An act charged in one billing period can settle in the next — a 124-meal plan is eighteen provider calls,
+and the monthly allowance posts on any entitlement check in between. The `Reversal` row records which
+`Consumption` it undoes, so the unspent-allowance sweep counts it against the period the **charge** drew
+on, not the period the refund landed in. That is what stops the sweep reaching purchased credit.
+
+⚠️ **The consequence, accepted deliberately: those credits are never swept.** The month they belonged to
+has already closed, so nothing takes them back, and they stay spendable in the persisting pool alongside
+purchases — allowance credits outliving a no-rollover allowance. It is bounded by one act's charge per
+month boundary (at most 42 credits today, a 124-meal plan), needs an act that genuinely under-delivers
+while straddling midnight UTC on the 1st, and errs **toward the household**.
+
+The alternative — posting a compensating `Expiry` for the part that was allowance — needs the split
+between allowance and purchased money *as it stood at charge time*, which the ledger does not record.
+Reconstructing it wrongly takes credits the household paid for, which is exactly the failure this
+attribution was added to fix, pointing the other way. So the leak is held open on purpose: the same
+"round in the household's favour" call the denomination migration made. **Revisit if the allowance ever
+gets large enough that one act's charge is material.**
+
 ## 5. Founder tier (from the parked 2026-08-23 design)
 
 Tier #1 of this system; needs zero payment code. `Household.Tier` (auth.db — deliberately: no pantry

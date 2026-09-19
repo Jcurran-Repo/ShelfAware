@@ -240,6 +240,10 @@ public class AiActionScopeSiteTests
     /// scope. It cannot tell a <c>Delivered(1)</c> on the right branch from one on the wrong branch; that is
     /// each service's own tests. What it does hold is the case that has no symptom at all: a service added
     /// later that charges and never settles, which no screen shows and no green suite catches.</para>
+    ///
+    /// <para><see cref="AiActionScope.Answered"/> counts, and is what a one-unit act should say: it is
+    /// <c>Delivered(Units)</c> under a name that carries the rule for when an AI act has delivered. See
+    /// the companion rule below for why a multi-unit act may not use it.</para>
     /// </summary>
     [Fact]
     public void Every_act_reports_what_it_delivered()
@@ -257,12 +261,7 @@ public class AiActionScopeSiteTests
                 // An unpinned match is satisfied by some other type's Delivered call sitting in the same
                 // method, which would let the act that actually charges go on settling nothing.
                 var scope = ScopeNameOf(call);
-                var settles = scope is not null && owner.DescendantNodes().OfType<InvocationExpressionSyntax>()
-                    .Any(i => i.Expression is MemberAccessExpressionSyntax
-                        {
-                            Name.Identifier.ValueText: nameof(AiActionScope.Delivered),
-                            Expression: IdentifierNameSyntax receiver,
-                        } && receiver.Identifier.ValueText == scope);
+                var settles = scope is not null && SettleCallsOn(owner, scope).Any();
                 if (!settles)
                     silent.Add($"{Path.GetFileName(file)}:{Line(call)} — {ActionOf(call)?.ToString() ?? "?"}");
             }
@@ -273,9 +272,61 @@ public class AiActionScopeSiteTests
         Assert.True(silent.Count == 0,
             "An act opens a charging scope and never says what it delivered, so every run of it refunds in "
             + "full — or, if the default is ever flipped, charges for work that never arrived. Call "
-            + "Delivered(n) on the path that produced something:"
+            + "Delivered(n) — or Answered() for a one-unit act — on the path that produced something:"
             + Environment.NewLine + string.Join(Environment.NewLine, silent));
     }
+
+    /// <summary>
+    /// ⚠️ An act the household pays for BY THE UNIT never settles with <see cref="AiActionScope.Answered"/>.
+    ///
+    /// <para><c>Answered()</c> is <c>Delivered(Units)</c>: the whole act, because a one-unit act either got
+    /// an answer or it didn't. A meal plan is not one unit — the household chose the horizon and pays per
+    /// meal — so the same call on a batch that produced three meals out of twelve would claim all twelve
+    /// and keep the credits for the nine that never arrived. That act has to count what it persisted.</para>
+    ///
+    /// <para>Held here rather than inside <see cref="AiActionScope"/> because the alternative is a runtime
+    /// throw on the money path, which turns a billing mistake into a failed meal plan for the household
+    /// that asked for one. A build that won't compile the mistake costs nobody anything.</para>
+    /// </summary>
+    [Fact]
+    public void An_act_priced_by_the_unit_counts_what_it_delivered()
+    {
+        var wrong = new List<string>();
+        var byTheUnit = 0;
+
+        foreach (var (file, tree) in Trees())
+            foreach (var call in BeginCalls(tree))
+            {
+                // One unit is the default and needs no argument, so a second argument IS the per-unit price.
+                if (call.ArgumentList.Arguments.Count < 2) continue;
+                byTheUnit++;
+                var owner = EnclosingBody(call);
+                var scope = ScopeNameOf(call);
+                if (owner is null || scope is null) continue; // the rules above report an unbound scope
+                if (SettleCallsOn(owner, scope).Contains(nameof(AiActionScope.Answered)))
+                    wrong.Add($"{Path.GetFileName(file)}:{Line(call)} — {ActionOf(call)?.ToString() ?? "?"}");
+            }
+
+        Assert.True(byTheUnit > 0,
+            "No per-unit act found — the scan is broken, not the sources: the meal plan is charged by the "
+            + "meal and opens its scope with a units: argument.");
+
+        Assert.True(wrong.Count == 0,
+            "An act the household pays for by the unit settles with Answered(), which claims every unit it "
+            + "was charged for however few actually arrived — so a plan that produced three meals out of "
+            + "twelve keeps the credits for nine it never made. Count what landed with Delivered(n):"
+            + Environment.NewLine + string.Join(Environment.NewLine, wrong));
+    }
+
+    /// <summary>How this body settles the scope bound to <paramref name="scope"/> — one name per call,
+    /// empty when it never settles at all.</summary>
+    private static IEnumerable<string> SettleCallsOn(SyntaxNode owner, string scope) =>
+        owner.DescendantNodes().OfType<InvocationExpressionSyntax>()
+            .Select(i => i.Expression)
+            .OfType<MemberAccessExpressionSyntax>()
+            .Where(m => m.Expression is IdentifierNameSyntax receiver && receiver.Identifier.ValueText == scope)
+            .Select(m => m.Name.Identifier.ValueText)
+            .Where(n => n is nameof(AiActionScope.Delivered) or nameof(AiActionScope.Answered));
 
     /// <summary>
     /// ⚠️ Every scope is opened with <c>await using</c>, so the settlement it holds actually runs.
@@ -305,14 +356,23 @@ public class AiActionScopeSiteTests
                 // obvious spelling and it is wrong: a Begin sitting loose inside an unrelated
                 // `await using (var db = ...) { ... }` block has that block as an ancestor and would pass,
                 // which is precisely the leak this rule exists to catch.
-                var held = call.Ancestors().OfType<VariableDeclaratorSyntax>().FirstOrDefault() is { } declarator
-                    && declarator.Initializer?.Value == call
-                    && declarator.Parent?.Parent is LocalDeclarationStatementSyntax
-                        { UsingKeyword.RawKind: not 0, AwaitKeyword.RawKind: not 0 }
-                    // …or the block form, `await using (AiActionScope.Begin(...))`, where the scope has no
-                    // name. It settles nothing, so Every_act_reports_what_it_delivered reports it — but it
-                    // IS disposed, so it is not this rule's finding.
-                    || call.Parent is UsingStatementSyntax { AwaitKeyword.RawKind: not 0 };
+                var declarator = call.Ancestors().OfType<VariableDeclaratorSyntax>().FirstOrDefault();
+                var declared = declarator?.Initializer?.Value == call
+                    && declarator!.Parent?.Parent switch
+                    {
+                        // `await using var action = Begin(...);`
+                        LocalDeclarationStatementSyntax
+                            { UsingKeyword.RawKind: not 0, AwaitKeyword.RawKind: not 0 } => true,
+                        // `await using (var action = Begin(...)) { ... }` — a different Roslyn shape, and
+                        // perfectly good code. Leaving it out made this rule fail the build on a site that
+                        // was correctly disposed AND could settle, which is the worse kind of wrong: a rule
+                        // that cries about good code gets weakened or deleted, and then it holds nothing.
+                        UsingStatementSyntax { AwaitKeyword.RawKind: not 0 } => true,
+                        _ => false,
+                    };
+                // …and the nameless block form, `await using (Begin(...))`. It IS disposed, so it is not
+                // this rule's finding — it settles nothing, which Every_act_reports_what_it_delivered says.
+                var held = declared || call.Parent is UsingStatementSyntax { AwaitKeyword.RawKind: not 0 };
                 if (!held) loose.Add($"{Path.GetFileName(file)}:{Line(call)} — {ActionOf(call)?.ToString() ?? "?"}");
             }
 

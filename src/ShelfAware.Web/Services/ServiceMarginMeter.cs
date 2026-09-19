@@ -36,9 +36,9 @@ public sealed class ServiceMarginMeter(
     /// true for every round of a paying household's action and false for a Founder's or a BYOK visitor's.
     /// <paramref name="billable"/> is not "was charged": the four silent rounds of a paid chat turn are
     /// billable and charge nothing, and their cost is what that one charge really bought.</summary>
-    public async Task RecordAsync(ServiceAction? action, long costMicros, long creditsCharged, bool billable, CancellationToken ct = default)
+    public async Task RecordAsync(
+        ServiceAction? action, DateOnly day, long costMicros, long creditsCharged, bool billable, CancellationToken ct = default)
     {
-        var day = DateOnly.FromDateTime(DateTime.Today);
         var charges = creditsCharged > 0 ? 1 : 0;
         var billableCost = billable ? costMicros : 0;
         try
@@ -139,7 +139,10 @@ public sealed class ServiceMarginMeter(
             // whose matching charge never reached this table — RecordAsync is best-effort and gives up on a
             // lost insert race — would otherwise push Charges negative, and CostPerCharge reads null at
             // Charges <= 0: the operator's "is this price right?" answer would silently disappear for that
-            // action, which is the one surface that would have shown any of this.
+            // action, which is the one surface that would have shown any of this. ⚠️ The floor bounds the
+            // row, it does not make the arithmetic exact: this is a box-wide daily total, so a reversal
+            // whose charge never reached the table subtracts from OTHER households' legitimate charges on
+            // the same row and the floor never fires. Reconciliation accuracy, never a household's money.
             var touched = await db.ServiceMargin.Where(d => d.Day == chargedOn && d.Action == action)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(d => d.Charges, d => d.Charges > charges ? d.Charges - charges : 0)

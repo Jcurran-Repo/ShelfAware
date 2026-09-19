@@ -588,6 +588,47 @@ public class MeteredChatClientTests : IDisposable
             .GetBalanceCreditsAsync("hh-test"));
     }
 
+    [Fact]
+    public async Task A_call_that_outlives_its_act_is_charged_once_and_not_once_per_call()
+    {
+        // ⚠️ THE double-bill. When a charge lands against an act that has already closed, the scope refuses
+        // to make it refundable — and the refusal must NOT travel through the code that hands an act's one
+        // charge back. That release is unconditional and is correct only because the money write throws
+        // exclusively when the row did NOT land; this refusal happens after it landed. Released, the next
+        // call on the same flow claims again and bills a second time for one act, which the charge path
+        // names as the one outcome worse than not billing at all.
+        //
+        // The arrangement is the leak the scope's own remarks describe: work started inside an act, which
+        // captured it as ambient, and which runs on after the act has closed. Nothing does this today —
+        // that is why it is a guard — so the test has to build it.
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free);
+        var released = new TaskCompletionSource();
+        Task detached;
+
+        await using (AiActionScope.Begin(ServiceAction.ChatTurn))
+        {
+            detached = Task.Run(async () =>
+            {
+                await released.Task;             // runs after the act below has closed…
+                await AskAsync(client);          // …and this one pays
+                await AskAsync(client);          // …and this one must not pay again
+            });
+        }
+
+        released.SetResult();
+        await detached;
+
+        await using var db = _authDb.CreateDbContext();
+        var charges = await db.CreditLedger
+            .Where(e => e.HouseholdId == "hh-test" && e.Kind == CreditEntryKind.Consumption).ToListAsync();
+        Assert.Single(charges);                              // one act, one charge
+        Assert.Equal(-2, charges[0].AmountCredits);          // priced as the chat turn it belongs to
+        // And nothing was handed back, because nothing could be: the act was closed before the money
+        // landed, so there is no settlement to run. The household stays charged for the call it made.
+        Assert.DoesNotContain(await db.CreditLedger.Where(e => e.HouseholdId == "hh-test").ToListAsync(),
+            e => e.Kind == CreditEntryKind.Reversal);
+    }
+
     // ---- The AI-allowed gate: phase 4b refuses a managed call the household can't pay for ----
 
     [Fact]

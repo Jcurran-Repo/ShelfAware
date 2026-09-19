@@ -124,9 +124,12 @@ public class AnthropicRecipeImporter : IRecipeImporter
             try
             {
                 var parsed = Parse(rawJson);
-                // "found: false" is the model's own anti-hallucination floor — a successful call that
-                // produced no recipe, which is an act the household got nothing out of.
-                if (parsed.Recipe is not null) action.Delivered(1);
+                // ⚠️ Settled even on "found: false". That is the model's own anti-hallucination floor —
+                // it looked at the photo and reported honestly that there is no recipe in it, which is a
+                // better outcome than an invented one and is what the call was for. The retry loop above
+                // is what covers the case the household really got nothing out of: an unreadable reply
+                // throws past this line and the act closes having delivered zero.
+                action.Answered();
                 return parsed;
             }
             catch (Exception ex) { lastError = ex.Message; } // any invalid shape is retryable

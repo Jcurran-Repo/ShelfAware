@@ -92,8 +92,8 @@ public class AnthropicPantryChat : IPantryChat
         messages.Add(new ChatMessage(ChatRole.User, userText));
 
         var actions = new List<string>();
-        var nav = new NavigationTarget();
-        var wrote = new TurnWrites(); // set by open_page / read_recipe; carried out on ChatResult
+        var nav = new NavigationTarget(); // set by open_page / read_recipe; carried out on ChatResult
+        var wrote = new TurnWrites(action); // ⚠️ NOT set by either of those — see the type
 
         for (var turn = 0; turn < MaxTurns; turn++)
         {
@@ -109,17 +109,12 @@ public class AnthropicPantryChat : IPantryChat
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Pantry chat call to the model failed on turn {Turn}.", turn + 1);
-                // ⚠️ Delivered when earlier rounds already WROTE something. A turn can change the pantry on
-                // round one and lose the provider on round two, and those writes are real and already
-                // committed — refunding in full would hand back the credits for work the household can see
-                // in its own pantry. Same rule as the turn-limit exit below: a charge for work that landed
-                // is not a charge for nothing.
-                //
-                // ⚠️ `wrote`, NOT `actions.Count`. The actions list is what the turn will TELL the household
-                // it did, and the read-only tools put their lines in it too ("opened reports", "reading
-                // Chili"). A turn that navigated and then lost the provider delivered nothing at all — this
-                // exit discards the navigation as well — so counting those would charge for an empty turn.
-                if (wrote.Any) action.Delivered(1);
+                // No settlement here, deliberately. A turn that already wrote to the pantry on an earlier
+                // round has settled at the write (TurnWrites.Mark), so the charge stands for work the
+                // household can see; a turn that wrote nothing settles nothing and is refunded in full.
+                // Both are already true by the time this line runs, and a Delivered call here would be a
+                // second place answering a question that is already answered — which is how the two
+                // cancellation exits below came to be wrong.
                 return ChatResult.Fail($"Sorry — I couldn't reach the assistant just now. ({ex.Message})");
             }
 
@@ -128,7 +123,7 @@ public class AnthropicPantryChat : IPantryChat
             {
                 var text = response.Text.Trim();
                 _logger.LogInformation("Pantry chat completed on turn {Turn} with {ActionCount} action(s) applied.", turn + 1, actions.Count);
-                action.Delivered(1); // the household got an answer; how many rounds it took is our arrangement
+                action.Answered(); // the household got an answer; how many rounds it took is our arrangement
                 return ChatResult.Ok(text.Length > 0 ? text : "Done.", actions, nav.Url, nav.HandsOff, nav.Step);
             }
 
@@ -191,14 +186,28 @@ public class AnthropicPantryChat : IPantryChat
     /// <see cref="Step"/> moves a hands-free cook-along that's already on screen.</summary>
     private sealed class NavigationTarget { public string? Url; public bool HandsOff; public int? Step; }
 
-    /// <summary>Whether this turn CHANGED anything — set beside each store write, never inferred.
+    /// <summary>Settles the act at each write this turn makes — marked beside the write, never inferred.
     ///
     /// <para>⚠️ It exists because the actions list cannot answer this. That list is what the turn will tell
     /// the household it did, and the read-only tools write their lines into it too ("opened reports",
     /// "reading Chili"). Billing read it once, and a turn that navigated and then lost the provider was
     /// charged for work it never did — the failure exit discards the navigation as well, so the household
-    /// got nothing at all. Two questions, two answers.</para></summary>
-    private sealed class TurnWrites { public bool Any; }
+    /// got nothing at all. Two questions, two answers, and this one is not asked from the actions list.</para>
+    ///
+    /// <para>⚠️ Settling AT THE WRITE, rather than on the way out, is the whole point. A turn has four ways out — a final reply, the turn limit, a provider failure, and a
+    /// cancelled circuit — and settling at each of them means the next exit anyone adds will be wrong. It
+    /// was wrong twice already: the cancellation exits refunded the whole turn while its pantry writes
+    /// stood, which a household can trigger at will by closing the tab. Marked at the WRITE, every exit is
+    /// right by construction and none of them has to remember. <c>Delivered</c> is last-write-wins and
+    /// clamped, and a chat turn is one unit, so marking repeatedly is a no-op.</para></summary>
+    private sealed class TurnWrites(AiActionScope act)
+    {
+        /// <summary>This turn just persisted something the household can see. ⚠️ Called from every write,
+        /// including the ones that do not go through <c>IPantryStore</c> — <c>adapt_recipe</c> saves a
+        /// recipe variant through <c>IRecipeAdapter</c>, and the first version of this counted
+        /// <c>_store.</c> calls and missed exactly that one.</summary>
+        public void Mark() => act.Delivered(1);
+    }
 
     private async Task<(string text, bool isError)> ExecuteToolAsync(
         FunctionCallContent call, IReadOnlyList<Product> products, List<string> actions, NavigationTarget nav,
@@ -226,7 +235,7 @@ public class AnthropicPantryChat : IPantryChat
                 if (product is null)
                     return ($"No product matches \"{name}\". Call create_product first if it's new.", true);
                 await _store.RecordSignalAsync(product.Id, kind, ct);
-                wrote.Any = true;
+                wrote.Mark();
                 actions.Add($"{kind} → {product.Name}");
                 // ⚠️ "Recorded" alone is a lie when the signal can't take effect: §6.6 gives a same-day
                 // tie to the stock, so an OutNow OR a RunningLow filed while the last stock-back is today
@@ -252,7 +261,7 @@ public class AnthropicPantryChat : IPantryChat
                 var date = DateOnly.TryParse(Str("date"), out var d) ? d : DateOnly.FromDateTime(DateTime.Today);
                 var qty = Dec("quantity") is { } q && q > 0 ? q : 1m;
                 var result = await _store.AddPurchaseAsync(product.Id, date, qty, cancellationToken: ct);
-                wrote.Any = true;
+                wrote.Mark();
                 actions.Add($"purchase → {product.Name}");
                 return ($"Logged {qty:0.##} × {product.Name} on {date:yyyy-MM-dd}." +
                     (result.Retracked ? " It was untracked; this purchase resumed tracking — mention that to the user." : ""), false);
@@ -315,7 +324,7 @@ public class AnthropicPantryChat : IPantryChat
                     return ($"No product matches \"{name}\".", true);
                 var tracked = Bool("tracked") ?? false;
                 await _store.SetTrackingAsync(product.Id, tracked, ct);
-                wrote.Any = true;
+                wrote.Mark();
                 actions.Add($"{(tracked ? "tracking" : "untracked")} → {product.Name}");
                 return ($"{(tracked ? "Now tracking" : "Stopped tracking")} {product.Name}.", false);
             }
@@ -340,7 +349,7 @@ public class AnthropicPantryChat : IPantryChat
                 }
                 if (!await _store.SetExpirationAsync(product.Id, expiresOn, ct))
                     return ($"{product.Name} has no recorded purchases to carry a date.", true);
-                wrote.Any = true;
+                wrote.Mark();
                 actions.Add($"expiration → {product.Name}");
                 return (expiresOn is { } e
                     ? $"Noted — {product.Name} expires {e:yyyy-MM-dd}; after that date it's marked out automatically."
@@ -356,7 +365,7 @@ public class AnthropicPantryChat : IPantryChat
                 if (Bool("stop_counting") == true)
                 {
                     await _store.SetQuantityAsync(product.Id, 0, stopCounting: true, cancellationToken: ct);
-                    wrote.Any = true;
+                    wrote.Mark();
                     actions.Add($"stopped counting {product.Name}");
                     return ($"Stopped counting {product.Name} — it goes back to running on its usual rhythm.", false);
                 }
@@ -373,7 +382,7 @@ public class AnthropicPantryChat : IPantryChat
                             : ($"{product.Name} has no count yet to adjust — say how many there are and I'll start from that.", true))
                         : ($"Couldn't set a count for {product.Name}.", true);
 
-                wrote.Any = true;
+                wrote.Mark();
                 actions.Add($"count → {product.Name}");
                 // Deliberately not echoing a computed total for a relative move: this method doesn't
                 // read the result back, and stating a number the engine might have clamped would be
@@ -424,7 +433,7 @@ public class AnthropicPantryChat : IPantryChat
                 }
                 var tags = StrList("tags") ?? [];
                 await _store.CreateProductAsync(name, category, tags, cancellationToken: ct);
-                wrote.Any = true;
+                wrote.Mark();
                 actions.Add($"created {name}");
                 return ($"Created {name} ({category}){(tags.Count > 0 ? $", tagged {string.Join(", ", tags)}" : "")}.", false);
             }
@@ -451,7 +460,7 @@ public class AnthropicPantryChat : IPantryChat
                         return ($"Couldn't think of any substitutes for {product.Name}.", false);
                 }
                 var added = await _store.AddSubstitutesAsync(product.Id, ideas, ct);
-                if (added.Count > 0) { actions.Add($"substitutes → {product.Name}"); wrote.Any = true; }
+                if (added.Count > 0) { actions.Add($"substitutes → {product.Name}"); wrote.Mark(); }
                 return (added.Count > 0
                     ? $"Added \"also works as\" for {product.Name}: {string.Join(", ", added)}."
                     : $"{product.Name} already has those substitutes.", false);
@@ -466,7 +475,7 @@ public class AnthropicPantryChat : IPantryChat
                 var tags = StrList("tags") ?? [];
                 if (tags.Count == 0) return ("Pass at least one tag.", true);
                 var added = await _store.AddTagsAsync(product.Id, tags, ct);
-                if (added.Count > 0) { actions.Add($"tags → {product.Name}"); wrote.Any = true; }
+                if (added.Count > 0) { actions.Add($"tags → {product.Name}"); wrote.Mark(); }
                 return (added.Count > 0
                     ? $"Tagged {product.Name}: {string.Join(", ", added)}."
                     : $"{product.Name} already has those tags (or near-duplicates of them).", false);
@@ -511,7 +520,7 @@ public class AnthropicPantryChat : IPantryChat
                 // A shopping-list add is NOT an "I'm out" signal — extras only, never RecordSignal (keeps the
                 // burn-rate/rebuy prediction honest).
                 var addedToList = await _store.AddGroceryExtrasAsync(missing, ct);
-                if (addedToList.Count > 0) { actions.Add($"list += {addedToList.Count} for {recipe.Name}"); wrote.Any = true; }
+                if (addedToList.Count > 0) { actions.Add($"list += {addedToList.Count} for {recipe.Name}"); wrote.Mark(); }
                 return (addedToList.Count > 0
                     ? $"Added {string.Join(", ", addedToList)} to your grocery list for {recipe.Name}."
                     : $"Everything for {recipe.Name} was already on your list.", false);
@@ -630,6 +639,7 @@ public class AnthropicPantryChat : IPantryChat
                 if (adaptResult.Success)
                 {
                     actions.Add($"adapted {match.Name}");
+                    wrote.Mark(); // saves a recipe VARIANT — a real, household-visible write, via the adapter
                     nav.Url = "/recipes"; // show the new variant; keep listening (not a hand-off)
                 }
                 return (adaptResult.Message, !adaptResult.Success);

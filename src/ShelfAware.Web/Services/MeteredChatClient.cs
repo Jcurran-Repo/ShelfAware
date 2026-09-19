@@ -257,9 +257,15 @@ public sealed class MeteredChatClient(
         catch (Exception ex) { logger.LogError(ex, "Recording AI usage failed; this call's tokens/cost went unrecorded."); }
 
         var consumption = CreditConsumption.None;
+        // ⚠️ ONE read of the date, shared by the charge's stamp and the margin row it lands on. Reading
+        // it twice — once here and once inside the meter — reproduces the very defect the reversal's day
+        // stamp was added to fix: straddle midnight between the two statements and the charge is recorded
+        // on one day while its reversal aims at the other, leaving both permanently wrong. The window is
+        // milliseconds rather than minutes, and it is the same one-fact-two-derivations shape either way.
+        var today = DateOnly.FromDateTime(DateTime.Today);
         try
         {
-            consumption = await RecordCreditConsumptionAsync(costMicros, model, CancellationToken.None);
+            consumption = await RecordCreditConsumptionAsync(costMicros, model, today, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -279,7 +285,7 @@ public sealed class MeteredChatClient(
         try
         {
             await margin.RecordAsync(
-                AiActionScope.Current?.Action, costMicros, consumption.Credits, consumption.Billable, CancellationToken.None);
+                AiActionScope.Current?.Action, today, costMicros, consumption.Credits, consumption.Billable, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -311,7 +317,8 @@ public sealed class MeteredChatClient(
     /// free action and for every later round of an action already paid for. Both go to the reconciliation
     /// row: the credits say what was billed, the billable flag says whose cost that billing has to cover.
     /// </returns>
-    private async Task<CreditConsumption> RecordCreditConsumptionAsync(long costMicros, string? model, CancellationToken cancellationToken)
+    private async Task<CreditConsumption> RecordCreditConsumptionAsync(
+        long costMicros, string? model, DateOnly today, CancellationToken cancellationToken)
     {
         if (!settings.Managed || !payments.Value.IsConfigured) return CreditConsumption.None;
         if ((await entitlements.GetTierAsync(cancellationToken)).IsUnlimited()) return CreditConsumption.None;
@@ -374,19 +381,28 @@ public sealed class MeteredChatClient(
             // it undoes, the amount, and the price the charge was computed at. Re-reading any of them when
             // the act closes would let a config edit mid-act price the refund differently from the charge —
             // the same rule RecordUsageAsync states for cost, applied to the correction.
+            // ⚠️ The null-id case is logged rather than passed over. It cannot happen today — the ledger
+            // returns null only for a non-positive price, which `credits > 0` has already excluded — but
+            // the consequence if it ever does is a charge with the refund permanently unreachable and
+            // nothing said, which is the shape this whole arc keeps finding.
+            if (claimed is not null && credits > 0 && chargeId is null)
+                logger.LogError("A charge of {Credits} credit(s) for household {HouseholdId} landed without "
+                    + "a row id, so it cannot be given back.", credits, householdId);
             if (claimed is not null && credits > 0 && chargeId is { } id)
             {
                 var pricedAt = billing.Value;
-                var chargedOn = DateOnly.FromDateTime(DateTime.Today);
                 claimed.ChargeRecorded(credits, (delivered, ct) =>
-                    ReverseUndeliveredAsync(householdId, claimed, credits, id, pricedAt, chargedOn, delivered, ct));
+                    ReverseUndeliveredAsync(householdId, claimed, credits, id, pricedAt, today, delivered, ct));
             }
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex)
         {
-            logger.LogError(ex, "A charge of {Credits} credit(s) for household {HouseholdId} landed but "
-                + "could not be made refundable; it will not be given back if the act under-delivers.",
-                credits, householdId);
+            // Not narrowed to InvalidOperationException: anything thrown here is past the landed row, and
+            // letting it escape would reach RecordUsageAsync's catch, which reports the call as having
+            // drawn nothing — a statement the ledger contradicts.
+            logger.LogError(ex, "A charge of {Credits} credit(s) for household {HouseholdId} on ledger row "
+                + "{ChargeId} for {Action} landed but could not be made refundable; it will not be given "
+                + "back if the act under-delivers.", credits, householdId, chargeId, claimed?.Action);
         }
         return new CreditConsumption(true, credits);
     }

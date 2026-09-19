@@ -139,9 +139,12 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
     /// remainder to ≤ 0 and it is not swept again from persisting purchases.</para>
     ///
     /// <para>⚠️ The Reversal term is the same argument for credits coming BACK: an allowance credit that was
-    /// charged and then refunded is unspent again, and leaving it out would let the household bank it past
-    /// its month. The result is clamped to the granted amount at BOTH ends for the reason the clamp states
-    /// — the two bounds are not symmetric accidents, they are the two ways this sum can lie.</para></summary>
+    /// charged and then refunded is unspent again within its own period, and leaving it out would let the
+    /// household bank it past its month. That holds for a refund of a charge against the CURRENT allowance,
+    /// which is what the term counts. A refund of an older period's charge is deliberately NOT counted —
+    /// that month has closed, nothing sweeps it, and those credits do keep rolling. It is bounded, it errs
+    /// toward the household, and the alternative takes purchased credit; see docs/subscription-plan.md
+    /// §4.x for why it is held open rather than closed.</para></summary>
     private static async Task<long> UnspentAllowanceCreditsAsync(AuthDbContext db, string householdId, CancellationToken cancellationToken)
     {
         var lastAllowance = await db.CreditLedger
@@ -270,6 +273,21 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
         try
         {
             await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+
+            // ⚠️ The id is checked before it is stored, because the unspent-allowance sum ACTS on it: an id
+            // naming some other household's row, or a row that isn't a consumption, would be compared
+            // against this household's latest allowance and could make an allowance look unspent that
+            // isn't — letting the period-end sweep reach purchased credit. One caller passes its own
+            // charge's id today; this is what stops the second caller getting it wrong silently.
+            if (!await db.CreditLedger.AnyAsync(e => e.Id == reversesEntryId
+                    && e.HouseholdId == householdId
+                    && e.Kind == CreditEntryKind.Consumption, cancellationToken))
+            {
+                logger?.LogError("Refusing to reverse {Credits} credit(s) for household {HouseholdId}: "
+                    + "entry {EntryId} is not a consumption of theirs.", credits, householdId, reversesEntryId);
+                return false;
+            }
+
             db.CreditLedger.Add(new CreditLedgerEntry
             {
                 HouseholdId = householdId,
