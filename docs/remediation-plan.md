@@ -331,6 +331,47 @@ can read. The workflow's own comment names the fix and calls it an opt-in.
 **The fix.** Take the opt-in: CI commits the regenerated `test-status.json` back to master. A
 `GITHUB_TOKEN` push does not re-trigger CI, so there is no loop.
 
+### As built (2026-09-19)
+
+**CI commits the snapshot back, from a separate job.** `publish-test-status` runs only on a push to
+master, holds the only `contents: write` token in the workflow (permissions are per-job, so the build job
+that also runs for pull requests stays read-only), and is serialised by a `concurrency` group so two
+pushes cannot race each other's commit. A `GITHUB_TOKEN` push does not trigger workflows, so it cannot
+loop. It commits only when the numbers changed — `jq` drops `GeneratedAt` from both sides — or master
+collects a no-op commit on every push.
+
+⚠️ **It publishes a failing suite and refuses an empty one.** The job runs under `always()`, because
+"3 failing" is exactly the news the card exists to carry and a card that only ever publishes green can
+never deliver bad news. But a run whose BUILD failed has no `.trx` at all, the generator honestly reports
+zero projects, and committing that would make the card claim the suite is empty. One line —
+refuse a snapshot with no test projects — is what tells "tests failed" apart from "nothing ran".
+
+**The build's warning count now comes from the build.** `BUILD_WARNINGS` was read by the generator and
+set by nobody, so a regenerated file would have silently dropped the warnings tile. CI captures MSBuild's
+own summary count — not a grep for the word "warning", which matches warning *text* and would over-report
+— and a pattern that matches nothing leaves the tile off rather than claiming zero.
+
+**The rule was then applied to this repo's other hand-typed count.** `CLAUDE.md`'s build-state table
+carried `3185 green … (Core 1378 · AI 189 · Persistence 1018 · Pages 600)`. It was stale by 46 within
+three weeks of being written — the same failure as the card, one file over. The line now names where the
+real number lives and says not to type one there.
+
+⚠️ **Three defects, all found by rehearsing rather than reading**, and all of the same kind — a comment
+describing behaviour the code did not have:
+- The job's comment said `always()`; the condition did not have it, so a failing build would have skipped
+  the publish entirely.
+- `warnings=$(grep … | tail -1)` aborts under `set -e` when grep matches nothing, so an unrecognised
+  MSBuild summary would have failed the **build** over a number the card merely displays.
+- The push retry's comment promised a warning annotation rather than a red master; `git pull --rebase`
+  is a bare command under `set -e`, so the retry could never reach its `||` and the job went red.
+
+The commit step was extracted from the YAML and run against a scratch repository for all four cases:
+empty snapshot, timestamp-only change, real change, and an unpushable remote.
+
+**`docs/demo.gif` is NOT fixed and is listed as open.** It is the same class — a truth-claiming artifact
+that shows an app from before v3.5 — but the fix is a capture session, not a workflow, and the storyboard
+that would guide one was deleted when the current gif landed. It stays in `docs/backlog.md`.
+
 **Why this is the D9 item, and the rule it sets.** Any artifact that makes a factual claim about the
 codebase must be produced by the thing it claims about. A number typed into a file by a person is a number
 that will be wrong; the only question is when. `eval-results.json` already works this way and is right.

@@ -83,7 +83,7 @@ dismiss polish as overkill "because it's single-user."
 
 | | |
 |---|---|
-| **Tests** | 3185 green, 0 failing, 0 skipped, 0 warnings on a non-incremental Release build (Core 1378 · AI 189 · Persistence 1018 · Pages 600) |
+| **Tests** | Four suites, 0 failing, 0 warnings on a non-incremental Release build. ⚠️ The count lives in `src/ShelfAware.Web/wwwroot/test-status.json`, written by the CI run that measured it and rendered on `/admin` — **don't type it here**: the copy that used to sit on this line was stale by 46 tests the week it was written, and the `/admin` card it mirrored was stale by 617. A number a person maintains is a number that will be wrong. |
 | **Mutation gate** | Core at 100% — full sweep weekly, diff-scoped per PR |
 | **Live** | Demo box on a DigitalOcean droplet since 2026-08-11 (BYOK); family box on Jordan's PC behind Cloudflare Access since 2026-08-12 |
 | **Phases 1–4** (DESIGN.md §10) | ✅ Done, acceptance verified |
