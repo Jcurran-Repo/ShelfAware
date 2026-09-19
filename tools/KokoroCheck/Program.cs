@@ -12,6 +12,10 @@ using ShelfAware.Llm;
 //
 //   dotnet run --project tools/KokoroCheck -- <modelDirectory> [outputWav] [speakerId]
 //
+// A clip that loaded, ran and said nothing is caught in KokoroTextToSpeech itself (an empty
+// synthesis is a failure, not a very short clip), so reaching this far already means there
+// is audio -- the tool's job is to let a person hear whether it is the RIGHT audio.
+//
 // It is deliberately NOT a unit test. The model is 150 MB and is not in the repo, so a test
 // would either fail on every machine that hasn't downloaded it or -- worse -- skip itself
 // quietly and report a green nobody earned.
@@ -25,7 +29,13 @@ if (string.IsNullOrWhiteSpace(modelDirectory))
 }
 
 var outputPath = args.Length > 1 ? args[1] : "kokoro-check.wav";
-var speakerId = args.Length > 2 ? int.Parse(args[2]) : 0;
+var speakerId = 0;
+if (args.Length > 2 && !int.TryParse(args[2], out speakerId))
+{
+    Console.Error.WriteLine($"'{args[2]}' is not a voice index. The archive ships no voice names, so a voice "
+                            + "is a number -- 0 to 10 for kokoro-int8-en-v0_19.");
+    return 1;
+}
 
 var options = new KokoroSpeechOptions { ModelDirectory = modelDirectory, SpeakerId = speakerId };
 
@@ -64,21 +74,25 @@ if (!result.Success)
     return 1;
 }
 
-// 44-byte header, 16-bit mono: enough to report what a player will find, without a decoder.
-var seconds = (result.Audio.Length - 44) / 2.0 / 24000;
+await File.WriteAllBytesAsync(outputPath, result.Audio);
+
 Console.WriteLine();
 Console.WriteLine($"Wrote {result.Audio.Length:N0} bytes of {result.MediaType} to {Path.GetFullPath(outputPath)}");
 Console.WriteLine($"Took {started.Elapsed.TotalSeconds:F1}s including the one-off model load.");
-await File.WriteAllBytesAsync(outputPath, result.Audio);
 
-// A clip that is the right length but silent is the failure this catches -- a model that loaded, ran, and
-// said nothing looks like success in every number above.
-if (result.Audio.Length <= 44)
-{
-    Console.Error.WriteLine("...but the clip has no samples in it. Something is wrong with the model.");
-    return 1;
-}
-
-Console.WriteLine($"Roughly {seconds:F1}s of audio. Play it: the voice should read that sentence, with "
-                  + "\"350 degrees Fahrenheit\" spelled out.");
+// Read the duration back out of the header rather than dividing by a rate typed in here: the model reports
+// its own sample rate (the log line above says it), and two places computing the same number from
+// different sources is how one of them ends up describing a clip the other didn't produce.
+var (seconds, rate) = DurationOf(result.Audio);
+Console.WriteLine($"Roughly {seconds:F1}s of audio at {rate} Hz. Play it: the voice should read that "
+                  + "sentence, with \"350 degrees Fahrenheit\" spelled out.");
 return 0;
+
+// Length and rate straight off the WAV header, the way a player reads them.
+static (double Seconds, int Rate) DurationOf(byte[] wav)
+{
+    var rate = BitConverter.ToInt32(wav, 24);
+    var bytesPerSecond = BitConverter.ToInt32(wav, 28);
+    var dataBytes = BitConverter.ToInt32(wav, 40);
+    return (dataBytes / (double)bytesPerSecond, rate);
+}

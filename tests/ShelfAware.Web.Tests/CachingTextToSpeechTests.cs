@@ -421,15 +421,36 @@ public sealed class CachingTextToSpeechTests : IDisposable
     // ⚠️ The native library answers a missing model file by killing the process — no exception, no log
     // line. So an incomplete model directory has to be refused at registration, while there is still
     // something that can report it.
-    [Fact]
-    public void An_incomplete_model_directory_is_refused_at_registration()
+    // Each of the four parts, separately: a check that happened to look at only three would pass on a
+    // directory missing the fourth, and the process would then die on the first read-aloud — which is the
+    // failure this check exists to prevent, arrived at through the check itself.
+    [Theory]
+    [InlineData("model.int8.onnx")]
+    [InlineData("voices.bin")]
+    [InlineData("tokens.txt")]
+    [InlineData("espeak-ng-data")]
+    public void A_model_directory_missing_any_one_part_is_refused_at_registration(string absent)
     {
-        var incomplete = AModel(except: "voices.bin");
+        var incomplete = AModel(except: absent);
 
         var ex = Assert.ThrowsAny<Exception>(() => FingerprintFor("Kokoro", modelDirectory: incomplete));
 
         Assert.Contains("Speech:Kokoro:ModelDirectory", DeepMessage(ex));
-        Assert.Contains("voices.bin", DeepMessage(ex));
+        Assert.Contains(absent, DeepMessage(ex));
+    }
+
+    // A value that cannot mean anything must be a boot failure naming the setting, not something handed to
+    // native code while holding the synthesis gate.
+    [Theory]
+    [InlineData("Speech:Kokoro:Speed", "0")]
+    [InlineData("Speech:Kokoro:NumThreads", "0")]
+    [InlineData("Speech:Kokoro:SynthesisTimeoutSeconds", "0")]
+    public void A_setting_that_cannot_mean_anything_is_refused_at_registration(string key, string value)
+    {
+        var ex = Assert.ThrowsAny<Exception>(() => FingerprintFor(
+            "Kokoro", modelDirectory: AModel(), extra: new() { [key] = value }));
+
+        Assert.Contains(key, DeepMessage(ex));
     }
 
     [Fact]
@@ -468,18 +489,15 @@ public sealed class CachingTextToSpeechTests : IDisposable
     /// nothing in these tests gets as far as reading one.</summary>
     private string AModel(string? except = null)
     {
-        var directory = Path.Combine(_dir, "kokoro-int8-en-v0_19");
+        // A directory of its own per case, so a test that asks for an incomplete model can never be handed
+        // one another test already completed — and so nothing has to delete what it didn't create.
+        var directory = Path.Combine(_dir, "models", except ?? "complete", "kokoro-int8-en-v0_19");
         Directory.CreateDirectory(directory);
-        foreach (var part in new[] { "model.int8.onnx", "voices.bin", "tokens.txt" })
-        {
-            var path = Path.Combine(directory, part);
-            if (part == except) File.Delete(path);
-            else File.WriteAllBytes(path, []);
-        }
 
-        var dataDir = Path.Combine(directory, "espeak-ng-data");
-        if (except == "espeak-ng-data") Directory.Delete(dataDir, recursive: true);
-        else Directory.CreateDirectory(dataDir);
+        foreach (var part in new[] { "model.int8.onnx", "voices.bin", "tokens.txt" })
+            if (part != except) File.WriteAllBytes(Path.Combine(directory, part), []);
+
+        if (except != "espeak-ng-data") Directory.CreateDirectory(Path.Combine(directory, "espeak-ng-data"));
 
         return directory;
     }

@@ -221,6 +221,11 @@ internal sealed class FakeTextToSpeech : ITextToSpeech
     /// rule needs a step that won't render.</summary>
     public List<string> FailOn { get; } = [];
 
+    /// <summary>Fail with no message at all — the case a page must still say something about. A provider
+    /// shouldn't do this (every one of ours returns person-facing copy), but a page that renders the
+    /// message without checking produces a sentence ending in a dash.</summary>
+    public bool FailWithoutSaying { get; set; }
+
     public string OutputFingerprint => "fake-tts";
     public string OutputMediaType => "audio/mpeg";
 
@@ -230,7 +235,7 @@ internal sealed class FakeTextToSpeech : ITextToSpeech
         cancellationToken.ThrowIfCancellationRequested();
         Spoken.Add((text, context));
         return Task.FromResult(FailOn.Any(text.Contains)
-            ? new TextToSpeechResult { Success = false, Error = "synthesis refused by test" }
+            ? new TextToSpeechResult { Success = false, Error = FailWithoutSaying ? "" : "synthesis refused by test" }
             : new TextToSpeechResult { Success = true, Audio = [1], MediaType = "audio/mpeg" });
     }
 }

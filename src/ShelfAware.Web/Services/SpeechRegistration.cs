@@ -102,17 +102,19 @@ public static class SpeechRegistration
     /// check the app would start clean and then die whole on the first read-aloud, taking every circuit
     /// with it, and the only clue would be a stderr line nobody was watching.
     /// <para>It asks <see cref="KokoroModelFiles"/> — the same definition the engine loads from — because
-    /// a validation that checked a different set of paths than the load uses would pass and then crash.</para>
+    /// a validation that checked a different set of paths than the load uses would pass and then crash.
+    /// The settings it can judge without the disk go through <see cref="KokoroSpeechOptions.Invalid"/>,
+    /// which the engine also asks, for the same reason.</para>
     /// </summary>
     private static void RequireAModelOnDisk(IConfiguration configuration)
     {
         var options = configuration.GetSection(KokoroSpeechOptions.SectionName).Get<KokoroSpeechOptions>()
                       ?? new KokoroSpeechOptions();
 
-        if (string.IsNullOrWhiteSpace(options.ModelDirectory))
-            throw new InvalidOperationException(
-                "Speech:Provider is Kokoro, so Speech:Kokoro:ModelDirectory must name a directory holding "
-                + "an unpacked sherpa-onnx Kokoro model. See docs/deploy-kokoro.md.");
+        // Everything judgeable from the settings alone, asked of the one definition so registration and
+        // the engine cannot come to different conclusions about the same configuration.
+        if (options.Invalid() is { } wrong)
+            throw new InvalidOperationException($"Speech:Provider is Kokoro, but {wrong}");
 
         if (KokoroModelFiles.In(options.ModelDirectory, options.ModelFile).Missing() is { Count: > 0 } missing)
             throw new InvalidOperationException(

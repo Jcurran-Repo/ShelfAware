@@ -7,6 +7,17 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
 
 ## Open
 
+- **The TTS cache is trimmed only at startup, and a free voice fills it ~10× faster.** `CachingTextToSpeech.Trim`
+  runs once, at boot, against `Speech:CacheMegabytes` per household. That cadence was chosen when every clip
+  was an MP3 someone had paid ElevenLabs for — small, and self-limiting because nobody synthesizes what
+  they are billed for by accident. The in-process Kokoro voice makes clips **WAV at ~48 KB per spoken
+  second** and free, so a household reading its way through a cookbook on a box that is up for weeks can
+  run a long way past the cap between restarts. On a 2 GB droplet that also now holds ~600 MB of model,
+  that is the disk to watch. Nothing is broken today — the cap is still enforced, just not promptly — and
+  the fix (trim after a write, for the household written) is a change to a hot path with its own cost, so
+  it is a deliberate decision rather than a tidy-up. **Revisit once the family box has a few weeks of real
+  read-aloud on it**, which is the first time there will be a real number instead of an estimate.
+
 - **The mutation score on `/admin` is carried forward, not re-measured.** `ci.yml` does not run Stryker,
   so its snapshot never measures a score; it now keeps whatever the last measuring run wrote rather than
   blanking the tile (which is what it did before 2026-09-19, and would have removed the card on the first

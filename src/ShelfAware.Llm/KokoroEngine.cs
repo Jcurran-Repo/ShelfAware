@@ -49,7 +49,7 @@ public sealed class SherpaKokoroEngine : IKokoroEngine
     private readonly ILogger<SherpaKokoroEngine> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private OfflineTts? _tts;
-    private bool _disposed;
+    private int _disposed;
 
     public SherpaKokoroEngine(IOptions<KokoroSpeechOptions> options, ILogger<SherpaKokoroEngine> logger)
     {
@@ -59,23 +59,50 @@ public sealed class SherpaKokoroEngine : IKokoroEngine
 
     public async Task<KokoroAudio> GenerateAsync(string text, CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowIfDisposed();
+        if (_options.Invalid() is { } wrong) throw new InvalidOperationException(wrong);
 
-        await _gate.WaitAsync(cancellationToken);
+        var budget = TimeSpan.FromSeconds(_options.SynthesisTimeoutSeconds);
+
+        // ⚠️ The bound is on the WAIT as well as on the synthesis, because being queued behind another
+        // household's narration is just as long a silence as a slow model is, and neither has anything on
+        // screen to explain it. WaitAsync's own timeout is used rather than a cancelling token so that the
+        // two outcomes stay different things: false means WE gave up, an exception means the caller left.
+        if (!await _gate.WaitAsync(budget, cancellationToken))
+            throw Timeout("waiting for the synthesizer");
+
         try
         {
+            // Disposal may have started while this call was queued, in which case the model is gone.
+            ThrowIfDisposed();
             var tts = Load();
+
+            using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            bounded.CancelAfter(budget);
+
             // Off the caller's thread: this blocks for roughly as long as the clip lasts, and the caller is
-            // a Blazor circuit. No token here on purpose — Task.Run's token only decides whether the work
+            // a Blazor circuit. No token on Task.Run on purpose — its token only decides whether the work
             // STARTS, and pretending otherwise is how a cancel that does nothing gets written. The callback
             // inside Speak is what actually stops a synthesis already running.
-            return await Task.Run(() => Speak(tts, text, cancellationToken), CancellationToken.None);
+            return await Task.Run(() => Speak(tts, text, cancellationToken, bounded.Token), CancellationToken.None);
         }
         finally
         {
             _gate.Release();
         }
     }
+
+    /// <summary>A bound we chose ran out. ⚠️ Deliberately NOT an <see cref="OperationCanceledException"/>:
+    /// that type means the household walked away, and a service that reports its own slowness in the
+    /// caller's words is how a provider failure ends up thrown out through a Blazor event handler instead
+    /// of being failed softly.</summary>
+    private TimeoutException Timeout(string doing)
+    {
+        _logger.LogError("Kokoro gave up after {Seconds}s {Doing}.", _options.SynthesisTimeoutSeconds, doing);
+        return new TimeoutException($"Kokoro gave up after {_options.SynthesisTimeoutSeconds}s {doing}.");
+    }
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) == 1, this);
 
     /// <summary>
     /// Loads the model, once. ⚠️ The file check is not defensive tidiness: the native library answers a
@@ -100,50 +127,69 @@ public sealed class SherpaKokoroEngine : IKokoroEngine
         config.Model.Kokoro.Voices = files.Voices;
         config.Model.Kokoro.Tokens = files.Tokens;
         config.Model.Kokoro.DataDir = files.DataDir;
-        config.Model.NumThreads = Math.Max(1, _options.NumThreads);
+        config.Model.NumThreads = _options.NumThreads;
         config.Model.Provider = "cpu";
         config.Model.Debug = 0;
 
         var started = System.Diagnostics.Stopwatch.StartNew();
         var tts = new OfflineTts(config);
 
+        // ⚠️ Read the model's facts into locals BEFORE anything can dispose it. These properties read
+        // through the native handle, so asking one after Dispose is a use-after-free — which does not
+        // throw, it takes the process out with a SIGSEGV, and it cost an hour here: the refusal below
+        // interpolated tts.NumSpeakers into its own message one line after disposing tts, so the guard
+        // fired correctly and then crashed on the way to saying so. Every test still passed; only running
+        // it found it.
+        var speakers = tts.NumSpeakers;
+        var sampleRate = tts.SampleRate;
+
         // ⚠️ Refuse an out-of-range voice rather than letting the model substitute one. It answers an index
         // it doesn't have by quietly using voice 0 — which would leave every cached clip filed under a
         // fingerprint naming a voice that never spoke it, and the cache would go on serving them after the
         // setting was corrected.
-        if (_options.SpeakerId < 0 || _options.SpeakerId >= tts.NumSpeakers)
+        if (_options.SpeakerId < 0 || _options.SpeakerId >= speakers)
         {
             tts.Dispose();
             throw new InvalidOperationException(
-                $"Speech:Kokoro:SpeakerId is {_options.SpeakerId}, but this model has {tts.NumSpeakers} "
-                + $"voice(s) — valid values are 0 to {tts.NumSpeakers - 1}.");
+                $"Speech:Kokoro:SpeakerId is {_options.SpeakerId}, but this model has {speakers} "
+                + $"voice(s) — valid values are 0 to {speakers - 1}.");
         }
 
         _logger.LogInformation(
             "Loaded Kokoro from {Directory} in {ElapsedMs} ms: {Speakers} voice(s) at {SampleRate} Hz, "
             + "{Threads} thread(s), speaking as voice {SpeakerId}.",
-            _options.ModelDirectory, started.ElapsedMilliseconds, tts.NumSpeakers, tts.SampleRate,
+            _options.ModelDirectory, started.ElapsedMilliseconds, speakers, sampleRate,
             config.Model.NumThreads, _options.SpeakerId);
 
         return _tts = tts;
     }
 
-    private KokoroAudio Speak(OfflineTts tts, string text, CancellationToken cancellationToken)
+    /// <summary>
+    /// Runs the model. ⚠️ Two tokens, and the difference between them is the whole point: <paramref
+    /// name="caller"/> means the household walked away, <paramref name="bounded"/> adds "or we ran out of
+    /// the time we gave ourselves". Both stop the run; only the first is a cancellation. They are told
+    /// apart by ASKING, before anything is thrown — there is no <c>catch</c> here on purpose, because a
+    /// cancellation caught at a provider boundary and rethrown is exactly the defect
+    /// <c>ProviderCancellationSiteTests</c> exists to stop, and a filter reading the inverse of that rule
+    /// is the same defect wearing the rule's clothes.
+    /// </summary>
+    private KokoroAudio Speak(OfflineTts tts, string text, CancellationToken caller, CancellationToken bounded)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        bounded.ThrowIfCancellationRequested();
 
         // Returning 0 stops generation. The delegate is handed to native code, so it has to stay reachable
         // for the whole call — hence the local and the KeepAlive below rather than an inline lambda.
-        OfflineTtsCallbackProgress onProgress =
-            (_, _, _) => cancellationToken.IsCancellationRequested ? 0 : 1;
+        OfflineTtsCallbackProgress onProgress = (_, _, _) => bounded.IsCancellationRequested ? 0 : 1;
 
         var audio = tts.GenerateWithCallbackProgress(text, (float)_options.Speed, _options.SpeakerId, onProgress);
         GC.KeepAlive(onProgress);
         try
         {
             // A stopped run still returns the samples it had reached. They are a fragment of a sentence, so
-            // the only honest thing to do with them is throw — the caller asked us to stop.
-            cancellationToken.ThrowIfCancellationRequested();
+            // the only honest thing to do with them is throw — nobody is waiting for half a step.
+            caller.ThrowIfCancellationRequested();
+            if (bounded.IsCancellationRequested) throw Timeout("synthesizing");
+
             return new KokoroAudio(audio.Samples, audio.SampleRate);
         }
         finally
@@ -155,11 +201,37 @@ public sealed class SherpaKokoroEngine : IKokoroEngine
         }
     }
 
+    /// <summary>
+    /// ⚠️ Waits for any synthesis in flight before freeing the model. Disposing the native
+    /// <c>OfflineTts</c> out from under a <c>GenerateWithCallbackProgress</c> already running on it is
+    /// precisely the crash-with-no-log this whole class is arranged around — and at host shutdown it is a
+    /// real race, because a circuit closing and the host stopping happen at the same moment. The wait is
+    /// bounded by the same timeout every call is, so it cannot hang a shutdown indefinitely.
+    /// <para>The gate itself is deliberately NOT disposed. <see cref="SemaphoreSlim"/> only holds a
+    /// disposable handle once <c>AvailableWaitHandle</c> has been read, which nothing here does — and
+    /// disposing it would turn a queued call's <c>finally { Release(); }</c> into a second exception
+    /// thrown over the first.</para>
+    /// </summary>
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
-        _tts?.Dispose();
-        _gate.Dispose();
+        if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+
+        if (!_gate.Wait(TimeSpan.FromSeconds(_options.SynthesisTimeoutSeconds)))
+        {
+            // Freeing it anyway would segfault the process on its way out, which looks like a crash rather
+            // than a shutdown. Leaving it is a leak in a process that is ending.
+            _logger.LogWarning("A Kokoro synthesis was still running at shutdown; leaving the model loaded.");
+            return;
+        }
+
+        try
+        {
+            _tts?.Dispose();
+            _tts = null;
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 }

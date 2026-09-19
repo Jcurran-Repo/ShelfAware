@@ -140,6 +140,32 @@ public class KokoroTextToSpeechTests
         Assert.False(string.IsNullOrWhiteSpace(result.Error));
     }
 
+    // ⚠️ A run that returns no samples is a failure, not a very short clip. Returned as a success it is a
+    // valid WAV of nothing, which the cache files and then serves forever — so the step plays as silence
+    // with no error and no log line, and nobody can tell it from a quiet room.
+    [Fact]
+    public async Task Synthesize_treats_a_clip_with_no_samples_as_a_failure()
+    {
+        var result = await Tts(FakeKokoroEngine.Returning([])).SynthesizeAsync("Sear the chicken.");
+
+        Assert.False(result.Success);
+        Assert.Empty(result.Audio);
+        Assert.False(string.IsNullOrWhiteSpace(result.Error));
+    }
+
+    // The engine bounds itself so a household is never queued forever. A timeout is the provider failing,
+    // not the caller leaving, so it must come back as a soft failure rather than out through the circuit.
+    [Fact]
+    public async Task Synthesize_reports_a_synthesis_that_timed_out_as_a_failure()
+    {
+        var engine = FakeKokoroEngine.Throwing(new TimeoutException("Kokoro gave up after 120s synthesizing."));
+
+        var result = await Tts(engine).SynthesizeAsync("hello");
+
+        Assert.False(result.Success);
+        Assert.DoesNotContain("120s", result.Error!);
+    }
+
     // ---- Fingerprint + media type -----------------------------------------------------------------
 
     [Fact]

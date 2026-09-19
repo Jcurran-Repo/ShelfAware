@@ -54,11 +54,48 @@ public class KokoroSpeechOptions
     /// the app room to answer requests. Raise it on a box with cores to spare.</summary>
     public int NumThreads { get; set; } = 2;
 
+    /// <summary>How long one read may take in total — the wait behind whatever is already synthesizing,
+    /// plus the synthesis itself. ⚠️ There must be a bound. The HTTP sidecar this replaced inherited
+    /// <see cref="HttpClient"/>'s 100-second default and nobody had to think about it; an in-process model
+    /// inherits nothing, and several callers (the voice agent, push-to-talk) pass no cancellation token at
+    /// all, so without this a household could wait on the queue with no way out. Two minutes is roughly
+    /// three times the longest recipe step at the measured rate, which leaves room to be queued behind
+    /// another household and still finish.</summary>
+    public int SynthesisTimeoutSeconds { get; set; } = 120;
+
     /// <summary>Spell numbers, fractions and unit abbreviations out into words (via
     /// <see cref="ShelfAware.Core.Speech.SpeechText"/>) before synthesis. On by default so pronunciation
     /// is consistent with the ElevenLabs path and the cache fingerprint's spelling rules mean the same
     /// thing whichever provider voiced a clip.</summary>
     public bool NormalizeText { get; set; } = true;
+
+    /// <summary>
+    /// What is wrong with these settings on their own terms, or null when nothing is. ⚠️ ONE definition,
+    /// asked both by registration (so a bad value is a boot failure naming the setting) and by the engine
+    /// before it loads (so a value that arrived some other way still can't reach native code). Anything
+    /// that needs the MODEL to judge — whether the voice index exists — cannot be answered here and is
+    /// checked at load; anything that needs the DISK is <see cref="KokoroModelFiles"/>.
+    /// </summary>
+    public string? Invalid() =>
+        string.IsNullOrWhiteSpace(ModelDirectory)
+            ? $"{SectionName}:ModelDirectory must name a directory holding an unpacked sherpa-onnx Kokoro "
+              + "model. See docs/deploy-kokoro.md."
+        : string.IsNullOrWhiteSpace(ModelFile)
+            ? $"{SectionName}:ModelFile must name the ONNX file inside that directory "
+              + "(model.int8.onnx, or model.onnx for the full-precision archive)."
+        // Speed is a divisor on the way to the model's length scale, so zero is not "as fast as possible"
+        // — it is a division by zero inside native code, reached while holding the synthesis gate.
+        : Speed is <= 0 or > 5
+            ? $"{SectionName}:Speed is {Speed.ToString(System.Globalization.CultureInfo.InvariantCulture)}; "
+              + "it must be greater than 0 and at most 5. 1.0 is the model's natural pace."
+        // ⚠️ Refused rather than clamped up to 1, for the same reason the voice index is: a setting that
+        // silently means something other than what it says is a setting nobody can debug from its value.
+        : NumThreads < 1
+            ? $"{SectionName}:NumThreads is {NumThreads}; it must be at least 1."
+        : SynthesisTimeoutSeconds < 1
+            ? $"{SectionName}:SynthesisTimeoutSeconds is {SynthesisTimeoutSeconds}; it must be at least 1. "
+              + "There is no value meaning 'wait forever' on purpose."
+        : null;
 }
 
 /// <summary>

@@ -95,6 +95,56 @@ public class SherpaKokoroEngineTests
         Assert.Equal(Path.Combine("models", "kokoro", "espeak-ng-data"), files.DataDir);
     }
 
+    // ⚠️ A value that cannot mean anything must fail before it reaches native code — and before it takes
+    // the synthesis gate, since a division by zero inside the library would take the process with it and
+    // leave every queued read waiting on a gate nothing will release.
+    [Theory]
+    [InlineData("Speed", 0.0)]
+    [InlineData("Speed", -1.0)]
+    [InlineData("Speed", 99.0)]
+    public async Task A_speed_that_cannot_mean_anything_fails_before_the_model_is_touched(string setting, double speed)
+    {
+        var options = new KokoroSpeechOptions { ModelDirectory = ModelDirectory(), Speed = speed };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => Engine(options).GenerateAsync("hello"));
+
+        Assert.Contains(setting, ex.Message);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-2)]
+    public async Task A_thread_count_below_one_is_refused_rather_than_clamped(int threads)
+    {
+        var options = new KokoroSpeechOptions { ModelDirectory = ModelDirectory(), NumThreads = threads };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => Engine(options).GenerateAsync("hello"));
+
+        Assert.Contains("NumThreads", ex.Message);
+    }
+
+    // ⚠️ There is deliberately no value meaning "wait forever". The HTTP sidecar this replaced inherited
+    // HttpClient's 100-second timeout without anyone choosing it; an in-process call inherits nothing, and
+    // several callers pass no cancellation token at all.
+    [Fact]
+    public async Task There_is_no_way_to_ask_for_an_unbounded_wait()
+    {
+        var options = new KokoroSpeechOptions { ModelDirectory = ModelDirectory(), SynthesisTimeoutSeconds = 0 };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => Engine(options).GenerateAsync("hello"));
+
+        Assert.Contains("SynthesisTimeoutSeconds", ex.Message);
+    }
+
+    // The settings rule is ONE definition, so what the engine refuses and what registration refuses cannot
+    // drift apart — these are the cases both of them are reading.
+    [Fact]
+    public void Settings_that_are_fine_are_reported_as_fine()
+    {
+        Assert.Null(new KokoroSpeechOptions { ModelDirectory = "models/kokoro" }.Invalid());
+        Assert.Null(new KokoroSpeechOptions { ModelDirectory = "models/kokoro", Speed = 1.0, NumThreads = 1 }.Invalid());
+    }
+
     // A caller that walked away before the model was even asked must see the cancel, not a load.
     [Fact]
     public async Task A_cancelled_caller_is_not_made_to_wait_for_a_model_load()

@@ -83,16 +83,38 @@ public class RecipeReadAloudTests : VoiceTestBase
         Assert.True((bool)load.Arguments[3]!);  // button mode runs on between steps
     }
 
+    // ⚠️ The SYNTHESIZER's own words, not the page's guess at them. This used to read "check that the
+    // ElevenLabs key is set", which on a box voiced by the in-process Kokoro model named a key that does
+    // not exist and never ran — a screen stating something the engine didn't do. Every ITextToSpeech
+    // already returns copy written for a person (ProviderErrorCopyTests holds that rule), so there is one
+    // account of the failure and the page shows it.
     [Fact]
-    public void A_failed_intro_names_the_likely_cause()
+    public void A_failed_intro_shows_what_the_synthesizer_said_went_wrong()
     {
         Tts.FailOn.Add("Sticky Ribs");
         var cut = RenderReader();
 
         cut.WaitForAssertion(() => Assert.Contains(
-            "Couldn't generate the narration — check that the ElevenLabs key is set.",
+            "Couldn't generate the narration — synthesis refused by test",
             cut.Find(".error").TextContent));
         Assert.Empty(cut.FindAll(".ra-controls")); // nothing to control
+    }
+
+    // ...and when it said nothing, the page still has to. A blank provider message must not render as a
+    // sentence that trails off into an em-dash and stops.
+    [Fact]
+    public void A_failed_intro_that_came_with_no_explanation_still_says_something()
+    {
+        Tts.FailOn.Add("Sticky Ribs");
+        Tts.FailWithoutSaying = true;
+        var cut = RenderReader();
+
+        cut.WaitForAssertion(() =>
+        {
+            var shown = cut.Find(".error").TextContent;
+            Assert.Contains("Couldn't generate the narration", shown);
+            Assert.DoesNotContain("—", shown);
+        });
     }
 
     [Fact]

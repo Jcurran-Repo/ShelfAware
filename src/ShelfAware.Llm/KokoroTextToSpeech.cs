@@ -77,6 +77,18 @@ public class KokoroTextToSpeech : ITextToSpeech
         try
         {
             var audio = await _engine.GenerateAsync(spoken, cancellationToken);
+
+            // ⚠️ A run that returns no samples is a FAILURE, not a very short clip. Encoded and returned as
+            // a success it would be a valid 44-byte WAV of nothing — which the cache would then file and
+            // serve forever, so the step would play as silence with no error, no log line and no way for
+            // anyone to tell it apart from a quiet room. There is no text that legitimately reaches here
+            // and synthesizes to nothing: the blank cases were turned away above.
+            if (audio.Samples.Length == 0)
+            {
+                _logger.LogError("Kokoro returned no samples for {Chars} character(s).", spoken.Length);
+                return TextToSpeechResult.Fail("Couldn't reach text-to-speech just now — please try again.");
+            }
+
             var bytes = WaveAudio.Encode(audio.Samples, audio.SampleRate);
             _logger.LogInformation("Synthesized {Seconds:F1}s of audio ({Bytes} bytes of {MediaType}).",
                 audio.Samples.Length / (double)audio.SampleRate, bytes.Length, WaveAudio.MediaType);
