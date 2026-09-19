@@ -24,6 +24,7 @@ public static class WaveAudio
     private const short BitsPerSample = 16;
     private const short Channels = 1;
 
+
     /// <summary>
     /// Encodes mono float samples (nominally −1…1) as 16-bit PCM in a WAV container.
     /// </summary>
@@ -36,6 +37,14 @@ public static class WaveAudio
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(sampleRate, 0);
 
         var dataBytes = samples.Length * sizeof(short);
+
+        // ⚠️ A local with an explicit cast, not `const short` and not inline arithmetic — both of those
+        // compile only because the compiler folds them to a constant, and a mutation testing tool rewrites
+        // the expression into a ternary, which is not one. That made every mutant in this method fail to
+        // compile and be discarded, so the mutation gate passed over this file having tested NOTHING: 34
+        // mutants, 34 compile errors, one green check. The cast keeps the arithmetic visible and keeps it
+        // mutable, which is the only way the gate can actually judge it.
+        var blockAlign = (short)(Channels * BitsPerSample / 8);
         var wav = new byte[HeaderBytes + dataBytes];
         var span = wav.AsSpan();
 
@@ -50,8 +59,8 @@ public static class WaveAudio
         WriteInt16(span[20..], PcmFormat);
         WriteInt16(span[22..], Channels);
         WriteInt32(span[24..], sampleRate);
-        WriteInt32(span[28..], sampleRate * Channels * BitsPerSample / 8); // byte rate
-        WriteInt16(span[32..], Channels * BitsPerSample / 8);              // block align
+        WriteInt32(span[28..], sampleRate * blockAlign);                   // byte rate
+        WriteInt16(span[32..], blockAlign);                                // block align
         WriteInt16(span[34..], BitsPerSample);
 
         // "data" chunk: the samples.
@@ -60,9 +69,14 @@ public static class WaveAudio
 
         for (var i = 0; i < samples.Length; i++)
         {
-            // ⚠️ Clamp first (see the class remark): float.Clamp on a NaN returns NaN, so NaN is mapped to
-            // silence deliberately rather than left to cast into whatever the platform does with it.
-            var sample = float.IsNaN(samples[i]) ? 0f : float.Clamp(samples[i], -1f, 1f);
+            // ⚠️ Clamp, don't scale (see the class remark). There is deliberately no NaN branch:
+            // float.Clamp passes a NaN through and .NET's float-to-integer conversion is saturating, so a
+            // NaN becomes 0 — silence — on its own. An explicit `IsNaN(x) ? 0f : …` was written here first
+            // and removed: no input could tell the two apart, so it was a comparison per sample buying a
+            // guarantee the runtime already makes. The guarantee is pinned by a test instead
+            // (A_sample_that_is_not_a_number_is_silence), which is the thing that would notice if it ever
+            // stopped being true.
+            var sample = float.Clamp(samples[i], -1f, 1f);
             WriteInt16(span[(HeaderBytes + i * sizeof(short))..], (short)(sample * short.MaxValue));
         }
 

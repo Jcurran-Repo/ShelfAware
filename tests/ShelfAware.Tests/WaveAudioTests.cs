@@ -67,8 +67,11 @@ public class WaveAudioTests
     public void A_sample_outside_full_scale_is_clamped_rather_than_wrapped(float sample, short expected) =>
         Assert.Equal(expected, Int16At(WaveAudio.Encode([sample], 24000), 44));
 
-    // NaN has no loudness to clamp to, so it is silence — the one value where "do the arithmetic anyway"
-    // has no defined answer at all.
+    // NaN has no loudness to clamp to, so it is silence. ⚠️ Nothing in the encoder MAKES that happen —
+    // float.Clamp passes a NaN through and .NET's saturating float-to-integer conversion turns it into 0.
+    // This test is what holds the encoder to it: an explicit NaN branch was written, found to be
+    // indistinguishable from its own absence by any input, and removed, so this assertion is now the only
+    // thing standing between a runtime that stopped saturating and a click in the middle of a word.
     [Fact]
     public void A_sample_that_is_not_a_number_is_silence() =>
         Assert.Equal(0, Int16At(WaveAudio.Encode([float.NaN], 24000), 44));
