@@ -1051,9 +1051,13 @@ What that took was not seven `if`s deleted. It was the nine-sites problem again:
   `suggestions.Count > 0`, `adapted is not null`, `parsed.Recipe is not null`, `tags.Count > 0`,
   `match is not null`, `substitutes.Count > 0`, `alternatives.Count > 0`, and two that settled on a
   successful parse and were therefore *already right by accident* (the receipt extractor and the census
-  reader ignore how many lines came back). One `AiActionScope.Answered()` now, converted at **every**
-  caller in this change — the partial-conversion rule from `CLAUDE.md`, which this branch has already
-  paid for once.
+  reader ignore how many lines came back). One `AiActionScope.Answered()` now, at every site asking that
+  question — the partial-conversion rule from `CLAUDE.md`, which this branch has already paid for once.
+  ⚠️ **Three single-unit `Delivered(1)` calls deliberately remain**, and the first write-up of this pass
+  said "every caller" without saying so. They settle on a different fact: the meal-plan reroll settles on
+  the write being *durable* (after the commit, per that class's own rule), `TurnWrites.Mark` settles on a
+  pantry write landing, and the chat's turn-limit exit settles on what it carried out. None of them is
+  "the provider answered", and renaming them would be a worse kind of uniformity.
 - **`Answered()` is `Delivered(Units)`, and on a per-unit act that is a real money bug** — a meal plan
   that produced three meals out of twelve would keep the credits for nine that never arrived. Held by a
   new build rule (`An_act_priced_by_the_unit_counts_what_it_delivered`) rather than by a runtime throw,
@@ -1064,8 +1068,11 @@ What that took was not seven `if`s deleted. It was the nine-sites problem again:
   every one of them. Caught by writing the test before believing the diff.
 - **Nothing pinned any of it.** Before this pass, no test in `ShelfAware.Llm.Tests` mentioned
   `AiActionScope`: all nine services could have their settlement branch changed, or deleted, with the
-  four suites still green. `AiDeliveryTests` holds each site now, and ten of its eleven cases were
-  verified by restoring the old condition and watching them go red.
+  four suites still green. `AiDeliveryTests` holds each site now, and ten of its cases were verified by
+  planting a content-conditioned settle and watching them go red. ⚠️ The first write-up said "restoring
+  the old condition", which is wrong for two of them — the receipt extractor and the census reader never
+  had one, so what was planted there is a plausible mistake rather than the previous code. The wording
+  mattered because the count was offered as the evidence the conversion was right.
 - **The empty-reply line is drawn deliberately.** `NONE` is an answer; no text at all is not, and that
   act refunds. One test proves the line exists rather than leaving it to read as an accident.
 
@@ -1073,10 +1080,60 @@ Also in the pass: the last mutation survivor from the fourth round is gone, and 
 late-charge guard was written as *"return early on the benign case, then throw"*, and the benign case is
 only reachable when a concurrent `DisposeAsync` lands between two adjacent instructions — a window no
 deterministic test can open, so the `return` was a statement nothing executed. Inverted to *"throw on the
-harmful case"*, the behaviour is identical and the benign case is the absence of a statement, so every
-line is exercised. Worth writing down as a general move: an untestable early-out is often a guard written
-the wrong way round, not a case that needs a racing test. (This file rejected a racing test once already —
-a killer that lands four runs in six is coverage claimed and not held.)
+harmful case"*, the benign case became the absence of a statement and the gate went green. Worth writing
+down as a general move: an untestable early-out is often a guard written the wrong way round, not a case
+that needs a racing test. (This file rejected a racing test once already — a killer that lands four runs
+in six is coverage claimed and not held.)
+
+⚠️ **Two things the first write-up of that got wrong, and both are the §6 failure.** It said "the
+behaviour is identical", which holds only for the inversion in isolation: measured against the previous
+commit, `ChargeRecorded` threw *unconditionally* on a closed scope, and the round-4 take-back narrowed
+that. Narrowing it is the point — it stops the "charged but un-refundable" alarm firing on acts that
+settled fine — but the changelog described a refactor where there was a behaviour change. And "every line
+is exercised" is a claim about lines: the benign case is still untested, as a condition's false arm now
+rather than a dead statement. A gate going green is not the same as ground being covered, and saying so
+is what this section is for.
+
+### Sixth pass: what the two gates found in the fifth (2026-09-19)
+
+Both gates ran over `c240d56`. Nothing they found had cost a household money, and the list is long
+because a money commit earns a long list.
+
+- **The chat's turn-limit exit charged a turn that delivered nothing.** Every tool call coming back as
+  validation text ("No product matches X") reaches that exit with nothing written, nothing listed and
+  nowhere navigated, tells the household *"Stopped after several steps without finishing"*, and charged a
+  full chat turn for the sentence. It settles on what it carried out now. Found by the code gate noticing
+  the fifth pass had removed the *failure* exit's guard while leaving this one bare.
+- **Eight of eleven new tests passed vacuously.** `RefundedFor` is written only from inside the
+  settlement, so "nothing was given back" and "nothing was ever charged" were indistinguishable — delete
+  a service's `Begin` line and the test stayed green. Every case asserts `Charged` now. ⚠️ The second time
+  in this arc a new test asserted only the absence of something.
+- **The commit's largest behaviour change had no test at all.** `TurnWrites` moving from a flag read at
+  the exit to a settle at the write is what stops a cancelled circuit refunding committed pantry writes,
+  and nothing exercised it. Three chat cases do now.
+- **The `ChargeRecorded` contract doc said the opposite of the body** — "refused once the scope has
+  CLOSED … by then DisposeAsync has taken the settlement", which is exactly the case that is now *not*
+  refused — and the `<exception>` tag with it.
+- **`ReverseConsumptionAsync` validated *which* charge but not *how much* or *whether already given
+  back*.** Both mint credit and neither nets afterwards. The scope enforces once and the metering layer
+  bounds the amount, but both live in the caller and this is the layer that writes the money.
+- **The pantry chat was a sixth site leaking provider exception text to the screen**, missed when the
+  other five were converted the same day. It is the worst one to leak from: the dashboard chat box and
+  push-to-talk both render that string, and a chat turn is the surface a household uses most.
+- **A recipe import claiming `found: true` with no name was charged** — a self-contradicting reply
+  sharing a branch with the honest "no recipe here". It throws into the retry now, like every other
+  invalid shape, and refunds if the retry is no better.
+- **Four advisors, four spellings of "did the model say anything?"** — three testing the raw reply, one
+  testing it with trailing punctuation stripped, so a reply of `"."` refunded in one and was paid for in
+  the other three, under a doc paragraph saying all four drew the line in the same place. `ProviderReply`
+  is the one definition. ⚠️ The fifth pass *considered* extracting this and decided it was too small to
+  be worth it; one commit later it had diverged. The rule has no exemption for small facts.
+- **The new build rule could not see a scope handed to a helper** — the shape this very commit
+  introduces for the chat turn. A per-unit act whose scope escapes its method is the finding now, rather
+  than a gap the rule passes over in silence.
+
+**What it cost to find:** nothing shipped, again — the fourth pass in a row where that is true, and the
+fourth in a row that had a green four-suite run and a 100% mutation score over it when the gates started.
 
 ## 10. Sequencing
 

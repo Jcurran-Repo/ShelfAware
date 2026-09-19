@@ -148,9 +148,21 @@ public class AnthropicRecipeImporter : IRecipeImporter
         var root = doc.RootElement;
 
         var name = GetNullableString(root, "name");
-        // The model says so itself when there's nothing to extract — the anti-hallucination floor.
-        if (!root.GetProperty("found").GetBoolean() || string.IsNullOrWhiteSpace(name))
+        var found = root.GetProperty("found").GetBoolean();
+
+        // The model says so itself when there's nothing to extract — the anti-hallucination floor. An
+        // honest "there is no recipe in that photo" IS an answer and is paid for; see AiActionScope.Answered.
+        if (!found)
             return RecipeImportResult.Fail("No recipe found — try a clearer photo, or paste the recipe text.");
+
+        // ⚠️ "Found a recipe" and then no name for it is a reply we could not READ, not an answer, and the
+        // difference is money: the two used to share the branch above, so a self-contradicting reply
+        // returned quietly, settled the act and charged the household while the screen said "No recipe
+        // found". Thrown instead, it takes the §5 validate-then-retry path every other invalid shape
+        // takes — one more attempt with the fault named, and a refund if that one is no better. The
+        // message becomes the retry prompt, so it says what was wrong rather than that something was.
+        if (string.IsNullOrWhiteSpace(name))
+            throw new InvalidOperationException("\"found\" was true but \"name\" was null or blank.");
 
         var ingredients = new List<ImportedIngredient>();
         foreach (var item in root.GetProperty("ingredients").EnumerateArray())

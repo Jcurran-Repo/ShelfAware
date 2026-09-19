@@ -254,16 +254,21 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
     /// did not deliver. <paramref name="credits"/> is the positive amount coming back; non-positive records
     /// nothing.
     ///
-    /// <para>⚠️ Deliberately NOT idempotent, because nothing here could make it so: the ledger is
-    /// append-only with no key to net two rows against. The scope that owns the charge runs this at most
-    /// once — <see cref="Core.Billing.AiActionScope.DisposeAsync"/> takes the settlement callback with an
-    /// <c>Interlocked.Exchange</c>, exactly as <c>TryClaimCharge</c> takes the charge — and that is where
-    /// "once" is enforced.</para>
+    /// <para>⚠️ "Once per charge" is enforced in TWO places, on purpose. The scope that owns the charge
+    /// runs this at most once — <see cref="Core.Billing.AiActionScope.DisposeAsync"/> takes the settlement
+    /// callback with an <c>Interlocked.Exchange</c>, exactly as <c>TryClaimCharge</c> takes the charge —
+    /// and that is the mechanism. The check below is the backstop, and it exists because the ledger is
+    /// append-only with no way to net two rows afterwards: a second reversal is money minted and nothing
+    /// downstream can undo it. <c>ReversesEntryId</c> is the key that makes the backstop possible at all,
+    /// and it was added for the allowance attribution rather than for this — it earns its keep twice.</para>
     ///
     /// <para>The same commit-side distinction as <see cref="RecordConsumptionAsync"/>, for the same reason
     /// pointing the other way: a post-commit failure reported as a failure would invite a retry, and a
     /// second reversal would pay the household twice for one undelivered act.</para></summary>
-    /// <returns>true when a row was written; false when there was nothing to give back.</returns>
+    /// <returns>true when a row was written. false has two meanings and an operator needs both: there
+    /// was nothing to give back (a non-positive amount), or the give-back was REFUSED by one of the guards
+    /// below — a charge that isn't this household's, an amount larger than it drew, or one already
+    /// reversed. Every refusal logs at Error; "nothing to give back" is silent.</returns>
     public async Task<bool> ReverseConsumptionAsync(
         string householdId, long credits, string? reason, long reversesEntryId,
         CancellationToken cancellationToken = default)
@@ -274,17 +279,45 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
         {
             await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
 
-            // ⚠️ The id is checked before it is stored, because the unspent-allowance sum ACTS on it: an id
-            // naming some other household's row, or a row that isn't a consumption, would be compared
-            // against this household's latest allowance and could make an allowance look unspent that
-            // isn't — letting the period-end sweep reach purchased credit. One caller passes its own
-            // charge's id today; this is what stops the second caller getting it wrong silently.
-            if (!await db.CreditLedger.AnyAsync(e => e.Id == reversesEntryId
+            // ⚠️ The charge is checked before anything is written, because the unspent-allowance sum ACTS
+            // on this id: one naming some other household's row, or a row that isn't a consumption, would
+            // be compared against this household's latest allowance and could make an allowance look
+            // unspent that isn't — letting the period-end sweep reach purchased credit. One caller passes
+            // its own charge's id today; this is what stops the second caller getting it wrong silently.
+            //
+            // ⚠️ And there are three ways to get it wrong, not one. Naming the wrong row is the first;
+            // giving back MORE than the charge and giving it back TWICE both mint credit, and neither can
+            // be netted afterwards because the ledger is append-only with no idempotency key. The scope
+            // enforces "once" for the caller that exists (AiActionScope.DisposeAsync takes the settlement
+            // with an Interlocked.Exchange) and the metering layer bounds the amount — but both live in
+            // the caller, and this is the layer that writes the money.
+            var charge = await db.CreditLedger
+                .Where(e => e.Id == reversesEntryId
                     && e.HouseholdId == householdId
-                    && e.Kind == CreditEntryKind.Consumption, cancellationToken))
+                    && e.Kind == CreditEntryKind.Consumption)
+                .Select(e => (long?)e.AmountCredits)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (charge is not { } drawn)
             {
                 logger?.LogError("Refusing to reverse {Credits} credit(s) for household {HouseholdId}: "
                     + "entry {EntryId} is not a consumption of theirs.", credits, householdId, reversesEntryId);
+                return false;
+            }
+
+            // A consumption is stored negative, so the charge's size is its magnitude.
+            if (credits > -drawn)
+            {
+                logger?.LogError("Refusing to reverse {Credits} credit(s) for household {HouseholdId}: "
+                    + "entry {EntryId} only drew {Drawn}.", credits, householdId, reversesEntryId, -drawn);
+                return false;
+            }
+
+            if (await db.CreditLedger.AnyAsync(e => e.Kind == CreditEntryKind.Reversal
+                    && e.ReversesEntryId == reversesEntryId
+                    && e.HouseholdId == householdId, cancellationToken))
+            {
+                logger?.LogError("Refusing to reverse {Credits} credit(s) for household {HouseholdId}: "
+                    + "entry {EntryId} has already been given back.", credits, householdId, reversesEntryId);
                 return false;
             }
 

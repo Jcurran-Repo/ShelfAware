@@ -117,14 +117,21 @@ public sealed class AiActionScope : IAsyncDisposable
     /// reversal arrives as a delegate rather than a dependency — the same reasoning that makes the scope
     /// ambient rather than a collaborator threaded through ten service constructors.</para>
     ///
-    /// <para>⚠️ Refused once the scope has CLOSED, and loudly — by then <see cref="DisposeAsync"/> has taken
-    /// the settlement and gone, so a callback attached here would never run: the household would be charged
-    /// with the refund already unreachable. Nothing does this today; it is a guard because the shape that
-    /// could (a provider call outliving the scope that started it) is one this type's own remarks describe,
-    /// and it used to cost only a free call.</para></summary>
+    /// <para>⚠️ Refused, and loudly, when the scope has closed with this settlement STRANDED — nothing will
+    /// ever run it, so the household would be charged with the refund already out of reach. Nothing does
+    /// this today; it is a guard because the shape that could (a provider call outliving the scope that
+    /// started it) is one this type's own remarks describe, and it used to cost only a free call.</para>
+    ///
+    /// <para>⚠️ A closed scope is NOT by itself the refusal, and the difference is the whole point of the
+    /// take-back in the body. <see cref="DisposeAsync"/> can race in between this method's two steps and
+    /// carry the settlement off with it, in which case the act closed correctly and there is nothing to
+    /// report. Throwing on that too — which this did until 2026-09-19 — makes the operator's "charged but
+    /// un-refundable" alarm fire on acts that settled fine, and an alarm an operator cannot trust is worse
+    /// than none: they would comp the household a second time.</para></summary>
     /// <param name="credits">What landed. Nothing stores it — the settlement closes over its own copy —
     /// so this is here to put a number on the exception below, which is money stranded out of reach.</param>
-    /// <exception cref="InvalidOperationException">The scope has already been disposed.</exception>
+    /// <exception cref="InvalidOperationException">The scope closed before this settlement was installed,
+    /// so no one will ever run it.</exception>
     public void ChargeRecorded(long credits, Func<int, CancellationToken, Task> settle)
     {
         ArgumentNullException.ThrowIfNull(settle);
@@ -139,21 +146,20 @@ public sealed class AiActionScope : IAsyncDisposable
         if (Volatile.Read(ref _closed) == 0) return;
 
         // ⚠️ The scope closed, and there are two ways that happened — only one of them is a problem.
-        // Either DisposeAsync took this settlement on its way out and ran it, in which case the refund
-        // happened and there is nothing to report; or it closed before this was installed, in which case
-        // nothing will ever run it. Taking it back is what distinguishes them: a non-null means it is
-        // still here, so nobody took it. Throwing on both would make the operator's "charged but
-        // un-refundable" log fire on refunds that did happen, and a log an operator can't trust is worse
-        // than none — they would comp the household a second time.
+        // Either DisposeAsync took this settlement on its way out, in which case the act closed with the
+        // settlement in hand and whatever was owed has been paid; or it closed before this was installed,
+        // in which case nothing will ever run it. Taking it back is what distinguishes them: a non-null
+        // means it is still sitting here, so nobody took it.
         //
-        // ⚠️ Written as "throw on the harmful case", not "return early on the benign one", and the
-        // difference is testable coverage rather than taste. The benign case is only reachable when a
-        // concurrent DisposeAsync lands between the install above and the close-check that follows it — a
-        // window of two instructions that no deterministic test can open. An early `return` there is
-        // therefore a statement nothing executes, and the mutation gate rightly says so; a racing test is
-        // the shape this file already rejected once (see AiActionScopeTests on TryClaimCharge: a killer
-        // that lands four runs in six is coverage claimed and not held). Said this way round the benign
-        // case is the absence of a statement, and every line here is exercised.
+        // ⚠️ Written as "throw on the harmful case" rather than "return early on the benign one", and the
+        // difference is coverage rather than taste. The benign case needs a concurrent DisposeAsync to land
+        // between the install above and the close-check beside it — a two-instruction window no
+        // deterministic test can open, and a racing test is the shape this file rejected once already (see
+        // AiActionScopeTests on TryClaimCharge: a killer that lands four runs in six is coverage claimed
+        // and not held). An early `return` there would be a STATEMENT nothing executes, which the mutation
+        // gate rightly reports; said this way round the benign case is the absence of a statement. The case
+        // is still unreachable in a test — it is a condition's false arm now rather than a dead line, which
+        // is honest about where the untested ground is instead of failing the gate over it.
         var stranded = Interlocked.Exchange(ref _settle, null);
         if (stranded is not null)
             throw new InvalidOperationException(

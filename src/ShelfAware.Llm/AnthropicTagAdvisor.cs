@@ -40,12 +40,15 @@ public class AnthropicTagAdvisor : ITagAdvisor
             var options = new ChatOptions { ModelId = _options.ExtractionModel, MaxOutputTokens = 32 };
             var response = await _chat.GetResponseAsync(prompt, options, cancellationToken);
 
-            var reply = response.Text.Trim();
-            if (reply.Length == 0) return null;
-            // ⚠️ Settled BEFORE the sentinel, not after the parse. "NONE" is the model's considered
-            // answer to a question the household asked, and an answer is paid for; only a provider
-            // that said nothing at all is refunded. Everything below this line is us INTERPRETING
-            // a reply we were given.
+            var reply = ProviderReply.Normalize(response.Text);
+            if (!ProviderReply.IsAnAnswer(reply)) return null;
+            // ⚠️ Settled on the REPLY, before anything is made of it. "None of your tags mean this" is
+            // the model's considered answer to what the household asked, and an answer is paid for; only a
+            // provider that said nothing at all is refunded.
+            //
+            // There is no IsNothingFound branch here, unlike the three advisors that share this rule:
+            // "NONE" simply matches no existing tag, which is already what this returns. A sentinel test
+            // would be a second place deciding the same thing.
             action.Answered();
             return existing.FirstOrDefault(t => string.Equals(t, reply, StringComparison.OrdinalIgnoreCase));
         }

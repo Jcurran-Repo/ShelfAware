@@ -433,9 +433,12 @@ public sealed class MeteredChatClient(
                     CreditPricing.DescribeReversal(pricedAt, act.Action, delivered, act.Units), chargeId,
                     cancellationToken))
             {
-                // Unreachable while giveBack > 0 is checked above — but the alternative is a log line
-                // asserting a give-back the ledger never wrote, which is the one thing an operator chasing
-                // a household's missing credits would believe.
+                // ⚠️ Reachable, and it was not always: the ledger now refuses a reversal whose charge is
+                // not this household's, is smaller than the amount asked for, or has already been given
+                // back. Those refusals log their own reason at Error; this line says the give-back did not
+                // happen, which is what an operator chasing a household's missing credits needs to see
+                // beside them. Reporting a give-back the ledger never wrote is the one thing they would
+                // believe without checking.
                 logger.LogError("The reversal of {Credits} credit(s) for {Action} on household "
                     + "{HouseholdId} wrote no row.", giveBack, act.Action, householdId);
                 return;

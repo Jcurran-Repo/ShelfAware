@@ -115,7 +115,12 @@ public class AnthropicPantryChat : IPantryChat
                 // Both are already true by the time this line runs, and a Delivered call here would be a
                 // second place answering a question that is already answered — which is how the two
                 // cancellation exits below came to be wrong.
-                return ChatResult.Fail($"Sorry — I couldn't reach the assistant just now. ({ex.Message})");
+                // ⚠️ The exception text goes to the LOG above and NOT into this reply. An
+                // HttpRequestException's message can name an internal host, a proxy URL or a provider
+                // account detail, and this string is rendered verbatim in the chat box and in PushToTalk.
+                // The other five services at this boundary were converted on 2026-09-19 and this one was
+                // missed; ProviderErrorCopyTests now covers it too.
+                return ChatResult.Fail("Sorry — I couldn't reach the assistant just now. Please try again.");
             }
 
             var calls = response.Messages.SelectMany(m => m.Contents).OfType<FunctionCallContent>().ToList();
@@ -171,9 +176,17 @@ public class AnthropicPantryChat : IPantryChat
         }
 
         _logger.LogWarning("Pantry chat hit the {MaxTurns}-turn limit without a final reply ({ActionCount} action(s) applied).", MaxTurns, actions.Count);
-        // ⚠️ Delivered even though it ran out of turns: the actions it applied are real and the household is
-        // told what happened. A charge for work that landed is not a charge for nothing.
-        action.Delivered(1);
+        // ⚠️ Settled when something reached the household, and NOT otherwise. Running out of turns is not
+        // an answer; what makes this exit worth paying for is what it carries out with it — the actions it
+        // lists and the navigation it performs. A turn whose every tool call came back as validation text
+        // ("No product matches X") arrives here with neither, tells the household "Stopped after several
+        // steps without finishing", and must not be charged for saying so.
+        //
+        // ⚠️ `actions`, which the FAILURE exit above is forbidden to use, and the difference is real rather
+        // than an inconsistency between two exits. Read-only tools put their lines in this list too, and
+        // that exit discards the navigation and returns a failure, so its actions reached nobody. This exit
+        // returns Ok and carries nav out, so they did. Writes have already settled at the write.
+        if (actions.Count > 0 || nav.Url is not null) action.Answered();
         return ChatResult.Ok(
             actions.Count > 0 ? $"Applied: {string.Join(", ", actions)}." : "Stopped after several steps without finishing.",
             actions, nav.Url, nav.HandsOff, nav.Step);
@@ -194,12 +207,15 @@ public class AnthropicPantryChat : IPantryChat
     /// charged for work it never did — the failure exit discards the navigation as well, so the household
     /// got nothing at all. Two questions, two answers, and this one is not asked from the actions list.</para>
     ///
-    /// <para>⚠️ Settling AT THE WRITE, rather than on the way out, is the whole point. A turn has four ways out — a final reply, the turn limit, a provider failure, and a
-    /// cancelled circuit — and settling at each of them means the next exit anyone adds will be wrong. It
-    /// was wrong twice already: the cancellation exits refunded the whole turn while its pantry writes
-    /// stood, which a household can trigger at will by closing the tab. Marked at the WRITE, every exit is
-    /// right by construction and none of them has to remember. <c>Delivered</c> is last-write-wins and
-    /// clamped, and a chat turn is one unit, so marking repeatedly is a no-op.</para></summary>
+    /// <para>⚠️ Settling AT THE WRITE, rather than on the way out, is the whole point. A turn has four ways
+    /// out — a final reply, the turn limit, a provider failure and a cancelled circuit — and a write is
+    /// worth paying for at every one of them, so asking each exit to remember that is three chances to
+    /// forget. It was forgotten twice: the cancellation exits refunded the whole turn while its pantry
+    /// writes stood, which a household can trigger at will by closing the tab. Marked here, a turn that
+    /// wrote is paid for however it ends. The two exits that still settle for themselves are settling
+    /// something else — an answer given, or a turn limit that carried actions out — not this.
+    /// <c>Delivered</c> is last-write-wins and clamped, and a chat turn is one unit, so marking repeatedly
+    /// is a no-op.</para></summary>
     private sealed class TurnWrites(AiActionScope act)
     {
         /// <summary>This turn just persisted something the household can see. ⚠️ Called from every write,

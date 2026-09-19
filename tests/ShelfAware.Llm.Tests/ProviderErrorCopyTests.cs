@@ -164,6 +164,27 @@ public class ProviderErrorCopyTests
         AssertSafe(result.Error);
     }
 
+    // ---- Pantry chat -----------------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_failed_chat_turn_does_not_put_the_providers_words_on_the_screen()
+    {
+        // ⚠️ The sixth site, and it was missed when the other five were converted on 2026-09-19 — its
+        // failure reply interpolated ex.Message until a security review found it. It is the WORST of the
+        // six to leak from: the dashboard chat box and PushToTalk both render this string verbatim, and a
+        // chat turn is the surface a household uses most.
+        var chat = new AnthropicPantryChat(
+            new FakeChatClient(() => throw new HttpRequestException(Secret)),
+            Options.Create(new LlmOptions()),
+            new FakePantryStore(),
+            NullLogger<AnthropicPantryChat>.Instance);
+
+        var result = await chat.HandleAsync("what should I cook?");
+
+        Assert.False(result.Success);
+        AssertSafe(result.Reply);
+    }
+
     [Fact]
     public async Task A_failed_local_synthesis_does_not_put_the_sidecars_words_on_the_screen()
     {

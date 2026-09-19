@@ -287,24 +287,38 @@ public class AiActionScopeSiteTests
     /// <para>Held here rather than inside <see cref="AiActionScope"/> because the alternative is a runtime
     /// throw on the money path, which turns a billing mistake into a failed meal plan for the household
     /// that asked for one. A build that won't compile the mistake costs nobody anything.</para>
+    ///
+    /// <para>⚠️ It can only see the method that OPENED the scope, so it also refuses to let a per-unit
+    /// scope leave that method. Hand the scope to a helper and the helper can call <c>Answered()</c> where
+    /// no scan will find it — which is not hypothetical: <c>AnthropicPantryChat</c>'s <c>TurnWrites</c>
+    /// takes exactly that shape, correctly, for a one-unit act. A rule that silently stops guarding is
+    /// worse than no rule, so the escape is the finding rather than a gap.</para>
     /// </summary>
     [Fact]
     public void An_act_priced_by_the_unit_counts_what_it_delivered()
     {
         var wrong = new List<string>();
+        var escaped = new List<string>();
         var byTheUnit = 0;
 
         foreach (var (file, tree) in Trees())
             foreach (var call in BeginCalls(tree))
             {
-                // One unit is the default and needs no argument, so a second argument IS the per-unit price.
+                // One unit is the default and needs no argument, so a second argument is the per-unit
+                // count — unless it says 1, which is the default written out and settles like any one-unit
+                // act. Refusing Answered() there would be the rule crying about correct code.
                 if (call.ArgumentList.Arguments.Count < 2) continue;
+                if (call.ArgumentList.Arguments[1].Expression is LiteralExpressionSyntax { Token.ValueText: "1" })
+                    continue;
                 byTheUnit++;
                 var owner = EnclosingBody(call);
                 var scope = ScopeNameOf(call);
                 if (owner is null || scope is null) continue; // the rules above report an unbound scope
+                var where = $"{Path.GetFileName(file)}:{Line(call)} — {ActionOf(call)?.ToString() ?? "?"}";
                 if (SettleCallsOn(owner, scope).Contains(nameof(AiActionScope.Answered)))
-                    wrong.Add($"{Path.GetFileName(file)}:{Line(call)} — {ActionOf(call)?.ToString() ?? "?"}");
+                    wrong.Add($"{where} settles with Answered()");
+                else if (Escapes(owner, scope))
+                    escaped.Add($"{where} hands its scope to something else");
             }
 
         Assert.True(byTheUnit > 0,
@@ -316,7 +330,20 @@ public class AiActionScopeSiteTests
             + "was charged for however few actually arrived — so a plan that produced three meals out of "
             + "twelve keeps the credits for nine it never made. Count what landed with Delivered(n):"
             + Environment.NewLine + string.Join(Environment.NewLine, wrong));
+
+        Assert.True(escaped.Count == 0,
+            "A per-unit act passes its scope out of the method that opened it, so the rule above can no "
+            + "longer see how it settles and an Answered() in the helper would claim every unit the act "
+            + "was charged for. Settle a per-unit act in its own method:"
+            + Environment.NewLine + string.Join(Environment.NewLine, escaped));
     }
+
+    /// <summary>Whether the scope bound to <paramref name="scope"/> is handed to anything else in this
+    /// body — passed as an argument, or captured into an object. Settling it is a member ACCESS on the
+    /// name, which is why those don't count here.</summary>
+    private static bool Escapes(SyntaxNode owner, string scope) =>
+        owner.DescendantNodes().OfType<ArgumentSyntax>()
+            .Any(a => a.Expression is IdentifierNameSyntax id && id.Identifier.ValueText == scope);
 
     /// <summary>How this body settles the scope bound to <paramref name="scope"/> — one name per call,
     /// empty when it never settles at all.</summary>

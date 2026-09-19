@@ -468,4 +468,40 @@ public class CreditLedgerTests : IDisposable
 
         Assert.Equal(500, await _ledger.GetBalanceCreditsAsync(id));
     }
+
+    [Fact]
+    public async Task A_reversal_is_refused_when_it_gives_back_more_than_the_charge_drew()
+    {
+        // ⚠️ Money minted out of arithmetic, and the ledger is append-only with no key to net it against
+        // afterwards. The metering layer bounds the amount today — it prices what was kept from the same
+        // table the charge used — but that bound lives in the caller, and this is the layer that writes
+        // the money. The caller that gets this wrong will be the second one.
+        var id = await SeedHouseholdAsync(HouseholdTier.Aware);
+        await _ledger.GrantAsync(id, 100, "credit pack");
+        var charge = await _ledger.RecordConsumptionAsync(id, 10, "one chat turn");
+
+        Assert.False(await _ledger.ReverseConsumptionAsync(id, 11, "a credit more than it cost", charge!.Value));
+        Assert.Equal(90, await _ledger.GetBalanceCreditsAsync(id));
+
+        // The whole charge back is the most there is, and it is allowed.
+        Assert.True(await _ledger.ReverseConsumptionAsync(id, 10, "the act delivered nothing", charge.Value));
+        Assert.Equal(100, await _ledger.GetBalanceCreditsAsync(id));
+    }
+
+    [Fact]
+    public async Task A_charge_is_given_back_once_however_many_times_it_is_asked_for()
+    {
+        // ⚠️ The scope enforces "once" for the caller that exists — DisposeAsync takes the settlement with
+        // an Interlocked.Exchange — but that is a mechanism in the caller, and a second reversal is a
+        // household paid twice for one act with nothing downstream able to net them. ReversesEntryId was
+        // added for the allowance attribution; it is what makes this backstop possible at all.
+        var id = await SeedHouseholdAsync(HouseholdTier.Aware);
+        await _ledger.GrantAsync(id, 100, "credit pack");
+        var charge = await _ledger.RecordConsumptionAsync(id, 10, "one chat turn");
+
+        Assert.True(await _ledger.ReverseConsumptionAsync(id, 10, "refunded", charge!.Value));
+        Assert.False(await _ledger.ReverseConsumptionAsync(id, 10, "refunded again?", charge.Value));
+
+        Assert.Equal(100, await _ledger.GetBalanceCreditsAsync(id)); // not 110
+    }
 }

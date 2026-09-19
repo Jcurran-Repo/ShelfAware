@@ -357,7 +357,11 @@ about a blurry photo. What comes back is the act that produced nothing: the prov
 we could not read, a cancelled turn.
 
 The empty-reply line matters and is drawn deliberately: a model that returns `NONE` answered; a model that
-returned no text at all did not, and that act refunds.
+returned no text at all did not, and that act refunds. ⚠️ That line is `ProviderReply.IsAnAnswer` and
+nowhere else. The four advisors that ask the model a question in words were each allowed to spell it
+their own way for exactly one commit, and in that commit three tested the raw reply while the fourth
+tested it with trailing punctuation stripped — so a reply of `"."` refunded in one and was paid for in
+the other three, under this paragraph saying they agreed.
 
 ⚠️ **One definition, one call.** "Did this act deliver?" is `AiActionScope.Answered()` and nothing else.
 It was previously re-derived per service from the shape of the answer — `suggestions.Count > 0` in one,
@@ -368,7 +372,14 @@ any of it: no test in the LLM suite mentioned `AiActionScope` at all, so the who
 without a single test going red. `AiDeliveryTests` now holds each site's branch, and
 `AiActionScopeSiteTests` fails the build for an `Answered()` inside a **per-unit** act — a meal plan is
 charged by the meal and must count what it persisted, or a batch that made three meals out of twelve would
-keep the credits for nine that never arrived.
+keep the credits for nine that never arrived. It also refuses to let a per-unit scope leave the method
+that opened it, because a scope handed to a helper settles where no scan can see it.
+
+Three acts still settle with a bare `Delivered(1)`, on purpose: they are answering a different question.
+The meal-plan reroll settles on its write being **durable** (after the commit, never before), the chat's
+`TurnWrites` settles on a pantry **write landing** so that every exit is paid correctly without having to
+remember, and the chat's turn-limit exit settles on **what it carried out** — the actions it lists and the
+navigation it performs. Running out of turns having done none of those is not an answer and is refunded.
 
 ### 4.x A refund that lands after its month keeps rolling (accepted, 2026-09-19)
 
