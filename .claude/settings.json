@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(git push)",
+      "Bash(git push *)"
+    ],
+    "deny": [
+      "Bash(git push origin master*)",
+      "Bash(git push origin HEAD:master*)",
+      "Bash(git push origin *:master*)",
+      "Bash(git push --force*)",
+      "Bash(git push -f *)",
+      "Bash(git push --delete*)",
+      "Bash(git push --mirror*)"
+    ]
+  }
+}
