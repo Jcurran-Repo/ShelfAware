@@ -17,7 +17,7 @@ Two items are deliberately **not** in the arc, with reasons in §9. Read that be
 |---|---|---|---|---|
 | 1 | The docs reset ✅ | F5, D8 | M | none — no code |
 | 2 | Pin the toolchain, unbreak the parse ✅ | F2, D7 | S | low |
-| 3 | The presentation layer | F3, D2 | M | low |
+| 3 | The presentation layer ✅ | F3, D2 | M | low |
 | 4 | Errors stop leaking provider text | F4 | S | low |
 | 5 | The operational floor | F6, F7a, F7b, D6 | M | low |
 | 6 | Make the truth-claiming artifacts self-maintaining | F1, D9 | S | low |
@@ -140,8 +140,30 @@ own wording.
 
 **Why this is the D2 item and not just F3.** The general rule is that a page should not contain a function
 that another page could want. The four helpers are the proof; the layer is the fix. Phase 3 does not
-attempt to drain the pages of logic wholesale — see §9 on D1 — it establishes the place that logic goes,
+attempt to drain the pages of logic wholesale — see §8 on D1 — it establishes the place that logic goes,
 and moves the demonstrated duplicates into it.
+
+**As built.** `PredictionDisplay` (Core/Prediction) owns `ChipClass`, `Label`, `Urgency`, `Relative` and
+`Plural`. Two phrasings survived rather than one, because the pages genuinely wanted two: the dashboard's
+standalone card line ("Due in 3 days") and the grids' inline cell phrase ("in 3 days"), which sits under a
+heading that supplies the subject. Forcing one on both would have been a behaviour change dressed as a
+refactor. What they now share — and could previously drift on — is the lateness wording, factored into one
+private `Overdue(days)`: that is the arm that actually went wrong, shipping "1 days over" twice from two
+private copies.
+
+Call sites read `@PredictionDisplay.ChipClass(...)` rather than importing the type statically. The extra
+words are the point: `@ChipClass(...)` reads like a page-local helper, which is exactly the misreading that
+let four copies coexist.
+
+**Verified by what did not change.** The 601 bUnit page tests render all four of these pages and assert on
+their chips and urgency text; all of them still pass untouched, which is the evidence that the conversion
+is behaviour-preserving. New Core tests pin every arm, both phrasings, the out-of-enum fallback, and that
+the two forms word lateness identically. Diff-scoped Stryker on the new file: **100.00%**, 24 mutants, no
+survivors. Net −99 lines.
+
+One stale comment fixed in passing: `MakeabilityFormat`'s docstring cited "the same one-definition
+discipline the app applies to prediction-status chips" as precedent. That was false when written — the
+prediction chips were the four-copy case — and is true as of this phase.
 
 ---
 

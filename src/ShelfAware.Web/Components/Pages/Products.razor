@@ -194,7 +194,7 @@ else
                     </td>
                     <td><input type="checkbox" checked="@p.IsTracked" aria-label="Track @p.Name" @onchange="ev => SetTracked(p, (bool)ev.Value!)" /></td>
                     <td>@purchaseCounts.GetValueOrDefault(p.Id)</td>
-                    <td><span class="chip chip-@ChipClass(e.Status)">@StatusLabel(e.Status)</span></td>
+                    <td><span class="chip chip-@PredictionDisplay.ChipClass(e.Status)">@PredictionDisplay.Label(e.Status)</span></td>
                     <td class="nextbuy">
                         @* Never print NextBuyDate raw — a suppressed row would read "Stocked · 15 days
                            overdue", the same self-contradiction the grocery list shipped. CountNote is
@@ -206,7 +206,7 @@ else
                         else if (e.NextBuyDate is { } d)
                         {
                             @d.ToString("MMM d")
-                            <span class="muted"> (@Relative(e.DaysUntil!.Value))</span>
+                            <span class="muted"> (@PredictionDisplay.Relative(e.DaysUntil!.Value))</span>
                         }
                         else
                         {
@@ -228,7 +228,7 @@ else
                                     }
                                     else
                                     {
-                                        @(e.NextBuyDate is { } nb ? $"{nb:yyyy-MM-dd} ({Relative(e.DaysUntil!.Value)})" : "still learning")
+                                        @(e.NextBuyDate is { } nb ? $"{nb:yyyy-MM-dd} ({PredictionDisplay.Relative(e.DaysUntil!.Value)})" : "still learning")
                                     }
                                 </dd>
                                 <dt>Est. unit price</dt>
@@ -417,32 +417,6 @@ else
             p => p.Id,
             p => ShoppingEstimator.For(p, predictions[p.Id], today, prices.PriceFor(p.Id, predictions[p.Id].RecommendedSize)));
     }
-
-    // `_ when` guards, not bare relational patterns: Razor reads a leading `<` as markup (docs/environment.md).
-    private static string Relative(int days) => days switch
-    {
-        _ when days < 0 => $"{-days} day{P(-days)} overdue",
-        0 => "today",
-        _ => $"in {days} day{P(days)}"
-    };
-
-    private static string P(int n) => n == 1 ? "" : "s";
-
-    private static string ChipClass(PredictionStatus s) => s switch
-    {
-        PredictionStatus.Overdue => "overdue",
-        PredictionStatus.DueSoon => "duesoon",
-        PredictionStatus.Stocked => "stocked",
-        _ => "unknown"
-    };
-
-    private static string StatusLabel(PredictionStatus s) => s switch
-    {
-        PredictionStatus.Overdue => "Overdue",
-        PredictionStatus.DueSoon => "Due soon",
-        PredictionStatus.Stocked => "Stocked",
-        _ => "Still learning"
-    };
 
     private async Task AddProduct()
     {

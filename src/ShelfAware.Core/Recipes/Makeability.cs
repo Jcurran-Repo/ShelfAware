@@ -9,8 +9,10 @@ public enum Makeability { Missing, Ready, NeedsSwap }
 
 /// <summary>The one definition of how a <see cref="Makeability"/> renders as a status chip — its CSS class
 /// and its label — so the badge can never say "Ready to make" on the Recipes page and something else on the
-/// Cookbook. Both surfaces (and the tests) read this single source rather than each keeping a copy; the same
-/// one-definition discipline the app applies to prediction-status chips.</summary>
+/// Cookbook. Both surfaces (and the tests) read this single source rather than each keeping a copy.
+/// <see cref="Prediction.PredictionDisplay"/> is the same shape for replenishment status — and was the
+/// counter-example when this comment was written, since four pages held their own copy of it until
+/// 2026-09-19.</summary>
 public static class MakeabilityFormat
 {
     /// <summary>The status-chip CSS class: green (stocked) when Ready, amber (duesoon) when it needs a swap,
