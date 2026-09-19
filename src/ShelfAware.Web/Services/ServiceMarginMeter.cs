@@ -143,7 +143,11 @@ public sealed class ServiceMarginMeter(
             // row, it does not make the arithmetic exact: this is a box-wide daily total, so a reversal
             // whose charge never reached the table subtracts from OTHER households' legitimate charges on
             // the same row and the floor never fires. Reconciliation accuracy, never a household's money.
-            var touched = await db.ServiceMargin.Where(d => d.Day == chargedOn && d.Action == action)
+            // ⚠️ The same ONE row the charge accumulated on — see TheRowFor. Taking it back by the
+            // (Day, Action) predicate would subtract this refund from every duplicate row a race had left,
+            // giving back more than was ever charged there.
+            var id = await TheRowFor(db, chargedOn, action, ct);
+            var touched = id is null ? 0 : await db.ServiceMargin.Where(d => d.Id == id)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(d => d.Charges, d => d.Charges > charges ? d.Charges - charges : 0)
                     .SetProperty(d => d.CreditsCharged,
@@ -160,15 +164,41 @@ public sealed class ServiceMarginMeter(
         }
     }
 
-    private static Task<int> IncrementAsync(
+    private static async Task<int> IncrementAsync(
         AuthDbContext db, DateOnly day, ServiceAction? action, long costMicros, long billableCost, long credits, int charges, CancellationToken ct)
-        => db.ServiceMargin.Where(d => d.Day == day && d.Action == action)
+    {
+        var id = await TheRowFor(db, day, action, ct);
+        if (id is null) return 0;
+        return await db.ServiceMargin.Where(d => d.Id == id)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(d => d.Calls, d => d.Calls + 1)
                 .SetProperty(d => d.Charges, d => d.Charges + charges)
                 .SetProperty(d => d.CreditsCharged, d => d.CreditsCharged + credits)
                 .SetProperty(d => d.CostMicros, d => d.CostMicros + costMicros)
                 .SetProperty(d => d.BillableCostMicros, d => d.BillableCostMicros + billableCost), ct);
+    }
+
+    /// <summary>The ONE row a day's action accumulates on, by id — the single definition of "which row is
+    /// this call's", asked by both the increment and the reversal.
+    ///
+    /// <para>⚠️ It exists because <c>(Day, Action)</c> does NOT identify one row for an unlabelled call.
+    /// The unique index cannot enforce it there: SQLite counts NULLs as distinct, so two rows with
+    /// <c>Action IS NULL</c> on one day satisfy it, and a lost insert race leaves exactly that. Both writers
+    /// used to update BY THE PREDICATE, which updates EVERY matching row — so from the first race onward
+    /// each later unlabelled call added its numbers to both rows and reconciliation counted it twice, with
+    /// the error growing per call rather than per race. <see cref="ReadAsync"/>'s GroupBy makes duplicate
+    /// rows read as one line, which HIDES the duplication and does not stop the double count; the two are
+    /// different problems and only one of them was solved. Addressing the row by its own id is what makes
+    /// "one call, one increment" true no matter how many rows the race left behind.</para>
+    ///
+    /// <para>Lowest id wins, so every writer converges on the same row and the strays are simply never
+    /// touched again. Null when there is no row yet — the caller inserts one.</para></summary>
+    private static async Task<int?> TheRowFor(AuthDbContext db, DateOnly day, ServiceAction? action, CancellationToken ct)
+    {
+        var ids = await db.ServiceMargin.Where(d => d.Day == day && d.Action == action)
+            .OrderBy(d => d.Id).Select(d => d.Id).Take(1).ToListAsync(ct);
+        return ids.Count > 0 ? ids[0] : null;
+    }
 }
 
 /// <summary>One action's reconciliation over a window: what it was charged against what it cost.</summary>

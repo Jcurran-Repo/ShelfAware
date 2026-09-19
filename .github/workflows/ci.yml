@@ -113,7 +113,13 @@ jobs:
         with:
           ref: master
 
+      # ⚠️ continue-on-error, so the empty-snapshot guard below is REACHABLE. On a failing BUILD the
+      # snapshot step cannot run (--no-build has nothing to run), no artifact is uploaded, and a hard
+      # download failure ended this job before the guard that exists for exactly that case ever executed.
+      # The guard was unreachable on the one path it was written for, which is the same "dead code that
+      # reads as coverage" shape the razor scan hit. Found by the pre-merge gate, 2026-09-19.
       - uses: actions/download-artifact@v7
+        continue-on-error: true
         with:
           name: test-status
           path: artifacts
@@ -123,6 +129,13 @@ jobs:
           set -euo pipefail
           target=src/ShelfAware.Web/wwwroot/test-status.json
 
+          # No artifact at all — the build failed before the generator could run. Same verdict as the
+          # empty snapshot below, reached one step earlier.
+          if [ ! -f artifacts/test-status.json ]; then
+            echo "::warning::No test-status artifact (the build probably failed) — nothing to commit."
+            exit 0
+          fi
+
           # ⚠️ A snapshot that measured nothing is not a measurement. This job runs even when build-test
           # failed, which is right for a FAILING TEST (the card should say "3 failing" — that is the news)
           # and wrong for a failing BUILD, where no .trx exists, the generator honestly reports zero
@@ -131,6 +144,26 @@ jobs:
           if [ "$(jq '.Projects | length' artifacts/test-status.json)" -eq 0 ]; then
             echo "::warning::The snapshot has no test projects (the build probably failed) — not committing it."
             exit 0
+          fi
+
+          # ⚠️ This workflow does not run Stryker, so it never MEASURES a mutation score — and a
+          # snapshot that omits one is not neutral: /admin reads a missing score as "no tile", so the first
+          # push to master would have taken the Core mutation card away for good, replacing a real number
+          # with silence. Saying "we don't know" is a claim this run is no more entitled to make than the
+          # number itself. So carry forward whatever the last run that DID measure it wrote, and leave
+          # updating it to mutation.yml, which is the thing that measures it (§6: an artifact's claim comes
+          # from the thing it claims about). Found by the pre-merge gate, 2026-09-19.
+          # jq -r on BOTH sides, deliberately: without it jq prints the string WITH its quotes, the
+          # comparison against a bare word is never true, and the carry-forward silently never happens.
+          # That was the first version of this block, and rehearsing it is the only reason it isn't still
+          # here — it read correctly and did nothing, which is the failure mode this repo keeps meeting.
+          if [ "$(jq -r '.MutationScore // "absent"' artifacts/test-status.json)" = "absent" ] && [ -f "$target" ]; then
+            prior=$(jq -r '.MutationScore // "absent"' "$target")
+            if [ "$prior" != "absent" ]; then
+              jq --argjson m "$prior" '.MutationScore = $m' artifacts/test-status.json > artifacts/with-mutation.json
+              mv artifacts/with-mutation.json artifacts/test-status.json
+              echo "Carried the last measured mutation score ($prior) forward; this run did not measure one."
+            fi
           fi
 
           cp artifacts/test-status.json "$target"

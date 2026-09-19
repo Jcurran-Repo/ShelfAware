@@ -68,6 +68,18 @@ public static class CreditDenominationMigration
             // ROUND(x) in SQLite rounds half away from zero — a balance somebody already holds should
             // convert to the NEAREST whole credit, not be floored down. Signed throughout, so a consumption
             // or an expiry converts to a negative credit count exactly as it should.
+            // ⚠️ PER ROW, and a sum of rounded rows is NOT the rounded sum — accepted deliberately
+            // (Jordan, 2026-09-19), and stated here because the paragraph above reads as though rounding to
+            // nearest settles the question and it does not. Every movement under half a credit converts to
+            // ZERO, and pre-credit charges were cost-denominated, so most historical SPEND lands under that
+            // line while a grant at a round dollar figure converts exactly: the residual is one-directional
+            // and in the household's favour, not a random walk. Held because the exposure is bounded to the
+            // databases that already exist — a fresh box has both columns and returns above, so this can
+            // only ever run against those — and both are free-use today, where a consumption row needs
+            // managed billing AND configured payments AND a non-unlimited tier to have been written at all.
+            // LegacyAmountMicros is kept, so a household's true balance stays recomputable if that is ever
+            // wrong: the receipt is what makes accepting this reversible. Getting the balance exact would
+            // mean one adjustment entry per household for the residual.
             // ⚠️ This SQL is the ONE statement of the retail→credit rule. There used to be a C# twin
             // (CreditPricing.CreditsFromRetailMicros) that nothing but tests called, which is two definitions
             // of one rule with a test standing between them; the rounding table is now asserted through this

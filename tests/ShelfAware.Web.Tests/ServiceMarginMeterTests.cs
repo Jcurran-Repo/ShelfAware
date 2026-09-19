@@ -252,4 +252,57 @@ public class ServiceMarginMeterTests : IDisposable
         Assert.Equal(2, line.CreditsCharged);   // today's row is untouched
         Assert.Equal(1, line.Charges);
     }
+
+    // ------------------------------------------------- the unlabelled row a race can duplicate
+
+    /// <summary>Put the state a lost insert race leaves behind on the unlabelled path: two rows for one
+    /// day with Action NULL, which the (Day, Action) unique index permits because SQLite counts NULLs as
+    /// distinct. Returns the ids, lowest first.</summary>
+    private async Task<(int Kept, int Stray)> TwoUnlabelledRowsForTodayAsync()
+    {
+        await using var db = _authDb.CreateDbContext();
+        var first = new ServiceMarginDay { Day = Today, Action = null, Calls = 1, CostMicros = 100 };
+        var second = new ServiceMarginDay { Day = Today, Action = null, Calls = 1, CostMicros = 100 };
+        db.ServiceMargin.AddRange(first, second);
+        await db.SaveChangesAsync(); // the index does NOT refuse this — that is the whole problem
+        return first.Id < second.Id ? (first.Id, second.Id) : (second.Id, first.Id);
+    }
+
+    [Fact]
+    public async Task An_unlabelled_call_increments_ONE_row_even_when_a_race_left_two()
+    {
+        var (kept, stray) = await TwoUnlabelledRowsForTodayAsync();
+
+        await _meter.RecordAsync(action: null, Today, costMicros: 500, creditsCharged: 1, billable: true);
+
+        await using var db = _authDb.CreateDbContext();
+        var rows = await db.ServiceMargin.AsNoTracking().OrderBy(d => d.Id).ToListAsync();
+        // ⚠️ The count the operator reads is the SUM, so "did it double-count" is a question about the
+        // total, not about either row. Updating by the (Day, Action) predicate hit both rows and made this
+        // 4 calls / 1200 micros for one 500-micro call — and it compounds, because every later call does
+        // it again. ReadAsync's GroupBy would have folded these two rows into one honest-looking line.
+        var line = Assert.Single(await _meter.ReadAsync(days: 1));
+        Assert.Equal(3, line.Calls);        // the two seeded + exactly one more
+        Assert.Equal(700, line.CostMicros); // 100 + 100 + 500
+        Assert.Equal(1, line.Charges);
+        // And it is the LOWEST id that accumulates, so every writer converges on the same row rather than
+        // each picking its own and drifting apart.
+        Assert.Equal(2, rows.Single(r => r.Id == kept).Calls);
+        Assert.Equal(1, rows.Single(r => r.Id == stray).Calls);
+    }
+
+    [Fact]
+    public async Task A_reversal_comes_off_ONE_row_even_when_a_race_left_two()
+    {
+        await TwoUnlabelledRowsForTodayAsync();
+        await _meter.RecordAsync(action: null, Today, costMicros: 500, creditsCharged: 4, billable: true);
+
+        await _meter.RecordReversalAsync(action: null, Today, creditsGivenBack: 3, wholeCharge: false);
+
+        // Taking it back by the predicate would have subtracted 3 credits from every duplicate row — giving
+        // back more than the action was ever charged on this day.
+        var line = Assert.Single(await _meter.ReadAsync(days: 1));
+        Assert.Equal(1, line.CreditsCharged); // 4 charged, 3 given back, once
+        Assert.Equal(1, line.Charges);        // not a whole-charge reversal, so the charge still counts
+    }
 }

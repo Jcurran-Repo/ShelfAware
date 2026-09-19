@@ -71,13 +71,28 @@ public class ProviderReplyTests
     [InlineData("\uFE0F")]              // orphaned variation selector (Mn) — the reachable truncation case
     [InlineData("\u20E3")]              // orphaned enclosing keycap (Me)
     [InlineData("\u0903")]              // spacing combining mark (Mc)
-    // Ill-formed UTF-16. EnumerateRunes substitutes U+FFFD, whose own category is OtherSymbol — so the
-    // deny-list version classified mojibake as content and charged for it.
-    [InlineData("\uD83D")]              // lone high surrogate — a \U0001F44D cut mid-pair by a truncated stream
-    [InlineData("\uFFFD\uFFFD\uFFFD")]  // a decode failure
     [InlineData("\uE000")]              // private use (Co)
     public void A_reply_with_nothing_readable_in_it_is_not_an_answer(string reply) =>
         Assert.False(ProviderReply.IsAnAnswer(reply));
+
+    // Ill-formed UTF-16. EnumerateRunes substitutes U+FFFD, whose own category is OtherSymbol — so the
+    // deny-list version classified mojibake as content and charged for it.
+    //
+    // ⚠️ These two are FACTS, not [InlineData] rows, and that is not a style choice. xUnit derives a
+    // theory row's id from its arguments RENDERED AS TEXT, and a lone surrogate renders as U+FFFD — so
+    // these two rows produced the same id, xUnit dropped one as a duplicate, and the summary still said
+    // "Skipped: 0". One of the two cases this whole allow-list rests on was silently not running while
+    // the suite reported green. A green a control has not earned is worse than a gap that is written
+    // down, because the next person stops looking. Found by the pre-merge gate, 2026-09-19.
+    [Fact]
+    public void A_lone_surrogate_is_not_an_answer() =>
+        // A \U0001F44D cut mid-pair by a truncated stream.
+        Assert.False(ProviderReply.IsAnAnswer("\uD83D"));
+
+    [Fact]
+    public void A_reply_that_is_only_replacement_characters_is_not_an_answer() =>
+        // A decode failure — distinct from the case above, which is what the shared id was hiding.
+        Assert.False(ProviderReply.IsAnAnswer("\uFFFD\uFFFD\uFFFD"));
 
     [Fact]
     public void A_mark_is_not_an_answer_alone_but_costs_nothing_on_the_letter_it_belongs_to() =>

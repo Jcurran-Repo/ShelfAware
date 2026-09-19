@@ -7,6 +7,15 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
 
 ## Open
 
+- **The mutation score on `/admin` is carried forward, not re-measured.** `ci.yml` does not run Stryker,
+  so its snapshot never measures a score; it now keeps whatever the last measuring run wrote rather than
+  blanking the tile (which is what it did before 2026-09-19, and would have removed the card on the first
+  push to master). The consequence is that the number can sit unchanged indefinitely with nothing saying
+  how old it is — a milder version of exactly what §6 is about. The fix is for `mutation.yml`, the thing
+  that measures it, to publish it: that needs `contents: write` and a commit job of its own, which is more
+  new untested workflow than a gate fix should carry, so it is written down instead. **Revisit when the
+  weekly run next changes the score**, since that is when the staleness would first bite.
+
 - **The credit gate checks the balance but does not reserve it.** `EnsureManagedCallAllowedAsync` reads
   the balance before the provider call; `RecordCreditConsumptionAsync` writes the draw after it. So several
   acts started at once — two tabs, the roaming voice agent, a fast clicker — can all pass the same check
