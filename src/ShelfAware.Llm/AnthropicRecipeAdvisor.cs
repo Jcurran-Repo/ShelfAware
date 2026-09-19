@@ -153,11 +153,12 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
         // "including this can't be adapted to what you have", which is a different and honest answer the
         // model never actually gave.
         //
-        // ⚠️ One half of this is NOT fixed here and is in docs/backlog.md: RecipeAdapter also rejects
-        // an adaptation that ignored the chosen swap, with the same retry invitation, and that one stays
-        // charged. This method cannot see that check, and moving the scope out to RecipeAdapter so the
-        // one place that knows whether the act delivered is the one place that settles it is a design
-        // change rather than a fix — it is Jordan's call, per CLAUDE.md's co-creation rule.
+        // ⚠️ The neighbouring case — an adaptation that came back fine but IGNORED the swap the household
+        // picked — is not settled here, and deliberately so: this method cannot see which swap was chosen.
+        // It is settled where that fact lives, in RecipeAdapter, which now LABELS the variant and keeps the
+        // charge rather than rejecting it and inviting a paid retry (asking is what is paid for, §4.w — see
+        // AdaptResult.SwapIgnored). That was the open "Jordan's call" this comment used to flag; it was
+        // decided and implemented, so there is nothing left owing here.
         if (!adapted.Landed()) return adapted;
         action.Answered();
         return adapted;
