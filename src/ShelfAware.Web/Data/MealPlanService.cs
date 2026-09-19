@@ -73,7 +73,7 @@ public sealed class MealPlanService(
         // ⚠️ The charging boundary is HERE, around the whole plan, not inside the generator around a batch.
         // The household asked for a plan; that a 31-day horizon takes eighteen provider calls is our
         // arrangement, not theirs. With the scope in the generator a 124-slot plan was charged eighteen
-        // times for a thing the price list calls two credits (docs/remediation-plan.md §8).
+        // times for a thing the price list calls two credits (docs/remediation-plan.md §9).
         using var action = AiActionScope.Begin(ServiceAction.MealPlan);
         var setup = await LoadSettingsAsync(ct);
         var slots = SlotsFor(setup); // always ≥ 1 — Days clamps to [1,31] and Slots defaults to dinner

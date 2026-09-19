@@ -171,20 +171,44 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
     /// <summary>Append a CONSUMPTION entry (stored negative) — a charged action drawing the balance down.
     /// <paramref name="credits"/> is the positive price; a non-positive price (a FREE action per the price
     /// list, or a cached call that did no work) records nothing, which is what keeps the ledger a record of
-    /// money rather than a log of everything that happened.</summary>
-    public async Task RecordConsumptionAsync(
+    /// money rather than a log of everything that happened.
+    ///
+    /// <para>⚠️ It throws ONLY when the row provably did not land. The caller
+    /// (<see cref="Services.MeteredChatClient"/>) hands the action's one charge back on a throw so a later
+    /// round can pay instead, and a throw raised AFTER the INSERT committed — a connection reset on the
+    /// context's dispose, say — would make that retry a SECOND ledger line for one act. The ledger is
+    /// append-only with no idempotency key, so nothing would net them. This method is the only place that
+    /// knows which side of the commit a failure came from, so it is where the distinction belongs.</para>
+    /// </summary>
+    /// <returns>true when a row was written; false when the price was not chargeable.</returns>
+    public async Task<bool> RecordConsumptionAsync(
         string householdId, long credits, string? reason, CancellationToken cancellationToken = default)
     {
-        if (credits <= 0) return;
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        db.CreditLedger.Add(new CreditLedgerEntry
+        if (credits <= 0) return false;
+        var committed = false;
+        try
         {
-            HouseholdId = householdId,
-            Kind = CreditEntryKind.Consumption,
-            AmountCredits = -credits,
-            Reason = reason,
-        });
-        await db.SaveChangesAsync(cancellationToken);
+            await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+            db.CreditLedger.Add(new CreditLedgerEntry
+            {
+                HouseholdId = householdId,
+                Kind = CreditEntryKind.Consumption,
+                AmountCredits = -credits,
+                Reason = reason,
+            });
+            await db.SaveChangesAsync(cancellationToken);
+            committed = true;
+        }
+        catch (Exception ex) when (committed)
+        {
+            // The money is recorded; what failed is the tidying after it (dispose, a connection reset).
+            // Swallowed DELIBERATELY and not silently: reporting it as a failure would tell the caller to
+            // retry the charge, which is the one outcome worse than the exception — the household would pay
+            // twice for one action. Logged, because a connection that dies on dispose is worth knowing about.
+            logger?.LogWarning(ex, "The consumption row for household {HouseholdId} was written, but the "
+                + "context failed afterwards; reporting it as charged so the action is not billed twice.", householdId);
+        }
+        return committed;
     }
 
     /// <summary>Append a GRANT entry (positive) — the welcome grant on a standalone context, or an admin

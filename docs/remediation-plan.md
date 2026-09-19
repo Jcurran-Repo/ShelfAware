@@ -7,7 +7,7 @@ The audit produced two lists — seven findings and nine "what I'd do differentl
 heavily: five of the nine retrospective items are the *general form* of a specific finding. So the real
 arc is **seven phases, not sixteen**, each its own branch and its own `/pre-push` gate.
 
-Two items are deliberately **not** in the arc, with reasons in §9. Read that before asking where they went.
+Two items are deliberately **not** in the arc, with reasons in §8. Read that before asking where they went.
 
 ---
 
@@ -22,9 +22,9 @@ Two items are deliberately **not** in the arc, with reasons in §9. Read that be
 | 5 | The operational floor ✅ | F6, F7a, F7b, D6 | M | low |
 | 6 | Make the truth-claiming artifacts self-maintaining ✅ | F1, D9 | S | low |
 | 7 | The Shelf Aware credit ✅ | D5 | L | **high — money** |
-| — | Logic out of `.razor` | D1 | XL | see §9 |
-| — | EF Migrations | D3 | L | see §9 |
-| — | One database | D4 | XL | **rejected — see §9** |
+| — | Logic out of `.razor` | D1 | XL | see §8 |
+| — | EF Migrations | D3 | L | see §8 |
+| — | One database | D4 | XL | **rejected — see §8** |
 
 Phases 1–6 are independent and can land in any order. Phase 7 depends on nothing but deserves to go last
 because it is the only one that touches money, and because it is *cheapest to do before the first paying
@@ -33,7 +33,7 @@ customer* — see §7.
 **All seven landed 2026-09-19** (`129695a`, `2144629`, `48a79ac`, `d5f7a8e`, `65b4a6b`+`ce4f280`, `62ecbb5`,
 `e1b9daf`). Each phase's section carries an "As built" note recording what the code does that the design
 above does not say. The two remaining items — draining logic out of `.razor` (D1) and EF Migrations (D3) —
-are deliberately not phases; §9 says why.
+are deliberately not phases; §8 says why.
 
 ---
 
@@ -508,7 +508,7 @@ be recorded as one, not smuggled in as rounding.
 
 **Still open:**
 1. **The two placeholders.** TTS-per-read and realtime-per-minute cannot be priced honestly until EL
-   invoices are measured against real usage — §8's standing open item. They ship as config with a comment
+   invoices are measured against real usage — §9's standing open item. They ship as config with a comment
    saying they are estimates, and get corrected from evidence.
 2. **Naming.** "Credits" is the safe default. If they get a Shelf Aware name, the abstraction is more
    obviously deliberate — but it also has to survive being said out loud.
@@ -636,7 +636,7 @@ price for the three properties above. **Keep two databases.**
 
 ---
 
-## 8. What the review gates found (2026-09-19)
+## 9. What the review gates found (2026-09-19)
 
 Phase 7 went through both gates — a code review and a security review, on different models, reading
 `dd80ec4..e1b9daf` by SHA. Neither found a tenancy break, an injection, or a fault in the one-shot ledger
@@ -683,12 +683,54 @@ Two subtractions and one admission came out of this round, and they are the hone
   neither would announce itself if it did. `AiActionScopeSiteTests` scans for the first; the second is only
   written down.
 
+### The fix pass got its own gate, and that was the point
+
+Both gates ran again over the fix commit, because the repo's own history says a fix round is where the next
+round of defects arrives. They found five more, and **every one was in the fixes rather than in the original
+code** — which is the argument for reviewing a fix pass at all.
+
+- ⚠️ **The headline fix was guarded by a comment, not a test.** The 18× defect was *a scope opened inside
+  the generator*; re-adding that line brings it straight back, and nothing failed. `MealPlanServiceTests`
+  drives a FAKE generator, so a scope opened in the real one is structurally invisible to it, and the
+  price-list scan built a `HashSet` and threw away which file each site came from — a second site for an
+  action already in the set changes no set. `AiActionScopeSiteTests.Each_action_has_exactly_one_place_its_charge_begins`
+  now counts boundary files per action against a written-down map. Verified by re-adding the line: it fails.
+- ⚠️ **The scanner was a regex over lines, and both of its rules had holes.** It skipped every `.razor` file
+  — the 18,500 lines §8 says still hold logic — so a charge begun in an `@code` block was invisible to both
+  rules. Its async check walked backwards looking for a line that "looked like" a signature, which missed an
+  expression-bodied member (the walk sails past the whole previous method body and reads THAT signature) and
+  flagged correct code (any guard clause containing a parenthesis). It now parses with Roslyn and lifts
+  `@code` blocks out of `.razor`.
+- **`ReleaseCharge` could double-charge.** The release fired on any exception, including one raised after
+  the INSERT committed — a connection dying on dispose — and the retry would write a second ledger line for
+  one act, with no idempotency key to net them. `CreditLedger.RecordConsumptionAsync` now absorbs a
+  post-commit failure and reports the row as written; it throws only when nothing landed.
+- **A failed money write was recorded as NOT billable**, which drops its cost out of cost-per-charge and
+  flatters the margin on exactly the calls where money went wrong. The throw can only come from past every
+  billable gate, so it is `Free` (billable, drew nothing) now.
+- **The pack check refused the whole app to boot on a box that sells nothing.** `BillingOptions`' own doc
+  promises rates are retunable in appsettings; an unconditional pack check made that false everywhere, and
+  the family box has no Dashboard, no pantry and no receipt upload if it trips. The anchor rules stay
+  absolute — they guard the irreversible write — and the pack rule is now conditional on payments being
+  configured. The rules moved out of `Program.cs` lambdas into `BillingOptionsValidation`, which is tested.
+- **The migration's guard was narrower than its own comment.** It tested the two inputs; the harm is the
+  clamped product. `CostDollarsPerCredit = 0.0000001` is positive, passes every boot check, and still prices
+  a credit at one micro. Both the boot rule and the migration now ask about the computed price.
+
 ⚠️ **Still open, and Jordan's call:** text-to-speech is live, costs real ElevenLabs money, and is neither
 metered nor gated — a household at zero balance can still have recipes read aloud. Its published price is
 withdrawn (above), which removes the false statement but not the gap. Wiring it needs a real invoice to
 price against; see `docs/backlog.md`.
 
-## 9. Sequencing
+⚠️ **Also Jordan's call, and new:** a meal plan is now charged ONCE, which is right — but its cost is the
+household's to choose. A 31-day, four-meals-a-day horizon is 124 slots, 18 provider calls, on the order of
+$0.20–$0.35, for a flat 2 credits ($0.02 of intended cost). The old per-batch charge was wrong; a flat price
+on an act whose call count the customer sets is wrong the other way. Options: price the plan per week
+planned and say so on the list ("2 credits per week"), band it by horizon, or check the balance covers the
+whole plan before starting. Not urgent — no deployed box has a `Payments` section, so nothing is charged
+today — but it wants deciding before the first paying customer.
+
+## 10. Sequencing
 
 ```
 1. docs reset          ──┐

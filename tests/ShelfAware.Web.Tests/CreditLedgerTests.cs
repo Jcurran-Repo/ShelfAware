@@ -17,6 +17,48 @@ public class CreditLedgerTests : IDisposable
     public void Dispose() => _authDb.Dispose();
 
     [Fact]
+    public async Task A_consumption_that_landed_reports_landed_even_when_the_tidying_up_fails()
+    {
+        // ⚠️ The caller hands the action's ONE charge back when this throws, so a later round can pay
+        // instead. That is right when nothing was written and catastrophic when something was: the retry
+        // becomes a SECOND ledger line for one act, and the ledger is append-only with no idempotency key,
+        // so nothing nets them. A connection that dies on dispose, AFTER the INSERT committed, is exactly
+        // that shape — and only this method can tell which side of the commit a failure came from.
+        var ledger = new CreditLedger(
+            new DisposeThrowsAuthDbFactory(_authDb),
+            Microsoft.Extensions.Options.Options.Create(new BillingOptions()));
+
+        Assert.True(await ledger.RecordConsumptionAsync("hh-a", 2, "chat"));   // reported as charged
+        Assert.Equal(-2, await _ledger.GetBalanceCreditsAsync("hh-a"));        // and it really is
+    }
+
+    /// <summary>An auth.db factory whose contexts throw on DISPOSE — after any write they were asked to do
+    /// has already committed.</summary>
+    private sealed class DisposeThrowsAuthDbFactory(IDbContextFactory<AuthDbContext> inner)
+        : IDbContextFactory<AuthDbContext>
+    {
+        public AuthDbContext CreateDbContext() => new ThrowsOnDispose(inner.CreateDbContext());
+        public Task<AuthDbContext> CreateDbContextAsync(CancellationToken ct = default) =>
+            Task.FromResult<AuthDbContext>(new ThrowsOnDispose(inner.CreateDbContext()));
+    }
+
+    private sealed class ThrowsOnDispose : AuthDbContext
+    {
+        public ThrowsOnDispose(AuthDbContext real) : base(Options(real)) { }
+
+        private static DbContextOptions<AuthDbContext> Options(AuthDbContext real)
+        {
+            var options = new DbContextOptionsBuilder<AuthDbContext>()
+                .UseSqlite(real.Database.GetDbConnection()).Options;
+            real.Dispose();
+            return options;
+        }
+
+        public override ValueTask DisposeAsync() =>
+            throw new InvalidOperationException("the connection died while being returned to the pool");
+    }
+
+    [Fact]
     public async Task An_empty_ledger_reads_zero()
     {
         Assert.Equal(0, await _ledger.GetBalanceCreditsAsync("hh-a"));

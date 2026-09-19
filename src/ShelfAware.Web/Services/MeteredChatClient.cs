@@ -231,6 +231,11 @@ public sealed class MeteredChatClient(
             return;
         }
 
+        // ⚠️ The three writes below each swallow EVERYTHING, cancellation included, which is the opposite of
+        // the house rule and deliberate here. This whole tail runs from a `finally` after the household
+        // already has its answer, and every call passes CancellationToken.None — there is no cancellation to
+        // honour, and an exception escaping a `finally` would replace a delivered answer with a crash. The
+        // rule is "let cancellation propagate so work can stop"; there is no work left to stop.
         try
         {
             await meter.RecordLlmUsageAsync(inputTokens, outputTokens, costMicros, CancellationToken.None);
@@ -242,8 +247,13 @@ public sealed class MeteredChatClient(
         {
             consumption = await RecordCreditConsumptionAsync(costMicros, model, CancellationToken.None);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex)
         {
+            // ⚠️ Billable, drew nothing — NOT `None`. The throw can only come from past every "is this
+            // household on the hook?" gate, so the call WAS billable and its cost is part of what the
+            // action's charge has to cover. Recording it as unbillable would quietly leave it out of
+            // /admin's cost-per-charge and flatter the margin on exactly the calls where money went wrong.
+            consumption = CreditConsumption.Free;
             logger.LogError(ex, "Recording credit consumption failed; this call didn't draw the balance.");
         }
 
@@ -257,7 +267,7 @@ public sealed class MeteredChatClient(
             await margin.RecordAsync(
                 AiActionScope.Current?.Action, costMicros, consumption.Credits, consumption.Billable, CancellationToken.None);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex)
         {
             logger.LogError(ex, "Recording the service-margin row failed; this call is missing from reconciliation.");
         }
@@ -323,6 +333,10 @@ public sealed class MeteredChatClient(
             // keeps two parallel rounds from both charging), so a write that fails having spent the claim
             // would make every REMAINING round of the action free too — one failed row losing the whole
             // action's charge. Releasing it lets the next round of the same action pay instead.
+            // Safe to do unconditionally ONLY because RecordConsumptionAsync throws exclusively when the row
+            // provably did not land; a failure after the INSERT committed is absorbed there and returns
+            // normally. Releasing on a landed write would bill one action twice, which is the one outcome
+            // worse than not billing it at all — see that method's remarks.
             claimed?.ReleaseCharge();
             throw;
         }

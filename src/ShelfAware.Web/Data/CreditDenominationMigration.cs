@@ -47,17 +47,21 @@ public static class CreditDenominationMigration
 
             // ⚠️ Refuse rather than convert at a nonsense rate. RetailMicrosPerCredit CLAMPS to 1 so that
             // ordinary arithmetic stays defined, which is right everywhere except here: this runs ONCE and
-            // cannot be undone, so at a zero anchor it would divide by 1 micro and turn a $1.65 welcome
-            // grant into 1,650,000 credits, permanently. Program.cs validates the anchor at boot so this
-            // should be unreachable — but "unreachable" is a claim about today's startup code, and the cost
-            // of being wrong about it is a ledger nobody can put back.
-            if (billing.CostDollarsPerCredit <= 0 || billing.CreditMarkup <= 0)
-                throw new InvalidOperationException(
-                    "Refusing to re-denominate the credit ledger: Billing:CostDollarsPerCredit and " +
-                    "Billing:CreditMarkup must both be greater than zero. The conversion is one-shot and " +
-                    "irreversible, so it will not run at a rate that cannot be right.");
-
+            // cannot be undone, so at that clamp it divides by one micro and turns a $1.65 welcome grant
+            // into 1,650,000 credits, permanently. Program.cs validates the anchor at boot so this should be
+            // unreachable — but "unreachable" is a claim about today's startup code, and the cost of being
+            // wrong about it is a ledger nobody can put back.
+            // ⚠️ The test is the COMPUTED divisor, not the two inputs. An earlier version checked that both
+            // the anchor and the markup were positive, which is a narrower statement than the comment above
+            // it: an anchor of 0.0000001 is positive, passes every boot check, and still clamps the divisor
+            // to 1. What matters is whether a credit has a real retail price, so that is what is asked.
             var retailMicrosPerCredit = CreditPricing.RetailMicrosPerCredit(billing);
+            if (retailMicrosPerCredit <= 1)
+                throw new InvalidOperationException(
+                    "Refusing to re-denominate the credit ledger: Billing:CostDollarsPerCredit × " +
+                    "Billing:CreditMarkup gives a credit a retail price of one micro or less, so every " +
+                    "balance would convert to roughly a million times itself. The conversion is one-shot " +
+                    "and irreversible, so it will not run at a rate that cannot be right.");
 
             using var tx = conn.BeginTransaction();
             Execute(conn, tx, "ALTER TABLE CreditLedger ADD COLUMN AmountCredits INTEGER NOT NULL DEFAULT 0;");

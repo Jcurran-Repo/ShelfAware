@@ -115,18 +115,23 @@ public class CreditDenominationMigrationTests : IDisposable
         Assert.Equal(expected, row.AmountCredits);
     }
 
-    [Fact]
-    public async Task It_refuses_to_convert_at_an_anchor_that_cannot_be_right()
+    [Theory]
+    [InlineData(0)]          // no anchor at all
+    [InlineData(-0.01)]      // a sign typo
+    [InlineData(0.0000001)]  // ⚠️ POSITIVE, and still prices a credit at nothing — see below
+    public async Task It_refuses_to_convert_at_an_anchor_that_cannot_be_right(double anchor)
     {
-        // ⚠️ The one irreversible write in the app. At a zero anchor RetailMicrosPerCredit clamps to 1 — the
+        // ⚠️ The one irreversible write in the app. At these anchors RetailMicrosPerCredit clamps to 1 — the
         // clamp is right everywhere else, because it keeps ordinary arithmetic defined — and dividing by one
         // micro would turn this $1.65 grant into 1,650,000 credits, with no second boot to put it back.
-        // Program.cs refuses to start on such a config; this is the second lock on the same door.
+        // The third case is why the guard asks about the COMPUTED price rather than about the two inputs:
+        // 0.0000001 is a perfectly positive number that passes any "greater than zero" check and still
+        // rounds to nothing once multiplied by the markup. The first version of this guard missed it.
         await using var db = _db.CreateDbContext();
         await GiveItTheOldSchemaAsync(db);
         await SeedOldRowAsync(db, "hh-a", CreditEntryKind.Grant, 1_650_000);
 
-        var broken = new BillingOptions { CostDollarsPerCredit = 0m };
+        var broken = new BillingOptions { CostDollarsPerCredit = (decimal)anchor };
         Assert.Throws<InvalidOperationException>(() => CreditDenominationMigration.Apply(db, broken));
 
         // And it refused BEFORE touching anything, so the next boot at a sane anchor still converts.

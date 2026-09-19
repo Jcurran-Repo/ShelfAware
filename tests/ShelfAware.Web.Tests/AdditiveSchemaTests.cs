@@ -197,9 +197,38 @@ public class AdditiveSchemaTests : IDisposable
         db.ServiceMargin.Add(new ServiceMarginDay
         {
             Day = new DateOnly(2026, 9, 19), Action = ServiceAction.ChatTurn,
-            Calls = 3, Charges = 1, CreditsCharged = 2, CostMicros = 1_200,
+            Calls = 3, Charges = 1, CreditsCharged = 2, CostMicros = 1_200, BillableCostMicros = 400,
         });
         await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task Adds_the_billable_cost_column_to_a_ServiceMargin_table_that_predates_it()
+    {
+        // ⚠️ EnsureTable above returns early when the table EXISTS, so it can never add a column to one —
+        // which is why this needs its own EnsureColumn line, and why that line needs this test. A box booted
+        // between the two commits on this branch would otherwise hit "no such column: BillableCostMicros"
+        // forever: ServiceMarginMeter's best-effort catch swallows it (reconciliation silently stops), and
+        // /admin throws outright.
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await ColumnTypesAsync(db, "ServiceMargin");
+
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE ServiceMargin DROP COLUMN BillableCostMicros;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent on the next boot
+
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "ServiceMargin"));
+
+        // And a row round-trips through the migrated column.
+        db.ServiceMargin.Add(new ServiceMarginDay
+        {
+            Day = new DateOnly(2026, 9, 19), Action = ServiceAction.ChatTurn,
+            Calls = 3, Charges = 1, CreditsCharged = 2, CostMicros = 1_200, BillableCostMicros = 400,
+        });
+        await db.SaveChangesAsync();
+        Assert.Equal(400, (await db.ServiceMargin.AsNoTracking().SingleAsync()).BillableCostMicros);
     }
 
     [Fact]

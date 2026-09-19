@@ -130,10 +130,14 @@ else
     {
         <section class="panel">
             <h2>Margin by service</h2>
-            <p class="muted">The last 30 days. Credits are what households were charged (0 for Founder and
-                BYOK calls, which cost but bill nobody); cost is what ALL the calls cost at the rates in
-                force when they ran, billed or not. A price is wrong when it and the last column keep
-                disagreeing in the same direction.</p>
+            <p class="muted">The last 30 days. <strong>Credits</strong> is what households were charged
+                (0 for Founder and BYOK calls, which cost but bill nobody). <strong>Cost</strong> is what
+                every call cost at the rates in force when it ran, billed or not — the box's real spend.
+                <strong>Billable cost</strong> is the part of it incurred by households who were on the
+                hook, which is the only cost a price has to cover; dividing it by the charges gives
+                <strong>cost / charge</strong>. A price is wrong when it and that last column keep
+                disagreeing in the same direction. A free action never has a charge to divide by, so its
+                last cell stays blank — read its billable cost against its calls instead.</p>
             <table>
                 <caption class="sr-only">Credits charged against provider cost, per action, last 30 days</caption>
                 <thead>

@@ -214,6 +214,13 @@ public static class AdditiveSchema
         // Shelf Aware credit, docs/remediation-plan.md §7) — operator data, box-wide, like DemoUsage above.
         // A new table — existing rows unaffected.
         EnsureTable(db, table: "ServiceMargin");
+
+        // 2026-09-19: the part of a day's cost that a household was actually on the hook for, split out from
+        // the all-calls total so /admin's cost-per-charge divides one population (docs/remediation-plan.md
+        // §9). EnsureTable above returns early when the table exists, so a box booted off the branch between
+        // these two commits would never get the column — and ServiceMarginMeter's best-effort catch would
+        // swallow the "no such column" forever while /admin threw. One line, and the drill is the drill.
+        EnsureColumn(db, table: "ServiceMargin", column: "BillableCostMicros", definition: "INTEGER NOT NULL DEFAULT 0");
     }
 
     /// <summary>Create <paramref name="table"/> (and its indexes) on a DB built before it existed. The

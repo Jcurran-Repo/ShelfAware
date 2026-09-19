@@ -31,9 +31,12 @@ namespace ShelfAware.Core.Billing;
 /// method's synchronous prologue has its <see cref="System.Threading.ExecutionContext"/> restored on return,
 /// which is what contains the scope — a plain method has no such prologue, so the scope escapes to the
 /// caller and never ends. (2) Fire-and-forget (<c>Task.Run</c>, an unawaited task) started INSIDE a scope:
-/// it captures the context and goes on reading a scope whose <c>using</c> has closed. Both are held by
-/// AiActionScopeSiteTests, which scans every <see cref="Begin"/> site for an <c>async</c> enclosing
-/// signature.</para>
+/// it captures the context and goes on reading a scope whose <c>using</c> has closed.</para>
+///
+/// <para>Only the FIRST is held by a test: AiActionScopeSiteTests parses every <see cref="Begin"/> site and
+/// fails the build unless its enclosing method, local function or lambda is <c>async</c>. The second is
+/// written down and nothing more — a scan cannot tell which awaits inside a scope are fire-and-forget. If
+/// you start work you do not await from inside a scope, that work is charged to it.</para>
 /// </summary>
 public sealed class AiActionScope : IDisposable
 {

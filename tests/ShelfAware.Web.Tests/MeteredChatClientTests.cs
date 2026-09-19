@@ -452,6 +452,65 @@ public class MeteredChatClientTests : IDisposable
         Assert.Equal(1, line.Charges);
         Assert.Equal(1, line.CreditsCharged);
         Assert.Equal(350, line.CostMicros);
+        Assert.Equal(350, line.BillableCostMicros); // a paying household: the cost is what the charge bought
+    }
+
+    [Theory]
+    [InlineData("Managed", HouseholdTier.Founder, true)]   // the operator's own calls
+    [InlineData("Byok", HouseholdTier.Free, true)]         // their key, their wallet
+    [InlineData("Managed", HouseholdTier.Free, false)]     // billing off — §7 unlimited-by-default
+    public async Task A_call_nobody_could_be_billed_for_is_recorded_as_costing_the_operator(
+        string keyMode, HouseholdTier tier, bool paymentsEnabled)
+    {
+        // ⚠️ The determination, not the arithmetic. ServiceMarginMeterTests passes `billable` as a literal,
+        // so every branch of "was this household on the hook?" was unpinned: flipping CreditConsumption.None
+        // to billable counts a Founder's calls as billed, and /admin goes back to reporting several times an
+        // action's true cost — the defect the column was added to fix, on the one box it applies to.
+        var (client, _) = Build(keyMode, tier: tier, paymentsEnabled: paymentsEnabled);
+
+        using (AiActionScope.Begin(ServiceAction.ReceiptExtraction))
+            await AskAsync(client);
+
+        var line = Assert.Single(await new ServiceMarginMeter(_authDb, NullLogger<ServiceMarginMeter>.Instance).ReadAsync(days: 1));
+        Assert.Equal(350, line.CostMicros);       // the box still spent it
+        Assert.Equal(0, line.BillableCostMicros); // but nobody was billed, so it prices no action
+        Assert.Null(line.CostPerCharge);
+    }
+
+    [Fact]
+    public async Task A_free_action_still_counts_toward_what_its_household_costs_us()
+    {
+        // Billable is not "was charged". A tag suggestion is priced at 0 deliberately, and its cost is real:
+        // it belongs in the billable column so an operator asking "should this still be free?" has the
+        // number. The old code recorded it the same as a Founder's call, which answers a different question.
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free);
+
+        using (AiActionScope.Begin(ServiceAction.TagSuggest))
+            await AskAsync(client);
+
+        var line = Assert.Single(await new ServiceMarginMeter(_authDb, NullLogger<ServiceMarginMeter>.Instance).ReadAsync(days: 1));
+        Assert.Equal(0, line.CreditsCharged);
+        Assert.Equal(350, line.BillableCostMicros);
+    }
+
+    [Fact]
+    public async Task A_failed_money_write_still_counts_as_cost_the_charge_has_to_cover()
+    {
+        // ⚠️ The throw can only come from PAST every "is this billable?" gate, so recording it as unbillable
+        // would quietly drop it out of cost-per-charge — flattering the margin on exactly the calls where
+        // money went wrong, which is the same defect the column exists to prevent, pointing the other way.
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free, ledgerFailsFirst: true);
+
+        using (AiActionScope.Begin(ServiceAction.ChatTurn))
+        {
+            await AskAsync(client);   // write fails
+            await AskAsync(client);   // this one pays
+        }
+
+        var line = Assert.Single(await new ServiceMarginMeter(_authDb, NullLogger<ServiceMarginMeter>.Instance).ReadAsync(days: 1));
+        Assert.Equal(1, line.Charges);
+        Assert.Equal(700, line.BillableCostMicros); // BOTH calls, not just the one that paid
+        Assert.Equal(700, line.CostPerCharge);
     }
 
     // ---- The AI-allowed gate: phase 4b refuses a managed call the household can't pay for ----

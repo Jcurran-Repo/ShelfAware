@@ -107,12 +107,12 @@ public static class CreditPricing
     /// <see cref="BillingOptions.CreditPrices"/> — the estimates are the pending work, not dead weight — and
     /// they rejoin this set on the day they are wired.</para>
     ///
-    /// <para>⚠️ Kept honest by <c>MeteredActionsAreWiredTests</c>, which SCANS the source for
+    /// <para>⚠️ Kept honest by <c>AiActionScopeSiteTests</c>, which PARSES the source for
     /// <c>AiActionScope.Begin(ServiceAction.X)</c> and fails the build when this set and the call sites
     /// disagree in either direction. A hand-maintained list of what the code does is a list that goes
     /// stale; this one cannot.</para></summary>
-    public static readonly IReadOnlySet<ServiceAction> MeteredActions = new HashSet<ServiceAction>
-    {
+    public static readonly IReadOnlySet<ServiceAction> MeteredActions = System.Collections.Frozen.FrozenSet.ToFrozenSet(
+    [
         ServiceAction.ReceiptExtraction,
         ServiceAction.CensusPhoto,
         ServiceAction.ChatTurn,
@@ -124,7 +124,7 @@ public static class CreditPricing
         ServiceAction.TagSuggest,
         ServiceAction.SubstituteSuggest,
         ServiceAction.IngredientAlternatives,
-    };
+    ]);
 
     /// <summary>What one credit RETAILS for, in micros: the anchor's cost-dollars × the markup (default
     /// $0.01 × 1.65 = 16,500 micros). This is the ONE exchange rate between credits and money — pack sizes

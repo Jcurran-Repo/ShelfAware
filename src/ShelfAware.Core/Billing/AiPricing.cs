@@ -29,9 +29,12 @@ public sealed class BillingOptions
     /// independently, so there is exactly one exchange rate in the system.</summary>
     public decimal CostDollarsPerCredit { get; set; } = 0.01m;
 
-    /// <summary>What each user-visible action costs, in whole credits — the PUBLIC price list (it is shown
-    /// in Settings; an abstract unit with a hidden exchange rate is a casino chip). Operator-configurable
-    /// like every other number here: <c>Billing:CreditPrices:ChatTurn</c>.
+    /// <summary>What each user-visible action costs, in whole credits. Operator-configurable like every
+    /// other number here: <c>Billing:CreditPrices:ChatTurn</c>.
+    ///
+    /// ⚠️ Not all of it is published. Settings shows the rows in <see cref="CreditPricing.MeteredActions"/>
+    /// — the actions something actually charges for — because an abstract unit with a hidden exchange rate
+    /// is a casino chip, and a published price nothing can charge is worse than either.
     ///
     /// Opening values are derived from measured cost ranges (docs/remediation-plan.md §7.2), with anything
     /// too cheap to charge a whole credit for set FREE — that is how the fractional-credit problem goes

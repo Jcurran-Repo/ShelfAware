@@ -31,8 +31,8 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
   against (the 3-credit figure is an estimate, never a measurement), and a charge point that isn't an
   `IChatClient`. Jordan's call whether to wire it or leave speech free.
 - **The remediation arc** — all seven phases landed 2026-09-19, designed in `docs/remediation-plan.md`,
-  with the review-gate pass on phase 7 written up in its §8. What's left out of that arc is deliberate:
-  draining logic out of `.razor` (D1) and EF Migrations (D3), both with reasons in §9.
+  with the review-gate pass on phase 7 written up in its §9. What's left out of that arc is deliberate:
+  draining logic out of `.razor` (D1) and EF Migrations (D3), both with reasons in §8.
 
 ## Parked, with reasons
 
