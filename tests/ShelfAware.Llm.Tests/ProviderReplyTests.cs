@@ -1,5 +1,3 @@
-using ShelfAware.Llm;
-
 namespace ShelfAware.Llm.Tests;
 
 /// <summary>
@@ -21,6 +19,16 @@ public class ProviderReplyTests
     [Theory]
     // Letters and digits, across the planes — the uncontroversial half.
     [InlineData("yes")]
+    // \u26a0\ufe0f Uppercase has its own line because it has its own arm, and "NONE" \u2014 the single most common
+    // reply these four advisors get, and by \u00a74.w an answer that is PAID FOR \u2014 is all uppercase. Without
+    // this case, deleting `UppercaseLetter` from the switch left every suite green while every NONE
+    // refunded, because the advisors answer a sentinel and a refund with the same null.
+    [InlineData("NONE")]
+    [InlineData("OK")]
+    [InlineData("\u01C5")]              // titlecase letter (Lt)
+    [InlineData("\u02B0")]              // modifier letter (Lm)
+    [InlineData("\u02C7")]              // modifier symbol (Sk)
+    [InlineData("\U0001F3FB")]          // skin-tone modifier (Sk) \u2014 a surrogate pair in that arm
     [InlineData("7")]
     [InlineData("東")]                  // BMP ideograph (Lo)
     [InlineData("\U00020000")]          // astral ideograph — two code units, neither one a letter

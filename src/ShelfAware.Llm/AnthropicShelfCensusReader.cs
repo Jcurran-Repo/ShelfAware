@@ -132,9 +132,10 @@ public class AnthropicShelfCensusReader : IShelfCensusReader
             {
                 response = await _chat.GetResponseAsync(messages, options, cancellationToken);
             }
-            catch (OperationCanceledException)
+            // ⚠️ WHOSE cancellation — see AnthropicReceiptExtractor; a timeout belongs below.
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                throw; // the caller cancelled — not a read failure
+                throw; // the caller really did cancel — not a read failure
             }
             catch (Exception ex)
             {

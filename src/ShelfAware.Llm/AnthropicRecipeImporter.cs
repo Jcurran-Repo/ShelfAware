@@ -113,7 +113,7 @@ public class AnthropicRecipeImporter : IRecipeImporter
             {
                 response = await _chat.GetResponseAsync(messages, options, cancellationToken);
             }
-            catch (OperationCanceledException) { throw; } // caller cancelled — not a failure
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; } // whose cancellation: see ProviderCancellationSiteTests
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Recipe import call failed.");

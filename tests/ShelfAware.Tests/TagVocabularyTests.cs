@@ -159,4 +159,36 @@ public class TagVocabularyTests
         Assert.Null(TagVocabulary.FindNearDuplicate("Soda\ud83d", ["Cleaning"]));
         Assert.Equal("Soda\ud83d", TagVocabulary.FindNearDuplicate("Soda\ud83d", ["Soda\ud83d"]));
     }
+
+    [Fact]
+    public void An_exact_match_beats_a_one_edit_neighbour_that_comes_first()
+    {
+        // \u26a0\ufe0f The list order must not decide the answer. Checking both conditions in one pass let a
+        // one-edit neighbour earlier in the household's tags win over an identical tag later: "Pans"
+        // normalizes to "pan", which is one insertion from "pant", so ["Pants", "Pan"] answered "Pants"
+        // for a tag the household already had as "Pan". Tolerable while this only read text a person
+        // typed; a wrong answer once the LLM advisor started asking it about a model's reply.
+        Assert.Equal("Pan", TagVocabulary.FindNearDuplicate("Pans", ["Pants", "Pan"]));
+        Assert.Equal("Ice", TagVocabulary.FindNearDuplicate("Ices", ["Rice", "Ice"]));
+    }
+
+    [Fact]
+    public void A_candidate_longer_than_a_tag_could_be_is_not_a_tag()
+    {
+        // \u26a0\ufe0f A BOUND, not tidiness. Normalizing runs NFC, whose canonical ordering is quadratic in
+        // the length of one run of combining marks \u2014 and this method sits at stage one of Upload.AddTag,
+        // before the advisor and so before any credit gate or usage cap, reading a box with no other
+        // limit than the 4 MB SignalR message size. Without the cap a tag is a free way to pin a core.
+        var monster = "a" + new string('\u0301', TagVocabulary.MaxLength * 2);
+
+        Assert.Null(TagVocabulary.FindNearDuplicate(monster, ["Snack"]));
+        Assert.Null(TagVocabulary.Canonicalize(monster, [], [.. TagVocabulary.Seed]));
+        // And the cap does not bite a real tag. A candidate exactly AT the limit is still read, so the
+        // boundary is off-by-one-proof in the direction that would silently drop a legitimate tag.
+        var atTheLimit = new string('x', TagVocabulary.MaxLength);
+        Assert.Equal(atTheLimit, TagVocabulary.FindNearDuplicate(atTheLimit, [atTheLimit]));
+        Assert.Equal(atTheLimit, TagVocabulary.Canonicalize(atTheLimit, [], []));
+        Assert.All(TagVocabulary.Seed, tag => Assert.True(tag.Length <= TagVocabulary.MaxLength,
+            $"Seed tag \"{tag}\" is longer than the cap, so the vocabulary cannot dedup against itself."));
+    }
 }

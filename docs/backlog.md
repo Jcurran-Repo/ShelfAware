@@ -7,12 +7,23 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
 
 ## Open
 
+- **A recipe adapt that ignores the chosen swap is still charged.** `RecipeAdapter` rejects an
+  adaptation whose main ingredients don't mention the swap the household picked, tells them "I couldn't
+  make a {form} version this time — give it another try", and every retry costs another credit. The
+  null/unnamed half of this was fixed on 2026-09-19 in `AnthropicRecipeAdvisor`; this half cannot be,
+  because the advisor cannot see a check that lives in the caller. The real fix is for the scope to be
+  opened where the act's success is known — `RecipeAdapter` — rather than at the provider boundary, which
+  is a design change to how every service opens a scope and so is **Jordan's call**, per CLAUDE.md's
+  co-creation rule. Raised by the pre-merge security gate, 2026-09-19.
+
 - **Tag dedup does not see through Unicode confusables.** `TagVocabulary.Normalize` now folds to one
   Unicode normal form, so a precomposed "Café" and a decomposed one are the same tag. A Cyrillic "Ѕoda"
   against "Soda" is still a new tag. That needs a confusable *skeleton* mapping rather than a normal
   form, and the blast radius is small and household-local: the advisor can only ever return an element
-  of that household's own list, and the result is shown as a suggestion the user accepts or overrides,
-  never a silent write. Raised by the pre-merge security gate, 2026-09-19.
+  of that household's own list. On the receipt path the result is a suggestion the user accepts or
+  overrides; on the recipe path `RecipeTagService.SuggestAndApplyAsync` applies and saves it with no
+  confirmation step, so there it IS a silent write — the first version of this note claimed otherwise.
+  Raised by the pre-merge security gate, 2026-09-19.
 - **A handful of invisible code points still read as an "answer" and are charged.** `ProviderReply`'s
   allow-list excludes marks, punctuation, separators, controls and the replacement character, but a
   Hangul filler (category `Lo`) and BRAILLE PATTERN BLANK (`So`) are categorically letters and symbols

@@ -46,7 +46,7 @@ public class RecipeTagService
             await db.SaveChangesAsync(ct);
             return recipe.Tags.Select(t => t.Value).Where(v => !before.Contains(v)).ToList();
         }
-        catch (OperationCanceledException) { throw; }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; } // whose cancellation: see ProviderCancellationSiteTests
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Suggesting tags for recipe {RecipeId} failed; leaving it as-is.", recipeId);

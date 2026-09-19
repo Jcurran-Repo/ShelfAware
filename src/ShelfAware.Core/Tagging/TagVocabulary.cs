@@ -10,6 +10,17 @@ namespace ShelfAware.Core.Tagging;
 /// </summary>
 public static class TagVocabulary
 {
+    /// <summary>The longest a tag may be. ⚠️ A BOUND, not a style preference. Normalizing a candidate
+    /// puts it in a Unicode normal form, and NFC's canonical-ordering step is quadratic in the length of
+    /// a single run of combining marks — so without a cap, a tag is a free, unauthenticated way to pin a
+    /// core for as long as you like. The path has no other brake on it: the tag box carries whatever the
+    /// SignalR message size allows (4 MB), <c>FindNearDuplicate</c> runs at stage one of
+    /// <c>Upload.AddTag</c> — before the advisor, so before any credit gate or usage cap — and the
+    /// column has no length, so one stored monster is re-normalized on every later call for that
+    /// household. 64 is past every real tag ("Storage Bags" is 12) and short enough that the quadratic
+    /// term cannot matter.</summary>
+    public const int MaxLength = 64;
+
     /// <summary>Starter tags. Descriptive, orthogonal to the store-aisle Category; users can add more.</summary>
     public static readonly IReadOnlyList<string> Seed =
     [
@@ -23,15 +34,27 @@ public static class TagVocabulary
     /// plural/typo), or null if it's genuinely new. Cheap and instant — the first dedup stage.</summary>
     public static string? FindNearDuplicate(string candidate, IEnumerable<string> existing)
     {
+        if (candidate.Length > MaxLength) return null; // not a tag — see MaxLength
         var key = Normalize(candidate);
         if (key.Length == 0) return null;
+
+        // ⚠️ TWO passes, because one pass answers the wrong question. Checking both conditions per
+        // element means a one-edit neighbour EARLIER in the list beats an identical tag later: with
+        // ["Pants", "Pan"] a candidate of "Pans" normalizes to "pan", matches "pant" by one insertion,
+        // and the household is offered "Pants" for a tag it already has as "Pan". Harmless while this
+        // only ever read text a person typed; it stopped being harmless when the LLM advisor started
+        // asking this question about a MODEL's reply, where naming the wrong existing tag is a wrong
+        // answer rather than a missed one.
+        var keys = new List<(string Tag, string Key)>();
         foreach (var tag in existing)
         {
             var other = Normalize(tag);
             if (other == key) return tag;
-            // One-edit typo or a trailing-letter slip on an otherwise-identical tag.
-            if (Math.Abs(other.Length - key.Length) <= 1 && LevenshteinAtMost1(key, other)) return tag;
+            keys.Add((tag, other));
         }
+        // One-edit typo or a trailing-letter slip on an otherwise-identical tag.
+        foreach (var (tag, other) in keys)
+            if (Math.Abs(other.Length - key.Length) <= 1 && LevenshteinAtMost1(key, other)) return tag;
         return null;
     }
 
@@ -45,7 +68,7 @@ public static class TagVocabulary
     public static string? Canonicalize(string candidate, IReadOnlyList<string> existing, List<string> vocabulary)
     {
         var tag = candidate.Trim();
-        if (tag.Length == 0) return null;
+        if (tag.Length is 0 or > MaxLength) return null; // see MaxLength: a 4 MB "tag" is not a tag
         // Resolve against the vocabulary in order: an exact (case-insensitive) match, then a near-dup of
         // a known tag, then the candidate itself when it is genuinely new.
         var canonical = vocabulary.FirstOrDefault(v => string.Equals(v, tag, StringComparison.OrdinalIgnoreCase));

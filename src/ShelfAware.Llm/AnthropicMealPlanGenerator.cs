@@ -68,7 +68,10 @@ public class AnthropicMealPlanGenerator : IMealPlanGenerator
                 }
                 _logger.LogWarning("Meal-plan batch returned no meals (attempt {Attempt} of 2).", attempt);
             }
-            catch (OperationCanceledException) { throw; }
+            // ⚠️ WHOSE cancellation. MealPlanPage's reroll runs this inline on the circuit and
+            // passes no token, so an unfiltered rethrow turns a provider timeout into a torn circuit and
+            // the household loses the plan edits it had on screen.
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; } // whose cancellation: see ProviderCancellationSiteTests
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Meal-plan batch failed (attempt {Attempt} of 2) — {Action}.",

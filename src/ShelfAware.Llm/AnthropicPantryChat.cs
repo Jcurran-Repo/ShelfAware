@@ -102,9 +102,15 @@ public class AnthropicPantryChat : IPantryChat
             {
                 response = await _chat.GetResponseAsync(messages, chatOptions, cancellationToken);
             }
-            catch (OperationCanceledException)
+            // ⚠️ WHOSE cancellation. An unconditional rethrow here also catches an HttpClient
+            // TIMEOUT, which is a provider failure and belongs in the catch below — and no caller of
+            // HandleAsync passes a token, so every cancellation reaching this line is one. Rethrown
+            // unfiltered it escapes past the plain copy below and blanks whichever surface invoked it,
+            // which the tool loop's own comment says it exists to prevent. ProviderCancellationSiteTests
+            // holds this for every provider call in the assembly.
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                throw; // the caller cancelled (e.g. circuit gone) — not a model failure
+                throw; // the caller really did cancel (e.g. circuit gone) — not a model failure
             }
             catch (Exception ex)
             {
@@ -157,9 +163,9 @@ public class AnthropicPantryChat : IPantryChat
                 {
                     (text, _) = await ExecuteToolAsync(call, products, actions, nav, wrote, cancellationToken);
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    throw; // caller cancelled (e.g. circuit gone) — not a tool failure
+                    throw; // the caller really did cancel — not a tool failure
                 }
                 catch (Exception ex)
                 {

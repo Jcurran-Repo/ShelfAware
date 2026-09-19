@@ -82,14 +82,42 @@ public class AiDeliveryTests
     }
 
     [Fact]
-    public async Task A_recipe_that_cannot_be_adapted_to_what_is_on_hand_is_an_answer()
+    public async Task An_adaptation_that_came_back_empty_is_refunded()
     {
+        // \u26a0\ufe0f This test used to assert the opposite, under the name "a recipe that cannot be adapted
+        // to what is on hand is an answer" \u2014 and the name was the error. \u00a74.w pays for an honest
+        // "nothing here", but recipe-adapt-system.txt never offers the model that answer: rule 1 says
+        // output "a SINGLE adapted recipe in the recipes array" and rule 7 says return the recipe even
+        // when nothing needs swapping. So an empty array is not the model declining, it is the model
+        // failing to do what was asked \u2014 and RecipeAdapter turns it into "Couldn't adapt {recipe} right
+        // now.", which invited the household to press the button again and be charged again.
+        //
+        // The lesson is narrower than the fix: a test can encode a MEANING the contract does not carry,
+        // and its name is where that goes unnoticed.
         var (charging, advisor) = Wire(RecipeAdvisor, """{ "recipes": [] }""");
         var recipe = new RecipeToAdapt("Paella", null, [new AdaptIngredient("Saffron", true, "1 g")], []);
 
         Assert.Null(await advisor.AdaptAsync(recipe, [], []));
         Assert.True(charging.Charged);
-        Assert.Null(charging.RefundedFor);
+        Assert.Equal(0, charging.RefundedFor);
+    }
+
+    [Fact]
+    public async Task An_adaptation_with_no_name_is_refunded()
+    {
+        // The other half of the same guard: the model returned a recipe object it never named, which
+        // RecipeAdapter rejects with the same retry invitation.
+        const string Unnamed =
+            """
+            { "recipes": [ { "name": "  ", "blurb": null, "calories_per_serving": null, "servings": 2,
+              "ingredients": [], "steps": [] } ] }
+            """;
+        var (charging, advisor) = Wire(RecipeAdvisor, Unnamed);
+        var recipe = new RecipeToAdapt("Paella", null, [new AdaptIngredient("Saffron", true, "1 g")], []);
+
+        await advisor.AdaptAsync(recipe, [], []);
+        Assert.True(charging.Charged);
+        Assert.Equal(0, charging.RefundedFor);
     }
 
     [Fact]

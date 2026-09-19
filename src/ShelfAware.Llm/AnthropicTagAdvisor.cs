@@ -52,9 +52,6 @@ public class AnthropicTagAdvisor : ITagAdvisor
             // almost. Nothing stops one naming a tag "None", and then the model's way of saying "these
             // are different" comes back as a synonym for whatever was typed.
             //
-            // The exact spelling wins where there is one, so a household with both "Etc" and "Etc." gets
-            // back the one the model actually named; ProviderReply.Names is the looser second pass, and
-            // its remarks say why a single reading of the reply cannot serve here.
             // ⚠️ The loose pass is TagVocabulary's, not ours. "Which existing tag does this name mean?"
             // is the question that file says it is the one place for, and it knows things a local helper
             // does not: collapsed whitespace, a trailing plural "s", one character of typo. A private
@@ -68,18 +65,7 @@ public class AnthropicTagAdvisor : ITagAdvisor
             return existing.FirstOrDefault(t => string.Equals(t, reply, StringComparison.OrdinalIgnoreCase))
                 ?? TagVocabulary.FindNearDuplicate(reply, existing);
         }
-        // ⚠️ WHOSE cancellation, and the unconditional version of this line was wrong in every
-        // reachable case. A caller that cancelled is not this advisor's to absorb and is rethrown. A
-        // provider TIMEOUT arrives as the same type and is a degraded provider — the case the catch
-        // below exists for, whose log line is the operator's only signal that the dedup is silently
-        // failing open. Not one call site passes a token today (Upload.razor, ProductDetail.razor,
-        // Recipes.razor all take the CancellationToken.None default), so an unconditional rethrow
-        // reclassifies 100% of real cancellations as caller intent — and since those sites are a
-        // try/finally with no catch and the app has no ErrorBoundary, it escapes an @onclick handler
-        // and tears down the Blazor circuit, losing an in-progress receipt review. The token decides.
-        //
-        // Billing is the same either way: nothing above has settled, so the act refunds.
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; } // whose cancellation: see ProviderCancellationSiteTests
         catch (Exception ex)
         {
             // Fail open — never block tag creation on an API hiccup — but leave a trail so a

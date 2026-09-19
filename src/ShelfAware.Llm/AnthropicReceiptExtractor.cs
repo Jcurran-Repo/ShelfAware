@@ -129,9 +129,12 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
             {
                 response = await _chat.GetResponseAsync(messages, options, cancellationToken);
             }
-            catch (OperationCanceledException)
+            // ⚠️ WHOSE cancellation — a timeout is a provider failure and belongs below, where the
+            // plain copy is. Unfiltered, it escapes the endpoint too, and the audit images written before
+            // this call are then orphaned with no receipt row pointing at them.
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                throw; // the caller cancelled — not an extraction failure
+                throw; // the caller really did cancel — not an extraction failure
             }
             catch (Exception ex)
             {

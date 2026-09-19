@@ -244,7 +244,7 @@ else if (phase == Phase.Review && receipt is not null)
                                 }
                             </div>
                             <div class="tag-add">
-                                <input list="known-tags" placeholder="+ tag" size="9" @bind="line.NewTag" @bind:event="oninput" aria-label="Add a tag to @line.RawText" />
+                                <input list="known-tags" placeholder="+ tag" size="9" maxlength="@TagVocabulary.MaxLength" @bind="line.NewTag" @bind:event="oninput" aria-label="Add a tag to @line.RawText" />
                                 <button type="button" @onclick="() => AddTag(line)" disabled="@(line.Checking || string.IsNullOrWhiteSpace(line.NewTag))">@(line.Checking ? "…" : "Add")</button>
                             </div>
                             @if (line.Suggestion is { } sug)

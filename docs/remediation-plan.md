@@ -1267,7 +1267,9 @@ two they found independently are the two that matter.
   whatever a deny-list forgets is billed.
 - **Three stale counts, one of them written by that same commit into a new code comment.** §4.y gained a
   fourth bullet under a heading reading "the three". The §6 failure, committed in the pass that documents
-  it. §4.y is no longer counted in prose anywhere.
+  it. ⚠️ **And the fix re-introduced the count into §4.y's own lead-in in the same breath** — "the five
+  worth naming" — under a sentence here claiming it was "no longer counted in prose anywhere". Corrected
+  in the tenth pass; the count is gone and the claim with it.
 - **§4.y was understating the accepted exposure.** It omitted the two most expensive refunds in the app —
   a receipt and a shelf census each retry once at `MaxOutputTokens = 8192` on household-supplied images,
   twice the recipe importer's budget. And its cap claim was unconditional where the code's cap is not:
@@ -1278,6 +1280,65 @@ argued for the narrower question.** It now has a direct test file of its own
 (`ProviderReplyTests`) pinning each category arm — it had none before, every input reached it through an
 advisor, and the mutation gate is scoped to Core and does not reach it. That absence is the single best
 explanation for why three consecutive versions shipped wrong.
+
+
+### Tenth pass: what the gates found in the ninth (2026-09-19)
+
+Both gates again recommended against merging, and both led with the same finding: **the ninth pass is
+itself a partial conversion.**
+
+- ⚠️ **Nine sites, four converted.** The ninth pass proved that an unconditional
+  `catch (OperationCanceledException) { throw; }` around a provider call is wrong — a timeout arrives as
+  the same type, no call site passes a token, and the rethrow escapes a Blazor handler with no catch and
+  no `ErrorBoundary` behind it. It then fixed four advisors and left five siblings in the same assembly,
+  **including the chat turn** (the most expensive act in the app, whose own comment says its callers
+  don't wrap it) **and the meal-plan reroll** (which runs inline on the circuit, so a slow provider ate
+  the plan edits on screen). The commit message quoting CLAUDE.md's "every caller in the same change"
+  rule was in the commit that broke it.
+  - All nine are converted now, plus `RecipeAdapter` and `RecipeTagService`. More to the point, the
+    argument moved out of prose: `ProviderCancellationSiteTests` fails the build on an unfiltered
+    cancellation catch anywhere at the provider boundary. The four advisors carried a ten-line copy of
+    the same reasoning each, and **two of those copies named the wrong call sites** — which is the
+    argument for a rule that cannot be re-typed rather than a paragraph that must be.
+- **A test asserted the behaviour the same commit called a bug.** `ShelfCensusReaderTests` pinned that a
+  parameterless `OperationCanceledException` must escape — exactly the timeout shape — while the new
+  advisor test pinned that it must be absorbed. Two suites, opposite rules, same input, both green.
+- ⚠️ **And a second test encoded a meaning the contract does not carry.** `A_recipe_that_cannot_be_
+  adapted_to_what_is_on_hand_is_an_answer` asserted that an empty adaptation is paid for. But
+  `recipe-adapt-system.txt` never offers the model that answer — rule 1 mandates a single recipe and
+  rule 7 says return it even when nothing needs swapping. So an empty array is the model failing, not
+  declining, and `RecipeAdapter` turns it into "Couldn't adapt … right now" with an invitation to press
+  the button again and be charged again. **The test's NAME is where that went unnoticed**, which is a
+  narrower lesson than the fix: a test can assert a semantics nobody ever agreed to.
+- **My own normalization opened a denial-of-service on a free path.** NFC's canonical ordering is
+  quadratic in the length of one run of combining marks, and `FindNearDuplicate` runs at stage one of
+  `Upload.AddTag` — before the advisor, so before any credit gate or usage cap — against a box with no
+  `maxlength` and a column with no length, behind a 4 MB SignalR limit. `TagVocabulary.MaxLength` caps
+  it at 64 now. ⚠️ Worth keeping: the ninth pass added `Fold` as a *correctness* fix to the one place
+  that owns tag identity, which was right, and made a linear path input-sensitive without noticing.
+- **`FindNearDuplicate` let list order decide the answer** — one pass checking both conditions meant a
+  one-edit neighbour earlier beat an identical tag later ("Pans" → "Pants" over "Pan"). Tolerable while
+  it only read text a person typed; a wrong answer once the ninth pass pointed the LLM advisor at it.
+  Two passes now.
+- **The new `ProviderReplyTests` missed four of its twelve arms**, and one of them was `UppercaseLetter`
+  — the arm over `"NONE"`, the most common reply these advisors get and one §4.w pays for. Deleting it
+  left every suite green, because an advisor answers a sentinel and a refund with the same null. ⚠️ That
+  is this arc's signature failure reproduced **inside the file written to end it**.
+- **§4.y called the two vision refunds "the most expensive in the app". They are not.** A meal plan is
+  up to eighteen batches at 8192 output tokens, charged per meal up front and settling on what landed.
+  Added, along with the reroll and first-batch fast-fail, and the quiet-chat bullet now says it is
+  steerable by the household's own words rather than a matter of luck.
+- **A correction that was itself wrong, again.** The ninth pass's commit message said "TagVocabulary
+  joins the mutation scope". It was already in scope — `stryker-config.json` names the Core project with
+  no filter — so the claim described work that was neither done nor needed. The file genuinely was added
+  to the *sweep command's* `--mutate` list, which is not the same thing.
+
+⚠️ **The pattern to state, four passes on:** consolidating a rule is right, and every time this arc has
+done it the single definition shipped narrower than the sites it replaced, or the conversion stopped
+part-way. The two things that actually changed the outcome were not better prose — they were
+`ProviderReplyTests` (a direct test where there had been none) and `ProviderCancellationSiteTests` (a
+build rule where there had been a comment repeated four times, wrong twice). Rules that only live in
+prose get broken; that is already in this repo's memory, and it has now cost four rounds to relearn.
 
 
 ## 10. Sequencing

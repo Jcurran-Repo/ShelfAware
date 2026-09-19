@@ -59,10 +59,7 @@ public class RecipeAdapter(
         {
             adapted = await advisor.AdaptAsync(input, onHand, excluded, preference, cancellationToken);
         }
-        catch (OperationCanceledException)
-        {
-            throw; // the caller cancelled (e.g. circuit gone) — not a failure to report
-        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; } // whose cancellation: see ProviderCancellationSiteTests
         catch (Exception ex)
         {
             logger.LogError(ex, "Adapting recipe {RecipeId} failed.", recipeId);

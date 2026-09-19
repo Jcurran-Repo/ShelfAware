@@ -97,7 +97,21 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
         var response = await _chat.GetResponseAsync(messages, options, cancellationToken);
         var adapted = RecipeJson.Parse(response.Text).FirstOrDefault();
         _logger.LogInformation("Recipe advisor adapted \"{Name}\" (produced result: {HasResult}).", recipe.Name, adapted is not null);
-        action.Answered(); // including "this can't be adapted to what you have"
+        // ⚠️ Settled on a NAMED adaptation, not on the call returning. A reply that parses to nothing,
+        // or to a variant with no name, is one RecipeAdapter turns into "Couldn't adapt {recipe} right
+        // now." — and it used to charge a full credit for it, then invite the household to press the
+        // button again and charge again. Charging for a turn the household demonstrably did not receive
+        // is the thing docs/subscription-plan.md §4.w exists to stop; the old comment here called it
+        // "including this can't be adapted to what you have", which is a different and honest answer the
+        // model never actually gave.
+        //
+        // ⚠️ One half of this is NOT fixed here and is in docs/backlog.md: RecipeAdapter also rejects
+        // an adaptation that ignored the chosen swap, with the same retry invitation, and that one stays
+        // charged. This method cannot see that check, and moving the scope out to RecipeAdapter so the
+        // one place that knows whether the act delivered is the one place that settles it is a design
+        // change rather than a fix — it is Jordan's call, per CLAUDE.md's co-creation rule.
+        if (adapted is null || string.IsNullOrWhiteSpace(adapted.Name)) return adapted;
+        action.Answered();
         return adapted;
     }
 
