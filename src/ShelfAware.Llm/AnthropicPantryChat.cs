@@ -108,6 +108,12 @@ public class AnthropicPantryChat : IPantryChat
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Pantry chat call to the model failed on turn {Turn}.", turn + 1);
+                // ⚠️ Delivered when earlier rounds already APPLIED something. A turn can write to the pantry
+                // on round one and lose the provider on round two, and those writes are real and already
+                // committed — refunding the turn in full would hand back the credits for work the household
+                // can see in its own pantry. Same rule as the turn-limit exit below, deliberately: a charge
+                // for work that landed is not a charge for nothing.
+                if (actions.Count > 0) action.Delivered(1);
                 return ChatResult.Fail($"Sorry — I couldn't reach the assistant just now. ({ex.Message})");
             }
 

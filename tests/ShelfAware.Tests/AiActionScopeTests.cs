@@ -1,4 +1,4 @@
-﻿using ShelfAware.Core.Billing;
+using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Tests;
 
@@ -264,7 +264,7 @@ public class AiActionScopeTests
         await using var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124);
         act.Delivered(0);
 
-        Assert.Equal(0, act.ChargedCredits); // and disposal below settles nothing, with nothing to settle to
+        Assert.False(act.HasSettlement); // and disposal below settles nothing, with nothing to settle to
     }
 
     [Fact]
@@ -287,5 +287,57 @@ public class AiActionScopeTests
         Assert.Same(outer, AiActionScope.Current);
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () => await settling);
+    }
+
+    [Fact]
+    public async Task A_charge_recorded_after_the_act_closed_is_refused()
+    {
+        // ⚠️ Loud, not ignored. By this point DisposeAsync has taken the settlement and gone, so a callback
+        // attached here could never run: the household would be charged with the refund already
+        // unreachable, and nothing downstream would ever mention it. A provider call outliving the scope
+        // that started it is the leak shape this type's own remarks describe; it used to cost a free call,
+        // and since the refund it would cost real money in the silent direction.
+        var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 4);
+        await act.DisposeAsync();
+
+        var thrown = Assert.Throws<InvalidOperationException>(
+            () => act.ChargeRecorded(2, (_, _) => Task.CompletedTask));
+
+        // The message has to name both, because it is the only record that will exist: how much is
+        // stranded, and which act stranded it. An operator reading "an act has already closed" alone
+        // cannot tell a free tag suggestion from a 42-credit meal plan.
+        Assert.Contains("2 credit(s)", thrown.Message);
+        Assert.Contains(nameof(ServiceAction.MealPlan), thrown.Message);
+        // And the diagnosis, not just the symptom: "an act has already closed" tells whoever finds this in
+        // a log nothing about what to go and look for.
+        Assert.Contains("outlived its scope", thrown.Message);
+    }
+
+    [Fact]
+    public async Task An_act_cannot_record_a_charge_with_no_way_to_give_it_back()
+    {
+        // A null settlement would read downstream as "nothing was charged" — indistinguishable from a
+        // Founder — and the act would close having silently kept money it could not return.
+        await using var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 4);
+
+        Assert.Throws<ArgumentNullException>(() => act.ChargeRecorded(2, null!));
+        Assert.False(act.HasSettlement);
+    }
+
+    [Fact]
+    public async Task Disposing_twice_does_not_reinstate_a_scope_that_has_itself_closed()
+    {
+        // ⚠️ The settlement was already once-only; the RESTORE was not. Disposing inner, then outer, then
+        // inner again would put `outer` back as the ambient scope after outer had closed — and the next
+        // unlabelled AI call on that flow would be charged to a dead act whose one charge is already
+        // claimed, which is to say charged to nobody at all.
+        var outer = AiActionScope.Begin(ServiceAction.ChatTurn);
+        var inner = AiActionScope.Begin(ServiceAction.MealPlan, units: 4);
+
+        await inner.DisposeAsync();
+        await outer.DisposeAsync();
+        await inner.DisposeAsync();  // the stray second close
+
+        Assert.Null(AiActionScope.Current);
     }
 }

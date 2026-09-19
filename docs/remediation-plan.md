@@ -1,4 +1,4 @@
-﻿# Remediation plan — the 2026-09-18 audit and the architecture retrospective
+# Remediation plan — the 2026-09-18 audit and the architecture retrospective
 
 Jordan's ask (2026-09-18): *"Id like you to fix the findings AND the what youd do differently... feel free
 to split it up as needed and design first."* This is the design.
@@ -891,8 +891,83 @@ delivered nothing returns all of it.
   came back"*.
 - **The reversal never takes the act down with it.** `ReverseUndeliveredAsync` logs a failed give-back at
   `Error` rather than throwing, because a household that got its plan should not see it fail over a refund
-  it doesn't know it is owed. Cancellation still propagates.
+  it doesn't know it is owed. ⚠️ Including cancellation, which is this repo's house rule deliberately not
+  applied — the one caller is `DisposeAsync`, which passes `CancellationToken.None`, so there is no
+  cancellation to honour and the usual rethrow clause could only carry a spontaneous provider-layer
+  cancellation out of a `finally`, replacing a delivered answer with a crash. `RecordUsageAsync` in the
+  same file had already made that call for the same reason; the first version of this method contradicted
+  it, and a gate caught the pair.
 
+
+### The fifth pass got its own gate, and it found the pass's own worst habit
+
+Both gates ran over the settlement commit. The design held — tenancy, the once-only settlement, the
+ambient restore, the reversal arithmetic and the allowance interaction were all checked adversarially and
+all stood. What they found instead is worth recording, because it is the same shape as the fourth pass's
+finding, committed by the pass that was fixing an instance of it.
+
+⚠️ **The refund was applied to acts that did not fail.** Six sites reported delivery only when the result
+was non-empty, so a model that correctly answered *"there is no recipe in this photo"* — its own
+anti-hallucination floor, a successful call the host paid for — refunded the household in full. That is
+not "any call that fails is refunded"; it is "refunded unless it produced rows", and the difference is
+that the second one is free on demand. Upload something unreadable, get the credits back, repeat: the
+credit balance, which is the *designed* money bound, stops bounding those acts entirely, leaving only
+`AiUsageMeter`'s 1000-calls-a-day abuse cap. Worse, `AiUsageMeter`'s own comment reasons that failing its
+cap open is safe *because* "the real MONEY bound is the household's credit balance" — a sentence the
+settlement commit quietly made false. **Four of the six sites are priced at zero today, so only the recipe
+trio bit; the other three were latent, waiting for an operator to price a tag suggestion above free.**
+
+The root cause is one conflation: *the act failed* and *the act answered, and the answer was empty* are
+different things, and only the first is a refund. Put to Jordan as a decision rather than patched, because
+which one a household should pay for is a product call, not an engineering one.
+
+**What the gates found that was simply wrong, and was fixed in the same pass:**
+
+- ⚠️ **`RerollAsync` reported delivery before its write.** Its sibling in the same file settles after
+  `PersistAsync` with a comment explaining why — and was contradicted by the other method in the very
+  commit that wrote the comment. A reroll whose `SaveChangesAsync` threw charged the household for a meal
+  it never got, and settled nothing, because the act looked complete. The rule now lives once, on the
+  class, and both sites point at it.
+- ⚠️ **A chat turn refunded in full after it had already written to the pantry.** Round one creates three
+  products, round two loses the provider: the turn refunded 2 credits for work the household can see in
+  its own pantry. The same method already stated the opposite rule fifty-eight lines further down, for the
+  turn-limit exit.
+- **The ledger arithmetic had no tests at all.** `CreditLedgerTests` was not in the commit. Deleting the
+  new `Reversal` term turned nothing red in four suites — the exact risk the commit message asserted was
+  handled. Five tests now hold it, and both new terms were verified by re-breaking them.
+- ⚠️ **A reversal that lands after a month rollover was swept as the new month's allowance.** An act can
+  straddle the boundary — 124 meals is eighteen provider calls — so its reversal gets a higher id than the
+  *new* allowance and reads as credit returned to a month that never paid it out. The sweep then computed
+  an unspent larger than the grant and took the difference out of *purchased* credit: the household's own
+  money, silently. `unspent` is now clamped at both ends.
+- ⚠️ **`/admin`'s margin table kept the gross charge on refunded acts** — the one place an operator could
+  have noticed any of this. A 124-meal plan delivering seven recorded 42 credits and one charge while the
+  ledger netted to 3, so the table flatters worst exactly when the failure rate is worst, and a household
+  running the refund hole would read as the best customer on the box. Two surfaces answering "what did
+  this act earn?" with their own arithmetic, again.
+- **The build rule only held half the guarantee.** Dropping `IDisposable` forces the *existing* sites to
+  convert, and asks nothing of a new one written as a plain `var action = Begin(...)` — which compiles
+  clean, since this tree has no analyzer config. That is worse than a missed refund: the scope is never
+  disposed, so the ambient one is never restored and every later AI call on that flow rides a stale,
+  already-claimed scope **for free**. `Every_scope_is_opened_with_await_using` now holds it, and
+  `Every_act_reports_what_it_delivered` pins `Delivered` to the scope's own identifier rather than
+  matching any method of that name in the body.
+- **`DisposeAsync` restored unconditionally**, so a stray second close reinstated an enclosing scope that
+  had itself closed. The close is now taken the way the charge and the settlement are taken, and
+  `ChargeRecorded` refuses loudly on a closed scope rather than attaching a callback that can never run.
+- **A `catch (OperationCanceledException) { throw; }` that could only ever hurt.** The one caller passes
+  `CancellationToken.None`, so the clause could only carry a spontaneous provider-layer cancellation out
+  of a `finally` — the exact outcome the method's own ⚠️ paragraph forbids, and the opposite of the call
+  `RecordUsageAsync` makes 140 lines up for the same reason. The plan text claiming "cancellation still
+  propagates" was an artifact describing a path that could not occur; §6's warning, earned again.
+- Smaller: the refund logs carried no household id; `ReverseConsumptionAsync`'s result was discarded under
+  a log line asserting a give-back; `CreditLedgerEntry`'s own docs never learned about `Reversal` and
+  declared it out of value order; a new test pinned a sentence a test fifty lines above rejects as reading
+  like a bug; and six files picked up a UTF-8 BOM from the editor.
+
+**What it cost to find:** nothing shipped. Every item above was caught by reading the diff against the
+question *"who pays for this, and does the screen beside it agree?"* — and every one of them was under a
+fully green four-suite run, a clean non-incremental build, and a 100% scoped mutation score.
 
 ## 10. Sequencing
 

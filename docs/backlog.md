@@ -1,4 +1,4 @@
-﻿# Backlog — what's open
+# Backlog — what's open
 
 Carried out of `CLAUDE.md` on 2026-09-19. Everything here is deliberate: either parked with a reason,
 or small-and-not-yet-worth-a-branch. Shipped items are struck from the list rather than accumulating

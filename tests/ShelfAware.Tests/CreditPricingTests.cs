@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Tests;
@@ -378,10 +378,20 @@ public class CreditPricingTests
     public void A_reversal_never_reports_more_delivered_than_was_asked_for()
     {
         // The scope clamps Delivered to Units, so this shouldn't reach here — but the shortfall is
-        // subtraction, and an unclamped one would print "-6 of 124 meals never came back" on a household's
+        // subtraction, and an unclamped one would print "−6 of 124 meals never came back" on a household's
         // own financial record. A ledger row is not the place to discover an upstream defect.
+        //
+        // ⚠️ It reads as the plain "refunded", NOT "0 of 124 meals never came back". That sentence is
+        // arithmetically true and reads like a bug, which is the same judgement the delivered-nothing case
+        // above makes — and a shortfall of zero is the one case where no count is worth stating anyway.
         Assert.Equal(
-            "A meal plan — refunded, 0 of 124 meals never came back",
+            "A meal plan — refunded",
             CreditPricing.DescribeReversal(Default, ServiceAction.MealPlan, delivered: 130, asked: 124));
+
+        // And the boundary the clamp actually produces: delivered EXACTLY what was asked. A shortfall of
+        // none must read the same way, not "0 of 124 meals never came back".
+        Assert.Equal(
+            "A meal plan — refunded",
+            CreditPricing.DescribeReversal(Default, ServiceAction.MealPlan, delivered: 124, asked: 124));
     }
 }

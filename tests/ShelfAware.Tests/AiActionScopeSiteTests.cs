@@ -251,9 +251,16 @@ public class AiActionScopeSiteTests
             {
                 var owner = EnclosingBody(call);
                 if (owner is null) continue; // not in a method body at all — the async rule reports it
-                var settles = owner.DescendantNodes().OfType<InvocationExpressionSyntax>()
+                // ⚠️ Pinned to the NAME the scope was bound to, not just any `.Delivered(...)` in the body.
+                // An unpinned match is satisfied by some other type's Delivered call sitting in the same
+                // method, which would let the act that actually charges go on settling nothing.
+                var scope = ScopeNameOf(call);
+                var settles = scope is not null && owner.DescendantNodes().OfType<InvocationExpressionSyntax>()
                     .Any(i => i.Expression is MemberAccessExpressionSyntax
-                        { Name.Identifier.ValueText: nameof(AiActionScope.Delivered) });
+                        {
+                            Name.Identifier.ValueText: nameof(AiActionScope.Delivered),
+                            Expression: IdentifierNameSyntax receiver,
+                        } && receiver.Identifier.ValueText == scope);
                 if (!settles)
                     silent.Add($"{Path.GetFileName(file)}:{Line(call)} — {ActionOf(call)?.ToString() ?? "?"}");
             }
@@ -265,7 +272,53 @@ public class AiActionScopeSiteTests
             + Environment.NewLine + string.Join(Environment.NewLine, silent));
     }
 
+    /// <summary>
+    /// ⚠️ Every scope is opened with <c>await using</c>, so the settlement it holds actually runs.
+    ///
+    /// <para>Dropping <c>IDisposable</c> from <see cref="AiActionScope"/> made the compiler convert every
+    /// site that already said <c>using</c> — that is why it was dropped. It asks nothing at all of a site
+    /// written as a plain <c>var action = AiActionScope.Begin(...)</c>, which compiles clean: there is no
+    /// Directory.Build.props, no .editorconfig and no analyzer package in this tree, so CA2000 is not
+    /// enforced and nothing would say a word.</para>
+    ///
+    /// <para>The cost of that is worse than a missed refund. The scope is never disposed, so the ambient
+    /// one is never restored: every later AI call on that flow finds a stale scope whose one charge is
+    /// already claimed and is therefore FREE, and the charge that did land is never settled. One forgotten
+    /// keyword silently stops charging for a whole code path.</para>
+    /// </summary>
+    [Fact]
+    public void Every_scope_is_opened_with_await_using()
+    {
+        var loose = new List<string>();
+
+        foreach (var (file, tree) in Trees())
+            foreach (var call in BeginCalls(tree))
+            {
+                var held = call.Ancestors().Any(a => a switch
+                {
+                    UsingStatementSyntax u => u.AwaitKeyword != default,
+                    LocalDeclarationStatementSyntax l => l.UsingKeyword != default && l.AwaitKeyword != default,
+                    _ => false,
+                });
+                if (!held) loose.Add($"{Path.GetFileName(file)}:{Line(call)} — {ActionOf(call)?.ToString() ?? "?"}");
+            }
+
+        Assert.True(loose.Count == 0,
+            "An act opens a charging scope without `await using`, so it is never disposed: the settlement "
+            + "never runs, and — worse — the ambient scope is never restored, which makes every later AI "
+            + "call on that path ride the stale scope's spent charge for free:"
+            + Environment.NewLine + string.Join(Environment.NewLine, loose));
+    }
+
     // ------------------------------------------------------------------ the scan
+
+    /// <summary>The identifier a Begin call was bound to — <c>action</c> in
+    /// <c>await using var action = AiActionScope.Begin(...)</c> — or null when it was bound to nothing
+    /// nameable (an <c>await using (AiActionScope.Begin(...))</c> block, which cannot settle anyway since
+    /// there is no name to call Delivered on).</summary>
+    private static string? ScopeNameOf(InvocationExpressionSyntax call) =>
+        call.Ancestors().OfType<VariableDeclaratorSyntax>().FirstOrDefault()?.Identifier.ValueText;
+
 
     private sealed record Site(ServiceAction Action, string File, int Line, bool InAsyncMethod, bool HasUnitCount);
 

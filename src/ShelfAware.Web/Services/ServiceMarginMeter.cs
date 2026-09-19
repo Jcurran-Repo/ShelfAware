@@ -106,6 +106,45 @@ public sealed class ServiceMarginMeter(
         return [.. lines.OrderByDescending(l => l.CostMicros)];
     }
 
+    /// <summary>Take back credits from an action's row after an act was refunded — the same
+    /// <paramref name="creditsGivenBack"/> the ledger handed the household. <paramref name="wholeCharge"/>
+    /// says the act kept nothing, so its charge stops counting as a charge at all.
+    ///
+    /// <para>⚠️ Without this the margin table reads the GROSS charge forever, and does so on exactly the
+    /// acts that failed: a 124-meal plan that delivered seven records 42 credits and one charge here while
+    /// the ledger nets to 3. The column's whole job is answering "is this action's price right?", so a
+    /// refunded act inflating it is the one lie it cannot afford — and it flatters worst precisely when the
+    /// failure rate is worst. Two surfaces answering "what did this act earn?" with their own arithmetic is
+    /// the disagreement this repo keeps paying for; the ledger is the answer and this row has to follow it.
+    /// </para>
+    ///
+    /// <para>Calls are NOT decremented: the provider calls really happened and really cost money. Only what
+    /// the household was billed for them changes.</para></summary>
+    public async Task RecordReversalAsync(
+        ServiceAction? action, long creditsGivenBack, bool wholeCharge, CancellationToken ct = default)
+    {
+        if (creditsGivenBack <= 0) return;
+        var charges = wholeCharge ? 1 : 0;
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync(ct);
+            var day = DateOnly.FromDateTime(DateTime.Today);
+            // No insert-if-missing counterpart, deliberately: a reversal always follows a charge, so the row
+            // exists. If the act straddled midnight the charge sits on yesterday's row and this no-ops —
+            // a day boundary in the reconciliation table, not lost money; the ledger is still exact.
+            await db.ServiceMargin.Where(d => d.Day == day && d.Action == action)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(d => d.Charges, d => d.Charges - charges)
+                    .SetProperty(d => d.CreditsCharged, d => d.CreditsCharged - creditsGivenBack), ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Recording the margin reversal for {Action} failed; reconciliation now "
+                + "over-states what that action earned by {Credits} credit(s).", action, creditsGivenBack);
+        }
+    }
+
     private static Task<int> IncrementAsync(
         AuthDbContext db, DateOnly day, ServiceAction? action, long costMicros, long billableCost, long credits, int charges, CancellationToken ct)
         => db.ServiceMargin.Where(d => d.Day == day && d.Action == action)

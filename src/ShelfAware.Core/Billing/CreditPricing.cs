@@ -157,7 +157,13 @@ public static class CreditPricing
         var per = UnitsPerPrice(options, action);
         if (per == 1 || !options.UnitNouns.TryGetValue(action, out var noun) || string.IsNullOrWhiteSpace(noun))
             return $"{described} — refunded";
-        return $"{described} — refunded, {Math.Max(0, asked - delivered)} of {asked} {noun} never came back";
+        var missing = asked - delivered;
+        // A shortfall of none is the delivered-nothing case's mirror: "0 of 124 meals never came back" is
+        // true, reads like a defect, and states a count worth nothing to the household. Unreachable while
+        // the scope clamps Delivered and the meter only reverses a positive give-back, so this is about the
+        // row staying readable if either of those ever stops being true.
+        if (missing <= 0) return $"{described} — refunded";
+        return $"{described} — refunded, {missing} of {asked} {noun} never came back";
     }
 
     /// <summary>The actions a charge is actually WIRED to — the ones some service opens an

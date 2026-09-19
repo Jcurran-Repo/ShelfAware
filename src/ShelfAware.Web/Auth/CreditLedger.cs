@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Billing;
@@ -128,13 +128,20 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
         }
     }
 
-    /// <summary>The unspent remainder of the household's CURRENT (most recent) allowance, in credits: its amount minus
-    /// the consumption AND any prior expiry since it was granted (spend-allowance-first, so all later
-    /// consumption draws it down first). Zero when there's no prior allowance, or when it's already been
-    /// exhausted. ⚠️ The Expiry term is what stops a re-sweep: if a previous period already swept this
+    /// <summary>The unspent remainder of the household's CURRENT (most recent) allowance, in credits: its
+    /// amount, minus the consumption and any prior expiry since it was granted, plus any reversal that put
+    /// credits back (spend-allowance-first, so all later consumption draws it down first). Zero when
+    /// there's no prior allowance, or when it's already been exhausted.
+    ///
+    /// <para>⚠️ The Expiry term is what stops a re-sweep: if a previous period already swept this
     /// allowance (an Expiry row after it — which happens when the current month grants nothing, e.g.
     /// <c>MonthlyAllowanceDollars: 0</c>, so no NEWER Allowance becomes "the latest"), that Expiry nets the
-    /// remainder to ≤ 0 and it is not swept again from persisting purchases.</summary>
+    /// remainder to ≤ 0 and it is not swept again from persisting purchases.</para>
+    ///
+    /// <para>⚠️ The Reversal term is the same argument for credits coming BACK: an allowance credit that was
+    /// charged and then refunded is unspent again, and leaving it out would let the household bank it past
+    /// its month. The result is clamped to the granted amount at BOTH ends for the reason the clamp states
+    /// — the two bounds are not symmetric accidents, they are the two ways this sum can lie.</para></summary>
     private static async Task<long> UnspentAllowanceCreditsAsync(AuthDbContext db, string householdId, CancellationToken cancellationToken)
     {
         var lastAllowance = await db.CreditLedger
@@ -157,7 +164,14 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
                 && e.Id > lastAllowance.Id)
             .SumAsync(e => e.AmountCredits, cancellationToken);
         var unspent = lastAllowance.AmountCredits + drawnSince;
-        return unspent > 0 ? unspent : 0;
+        // ⚠️ Clamped ABOVE by what was actually granted, not just below by zero. An act can straddle the
+        // period boundary — a 124-meal plan is eighteen provider calls, and the allowance posts on any
+        // entitlement check in between — so its Reversal can land with a higher Id than the NEW allowance
+        // and read as credit returned to a month that never paid it out. Unclamped, the sweep would then
+        // compute an unspent larger than the grant and take the difference out of purchased credit: the
+        // household's own money, silently. The refunded credits stay in the balance either way; the clamp
+        // only stops them being counted as part of an allowance they didn't come from.
+        return Math.Clamp(unspent, 0, lastAllowance.AmountCredits);
     }
 
     /// <summary>A household's ledger entries, oldest first (by Id — SQLite can't ORDER BY a

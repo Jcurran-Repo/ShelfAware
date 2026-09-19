@@ -23,6 +23,14 @@ public sealed class MealPlanService(
     IAppSettings settings,
     ILogger<MealPlanService> logger)
 {
+    // ⚠️ WHEN AN ACT HERE HAS DELIVERED: once its result is durable, never before. Both paths charge up
+    // front and settle on the way out, so reporting delivery beside the provider's answer — the tempting
+    // place, since that is where the meals arrive — would charge a household for a plan or a reroll whose
+    // write then failed, and settle nothing, because the act looked complete. GenerateAsync settles after
+    // PersistAsync and RerollAsync after CommitAsync, and the rule is stated here rather than on one of
+    // them because the version that lived on GenerateAsync alone was contradicted by RerollAsync in the
+    // same commit that wrote it.
+
     // A generation call is capped near this many slots so the model returns full recipes within its output
     // budget; a longer horizon is generated over several calls, each told the names already planned so the
     // whole plan stays varied.
@@ -112,7 +120,7 @@ public sealed class MealPlanService(
         // ⚠️ The plan was CHARGED for every meal it asked for, on its first provider call. Here is where it
         // finds out how many actually arrived, so this is where the difference goes back. A month-long plan
         // whose model wobbled on three batches is not a month-long plan, and the household should not be
-        // holding a bill for one. Settled after PersistAsync, so what it is paying for is what it can see.
+        // holding a bill for one. Settled after PersistAsync, per the rule at the top of this class.
         action.Delivered(planned.Count);
         logger.LogInformation("Generated a meal plan of {Count} meal(s) over {Days} day(s).", planned.Count, setup.Days);
         return MealPlanResult.Ok(planId, planned.Count);
@@ -200,7 +208,6 @@ public sealed class MealPlanService(
         if (meals.Count == 0)
             return RerollResult.Failed("Couldn't come up with a different meal just now — please try again.");
         var suggestion = meals[0];
-        action.Delivered(1); // one slot asked for, one meal back — a reroll has no partial
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         // Library dedup is best-effort: two rerolls racing from two tabs can't see each other's uncommitted
@@ -213,6 +220,9 @@ public sealed class MealPlanService(
             meal.Recipe = BuildRecipe(suggestion);  // a fresh recipe joins the library
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+        // Settled after the commit, per the rule at the top of this class: this write can still fail,
+        // and a meal the household cannot see is a meal it did not receive.
+        action.Delivered(1); // one slot asked for, one meal back — a reroll has no partial
         return RerollResult.Ok(suggestion.Name);
     }
 

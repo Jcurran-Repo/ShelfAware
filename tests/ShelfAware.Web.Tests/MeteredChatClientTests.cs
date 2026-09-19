@@ -473,8 +473,11 @@ public class MeteredChatClientTests : IDisposable
         // per action, what we spent against what we charged.
         var (client, _) = Build("Managed", tier: HouseholdTier.Free);
 
-        await using (AiActionScope.Begin(ServiceAction.ReceiptExtraction))
+        await using (var act = AiActionScope.Begin(ServiceAction.ReceiptExtraction))
+        {
             await AskAsync(client);
+            act.Delivered(1); // a receipt that extracted — the charge stands, so the margin row keeps it
+        }
 
         var margin = await new ServiceMarginMeter(_authDb, NullLogger<ServiceMarginMeter>.Instance).ReadAsync(days: 1);
         var line = Assert.Single(margin);
@@ -532,16 +535,41 @@ public class MeteredChatClientTests : IDisposable
         // money went wrong, which is the same defect the column exists to prevent, pointing the other way.
         var (client, _) = Build("Managed", tier: HouseholdTier.Free, ledgerFailsFirst: true);
 
-        await using (AiActionScope.Begin(ServiceAction.ChatTurn))
+        await using (var act = AiActionScope.Begin(ServiceAction.ChatTurn))
         {
             await AskAsync(client);   // write fails
             await AskAsync(client);   // this one pays
+            act.Delivered(1);         // and the turn delivered, so nothing is given back
         }
 
         var line = Assert.Single(await new ServiceMarginMeter(_authDb, NullLogger<ServiceMarginMeter>.Instance).ReadAsync(days: 1));
         Assert.Equal(1, line.Charges);
         Assert.Equal(700, line.BillableCostMicros); // BOTH calls, not just the one that paid
         Assert.Equal(700, line.CostPerCharge);
+    }
+
+    [Fact]
+    public async Task A_refunded_act_stops_counting_as_revenue_in_the_operator_s_margin_table()
+    {
+        // ⚠️ /admin answers "is this action's price right?" from this row, and the ledger answers "what does
+        // the household owe" — so a refunded act left in the row makes the two disagree, and it flatters
+        // worst exactly when the failure rate is worst. A household whose acts all fail would read as the
+        // best customer on the box. The calls stay counted, because they really happened and really cost
+        // money; only what was billed for them comes back out.
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free);
+
+        await using (var act = AiActionScope.Begin(ServiceAction.ReceiptExtraction))
+            await AskAsync(client);   // never says it delivered, so the whole charge comes back
+
+        var line = Assert.Single(await new ServiceMarginMeter(_authDb, NullLogger<ServiceMarginMeter>.Instance).ReadAsync(days: 1));
+        Assert.Equal(1, line.Calls);              // the provider call happened and cost real money
+        Assert.Equal(350, line.CostMicros);       // which is still on the operator
+        Assert.Equal(0, line.Charges);            // but it earned nothing
+        Assert.Equal(0, line.CreditsCharged);
+
+        // And the two surfaces agree: the ledger nets to zero too.
+        Assert.Equal(0, await new CreditLedger(_authDb, Microsoft.Extensions.Options.Options.Create(new BillingOptions()))
+            .GetBalanceCreditsAsync("hh-test"));
     }
 
     // ---- The AI-allowed gate: phase 4b refuses a managed call the household can't pay for ----

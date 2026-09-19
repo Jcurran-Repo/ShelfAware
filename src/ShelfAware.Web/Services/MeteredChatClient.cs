@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Billing;
 using ShelfAware.Web.Auth;
@@ -385,19 +385,39 @@ public sealed class MeteredChatClient(
         if (giveBack <= 0) return;
         try
         {
-            await ledger.ReverseConsumptionAsync(householdId, giveBack,
-                CreditPricing.DescribeReversal(billing.Value, act.Action, delivered, act.Units), cancellationToken);
+            if (!await ledger.ReverseConsumptionAsync(householdId, giveBack,
+                    CreditPricing.DescribeReversal(billing.Value, act.Action, delivered, act.Units), cancellationToken))
+            {
+                // Unreachable while giveBack > 0 is checked above — but the alternative is a log line
+                // asserting a give-back the ledger never wrote, which is the one thing an operator chasing
+                // a household's missing credits would believe.
+                logger.LogError("The reversal of {Credits} credit(s) for {Action} on household "
+                    + "{HouseholdId} wrote no row.", giveBack, act.Action, householdId);
+                return;
+            }
             logger.LogInformation(
-                "Gave back {Credits} credit(s) of {Charged} for {Action}: {Delivered} of {Asked} unit(s) delivered.",
-                giveBack, charged, act.Action, delivered, act.Units);
+                "Gave back {Credits} credit(s) of {Charged} to household {HouseholdId} for {Action}: "
+                + "{Delivered} of {Asked} unit(s) delivered.",
+                giveBack, charged, householdId, act.Action, delivered, act.Units);
         }
-        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
+            // ⚠️ No `catch (OperationCanceledException) { throw; }` here, and that is the house rule
+            // deliberately not applied — the same call this file's RecordUsageAsync already makes, for the
+            // same reason. The only caller is AiActionScope.DisposeAsync, which passes CancellationToken.None,
+            // so there is no cancellation to honour: the clause could only rethrow a spontaneous one from
+            // the SQLite layer, out of a `finally`, replacing a delivered answer with a crash — which is
+            // precisely what the paragraph above says must not happen.
             logger.LogError(ex,
-                "Couldn't give back {Credits} credit(s) for an undelivered {Action}; the household stays "
-                + "charged for work it did not receive.", giveBack, act.Action);
+                "Couldn't give back {Credits} credit(s) to household {HouseholdId} for an undelivered "
+                + "{Action}; they stay charged for work they did not receive.",
+                giveBack, householdId, act.Action);
+            return;
         }
+
+        // The ledger has moved, so the operator's reconciliation has to move with it — otherwise /admin
+        // reports this action earning credits the household no longer holds. Best-effort inside the meter.
+        await margin.RecordReversalAsync(act.Action, giveBack, wholeCharge: keep == 0, CancellationToken.None);
     }
 
     /// <summary>What one metered call did to the household's balance: whether it was on a billable path, and

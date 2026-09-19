@@ -46,6 +46,7 @@ public sealed class AiActionScope : IAsyncDisposable
     private int _claimed;
     private Func<int, CancellationToken, Task>? _settle;
     private int _delivered;
+    private int _closed;
 
     private AiActionScope(ServiceAction action, int units)
     {
@@ -103,10 +104,10 @@ public sealed class AiActionScope : IAsyncDisposable
     /// runs in six, which is coverage claimed and not held (see AiActionScopeTests). Don't "simplify" it.</para></summary>
     public bool TryClaimCharge() => Interlocked.Exchange(ref _claimed, 1) == 0;
 
-    /// <summary>What this act was actually charged, or 0 if nothing was — a Founder, a BYOK visitor, a box
-    /// with billing off, a free-priced action, or an act whose provider calls all failed before the money
-    /// write. Set once, by the metering layer, when the charge has landed.</summary>
-    public long ChargedCredits { get; private set; }
+    /// <summary>Whether a charge for this act has LANDED and can still be given back — false for a Founder,
+    /// a BYOK visitor, a box with billing off, a free-priced action, and any act whose provider calls all
+    /// failed before the money write.</summary>
+    public bool HasSettlement => Volatile.Read(ref _settle) is not null;
 
     /// <summary>Told by the metering layer that a charge of <paramref name="credits"/> has LANDED, and
     /// handed the means to reverse it. <paramref name="settle"/> takes how many of the act's units were
@@ -114,10 +115,23 @@ public sealed class AiActionScope : IAsyncDisposable
     ///
     /// <para>⚠️ The money layer lives above this assembly and this type must not learn about ledgers, so the
     /// reversal arrives as a delegate rather than a dependency — the same reasoning that makes the scope
-    /// ambient rather than a collaborator threaded through ten service constructors.</para></summary>
+    /// ambient rather than a collaborator threaded through ten service constructors.</para>
+    ///
+    /// <para>⚠️ Refused once the scope has CLOSED, and loudly — by then <see cref="DisposeAsync"/> has taken
+    /// the settlement and gone, so a callback attached here would never run: the household would be charged
+    /// with the refund already unreachable. Nothing does this today; it is a guard because the shape that
+    /// could (a provider call outliving the scope that started it) is one this type's own remarks describe,
+    /// and it used to cost only a free call.</para></summary>
+    /// <param name="credits">What landed. Nothing stores it — the settlement closes over its own copy —
+    /// so this is here to put a number on the exception below, which is money stranded out of reach.</param>
+    /// <exception cref="InvalidOperationException">The scope has already been disposed.</exception>
     public void ChargeRecorded(long credits, Func<int, CancellationToken, Task> settle)
     {
-        ChargedCredits = credits;
+        ArgumentNullException.ThrowIfNull(settle);
+        if (Volatile.Read(ref _closed) == 1)
+            throw new InvalidOperationException(
+                $"A charge of {credits} credit(s) was recorded against a {Action} act that has already "
+                + "closed, so it could never be given back. The call that charged it outlived its scope.");
         Interlocked.Exchange(ref _settle, settle);
     }
 
@@ -132,11 +146,16 @@ public sealed class AiActionScope : IAsyncDisposable
     /// <para>Why a refund at all, rather than charging later: the charge lands on the FIRST provider call of
     /// an act that may take eighteen, which is what stops two parallel rounds both paying. By the time an
     /// act knows what it delivered, the money has already moved, so handing it back is the only honest
-    /// correction left.</para></summary>
-    public void Delivered(int units) => _delivered = Math.Clamp(units, 0, Units);
+    /// correction left.</para>
+    ///
+    /// <para>⚠️ Last write wins, and <see cref="Volatile"/> for the same reason <c>_claimed</c> is
+    /// interlocked: a site that reported delivery from a continuation on one thread and disposed on another
+    /// could otherwise read a stale zero here and refund an act that fully delivered. A batched site wanting
+    /// a running total must sum before it calls, not call per batch.</para></summary>
+    public void Delivered(int units) => Volatile.Write(ref _delivered, Math.Clamp(units, 0, Units));
 
     /// <summary>What this act has reported delivering so far — nothing until it says otherwise.</summary>
-    public int UnitsDelivered => _delivered;
+    public int UnitsDelivered => Volatile.Read(ref _delivered);
 
     /// <summary>Close the act: give back whatever was charged for units it never delivered, then restore the
     /// enclosing scope.
@@ -150,7 +169,8 @@ public sealed class AiActionScope : IAsyncDisposable
     /// <para>Settles at most once, taken the way <see cref="TryClaimCharge"/> takes the charge: the ledger is
     /// append-only with no idempotency key, so a second reversal would pay the household twice for one act
     /// and nothing downstream could net them. A no-op when nothing was charged, which is every unlimited
-    /// tier, every BYOK circuit and every box with billing off.</para></summary>
+    /// tier, every BYOK circuit and every box with billing off.</para>
+    ///
     /// <para>⚠️ NOT an <c>async</c> method, and it must not become one. An <c>AsyncLocal</c> written inside
     /// an async method does not flow back to its caller — that is the same "flows DOWN only" property this
     /// type's own remarks describe, and it applies to the restore as much as to the open. Written as
@@ -158,15 +178,23 @@ public sealed class AiActionScope : IAsyncDisposable
     /// call on that circuit is charged to it. Two tests here caught exactly that. So the restore happens
     /// synchronously, before anything is awaited, and the settlement is handed back as a task for the
     /// caller's <c>await using</c> to await — which also means the scope is restored even when settling
-    /// throws, without needing a <c>finally</c> to say so.</para>
+    /// throws, without needing a <c>finally</c> to say so.</para></summary>
     public ValueTask DisposeAsync()
     {
+        // ⚠️ The restore runs ONCE, not on every call. It is unconditional-looking for a reason and was
+        // written that way first: a second dispose would then reinstate this scope's enclosing one as
+        // ambient after that one had itself closed, and the next unlabelled call would be charged to a dead
+        // act whose one charge is already claimed — which is to say, charged to nobody. Taking the close
+        // the way the charge and the settlement are taken keeps all three honest under the same idiom.
+        if (Interlocked.Exchange(ref _closed, 1) == 1) return ValueTask.CompletedTask;
+
         var settle = Interlocked.Exchange(ref _settle, null);
-        var owed = settle is not null && _delivered < Units;
+        var delivered = Volatile.Read(ref _delivered);
+        var owed = settle is not null && delivered < Units;
 
         Ambient.Value = _enclosing;
 
-        return owed ? new ValueTask(settle!(_delivered, CancellationToken.None)) : ValueTask.CompletedTask;
+        return owed ? new ValueTask(settle!(delivered, CancellationToken.None)) : ValueTask.CompletedTask;
     }
 
     /// <summary>Give the claim back, so a LATER call in this action can charge instead. Called only when a
@@ -177,5 +205,4 @@ public sealed class AiActionScope : IAsyncDisposable
     /// nothing. Claiming first is still right — it is what stops two parallel rounds both charging — so the
     /// fix is to undo the claim on the one path that can take it without spending it.</para></summary>
     public void ReleaseCharge() => Interlocked.Exchange(ref _claimed, 0);
-
 }
