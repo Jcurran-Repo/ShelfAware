@@ -113,4 +113,41 @@ public class AiActionScopeTests
 
         Assert.Null(AiActionScope.Current);
     }
+
+    // ------------------------------------------------------------------ the unit count
+
+    [Fact]
+    public void An_act_covers_one_unit_unless_it_says_otherwise()
+    {
+        // Almost every action is one thing the household asked for, so the count is the boring default and
+        // CreditPricing.CreditsFor prices it per act. Only an action the price list prices BY THE UNIT may
+        // pass a count at all — AiActionScopeSiteTests fails the build otherwise.
+        using var scope = AiActionScope.Begin(ServiceAction.ChatTurn);
+
+        Assert.Equal(1, scope.Units);
+    }
+
+    [Fact]
+    public void The_count_an_act_was_opened_with_is_the_count_it_is_charged_for()
+    {
+        // ⚠️ This is the whole per-meal price. A 21-meal plan carrying a Units of 1 is charged 1 credit for
+        // seven credits of work, and nothing downstream could tell: the ledger line, the margin row and the
+        // Settings quote would all agree with each other and all be wrong.
+        using var scope = AiActionScope.Begin(ServiceAction.MealPlan, units: 21);
+
+        Assert.Equal(21, scope.Units);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-3)]
+    public void An_act_covering_nothing_still_covers_one(int units)
+    {
+        // A plan of no meals can't happen — SlotsFor always returns at least one — but the clamp is here
+        // rather than at the call site so that a count arriving from somewhere new can never price an act
+        // at zero, or (negatively) pay the household to run it.
+        using var scope = AiActionScope.Begin(ServiceAction.MealPlan, units: units);
+
+        Assert.Equal(1, scope.Units);
+    }
 }

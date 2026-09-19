@@ -11,7 +11,13 @@ namespace ShelfAware.Tests;
 /// </summary>
 public class CreditPricingTests
 {
-    private static readonly BillingOptions Default = new();
+    // ⚠️ A PROPERTY, not a static readonly field, and the mutation gate is why. A static field is
+    // initialised once per test host process, and Stryker reuses that process across mutants — so the
+    // instance every test shared was built before any mutant was active, and NO assertion against it could
+    // ever kill a mutant in BillingOptions' own field initialisers. The `UnitNouns[MealPlan] = "meals"`
+    // entry survived exactly that way, with a test sitting right here asserting the quote it produces.
+    // A fresh instance per read costs nothing and makes the defaults testable at all.
+    private static BillingOptions Default => new();
 
     // ------------------------------------------------------------------ the anchor
 
