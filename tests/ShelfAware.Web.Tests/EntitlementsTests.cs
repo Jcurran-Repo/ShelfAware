@@ -202,4 +202,38 @@ public class EntitlementsTests : IDisposable
         Assert.False(await For(id, paymentsEnabled: true).IsAiAllowedAsync());  // billing ON → Free with no credit is gated
         Assert.True(await For(id, paymentsEnabled: false).IsAiAllowedAsync());  // billing OFF → unlimited by default
     }
+
+    [Fact]
+    public async Task An_act_is_allowed_only_on_a_balance_that_covers_its_price()
+    {
+        // ⚠️ The gate used to ask "any credit left", which is a different question and was 41 credits away
+        // from the right one: a household holding a single credit passed it for a 42-credit meal plan, was
+        // charged the 42 on the plan's first batch, and had every batch after that refused — seven meals
+        // delivered of the hundred and twenty-four it had paid for, reported as a success.
+        var id = await SeedHouseholdAsync(HouseholdTier.Free);
+        await Ledger().GrantAsync(id, 41, "Test grant");
+
+        Assert.True(await For(id).IsAiAllowedAsync(41));    // exactly enough is enough
+        Assert.False(await For(id).IsAiAllowedAsync(42));   // one short is refused, before anything is spent
+    }
+
+    [Fact]
+    public async Task A_spent_household_is_refused_even_an_act_that_costs_nothing()
+    {
+        // The floor is one credit whatever price is asked for. A free-priced action still burns the host's
+        // key, and this gate has always refused a household at zero — pricing the acts must not quietly
+        // turn that into an open door.
+        var id = await SeedHouseholdAsync(HouseholdTier.Free);
+
+        Assert.False(await For(id).IsAiAllowedAsync(0));
+    }
+
+    [Fact]
+    public async Task A_founder_is_allowed_an_act_of_any_price()
+    {
+        // Unlimited means the balance is never consulted, so the price cannot start consulting it either.
+        var id = await SeedHouseholdAsync(HouseholdTier.Founder);
+
+        Assert.True(await For(id).IsAiAllowedAsync(42));
+    }
 }

@@ -18,12 +18,19 @@ public interface IEntitlements
     /// signed-in household.</summary>
     ValueTask<long> GetBalanceCreditsAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>Whether the current household may make a managed AI call. Allowed when billing is OFF on this
-    /// deployment (self-host / dev / the family box — §7 "unlimited by default"; the credit system only bites
-    /// where <c>Payments:Enabled</c>), OR the tier <see cref="HouseholdTierExtensions.IsUnlimited"/> (Founder),
-    /// OR a positive credit balance. The gate (phase 4b) consults this before a metered call. Read fresh via
-    /// <see cref="GetBalanceCreditsAsync"/>.</summary>
-    ValueTask<bool> IsAiAllowedAsync(CancellationToken cancellationToken = default);
+    /// <summary>Whether the current household may make a managed AI call COSTING
+    /// <paramref name="creditsNeeded"/>. Allowed when billing is OFF on this deployment (self-host / dev /
+    /// the family box — §7 "unlimited by default"; the credit system only bites where <c>Payments:Enabled</c>),
+    /// OR the tier <see cref="HouseholdTierExtensions.IsUnlimited"/> (Founder), OR a balance that covers the
+    /// price. The gate (phase 4b) consults this before a metered call. Read fresh via
+    /// <see cref="GetBalanceCreditsAsync"/>.
+    ///
+    /// <para>⚠️ The price is a PARAMETER because "has any credit left" is not the same question as "can
+    /// afford this", and pricing the meal plan by the meal made the difference 42 credits wide. A household
+    /// holding exactly one credit used to pass this gate for an act priced at forty-two. The floor is one
+    /// credit whatever is asked for, so a free-priced action is refused at a zero balance exactly as it
+    /// always was — the host's key is not a public good.</para></summary>
+    ValueTask<bool> IsAiAllowedAsync(long creditsNeeded = 1, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -105,14 +112,16 @@ public sealed class Entitlements(
         return await ledger.GetBalanceCreditsAsync(householdId, cancellationToken);
     }
 
-    public async ValueTask<bool> IsAiAllowedAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<bool> IsAiAllowedAsync(long creditsNeeded = 1, CancellationToken cancellationToken = default)
     {
         // Billing OFF on this deployment → the credit system doesn't apply; managed AI is unlimited by
         // default (self-host / dev / family box — §7). This is what keeps the gate from walling a box that
         // has a server key but no Payments config (a key alone makes CircuitAiSettings.Managed true).
         if (!payments.Value.IsConfigured) return true;
-        // Founder is unlimited (skip the balance entirely); everyone else needs credit left.
+        // Founder is unlimited (skip the balance entirely); everyone else needs to cover the price.
         if ((await GetTierAsync(cancellationToken)).IsUnlimited()) return true;
-        return await GetBalanceCreditsAsync(cancellationToken) > 0;
+        // At least one credit, always: a free-priced action stays refused at a zero balance, which is what
+        // this gate did before it knew any prices, and the host's key is not free to a spent household.
+        return await GetBalanceCreditsAsync(cancellationToken) >= Math.Max(1, creditsNeeded);
     }
 }

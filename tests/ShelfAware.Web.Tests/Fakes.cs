@@ -14,7 +14,7 @@ internal sealed class FakeEntitlements(HouseholdTier tier = HouseholdTier.Free) 
     public HouseholdTier Tier { get; set; } = tier;
 
     /// <summary>Settable credit balance, in CREDITS; <see cref="IsAiAllowedAsync"/> mirrors the real
-    /// rule (Founder is unlimited, otherwise a positive balance).</summary>
+    /// rule (Founder is unlimited, otherwise a balance that COVERS the price asked for).</summary>
     public long BalanceCredits { get; set; }
 
     public ValueTask<HouseholdTier> GetTierAsync(CancellationToken cancellationToken = default) => new(Tier);
@@ -26,8 +26,8 @@ internal sealed class FakeEntitlements(HouseholdTier tier = HouseholdTier.Free) 
     // Consequence: don't write a "surface allowed because billing is off" test against this fake — it would
     // pass vacuously. That branch is covered directly on the real type (EntitlementsTests). Here the fake's
     // job is only to script allowed/blocked via Tier + BalanceCredits.
-    public ValueTask<bool> IsAiAllowedAsync(CancellationToken cancellationToken = default) =>
-        new(Tier.IsUnlimited() || BalanceCredits > 0);
+    public ValueTask<bool> IsAiAllowedAsync(long creditsNeeded = 1, CancellationToken cancellationToken = default) =>
+        new(Tier.IsUnlimited() || BalanceCredits >= Math.Max(1, creditsNeeded));
 }
 
 /// <summary>A fixed household, standing in for the scope resolution (claim / circuit auth state) that only

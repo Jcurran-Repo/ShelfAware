@@ -141,8 +141,16 @@ public sealed class MeteredChatClient(
     /// reserve is <see cref="ReserveCallAsync"/>, next. BYOK circuits skip it entirely (their key, their
     /// wallet). For a managed household: the per-household caps, then the demo box-wide valve, then
     /// <see cref="IEntitlements.IsAiAllowedAsync"/> — always true where billing is off (§7), and otherwise a
-    /// Founder (unlimited) or a positive balance (running the lazy monthly allowance first). Throws to
-    /// refuse — the provider call never happens, and (because the reserve runs after) nothing is counted.</summary>
+    /// Founder (unlimited) or a balance that covers THIS ACT'S price. Throws to refuse — the provider call
+    /// never happens, and (because the reserve runs after) nothing is counted.
+    ///
+    /// <para>⚠️ Two things this asks that a bare "any credit left?" did not, and a meal plan needs both.
+    /// It asks for the price of the act about to run, so a household holding 5 credits is refused a
+    /// 42-credit plan BEFORE a single batch is generated rather than after the first one has drained them.
+    /// And it does not ask at all once the act's charge is already claimed: a plan charges its whole price
+    /// on the first of eighteen calls, so re-asking on call two would refuse the rest of a plan the
+    /// household has paid for in full — the plan would persist seven meals of the hundred and twenty-four
+    /// it bought, and the page would report success.</para></summary>
     private async Task EnsureManagedCallAllowedAsync(CancellationToken cancellationToken)
     {
         if (!settings.Managed) return;
@@ -150,9 +158,18 @@ public sealed class MeteredChatClient(
         // The demo box's BOX-WIDE daily valve (a no-op unless a Demo cap is configured) — the wallet bound
         // the per-household cap above can't give under open registration. Throws the come-back message.
         await demoMeter.EnsureCallAllowedAsync(cancellationToken);
-        if (!await entitlements.IsAiAllowedAsync(cancellationToken))
+
+        var act = AiActionScope.Current;
+        if (act is { ChargeClaimed: true }) return; // bought and paid for; the rest of it is not a new spend
+        if (!await entitlements.IsAiAllowedAsync(PriceOfPendingAct(act), cancellationToken))
             throw new AiCreditsExhaustedException();
     }
+
+    /// <summary>What the act this call belongs to will draw, for the gate above. An unlabelled call has no
+    /// price until its cost is known (<see cref="CreditPricing.CreditsForCostMicros"/>), so it asks for the
+    /// gate's floor of one credit — the same bar it has always had to clear.</summary>
+    private long PriceOfPendingAct(AiActionScope? act) =>
+        act is null ? 1 : CreditPricing.CreditsFor(billing.Value, act.Action, act.Units);
 
     /// <summary>Which of the two reserves DID NOT throw, so the matching release gives back ONLY those. A
     /// reserve write is best-effort (below) — if it silently fails, "releasing" it anyway would subtract a
@@ -315,7 +332,7 @@ public sealed class MeteredChatClient(
         {
             if (!claimed.TryClaimCharge()) return CreditConsumption.Free; // a later round of an action already paid for
             credits = CreditPricing.CreditsFor(billing.Value, claimed.Action, claimed.Units);
-            reason = CreditPricing.Describe(claimed.Action);
+            reason = CreditPricing.DescribeCharge(billing.Value, claimed.Action, claimed.Units);
         }
         else
         {

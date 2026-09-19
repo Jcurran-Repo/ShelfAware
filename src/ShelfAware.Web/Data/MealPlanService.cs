@@ -28,10 +28,6 @@ public sealed class MealPlanService(
     // whole plan stays varied.
     private const int BatchSize = 7;
 
-    // ⚠️ The cap and the day clamp live on MealPlanSettings, beside SlotCount, because the meal-plan PAGE
-    // needs the same arithmetic to quote a price before Generate is pressed — a plan is charged by the meal.
-    // Two answers to "how big is this plan?" would mean a quoted price the charge then disagreed with.
-
     public async Task<MealPlanSettings> LoadSettingsAsync(CancellationToken ct = default)
     {
         var json = await settings.GetAsync(SettingKeys.MealPlanSettings, ct);
@@ -80,7 +76,7 @@ public sealed class MealPlanService(
         // them — the household picks the horizon, so a plan is charged by the MEAL rather than at a flat
         // rate that over-charges a week and under-recovers a month. Everything that can spend money happens
         // below this line; loading the setup does not.
-        using var action = AiActionScope.Begin(ServiceAction.MealPlan, units: slots.Count);
+        using var action = AiActionScope.Begin(ServiceAction.MealPlan, units: setup.SlotCount);
         var context = await LoadContextAsync(setup, ct);
         onProgress?.Invoke(0, chunks.Count);
 
@@ -261,18 +257,26 @@ public sealed class MealPlanService(
 
     // Every meal to fill, day-major (day 0's meals, then day 1's…) so a BatchSize chunk spans roughly a week.
     // Each meal resolves its own calorie + effort target (its override, or the plan default) so the generator
-    // prompts a snack as a snack and a dinner as a dinner. Days is clamped and the total is capped (MaxSlots).
+    // prompts a snack as a snack and a dinner as a dinner.
+    //
+    // ⚠️ HOW MANY there are is not decided here. setup.SlotCount is the one definition of a plan's size, and
+    // the meal-plan page quotes a PRICE from the same one before Generate is pressed — a plan is charged by
+    // the meal. This loop used to re-derive the count with its own day clamp, its own empty-meals fallback
+    // and its own cap: three lines that happened to agree with SlotCount and were pinned to it by nothing.
+    // That is the exact shape CLAUDE.md calls this repo's most expensive failure — two sites answering one
+    // question, agreeing today, one of them edited later — and here the disagreement would be a household
+    // quoted one price and charged another. So this fills a count it is given and computes none.
     private static IReadOnlyList<PlannedSlot> SlotsFor(MealPlanSettings setup)
     {
-        var days = Math.Clamp(setup.Days, 1, MealPlanSettings.MaxDays);
+        var total = setup.SlotCount;
         var meals = setup.Meals.Count > 0 ? setup.Meals : [new MealEntry { Slot = MealSlot.Dinner }];
-        var slots = new List<PlannedSlot>();
-        for (var day = 0; day < days; day++)
+        var slots = new List<PlannedSlot>(total);
+        for (var day = 0; slots.Count < total; day++)
         {
             foreach (var meal in meals)
             {
+                if (slots.Count >= total) break;
                 slots.Add(new PlannedSlot(day, meal.Slot, setup.CaloriesFor(meal), setup.EffortFor(meal)));
-                if (slots.Count >= MealPlanSettings.MaxSlots) return slots;
             }
         }
         return slots;

@@ -126,30 +126,33 @@ public class AiActionScopeSiteTests
     }
 
     /// <summary>
-    /// ⚠️ A scope may only be opened with a UNIT COUNT for an action that is actually priced by the unit.
-    /// For every other action a price covers one unit, so passing five would charge five times — a chat
-    /// turn is one thing the household asked for however many rounds it took, and the count is not the
-    /// place to express that.
+    /// ⚠️ An action is begun with a UNIT COUNT if and only if its price is per unit. Both directions matter
+    /// and each one is a silent money defect.
+    ///
+    /// <para>A count on an action priced per ACT multiplies its charge: a chat turn is one thing the
+    /// household asked for however many rounds it took, and five rounds passed as five units would bill it
+    /// five times.</para>
+    ///
+    /// <para>No count on an action priced per UNIT collapses its charge to one unit. Delete
+    /// <c>units: setup.SlotCount</c> from the meal plan and every plan — seven meals or a hundred and
+    /// twenty-four — costs one credit, while the price list still reads "1 per 3 meals" and the page still
+    /// quotes forty-two. Nothing about that is visible on screen or in a green suite, which is the whole
+    /// argument for holding it here rather than in a test a fake can sidestep.</para>
     /// </summary>
     [Fact]
-    public void Only_an_action_priced_by_the_unit_is_begun_with_a_count()
+    public void An_action_is_begun_with_a_count_exactly_when_it_is_priced_by_the_unit()
     {
         var options = new BillingOptions();
-        var wrong = new List<string>();
-
-        foreach (var (file, tree) in Trees())
-            foreach (var call in BeginCalls(tree))
-            {
-                if (call.ArgumentList.Arguments.Count < 2) continue;
-                if (ActionOf(call) is not { } action) continue; // reported by the rule below
-                if (CreditPricing.UnitsPerPrice(options, action) == 1)
-                    wrong.Add($"{Path.GetFileName(file)}:{Line(call)} — {action} is priced per act");
-            }
+        var wrong = Sites()
+            .Where(s => (CreditPricing.UnitsPerPrice(options, s.Action) > 1) != s.HasUnitCount)
+            .Select(s => $"{Path.GetFileName(s.File)}:{s.Line} — {s.Action} is priced per "
+                       + (s.HasUnitCount ? "act but is begun with a count" : "unit but is begun without one"))
+            .ToList();
 
         Assert.True(wrong.Count == 0,
-            "A scope was opened with a unit count for an action whose price covers ONE unit, so the count "
-            + "multiplies the charge. Either price the action per unit (BillingOptions.UnitsPerPrice) or "
-            + "drop the count:" + Environment.NewLine + string.Join(Environment.NewLine, wrong));
+            "A scope's unit count disagrees with how BillingOptions.UnitsPerPrice prices that action. A "
+            + "count on a per-act price multiplies the charge; no count on a per-unit price collapses it to "
+            + "one unit:" + Environment.NewLine + string.Join(Environment.NewLine, wrong));
     }
 
     /// <summary>
@@ -162,11 +165,18 @@ public class AiActionScopeSiteTests
     public void No_scope_is_begun_from_a_computed_action()
     {
         var computed = new List<string>();
+        var calls = 0;
         foreach (var (file, tree) in Trees())
             foreach (var call in BeginCalls(tree))
+            {
+                calls++;
                 if (ActionOf(call) is null)
                     computed.Add($"{Path.GetFileName(file)}:{Line(call)} — {call}");
+            }
 
+        // This rule reports the calls Sites() DROPS, so it cannot run off Sites() and inherit its guard —
+        // and a rule whose whole output is "nothing found" is exactly the one that must prove it looked.
+        Assert.True(calls > 5, $"Only {calls} Begin call(s) found — the scan is broken, not the sources.");
         Assert.True(computed.Count == 0,
             "AiActionScope.Begin was called with something other than a literal ServiceAction value. The "
             + "price-list and boundary rules in this file read the source, so they cannot see it:"
@@ -175,7 +185,7 @@ public class AiActionScopeSiteTests
 
     // ------------------------------------------------------------------ the scan
 
-    private sealed record Site(ServiceAction Action, string File, int Line, bool InAsyncMethod);
+    private sealed record Site(ServiceAction Action, string File, int Line, bool InAsyncMethod, bool HasUnitCount);
 
     private static List<Site> Sites()
     {
@@ -188,7 +198,7 @@ public class AiActionScopeSiteTests
             foreach (var call in BeginCalls(tree))
             {
                 if (ActionOf(call) is not { } action) continue; // reported by No_scope_is_begun_from_a_computed_action
-                sites.Add(new Site(action, file, Line(call), IsInsideAsync(call)));
+                sites.Add(new Site(action, file, Line(call), IsInsideAsync(call), call.ArgumentList.Arguments.Count >= 2));
             }
         }
 

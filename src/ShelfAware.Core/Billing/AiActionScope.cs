@@ -75,6 +75,17 @@ public sealed class AiActionScope : IDisposable
         return scope;
     }
 
+    /// <summary>Whether this act's one charge has already been taken — so a LATER call in the same act
+    /// knows it draws nothing more.
+    ///
+    /// <para>⚠️ This is what stops the credit gate refusing the second half of an act the household has
+    /// already paid for in full. A meal plan charges its whole price on the first of up to eighteen provider
+    /// calls; a gate that asked "can they afford this act?" again on call two would refuse every remaining
+    /// batch of a plan that was paid for, and the household would receive a fraction of what it bought while
+    /// the page reported success. Read it, don't claim with it — <see cref="TryClaimCharge"/> is the only
+    /// thing that may take the charge, because only it is atomic.</para></summary>
+    public bool ChargeClaimed => Volatile.Read(ref _claimed) == 1;
+
     /// <summary>Take this scope's ONE charge, atomically — true exactly once per scope, false for every
     /// later call in the same action. This is what makes "one price per user-visible act" true no matter how
     /// many provider round-trips it took, including concurrent ones.

@@ -4,6 +4,7 @@
 @using ShelfAware.Core.MealPlanning
 @using ShelfAware.Core.Recipes
 @using ShelfAware.Web.Data
+@using ShelfAware.Web.Auth
 @using ShelfAware.Core.Billing
 @inject MealPlanService Planner
 @inject Microsoft.Extensions.Options.IOptions<BillingOptions> Billing
@@ -115,12 +116,18 @@
 
     @* ⚠️ The price BEFORE the button, which is the thing an abstract credit buys that a dollar balance
        can't: a meal plan is charged by the meal, so a household changing Days or adding a meal watches the
-       number move. Quoted from MealPlanSettings.SlotCount and CreditPricing — the same two the charge
-       reads — because a quote the charge then disagrees with is worse than no quote. Shown only where the
-       credit system is on, matching the Settings price list's gate exactly. *@
-    @if (AiSettings.Managed && Payments.Value.IsConfigured)
+       number move. Quoted from PlannedSlotCount and CreditPricing — the same two the charge reads — because
+       a quote the charge then disagrees with is worse than no quote.
+
+       ⚠️ NOT the same gate as the Settings price list, deliberately. That list is a RATE CARD and is shown
+       to a Founder on purpose. This sentence says what THIS plan will cost THIS household, so it follows
+       the Settings BALANCE line instead and stays hidden from a tier that is never charged — a Founder
+       reading "this plan is 42 credits" on the operator's own box is a surface stating something the
+       engine will not do. role="status" because the number moves as Days and the meals change, and a
+       screen-reader user changing 7 days to 31 should hear the price go from 3 to 42. *@
+    @if (AiSettings.Managed && Payments.Value.IsConfigured && !tier.IsUnlimited())
     {
-        <p class="muted small mealplan-price">
+        <p class="muted small mealplan-price" role="status">
             This plan is @CreditPricing.FormatCredits(
                 CreditPricing.CreditsFor(Billing.Value, ServiceAction.MealPlan, PlannedSlotCount))
             — @PlannedSlotCount meal@(PlannedSlotCount == 1 ? "" : "s")@(PlannedSlotCount >= MealPlanSettings.MaxSlots
@@ -224,7 +231,14 @@ else if (!generating)
     /// <summary>How many meals the CURRENT form would ask for — what the plan will be charged by. Reads
     /// MealPlanSettings' own arithmetic rather than repeating it here, so the quote above the button and
     /// the charge below it cannot answer "how big is this plan?" differently.</summary>
+    // ⚠️ THE definition of "how big is this plan?", shared with MealPlanService, which builds exactly this
+    // many slots and opens the charging scope with the same number. Two answers here would be a quoted
+    // price the charge then contradicted.
     private int PlannedSlotCount => MealPlanSettings.SlotCountFor(days, meals.Count);
+
+    // Only to decide whether the price sentence above applies to this household at all — a Founder is never
+    // charged, so they are not told a price. Resolved once in OnInitializedAsync.
+    private HouseholdTier tier;
     private int? defaultCalories;
     private TimeEffort defaultEffort = TimeEffort.Standard;
     private bool invent, preferLeftovers;
@@ -429,6 +443,7 @@ else if (!generating)
             meals.AddRange(setup.Meals.Select(m => new MealRow { Slot = m.Slot, Calories = m.Calories, Effort = m.Effort }));
         }
 
+        tier = await Entitlements.GetTierAsync();
         householdId = await Household.GetIdAsync();
         plan = await Planner.GetCurrentPlanAsync();
         IndexPlan();
@@ -480,7 +495,14 @@ else if (!generating)
         // []); a blocked circuit would just read "couldn't generate — try again". Say the real reason and
         // don't start the doomed job. ⚠️ AFTER SaveSettingsAsync (this is the setup form's only writer), so a
         // blocked Generate still keeps the household's edits — only the doomed job is skipped.
-        var blocked = await AiErrorText.BlockedReasonAsync(Entitlements, AiSettings, DemoValve);
+        // ⚠️ Priced with the SAME count the quote above the button used and the charge will use, so a
+        // household is refused a plan it cannot afford BEFORE any of it is generated. Without the price the
+        // gate only asked "any credit left", and a household holding five credits passed it, was charged
+        // forty-two on the first batch, and then had every remaining batch refused — a seven-meal plan
+        // reported as a success and a hundred and seventeen meals paid for and never delivered.
+        var blocked = await AiErrorText.BlockedReasonAsync(
+            Entitlements, AiSettings, DemoValve,
+            creditsNeeded: CreditPricing.CreditsFor(Billing.Value, ServiceAction.MealPlan, PlannedSlotCount));
         if (blocked is not null) { error = blocked; return; }
 
         // Kick off a DETACHED background job and watch it: the generation survives navigating away, and the

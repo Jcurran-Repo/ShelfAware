@@ -150,4 +150,34 @@ public class AiActionScopeTests
 
         Assert.Equal(1, scope.Units);
     }
+
+    [Fact]
+    public void An_act_knows_whether_its_one_charge_has_been_taken()
+    {
+        // ⚠️ This is what lets the credit gate tell "this household is about to spend" from "this household
+        // already has". A meal plan pays its whole price on the first of eighteen calls, so a gate that
+        // re-asked "can they afford this act?" on call two would refuse the rest of a plan they had paid
+        // for in full — and the page would report the fraction that got through as a success.
+        using var scope = AiActionScope.Begin(ServiceAction.MealPlan, units: 21);
+        Assert.False(scope.ChargeClaimed);
+
+        Assert.True(scope.TryClaimCharge());
+        Assert.True(scope.ChargeClaimed);
+
+        scope.ReleaseCharge();
+        Assert.False(scope.ChargeClaimed); // handed back, so the next round may pay instead
+    }
+
+    [Fact]
+    public void Asking_whether_the_charge_is_claimed_does_not_claim_it()
+    {
+        // It is a READ. If it took the charge the way TryClaimCharge does, every gated call would consume
+        // the act's one charge before the money write ever ran, and nothing would ever be billed.
+        using var scope = AiActionScope.Begin(ServiceAction.ChatTurn);
+
+        Assert.False(scope.ChargeClaimed);
+        Assert.False(scope.ChargeClaimed);
+
+        Assert.True(scope.TryClaimCharge()); // still there to be taken
+    }
 }

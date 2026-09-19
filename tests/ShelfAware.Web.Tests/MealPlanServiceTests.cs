@@ -72,6 +72,35 @@ public class MealPlanServiceTests : IDisposable
         Assert.All(gen.Charges, c => Assert.Equal(6, c.Units)); // 3 days x 2 slots
     }
 
+    [Theory]
+    [InlineData(3, 2)]     // an ordinary plan
+    [InlineData(31, 4)]    // exactly the cap: 124
+    [InlineData(31, 5)]    // past it, so the cap truncates mid-day
+    [InlineData(365, 1)]   // past the day clamp too
+    public async Task The_plan_that_is_built_is_exactly_the_plan_that_was_priced(int days, int mealsPerDay)
+    {
+        // ⚠️ The one definition, asserted rather than assumed. The page quotes MealPlanSettings.SlotCount
+        // and the scope charges it; this pins that the generator is actually asked for that many slots. The
+        // count used to be re-derived here by a loop with its own day clamp, its own empty-meals fallback
+        // and its own cap — three lines that agreed with SlotCount and were held to it by nothing, which is
+        // the shape CLAUDE.md calls this repo's most expensive failure. The disagreement, when it came,
+        // would be a household quoted one price and charged another.
+        var setup = new MealPlanSettings
+        {
+            Days = days,
+            Meals = [.. Enumerable.Repeat(0, mealsPerDay).Select(_ => new MealEntry { Slot = MealSlot.Dinner })],
+        };
+        var gen = new FakeMealPlanGenerator([Meal("Tacos")]);
+        var service = Service(gen);
+        await SaveSettings(service, setup);
+
+        await service.GenerateAsync();
+
+        Assert.NotEmpty(gen.Charges);
+        Assert.All(gen.Charges, c => Assert.Equal(setup.SlotCount, c.Units));    // priced at the one count
+        Assert.Equal(setup.SlotCount, gen.Calls.Sum(b => b.Slots.Count));        // and built to it exactly
+    }
+
     [Fact]
     public async Task A_reroll_is_one_meal_however_long_the_plan_is()
     {

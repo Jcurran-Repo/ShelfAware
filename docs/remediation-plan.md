@@ -747,9 +747,66 @@ paragraph:
 page quotes the whole plan's price above the Generate button before it is pressed. Rerolling one meal
 (`ServiceAction.MealReroll`) is its own 1-credit act, since it is one provider call for one slot.
 
-⚠️ **Not done, and deliberately: nothing checks the balance covers the plan before starting.** A 42-credit
-plan can still begin on a 5-credit balance and land the household in the red. That is the same gap every
-other action has and wants fixing once, at the gate, rather than per action; it is in `docs/backlog.md`.
+### The third gate pass, on the pricing change itself
+
+Both gates were run over the per-meal commit and both led with the same finding, which is the one worth
+recording: **the change multiplied an existing exposure by twenty-one, and the note that would have stopped
+anyone looking again described a milder failure than the real one.** The note said a 42-credit plan could
+begin on a 5-credit balance and "land the household in the red". It could not. What actually happened:
+
+1. The page quotes 42 credits for 124 meals and the household presses Generate.
+2. `IsAiAllowedAsync` asked only whether any credit was left, so 5 > 0 passed.
+3. Batch 1 succeeds and the metering tail takes the whole plan's price — the charge is claimed on the FIRST
+   provider call, not the last. Balance −37.
+4. Batches 2 to 18 hit the same gate, now failing, and `AiCreditsExhaustedException` is swallowed by the
+   generator's catch-and-retry. Seven meals of a hundred and twenty-four.
+5. `planned.Count` is 7, not 0, so the fast-fail does not trip: the plan persists and the page reports
+   **"Planned 7 meals."** No error anywhere.
+
+A household paid 42 credits, received 6% of what it bought, and was told it worked. At a flat 2 credits
+this shape needed a balance of 1 to reach; at 42 it catches an ordinary paying household on its first
+full-month plan. What closed it:
+
+- **The gate asks what the act costs.** `IEntitlements.IsAiAllowedAsync(creditsNeeded)` compares the
+  balance against the price of the act about to run, with a floor of one credit so a free-priced action is
+  still refused at zero exactly as before. Every caller passes what it is about to do; the meal-plan page
+  passes the same number it quoted. This is the "once, at the gate, for every action" fix the backlog asked
+  for rather than a check bolted onto one page.
+- **And it stops asking once the act is paid for.** `AiActionScope.ChargeClaimed` lets the gate tell "about
+  to spend" from "already has". Without this half the fix produces the SAME truncated plan — the gate
+  refuses batches 2 to 18 of a plan the household bought outright.
+
+Four more findings, all confirmed and all fixed in the same pass:
+
+- **"Plan size got ONE definition" was written and not adopted.** `MealPlanSettings.SlotCount` had zero
+  production callers; the page asked `SlotCountFor` and the service's `SlotsFor` loop re-derived the same
+  number with its own day clamp, its own empty-meals fallback and its own cap. They agreed at every input
+  either reviewer could construct, and nothing held them to it — the exact half-conversion CLAUDE.md calls
+  the repo's most expensive failure, with a quoted price and a charge on the two ends of it. `SlotsFor` now
+  fills a count it is given, and a theory pins the plan built to the plan priced at the cap and both clamps.
+- **The quote was shown to households that are never charged.** "This plan is 42 credits" is a statement
+  about one household's bill, not a rate card, and a Founder pays nothing — on the box the operator demos
+  from. It now follows Settings' BALANCE line rather than its price list.
+- **The new number had no test and could not render under one.** `PageTestContext` registers no
+  `IOptions<PaymentsOptions>`, so the block was invisible in every existing meal-plan test and nothing
+  would have failed if it vanished.
+- **The scanner held one direction of its rule.** It rejected a unit count on a per-act price but not a
+  missing count on a per-unit one — delete `units:` from the meal plan and every plan costs one credit with
+  the price list and the page both still saying 42. It now asserts the biconditional, and the two rules
+  that walked the syntax trees directly no longer skip the vacuity guard.
+
+The mutation gate also came back at **94.38%** against a break threshold of 100: `SlotCountFor` had no test
+at all (Core code exercised only from the Web suite, which Stryker does not run), `AiActionScope.Units` had
+none either — `Math.Max(1, units)` mutated to `Math.Min` and nothing noticed, which is a 124-meal plan
+charged as one — and a third survivor was a harness defect worth knowing about: a `static readonly
+BillingOptions Default` is built once per test host, and Stryker reuses that host across mutants, so no
+assertion against it can ever kill a mutant in `BillingOptions`' own field initialisers.
+
+⚠️ **Still open, and Jordan's call: a plan that under-delivers has still been charged in full.** The price
+is taken on the first provider call, so a plan that fails outright, or comes back short, has already cost
+up to 42 credits. Closing it means the act settles up at the end — a compensating ledger entry for the
+shortfall — or charges on delivery, and the refund has to be keyed to a charge that actually happened, or a
+Founder's plan would mint credit out of a charge that never existed. It is in `docs/backlog.md`.
 
 ## 10. Sequencing
 

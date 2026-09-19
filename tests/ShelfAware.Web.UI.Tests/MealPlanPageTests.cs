@@ -1,3 +1,5 @@
+using ShelfAware.Core.Billing;
+using ShelfAware.Web.Billing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -313,5 +315,139 @@ public class MealPlanPageBlockedTests : PageTestContext
         // setup was persisted even though generation was blocked — the error above proves the pre-check ran,
         // which is downstream of the save. Awaited out here (WaitForAssertion's lambda is synchronous).
         Assert.False(string.IsNullOrEmpty(await AppSettings.GetAsync(SettingKeys.MealPlanSettings)));
+    }
+}
+
+
+/// <summary>The PRICE sentence above the Generate button. Its own class because it needs the credit system
+/// switched on — managed keys plus a configured Payments section — which the default harness deliberately
+/// leaves off. ⚠️ This is the number that has to agree with what the household is actually charged, and
+/// until these tests existed the block could not render under test at all: PageTestContext never registers
+/// IOptions&lt;PaymentsOptions&gt;, so the open-generic default made IsConfigured false and every existing
+/// meal-plan test rendered with the sentence absent and nothing failing if it vanished.</summary>
+public class MealPlanPagePriceTests : PageTestContext
+{
+    private readonly MealPlanPageTests.FakeMealPlanJobs _jobs = new();
+    private readonly FakeEntitlements _entitlements = new(HouseholdTier.Free) { BalanceCredits = 1_000 };
+
+    protected override void RegisterAdditionalServices()
+    {
+        Services.AddScoped<ICurrentHousehold>(_ => new FakeCurrentHousehold("hh-test"));
+        Services.AddSingleton<IMealPlanJobs>(_jobs);
+        Services.AddScoped(sp => new MealPlanService(
+            Factory, new MealPlanPageTests.NoopGenerator(), sp.GetRequiredService<IAppSettings>(), NullLogger<MealPlanService>.Instance));
+        Services.AddSingleton(new CircuitAiSettings(Options.Create(new LlmOptions { KeyMode = "managed", ApiKey = "server-key" })));
+        Services.AddSingleton<IEntitlements>(_entitlements);
+        Services.AddSingleton(Options.Create(new PaymentsOptions { Enabled = true }));
+    }
+
+    private IRenderedComponent<MealPlanPage> RenderPage()
+    {
+        var cut = Render<MealPlanPage>();
+        cut.WaitForState(() => cut.FindAll("section.panel").Count > 0);
+        return cut;
+    }
+
+    private static string Price(IRenderedComponent<MealPlanPage> cut) => cut.Find("p.mealplan-price").TextContent;
+
+    private static void SetDays(IRenderedComponent<MealPlanPage> cut, int days) =>
+        cut.Find("input[type=number]").Change(days.ToString());
+
+    [Fact]
+    public void A_week_of_dinners_is_quoted_at_its_real_price()
+    {
+        // The default setup: 7 days, one dinner a day = 7 meals, at 1 credit per 3 = 3 credits.
+        var price = Price(RenderPage());
+
+        Assert.Contains("3 credits", price);
+        Assert.Contains("7 meals", price);
+    }
+
+    [Fact]
+    public void The_quote_moves_with_the_horizon_the_household_picks()
+    {
+        // ⚠️ The whole reason the sentence exists: a household changing Days watches the number move, so it
+        // learns what a plan costs BEFORE pressing a button that spends it.
+        var cut = RenderPage();
+        Assert.Contains("3 credits", Price(cut));
+
+        SetDays(cut, 31);
+
+        cut.WaitForAssertion(() => Assert.Contains("11 credits", Price(cut))); // 31 dinners, ceil(31/3)
+        Assert.Contains("31 meals", Price(cut));
+    }
+
+    [Fact]
+    public void The_quoted_price_is_the_one_the_charge_will_read()
+    {
+        // ⚠️ The assertion that outlives any particular number. The page must quote CreditsFor over
+        // MealPlanSettings' own slot count — the same function and the same count MealPlanService opens the
+        // charging scope with — rather than arithmetic of its own that agrees today.
+        var cut = RenderPage();
+        SetDays(cut, 31);
+
+        var expected = CreditPricing.CreditsFor(
+            new BillingOptions(), ServiceAction.MealPlan, MealPlanSettings.SlotCountFor(31, 1));
+
+        cut.WaitForAssertion(() => Assert.Contains(CreditPricing.FormatCredits(expected), Price(cut)));
+    }
+
+    [Fact]
+    public void A_plan_at_the_cap_says_so_rather_than_quoting_what_was_asked_for()
+    {
+        // 31 days x 4 meals is 155 asked for and 124 planned. Quoting the 155 would be a price the charge
+        // never takes; saying nothing about the cap would leave the household wondering where 31 meals went.
+        var cut = RenderPage();
+        for (var i = 0; i < 3; i++) cut.FindAll("button").First(b => b.TextContent.Contains("Add a meal")).Click();
+        SetDays(cut, 31);
+
+        cut.WaitForAssertion(() => Assert.Contains($"{MealPlanSettings.MaxSlots} meals", Price(cut)));
+        Assert.Contains("the most one plan can hold", Price(cut));
+        Assert.Contains("42 credits", Price(cut));
+    }
+
+    [Fact]
+    public void A_founder_is_not_told_a_price_they_will_never_pay()
+    {
+        // ⚠️ "This plan is 42 credits" is a statement about THIS household's bill, not a rate card — and a
+        // Founder is charged nothing. Settings makes the same distinction: it shows a Founder the price
+        // list and hides their balance. The operator runs as a Founder on the box they demo from, so this
+        // is the screen most likely to be read while saying something the engine will not do.
+        _entitlements.Tier = HouseholdTier.Founder;
+
+        Assert.Empty(RenderPage().FindAll("p.mealplan-price"));
+    }
+
+    [Fact]
+    public void A_household_that_cannot_afford_the_plan_is_told_before_any_of_it_is_generated()
+    {
+        // ⚠️ THE finding. 31 days x 4 meals is 42 credits; this household holds 41. It used to pass the
+        // gate on "any credit left", be charged the 42 by the plan's first batch, and then have every
+        // remaining batch refused — seven meals of a hundred and twenty-four, reported as a success.
+        _entitlements.BalanceCredits = 41;
+        var cut = RenderPage();
+        for (var i = 0; i < 3; i++) cut.FindAll("button").First(b => b.TextContent.Contains("Add a meal")).Click();
+        SetDays(cut, 31);
+        cut.WaitForAssertion(() => Assert.Contains("42 credits", Price(cut)));
+
+        cut.FindAll("button").First(b => b.TextContent.Contains("Generate") || b.TextContent.Contains("Regenerate")).Click();
+
+        cut.WaitForAssertion(() => Assert.Contains(AiErrorText.SubscribeToUse, cut.Markup));
+        Assert.Empty(_jobs.Started); // nothing was generated, so nothing was charged
+    }
+
+    [Fact]
+    public void A_household_that_can_afford_it_exactly_is_not_turned_away()
+    {
+        // The other side of the boundary. A gate that refuses one credit too eagerly is its own defect.
+        _entitlements.BalanceCredits = 42;
+        var cut = RenderPage();
+        for (var i = 0; i < 3; i++) cut.FindAll("button").First(b => b.TextContent.Contains("Add a meal")).Click();
+        SetDays(cut, 31);
+        cut.WaitForAssertion(() => Assert.Contains("42 credits", Price(cut)));
+
+        cut.FindAll("button").First(b => b.TextContent.Contains("Generate") || b.TextContent.Contains("Regenerate")).Click();
+
+        cut.WaitForAssertion(() => Assert.Single(_jobs.Started));
     }
 }

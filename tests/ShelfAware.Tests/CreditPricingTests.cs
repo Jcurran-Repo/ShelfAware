@@ -278,4 +278,38 @@ public class CreditPricingTests
             CultureInfo.CurrentCulture = original;
         }
     }
+
+    // ------------------------------------------------------------------ what a CHARGE reads on the ledger
+
+    [Fact]
+    public void A_charge_for_a_unit_priced_act_says_how_many_units_it_bought()
+    {
+        // ⚠️ Since a plan was priced by the meal, two honest rows can both read "A meal plan" and be -3 and
+        // -42. Without the size the household cannot check either against what it asked for, which is the
+        // whole promise of an itemised ledger.
+        Assert.Equal("A meal plan (124 meals)",
+            CreditPricing.DescribeCharge(Default, ServiceAction.MealPlan, units: 124));
+    }
+
+    [Theory]
+    [InlineData(ServiceAction.MealPlan, 1)]        // a plan of one meal — the size adds nothing
+    [InlineData(ServiceAction.MealPlan, 0)]        // and nor does a nonsense one
+    [InlineData(ServiceAction.MealReroll, 1)]      // priced per act, so it has no size to state
+    [InlineData(ServiceAction.ChatTurn, 5)]        // per act, and the 5 is not the household's to read
+    public void A_charge_with_no_size_worth_stating_reads_exactly_as_the_price_list_names_it(
+        ServiceAction action, int units) =>
+        // ⚠️ The same wording as Describe, deliberately: the price list, the operator's margin table and a
+        // household's ledger are one vocabulary, and only the SIZE is ever added on top of it.
+        Assert.Equal(CreditPricing.Describe(action), CreditPricing.DescribeCharge(Default, action, units));
+
+    [Fact]
+    public void A_charge_falls_back_to_the_bare_name_when_the_unit_has_none()
+    {
+        // The noun is display copy. Losing it makes the row terser, never wrong — the same degradation
+        // QuotePrice makes, because they are two views of one price.
+        var nameless = new BillingOptions();
+        nameless.UnitNouns.Remove(ServiceAction.MealPlan);
+
+        Assert.Equal("A meal plan", CreditPricing.DescribeCharge(nameless, ServiceAction.MealPlan, units: 124));
+    }
 }

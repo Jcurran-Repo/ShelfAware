@@ -25,7 +25,9 @@ public static class AiErrorText
     public const string NoKey = "AI isn't set up yet — add an API key in Settings to use this (bring your own, or subscribe for managed keys).";
 
     /// <summary>The pre-call gate for a UI surface: null when this circuit may make an AI call now, otherwise
-    /// the reason to SHOW (and skip the attempt). A managed household is blocked when the box-wide demo valve
+    /// the reason to SHOW (and skip the attempt). <paramref name="creditsNeeded"/> is what the act about to
+    /// run will cost — 1, the gate's floor, for everything priced per act, and the whole plan's price for a
+    /// meal plan, which is the one act a household can ask to make twenty times dearer than the default. A managed household is blocked when the box-wide demo valve
     /// has hit today's cap (<see cref="IDemoValve"/> — a no-op unless a Demo cap is configured), else allowed
     /// when billing is off (§7), unlimited (Founder), or in credit (<see cref="IEntitlements.IsAiAllowedAsync"/>,
     /// which also runs the lazy allowance); when a billing-enabled box is out of credit the next step is
@@ -34,7 +36,7 @@ public static class AiErrorText
     /// refusal into a message and avoids a doomed call.</summary>
     public static async ValueTask<string?> BlockedReasonAsync(
         IEntitlements entitlements, CircuitAiSettings settings, IDemoValve demoValve,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, long creditsNeeded = 1)
     {
         if (settings.Managed)
         {
@@ -45,7 +47,7 @@ public static class AiErrorText
             // rather than an honest message. Worth a follow-up twin for AiUsageMeter.)
             if (await demoValve.CallBlockedMessageAsync(cancellationToken) is { } demoBlocked) return demoBlocked;
 
-            if (await entitlements.IsAiAllowedAsync(cancellationToken)) return null;
+            if (await entitlements.IsAiAllowedAsync(creditsNeeded, cancellationToken)) return null;
             // Blocked on a billing-enabled managed box: name the act the household can actually take.
             return await entitlements.GetTierAsync(cancellationToken) == HouseholdTier.Aware ? OutOfCredits : SubscribeToUse;
         }

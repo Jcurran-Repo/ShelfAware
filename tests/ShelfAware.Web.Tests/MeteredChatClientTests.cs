@@ -23,6 +23,11 @@ public class MeteredChatClientTests : IDisposable
     private readonly TestAuthDb _authDb = new(); // the ledger lives in auth.db
     private readonly ScriptedChatClient _provider = new();
 
+    /// <summary>The entitlements the last <see cref="Build"/> handed the client. Exposed so a test can move
+    /// the balance BETWEEN two calls of one act — which is what really happens when the first call of a
+    /// meal plan charges the whole plan and the seventeen after it find the balance drained.</summary>
+    private FakeEntitlements _entitlements = new();
+
     public void Dispose()
     {
         _db.Dispose();
@@ -187,7 +192,7 @@ public class MeteredChatClientTests : IDisposable
         var settings = new CircuitAiSettings(llm);
         // Default "plenty" so a recording/metering test's managed call is allowed by the phase-4b gate; a
         // gate test sets balanceCredits: 0 to exercise the refusal.
-        var entitlements = new FakeEntitlements(tier) { BalanceCredits = balanceCredits };
+        var entitlements = _entitlements = new FakeEntitlements(tier) { BalanceCredits = balanceCredits };
         var payments = Options.Create(new ShelfAware.Web.Billing.PaymentsOptions { Enabled = paymentsEnabled });
         // meterReserveFailsFirst faults ONLY the first usage-row write (the reserve), to pin the balanced
         // release; the returned meter reads through the same wrapper, whose later calls delegate to _db.
@@ -1197,5 +1202,86 @@ public class MeteredChatClientTests : IDisposable
         var response = await AskAsync(client);
         Assert.Equal("ok", response.Text);
         Assert.Equal(1, _provider.Calls);
+    }
+
+    // ------------------------------------------------------------------ the gate knows what the act costs
+
+    [Fact]
+    public async Task An_act_the_balance_cannot_cover_is_refused_before_the_provider_is_called()
+    {
+        // ⚠️ THE finding. A 124-meal plan is 42 credits; this household holds 41. The old gate asked only
+        // "any credit left", so it said yes — and the plan then charged 42 on its first batch, ran the
+        // household to -1, had every remaining batch refused, persisted seven of the hundred and twenty-four
+        // meals it had been paid for, and reported success. Refusing it here is what makes that unreachable.
+        var (client, _) = Build("server", balanceCredits: 41);
+        using var _act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124);
+
+        await Assert.ThrowsAsync<AiCreditsExhaustedException>(() => AskAsync(client));
+        Assert.Equal(0, _provider.Calls);        // refused BEFORE the provider — nothing was spent
+        Assert.Empty(await LedgerRowsAsync());   // and nothing was charged
+    }
+
+    [Fact]
+    public async Task The_same_act_goes_through_on_a_balance_that_exactly_covers_it()
+    {
+        // The other side of the boundary, because a gate that refuses one credit too eagerly is its own
+        // defect: a household holding exactly the quoted price can buy exactly the quoted plan.
+        var (client, _) = Build("server", balanceCredits: 42);
+        using var _act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124);
+
+        await AskAsync(client);
+
+        Assert.Equal(1, _provider.Calls);
+        Assert.Equal(-42, Assert.Single(await LedgerRowsAsync()).AmountCredits);
+    }
+
+    [Fact]
+    public async Task The_rest_of_an_act_already_paid_for_is_never_refused_for_want_of_credit()
+    {
+        // ⚠️ The half of the fix that is easy to leave out, and it produces the SAME visible defect as the
+        // half above. A plan pays for itself in full on batch one, so batches two to eighteen run against a
+        // balance the plan itself emptied. If the gate asks again, the household is refused the plan it just
+        // bought and the page happily reports the fraction that got through.
+        var (client, _) = Build("server", balanceCredits: 42);
+        using var act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124);
+
+        await AskAsync(client);                  // batch 1 — charges the whole 42
+        _entitlements.BalanceCredits = 0;        // which is what it leaves behind
+        await AskAsync(client);                  // batch 2 — must NOT be refused
+        await AskAsync(client);                  // and nor must any after it
+
+        Assert.Equal(3, _provider.Calls);
+        Assert.Equal(-42, Assert.Single(await LedgerRowsAsync()).AmountCredits); // still ONE charge
+    }
+
+    [Fact]
+    public async Task A_charge_for_a_plan_says_on_the_ledger_how_many_meals_it_bought()
+    {
+        // "A meal plan" meant one amount until a plan was priced by the meal. Now two honest rows can read
+        // -3 and -42, and a household checking either against what it asked for has nothing to check with.
+        var (client, _) = Build("server", balanceCredits: 1_000);
+        using var _act = AiActionScope.Begin(ServiceAction.MealPlan, units: 124);
+
+        await AskAsync(client);
+
+        Assert.Equal("A meal plan (124 meals)", Assert.Single(await LedgerRowsAsync()).Reason);
+    }
+
+    [Fact]
+    public async Task A_one_meal_act_is_described_without_a_count_it_does_not_need()
+    {
+        // A reroll is one meal and is priced per act, so the size would be noise. Same for a plan of one.
+        var (client, _) = Build("server", balanceCredits: 1_000);
+        using var _act = AiActionScope.Begin(ServiceAction.MealReroll);
+
+        await AskAsync(client);
+
+        Assert.Equal("Swapping one meal", Assert.Single(await LedgerRowsAsync()).Reason);
+    }
+
+    private async Task<List<CreditLedgerEntry>> LedgerRowsAsync()
+    {
+        await using var db = _authDb.CreateDbContext();
+        return await db.CreditLedger.AsNoTracking().OrderBy(e => e.Id).ToListAsync();
     }
 }

@@ -103,8 +103,9 @@ public static class CreditPricing
             ? configured
             : options.CreditsForUnknownAction;
         credits = Math.Max(0, credits);
-        if (credits == 0) return 0; // free is free, however much of it was asked for
-
+        // No early-out for a free action: 0 x any number of blocks is already 0, and a guard no input can
+        // make fail is a line the mutation gate has to be told to ignore. The POLICY that free stays free
+        // however much was asked for is real and tested; it just falls out of the multiply.
         var per = UnitsPerPrice(options, action);
         var blocks = (int)Math.Ceiling(Math.Max(1, units) / (double)per);
         return credits * blocks;
@@ -127,6 +128,23 @@ public static class CreditPricing
         if (per == 1 || !options.UnitNouns.TryGetValue(action, out var noun) || string.IsNullOrWhiteSpace(noun))
             return price.ToString();
         return $"{price} per {per} {noun}";
+    }
+
+    /// <summary>How a CHARGE reads on a household's ledger: <see cref="Describe"/> for anything priced per
+    /// act, and the same wording with the size for anything priced per unit ("A meal plan (124 meals)").
+    ///
+    /// <para>⚠️ The size belongs here and not in <see cref="Describe"/>, which the price list and the
+    /// operator's margin table also read — those two are about the ACTION and would be wrong to name one
+    /// household's plan. But a ledger line is about one act, and since a meal plan was priced by the meal
+    /// two rows reading "A meal plan" can honestly be -3 and -42. Without the count the household cannot
+    /// check either against what it asked for, which is the whole promise of an itemised ledger.</para></summary>
+    public static string DescribeCharge(BillingOptions options, ServiceAction action, int units = 1)
+    {
+        var described = Describe(action);
+        var per = UnitsPerPrice(options, action);
+        if (per == 1 || units <= 1 || !options.UnitNouns.TryGetValue(action, out var noun) || string.IsNullOrWhiteSpace(noun))
+            return described;
+        return $"{described} ({units} {noun})";
     }
 
     /// <summary>The actions a charge is actually WIRED to — the ones some service opens an

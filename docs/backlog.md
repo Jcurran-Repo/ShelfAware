@@ -30,16 +30,16 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
   Wiring it needs two things the app can't see from inside: a real ElevenLabs invoice to price a read
   against (the 3-credit figure is an estimate, never a measurement), and a charge point that isn't an
   `IChatClient`. Jordan's call whether to wire it or leave speech free.
-- ⚠️ **The credit gate asks "any credit left?", not "enough for THIS?"** (2026-09-19, surfaced by pricing
-  the meal plan per meal). `Entitlements.IsAiAllowedAsync` returns `GetBalanceCreditsAsync() > 0`, and
-  `AiErrorText.BlockedReasonAsync` mirrors it, so a household with 1 credit can start a 42-credit meal
-  plan and finish it owing 41. The overrun is bounded by one action and the ledger records it honestly,
-  so nothing is lost or mis-stated — but the household is told "you're out of credits" only after the
-  spend, not before it. The fix belongs at the gate, ONCE, for every action: the price of the act about
-  to run is knowable (`CreditPricing.CreditsFor`), so the check can be "balance covers this" instead of
-  "balance is non-zero". Doing it per surface would be the partial conversion CLAUDE.md warns about —
-  fourteen call sites answering the same question their own way. Not urgent: no deployed box has a
-  `Payments` section, so nothing is charged today.
+- ⚠️ **A meal plan still charges for meals it does not deliver.** Closed in part on 2026-09-19: the credit
+  gate now asks whether the balance covers the act's own price, so a household is refused a plan it cannot
+  afford before any of it runs. What is NOT closed is non-delivery. The whole plan's price is taken on the
+  first of up to eighteen provider calls, so a plan that then fails outright, or returns short because the
+  model wobbled, has already been charged in full — up to 42 credits for nothing, where before it was 2 and
+  therefore noise. Fixing it needs the act to settle up at the end (a compensating ledger entry for the
+  shortfall) or to charge on delivery, and either is a money-path decision rather than a patch; the refund
+  must also be keyed to a charge that really happened, since on a Founder or billing-off box nothing was
+  charged and a naive refund would mint credit. Not urgent — no deployed box has a `Payments` section, so
+  nothing is charged today — but it wants deciding before the first paying customer.
 - **The remediation arc** — all seven phases landed 2026-09-19, designed in `docs/remediation-plan.md`,
   with the review-gate pass on phase 7 written up in its §9. What's left out of that arc is deliberate:
   draining logic out of `.razor` (D1) and EF Migrations (D3), both with reasons in §8.
