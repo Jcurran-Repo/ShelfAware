@@ -31,7 +31,9 @@
             <div class="billing-actions">
                 @foreach (var pack in BillingCatalog.Packs)
                 {
-                    <a href="/billing/checkout?product=@pack.Product" data-enhance-nav="false">@pack.PriceDisplay</a>
+                    @* Both halves, deliberately: the price AND what it buys, so the exchange rate is
+                       something a buyer reads rather than something they have to work out. *@
+                    <a href="/billing/checkout?product=@pack.Product" data-enhance-nav="false">@pack.PriceDisplay — @pack.DisplayName</a>
                 }
             </div>
 

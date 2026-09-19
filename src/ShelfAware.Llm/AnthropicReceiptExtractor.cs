@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using ShelfAware.Core.Billing;
 using ShelfAware.Core.Extraction;
 using Category = ShelfAware.Core.Domain.Category;
 
@@ -70,6 +71,7 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
         CancellationToken cancellationToken = default)
     {
         if (attachments.Count == 0) return ExtractionResult.Fail("No attachments provided.");
+        using var action = AiActionScope.Begin(ServiceAction.ReceiptExtraction);
 
         _logger.LogInformation("Extracting receipt from {AttachmentCount} attachment(s) ({ProductHints} product hints, {TagHints} tag hints).",
             attachments.Count, knownProductNames?.Count ?? 0, knownTags?.Count ?? 0);

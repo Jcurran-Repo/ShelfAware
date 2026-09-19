@@ -19,28 +19,28 @@ public class CreditLedgerTests : IDisposable
     [Fact]
     public async Task An_empty_ledger_reads_zero()
     {
-        Assert.Equal(0, await _ledger.GetBalanceMicrosAsync("hh-a"));
+        Assert.Equal(0, await _ledger.GetBalanceCreditsAsync("hh-a"));
     }
 
     [Fact]
     public async Task Balance_is_a_grant_minus_its_consumption()
     {
-        await _ledger.GrantAsync("hh-a", 1_650_000, "Welcome grant");
-        await _ledger.RecordConsumptionAsync("hh-a", 250_000, "chat");
-        await _ledger.RecordConsumptionAsync("hh-a", 100_000, "extraction");
+        await _ledger.GrantAsync("hh-a", 165, "Welcome grant");
+        await _ledger.RecordConsumptionAsync("hh-a", 25, "chat");
+        await _ledger.RecordConsumptionAsync("hh-a", 10, "extraction");
 
-        Assert.Equal(1_300_000, await _ledger.GetBalanceMicrosAsync("hh-a")); // 1,650,000 − 250,000 − 100,000
+        Assert.Equal(130, await _ledger.GetBalanceCreditsAsync("hh-a")); // 165 − 25 − 10
     }
 
     [Fact]
     public async Task Consumption_is_stored_negative()
     {
-        await _ledger.RecordConsumptionAsync("hh-a", 250_000, "chat");
+        await _ledger.RecordConsumptionAsync("hh-a", 25, "chat");
 
         await using var db = _authDb.CreateDbContext();
         var entry = await db.CreditLedger.SingleAsync();
         Assert.Equal(CreditEntryKind.Consumption, entry.Kind);
-        Assert.Equal(-250_000, entry.AmountMicros); // stored negative so the SUM is the balance
+        Assert.Equal(-25, entry.AmountCredits); // stored negative so the SUM is the balance
     }
 
     [Fact]
@@ -49,7 +49,7 @@ public class CreditLedgerTests : IDisposable
         await _ledger.RecordConsumptionAsync("hh-a", 0, "cache hit");
         await _ledger.RecordConsumptionAsync("hh-a", -5, "bug");
 
-        Assert.Equal(0, await _ledger.GetBalanceMicrosAsync("hh-a"));
+        Assert.Equal(0, await _ledger.GetBalanceCreditsAsync("hh-a"));
         await using var db = _authDb.CreateDbContext();
         Assert.Empty(await db.CreditLedger.ToListAsync());
     }
@@ -57,12 +57,12 @@ public class CreditLedgerTests : IDisposable
     [Fact]
     public async Task The_ledger_is_hand_scoped_per_household()
     {
-        await _ledger.GrantAsync("hh-a", 1_000_000, "Welcome grant");
-        await _ledger.RecordConsumptionAsync("hh-a", 400_000, "chat");
-        await _ledger.GrantAsync("hh-b", 500_000, "Welcome grant");
+        await _ledger.GrantAsync("hh-a", 100, "Welcome grant");
+        await _ledger.RecordConsumptionAsync("hh-a", 40, "chat");
+        await _ledger.GrantAsync("hh-b", 50, "Welcome grant");
 
-        Assert.Equal(600_000, await _ledger.GetBalanceMicrosAsync("hh-a")); // untouched by hh-b
-        Assert.Equal(500_000, await _ledger.GetBalanceMicrosAsync("hh-b")); // untouched by hh-a's consumption
+        Assert.Equal(60, await _ledger.GetBalanceCreditsAsync("hh-a")); // untouched by hh-b
+        Assert.Equal(50, await _ledger.GetBalanceCreditsAsync("hh-b")); // untouched by hh-a's consumption
     }
 
     [Fact]
@@ -72,7 +72,7 @@ public class CreditLedgerTests : IDisposable
 
         Assert.NotNull(entry);
         Assert.Equal(CreditEntryKind.Grant, entry!.Kind);
-        Assert.Equal(AiPricing.WelcomeGrantRetailMicros(new BillingOptions()), entry.AmountMicros); // $1 × 1.65 = 1,650,000
+        Assert.Equal(CreditPricing.WelcomeGrantCredits(new BillingOptions()), entry.AmountCredits); // $1 of cost ÷ 1¢ a credit = 100 credits
         Assert.Equal("hh-a", entry.HouseholdId);
     }
 
@@ -87,7 +87,7 @@ public class CreditLedgerTests : IDisposable
 
     // ---- The lazy per-CALENDAR-MONTH Aware allowance + no-rollover (phase 4a/4d, §4) ----
 
-    private static readonly long Allowance = AiPricing.MonthlyAllowanceRetailMicros(new BillingOptions()); // $1 × 1.65
+    private static readonly long Allowance = CreditPricing.MonthlyAllowanceCredits(new BillingOptions()); // $1 of cost ÷ 1¢ a credit = 100
     private static readonly DateTimeOffset Oct = DateTimeOffset.Parse("2026-10-15T09:00:00Z"); // an instant in October
     private static readonly DateTimeOffset Nov = DateTimeOffset.Parse("2026-11-15T09:00:00Z"); // the next calendar month
     private static readonly DateTimeOffset Dec = DateTimeOffset.Parse("2026-12-15T09:00:00Z"); // and the one after
@@ -113,7 +113,7 @@ public class CreditLedgerTests : IDisposable
 
         await _ledger.EnsureCurrentAllowanceAsync(id, Oct);
 
-        Assert.Equal(Allowance, await _ledger.GetBalanceMicrosAsync(id));
+        Assert.Equal(Allowance, await _ledger.GetBalanceCreditsAsync(id));
         await using var db = _authDb.CreateDbContext();
         // The marker is the CALENDAR MONTH, not the subscription's renewal date.
         Assert.Equal(CreditLedger.PeriodFor(Oct), (await db.Households.SingleAsync()).AllowanceGrantedForPeriod);
@@ -128,7 +128,7 @@ public class CreditLedgerTests : IDisposable
         await _ledger.EnsureCurrentAllowanceAsync(id, Oct.AddDays(5));  // same month, a later day
         await _ledger.EnsureCurrentAllowanceAsync(id, Oct.AddDays(12));
 
-        Assert.Equal(Allowance, await _ledger.GetBalanceMicrosAsync(id)); // one grant, not three
+        Assert.Equal(Allowance, await _ledger.GetBalanceCreditsAsync(id)); // one grant, not three
         await using var db = _authDb.CreateDbContext();
         Assert.Single(await db.CreditLedger.Where(e => e.Kind == CreditEntryKind.Allowance).ToListAsync());
     }
@@ -159,7 +159,7 @@ public class CreditLedgerTests : IDisposable
 
         await _ledger.EnsureCurrentAllowanceAsync(id, Oct);
 
-        Assert.Equal(Allowance, await _ledger.GetBalanceMicrosAsync(id));
+        Assert.Equal(Allowance, await _ledger.GetBalanceCreditsAsync(id));
     }
 
     [Fact]
@@ -171,8 +171,8 @@ public class CreditLedgerTests : IDisposable
         await _ledger.EnsureCurrentAllowanceAsync(free, Oct);
         await _ledger.EnsureCurrentAllowanceAsync(founder, Oct);
 
-        Assert.Equal(0, await _ledger.GetBalanceMicrosAsync(free));
-        Assert.Equal(0, await _ledger.GetBalanceMicrosAsync(founder));
+        Assert.Equal(0, await _ledger.GetBalanceCreditsAsync(free));
+        Assert.Equal(0, await _ledger.GetBalanceCreditsAsync(founder));
     }
 
     [Fact]
@@ -180,29 +180,29 @@ public class CreditLedgerTests : IDisposable
     {
         var id = await SeedHouseholdAsync(HouseholdTier.Aware);
         await _ledger.EnsureCurrentAllowanceAsync(id, Oct);           // month 1: +A
-        await _ledger.RecordConsumptionAsync(id, 400_000, "chat");    // spend part of it → A − 400k
+        await _ledger.RecordConsumptionAsync(id, 40, "chat");    // spend part of it → A − 40
 
-        await _ledger.EnsureCurrentAllowanceAsync(id, Nov);          // month 2: expire the unspent A−400k, grant +A
+        await _ledger.EnsureCurrentAllowanceAsync(id, Nov);          // month 2: expire the unspent A−40, grant +A
 
-        // No rollover: the unspent A−400k is swept, so the balance is exactly one fresh allowance. (Also the
-        // #7 guard against dropping the Consumption term — then the full A would be swept, leaving A−400k.)
-        Assert.Equal(Allowance, await _ledger.GetBalanceMicrosAsync(id));
+        // No rollover: the unspent A−40 is swept, so the balance is exactly one fresh allowance. (Also the
+        // #7 guard against dropping the Consumption term — then the full A would be swept, leaving A−40.)
+        Assert.Equal(Allowance, await _ledger.GetBalanceCreditsAsync(id));
     }
 
     [Fact]
     public async Task Purchases_survive_the_allowance_expiry_when_consumption_dipped_into_them()
     {
         var id = await SeedHouseholdAsync(HouseholdTier.Aware);
-        await _ledger.GrantAsync(id, 2_000_000, "credit pack");      // persisting money (a Grant persists like a Purchase)
+        await _ledger.GrantAsync(id, 200, "credit pack");      // persisting money (a Grant persists like a Purchase)
         await _ledger.EnsureCurrentAllowanceAsync(id, Oct);         // +A
-        await _ledger.RecordConsumptionAsync(id, 2_000_000, "big"); // spends all of A, then the overflow dips the pack
+        await _ledger.RecordConsumptionAsync(id, 200, "big"); // spends all of A, then the overflow dips the pack
 
         await _ledger.EnsureCurrentAllowanceAsync(id, Nov);         // A fully spent → expire 0; grant +A
 
         // Spend-allowance-first: consumption drew all of A, then the OVERFLOW dipped the pack. So the pack
         // keeps 2,000,000 − overflow, the expiry sweeps nothing (A was fully spent), plus the fresh A.
-        var overflow = 2_000_000 - Allowance;
-        Assert.Equal((2_000_000 - overflow) + Allowance, await _ledger.GetBalanceMicrosAsync(id));
+        var overflow = 200 - Allowance;
+        Assert.Equal((200 - overflow) + Allowance, await _ledger.GetBalanceCreditsAsync(id));
     }
 
     [Fact]
@@ -210,14 +210,14 @@ public class CreditLedgerTests : IDisposable
     {
         // #7 guard (the `e.Id > lastAllowance.Id` term): only consumption AFTER the allowance draws it down.
         var id = await SeedHouseholdAsync(HouseholdTier.Aware);
-        await _ledger.GrantAsync(id, 2_000_000, "credit pack");
-        await _ledger.RecordConsumptionAsync(id, 500_000, "before"); // drawn from the pack, BEFORE any allowance
+        await _ledger.GrantAsync(id, 200, "credit pack");
+        await _ledger.RecordConsumptionAsync(id, 50, "before"); // drawn from the pack, BEFORE any allowance
         await _ledger.EnsureCurrentAllowanceAsync(id, Oct);         // +A (nothing consumed against it yet)
 
         await _ledger.EnsureCurrentAllowanceAsync(id, Nov);         // month 2: A fully unspent → sweep A; +A
 
-        // The pre-allowance 500k is NOT counted against A, so the full A is swept; the pack keeps 1.5M.
-        Assert.Equal((2_000_000 - 500_000) + Allowance, await _ledger.GetBalanceMicrosAsync(id));
+        // The pre-allowance 50 is NOT counted against A, so the full A is swept; the pack keeps 150.
+        Assert.Equal((200 - 50) + Allowance, await _ledger.GetBalanceCreditsAsync(id));
     }
 
     [Fact]
@@ -225,14 +225,14 @@ public class CreditLedgerTests : IDisposable
     {
         // #7 guard (the Kind filter): the sweep draws down only Consumption + Expiry, NEVER a Purchase/Grant —
         // a pack bought after the allowance must survive the month rollover intact (dropping the filter would
-        // add the +5M pack into "drawn", compute a huge unspent, and sweep the pack).
+        // add the +500 pack into "drawn", compute a huge unspent, and sweep the pack).
         var id = await SeedHouseholdAsync(HouseholdTier.Aware);
         await _ledger.EnsureCurrentAllowanceAsync(id, Oct);         // +A
-        await _ledger.GrantAsync(id, 5_000_000, "credit pack");     // pack AFTER the allowance, no consumption
+        await _ledger.GrantAsync(id, 500, "credit pack");     // pack AFTER the allowance, no consumption
 
         await _ledger.EnsureCurrentAllowanceAsync(id, Nov);         // sweep the unspent A; +A
 
-        Assert.Equal(5_000_000 + Allowance, await _ledger.GetBalanceMicrosAsync(id)); // pack untouched + fresh A
+        Assert.Equal(500 + Allowance, await _ledger.GetBalanceCreditsAsync(id)); // pack untouched + fresh A
     }
 
     [Fact]
@@ -244,14 +244,14 @@ public class CreditLedgerTests : IDisposable
         // credit.
         var id = await SeedHouseholdAsync(HouseholdTier.Aware);
         await LedgerWithAllowance(1m).EnsureCurrentAllowanceAsync(id, Oct); // month 1: +A (allowance on)
-        await _ledger.GrantAsync(id, 5_000_000, "credit pack");            // a purchased pack
+        await _ledger.GrantAsync(id, 500, "credit pack");            // a purchased pack
 
         var paused = LedgerWithAllowance(0m); // operator turns the allowance off
         await paused.EnsureCurrentAllowanceAsync(id, Nov);                 // month 2: sweep A once, grant nothing
-        Assert.Equal(5_000_000, await _ledger.GetBalanceMicrosAsync(id)); // pack only (A swept exactly once)
+        Assert.Equal(500, await _ledger.GetBalanceCreditsAsync(id)); // pack only (A swept exactly once)
 
         await paused.EnsureCurrentAllowanceAsync(id, Dec);                // month 3: must NOT re-sweep
-        Assert.Equal(5_000_000, await _ledger.GetBalanceMicrosAsync(id)); // still the pack, not 5M − A
+        Assert.Equal(500, await _ledger.GetBalanceCreditsAsync(id)); // still the pack, not 500 − A
     }
 
     [Fact]
@@ -262,11 +262,11 @@ public class CreditLedgerTests : IDisposable
         // allowance — which only holds if "the last allowance" is the newest.
         var id = await SeedHouseholdAsync(HouseholdTier.Aware);
         await _ledger.EnsureCurrentAllowanceAsync(id, Oct);         // +A1
-        await _ledger.RecordConsumptionAsync(id, 300_000, "m1");
+        await _ledger.RecordConsumptionAsync(id, 30, "m1");
         await _ledger.EnsureCurrentAllowanceAsync(id, Nov);         // sweep A1's unspent, +A2
-        await _ledger.RecordConsumptionAsync(id, 300_000, "m2");
+        await _ledger.RecordConsumptionAsync(id, 30, "m2");
         await _ledger.EnsureCurrentAllowanceAsync(id, Dec);         // sweep A2's unspent, +A3
 
-        Assert.Equal(Allowance, await _ledger.GetBalanceMicrosAsync(id)); // exactly one fresh allowance, no rollover
+        Assert.Equal(Allowance, await _ledger.GetBalanceCreditsAsync(id)); // exactly one fresh allowance, no rollover
     }
 }

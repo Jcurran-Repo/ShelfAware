@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.MealPlanning;
 using ShelfAware.Core.Recipes;
+using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Llm;
 
@@ -32,6 +33,7 @@ public class AnthropicMealPlanGenerator : IMealPlanGenerator
     public async Task<IReadOnlyList<RecipeSuggestion>> GenerateAsync(
         MealPlanBatch batch, CancellationToken cancellationToken = default)
     {
+        using var action = AiActionScope.Begin(ServiceAction.MealPlan);
         var messages = new List<ChatMessage>
         {
             new(ChatRole.System, SystemPrompt),

@@ -11,6 +11,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using System.Threading.RateLimiting;
 using System.Text.Json;
+using ShelfAware.Core.Billing;
 using ShelfAware.Core.Census;
 using ShelfAware.Core.Chat;
 using ShelfAware.Core.Domain;
@@ -445,6 +446,7 @@ builder.Services.AddScoped<AiUsageMeter>();
 builder.Services.AddSingleton<HealthProbe>();
 builder.Services.AddSingleton<DemoUsageMeter>();
 builder.Services.AddSingleton<IDemoValve>(sp => sp.GetRequiredService<DemoUsageMeter>());
+builder.Services.AddSingleton<ServiceMarginMeter>();
 builder.Services.AddScoped<IChatClient, MeteredChatClient>();
 
 // Per-circuit bus wiring the layout voice agent to the pages (data-changed refresh + resume hand-off).
@@ -676,6 +678,9 @@ using (var scope = app.Services.CreateScope())
         // auth.db — the rebuild copies them by name, so it needs them to exist first. One-off; see the
         // class docs for why it's the exception to AdditiveSchema's additive-only rule.
         NullableInviteCodeMigration.Apply(authDb);
+        // Also strictly after the additive pass (which creates CreditLedger on a DB that predates it).
+        // One-off money migration: retail micros → Shelf Aware credits, in one transaction — see the class.
+        CreditDenominationMigration.Apply(authDb, app.Services.GetRequiredService<IOptions<BillingOptions>>().Value);
     }
 
     var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<ShelfAwareDbContext>>();
@@ -1206,7 +1211,7 @@ if (fakePayments)
             Product: prod,
             PeriodEnd: isPack ? null : DateTimeOffset.Now.Add(period),
             CancelAtPeriodEnd: false,
-            AmountMicros: isPack ? BillingCatalog.RetailMicrosFor(prod) : null);
+            AmountCredits: isPack ? BillingCatalog.CreditsFor(prod) : null);
         await handler.HandleAsync(completed, ct);
         return Results.Redirect(isPack ? "/settings?checkout=credits" : "/settings?checkout=subscribed");
     }).RequireAuthorization();

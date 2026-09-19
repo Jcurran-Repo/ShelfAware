@@ -160,9 +160,10 @@ public sealed class StripePaymentProvider(
         if (product is null) return Unmapped(stripeEvent, "unknown or missing product metadata");
 
         var isPack = BillingCatalog.IsPack(product.Value);
-        // A pack grants its FACE value (not session.AmountTotal, which under MoR includes tax). A subscription
-        // grants no credit here (the fee isn't a credit; the monthly allowance is a later step).
-        long? amount = isPack ? BillingCatalog.RetailMicrosFor(product.Value) : null;
+        // A pack grants its FACE value in CREDITS (not session.AmountTotal, which under MoR includes tax, and
+        // which is money rather than credits anyway). A subscription grants no credit here (the fee isn't a
+        // credit; the monthly allowance is granted separately).
+        long? amount = isPack ? BillingCatalog.CreditsFor(product.Value) : null;
         // The session doesn't carry the subscription's period end; provision one that the subscription.created/
         // updated event corrects with the real anchor. A pack has no period.
         DateTimeOffset? periodEnd = isPack
@@ -178,7 +179,7 @@ public sealed class StripePaymentProvider(
             Product: product,
             PeriodEnd: periodEnd,
             CancelAtPeriodEnd: false,
-            AmountMicros: amount);
+            AmountCredits: amount);
     }
 
     private PaymentWebhookEvent? MapSubscriptionChange(Event stripeEvent)

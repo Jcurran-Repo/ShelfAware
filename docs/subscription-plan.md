@@ -247,10 +247,19 @@ not global config). The pieces:
   best-effort (`MeteredChatClient` logs-and-continues on a failed record). One of them must be the
   authority — the top-of-CLAUDE.md one-definition rule — and it's the ledger: gate on it, bill from
   it, export it; the usage row feeds the Settings panel and nothing else.
-- **One currency: retail-denominated credit.** Every call decrements at retail (cost × 1.65); the AI
+- ⚠️ **SUPERSEDED 2026-09-19 — the ledger is denominated in CREDITS, not retail dollars.** The two
+  bullets below describe the pass-through model the app shipped with, kept because the reasoning behind
+  the rest of this section still rests on them. What replaced them, and why, is
+  `docs/remediation-plan.md` §7: a credit is an abstract unit Shelf Aware issues, priced per
+  `ServiceAction` from a published list; what a credit costs *Jordan* varies by service, which is the
+  point. The anchor is **1 credit = $0.01 of cost = $0.0165 retail**, so the grant and pack figures
+  quoted throughout this document are unchanged in money and now read as 100 credits and 303/606/1,212.
+  The "two pricing shapes" carve-out is **gone** — a realtime minute and a chat turn are both simply
+  prices on the list, which is the problem the credit was introduced to solve.
+- ~~**One currency: retail-denominated credit.** Every call decrements at retail (cost × 1.65); the AI
   tier's monthly grant is $1.65 retail (= $1.00 cost). One ledger, one consumption rate — no
-  "included is at cost but credits are marked up" dual bookkeeping.
-- **Two pricing shapes, one currency.** Token actions (chat, extraction, census, recipes) stamp *exact*
+  "included is at cost but credits are marked up" dual bookkeeping.~~
+- ~~**Two pricing shapes, one currency.**~~ Token actions (chat, extraction, census, recipes) stamp *exact*
   cost from the pricing catalog. Voice/agent actions (EL TTS synthesis, STT, realtime sessions) post
   **flat retail prices** per action — their provider costs are per-character/per-minute and not
   observable per-call from inside the app, so a measured flat price (§3) is the honest unit. Both land

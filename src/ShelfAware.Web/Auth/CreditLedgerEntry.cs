@@ -6,7 +6,7 @@ namespace ShelfAware.Web.Auth;
 /// §4) join with payments (phase 3). <see cref="Allowance"/> (the recurring Aware monthly grant) and
 /// <see cref="Expiry"/> (its no-rollover sweep) are phase 4. The enum is
 /// extensible — a new kind is additive, and nothing switches on it exhaustively (the balance is a plain sum
-/// of <see cref="CreditLedgerEntry.AmountMicros"/>, kind is for display/audit).</summary>
+/// of <see cref="CreditLedgerEntry.AmountCredits"/>, kind is for display/audit).</summary>
 public enum CreditEntryKind
 {
     Grant = 0,
@@ -29,7 +29,7 @@ public enum CreditEntryKind
 /// <summary>
 /// One movement in a household's credit ledger — the append-only money record (docs/subscription-plan.md
 /// §4: "the auth-side LEDGER is THE money record; the pantry AiUsage row is display-only"). Balance is the
-/// SUM of <see cref="AmountMicros"/> for a household, so nothing mutates a running total in place (the
+/// SUM of <see cref="AmountCredits"/> for a household, so nothing mutates a running total in place (the
 /// read-modify-write races the invite-code work already taught).
 ///
 /// Lives in auth.db beside accounts and the subscription (this is money/credential-adjacent, and it must
@@ -47,10 +47,27 @@ public sealed class CreditLedgerEntry
 
     public CreditEntryKind Kind { get; set; }
 
-    /// <summary>Signed RETAIL micros (millionths of a dollar, at retail = cost × markup): POSITIVE for a
-    /// grant, NEGATIVE for consumption. The household's balance is the sum of these — never stored, always
-    /// derived — so a movement can only ever be appended, never edited.</summary>
-    public long AmountMicros { get; set; }
+    /// <summary>Signed SHELF AWARE CREDITS: POSITIVE for a grant, allowance or purchase, NEGATIVE for
+    /// consumption, an expiry sweep or a refund. The household's balance is the sum of these — never stored,
+    /// always derived — so a movement can only ever be appended, never edited.
+    ///
+    /// ⚠️ Credits, not dollars, since 2026-09-19. A credit is an abstract unit Shelf Aware issues and prices
+    /// per <see cref="ShelfAware.Core.Billing.ServiceAction"/>; what it costs JORDAN varies by service, which
+    /// is the whole point (docs/remediation-plan.md §7). The ledger used to be denominated in retail micros —
+    /// Jordan's own provider bill — which could not price a realtime voice minute at all and made margin per
+    /// service invisible by construction. Rows written before the change were converted once at the anchor;
+    /// see <see cref="Data.CreditDenominationMigration"/> and <see cref="LegacyAmountMicros"/>.</summary>
+    public long AmountCredits { get; set; }
+
+    /// <summary>HISTORICAL. The retail micros this entry was originally denominated in, kept as the receipt
+    /// for the 2026-09-19 conversion to credits — so the arithmetic that produced every converted balance
+    /// can be audited rather than taken on trust. Zero on every entry written after the conversion; nothing
+    /// reads it but a human. Mapped to the original <c>AmountMicros</c> column, so a migrated database and a
+    /// freshly created one still have identical schemas (the parity the AdditiveSchema tests pin) — dropping
+    /// a SQLite column is a structural rebuild, and rebuilding the MONEY table to delete an audit trail is
+    /// the wrong trade twice over.</summary>
+    [System.ComponentModel.DataAnnotations.Schema.Column("AmountMicros")]
+    public long LegacyAmountMicros { get; set; }
 
     /// <summary>A short human-readable reason ("Welcome grant", or the action a consumption paid for) —
     /// for the ledger view and support ("where did my dollar go?"). Not machine-load-bearing.</summary>

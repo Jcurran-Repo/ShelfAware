@@ -23,6 +23,7 @@ public sealed class MeteredChatClient(
     IOptions<BillingOptions> billing,
     IOptions<PaymentsOptions> payments,
     CreditLedger ledger,
+    ServiceMarginMeter margin,
     IEntitlements entitlements,
     ICurrentHousehold currentHousehold,
     ILogger<MeteredChatClient> logger) : IChatClient
@@ -236,33 +237,67 @@ public sealed class MeteredChatClient(
         }
         catch (Exception ex) { logger.LogError(ex, "Recording AI usage failed; this call's tokens/cost went unrecorded."); }
 
+        long charged = 0;
         try
         {
-            await RecordCreditConsumptionAsync(costMicros, model, CancellationToken.None);
+            charged = await RecordCreditConsumptionAsync(costMicros, model, CancellationToken.None);
         }
         catch (Exception ex) { logger.LogError(ex, "Recording credit consumption failed; this call didn't draw the balance."); }
+
+        // Reconciliation, box-wide and household-free: what this call COST against what it was CHARGED.
+        // Recorded in every key mode and at every tier (see ServiceMarginMeter) — the question it answers is
+        // "is this action's price right?", which is about the action, not about who ran it. Its own
+        // best-effort, so a reconciliation hiccup can't undo the two writes above.
+        await margin.RecordAsync(AiActionScope.Current?.Action, costMicros, charged, CancellationToken.None);
     }
 
-    /// <summary>Draw the household's credit balance down by this call's RETAIL cost — but only for a
-    /// household that actually spends host credits: a MANAGED deployment with BILLING enabled (BYOK visitors
-    /// ride their own key; a managed box with no <c>Payments</c> config is unlimited-by-default per §7, so
-    /// the credit system doesn't apply and nothing is drawn) and a NON-unlimited tier (a Founder's cost is
-    /// recorded above for the operator, but they never spend credit). ⚠️ The billing-off skip mirrors
+    /// <summary>Draw the household's credit balance down by the PRICE OF THE ACTION this call belongs to —
+    /// but only for a household that actually spends host credits: a MANAGED deployment with BILLING enabled
+    /// (BYOK visitors ride their own key; a managed box with no <c>Payments</c> config is unlimited-by-default
+    /// per §7, so the credit system doesn't apply and nothing is drawn) and a NON-unlimited tier (a Founder's
+    /// cost is recorded above for the operator, but they never spend credit). ⚠️ The billing-off skip mirrors
     /// <see cref="IEntitlements.IsAiAllowedAsync"/>'s <c>!IsConfigured</c> short-circuit — the credit system
     /// is on or off as ONE thing (gate, pre-check, display, AND this recorder), so a billing-off box never
     /// accrues an invisible negative balance that flipping billing on would later enforce. This RECORDS
     /// consumption; the balance ENFORCEMENT is <see cref="EnsureManagedCallAllowedAsync"/> (phase 4b), which
-    /// runs BEFORE the call — so this post-call hot path reads no balance.</summary>
-    private async Task RecordCreditConsumptionAsync(long costMicros, string? model, CancellationToken cancellationToken)
+    /// runs BEFORE the call — so this post-call hot path reads no balance.
+    ///
+    /// <para>⚠️ ONE charge per <see cref="AiActionScope"/>, claimed atomically, so a chat turn that needs five
+    /// tool rounds costs a chat turn rather than five of them. The variance between the price and what the
+    /// rounds actually cost is Jordan's — and in exchange the UI can state a price BEFORE the button is
+    /// pressed, which a cost-denominated balance can never do.</para>
+    ///
+    /// <para>⚠️ A call with no scope (an AI service nobody has labelled) is NOT free: it falls back to the
+    /// old cost-denominated charge via <see cref="CreditPricing.CreditsForCostMicros"/>, so a missing label
+    /// over-charges visibly instead of opening a hole. The tier and household reads happen BEFORE the claim,
+    /// so a call that was never going to be charged doesn't spend its scope's one charge.</para></summary>
+    /// <returns>The credits actually charged for this call — 0 when nothing was drawn (a free action, a
+    /// later round of an action already paid for, a Founder, a BYOK circuit, or a billing-off box), which is
+    /// what the reconciliation row records alongside the cost.</returns>
+    private async Task<long> RecordCreditConsumptionAsync(long costMicros, string? model, CancellationToken cancellationToken)
     {
-        if (!settings.Managed || !payments.Value.IsConfigured || costMicros <= 0) return;
-        if ((await entitlements.GetTierAsync(cancellationToken)).IsUnlimited()) return;
+        if (!settings.Managed || !payments.Value.IsConfigured) return 0;
+        if ((await entitlements.GetTierAsync(cancellationToken)).IsUnlimited()) return 0;
 
         var householdId = await currentHousehold.GetIdAsync(cancellationToken);
-        if (householdId is null) return;
+        if (householdId is null) return 0;
 
-        var retailMicros = AiPricing.ToRetailMicros(billing.Value, costMicros);
-        await ledger.RecordConsumptionAsync(householdId, retailMicros, model, cancellationToken);
+        long credits;
+        string? reason;
+        if (AiActionScope.Current is { } action)
+        {
+            if (!action.TryClaimCharge()) return 0; // a later round of an action already paid for
+            credits = CreditPricing.CreditsFor(billing.Value, action.Action);
+            reason = CreditPricing.Describe(action.Action);
+        }
+        else
+        {
+            credits = CreditPricing.CreditsForCostMicros(billing.Value, costMicros);
+            reason = model;
+        }
+
+        await ledger.RecordConsumptionAsync(householdId, credits, reason, cancellationToken);
+        return credits;
     }
 
     public object? GetService(Type serviceType, object? serviceKey = null) =>

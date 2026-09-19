@@ -5,6 +5,7 @@ using ShelfAware.Web.Billing;
 using ShelfAware.Web.Data;
 using ShelfAware.Web.Diagnostics;
 using ShelfAware.Web.Wishlist;
+using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Web.Tests;
 
@@ -171,6 +172,33 @@ public class AdditiveSchemaTests : IDisposable
         Assert.Equal(fresh, await TableSchemaAsync(db, "DemoUsage"));
 
         db.DemoUsage.Add(new DemoUsageDay { Day = new DateOnly(2026, 9, 5), Calls = 3 });
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task Creates_the_ServiceMargin_table_on_an_older_auth_db_with_the_fresh_schema()
+    {
+        // The per-action reconciliation table (2026-09-19, the credit unit): box-wide operator data in
+        // auth.db, so it rides EnsureTable like its DemoUsage/ErrorLog neighbours rather than the pantry
+        // drill. ⚠️ Its unique index is part of the shape being pinned — the upsert's race handling keys
+        // on the constraint, so a rebuild that dropped the index would turn a race into silent duplicate
+        // rows instead of a caught one.
+        using var authDb = new TestAuthDb();
+        await using var db = authDb.CreateDbContext();
+        var fresh = await TableSchemaAsync(db, "ServiceMargin");
+        Assert.NotEmpty(fresh);
+
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE ServiceMargin;");
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // idempotent
+
+        Assert.Equal(fresh, await TableSchemaAsync(db, "ServiceMargin"));
+
+        db.ServiceMargin.Add(new ServiceMarginDay
+        {
+            Day = new DateOnly(2026, 9, 19), Action = ServiceAction.ChatTurn,
+            Calls = 3, Charges = 1, CreditsCharged = 2, CostMicros = 1_200,
+        });
         await db.SaveChangesAsync();
     }
 
@@ -679,7 +707,7 @@ public class AdditiveSchemaTests : IDisposable
 
         db.CreditLedger.Add(new CreditLedgerEntry
         {
-            HouseholdId = "hh-1", Kind = CreditEntryKind.Grant, AmountMicros = 1_650_000, Reason = "Welcome grant",
+            HouseholdId = "hh-1", Kind = CreditEntryKind.Grant, AmountCredits = 1_650_000, Reason = "Welcome grant",
         });
         await db.SaveChangesAsync();
         Assert.Single(await db.CreditLedger.ToListAsync());

@@ -4,6 +4,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Census;
+using ShelfAware.Core.Billing;
 using Category = ShelfAware.Core.Domain.Category;
 
 namespace ShelfAware.Llm;
@@ -78,6 +79,7 @@ public class AnthropicShelfCensusReader : IShelfCensusReader
         CancellationToken cancellationToken = default)
     {
         if (photos.Count == 0) return ShelfCensusResult.Fail("No photos provided.");
+        using var action = AiActionScope.Begin(ServiceAction.CensusPhoto);
 
         _logger.LogInformation("Reading a shelf census from {PhotoCount} photo(s) ({ProductHints} product hints).",
             photos.Count, knownProductNames?.Count ?? 0);

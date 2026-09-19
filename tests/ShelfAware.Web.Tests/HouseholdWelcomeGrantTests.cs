@@ -51,7 +51,7 @@ public class HouseholdWelcomeGrantTests : IDisposable
         await using var read = _authDb.CreateDbContext();
         var grant = Assert.Single(await read.CreditLedger.Where(e => e.HouseholdId == household.Id).ToListAsync());
         Assert.Equal(CreditEntryKind.Grant, grant.Kind);
-        Assert.Equal(AiPricing.WelcomeGrantRetailMicros(new BillingOptions()), grant.AmountMicros); // $1 × 1.65
+        Assert.Equal(CreditPricing.WelcomeGrantCredits(new BillingOptions()), grant.AmountCredits); // $1 × 1.65
     }
 
     [Fact]

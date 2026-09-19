@@ -52,7 +52,7 @@ public class UserDataServiceTests : IDisposable
         var export = await Service().ExportAsync();
 
         Assert.Equal(2, export.CreditLedger.Count);                              // the money record is theirs
-        Assert.Equal(1_500_000, export.CreditLedger.Sum(e => e.AmountMicros));   // 1,650,000 − 150,000
+        Assert.Equal(1_500_000, export.CreditLedger.Sum(e => e.AmountCredits));   // 1,650,000 − 150,000
     }
 
     [Fact]
@@ -64,7 +64,7 @@ public class UserDataServiceTests : IDisposable
         await Service().DeleteAllAsync();
 
         // The pantry is wiped, but the balance survives — destroying credit would be destroying money.
-        Assert.Equal(1_650_000, await Ledger.GetBalanceMicrosAsync(HouseholdId));
+        Assert.Equal(1_650_000, await Ledger.GetBalanceCreditsAsync(HouseholdId));
     }
 
     [Fact]

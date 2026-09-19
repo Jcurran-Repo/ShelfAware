@@ -10,6 +10,7 @@ using ShelfAware.Core.Prediction;
 using ShelfAware.Core.Recipes;
 using ShelfAware.Core.Settings;
 using ShelfAware.Core.Shopping;
+using ShelfAware.Core.Billing;
 using Category = ShelfAware.Core.Domain.Category;
 
 namespace ShelfAware.Llm;
@@ -53,6 +54,7 @@ public class AnthropicPantryChat : IPantryChat
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(userText)) return ChatResult.Fail("Type something to update.");
+        using var action = AiActionScope.Begin(ServiceAction.ChatTurn);
 
         var products = await _store.GetProductsAsync(cancellationToken);
         var knownTags = await _store.GetKnownTagsAsync(cancellationToken);

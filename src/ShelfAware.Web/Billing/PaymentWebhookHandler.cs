@@ -192,7 +192,7 @@ public sealed class PaymentWebhookHandler(
                     // A pack buyer already has the customer id from subscribing (packs are subscribers-only,
                     // §8), but keep whatever the event carries if we somehow don't.
                     household.BillingCustomerId ??= webhookEvent.BillingCustomerId;
-                    var entry = CreditLedger.Purchase(household.Id, webhookEvent.AmountMicros ?? 0, "Credit pack");
+                    var entry = CreditLedger.Purchase(household.Id, webhookEvent.AmountCredits ?? 0, "Credit pack");
                     if (entry is not null) db.CreditLedger.Add(entry);
                 }
                 else
@@ -229,7 +229,7 @@ public sealed class PaymentWebhookHandler(
                 break;
 
             case PaymentEventKind.Refunded:
-                var reversal = CreditLedger.Refund(household.Id, webhookEvent.AmountMicros ?? 0, "Refund");
+                var reversal = CreditLedger.Refund(household.Id, webhookEvent.AmountCredits ?? 0, "Refund");
                 if (reversal is not null) db.CreditLedger.Add(reversal); // balance may go negative (§4)
                 break;
 

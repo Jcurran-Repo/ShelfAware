@@ -3,6 +3,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Recipes;
+using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Llm;
 
@@ -31,6 +32,7 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
         string request, IReadOnlyList<string> onHand, IReadOnlyList<string> excludedFoods,
         CancellationToken cancellationToken = default)
     {
+        using var action = AiActionScope.Begin(ServiceAction.RecipeSuggest);
         var content =
             $"Request: {request}\n\n" +
             "Likely on hand:\n" + (onHand.Count > 0 ? "- " + string.Join("\n- ", onHand) : "(nothing recorded)") + "\n\n" +
@@ -58,6 +60,7 @@ public class AnthropicRecipeAdvisor : IRecipeAdvisor
         RecipeToAdapt recipe, IReadOnlyList<PantryProduct> onHand, IReadOnlyList<string> excludedFoods,
         string? preference = null, CancellationToken cancellationToken = default)
     {
+        using var action = AiActionScope.Begin(ServiceAction.RecipeAdapt);
         var ingredients = string.Join("\n", recipe.Ingredients.Select(i =>
             $"- {(string.IsNullOrWhiteSpace(i.Quantity) ? "" : i.Quantity + " ")}{i.Name}{(i.IsMain ? "" : " (seasoning)")}"));
         var steps = recipe.Steps.Count > 0

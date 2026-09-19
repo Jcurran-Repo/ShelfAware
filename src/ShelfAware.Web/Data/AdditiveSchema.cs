@@ -209,6 +209,11 @@ public static class AdditiveSchema
         // 2026-09-05: the managed demo box's box-wide daily AI counters (§10) — operator data, like the
         // error log. A new table — existing rows unaffected, and unwritten unless a Demo cap is configured.
         EnsureTable(db, table: "DemoUsage");
+
+        // 2026-09-19: per-day, per-action reconciliation of credits charged against provider cost (the
+        // Shelf Aware credit, docs/remediation-plan.md §7) — operator data, box-wide, like DemoUsage above.
+        // A new table — existing rows unaffected.
+        EnsureTable(db, table: "ServiceMargin");
     }
 
     /// <summary>Create <paramref name="table"/> (and its indexes) on a DB built before it existed. The

@@ -18,13 +18,13 @@ namespace ShelfAware.Web.Auth;
 /// </summary>
 public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOptions<BillingOptions> billing, ILogger<CreditLedger>? logger = null)
 {
-    /// <summary>The household's balance in retail micros = the sum of its ledger entries (empty → 0).</summary>
-    public async Task<long> GetBalanceMicrosAsync(string householdId, CancellationToken cancellationToken = default)
+    /// <summary>The household's balance in CREDITS = the sum of its ledger entries (empty → 0).</summary>
+    public async Task<long> GetBalanceCreditsAsync(string householdId, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         return await db.CreditLedger
             .Where(e => e.HouseholdId == householdId)
-            .SumAsync(e => e.AmountMicros, cancellationToken);
+            .SumAsync(e => e.AmountCredits, cancellationToken);
     }
 
     /// <summary>The billing period an allowance belongs to: the first instant of <paramref name="now"/>'s
@@ -91,27 +91,27 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
 
             // No rollover: sweep the prior allowance's unspent remainder BEFORE posting the new one.
             // ⚠️ ORDER IS LOAD-BEARING: the Expiry MUST be Added before the new Allowance below, so it gets a
-            // LOWER Id. UnspentAllowanceMicrosAsync finds the latest allowance by max Id and nets Expiry rows
+            // LOWER Id. UnspentAllowanceCreditsAsync finds the latest allowance by max Id and nets Expiry rows
             // with a GREATER Id against it; if the Expiry landed after the new Allowance, next month it would
             // be netted against THAT allowance and the sweep would silently double-count (a wrong rollover).
             // Do not reorder these two Adds.
-            var unspent = await UnspentAllowanceMicrosAsync(db, householdId, cancellationToken);
+            var unspent = await UnspentAllowanceCreditsAsync(db, householdId, cancellationToken);
             if (unspent > 0)
                 db.CreditLedger.Add(new CreditLedgerEntry
                 {
                     HouseholdId = householdId,
                     Kind = CreditEntryKind.Expiry,
-                    AmountMicros = -unspent,
+                    AmountCredits = -unspent,
                     Reason = "Monthly allowance expired (no rollover)",
                 });
 
-            var allowance = AiPricing.MonthlyAllowanceRetailMicros(billing.Value);
+            var allowance = CreditPricing.MonthlyAllowanceCredits(billing.Value);
             if (allowance > 0)
                 db.CreditLedger.Add(new CreditLedgerEntry
                 {
                     HouseholdId = householdId,
                     Kind = CreditEntryKind.Allowance,
-                    AmountMicros = allowance,
+                    AmountCredits = allowance,
                     Reason = "Monthly allowance",
                 });
 
@@ -128,19 +128,19 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
         }
     }
 
-    /// <summary>The unspent remainder of the household's CURRENT (most recent) allowance: its amount minus
+    /// <summary>The unspent remainder of the household's CURRENT (most recent) allowance, in credits: its amount minus
     /// the consumption AND any prior expiry since it was granted (spend-allowance-first, so all later
     /// consumption draws it down first). Zero when there's no prior allowance, or when it's already been
     /// exhausted. ⚠️ The Expiry term is what stops a re-sweep: if a previous period already swept this
     /// allowance (an Expiry row after it — which happens when the current month grants nothing, e.g.
     /// <c>MonthlyAllowanceDollars: 0</c>, so no NEWER Allowance becomes "the latest"), that Expiry nets the
     /// remainder to ≤ 0 and it is not swept again from persisting purchases.</summary>
-    private static async Task<long> UnspentAllowanceMicrosAsync(AuthDbContext db, string householdId, CancellationToken cancellationToken)
+    private static async Task<long> UnspentAllowanceCreditsAsync(AuthDbContext db, string householdId, CancellationToken cancellationToken)
     {
         var lastAllowance = await db.CreditLedger
             .Where(e => e.HouseholdId == householdId && e.Kind == CreditEntryKind.Allowance)
             .OrderByDescending(e => e.Id)
-            .Select(e => new { e.Id, e.AmountMicros })
+            .Select(e => new { e.Id, e.AmountCredits })
             .FirstOrDefaultAsync(cancellationToken);
         if (lastAllowance is null) return 0;
 
@@ -150,8 +150,8 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
             .Where(e => e.HouseholdId == householdId
                 && (e.Kind == CreditEntryKind.Consumption || e.Kind == CreditEntryKind.Expiry)
                 && e.Id > lastAllowance.Id)
-            .SumAsync(e => e.AmountMicros, cancellationToken);
-        var unspent = lastAllowance.AmountMicros + drawnSince;
+            .SumAsync(e => e.AmountCredits, cancellationToken);
+        var unspent = lastAllowance.AmountCredits + drawnSince;
         return unspent > 0 ? unspent : 0;
     }
 
@@ -168,19 +168,20 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
             .ToListAsync(cancellationToken);
     }
 
-    /// <summary>Append a CONSUMPTION entry (stored negative) — an AI call drawing the balance down.
-    /// <paramref name="retailMicros"/> is the positive retail amount; a non-positive amount (a free or
-    /// cached call) records nothing.</summary>
+    /// <summary>Append a CONSUMPTION entry (stored negative) — a charged action drawing the balance down.
+    /// <paramref name="credits"/> is the positive price; a non-positive price (a FREE action per the price
+    /// list, or a cached call that did no work) records nothing, which is what keeps the ledger a record of
+    /// money rather than a log of everything that happened.</summary>
     public async Task RecordConsumptionAsync(
-        string householdId, long retailMicros, string? reason, CancellationToken cancellationToken = default)
+        string householdId, long credits, string? reason, CancellationToken cancellationToken = default)
     {
-        if (retailMicros <= 0) return;
+        if (credits <= 0) return;
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         db.CreditLedger.Add(new CreditLedgerEntry
         {
             HouseholdId = householdId,
             Kind = CreditEntryKind.Consumption,
-            AmountMicros = -retailMicros,
+            AmountCredits = -credits,
             Reason = reason,
         });
         await db.SaveChangesAsync(cancellationToken);
@@ -189,15 +190,15 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
     /// <summary>Append a GRANT entry (positive) — the welcome grant on a standalone context, or an admin
     /// comp later. A non-positive amount records nothing.</summary>
     public async Task GrantAsync(
-        string householdId, long amountMicros, string? reason, CancellationToken cancellationToken = default)
+        string householdId, long credits, string? reason, CancellationToken cancellationToken = default)
     {
-        if (amountMicros <= 0) return;
+        if (credits <= 0) return;
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         db.CreditLedger.Add(new CreditLedgerEntry
         {
             HouseholdId = householdId,
             Kind = CreditEntryKind.Grant,
-            AmountMicros = amountMicros,
+            AmountCredits = credits,
             Reason = reason,
         });
         await db.SaveChangesAsync(cancellationToken);
@@ -205,41 +206,41 @@ public sealed class CreditLedger(IDbContextFactory<AuthDbContext> dbFactory, IOp
 
     /// <summary>The welcome-grant entry for a new household — a FACTORY, so a registration can add it to
     /// its OWN context (atomic with creating the household) while "what the welcome grant is" stays a
-    /// single definition. Amount is the configured cost-dollars × markup (0 → no entry worth adding).</summary>
+    /// single definition. Amount is the configured cost-dollars at the anchor (0 → no entry worth adding).</summary>
     public static CreditLedgerEntry? WelcomeGrant(string householdId, BillingOptions options)
     {
-        var amount = AiPricing.WelcomeGrantRetailMicros(options);
-        return amount <= 0 ? null : new CreditLedgerEntry
+        var credits = CreditPricing.WelcomeGrantCredits(options);
+        return credits <= 0 ? null : new CreditLedgerEntry
         {
             HouseholdId = householdId,
             Kind = CreditEntryKind.Grant,
-            AmountMicros = amount,
+            AmountCredits = credits,
             Reason = "Welcome grant",
         };
     }
 
-    /// <summary>A credit-PACK purchase entry (positive retail micros) — a FACTORY so the webhook handler
+    /// <summary>A credit-PACK purchase entry (positive credits) — a FACTORY so the webhook handler
     /// adds it to its own context, atomic with the tier/period write and the idempotency row, while the
     /// entry's shape stays defined here. Non-positive → null (nothing worth recording).</summary>
-    public static CreditLedgerEntry? Purchase(string householdId, long retailMicros, string? reason) =>
-        retailMicros <= 0 ? null : new CreditLedgerEntry
+    public static CreditLedgerEntry? Purchase(string householdId, long credits, string? reason) =>
+        credits <= 0 ? null : new CreditLedgerEntry
         {
             HouseholdId = householdId,
             Kind = CreditEntryKind.Purchase,
-            AmountMicros = retailMicros,
+            AmountCredits = credits,
             Reason = reason,
         };
 
     /// <summary>A REFUND reversal entry (stored NEGATIVE) — a FACTORY, same batching reason as
-    /// <see cref="Purchase"/>. <paramref name="retailMicros"/> is the positive amount being reversed; the
+    /// <see cref="Purchase"/>. <paramref name="credits"/> is the positive amount being reversed; the
     /// balance may go negative as a result (§4: a refund after credits were spent nets against future
     /// purchases). Non-positive → null.</summary>
-    public static CreditLedgerEntry? Refund(string householdId, long retailMicros, string? reason) =>
-        retailMicros <= 0 ? null : new CreditLedgerEntry
+    public static CreditLedgerEntry? Refund(string householdId, long credits, string? reason) =>
+        credits <= 0 ? null : new CreditLedgerEntry
         {
             HouseholdId = householdId,
             Kind = CreditEntryKind.Refund,
-            AmountMicros = -retailMicros,
+            AmountCredits = -credits,
             Reason = reason,
         };
 }

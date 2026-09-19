@@ -10,6 +10,7 @@ using ShelfAware.Web.Data;
 using ShelfAware.Web.Diagnostics;
 using ShelfAware.Web.Services;
 using ShelfAware.Web.Tests;
+using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Web.UI.Tests;
 
@@ -73,6 +74,7 @@ public class AdminPageTests : PageTestContext
         Services.AddSingleton<ITestStatusProvider>(new FakeTestStatus());
         Services.AddSingleton<IOptions<DemoOptions>>(Options.Create(demoOptions));
         Services.AddSingleton<DemoUsageMeter>();
+        Services.AddSingleton<ServiceMarginMeter>();
     }
 
     protected override void Dispose(bool disposing)
@@ -174,6 +176,69 @@ public class AdminPageTests : PageTestContext
             // symbol varies by the host's locale, per the deploy notes).
             Assert.Contains("5 call", cut.Markup);   // today's calls: hh-a (3) + hh-b (2)
             Assert.Contains("2 active", cut.Markup);  // both households used AI this month
+        });
+    }
+
+    [Fact]
+    public void The_margin_panel_prices_each_action_against_what_it_cost()
+    {
+        // The operator's answer to "is this price right?". Per action: what households were charged
+        // against what the work cost. Seeded directly because the table is written from the metering tail.
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        using (var db = authDb.CreateDbContext())
+        {
+            db.ServiceMargin.Add(new ServiceMarginDay
+            {
+                Day = today, Action = ServiceAction.ChatTurn,
+                Calls = 9, Charges = 3, CreditsCharged = 6, CostMicros = 90_000,
+            });
+            db.SaveChanges();
+        }
+
+        var cut = Render<Components.Pages.Admin>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("Margin by service", cut.Markup);
+            // Named the way the price list and a customer's ledger name it, so an operator comparing the
+            // two is reading one vocabulary rather than an enum on one screen and a sentence on the other.
+            Assert.Contains(CreditPricing.Describe(ServiceAction.ChatTurn), cut.Markup);
+            var cells = cut.FindAll("section.panel")
+                .Single(sec => sec.QuerySelector("h2")?.TextContent.Contains("Margin by service") == true)
+                .QuerySelectorAll("tbody td").Select(c => c.TextContent.Trim()).ToArray();
+            Assert.Equal("9", cells[1]);   // calls
+            Assert.Equal("3", cells[2]);   // charges
+            Assert.Equal("6", cells[3]);   // credits
+            // ⚠️ Cost per CHARGE, not per call: the charge is the thing that has a price, so this is the
+            // column that sits beside the price list and says whether it is right. 90,000 ÷ 3 = 30,000.
+            Assert.Equal(AiPricing.FormatMicros(30_000), cells[5]);
+        });
+    }
+
+    [Fact]
+    public void An_action_nobody_was_charged_for_shows_no_cost_per_charge()
+    {
+        // A Founder-only or billing-off box: real cost, nobody billed. There is nothing to compare, so the
+        // cell says so rather than dividing by zero or implying a margin that was never charged.
+        using (var db = authDb.CreateDbContext())
+        {
+            db.ServiceMargin.Add(new ServiceMarginDay
+            {
+                Day = DateOnly.FromDateTime(DateTime.Today), Action = ServiceAction.TagSuggest,
+                Calls = 4, Charges = 0, CreditsCharged = 0, CostMicros = 360,
+            });
+            db.SaveChanges();
+        }
+
+        var cut = Render<Components.Pages.Admin>();
+
+        cut.WaitForAssertion(() =>
+        {
+            var cells = cut.FindAll("section.panel")
+                .Single(sec => sec.QuerySelector("h2")?.TextContent.Contains("Margin by service") == true)
+                .QuerySelectorAll("tbody td").Select(c => c.TextContent.Trim()).ToArray();
+            Assert.Equal("0", cells[2]);
+            Assert.Equal("—", cells[5]);
         });
     }
 

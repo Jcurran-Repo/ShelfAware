@@ -2,6 +2,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Tagging;
+using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Llm;
 
@@ -26,6 +27,7 @@ public class AnthropicTagAdvisor : ITagAdvisor
     public async Task<string?> FindSynonymAsync(string candidate, IReadOnlyList<string> existing, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(candidate) || existing.Count == 0) return null;
+        using var action = AiActionScope.Begin(ServiceAction.TagSuggest);
         try
         {
             var prompt =

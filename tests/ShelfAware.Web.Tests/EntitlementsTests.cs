@@ -141,7 +141,7 @@ public class EntitlementsTests : IDisposable
 
     // ---- The credit balance + the AI-allowed gate predicate (phase 4a) ----
 
-    private static readonly long Allowance = AiPricing.MonthlyAllowanceRetailMicros(new BillingOptions());
+    private static readonly long Allowance = CreditPricing.MonthlyAllowanceCredits(new BillingOptions());
 
     private CreditLedger Ledger() =>
         new(_auth, Microsoft.Extensions.Options.Options.Create(new BillingOptions()));
@@ -151,7 +151,7 @@ public class EntitlementsTests : IDisposable
     {
         var id = await SeedHouseholdAsync(HouseholdTier.Aware, DateTimeOffset.Parse("2026-10-01T00:00:00Z"));
 
-        var balance = await For(id).GetBalanceMicrosAsync();
+        var balance = await For(id).GetBalanceCreditsAsync();
 
         Assert.Equal(Allowance, balance); // reading the balance ran the lazy per-period grant
     }
@@ -159,7 +159,7 @@ public class EntitlementsTests : IDisposable
     [Fact]
     public async Task No_signed_in_household_has_no_balance_and_no_AI()
     {
-        Assert.Equal(0, await For(null).GetBalanceMicrosAsync());
+        Assert.Equal(0, await For(null).GetBalanceCreditsAsync());
         Assert.False(await For(null).IsAiAllowedAsync());
     }
 

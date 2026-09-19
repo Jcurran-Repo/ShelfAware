@@ -2,6 +2,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Recipes;
+using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Llm;
 
@@ -29,6 +30,7 @@ public class AnthropicIngredientAlternativesAdvisor : IIngredientAlternativesAdv
     public async Task<IReadOnlyList<string>> SuggestAsync(string ingredientName, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(ingredientName)) return [];
+        using var action = AiActionScope.Begin(ServiceAction.IngredientAlternatives);
         try
         {
             var prompt =

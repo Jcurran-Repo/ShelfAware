@@ -172,7 +172,7 @@ public class MeteredChatClientTests : IDisposable
 
     private (MeteredChatClient client, AiUsageMeter meter) Build(
         string keyMode, int? dailyCalls = null, long? dailyTokens = null, int? dailyMints = null,
-        HouseholdTier tier = HouseholdTier.Free, long balanceMicros = 100_000_000, bool paymentsEnabled = true,
+        HouseholdTier tier = HouseholdTier.Free, long balanceCredits = 1_000, bool paymentsEnabled = true,
         int? demoCap = null, bool factoryThrows = false, bool meterReserveFailsFirst = false,
         int? demoReserveFailsOnCall = null, ILogger<MeteredChatClient>? clientLogger = null)
     {
@@ -185,8 +185,8 @@ public class MeteredChatClientTests : IDisposable
         });
         var settings = new CircuitAiSettings(llm);
         // Default "plenty" so a recording/metering test's managed call is allowed by the phase-4b gate; a
-        // gate test sets balanceMicros: 0 to exercise the refusal.
-        var entitlements = new FakeEntitlements(tier) { BalanceMicros = balanceMicros };
+        // gate test sets balanceCredits: 0 to exercise the refusal.
+        var entitlements = new FakeEntitlements(tier) { BalanceCredits = balanceCredits };
         var payments = Options.Create(new ShelfAware.Web.Billing.PaymentsOptions { Enabled = paymentsEnabled });
         // meterReserveFailsFirst faults ONLY the first usage-row write (the reserve), to pin the balanced
         // release; the returned meter reads through the same wrapper, whose later calls delegate to _db.
@@ -209,7 +209,9 @@ public class MeteredChatClientTests : IDisposable
             demoFactory, Options.Create(new DemoOptions { DailyGlobalCallLimit = demoCap }), NullLogger<DemoUsageMeter>.Instance);
         var client = new MeteredChatClient(byok, settings, meter, demoMeter, Options.Create(new BillingOptions()),
             payments,
-            new CreditLedger(_authDb, Options.Create(new BillingOptions())), entitlements, new FakeCurrentHousehold("hh-test"),
+            new CreditLedger(_authDb, Options.Create(new BillingOptions())),
+            new ServiceMarginMeter(_authDb, NullLogger<ServiceMarginMeter>.Instance),
+            entitlements, new FakeCurrentHousehold("hh-test"),
             clientLogger ?? NullLogger<MeteredChatClient>.Instance);
         return (client, meter);
     }
@@ -295,8 +297,11 @@ public class MeteredChatClientTests : IDisposable
 
         await AskAsync(client);
 
-        // Cost 350 micros (Haiku 100/50) × 1.65 markup = 578 retail micros, stored as a consumption.
-        Assert.Equal(-578, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test"));
+        // No AiActionScope on a bare IChatClient call, so the charge falls back to the COST-derived
+        // ceiling: 350 micros ÷ 10,000 micros-of-cost-per-credit = 0.035 → ceil → 1 credit (rounding UP is what
+        // stops an unlabelled call being free). A LABELLED call charges its action's flat price instead —
+        // see A_scoped_action_charges_its_flat_price.
+        Assert.Equal(-1, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceCreditsAsync("hh-test"));
     }
 
     [Fact]
@@ -313,7 +318,7 @@ public class MeteredChatClientTests : IDisposable
         var response = await AskAsync(client);
 
         Assert.Equal("ok", response.Text);  // the gate allowed past the dead pantry; the user still got their answer
-        Assert.Equal(-578, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test")); // money write landed
+        Assert.Equal(-1, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceCreditsAsync("hh-test")); // money write landed
     }
 
     [Fact]
@@ -324,7 +329,7 @@ public class MeteredChatClientTests : IDisposable
         await AskAsync(client);
 
         Assert.Equal(350, (await meter.GetTodayAsync()).CostMicros);                        // cost still recorded
-        Assert.Equal(0, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test"));  // but no credit drawn
+        Assert.Equal(0, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceCreditsAsync("hh-test"));  // but no credit drawn
     }
 
     [Fact]
@@ -339,7 +344,7 @@ public class MeteredChatClientTests : IDisposable
         await AskAsync(client);
 
         Assert.Equal(350, (await meter.GetTodayAsync()).CostMicros);                        // usage still recorded
-        Assert.Equal(0, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test"));  // no ledger drawdown
+        Assert.Equal(0, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceCreditsAsync("hh-test"));  // no ledger drawdown
     }
 
     [Fact]
@@ -349,7 +354,80 @@ public class MeteredChatClientTests : IDisposable
 
         await AskAsync(client);
 
-        Assert.Equal(0, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test")); // their key, their wallet
+        Assert.Equal(0, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceCreditsAsync("hh-test")); // their key, their wallet
+    }
+
+    // ---- The action price: a credit is bought per ACT, not per token ----
+
+    [Fact]
+    public async Task A_scoped_action_charges_its_flat_price_not_the_cost()
+    {
+        // The whole point of the credit: a household pays a PUBLISHED price for the act, whatever it cost
+        // us. Reading a receipt is 1 credit even though this fake's 350 micros would also round to 1 — so
+        // the test uses ChatTurn (2 credits), where the flat price and the cost-derived fallback differ.
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free);
+
+        using (AiActionScope.Begin(ServiceAction.ChatTurn))
+            await AskAsync(client);
+
+        Assert.Equal(-CreditPricing.CreditsFor(new BillingOptions(), ServiceAction.ChatTurn),
+            await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceCreditsAsync("hh-test"));
+    }
+
+    [Fact]
+    public async Task A_multi_round_action_is_charged_exactly_once()
+    {
+        // ⚠️ A chat turn is several provider calls (a tool-call loop). The household asked for ONE thing
+        // and pays for one; the scope's claim is what makes the later rounds free. Without it the price
+        // list would be a lie — "a chat turn is 2 credits" would mean 2 × however many tools it used.
+        var (client, meter) = Build("Managed", tier: HouseholdTier.Free);
+
+        using (AiActionScope.Begin(ServiceAction.ChatTurn))
+        {
+            await AskAsync(client);
+            await AskAsync(client);
+            await AskAsync(client);
+        }
+
+        Assert.Equal(3, (await meter.GetTodayAsync()).Calls);  // three real provider calls, all recorded
+        Assert.Equal(-2, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceCreditsAsync("hh-test")); // one charge
+    }
+
+    [Fact]
+    public async Task A_free_priced_action_records_usage_but_charges_nothing()
+    {
+        // Some actions are priced at 0 deliberately (tag/substitute suggestions ride along with work the
+        // household already paid for). Free must mean NO ledger row, not a zero-valued one — a wallet's
+        // history should read as the things it bought.
+        var (client, meter) = Build("Managed", tier: HouseholdTier.Free);
+        Assert.Equal(0, CreditPricing.CreditsFor(new BillingOptions(), ServiceAction.TagSuggest)); // the premise
+
+        using (AiActionScope.Begin(ServiceAction.TagSuggest))
+            await AskAsync(client);
+
+        Assert.Equal(350, (await meter.GetTodayAsync()).CostMicros); // the cost is still ours, and still recorded
+        Assert.Equal(0, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceCreditsAsync("hh-test"));
+        await using var db = _authDb.CreateDbContext();
+        Assert.Empty(db.CreditLedger.Where(e => e.HouseholdId == "hh-test"));
+    }
+
+    [Fact]
+    public async Task What_an_action_cost_and_what_it_charged_are_both_recorded_for_the_operator()
+    {
+        // The margin table is how "is this price right?" gets answered with evidence rather than a guess:
+        // per action, what we spent against what we charged.
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free);
+
+        using (AiActionScope.Begin(ServiceAction.ReceiptExtraction))
+            await AskAsync(client);
+
+        var margin = await new ServiceMarginMeter(_authDb, NullLogger<ServiceMarginMeter>.Instance).ReadAsync(days: 1);
+        var line = Assert.Single(margin);
+        Assert.Equal(ServiceAction.ReceiptExtraction, line.Action);
+        Assert.Equal(1, line.Calls);
+        Assert.Equal(1, line.Charges);
+        Assert.Equal(1, line.CreditsCharged);
+        Assert.Equal(350, line.CostMicros);
     }
 
     // ---- The AI-allowed gate: phase 4b refuses a managed call the household can't pay for ----
@@ -357,18 +435,18 @@ public class MeteredChatClientTests : IDisposable
     [Fact]
     public async Task A_managed_household_with_no_credit_is_refused_before_the_call()
     {
-        var (client, _) = Build("Managed", tier: HouseholdTier.Free, balanceMicros: 0);
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free, balanceCredits: 0);
 
         await Assert.ThrowsAsync<AiCreditsExhaustedException>(() => AskAsync(client));
 
         Assert.Equal(0, _provider.Calls); // refused BEFORE the provider call — nothing spent
-        Assert.Equal(0, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test")); // nothing recorded
+        Assert.Equal(0, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceCreditsAsync("hh-test")); // nothing recorded
     }
 
     [Fact]
     public async Task A_managed_household_with_credit_is_allowed()
     {
-        var (client, _) = Build("Managed", tier: HouseholdTier.Free, balanceMicros: 1_000_000);
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free, balanceCredits: 10);
 
         var response = await AskAsync(client);
 
@@ -379,7 +457,7 @@ public class MeteredChatClientTests : IDisposable
     [Fact]
     public async Task A_founder_with_no_credit_is_never_refused()
     {
-        var (client, _) = Build("Managed", tier: HouseholdTier.Founder, balanceMicros: 0);
+        var (client, _) = Build("Managed", tier: HouseholdTier.Founder, balanceCredits: 0);
 
         var response = await AskAsync(client);
 
@@ -390,7 +468,7 @@ public class MeteredChatClientTests : IDisposable
     [Fact]
     public async Task A_BYOK_circuit_with_no_credit_is_never_gated()
     {
-        var (client, _) = Build("Byok", tier: HouseholdTier.Free, balanceMicros: 0);
+        var (client, _) = Build("Byok", tier: HouseholdTier.Free, balanceCredits: 0);
 
         var response = await AskAsync(client);
 
@@ -402,7 +480,7 @@ public class MeteredChatClientTests : IDisposable
     public async Task The_streaming_path_also_refuses_an_exhausted_managed_household()
     {
         // The gate guards the streaming path too, so a future streaming service can't slip past it.
-        var (client, _) = Build("Managed", tier: HouseholdTier.Free, balanceMicros: 0);
+        var (client, _) = Build("Managed", tier: HouseholdTier.Free, balanceCredits: 0);
 
         await Assert.ThrowsAsync<AiCreditsExhaustedException>(async () =>
         {
@@ -690,8 +768,8 @@ public class MeteredChatClientTests : IDisposable
         Assert.Equal(1, today.Calls);
         Assert.Equal(150, today.Tokens);
         Assert.Equal(350, today.CostMicros);
-        // …and the money write landed too: 350 × 1.65 = 578 retail micros drawn.
-        Assert.Equal(-578, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceMicrosAsync("hh-test"));
+        // …and the money write landed too: the unlabelled cost-derived charge of 1 credit.
+        Assert.Equal(-1, await new CreditLedger(_authDb, Options.Create(new BillingOptions())).GetBalanceCreditsAsync("hh-test"));
     }
 
     // ---- Release-on-refusal: an OUTAGE gives the reserved call back; an ABORT does not ----

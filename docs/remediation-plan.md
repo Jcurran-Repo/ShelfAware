@@ -508,6 +508,77 @@ be recorded as one, not smuggled in as rounding.
 2. **Naming.** "Credits" is the safe default. If they get a Shelf Aware name, the abstraction is more
    obviously deliberate — but it also has to survive being said out loud.
 
+### As built (2026-09-19)
+
+Built as designed, at the decided anchor. What the code does that the plan above does not say:
+
+**`CreditPricing` (Core) is the unit's one definition** — the anchor, the price list, and every conversion
+between credits and money. `ServiceAction` gained two values the plan's list missed (`MealPlan`,
+`IngredientAlternatives`), both real AI surfaces that would otherwise have been priced by accident.
+
+⚠️ **The markup is expressed once, in what a DOLLAR buys, and cancels out of every charge.** A credit is
+defined as a fixed amount of *cost*, so consumption has no markup term — raising `CreditMarkup` sells fewer
+credits per dollar and leaves every action's price alone. Applying it in both places would double it,
+invisibly. Pinned by `The_markup_is_expressed_once_in_what_a_dollar_buys`.
+
+⚠️ **Dollars convert to credits two different ways, deliberately.** A *pack* is bought, so its dollars are
+RETAIL (`PackCredits`); a *grant* is given, so its dollars are what the house is willing to SPEND
+(`WelcomeGrantCredits`/`MonthlyAllowanceCredits`). $1 of cost is 100 credits; $1 of retail is 60. Getting
+these the same way round is the mistake to guard against, and a test says so by name.
+
+**`AiActionScope` (Core) is how the charge point learns which act it is serving.** The two facts live in
+different places — only the service knows an action's boundary, only `MeteredChatClient` sees the provider
+call — so the action rides an `AsyncLocal` ambient scope that every AI service opens around its own work.
+Three properties are load-bearing: it flows DOWN only (a side task's scope can't leak into its caller);
+disposing restores the ENCLOSING scope, not null (a chat turn that adapts a recipe through a tool is still a
+chat turn afterwards); and `TryClaimCharge` succeeds exactly once per scope, which is what makes "a chat turn
+is 2 credits" true however many tool rounds it took.
+
+⚠️ **An unlabelled call is charged, not skipped.** A metered call with no scope falls back to
+`CreditsForCostMicros` — its raw cost, rounded up. An AI service nobody has labelled yet reads as the old
+cost-denominated behaviour, visible on the balance and in reconciliation, rather than silently becoming
+free. That is the direction a pricing hole has to fail in.
+
+**`ServiceMarginDay` + `ServiceMarginMeter` are §7.2(d).** Per day and per action: calls, charges, credits
+charged, cost. Box-wide operator data in auth.db with no household id — pinned by a reflection test, because
+a household id arriving on it later would silently make it tenant data that export and delete-my-data both
+owe something to. It records in EVERY key mode and at EVERY tier (a Founder's calls cost real money and bill
+nobody), so margin is read from `Charges`, never `Calls`. Rendered on `/admin` as "Margin by service", with
+cost-per-CHARGE beside the price list and an em dash where nobody was charged.
+
+**`CreditDenominationMigration` converts the existing ledger once**, at the anchor, in ONE transaction. ⚠️ The
+transaction is why it is a class of its own rather than an `AdditiveSchema` line: the ALTER and the UPDATE
+must commit together, or a crash between them leaves the column present, the conversion skipped (it keys on
+the column's absence), and every pre-existing balance silently reading zero. `AmountCredits` is deliberately
+NOT in `AdditiveSchema.Apply` for the same reason — an additive pass adding it first would disarm the guard.
+The old `AmountMicros` column is kept as `LegacyAmountMicros`: the receipt for the conversion, so every
+converted balance can be audited rather than taken on trust.
+
+**The price list is published in Settings**, rendered from the same `BillingOptions` the charge reads, so
+what it quotes and what it charges cannot drift. Zero-priced actions say "free" rather than "0".
+
+**Testing.** 3,297 green across the four suites, 0 warnings on a non-incremental Release build. 19 hand
+mutations, each killing exactly its test. ⚠️ **Scoped Stryker then found four survivors the hand pass
+missed** — all guards against a misconfigured anchor or a negative pack, none of which I had thought to
+break: a `CostDollarsPerCredit` of 0 would have thrown `DivideByZeroException` on the grant path, and a
+negative pack would have computed to −303 credits. Closed; `--since:master` reads **100.00%**. This is
+item 59's rule earning itself again: hand checks catch the behavioural mutants, only the exhaustive gate
+catches the degenerate ones.
+
+⚠️ **One test was written and then deleted, and the gap is the record.** A racing test for
+`TryClaimCharge`'s atomicity killed a deliberately non-atomic version in only four runs of six, even with
+real threads released from one gate and the race re-run 200 times. A test whose kill is a coin flip claims
+coverage it does not have and will eventually fail on CI for reasons no change caused — strictly worse than
+saying so. The atomicity is held by reading `Interlocked.Exchange`, and the note sits on both the method and
+the test file.
+
+**Also removed:** a `Math.Max(1, ...)` in `CreditsForCostMicros` that survived mutation because `Ceiling` of
+any positive quotient is already ≥ 1. It was dead code, not an untested guard, so it went rather than
+acquiring a test that could not fail.
+
+**The two placeholders stand.** TTS-per-read (3) and realtime-per-minute (12) are still estimates and still
+need EL invoices measured against real usage before they can be called prices.
+
 ---
 
 ## 8. What is not in the arc, and why

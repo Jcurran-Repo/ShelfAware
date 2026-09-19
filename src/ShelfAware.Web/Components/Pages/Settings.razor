@@ -19,6 +19,7 @@
 @inject IOptions<LlmOptions> LlmConfig
 @inject IOptions<EmailOptions> EmailConfig
 @inject IOptions<PaymentsOptions> Payments
+@inject IOptions<BillingOptions> Billing
 @inject ILogger<Settings> Logger
 @inject UserDataService UserData
 @inject TourCoordinator Tour
@@ -361,8 +362,35 @@
     }
     @if (AiSettings.Managed && tier != HouseholdTier.Founder && Payments.Value.IsConfigured)
     {
-        <p><strong>Credit balance:</strong> @AiPricing.FormatMicros(creditBalanceMicros)
-            <span class="muted"> — your AI credit; managed calls draw on it, and AI pauses at zero.</span></p>
+        <p><strong>Credit balance:</strong> @CreditPricing.FormatCredits(creditBalanceCredits)
+            <span class="muted"> — your AI credit; the actions below draw on it, and AI pauses at zero.</span></p>
+    }
+    @* The price list is PUBLIC, by design: an abstract unit with a hidden exchange rate is a casino chip,
+       an abstract unit with a published price list is a product. Rendered from the SAME BillingOptions the
+       charge reads, so what it says and what you are charged cannot drift; the rows are per user-visible
+       ACTION, not per AI call, because that is what the price is. Shown wherever the credit system is on —
+       a Founder doesn't spend credits, but the operator is a Founder and wants to see the list too. *@
+    @if (AiSettings.Managed && Payments.Value.IsConfigured)
+    {
+        <details class="price-list">
+            <summary>What things cost</summary>
+            <p class="muted small">One price per action, whatever it takes under the hood — a chat turn that
+                needs five look-ups still costs one chat turn.</p>
+            <table>
+                <caption class="sr-only">Credit price per action</caption>
+                <thead><tr><th scope="col">Action</th><th scope="col">Credits</th></tr></thead>
+                <tbody>
+                @foreach (var action in Enum.GetValues<ServiceAction>())
+                {
+                    var price = CreditPricing.CreditsFor(Billing.Value, action);
+                    <tr>
+                        <td>@CreditPricing.Describe(action)</td>
+                        <td>@(price == 0 ? "free" : price.ToString())</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </details>
     }
     @if (todayUsage is { } today)
     {
@@ -1131,11 +1159,11 @@
         usageHistory = await UsageMeter.GetRecentAsync(days: 14);
         monthlyUsage = await UsageMeter.GetMonthlyAsync(months: 12);
         tier = await Entitlements.GetTierAsync();
-        // The ONE balance definition — IEntitlements.GetBalanceMicrosAsync runs the lazy monthly allowance
+        // The ONE balance definition — IEntitlements.GetBalanceCreditsAsync runs the lazy monthly allowance
         // first, so a new period shows this month's grant, not the pre-rollover number (Ledger's raw sum).
         // Only read it when billing is on: the balance panel is hidden otherwise, and reading it would run
         // the allowance grant (minting ledger rows) on a billing-off box for an admin-set Aware household.
-        creditBalanceMicros = Payments.Value.IsConfigured ? await Entitlements.GetBalanceMicrosAsync() : 0;
+        creditBalanceCredits = Payments.Value.IsConfigured ? await Entitlements.GetBalanceCreditsAsync() : 0;
         await LoadSettingsStateAsync();
     }
 
@@ -1221,7 +1249,7 @@
     private AiUsageMeter.TodayUsage? todayUsage;
     private IReadOnlyList<AiUsageMeter.DayUsage> usageHistory = [];
     private IReadOnlyList<AiUsageMeter.MonthUsage> monthlyUsage = [];
-    private long creditBalanceMicros;
+    private long creditBalanceCredits;
 
     private static string MonthLabel(AiUsageMeter.MonthUsage m) => new DateOnly(m.Year, m.Month, 1).ToString("MMM yyyy");
     private string UsageLimitSuffix => LlmConfig.Value.DailyCallLimit is int limit

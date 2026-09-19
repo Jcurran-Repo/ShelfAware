@@ -2,6 +2,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Recipes;
+using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Llm;
 
@@ -30,6 +31,7 @@ public class AnthropicProductSubstituteAdvisor : IProductSubstituteAdvisor
         string productName, string category, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(productName)) return [];
+        using var action = AiActionScope.Begin(ServiceAction.SubstituteSuggest);
         try
         {
             var prompt =

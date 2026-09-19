@@ -18,6 +18,7 @@ using ShelfAware.Web.Components.Pages;
 using ShelfAware.Web.Data;
 using ShelfAware.Web.Services;
 using ShelfAware.Web.Tests;
+using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Web.UI.Tests;
 
@@ -578,7 +579,7 @@ public class SettingsManagedModeTests : SettingsTestBase
         // #5: the credit balance is a BILLING feature. On a managed box with billing OFF (self-host / dev /
         // family — §7 "unlimited by default"), nothing spends credits, so the panel is hidden even with a
         // balance present. (Mutation guard for the Payments.IsConfigured condition on the balance line.)
-        Entitlements.BalanceMicros = 1_500_000;
+        Entitlements.BalanceCredits = 1_500_000;
 
         var section = Section(RenderSettings(), "AI usage");
 
@@ -625,15 +626,32 @@ public class SettingsBillingPanelTests : SettingsTestBase
     [Fact]
     public void A_managed_household_with_billing_sees_its_credit_balance()
     {
-        // With billing ON, the balance shows. Settings reads it via IEntitlements.GetBalanceMicrosAsync
+        // With billing ON, the balance shows. Settings reads it via IEntitlements.GetBalanceCreditsAsync
         // (the ONE definition that runs the lazy allowance) — so the test drives the fake's balance, not
         // raw ledger rows, which is exactly the wiring #5 corrected.
-        Entitlements.BalanceMicros = 1_500_000;
+        Entitlements.BalanceCredits = 150;
 
         var section = Section(RenderSettings(), "AI usage");
 
         Assert.Contains("Credit balance", section.TextContent);
-        Assert.Contains(1.50m.ToString("C2"), section.TextContent); // $1.50, same culture both sides
+        // In CREDITS, not dollars: the unit the household spends is the unit it is shown. Asserted through
+        // CreditPricing.FormatCredits so the page and the test can't disagree about how a credit is written.
+        Assert.Contains(CreditPricing.FormatCredits(150), section.TextContent);
+    }
+
+    [Fact]
+    public void The_price_list_is_published_beside_the_balance()
+    {
+        // ⚠️ An abstract unit with a hidden exchange rate is a casino chip. The price of every action is
+        // shown to the household that spends on it, from the SAME BillingOptions the charge reads — so a
+        // price can't be quoted here and charged differently there.
+        Entitlements.BalanceCredits = 150;
+
+        var section = Section(RenderSettings(), "AI usage");
+
+        Assert.Contains(CreditPricing.Describe(ServiceAction.ReceiptExtraction), section.TextContent);
+        Assert.Contains(CreditPricing.Describe(ServiceAction.ChatTurn), section.TextContent);
+        Assert.Contains("free", section.TextContent); // the zero-priced actions say so rather than showing "0"
     }
 
     [Fact]

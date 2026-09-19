@@ -19,17 +19,60 @@ public sealed class BillingOptions
 {
     public const string SectionName = "Billing";
 
-    /// <summary>Retail markup on credits: retail = cost × this. Default 1.65 (the 65% markup).</summary>
+    /// <summary>Retail markup on credits: retail = cost × this. Default 1.65 (the 65% markup). It prices
+    /// what a DOLLAR buys, not what an ACTION costs — see <see cref="CreditPricing"/>.</summary>
     public decimal CreditMarkup { get; set; } = 1.65m;
 
+    /// <summary>THE anchor: what one Shelf Aware credit costs JORDAN, in dollars. Default $0.01 (Jordan's
+    /// call, 2026-09-19), which retails for $0.0165 at the default markup. Grants, allowances and pack
+    /// sizes are all derived from this one number (<see cref="CreditPricing"/>) rather than set
+    /// independently, so there is exactly one exchange rate in the system.</summary>
+    public decimal CostDollarsPerCredit { get; set; } = 0.01m;
+
+    /// <summary>What each user-visible action costs, in whole credits — the PUBLIC price list (it is shown
+    /// in Settings; an abstract unit with a hidden exchange rate is a casino chip). Operator-configurable
+    /// like every other number here: <c>Billing:CreditPrices:ChatTurn</c>.
+    ///
+    /// Opening values are derived from measured cost ranges (docs/remediation-plan.md §7.2), with anything
+    /// too cheap to charge a whole credit for set FREE — that is how the fractional-credit problem goes
+    /// away, and it makes the ✨ buttons free, which they should be anyway.
+    ///
+    /// ⚠️ <see cref="ServiceAction.TtsSynthesis"/> and <see cref="ServiceAction.RealtimeMinute"/> are
+    /// ESTIMATES, not measurements: neither per-character nor per-minute vendor cost is observable per call
+    /// from inside the app, so these two wait on real invoices measured against real usage and get corrected
+    /// from that evidence. Every other price here comes from token costs the app already stamps.</summary>
+    public Dictionary<ServiceAction, int> CreditPrices { get; set; } = new()
+    {
+        [ServiceAction.ReceiptExtraction] = 1,
+        [ServiceAction.CensusPhoto] = 1,
+        [ServiceAction.ChatTurn] = 2,
+        [ServiceAction.RecipeSuggest] = 2,
+        [ServiceAction.RecipeAdapt] = 2,
+        [ServiceAction.RecipeImport] = 2,
+        [ServiceAction.MealPlan] = 2,
+        [ServiceAction.TagSuggest] = 0,
+        [ServiceAction.SubstituteSuggest] = 0,
+        [ServiceAction.IngredientAlternatives] = 0,
+        [ServiceAction.TtsSynthesis] = 3,
+        [ServiceAction.RealtimeMinute] = 12,
+    };
+
+    /// <summary>The price for a <see cref="ServiceAction"/> missing from <see cref="CreditPrices"/> — an
+    /// action added to the enum before the price list, or a key an operator removed. Deliberately the
+    /// ordinary paid price rather than zero, for <see cref="FallbackRate"/>'s reason: an unpriced action
+    /// should OVER-charge visibly, not read as free.</summary>
+    public int CreditsForUnknownAction { get; set; } = 2;
+
     /// <summary>The one-time welcome grant per new household, in dollars OF COST (the doc's "$1 of my
-    /// cost"); stored as retail credit = this × <see cref="CreditMarkup"/>.</summary>
+    /// cost"); posted as credits at the anchor — see <see cref="CreditPricing.WelcomeGrantCredits"/>
+    /// ($1.00 ÷ $0.01 = 100 credits on the defaults).</summary>
     public decimal WelcomeGrantDollars { get; set; } = 1.00m;
 
     /// <summary>The recurring monthly allowance for an Aware subscriber, in dollars OF COST (the doc's
-    /// "$1.65 retail = $1.00 cost" monthly grant); stored as retail credit = this × <see cref="CreditMarkup"/>.
-    /// Granted lazily per billing period and does NOT roll over (§4) — distinct from the one-time
-    /// <see cref="WelcomeGrantDollars"/>, which persists until spent.</summary>
+    /// "$1.65 retail = $1.00 cost" monthly grant); posted as credits at the anchor — see
+    /// <see cref="CreditPricing.MonthlyAllowanceCredits"/>. Granted lazily per billing period and does NOT
+    /// roll over (§4) — distinct from the one-time <see cref="WelcomeGrantDollars"/>, which persists until
+    /// spent.</summary>
     public decimal MonthlyAllowanceDollars { get; set; } = 1.00m;
 
     /// <summary>The rate for a model not in <see cref="ModelRates"/> — a visitor's exotic BYOK model, or
@@ -54,6 +97,11 @@ public sealed class BillingOptions
 /// TEXT-decimal, so it rides the race-safe SQL increment). Pure functions that take a
 /// <see cref="BillingOptions"/> (Web consumers pass <c>IOptions&lt;BillingOptions&gt;.Value</c>), so the
 /// money math stays in Core and unit-tested while every number stays operator-configurable.
+///
+/// This is the COST side only — what a call cost Jordan. What the HOUSEHOLD is charged is a
+/// <see cref="ServiceAction"/> priced in credits (<see cref="CreditPricing"/>); the two are deliberately
+/// separate units, which is what makes margin per service a number you can read rather than discover on an
+/// invoice.
 ///
 /// dollars-per-MTok numerically EQUALS micros-per-token (both divide by 1e6), which is why the cost math
 /// below is just tokens × rate. Cost is stamped at call time, so a historical row keeps the price it was
@@ -80,19 +128,6 @@ public static class AiPricing
         var micros = input * rate.InputPerMTok + output * rate.OutputPerMTok;
         return (long)Math.Round(micros, MidpointRounding.AwayFromZero);
     }
-
-    /// <summary>Cost micros → RETAIL micros (what a credit balance decrements): cost × the configured markup.</summary>
-    public static long ToRetailMicros(BillingOptions options, long costMicros) =>
-        (long)Math.Round(costMicros * options.CreditMarkup, MidpointRounding.AwayFromZero);
-
-    /// <summary>The welcome grant in RETAIL micros: configured cost-dollars × markup, in micros.</summary>
-    public static long WelcomeGrantRetailMicros(BillingOptions options) =>
-        (long)Math.Round(options.WelcomeGrantDollars * MicrosPerDollar * options.CreditMarkup, MidpointRounding.AwayFromZero);
-
-    /// <summary>The Aware monthly allowance in RETAIL micros: configured cost-dollars × markup, in micros —
-    /// the recurring per-period grant (§4), same shape as the welcome grant but a distinct, no-rollover pool.</summary>
-    public static long MonthlyAllowanceRetailMicros(BillingOptions options) =>
-        (long)Math.Round(options.MonthlyAllowanceDollars * MicrosPerDollar * options.CreditMarkup, MidpointRounding.AwayFromZero);
 
     /// <summary>Micros → a display string in dollars (e.g. 1_234_500 → "$1.23"), on the current culture.</summary>
     public static string FormatMicros(long micros) => (micros / MicrosPerDollar).ToString("C2");

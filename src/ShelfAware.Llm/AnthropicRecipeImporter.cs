@@ -4,6 +4,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Recipes;
+using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Llm;
 
@@ -82,6 +83,7 @@ public class AnthropicRecipeImporter : IRecipeImporter
     private async Task<RecipeImportResult> ExtractAsync(
         string systemPrompt, List<AIContent> userContent, string model, CancellationToken cancellationToken)
     {
+        using var action = AiActionScope.Begin(ServiceAction.RecipeImport);
         var options = new ChatOptions
         {
             ModelId = model,

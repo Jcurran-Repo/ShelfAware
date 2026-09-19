@@ -2,6 +2,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ShelfAware.Core.Recipes;
+using ShelfAware.Core.Billing;
 
 namespace ShelfAware.Llm;
 
@@ -34,6 +35,7 @@ public class AnthropicRecipeTagAdvisor : IRecipeTagAdvisor
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(recipeName)) return [];
+        using var action = AiActionScope.Begin(ServiceAction.TagSuggest);
         try
         {
             var ingredients = ingredientNames.Count > 0 ? string.Join(", ", ingredientNames) : "(not listed)";

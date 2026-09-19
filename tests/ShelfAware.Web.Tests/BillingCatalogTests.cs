@@ -1,3 +1,4 @@
+using ShelfAware.Core.Billing;
 using ShelfAware.Web.Billing;
 
 namespace ShelfAware.Web.Tests;
@@ -23,13 +24,29 @@ public class BillingCatalogTests
         Assert.Equal(isSub, BillingCatalog.IsSubscription(product));
 
     [Theory]
-    [InlineData(BillingProduct.CreditPack5, 5_000_000L)]
-    [InlineData(BillingProduct.CreditPack10, 10_000_000L)]
-    [InlineData(BillingProduct.CreditPack20, 20_000_000L)]
+    [InlineData(BillingProduct.CreditPack5, 303L)]
+    [InlineData(BillingProduct.CreditPack10, 606L)]
+    [InlineData(BillingProduct.CreditPack20, 1_212L)]
     [InlineData(BillingProduct.SubscriptionMonthly, 0L)] // a subscription fee is not a credit grant
     [InlineData(BillingProduct.SubscriptionAnnual, 0L)]
-    public void RetailMicrosFor_gives_the_pack_face_value(BillingProduct product, long micros) =>
-        Assert.Equal(micros, BillingCatalog.RetailMicrosFor(product));
+    public void CreditsFor_gives_the_pack_face_value(BillingProduct product, long credits) =>
+        Assert.Equal(credits, BillingCatalog.CreditsFor(product));
+
+    [Theory]
+    [InlineData(BillingProduct.CreditPack5, 5)]
+    [InlineData(BillingProduct.CreditPack10, 10)]
+    [InlineData(BillingProduct.CreditPack20, 20)]
+    public void Every_pack_is_exactly_what_its_dollars_buy(BillingProduct product, int dollars)
+    {
+        // ⚠️ The catalog states the face values as literals — a product decision shouldn't move when an
+        // operator edits a config rate — so this is what stops them DRIFTING from the anchor they were
+        // derived from. Every pack must carry the same exchange rate: floor(dollars ÷ a credit's retail
+        // price). If a pack is ever meant to be cheaper per credit, that is a DISCOUNT, and it belongs in
+        // the record as one rather than arriving as a silently failing assertion here.
+        Assert.Equal(
+            CreditPricing.PackCredits(new BillingOptions(), dollars),
+            BillingCatalog.CreditsFor(product));
+    }
 
     [Fact]
     public void Packs_are_the_three_in_ascending_order() =>
