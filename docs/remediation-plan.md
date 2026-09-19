@@ -192,6 +192,42 @@ then `Fail(ex.Message)` for the exception path. The exception path just never go
 This is small, but it is the one finding with a security edge: an exception message can name an internal
 host, a path, or a provider account detail.
 
+### As built (2026-09-19)
+
+**Seven sites, not five.** The audit counted the `Fail(ex.Message, …)` shape and missed two more that
+reach the same place by a different route: the extractor's and the census reader's *terminal* parse
+failures interpolate `lastError` — which is `ex.Message` — into the sentence. A `grep` for
+`Fail(ex.Message` cannot see those. All seven now return fixed copy:
+
+| Site | What the person now reads |
+|---|---|
+| extractor / census — call failed | "Couldn't reach the AI just now — please try again." |
+| extractor — unparseable after a retry | "Couldn't read that receipt — try again, or use a clearer photo." |
+| census — unparseable after a retry | "Couldn't read that photo — try again, or take a clearer one." |
+| ElevenLabs + local TTS | "Couldn't reach text-to-speech just now — please try again." |
+| ElevenLabs STT | "Couldn't reach speech-to-text just now — please try again." |
+
+The importer's terminal copy was already written this way; only its log level changed.
+
+**Three terminal failures were logged at Warning.** The person watching saw the thing fail, so the
+operator has to be able to see why without asking them for the wording — and only `LogError` is captured
+by the error-log pipeline onto `/admin`. Raised in the extractor, the census reader and the importer.
+
+**The guard: `tests/ShelfAware.Llm.Tests/ProviderErrorCopyTests.cs` (8 tests).** Transport failures throw
+an exception whose text names an internal host and an `sk-ant-` key; the test asserts both are absent and
+that a non-empty message is still returned — so the copy stays free to change while the leak cannot come
+back.
+
+⚠️ **The parse-path guards were vacuous on their first writing, and the mutation check is what caught
+it.** They pinned the absence of `"System."` and `"Path: $"` — an assumption about deserializer wording.
+`System.Text.Json` actually says `'n' is an invalid start of a value. LineNumber: 0 |
+BytePositionInLine: 0.`, so all three passed while observing nothing. They now pin the property a leak
+genuinely cannot satisfy: **the terminal message is fixed copy, not derived from the failure** — two
+different bad outputs must produce one identical sentence. Reverting all seven sites kills 7 of the 8
+tests; the survivor is the importer, which had nothing to revert, and its comment says so.
+
+3216 green, 0 warnings on a non-incremental Release build.
+
 ---
 
 ## 5. The operational floor (F6, F7a, F7b, D6)

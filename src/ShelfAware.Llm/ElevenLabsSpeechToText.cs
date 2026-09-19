@@ -80,8 +80,9 @@ public class ElevenLabsSpeechToText : ISpeechToText
         catch (Exception ex)
         {
             // Transport / parse errors — fail soft at the I/O boundary (there's no useful retry here).
+            // Exception text to the log, plain copy to the screen — see AnthropicReceiptExtractor.
             _logger.LogError(ex, "Speech-to-text call to ElevenLabs failed.");
-            return SpeechToTextResult.Fail(ex.Message);
+            return SpeechToTextResult.Fail("Couldn't reach speech-to-text just now — please try again.");
         }
     }
 

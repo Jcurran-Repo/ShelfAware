@@ -135,8 +135,12 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
             {
                 // API/transport errors (auth, rate limit, network) — not fixable by a retry
                 // here; the SDK already retries retryable statuses internally.
+                // The exception text goes to the LOG, never to the screen: it can name an internal
+                // host, a path, or a provider account detail, and it reads as a crash to the person
+                // holding the receipt. The operator still sees it — a LogError is captured into the
+                // error log and rendered on /admin.
                 _logger.LogError(ex, "Extraction call to the model failed.");
-                return ExtractionResult.Fail(ex.Message, rawJson);
+                return ExtractionResult.Fail("Couldn't reach the AI just now — please try again.", rawJson);
             }
 
             rawJson = response.Text;
@@ -157,8 +161,11 @@ public class AnthropicReceiptExtractor : IReceiptExtractor
             }
         }
 
-        _logger.LogWarning("Extraction failed after a retry: {Error}", lastError);
-        return ExtractionResult.Fail($"The extraction output could not be parsed after a retry: {lastError}", rawJson);
+        // Error, not Warning: the person watching this saw it fail, so the operator must be able to
+        // see why without asking them for the wording. lastError is deserializer text — it belongs
+        // in the log with the raw output, not in the sentence the page shows.
+        _logger.LogError("Extraction failed after a retry: {Error}", lastError);
+        return ExtractionResult.Fail("Couldn't read that receipt — try again, or use a clearer photo.", rawJson);
     }
 
     private static ExtractedReceipt ParseReceipt(string json)

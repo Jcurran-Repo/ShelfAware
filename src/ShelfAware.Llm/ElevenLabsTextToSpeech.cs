@@ -108,8 +108,9 @@ public class ElevenLabsTextToSpeech : ITextToSpeech
         }
         catch (Exception ex)
         {
+            // Exception text to the log, plain copy to the screen — see AnthropicReceiptExtractor.
             _logger.LogError(ex, "Text-to-speech call to ElevenLabs failed.");
-            return TextToSpeechResult.Fail(ex.Message);
+            return TextToSpeechResult.Fail("Couldn't reach text-to-speech just now — please try again.");
         }
     }
 

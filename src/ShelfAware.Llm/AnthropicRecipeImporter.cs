@@ -123,7 +123,10 @@ public class AnthropicRecipeImporter : IRecipeImporter
             catch (Exception ex) { lastError = ex.Message; } // any invalid shape is retryable
         }
 
-        _logger.LogWarning("Recipe import couldn't be parsed after a retry: {Error}", lastError);
+        // Error, not Warning: the same rule as the extractor and the census — a user-visible failure
+        // the operator cannot see is a support ticket with no evidence. (The transport catch above
+        // already returns plain copy; this is the parse path catching up with it.)
+        _logger.LogError("Recipe import couldn't be parsed after a retry: {Error}", lastError);
         return RecipeImportResult.Fail("Couldn't read a recipe from that — try a clearer photo or paste the text.");
     }
 

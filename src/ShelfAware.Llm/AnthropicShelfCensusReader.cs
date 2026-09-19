@@ -138,8 +138,9 @@ public class AnthropicShelfCensusReader : IShelfCensusReader
             {
                 // API/transport errors (auth, rate limit, network) — the SDK already retried what's
                 // retryable, so a second attempt here would only cost the visitor another call.
+                // Exception text to the log, plain copy to the screen — see AnthropicReceiptExtractor.
                 _logger.LogError(ex, "Shelf census call to the model failed.");
-                return ShelfCensusResult.Fail(ex.Message, rawJson);
+                return ShelfCensusResult.Fail("Couldn't reach the AI just now — please try again.", rawJson);
             }
 
             rawJson = response.Text;
@@ -163,8 +164,10 @@ public class AnthropicShelfCensusReader : IShelfCensusReader
             }
         }
 
-        _logger.LogWarning("Shelf census failed after a retry: {Error}", lastError);
-        return ShelfCensusResult.Fail($"The photo couldn't be read after a retry: {lastError}", rawJson);
+        // Error, not Warning: a user-visible failure the operator cannot see is a support ticket with
+        // no evidence — and a census keeps no audit copy, so this is the only record of the attempt.
+        _logger.LogError("Shelf census failed after a retry: {Error}", lastError);
+        return ShelfCensusResult.Fail("Couldn't read that photo — try again, or take a clearer one.", rawJson);
     }
 
     private static List<CensusItem> ParseItems(string json)
