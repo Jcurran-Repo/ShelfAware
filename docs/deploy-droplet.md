@@ -65,10 +65,10 @@ ufw allow OpenSSH && ufw allow 80 && ufw allow 443 && ufw enable
 **demo posture**: `Llm__KeyMode=Byok`, no keys on the server, visitors paste their own
 in Settings. The managed / family variant sits in the same file, commented out.
 
-> **Free read-aloud voice (optional):** set `Speech__Provider=Local` to voice recipes
-> with a self-hosted Kokoro sidecar on the box instead of ElevenLabs — $0 per call, no
-> key. It's a separate systemd service; stand it up first with
-> [docs/deploy-kokoro.md](deploy-kokoro.md).
+> **Free read-aloud voice (optional):** set `Speech__Provider=Kokoro` to voice recipes
+> with a model running inside the app instead of ElevenLabs — $0 per call, no key, and no
+> second service. Unpack a model first with [docs/deploy-kokoro.md](deploy-kokoro.md); the
+> app refuses to start if it is pointed at one that isn't there.
 
 **5. Service.** Copy [`deploy/shelfaware.service`](../deploy/shelfaware.service) to
 `/etc/systemd/system/shelfaware.service`, then:
@@ -184,10 +184,10 @@ box with **existing** accounts, turning on email confirmation locks them out unt
 backfill `sqlite3 auth.db "UPDATE AspNetUsers SET EmailConfirmed = 1;"` — or start from a
 fresh DB (no accounts to backfill).
 
-**Read-aloud voice** on the demo is free via the local Kokoro sidecar — set
-`Speech__Provider=Local` *after* standing the sidecar up ([docs/deploy-kokoro.md](deploy-kokoro.md)).
+**Read-aloud voice** on the demo is free via Kokoro, which runs in the app's own process — set
+`Speech__Provider=Kokoro` *after* unpacking a model ([docs/deploy-kokoro.md](deploy-kokoro.md)).
 Until then, leave it commented; chat + receipts don't need it, and read-aloud just fails
-soft.
+soft. Budget ~600 MB of RAM once a recipe has been read, and add swap on a 2 GB box.
 
 **Payments stays OFF** on the demo (no `Payments` section) — with billing off, the AI
 simply works for every fresh household, gated only by the caps above.

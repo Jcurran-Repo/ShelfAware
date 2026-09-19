@@ -9,6 +9,10 @@
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.7.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.9" />
+    <!-- Kokoro-82M runs in this process through sherpa-onnx (Apache-2.0): raw text in, samples out, no
+         sidecar and no Python. The package pulls a native runtime for every platform it supports; a
+         RID-specific publish (what both deploy scripts do) copies only the one it is building for. -->
+    <PackageReference Include="org.k2fsa.sherpa.onnx" Version="1.13.8" />
   </ItemGroup>
 
   <ItemGroup>

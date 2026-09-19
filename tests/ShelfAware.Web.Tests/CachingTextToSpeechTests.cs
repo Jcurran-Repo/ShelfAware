@@ -396,40 +396,100 @@ public sealed class CachingTextToSpeechTests : IDisposable
     }
 
     [Fact]
-    public void Speech_provider_local_selects_the_self_hosted_sidecar()
+    public void Speech_provider_kokoro_selects_the_in_process_model()
     {
-        Assert.StartsWith("kokoro", FingerprintFor(provider: "Local"));
+        Assert.StartsWith("kokoro", FingerprintFor(provider: "Kokoro", modelDirectory: AModel()));
     }
 
     // Case-insensitively, like every other enum-from-config in the app (a typo'd value fails fast at boot).
     [Fact]
     public void The_provider_setting_is_case_insensitive()
     {
-        Assert.StartsWith("kokoro", FingerprintFor(provider: "local"));
+        Assert.StartsWith("kokoro", FingerprintFor(provider: "kokoro", modelDirectory: AModel()));
     }
 
-    // The request URI is a leading-slash absolute path, so a BaseUrl carrying a subpath would be silently
-    // dropped -- registration refuses one up front instead, naming the setting.
+    // ⚠️ Resolving the synthesizer must NOT load the model. It is ~150 MB and takes over a second, and the
+    // cache asks for the fingerprint on every lookup — including every HIT, which is the case that exists
+    // to avoid doing work. A fingerprint that needed the model would make a warm cache load one anyway.
+    // The empty files below are what proves it: a real load would die on them.
     [Fact]
-    public void A_local_base_url_with_a_path_is_refused_at_registration()
+    public void Resolving_the_in_process_synthesizer_does_not_load_the_model()
     {
-        var ex = Assert.ThrowsAny<Exception>(() => FingerprintFor("Local", baseUrl: "http://host:8880/kokoro"));
-        Assert.Contains("Speech:Local:BaseUrl", DeepMessage(ex));
+        Assert.StartsWith("kokoro", FingerprintFor(provider: "Kokoro", modelDirectory: AModel()));
     }
 
-    // ...and a non-http scheme, which would otherwise fail later with a worse message.
+    // ⚠️ The native library answers a missing model file by killing the process — no exception, no log
+    // line. So an incomplete model directory has to be refused at registration, while there is still
+    // something that can report it.
     [Fact]
-    public void A_local_base_url_with_a_non_http_scheme_is_refused_at_registration()
+    public void An_incomplete_model_directory_is_refused_at_registration()
     {
-        var ex = Assert.ThrowsAny<Exception>(() => FingerprintFor("Local", baseUrl: "ftp://host:8880"));
-        Assert.Contains("Speech:Local:BaseUrl", DeepMessage(ex));
+        var incomplete = AModel(except: "voices.bin");
+
+        var ex = Assert.ThrowsAny<Exception>(() => FingerprintFor("Kokoro", modelDirectory: incomplete));
+
+        Assert.Contains("Speech:Kokoro:ModelDirectory", DeepMessage(ex));
+        Assert.Contains("voices.bin", DeepMessage(ex));
     }
 
-    private string FingerprintFor(string? provider, string? baseUrl = null)
+    [Fact]
+    public void Choosing_kokoro_without_naming_a_model_is_refused_at_registration()
     {
-        var settings = new Dictionary<string, string?>();
+        var ex = Assert.ThrowsAny<Exception>(() => FingerprintFor("Kokoro"));
+
+        Assert.Contains("Speech:Kokoro:ModelDirectory", DeepMessage(ex));
+    }
+
+    // ⚠️ A box upgrading past the HTTP sidecar must be TOLD its settings stopped meaning anything, not
+    // quietly booted on ElevenLabs at its owner's expense. Configuration binding drops keys nothing binds,
+    // so without this the old env file reads as a working one.
+    [Fact]
+    public void An_env_file_still_carrying_the_retired_sidecar_settings_is_refused()
+    {
+        var ex = Assert.ThrowsAny<Exception>(() => FingerprintFor(
+            provider: null, extra: new() { ["Speech:Local:BaseUrl"] = "http://127.0.0.1:8880" }));
+
+        Assert.Contains("Speech:Local:BaseUrl", DeepMessage(ex));
+        Assert.Contains("Speech:Kokoro", DeepMessage(ex));
+    }
+
+    // ...including the provider value itself, which would otherwise fail with a message about an enum.
+    [Fact]
+    public void An_env_file_still_asking_for_the_retired_provider_name_is_refused()
+    {
+        var ex = Assert.ThrowsAny<Exception>(() => FingerprintFor(provider: "Local"));
+
+        Assert.Contains("Speech:Provider=Local", DeepMessage(ex));
+        Assert.Contains("Speech:Kokoro", DeepMessage(ex));
+    }
+
+    /// <summary>A directory shaped like an unpacked Kokoro archive. The files are EMPTY: registration
+    /// checks that the four parts are on disk, which is all it can check without loading a model, and
+    /// nothing in these tests gets as far as reading one.</summary>
+    private string AModel(string? except = null)
+    {
+        var directory = Path.Combine(_dir, "kokoro-int8-en-v0_19");
+        Directory.CreateDirectory(directory);
+        foreach (var part in new[] { "model.int8.onnx", "voices.bin", "tokens.txt" })
+        {
+            var path = Path.Combine(directory, part);
+            if (part == except) File.Delete(path);
+            else File.WriteAllBytes(path, []);
+        }
+
+        var dataDir = Path.Combine(directory, "espeak-ng-data");
+        if (except == "espeak-ng-data") Directory.Delete(dataDir, recursive: true);
+        else Directory.CreateDirectory(dataDir);
+
+        return directory;
+    }
+
+    private string FingerprintFor(
+        string? provider, string? modelDirectory = null, Dictionary<string, string?>? extra = null)
+    {
+        var settings = extra ?? [];
         if (provider is not null) settings["Speech:Provider"] = provider;
-        if (baseUrl is not null) settings["Speech:Local:BaseUrl"] = baseUrl;
+        if (modelDirectory is not null) settings["Speech:Kokoro:ModelDirectory"] = modelDirectory;
 
         var services = new ServiceCollection();
         services.AddLogging();
@@ -442,8 +502,8 @@ public sealed class CachingTextToSpeechTests : IDisposable
         return scope.ServiceProvider.GetRequiredService<ITextToSpeech>().OutputFingerprint;
     }
 
-    // DI may wrap the ConfigureLocal exception in a typed-client factory error, so assert against the
-    // whole chain rather than the top message.
+    // DI may wrap a registration exception in a factory error, so assert against the whole chain rather
+    // than the top message.
     private static string DeepMessage(Exception ex)
     {
         var sb = new System.Text.StringBuilder();

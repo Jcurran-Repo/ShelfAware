@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ShelfAware.Tools.KokoroCheck</RootNamespace>
+    <AssemblyName>KokoroCheck</AssemblyName>
+    <!-- An operator's tool: proves a box's Kokoro model speaks before the app is pointed at it. Never shipped. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.9" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ShelfAware.Core\ShelfAware.Core.csproj" />
+    <ProjectReference Include="..\..\src\ShelfAware.Llm\ShelfAware.Llm.csproj" />
+  </ItemGroup>
+
+</Project>

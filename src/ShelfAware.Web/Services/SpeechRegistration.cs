@@ -14,20 +14,22 @@ public static class SpeechRegistration
 {
     /// <summary>
     /// Registers speech: Scribe = STT (ear), and TTS = mouth wrapped in a disk cache at
-    /// <paramref name="cacheDirectory"/>. Speech is its own REST API rather than an IChatClient workload,
-    /// so each rides a typed HttpClient. Typed clients are transient (the factory owns handler lifetime) —
-    /// fine, the services are stateless.
+    /// <paramref name="cacheDirectory"/>. The cloud services are their own REST APIs rather than
+    /// IChatClient workloads, so each rides a typed HttpClient; typed clients are transient (the factory
+    /// owns handler lifetime) — fine, the services are stateless. Kokoro rides nothing, because it runs
+    /// here.
     ///
     /// <para>The TTS PROVIDER is chosen by <c>Speech:Provider</c> (default ElevenLabs, so no existing
-    /// deployment changes on upgrade): <see cref="SpeechProvider.Local"/> points at a self-hosted,
-    /// OpenAI-compatible sidecar (Kokoro) for $0 synthesis; <see cref="SpeechProvider.ElevenLabs"/> keeps
-    /// the cloud voice. The STT ear stays ElevenLabs Scribe either way — moving speech RECOGNITION off
-    /// ElevenLabs is a separate seam. Whichever provider is chosen, it's the CACHE that answers
-    /// <see cref="ITextToSpeech"/>; the provider is only ever reached through it.</para>
+    /// deployment changes on upgrade): <see cref="SpeechProvider.Kokoro"/> runs Kokoro-82M IN THIS PROCESS
+    /// for $0 synthesis; <see cref="SpeechProvider.ElevenLabs"/> keeps the cloud voice. The STT ear stays
+    /// ElevenLabs Scribe either way — moving speech RECOGNITION off ElevenLabs is a separate seam.
+    /// Whichever provider is chosen, it's the CACHE that answers <see cref="ITextToSpeech"/>; the provider
+    /// is only ever reached through it.</para>
     ///
     /// Requires a scoped <see cref="IVoiceCredentials"/> registered by the caller: the ElevenLabs key is
     /// per-circuit (the visitor's own), so it is attached per request rather than baked into a default
-    /// header. The local sidecar needs no such credential (see <see cref="LocalSpeechOptions"/>).
+    /// header. Kokoro needs no such credential — there is nobody to pay (see
+    /// <see cref="KokoroSpeechOptions"/>).
     /// </summary>
     /// <param name="cacheDirectory">Where synthesized audio lives, or null to synthesize every time. Null
     /// is what <c>Speech:CacheMegabytes = 0</c> means: someone asking for no cache should GET no cache,
@@ -37,21 +39,27 @@ public static class SpeechRegistration
         this IServiceCollection services, IConfiguration configuration, string? cacheDirectory)
     {
         services.Configure<ElevenLabsOptions>(configuration.GetSection(ElevenLabsOptions.SectionName));
-        services.Configure<LocalSpeechOptions>(configuration.GetSection(LocalSpeechOptions.SectionName));
+        services.Configure<KokoroSpeechOptions>(configuration.GetSection(KokoroSpeechOptions.SectionName));
+        RefuseRetiredSidecarSettings(configuration);
 
         // The ear is always ElevenLabs Scribe; only the mouth's provider is selectable.
         services.AddHttpClient<ISpeechToText, ElevenLabsSpeechToText>(ConfigureElevenLabs);
 
         var provider = configuration.GetValue<SpeechProvider?>("Speech:Provider") ?? SpeechProvider.ElevenLabs;
 
-        // Register the chosen provider by its own concrete type (with its typed HttpClient) and expose a
-        // resolver for it — so the cache, or the direct registration below, can wrap it as the inner
-        // ITextToSpeech without either caring which provider it is.
+        // Register the chosen provider by its own concrete type and expose a resolver for it — so the
+        // cache, or the direct registration below, can wrap it as the inner ITextToSpeech without either
+        // caring which provider it is, or whether it reaches a network at all.
         Func<IServiceProvider, ITextToSpeech> resolveProvider;
-        if (provider == SpeechProvider.Local)
+        if (provider == SpeechProvider.Kokoro)
         {
-            services.AddHttpClient<LocalTextToSpeech>(ConfigureLocal);
-            resolveProvider = sp => sp.GetRequiredService<LocalTextToSpeech>();
+            // No HttpClient: there is nothing to talk to. The ENGINE is a singleton because the model is
+            // the expensive thing (~1.6 s to load, a few hundred MB resident); the ITextToSpeech over it
+            // stays transient like its siblings.
+            RequireAModelOnDisk(configuration);
+            services.AddSingleton<IKokoroEngine, SherpaKokoroEngine>();
+            services.AddTransient<KokoroTextToSpeech>();
+            resolveProvider = sp => sp.GetRequiredService<KokoroTextToSpeech>();
         }
         else
         {
@@ -87,19 +95,57 @@ public static class SpeechRegistration
         http.BaseAddress = new Uri("https://api.elevenlabs.io");
     }
 
-    private static void ConfigureLocal(IServiceProvider sp, HttpClient http)
+    /// <summary>
+    /// ⚠️ Refuse to boot with a model directory that isn't there. This is not defensive tidiness: the
+    /// native library answers a missing model file by printing one line to stderr and killing the process
+    /// with a SIGSEGV — no managed exception, nothing to catch, nothing of ours in the log. Without this
+    /// check the app would start clean and then die whole on the first read-aloud, taking every circuit
+    /// with it, and the only clue would be a stderr line nobody was watching.
+    /// <para>It asks <see cref="KokoroModelFiles"/> — the same definition the engine loads from — because
+    /// a validation that checked a different set of paths than the load uses would pass and then crash.</para>
+    /// </summary>
+    private static void RequireAModelOnDisk(IConfiguration configuration)
     {
-        var options = sp.GetRequiredService<IOptions<LocalSpeechOptions>>().Value;
-        // A bad value would otherwise surface as an opaque failure on the first read-aloud; fail at
-        // startup with a message that names the setting. Require a bare http(s) ORIGIN, no path: the
-        // request URI is a leading-slash absolute path, so a BaseUrl carrying a subpath would be
-        // silently dropped, and a non-http scheme (file://, ftp://) would fail later with a worse message.
-        if (!Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out var baseUri)
-            || (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps)
-            || baseUri.AbsolutePath.Trim('/').Length != 0)
+        var options = configuration.GetSection(KokoroSpeechOptions.SectionName).Get<KokoroSpeechOptions>()
+                      ?? new KokoroSpeechOptions();
+
+        if (string.IsNullOrWhiteSpace(options.ModelDirectory))
             throw new InvalidOperationException(
-                $"Speech:Local:BaseUrl must be a bare http(s) origin with no path " +
-                $"(e.g. http://127.0.0.1:8880); got '{options.BaseUrl}'.");
-        http.BaseAddress = baseUri;
+                "Speech:Provider is Kokoro, so Speech:Kokoro:ModelDirectory must name a directory holding "
+                + "an unpacked sherpa-onnx Kokoro model. See docs/deploy-kokoro.md.");
+
+        if (KokoroModelFiles.In(options.ModelDirectory, options.ModelFile).Missing() is { Count: > 0 } missing)
+            throw new InvalidOperationException(
+                $"Speech:Kokoro:ModelDirectory ('{options.ModelDirectory}') is not a complete Kokoro model: "
+                + $"{string.Join(", ", missing)} not found. See docs/deploy-kokoro.md for the archive to "
+                + "unpack there. (Starting without them would not fail here — it would kill the process on "
+                + "the first read-aloud.)");
     }
+
+    /// <summary>
+    /// ⚠️ A box that upgrades past the sidecar gets told, rather than quietly ignored. The read-aloud voice
+    /// used to be an HTTP sidecar configured under <c>Speech:Local</c>; it is now in-process under
+    /// <c>Speech:Kokoro</c>. Configuration binding drops keys nothing binds, so an env file still carrying
+    /// <c>Speech__Provider=Local</c> and a tuned <c>Speech__Local__Speed</c> would boot happily on
+    /// ElevenLabs at someone else's expense, or on Kokoro at a speed nobody chose — and nothing would say
+    /// so. The whole point of retiring a setting is that its absence is loud.
+    /// </summary>
+    private static void RefuseRetiredSidecarSettings(IConfiguration configuration)
+    {
+        var retired = configuration.GetSection("Speech:Local").GetChildren().Select(c => c.Path).ToList();
+
+        // The enum's old member name, which no longer parses to anything and would otherwise fail with a
+        // message about a bad enum value rather than about what replaced it.
+        if (string.Equals(configuration["Speech:Provider"], "Local", StringComparison.OrdinalIgnoreCase))
+            retired.Add("Speech:Provider=Local");
+
+        if (retired.Count == 0) return;
+
+        throw new InvalidOperationException(
+            "The Kokoro read-aloud voice runs in this process now, not in an HTTP sidecar, so these "
+            + $"settings no longer do anything: {string.Join(", ", retired)}. Use Speech:Provider=Kokoro "
+            + "and the Speech:Kokoro section (ModelDirectory, SpeakerId, Speed, NumThreads) instead, and "
+            + "retire the sidecar service. See docs/deploy-kokoro.md.");
+    }
+
 }
