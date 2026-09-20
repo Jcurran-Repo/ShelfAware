@@ -5,8 +5,8 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace ShelfAware.Tests;
 
 /// <summary>
-/// ⚠️ THE one place the rule "whose cancellation is this?" lives, for every call that leaves the app and
-/// waits on a provider.
+/// ⚠️ THE one place the rule "whose cancellation is this?" lives, for every call that hands work to a
+/// model and waits on it — whether the model is across the internet or in this process.
 ///
 /// <para>An <c>HttpClient</c> timeout does not arrive as a timeout. It arrives as
 /// <c>TaskCanceledException</c>, which is an <see cref="OperationCanceledException"/> — the same type a
@@ -84,13 +84,20 @@ public class ProviderCancellationSiteTests
     private static readonly string[] CallScope =
         [.. BoundaryScope, Path.Combine("src", "ShelfAware.Web", "Components")];
 
-    /// <summary>The calls that leave the app and wait on a provider. ⚠️ More than one name: the first
+    /// <summary>The calls that hand work to a model and wait on it. ⚠️ More than one name: the first
     /// version knew only <c>GetResponseAsync</c> and so was blind to the three voice services in its own
-    /// scope directory, which reach ElevenLabs and Kokoro over <c>HttpClient.SendAsync</c>. All three
-    /// happened to be guarded, so the rule reported a green it had not earned — on the voice path, the
-    /// arc that previously shipped an open microphone.</summary>
+    /// scope directory, which reach ElevenLabs over <c>HttpClient.SendAsync</c>. All three happened to be
+    /// guarded, so the rule reported a green it had not earned — on the voice path, the arc that
+    /// previously shipped an open microphone.
+    ///
+    /// <para>⚠️ And "provider" here means a model, NOT a network. <c>IKokoroEngine.GenerateAsync</c> runs
+    /// in this process and never opens a socket, yet everything this rule is about still holds of it: it
+    /// blocks a circuit for as long as the clip lasts, it raises <c>OperationCanceledException</c> from a
+    /// token the caller may not own, and the household on the other end has the same unsaved work to
+    /// lose. A rule scoped to "calls that leave the app" would have let the in-process voice sit outside
+    /// it on a technicality, which is how the class of defect this file exists for gets back in.</para></summary>
     private static readonly string[] ProviderCalls =
-        ["GetResponseAsync", "GetStreamingResponseAsync", "SendAsync"];
+        ["GetResponseAsync", "GetStreamingResponseAsync", "SendAsync", "GenerateAsync"];
 
     [Fact]
     public void A_cancellation_caught_at_the_provider_boundary_asks_whose_it_was()

@@ -1,130 +1,285 @@
-# Kokoro voice: the self-hosted read-aloud sidecar
+# Kokoro voice: the read-aloud that runs inside the app
 
-ShelfAware's read-aloud (recipe steps, the chat's spoken confirmations) can run on a **local,
-self-hosted TTS sidecar** instead of ElevenLabs. It's [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)
-— Apache-2.0, so free even commercially — served behind an OpenAI-compatible HTTP API on the box. The
-app just POSTs text and gets audio back, so there's **no per-character cost, no key, and nothing to
-meter.** That is why the managed demo box uses it.
+ShelfAware's read-aloud (recipe steps, the chat's spoken confirmations) can run on
+[Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) — Apache-2.0, so free even commercially —
+**in the app's own process**, through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx). Raw text
+in, audio samples out. There is **no per-character cost, no key, and nothing to meter**, and there is
+no second service: no sidecar, no Docker, no Python, and no system `espeak-ng` — the phonemizer data
+ships inside the model archive.
 
-The app change is one setting (`Speech:Provider=Local`); this doc is the other half — standing up the
-sidecar. The two are independent: flip the setting only once the sidecar answers.
+That last part is the whole reason this shape was chosen over the HTTP sidecar it replaced. A sidecar
+is a second thing to install, start, keep running, keep patched and keep off the internet, and the app
+is useless if it is down. The model is a directory.
 
-> **Status:** the app side (provider seam, `LocalTextToSpeech`, tests) is built and CI-green. The image
-> name (`ghcr.io/remsky/kokoro-fastapi-cpu`), tag (`v0.8.1`), port (8880) and endpoint
-> (`/v1/audio/speech`) are **verified against the Kokoro-FastAPI project**, but the end-to-end run has
-> **not yet happened on a live box** — the first deploy is the first real test, so watch
-> `journalctl -u kokoro -f` and the smoke-test in step 3 before flipping the app over.
+> **Status:** built and CI-green, and verified end to end on a development box — a recipe step was
+> synthesized through `KokoroTextToSpeech` and transcribed back to check the words came out. It has
+> **not yet run on the droplet or the family box**: the first deploy is the first real test of *those
+> boxes'* CPU and RAM. Run the check in step 3 there before flipping the app over.
 
 ## What talks to what
 
 ```
-browser ──plays MP3──► ShelfAware app ──POST /v1/audio/speech──► Kokoro sidecar (127.0.0.1:8880)
-                          (server-side)
+browser ──plays WAV──► ShelfAware app ──in-process──► Kokoro (sherpa-onnx + ONNX Runtime)
+                          (server-side)                 ~150 MB of model files on disk
 ```
 
-The **browser never touches the sidecar** — the app calls it server-side and returns the bytes. So:
-- Bind the sidecar to **loopback only**. It takes arbitrary text and needs no auth; it must not be
-  reachable from the internet. (The unit and the config below both do this.)
-- **No browser CSP change** is needed — the audio is same-origin (served by the app), exactly as with
-  ElevenLabs today.
-- A **cache hit needs no sidecar at all** (clips are content-addressed on disk), so seeded/demo recipes
-  read even before the sidecar warms up.
+Nothing leaves the box, and nothing listens on a port. The browser is served the audio by the app,
+same-origin, exactly as with ElevenLabs — **no browser CSP change** is needed. A **cache hit needs no
+model at all** (clips are content-addressed on disk), so seeded/demo recipes read even before the model
+has ever been loaded.
 
 ## Requirements
 
-- **RAM: 2 GB is TIGHT — add swap.** Kokoro-82M is CPU-capable (no GPU), but the model + ONNX runtime +
-  Python resident set runs ~1–1.5 GB under load, and Reginald (.NET) + Caddy + the OS want the rest of a
-  2 GB droplet. It works, but a synthesis spike can OOM without a cushion, so **add a 2 GB swap file**
-  (step 0 below). If the box still struggles, bump the droplet to 4 GB. On a 1 GB box, keep ElevenLabs.
-- Docker (recommended) **or** a Python venv. Docker bundles the phonemizer/espeak-ng dependencies the
-  pip path otherwise needs, so it's the simpler path on a fresh droplet.
+- **RAM: ~600 MB resident while the model is loaded**, on top of the app. On a 2 GB droplet that is
+  workable but not roomy, so **add a 2 GB swap file** (step 0). On a 1 GB box, keep ElevenLabs.
+  The model loads on the **first read-aloud**, not at boot, and stays loaded after that — a box that
+  never reads a recipe never pays the RAM.
+- **CPU: synthesis is roughly real-time.** Measured on a 4-core development box with the int8 model:
+  **1.39× real time at one thread, 1.08× at two, 0.96× at four** — so a ten-second step takes about ten
+  seconds the first time it is read. The narration streams (the intro plays while later steps
+  synthesize) and every clip is cached forever, so this is a first-read cost per step, not a per-read
+  one. A slower box makes the first read of a long recipe noticeably laggy; that is the honest trade
+  for $0.
+- **Disk: ~152 MB** for the quantized model (below), or ~330 MB for full precision.
+- **No runtime dependencies to install.** The native library rides in the app's own publish output —
+  `libonnxruntime.so` (26 MB) and `libsherpa-onnx-c-api.so` (5 MB), so **~31 MB on the publish**. A
+  RID-specific publish (which both deploy scripts do) carries only the platform it is building for,
+  not the other eight.
 
-## Option A — Docker (recommended)
+## 1. Add swap first
 
-**0. Add swap first** (a 2 GB droplet needs the cushion; skip if you already have swap or ≥ 4 GB RAM):
+A 2 GB droplet needs the cushion; skip if you already have swap or ≥ 4 GB RAM.
 
-   ```bash
-   sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
-   sudo mkswap /swapfile && sudo swapon /swapfile
-   echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab   # survive reboots
-   free -h   # confirm Swap: 2.0Gi
-   ```
+```bash
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab   # survive reboots
+free -h   # confirm Swap: 2.0Gi
+```
 
-1. **Install Docker** (skip if it's already there — `docker --version`):
+## 2. Unpack a model
 
-   ```bash
-   curl -fsSL https://get.docker.com | sudo sh
-   ```
+The models are sherpa-onnx's own packaging of Kokoro — the archive already contains the ONNX weights,
+the voice embeddings, the token table and the `espeak-ng-data` directory.
 
-2. **Install the unit** — [`deploy/kokoro.service`](../deploy/kokoro.service) already pins the verified
-   image (`ghcr.io/remsky/kokoro-fastapi-cpu:v0.8.1`) and runs it loopback-bound with
-   `--cap-drop=ALL --security-opt=no-new-privileges`. Bump the tag when a newer release lands
-   ([project releases](https://github.com/remsky/Kokoro-FastAPI/releases)); add `--read-only` (plus a
-   writable `--tmpfs`) if you want to harden further. Then:
+Steps 1–5 are the **droplet**. The family box is Windows and keeps its files somewhere else — see
+[The family box (Windows)](#the-family-box-windows) below, which is the same five steps in its idiom.
 
-   ```bash
-   sudo cp deploy/kokoro.service /etc/systemd/system/kokoro.service
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now kokoro
-   ```
+```bash
+sudo mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models
+curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-en-v0_19.tar.bz2
+tar xjf kokoro-int8-en-v0_19.tar.bz2 && rm kokoro-int8-en-v0_19.tar.bz2
+ls kokoro-int8-en-v0_19   # model.int8.onnx  voices.bin  tokens.txt  espeak-ng-data/  README.md  LICENSE
+sudo chown -R shelfaware:shelfaware /var/lib/shelfaware/models
+```
 
-   The first start pulls the image and auto-downloads the model — give it a minute or two. Watch it:
-   `journalctl -u kokoro -f`.
+| Archive | Download | On disk | Voices | Notes |
+|---|---|---|---|---|
+| `kokoro-int8-en-v0_19` | 103 MB | 152 MB | 11 | **The default.** English, quantized — the one worth running on a small box. |
+| `kokoro-en-v0_19` | 320 MB | ~330 MB | 11 | Same voices, full precision. Set `Speech__Kokoro__ModelFile=model.onnx`. |
+| `kokoro-int8-multi-lang-v1_1` | 147 MB | ~200 MB | 50+ | Kokoro v1.1, many languages. **Not wired up** — it needs lexicon and dictionary paths this app does not pass. Don't point at it expecting it to work. |
 
-3. **Prove the sidecar answers** (still on the box):
+> ⚠️ **A wrong path does not produce an error message — it kills the process.** The native library
+> answers a missing model file by printing one line to stderr and exiting with a SIGSEGV. The app
+> therefore checks all four parts **at startup** and refuses to boot with a message naming what's
+> missing, which is the failure you want. Don't work around that check.
 
-   ```bash
-   curl -s http://127.0.0.1:8880/v1/audio/speech \
-     -H 'content-type: application/json' \
-     -d '{"model":"kokoro","input":"Shelf Aware is talking.","voice":"af_heart","response_format":"mp3"}' \
-     --output /tmp/kokoro-test.mp3
-   # expect a non-empty MP3:
-   ls -l /tmp/kokoro-test.mp3 && file /tmp/kokoro-test.mp3
-   ```
+## 3. Prove it speaks, before pointing the app at it
 
-## Option B — Python venv (no Docker)
+Run the app's own synthesis path against the model directory:
 
-Follow Kokoro-FastAPI's own "running without Docker" instructions (a venv + `uvicorn` on `127.0.0.1:8880`),
-then wrap that command in a systemd unit modelled on `deploy/kokoro.service` (drop the `docker` lines,
-point `ExecStart` at the venv's uvicorn, add `User=`/`WorkingDirectory=`). More moving parts (Python
-version, espeak-ng) — prefer Docker unless you can't.
+```bash
+dotnet run --project tools/KokoroCheck -- /var/lib/shelfaware/models/kokoro-int8-en-v0_19 /tmp/kokoro-check.wav
+```
 
-## Point the app at it
+It prints the load time, the cache fingerprint and how long the synthesis took, and writes a WAV.
+**Play it.** The voice should read "Shelf Aware is talking. Sear the chicken six to seven minutes per
+side, then roast at three hundred and fifty degrees Fahrenheit" — if the numbers and `°F` come out
+spelled like that, `SpeechText` is reaching the model too.
+
+Pass a voice index as a third argument to audition the others: `… /tmp/v3.wav 3`. The archive ships no
+name table, so the voices are numbered 0 to 10 rather than named; listen and pick.
+
+## 4. Point the app at it
 
 In the box's env file (`/etc/shelfaware/env` — see [`deploy/env.example`](../deploy/env.example)):
 
 ```
-Speech__Provider=Local
-Speech__Local__BaseUrl=http://127.0.0.1:8880
-Speech__Local__Voice=af_heart
-Speech__Local__Speed=0.9
+Speech__Provider=Kokoro
+Speech__Kokoro__ModelDirectory=/var/lib/shelfaware/models/kokoro-int8-en-v0_19
+Speech__Kokoro__SpeakerId=0
+Speech__Kokoro__Speed=0.9
+Speech__Kokoro__NumThreads=2
 ```
 
-Then restart the app: `sudo systemctl restart shelfaware`. Everything else (`Model=kokoro`,
-`Format=mp3`, no `ApiKey`) uses the defaults. Pick a different [Kokoro voice](https://github.com/remsky/Kokoro-FastAPI)
-(`af_bella`, `am_michael`, …) with `Speech__Local__Voice`.
+Then restart the app: `sudo systemctl restart shelfaware`.
 
-> **Changing the voice retires old clips automatically.** The voice/model/speed/format are in the cache
-> fingerprint, so switching any of them re-synthesizes rather than serving yesterday's voice. You do
-> **not** need to clear `tts-cache`.
+> **Changing the voice retires old clips automatically.** The archive, the ONNX file, the voice and the
+> speed are all in the cache fingerprint, so switching any of them re-synthesizes rather than serving
+> yesterday's voice. You do **not** need to clear `tts-cache`. Where the model is *unpacked* is
+> deliberately **not** in the fingerprint — moving the folder doesn't change how it sounds, and
+> re-synthesizing a household's whole cookbook because a path changed would be a real cost for nothing.
 
-## Verify end to end
+> ⚠️ **Clips are WAV, which is about ten times the size of the MP3 the sidecar returned.** 16-bit mono
+> at 24 kHz is ~48 KB per spoken second, so the default `Speech__CacheMegabytes=256` holds roughly 90
+> minutes of speech per household rather than fifteen hours. Raise it if a household's cookbook is
+> large; the trim is per household and runs at startup.
 
-1. Open a recipe → **Read it to me**. The first read synthesizes (watch `journalctl -u kokoro -f`); a
-   re-read is instant (cache).
-2. `journalctl -u shelfaware -f` should show `Synthesizing … via local TTS (kokoro, voice af_heart)` and
-   then `Synthesized N bytes of audio/mpeg` — no ElevenLabs call.
+## 5. Verify end to end
+
+1. Open a recipe → **Read it to me**. The first read loads the model and synthesizes; a re-read is
+   instant (cache).
+2. `journalctl -u shelfaware -f` should show `Loaded Kokoro from … : 11 voice(s) at 24000 Hz`, then
+   `Synthesizing N character(s) with Kokoro (voice 0)` and `Synthesized N.Ns of audio` — and no
+   ElevenLabs call.
+
+## The family box (Windows)
+
+Same model, same settings, different furniture: no systemd, no `/var/lib`, and a publish script that
+rebuilds the server folder from scratch every time. **Where the model goes is therefore not a matter
+of taste** — put it in the wrong place and the next publish moves it out from under the app.
+
+### Where it goes, and why there
+
+```
+C:\Users\Jorcu\ShelfAware-server\app-data\models\kokoro-int8-en-v0_19
+```
+
+Under `app-data`, not beside it. [`deploy/publish-family.ps1`](../deploy/publish-family.ps1) renames the
+live folder aside and lays a fresh publish down, and **`app-data` is the one thing it moves across**;
+every other item at the server root that the new publish doesn't account for is swept into
+`ShelfAware-server-attic`. So a `models\` folder at the root would survive exactly one deploy: the next
+publish would attic it, the app would then refuse to boot on a model directory that isn't there, and the
+script's 90-second poll would report the deploy as failed. Inside `app-data` it rides along, the way the
+databases and the speech cache do.
+
+The same reasoning gives the answer for a **development checkout**: `src\ShelfAware.Web\app-data\models\`
+— `app-data` is gitignored there, so a 152 MB model can never be committed by accident.
+
+### Unpack it
+
+Windows 10 and 11 ship both `curl.exe` and `tar` (bsdtar), so there is nothing to install:
+
+```powershell
+$models = "$env:USERPROFILE\ShelfAware-server\app-data\models"
+New-Item -ItemType Directory -Path $models -Force | Out-Null
+curl.exe -L -o "$models\kokoro.tar.bz2" `
+  https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-en-v0_19.tar.bz2
+tar -xf "$models\kokoro.tar.bz2" -C $models
+Remove-Item "$models\kokoro.tar.bz2"
+Get-ChildItem "$models\kokoro-int8-en-v0_19"   # model.int8.onnx  voices.bin  tokens.txt  espeak-ng-data\
+```
+
+⚠️ **`curl.exe`, with the extension, not `curl`.** In Windows PowerShell `curl` is an *alias for
+`Invoke-WebRequest`*, which is a different program with different switches — it has no `-L`, so pasting
+step 2's Linux line gets you "A parameter cannot be found that matches parameter name 'L'" rather than a
+download. Spelling out `curl.exe` bypasses the alias and runs the real curl, where `-L` (follow the
+redirect GitHub answers a release download with) and `-o` mean what they do everywhere else.
+
+`Invoke-WebRequest -OutFile` works too, and needs no `-L` because it follows redirects on its own. If you
+use it, set `$ProgressPreference = 'SilentlyContinue'` first — its progress bar re-renders per chunk and
+can turn a 103 MB download into a several-minute one.
+
+If that `tar` build turns out not to carry bzip2, 7-Zip unpacks it in two passes (`.tar.bz2` → `.tar` →
+the folder). Either way what must end up on disk is a `kokoro-int8-en-v0_19` directory containing those
+four things — the app checks all four by name and refuses to boot if any is missing.
+
+### Prove it speaks — before the app is told about it
+
+From the repo checkout, against the folder you just unpacked:
+
+```powershell
+dotnet run --project tools/KokoroCheck -- `
+  "$env:USERPROFILE\ShelfAware-server\app-data\models\kokoro-int8-en-v0_19" `
+  "$env:TEMP\kokoro-check.wav"
+```
+
+Play the WAV. This is step 3 above and it matters more here than on the droplet, because the family box
+is the one with a family on it.
+
+### Point the app at it
+
+The family box's settings live in **`C:\Users\Jorcu\ShelfAware-server\appsettings.json`** — the box's
+own file, which `publish-family.ps1` carries across every publish *over* the one in the publish output.
+Editing the repo's `src/ShelfAware.Web/appsettings.json` does **not** reach it; that copy is overwritten
+on arrival. Add to the box's file:
+
+```jsonc
+  "Speech": {
+    "Provider": "Kokoro",
+    "Kokoro": {
+      "ModelDirectory": "C:\\Users\\Jorcu\\ShelfAware-server\\app-data\\models\\kokoro-int8-en-v0_19",
+      "SpeakerId": 0,
+      "Speed": 0.9,
+      "NumThreads": 2
+    }
+  }
+```
+
+⚠️ **Backslashes are escaped in JSON** (`\\`), or use forward slashes — `C:/Users/...` works fine and is
+harder to get wrong. A path JSON reads as something else is a path the app refuses to boot on.
+
+⚠️ **Unpack first, flip the setting second.** The app refuses to start when it is told to use a model
+that isn't on disk — deliberately, because the alternative is a SIGSEGV on the first read-aloud — so a
+box that gets the setting before the files is a box that won't come back up, and `publish-family.ps1`
+will report the deploy as failed while the site stays down.
+
+Restart is the scheduled task rather than systemd — and ⚠️ **`Stop-ScheduledTask` does not reliably
+stop this app.** The boot-launched process outlives the task engine's control of it, so the task reports
+stopped while the old exe runs on, still serving the old settings and looking for all the world like the
+change didn't take. `publish-family.ps1` force-kills it by path for exactly this reason; do the same by
+hand:
+
+```powershell
+$exe = "$env:USERPROFILE\ShelfAware-server\ShelfAware.Web.exe"
+Stop-ScheduledTask -TaskName 'ShelfAware Server'
+# Match on Path, not name: a dev server running from the repo is also ShelfAware.Web.
+Get-Process ShelfAware.Web -ErrorAction SilentlyContinue |
+  Where-Object { $_.Path -eq $exe } | Stop-Process -Force
+Start-ScheduledTask -TaskName 'ShelfAware Server'
+```
+
+Then verify as in step 5, reading the app's own log rather than `journalctl`. If the app is **not**
+answering afterwards, the settings are the first place to look: a model directory it can't read is a
+refusal to boot with the reason on stderr, which on this box means Task Scheduler's history rather than
+a console.
+
+### On a development checkout
+
+Nothing about the voice needs committing to try it. `Speech:Provider` and `Speech:Kokoro:ModelDirectory`
+bind from user-secrets in Development like any other setting, so the machine-specific path stays on the
+machine:
+
+```powershell
+dotnet user-secrets --project src/ShelfAware.Web set "Speech:Provider" "Kokoro"
+dotnet user-secrets --project src/ShelfAware.Web set "Speech:Kokoro:ModelDirectory" "$PWD/src/ShelfAware.Web/app-data/models/kokoro-int8-en-v0_19"
+```
+
+Deliberately not `appsettings.Development.json`: that file is committed, so a provider set there would
+stop the app booting for anyone who cloned the repo without first downloading 152 MB of model.
+
+## Upgrading a box that ran the HTTP sidecar
+
+The sidecar is gone: `deploy/kokoro.service`, the `ghcr.io/remsky/kokoro-fastapi-cpu` container and the
+whole `Speech__Local__*` section no longer exist.
+
+```bash
+sudo systemctl disable --now kokoro          # stop the sidecar
+sudo rm /etc/systemd/system/kokoro.service && sudo systemctl daemon-reload
+sudo docker rmi ghcr.io/remsky/kokoro-fastapi-cpu:v0.8.1
+```
+
+Then replace the settings as in step 4. **The app refuses to start while any `Speech__Local__*` key or
+`Speech__Provider=Local` is still set**, and says what to use instead — deliberately, because
+configuration binding silently drops keys nothing reads, and a box that kept quietly running on
+ElevenLabs while its owner believed it was on the free voice would be a bill nobody chose.
+
+The cache does not need clearing: Kokoro clips were already fingerprinted under `kokoro|…`, and the
+fingerprint has changed shape, so the old ones are simply never asked for. They will age out of the
+size cap on their own, or `rm -rf app-data/tts-cache` if you want the space back today.
 
 ## Security recap
 
-- Loopback bind only (`-p 127.0.0.1:8880:8880`). Never publish the port.
-- If you must run a **shared** sidecar (one box serving several), put it behind auth and set
-  `Speech__Local__ApiKey=<token>` — the app then sends `Authorization: Bearer <token>`. A single-box
-  loopback sidecar needs none.
-- The sidecar has no persistence and sees only the recipe/step text the app sends it — no household data,
-  no keys.
-
-## Rolling back to ElevenLabs
-
-Remove `Speech__Provider=Local` (or set it to `ElevenLabs`), make sure `ElevenLabs__ApiKey` is present,
-and restart the app. Stop the sidecar if unused: `sudo systemctl disable --now kokoro`.
+- Nothing listens on a port, so there is nothing to firewall and nothing to leak.
+- The model files are read-only inputs; the app never writes to the model directory.
+- The text being spoken never leaves the box.

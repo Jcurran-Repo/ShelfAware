@@ -7,6 +7,31 @@ as "(shipped since this note)" parentheticals, which is how the old version got 
 
 ## Open
 
+- **The Core mutation gate can report success having tested ZERO mutants.** Found 2026-09-19 on the
+  in-process-voice branch: `WaveAudio.cs` was the only `src/ShelfAware.Core/**` file it added, all 34 of
+  its mutants failed to compile (a `short` argument that was only legal because the compiler folded it to
+  a constant — Stryker rewrites the expression into a ternary, which is not one), Stryker logged *"0 total
+  mutants will be tested"* and *"unable to calculate a mutation score"*, **exited 0**, and CI's
+  `Core mutation (changed files)` check went green. The file was fixed so its mutants compile and it now
+  scores 100% over 28 of them, so nothing is currently unmeasured — but the gate said yes to a file it had
+  not read, which is the same shape as the razor-scan gap `ProviderCancellationSiteTests` was given a reach
+  guard for, one level up. The fix is a reach guard in `mutation-pr.yml`: when the diff touches Core, fail
+  if the report's tested-mutant count is 0. **Deliberately not done on that branch** — it is a workflow
+  change that cannot be tested from a session, and the mutation workflow already has one entry on this
+  list. `docs/mutation-testing.md` §"Known limitation: compile-error mutants" describes the bucket but
+  reads as "a few mutants cannot exist", not "all of them can vanish and the check still passes".
+
+- **The TTS cache is trimmed only at startup, and a free voice fills it ~10× faster.** `CachingTextToSpeech.Trim`
+  runs once, at boot, against `Speech:CacheMegabytes` per household. That cadence was chosen when every clip
+  was an MP3 someone had paid ElevenLabs for — small, and self-limiting because nobody synthesizes what
+  they are billed for by accident. The in-process Kokoro voice makes clips **WAV at ~48 KB per spoken
+  second** and free, so a household reading its way through a cookbook on a box that is up for weeks can
+  run a long way past the cap between restarts. On a 2 GB droplet that also now holds ~600 MB of model,
+  that is the disk to watch. Nothing is broken today — the cap is still enforced, just not promptly — and
+  the fix (trim after a write, for the household written) is a change to a hot path with its own cost, so
+  it is a deliberate decision rather than a tidy-up. **Revisit once the family box has a few weeks of real
+  read-aloud on it**, which is the first time there will be a real number instead of an estimate.
+
 - **The mutation score on `/admin` is carried forward, not re-measured.** `ci.yml` does not run Stryker,
   so its snapshot never measures a score; it now keeps whatever the last measuring run wrote rather than
   blanking the tile (which is what it did before 2026-09-19, and would have removed the card on the first

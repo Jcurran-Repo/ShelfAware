@@ -7,12 +7,29 @@ most of it is a trap that costs twenty minutes and teaches nothing.
 
 ## The toolchain
 
-⚠️ **The SDK is not pinned yet** (`docs/remediation-plan.md` §2 is the fix). CI asks for `10.0.x`, i.e.
-whatever the latest patch is that day, and the patches are not interchangeable: on **10.0.112** the
-Razor parser reads a relational pattern at the start of a switch-expression arm as an HTML tag start,
-so `< 0 => ...` inside `@code` produces hundreds of errors on a commit CI reports green. If a build
-fails on `.razor` files with tag-mismatch errors, check the SDK patch before suspecting the repo.
-`_ when days < 0 =>` is the equivalent that parses everywhere.
+**The SDK is declared in `global.json`**, and all three workflows read it with
+`global-json-file` rather than naming a wildcard of their own, so CI cannot drift from what you build
+with (`docs/remediation-plan.md` §2). It asks for **10.0.100 or later within 10.0**, no previews:
+
+```json
+{ "sdk": { "version": "10.0.100", "rollForward": "latestFeature", "allowPrerelease": false } }
+```
+
+⚠️ **`latestFeature`, not `latestPatch`, and the difference is whether you can build at all.**
+`latestPatch` accepts only the *same feature band* — a 10.0.1xx SDK — so a machine with 10.0.302
+installed is told "a compatible .NET SDK was not found" and cannot build the repo, which is a strange
+thing to say to someone holding a newer SDK than the one being asked for. `latestFeature` keeps the
+floor and the no-previews rule and accepts any later band in 10.0. It does **not** buy a byte-identical
+toolchain everywhere; that needs `rollForward: disable` and an exact version, which makes a fresh
+machine unable to build until it installs that precise patch.
+
+⚠️ **What the pin is not doing is protecting the Razor parse.** On **10.0.112** the Razor parser reads a
+relational pattern at the start of a switch-expression arm as an HTML tag start, so `< 0 => ...` inside
+`@code` produced hundreds of errors on a commit CI reported green. That is fixed at the source —
+`_ when days < 0 =>` is the equivalent that parses everywhere — and held by `RazorSourceRulesTests`,
+which scans every `.razor` under `src/` and fails naming file and line if a bare relational arm comes
+back. A test, not a version number, is what makes a wider roll-forward safe. If a build still fails on
+`.razor` files with tag-mismatch errors, check the SDK before suspecting the repo.
 
 ⚠️ **"0 Warnings" from an incremental build is vacuous.** MSBuild does not re-emit warnings for
 up-to-date targets, so a `dotnet build` straight after `dotnet test` reports zero no matter what. Check

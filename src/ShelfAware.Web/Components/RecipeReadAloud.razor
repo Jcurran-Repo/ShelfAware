@@ -254,7 +254,14 @@
             texts[0].Text, RecipeNarration.ContextAt(texts, 0), _narration.Token);
         if (!intro.Success)
         {
-            error = "Couldn't generate the narration — check that the ElevenLabs key is set.";
+            // ⚠️ The synthesizer's own message, not a guess at the cause. This line used to name the
+            // ElevenLabs key — which on a box voiced by the in-process Kokoro model is a key that does not
+            // exist and never ran, pointing whoever read it at the wrong thing entirely. Every
+            // ITextToSpeech already returns copy written for a person (ProviderErrorCopyTests holds that
+            // rule), so the screen's job is to show it rather than to invent a second story beside it.
+            error = intro.Error is { Length: > 0 } said
+                ? $"Couldn't generate the narration — {said}"
+                : "Couldn't generate the narration.";
             preparing = false;
             StateHasChanged();
             return;

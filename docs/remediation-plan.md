@@ -108,6 +108,14 @@ the evidence does not support.
    **What it does not buy:** a byte-identical patch everywhere — that needs `rollForward: disable` and an
    exact version, which makes a fresh machine unable to build until it installs that precise patch. The
    pin makes the requirement *declared*; item 2 below is what makes the build *robust*.
+
+   ⚠️ **Amended 2026-09-20: `latestPatch` → `latestFeature`.** `latestPatch` accepts only the same
+   feature band, so a machine holding **10.0.302** was refused with "a compatible .NET SDK was not
+   found" and could not build the repo at all — the pin's own failure mode, on a *newer* SDK than the
+   one it asks for. `latestFeature` keeps the 10.0.100 floor, keeps `allowPrerelease: false`, and
+   accepts any later band within 10.0. It gives up nothing item 1 claimed to buy: a byte-identical
+   patch was already explicitly not on the list, and what protects the Razor parse is item 3's test,
+   not the version number.
 2. Rewrite the five relational-pattern sites so they parse under any SDK — `_ when days < 0 =>` is
    equivalent, unambiguous, and verified to compile on 10.0.112. The sites:
    `Home.razor:517`, `GroceryList.razor:730`, `Products.razor:423`, `ProductDetail.razor:1493`,

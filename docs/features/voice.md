@@ -26,6 +26,29 @@ the built-in reader.
   `ITextToSpeech.OutputFingerprint`. **A cache hit needs no API key**, which is what lets seeded/demo
   recipes talk for a keyless visitor. Registered via `SpeechRegistration.AddSpeech` so a test can prove
   nothing bypasses it. Bounded by `Speech:CacheMegabytes` (default 256), trimmed at startup.
+- **The mouth has two providers; the ear has one.** `Speech:Provider` picks between ElevenLabs (cloud,
+  per-character, the visitor's own key) and `Kokoro` — Kokoro-82M running IN THIS PROCESS via
+  sherpa-onnx, for $0 with nothing to meter and nothing to deploy beside the app. The STT ear stays
+  ElevenLabs Scribe either way; moving speech RECOGNITION off ElevenLabs is a separate seam. Both
+  mouths answer through `CachingTextToSpeech`, and each namespaces its own `OutputFingerprint`, so a
+  clip voiced by one is never served for the other's key. Setup + the model archive:
+  `docs/deploy-kokoro.md`.
+  - ⚠️ **sherpa-onnx does not throw on a bad model path — it kills the process** (stderr line, then
+    SIGSEGV; no managed exception to catch). So `SpeechRegistration` refuses to boot with an incomplete
+    model directory and `SherpaKokoroEngine` checks again before loading, both asking the one
+    definition (`KokoroModelFiles`). A check that read different paths than the load would pass and
+    then crash, which is why they are not two lists.
+  - ⚠️ **An out-of-range `SpeakerId` is REFUSED, not clamped.** The model answers a voice index it
+    hasn't got by quietly using voice 0 — which would file every clip under a fingerprint naming a
+    voice that never spoke it, and go on serving them after the setting was corrected. The archive
+    ships no voice-name table, which is also why the setting is an index rather than a name: a mapping
+    in our source is a fact nothing could check against the model.
+  - **Cancellation is real.** Synthesis is a blocking native call that can run for tens of seconds, so
+    the caller's token is read inside sherpa's progress callback (returning 0 stops the run — a 32 s
+    synthesis stops in 4 s). A reader the household closed doesn't keep burning a core.
+  - **Clips are WAV, ~10× an MP3.** `WaveAudio` packs the samples; nothing re-encodes. That is a real
+    consideration for `Speech:CacheMegabytes`, noted in the deploy doc.
+
 - **`CookAlongCommands` (Core) is the fast path, NOT a gate.** Whole-utterance matching (same discipline
   as `VoiceCommands.IsStop`) resolves next/back/repeat/step N/start over/hold/stop for free. Anything it
   misses goes to `IPantryChat` — with the recipe as `screenContext` — which can ANSWER or MOVE us

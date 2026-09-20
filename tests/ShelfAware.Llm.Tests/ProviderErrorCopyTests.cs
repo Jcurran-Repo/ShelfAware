@@ -186,16 +186,27 @@ public class ProviderErrorCopyTests
     }
 
     [Fact]
-    public async Task A_failed_local_synthesis_does_not_put_the_sidecars_words_on_the_screen()
+    public async Task A_failed_kokoro_synthesis_does_not_put_the_models_words_on_the_screen()
     {
-        // The sidecar is trusted local infrastructure, but its exception text still names a host and port.
-        var tts = new LocalTextToSpeech(
-            new HttpClient(Throwing()) { BaseAddress = new Uri("http://127.0.0.1:8880") },
-            Options.Create(new LocalSpeechOptions()), NullLogger<LocalTextToSpeech>.Instance);
+        // Kokoro runs in this process, so there is no provider account to leak — but the exception text
+        // still names filesystem paths, which is the same class of thing and the same rule.
+        var tts = new KokoroTextToSpeech(
+            FailingKokoroEngine.Instance, Options.Create(new KokoroSpeechOptions()),
+            NullLogger<KokoroTextToSpeech>.Instance);
 
         var result = await tts.SynthesizeAsync("Step 1. Sear the chicken.");
 
         Assert.False(result.Success);
         AssertSafe(result.Error);
+    }
+
+    private sealed class FailingKokoroEngine : IKokoroEngine
+    {
+        public static readonly FailingKokoroEngine Instance = new();
+
+        public Task<KokoroAudio> GenerateAsync(string text, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException(Secret);
+
+        public void Dispose() { }
     }
 }
