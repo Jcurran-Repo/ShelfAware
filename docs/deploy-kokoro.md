@@ -62,6 +62,9 @@ free -h   # confirm Swap: 2.0Gi
 The models are sherpa-onnx's own packaging of Kokoro — the archive already contains the ONNX weights,
 the voice embeddings, the token table and the `espeak-ng-data` directory.
 
+Steps 1–5 are the **droplet**. The family box is Windows and keeps its files somewhere else — see
+[The family box (Windows)](#the-family-box-windows) below, which is the same five steps in its idiom.
+
 ```bash
 sudo mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models
 curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-en-v0_19.tar.bz2
@@ -129,6 +132,117 @@ Then restart the app: `sudo systemctl restart shelfaware`.
 2. `journalctl -u shelfaware -f` should show `Loaded Kokoro from … : 11 voice(s) at 24000 Hz`, then
    `Synthesizing N character(s) with Kokoro (voice 0)` and `Synthesized N.Ns of audio` — and no
    ElevenLabs call.
+
+## The family box (Windows)
+
+Same model, same settings, different furniture: no systemd, no `/var/lib`, and a publish script that
+rebuilds the server folder from scratch every time. **Where the model goes is therefore not a matter
+of taste** — put it in the wrong place and the next publish moves it out from under the app.
+
+### Where it goes, and why there
+
+```
+C:\Users\Jorcu\ShelfAware-server\app-data\models\kokoro-int8-en-v0_19
+```
+
+Under `app-data`, not beside it. [`deploy/publish-family.ps1`](../deploy/publish-family.ps1) renames the
+live folder aside and lays a fresh publish down, and **`app-data` is the one thing it moves across**;
+every other item at the server root that the new publish doesn't account for is swept into
+`ShelfAware-server-attic`. So a `models\` folder at the root would survive exactly one deploy: the next
+publish would attic it, the app would then refuse to boot on a model directory that isn't there, and the
+script's 90-second poll would report the deploy as failed. Inside `app-data` it rides along, the way the
+databases and the speech cache do.
+
+The same reasoning gives the answer for a **development checkout**: `src\ShelfAware.Web\app-data\models\`
+— `app-data` is gitignored there, so a 152 MB model can never be committed by accident.
+
+### Unpack it
+
+Windows 10 and 11 ship `tar` (bsdtar), which reads `.tar.bz2` without anything installed:
+
+```powershell
+$models = "$env:USERPROFILE\ShelfAware-server\app-data\models"
+New-Item -ItemType Directory -Path $models -Force | Out-Null
+Invoke-WebRequest -OutFile "$models\kokoro.tar.bz2" `
+  https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-en-v0_19.tar.bz2
+tar -xf "$models\kokoro.tar.bz2" -C $models
+Remove-Item "$models\kokoro.tar.bz2"
+Get-ChildItem "$models\kokoro-int8-en-v0_19"   # model.int8.onnx  voices.bin  tokens.txt  espeak-ng-data\
+```
+
+### Prove it speaks — before the app is told about it
+
+From the repo checkout, against the folder you just unpacked:
+
+```powershell
+dotnet run --project tools/KokoroCheck -- `
+  "$env:USERPROFILE\ShelfAware-server\app-data\models\kokoro-int8-en-v0_19" `
+  "$env:TEMP\kokoro-check.wav"
+```
+
+Play the WAV. This is step 3 above and it matters more here than on the droplet, because the family box
+is the one with a family on it.
+
+### Point the app at it
+
+The family box's settings live in **`C:\Users\Jorcu\ShelfAware-server\appsettings.json`** — the box's
+own file, which `publish-family.ps1` carries across every publish *over* the one in the publish output.
+Editing the repo's `src/ShelfAware.Web/appsettings.json` does **not** reach it; that copy is overwritten
+on arrival. Add to the box's file:
+
+```jsonc
+  "Speech": {
+    "Provider": "Kokoro",
+    "Kokoro": {
+      "ModelDirectory": "C:\\Users\\Jorcu\\ShelfAware-server\\app-data\\models\\kokoro-int8-en-v0_19",
+      "SpeakerId": 0,
+      "Speed": 0.9,
+      "NumThreads": 2
+    }
+  }
+```
+
+⚠️ **Backslashes are escaped in JSON** (`\\`), or use forward slashes — `C:/Users/...` works fine and is
+harder to get wrong. A path JSON reads as something else is a path the app refuses to boot on.
+
+⚠️ **Unpack first, flip the setting second.** The app refuses to start when it is told to use a model
+that isn't on disk — deliberately, because the alternative is a SIGSEGV on the first read-aloud — so a
+box that gets the setting before the files is a box that won't come back up, and `publish-family.ps1`
+will report the deploy as failed while the site stays down.
+
+Restart is the scheduled task rather than systemd — and ⚠️ **`Stop-ScheduledTask` does not reliably
+stop this app.** The boot-launched process outlives the task engine's control of it, so the task reports
+stopped while the old exe runs on, still serving the old settings and looking for all the world like the
+change didn't take. `publish-family.ps1` force-kills it by path for exactly this reason; do the same by
+hand:
+
+```powershell
+$exe = "$env:USERPROFILE\ShelfAware-server\ShelfAware.Web.exe"
+Stop-ScheduledTask -TaskName 'ShelfAware Server'
+# Match on Path, not name: a dev server running from the repo is also ShelfAware.Web.
+Get-Process ShelfAware.Web -ErrorAction SilentlyContinue |
+  Where-Object { $_.Path -eq $exe } | Stop-Process -Force
+Start-ScheduledTask -TaskName 'ShelfAware Server'
+```
+
+Then verify as in step 5, reading the app's own log rather than `journalctl`. If the app is **not**
+answering afterwards, the settings are the first place to look: a model directory it can't read is a
+refusal to boot with the reason on stderr, which on this box means Task Scheduler's history rather than
+a console.
+
+### On a development checkout
+
+Nothing about the voice needs committing to try it. `Speech:Provider` and `Speech:Kokoro:ModelDirectory`
+bind from user-secrets in Development like any other setting, so the machine-specific path stays on the
+machine:
+
+```powershell
+dotnet user-secrets --project src/ShelfAware.Web set "Speech:Provider" "Kokoro"
+dotnet user-secrets --project src/ShelfAware.Web set "Speech:Kokoro:ModelDirectory" "$PWD/src/ShelfAware.Web/app-data/models/kokoro-int8-en-v0_19"
+```
+
+Deliberately not `appsettings.Development.json`: that file is committed, so a provider set there would
+stop the app booting for anyone who cloned the repo without first downloading 152 MB of model.
 
 ## Upgrading a box that ran the HTTP sidecar
 
