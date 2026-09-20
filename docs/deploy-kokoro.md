@@ -158,17 +158,27 @@ The same reasoning gives the answer for a **development checkout**: `src\ShelfAw
 
 ### Unpack it
 
-Windows 10 and 11 ship `tar` (bsdtar), which should read `.tar.bz2` with nothing installed:
+Windows 10 and 11 ship both `curl.exe` and `tar` (bsdtar), so there is nothing to install:
 
 ```powershell
 $models = "$env:USERPROFILE\ShelfAware-server\app-data\models"
 New-Item -ItemType Directory -Path $models -Force | Out-Null
-Invoke-WebRequest -OutFile "$models\kokoro.tar.bz2" `
+curl.exe -L -o "$models\kokoro.tar.bz2" `
   https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-en-v0_19.tar.bz2
 tar -xf "$models\kokoro.tar.bz2" -C $models
 Remove-Item "$models\kokoro.tar.bz2"
 Get-ChildItem "$models\kokoro-int8-en-v0_19"   # model.int8.onnx  voices.bin  tokens.txt  espeak-ng-data\
 ```
+
+⚠️ **`curl.exe`, with the extension, not `curl`.** In Windows PowerShell `curl` is an *alias for
+`Invoke-WebRequest`*, which is a different program with different switches — it has no `-L`, so pasting
+step 2's Linux line gets you "A parameter cannot be found that matches parameter name 'L'" rather than a
+download. Spelling out `curl.exe` bypasses the alias and runs the real curl, where `-L` (follow the
+redirect GitHub answers a release download with) and `-o` mean what they do everywhere else.
+
+`Invoke-WebRequest -OutFile` works too, and needs no `-L` because it follows redirects on its own. If you
+use it, set `$ProgressPreference = 'SilentlyContinue'` first — its progress bar re-renders per chunk and
+can turn a 103 MB download into a several-minute one.
 
 If that `tar` build turns out not to carry bzip2, 7-Zip unpacks it in two passes (`.tar.bz2` → `.tar` →
 the folder). Either way what must end up on disk is a `kokoro-int8-en-v0_19` directory containing those
