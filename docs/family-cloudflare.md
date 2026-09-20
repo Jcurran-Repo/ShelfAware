@@ -140,8 +140,9 @@ All four observed 2026-08-12.
 - **Updating cloudflared:** `winget upgrade Cloudflare.cloudflared` in an elevated
   shell now and then; the service survives it.
 - **Updating the app itself** is unchanged by any of this — publish → stop the
-  "ShelfAware Server" task → replace `ShelfAware-server` → start. (A
-  `publish-family.ps1` to script that is planned alongside the next feature arc.)
+  "ShelfAware Server" task → replace `ShelfAware-server` → start. `deploy\publish-family.ps1`
+  does exactly that from an ELEVATED shell, in an order chosen so the household's data is never
+  in limbo mid-swap; its header states the failure posture and the rollback.
 - **If the site is down:** check the PC is on, the "ShelfAware Server" task is
   running, and the tunnel shows Connected in the dashboard — in that order.
 
