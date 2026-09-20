@@ -158,7 +158,7 @@ The same reasoning gives the answer for a **development checkout**: `src\ShelfAw
 
 ### Unpack it
 
-Windows 10 and 11 ship `tar` (bsdtar), which reads `.tar.bz2` without anything installed:
+Windows 10 and 11 ship `tar` (bsdtar), which should read `.tar.bz2` with nothing installed:
 
 ```powershell
 $models = "$env:USERPROFILE\ShelfAware-server\app-data\models"
@@ -169,6 +169,10 @@ tar -xf "$models\kokoro.tar.bz2" -C $models
 Remove-Item "$models\kokoro.tar.bz2"
 Get-ChildItem "$models\kokoro-int8-en-v0_19"   # model.int8.onnx  voices.bin  tokens.txt  espeak-ng-data\
 ```
+
+If that `tar` build turns out not to carry bzip2, 7-Zip unpacks it in two passes (`.tar.bz2` → `.tar` →
+the folder). Either way what must end up on disk is a `kokoro-int8-en-v0_19` directory containing those
+four things — the app checks all four by name and refuses to boot if any is missing.
 
 ### Prove it speaks — before the app is told about it
 
