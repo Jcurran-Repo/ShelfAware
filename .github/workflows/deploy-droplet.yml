@@ -1,0 +1,175 @@
+name: Deploy to the droplet
+
+# Manual only, and deliberately so. `deploy/deploy.ps1` does this from a Windows checkout with an ssh
+# key on the machine; this is the same sequence run by a CI runner instead, so a deploy doesn't need
+# anyone to be at their desk. It exists because a project session CANNOT reach the droplet — it has no
+# ssh client and port 22 is unreachable from it — while a GitHub runner has both.
+#
+# ⚠️ NO push trigger. A merge to master must not deploy anything: CLAUDE.md's gate is about what LANDS
+# on master, and "landed" and "live" are separate decisions that stay separate here. It also takes a
+# `ref`, so an UNMERGED branch can be put on the demo box and tried before it is merged — which is the
+# order that makes sense for a demo box, and the reason the input exists.
+#
+# Setup, once (see docs/deploy-droplet.md § "Deploying from CI"):
+#   - secret DROPLET_SSH_KEY   a PRIVATE key whose public half is in the droplet's authorized_keys.
+#                              Generate a DEDICATED one for this; don't reuse a personal key.
+#   - secret DROPLET_HOST      user@host, e.g. root@203.0.113.10
+#   - secret DROPLET_KNOWN_HOSTS  (optional but recommended) the output of
+#                              `ssh-keyscan -H <host>`, so the runner pins the host key instead of
+#                              trusting whatever answers on the night.
+#   - environment `droplet` with yourself as a required reviewer, if you want a deploy to need one
+#     click from you. Remove the `environment:` line below if you'd rather it just run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag or SHA to deploy (an unmerged branch is fine)'
+        required: false
+        default: ''
+      bootstrap:
+        description: 'Also do one-time box setup: swap file + the Kokoro and Moonshine models'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+# One deploy at a time. cancel-in-progress is false: a half-finished install.sh is a box with a
+# staging directory and no service, so an in-flight deploy finishes rather than being abandoned.
+concurrency:
+  group: deploy-droplet
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Publish, ship, install
+    runs-on: ubuntu-latest
+    # Delete this line to deploy without an approval. With it, a deploy waits for a reviewer of the
+    # `droplet` environment — which is how "nothing reaches production without a human" stays true
+    # while everything up to the button is automated.
+    environment: droplet
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Empty means the ref this workflow was dispatched on, which is what the dispatcher chose.
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          # The repo's global.json, never a wildcard — the same rule ci.yml states and for the same
+          # reason: a deploy built on a toolchain nobody develops with proves nothing about the code.
+          global-json-file: global.json
+
+      # Build before touching the box. A publish that fails here costs nothing; one that fails after
+      # the service is stopped costs an outage.
+      - name: Publish (self-contained linux-x64)
+        run: |
+          dotnet publish src/ShelfAware.Web -c Release -r linux-x64 --self-contained \
+            -o publish/linux-x64
+          test -f publish/linux-x64/ShelfAware.Web \
+            || { echo "::error::Publish output has no apphost — wrong runtime identifier?"; exit 1; }
+
+      - name: Pack
+        run: tar -czf shelfaware.tar.gz -C publish/linux-x64 .
+
+      - name: Set up the ssh key
+        env:
+          KEY: ${{ secrets.DROPLET_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DROPLET_KNOWN_HOSTS }}
+          HOST: ${{ secrets.DROPLET_HOST }}
+        run: |
+          test -n "$KEY"  || { echo "::error::Secret DROPLET_SSH_KEY is not set — see this file's header."; exit 1; }
+          test -n "$HOST" || { echo "::error::Secret DROPLET_HOST is not set — see this file's header."; exit 1; }
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          if [ -n "$KNOWN_HOSTS" ]; then
+            printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            # Trust-on-first-use. Honest about what it is: without a pinned host key the FIRST connection
+            # of every run takes whatever answers. Set DROPLET_KNOWN_HOSTS to close that.
+            echo "::warning::DROPLET_KNOWN_HOSTS is not set; trusting the host key this run presents."
+            ssh-keyscan -H "${HOST#*@}" >> ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      # One-time box setup, idempotent, so re-running it is safe and so a rebuilt droplet is one
+      # dispatch away rather than an afternoon with a runbook.
+      - name: Bootstrap the box (swap + voice models)
+        if: inputs.bootstrap
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+        run: |
+          ssh -i ~/.ssh/id_deploy -o BatchMode=yes "$HOST" 'bash -euo pipefail -s' <<'REMOTE'
+          # Swap: a 2 GB box running a voice model wants the cushion. Skip if any swap exists.
+          if [ "$(swapon --show --noheadings | wc -l)" -eq 0 ]; then
+            fallocate -l 2G /swapfile && chmod 600 /swapfile
+            mkswap /swapfile && swapon /swapfile
+            grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+            echo "Added a 2 GB swap file."
+          else
+            echo "Swap already present; left alone."
+          fi
+
+          mkdir -p /var/lib/shelfaware/models
+          cd /var/lib/shelfaware/models
+
+          # The mouth (docs/deploy-kokoro.md) and the ear (docs/deploy-moonshine.md). Each unpacks only
+          # if it isn't already there, so this step is safe to re-run and costs nothing when it is.
+          fetch() {
+            local dir="$1" url="$2"
+            if [ -d "$dir" ]; then echo "$dir already unpacked."; return; fi
+            echo "Fetching $dir..."
+            curl -fsSL -o model.tar.bz2 "$url"
+            tar xjf model.tar.bz2 && rm -f model.tar.bz2
+          }
+          fetch kokoro-int8-en-v0_19 \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-en-v0_19.tar.bz2
+          fetch sherpa-onnx-moonshine-tiny-en-int8 \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-tiny-en-int8.tar.bz2
+
+          chown -R shelfaware:shelfaware /var/lib/shelfaware/models 2>/dev/null || true
+          df -h / | tail -1
+          REMOTE
+
+      - name: Ship it
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+        run: |
+          scp -i ~/.ssh/id_deploy -o BatchMode=yes shelfaware.tar.gz "$HOST:/tmp/shelfaware.tar.gz"
+          scp -i ~/.ssh/id_deploy -o BatchMode=yes deploy/install.sh "$HOST:/tmp/shelfaware-install.sh"
+
+      # install.sh stages outside the live directory, swaps, keeps the previous build at
+      # /opt/shelfaware.prev, and fails loudly if the service doesn't come back up. Its exit code is
+      # this job's result — a deploy that didn't start the app is a red run, not a green one.
+      - name: Install
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+        run: ssh -i ~/.ssh/id_deploy -o BatchMode=yes "$HOST" 'bash /tmp/shelfaware-install.sh'
+
+      # Asked of the app itself, over the loopback, so a green here means the APP answered — not that
+      # a proxy in front of it served a cached page or an error skin.
+      - name: Health check
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+        run: |
+          ssh -i ~/.ssh/id_deploy -o BatchMode=yes "$HOST" \
+            'curl -fsS --max-time 20 http://127.0.0.1:5000/healthz' \
+            || { echo "::error::/healthz did not answer. The build is live but unhealthy; \
+                 /opt/shelfaware.prev is the previous one."; exit 1; }
+
+      - name: Say what is running
+        if: always()
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+        run: |
+          ssh -i ~/.ssh/id_deploy -o BatchMode=yes "$HOST" \
+            'systemctl is-active shelfaware; journalctl -u shelfaware -n 20 --no-pager' || true
+
+      - name: Clean up the key
+        if: always()
+        run: rm -f ~/.ssh/id_deploy

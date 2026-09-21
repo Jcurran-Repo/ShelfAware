@@ -122,6 +122,43 @@ moving that back and `systemctl start shelfaware`. Data is untouched either way:
 lives in `/var/lib/shelfaware`, not the app directory. (The publish output lands in
 `src/ShelfAware.Web/bin/publish/linux-x64` locally, which is gitignored.)
 
+## Deploying from CI, so it doesn't need anyone at a desk
+
+[`deploy/deploy.ps1`](../deploy/deploy.ps1) needs a Windows checkout, an ssh key on the machine, and a
+person at it. [`.github/workflows/deploy-droplet.yml`](../.github/workflows/deploy-droplet.yml) is the
+same sequence — publish `linux-x64`, ship the tarball, run `install.sh`, check `/healthz` — run by a
+GitHub runner instead. It exists because a **project session cannot reach the droplet**: it has no ssh
+client and port 22 is unreachable from it, while a runner has both.
+
+**Manual dispatch only, never on push.** A merge to `master` must not deploy anything: what LANDS on
+master and what is LIVE are separate decisions and stay separate here. The workflow takes a `ref`, so
+an *unmerged* branch can be put on the demo box and tried before it is merged — which is the right
+order for a demo box.
+
+Setting it up, once:
+
+1. **A dedicated deploy key**, not a personal one:
+   ```bash
+   ssh-keygen -t ed25519 -f ~/.ssh/shelfaware-deploy -C 'github-actions deploy' -N ''
+   ssh-copy-id -i ~/.ssh/shelfaware-deploy.pub root@<droplet>     # or append it to authorized_keys
+   ssh-keyscan -H <droplet> > /tmp/known_hosts                    # for step 2's third secret
+   ```
+2. **Three repository secrets** (Settings → Secrets and variables → Actions):
+   `DROPLET_SSH_KEY` (the contents of the private half), `DROPLET_HOST` (`root@<ip>`), and
+   `DROPLET_KNOWN_HOSTS` (that `ssh-keyscan` output). The third is optional and worth setting: without
+   it each run trusts whatever host key answers.
+3. **An environment named `droplet`** (Settings → Environments) with yourself as a required reviewer,
+   if you want every deploy to need one click from you. Nothing reaches the box until you press it.
+   Delete the `environment:` line in the workflow if you'd rather it just run.
+
+Run it from Actions → *Deploy to the droplet* → **Run workflow**, choosing the branch. Tick
+**bootstrap** the first time: it adds the 2 GB swap file and unpacks the Kokoro and Moonshine models,
+idempotently, so a rebuilt droplet is one dispatch away rather than an afternoon with this page.
+
+⚠️ **The env file is not in this**, by design. `/etc/shelfaware/env` holds the box's secrets, lives
+only on the box, and a deploy never touches it — which is also why a setting change still needs an ssh
+session and a `systemctl restart`.
+
 ## The demo posture, spelled out
 
 - **BYOK, enforced by absence.** The box holds no AI keys, so there is nothing to leak
