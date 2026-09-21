@@ -1,6 +1,11 @@
-# ShelfAware reverse proxy -- install as /etc/caddy/Caddyfile, put the real domain in,
-# then: systemctl reload caddy. The domain's DNS A record must already point at this
-# droplet or certificate issuance fails.
+# ShelfAware reverse proxy -- install as /etc/caddy/Caddyfile, then: systemctl reload caddy.
+#
+# ⚠️ THREE site addresses carry a domain name below, and a self-hosted box owns none of
+# them: the two on the proxy block, and the one on the www redirect. Replace all three, or
+# delete the www block if you don't want a www name -- a site block left pointing at a
+# domain you don't own retries ACME forever, and would 301 your visitors to someone else's
+# apex if that name ever resolved to your box. Changing only the proxy block is the mistake
+# this paragraph exists to prevent.
 #
 # Caddy handles everything the app expects from its proxy: Let's Encrypt issuance and
 # renewal, WebSocket upgrade for the Blazor circuit, and the X-Forwarded-For/-Proto
@@ -8,6 +13,24 @@
 # the URLs the app generates for OAuth all key on them). Swapping in a proxy that
 # omits any of that breaks the corresponding feature -- see the Nginx note in
 # docs/deploy-droplet.md.
-demo.shelfaware.net {
+#
+# Two names front the same demo box: heyreginald.com (the brand domain, registered
+# 2026-09-21) and demo.shelfaware.net (the original, kept so existing links and the
+# 2026-08-11 deploy keep working). Both are listed deliberately -- retiring the old
+# one is a separate decision, and dropping it here would break it silently.
+#
+# DNS FIRST, RELOAD SECOND. Every address here gets its own certificate, and issuance
+# needs that name's DNS record already pointing at this droplet -- gray-cloud/DNS-only if
+# the zone is on Cloudflare. A name whose DNS isn't ready doesn't take the others down,
+# Caddy retries it in the background, but it serves nothing until the retry succeeds.
+# (Site-block order itself is irrelevant to Caddy; it matches on host specificity.)
+heyreginald.com, demo.shelfaware.net {
 	reverse_proxy 127.0.0.1:5000
+}
+
+# www is a redirect, not a second front door, so nobody bookmarks or links the www form.
+# The box still answers on both names above, so the Host the app sees -- and therefore the
+# host in the links it builds -- is whichever of those two the visitor arrived on.
+www.heyreginald.com {
+	redir https://heyreginald.com{uri} permanent
 }

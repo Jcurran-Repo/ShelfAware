@@ -356,9 +356,10 @@ jobs:
       # a proxy in front of it served a cached page or an error skin.
       #
       # ⚠️ With a Host header the app will accept. Once /etc/shelfaware/env sets AllowedHosts (the demo
-      # box pins demo.shelfaware.net), ASP.NET's host filtering answers 400 to anything else — and a bare
-      # loopback curl sends `Host: 127.0.0.1:5000`, so the check would go red against a perfectly healthy
-      # box. The hostname is read off the box's own env file, the one place it is defined, rather than
+      # box pins heyreginald.com;demo.shelfaware.net, and the cut below takes the first), ASP.NET's host
+      # filtering answers 400 to anything NOT in that list — and a bare loopback curl sends
+      # `Host: 127.0.0.1:5000`, so the check would go red against a perfectly healthy box. The
+      # hostname is read off the box's own env file, the one place it is defined, rather than
       # kept as a second copy here that could drift; unset means the app accepts any host (the `*`
       # default), and `localhost` is as good as anything then.
       - name: Health check
