@@ -15,7 +15,7 @@ namespace ShelfAware.Llm.Tests;
 /// actually stops a synthesis — is <see cref="SherpaKokoroEngineTests"/>, which needs the real model and
 /// says so when it hasn't got one.</para>
 /// </summary>
-public class KokoroTextToSpeechTests
+public class SherpaTextToSpeechTests
 {
     private static SherpaTextToSpeech Tts(FakeKokoroEngine engine, KokoroSpeechOptions? o = null) =>
         new(engine, o ?? Model("kokoro-int8-en-v0_19"),

@@ -21,8 +21,8 @@ public interface IDemoValve
 /// <para>A NO-OP when nothing is configured (all <see cref="DemoOptions"/> null — the family / self-host
 /// default): it enforces nothing and writes no row, so those boxes are untouched. Only counts host-key
 /// (managed) calls — a BYOK visitor rides their own wallet and never touches this counter.</para>
-/// <para>TTS is deliberately NOT metered here: the managed demo box reads recipes with a free self-hosted
-/// Kokoro sidecar (Speech:Provider=Local), so there's no per-synthesis cost to bound.</para></summary>
+/// <para>TTS is deliberately NOT metered here: the managed demo box reads recipes with a model running
+/// in this process (Speech:Provider=Piper), so there's no per-synthesis cost to bound.</para></summary>
 public sealed class DemoUsageMeter(
     IDbContextFactory<AuthDbContext> dbFactory,
     IOptions<DemoOptions> options,

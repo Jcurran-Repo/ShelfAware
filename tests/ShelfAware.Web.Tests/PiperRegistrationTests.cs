@@ -33,6 +33,10 @@ public sealed class PiperRegistrationTests : IDisposable
         if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
     }
 
+    // ⚠️ Every case here also proves that resolving the synthesizer does NOT load the model: the files
+    // AModel writes are EMPTY, and a real load would die on them (sherpa answers an unreadable model with
+    // a SIGSEGV). That property matters because the cache asks for the fingerprint on every lookup,
+    // including every HIT — the case that exists to avoid doing work.
     [Fact]
     public void Speech_provider_piper_selects_the_in_process_model()
     {
@@ -44,15 +48,6 @@ public sealed class PiperRegistrationTests : IDisposable
     public void The_provider_setting_is_case_insensitive()
     {
         Assert.StartsWith("piper", FingerprintFor(provider: "piper", modelDirectory: AModel()));
-    }
-
-    // ⚠️ Resolving the synthesizer must NOT load the model: the cache asks for the fingerprint on every
-    // lookup, including every HIT, which is the case that exists to avoid doing work. The empty files
-    // AModel writes are what proves it — a real load would die on them.
-    [Fact]
-    public void Resolving_the_in_process_synthesizer_does_not_load_the_model()
-    {
-        Assert.StartsWith("piper", FingerprintFor(provider: "Piper", modelDirectory: AModel()));
     }
 
     /// <summary>⚠️ The sharp one. Both sections configured, and the provider decides — not the presence of

@@ -12,7 +12,7 @@ public sealed class DemoOptions
     public const string SectionName = "Demo";
 
     /// <summary>Max host-key LLM calls across ALL households per day. Null = unbounded. (TTS isn't metered:
-    /// the managed demo box reads recipes with a free self-hosted Kokoro sidecar, so there's nothing to cap.)</summary>
+    /// the managed demo box reads recipes with a model in this process, so there's nothing to cap.)</summary>
     public int? DailyGlobalCallLimit { get; set; }
 
     /// <summary>Log a Warning the moment the day's global call count crosses this — an early "you're

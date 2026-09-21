@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using SherpaOnnx;
 
 namespace ShelfAware.Llm;

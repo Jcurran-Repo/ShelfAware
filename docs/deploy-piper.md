@@ -49,7 +49,14 @@ cd /var/lib/shelfaware/models
 curl -fsSL -o piper.tar.bz2 \
   https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-medium.tar.bz2
 echo "9e3febfacf0abf4270172d2958bcec246032b7e88efc2720840cc80c93de334e  piper.tar.bz2" | sha256sum -c -
-tar xjf piper.tar.bz2 --no-same-owner --no-same-permissions && rm piper.tar.bz2
+# Unpacked into a staging directory and moved into place only once it is whole -- the same shape the
+# workflow uses, and for the same reason: "is the directory there" is the check everything else makes,
+# so a half-extracted one (a disk that filled, a connection that dropped) would read as unpacked
+# forever and the app would refuse to boot naming files that were never going to arrive.
+rm -rf .staging && mkdir .staging
+tar xjf piper.tar.bz2 -C .staging --no-same-owner --no-same-permissions
+mv .staging/vits-piper-en_US-lessac-medium .
+rm -rf .staging piper.tar.bz2
 chown -R root:root vits-piper-en_US-lessac-medium
 chmod -R a+rX vits-piper-en_US-lessac-medium
 ```
@@ -109,8 +116,11 @@ because Piper names its weights after the voice and there is no name that is rig
 medium quality. Two alternatives worth knowing:
 
 - **`vits-piper-en_US-libritts_r-medium`** — one 79 MB archive holding **904 speakers**, selected with
-  `Speech__Piper__SpeakerId`. Same speed. Worth it if you want a particular character; it needs a
-  `ModelFile` of `en_US-libritts_r-medium.onnx`.
+  `Speech__Piper__SpeakerId`. Same speed. Worth it if you want a particular character; it needs
+  `Speech__Piper__ModelFile=en_US-libritts_r-medium.onnx`, and `VoiceCheck` takes the matching
+  `--model-file en_US-libritts_r-medium.onnx`. The tool refuses a directory whose voice does not match
+  the setting rather than auditioning one the app would then refuse to boot on, and tells you the line
+  to add.
 - **`-high` variants** of either — better audio, proportionally slower. Measure with `VoiceCheck` on
   the box that will run it before believing a number from anywhere else, including this table.
 

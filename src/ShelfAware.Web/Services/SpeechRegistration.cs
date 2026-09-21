@@ -40,8 +40,11 @@ public static class SpeechRegistration
         this IServiceCollection services, IConfiguration configuration, string? cacheDirectory)
     {
         services.Configure<ElevenLabsOptions>(configuration.GetSection(ElevenLabsOptions.SectionName));
-        services.Configure<KokoroSpeechOptions>(configuration.GetSection(KokoroSpeechOptions.SectionName));
-        services.Configure<PiperSpeechOptions>(configuration.GetSection(PiperSpeechOptions.SectionName));
+        // ⚠️ No Configure<> for the two MOUTH families, deliberately. The chosen one is bound once below
+        // (LocalVoiceOf) and handed to the engine and the voice over it as an object, because the family
+        // is a registration-time decision — an IOptions<T> nobody resolves is a setting a later
+        // services.Configure<PiperSpeechOptions>(o => …) would appear to change while changing nothing.
+        // The EAR still goes through IOptions because SherpaMoonshineEngine resolves it that way.
         services.Configure<MoonshineSpeechOptions>(configuration.GetSection(MoonshineSpeechOptions.SectionName));
         RefuseRetiredSidecarSettings(configuration);
 

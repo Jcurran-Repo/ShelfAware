@@ -10,6 +10,7 @@ using ShelfAware.Llm;
 // time the model has been loaded there.
 //
 //   dotnet run --project tools/VoiceCheck -- <kokoro|piper> <modelDirectory> [outputWav] [speakerId]
+//                                           [--model-file <name.onnx>]
 //
 // ⚠️ Run it BEFORE pointing Speech:Provider at a model directory. sherpa-onnx answers a missing
 // model file with a line on stderr and a SIGSEGV, so a box configured against an incomplete
@@ -26,12 +27,24 @@ using ShelfAware.Llm;
 if (args.Length < 2)
 {
     Console.Error.WriteLine(
-        "Usage: dotnet run --project tools/VoiceCheck -- <kokoro|piper> <modelDirectory> [outputWav] [speakerId]");
+        "Usage: dotnet run --project tools/VoiceCheck -- <kokoro|piper> <modelDirectory> [outputWav] "
+        + "[speakerId] [--model-file <name.onnx>]");
     Console.Error.WriteLine(
         "The model directory holds an unpacked sherpa-onnx archive -- see docs/deploy-kokoro.md or "
         + "docs/deploy-piper.md.");
     return 1;
 }
+
+// --model-file is lifted out BEFORE the positional arguments are read, so it can never be mistaken
+// for the voice index and so the Piper check below sees an override the operator has just applied.
+string? modelFileOverride = null;
+var positional = new List<string>();
+for (var i = 0; i < args.Length; i++)
+{
+    if (args[i] == "--model-file" && i + 1 < args.Length) { modelFileOverride = args[++i]; continue; }
+    positional.Add(args[i]);
+}
+args = [.. positional];
 
 var family = args[0].Trim();
 var modelDirectory = args[1];
@@ -54,27 +67,31 @@ switch (family.ToLowerInvariant())
         options = new KokoroSpeechOptions { ModelDirectory = modelDirectory, SpeakerId = speakerId };
         break;
     case "piper":
-        // Piper names its weights after the voice, and an archive holds exactly one .onnx, so the file
-        // is discovered rather than typed -- a person running this tool has just unpacked a directory,
-        // not memorised what is in it. A directory with two would be ambiguous, so it says so.
-        var onnx = Directory.Exists(modelDirectory)
-            ? Directory.GetFiles(modelDirectory, "*.onnx")
-            : [];
-        if (onnx.Length != 1)
+        // ⚠️ The app's OWN default, not whatever .onnx happens to be in the directory. Piper names its
+        // weights after the voice, so a directory holding en_US-libritts_r-medium.onnx is one this tool
+        // could happily load and the app would then REFUSE to boot on -- which is the exact outcome a
+        // pre-flight check exists to prevent. So the tool accepts only what the app would accept, and
+        // when it finds the archive is a different voice it says which setting line to add rather than
+        // quietly checking something else.
+        options = new PiperSpeechOptions { ModelDirectory = modelDirectory, SpeakerId = speakerId };
+        if (modelFileOverride is not null) options.ModelFile = modelFileOverride;
+
+        // A directory holding a DIFFERENT voice than the one being checked is the case worth catching:
+        // the tool would load it happily and the app would then refuse to boot, which is the exact
+        // outcome a pre-flight check exists to prevent. So say which setting line the box needs rather
+        // than quietly checking a voice nobody configured.
+        if (!File.Exists(Path.Combine(modelDirectory, options.ModelFile))
+            && Directory.Exists(modelDirectory)
+            && Directory.GetFiles(modelDirectory, "*.onnx") is [var only])
         {
-            Console.Error.WriteLine(onnx.Length == 0
-                ? $"No .onnx file in '{modelDirectory}' -- that is not an unpacked Piper archive. "
-                  + "See docs/deploy-piper.md."
-                : $"'{modelDirectory}' holds {onnx.Length} .onnx files, so this tool cannot tell which "
-                  + "voice you mean. Point it at a directory holding one archive.");
+            var name = Path.GetFileName(only);
+            Console.Error.WriteLine(
+                $"'{modelDirectory}' holds {name}, not {options.ModelFile}. That is a different voice, so "
+                + "the app needs telling -- add this to the box's environment:");
+            Console.Error.WriteLine($"  Speech__Piper__ModelFile={name}");
+            Console.Error.WriteLine($"and re-run this with: --model-file {name}");
             return 1;
         }
-        options = new PiperSpeechOptions
-        {
-            ModelDirectory = modelDirectory,
-            ModelFile = Path.GetFileName(onnx[0]),
-            SpeakerId = speakerId,
-        };
         break;
     default:
         Console.Error.WriteLine($"'{family}' is not a model family. Use 'kokoro' or 'piper'.");

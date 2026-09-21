@@ -34,6 +34,8 @@ the built-in reader.
   because a box has to be able to move one before the other. With both local, a deployment needs **no
   ElevenLabs key at all**. Every mouth answers through `CachingTextToSpeech`, and each namespaces its own
   `OutputFingerprint` with its family name, so a clip voiced by one is never served for another's key.
+  Setup + the model archives: `docs/deploy-kokoro.md` and `docs/deploy-piper.md` (mouth),
+  `docs/deploy-moonshine.md` (ear).
   - **The two local families are one engine and two descriptors** (`ISherpaTtsModel`): they differ only
     in which files must be on disk and which block of `OfflineTtsConfig` names them. The gate, the
     timeout that is not a cancellation, the empty-clip refusal and the fingerprint rules exist once.
@@ -42,8 +44,7 @@ the built-in reader.
     Piper 0.05×. ⚠️ The threshold that matters is **1.0×**, because below it synthesis outruns playback
     and a reply can start speaking before it is finished being made. The demo droplet measured Kokoro at
     **3.1×** — 28 seconds of silence for a 9-second reply — which is why that box runs Piper and the
-    family box, on real hardware, keeps Kokoro. Setup + the model
-  archives: `docs/deploy-kokoro.md` and `docs/deploy-piper.md` (mouth), `docs/deploy-moonshine.md` (ear).
+    family box, on real hardware, keeps Kokoro.
   - **The ear is far cheaper than the mouth.** Measured on one core: Kokoro needs ~17 s to *say* a 7.4 s
     sentence; Moonshine needs 0.7 s to *hear* it. If a small box feels slow, it is synthesis.
   - **The browser sends 16 kHz mono PCM** (`wwwroot/js/pcm.js`, imported by all three capture paths),
