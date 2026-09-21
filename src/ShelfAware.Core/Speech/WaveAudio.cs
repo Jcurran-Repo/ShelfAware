@@ -132,6 +132,10 @@ public static class WaveAudio
             // int.MaxValue — which passes both halves of this guard and leaves the Slice below to throw
             // ArgumentOutOfRangeException, an exception this method's contract does not allow and its
             // only caller does not catch. The loop condition guarantees the right-hand side is >= 0.
+            // Stryker disable once Equality: `>` and `>=` are equivalent on the second comparison — at
+            // exactly `wav.Length - at - 8` the clamp assigns `size` the value it already holds, so no
+            // input can tell the two readings apart. (`size < 0` on the left is a different question and
+            // is tested.) A test could not kill this one; only a claim that it cannot be killed can.
             if (size < 0 || size > wav.Length - at - 8) size = wav.Length - at - 8; // truncated: take what's there
             var body = wav.Slice(at + 8, size);
 
