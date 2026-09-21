@@ -12,6 +12,7 @@
 @implements IAsyncDisposable
 @inject ITextToSpeech Tts
 @inject ISpeechToText Stt
+@inject IVoiceCredentials Voice
 @inject IPantryChat Chat
 @inject IJSRuntime JS
 @inject VoiceCoordinator Coordinator
@@ -193,6 +194,15 @@
     /// </summary>
     private async Task OpenEarsAsync()
     {
+        // Before anything else: can this box hear at all? Reaching the microphone first would ask the
+        // cook for permission, take it, and only then discover there is nothing to transcribe with.
+        // micError is the reader's existing degradation — the steps still read, the buttons still work.
+        if (Voice.Ear.WhyNot() is { } shut)
+        {
+            micError = shut;
+            return;
+        }
+
         // There's one microphone. If the roaming assistant is up, it must let go before we take it —
         // two loops transcribing the same room would both answer every utterance and bill for it.
         await Coordinator.RequestStandDownAsync();

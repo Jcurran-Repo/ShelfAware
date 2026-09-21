@@ -6,6 +6,7 @@
 @using ShelfAware.Core.Recipes
 @using ShelfAware.Core.Settings
 @using ShelfAware.Core.Shopping
+@using ShelfAware.Core.Speech
 @using ShelfAware.Web.Undo
 @inject IHouseholdDbFactory DbFactory
 @inject IPantryStore Store
@@ -248,7 +249,15 @@
                                ElevenLabs realtime agent for anyone who wants interruption mid-sentence
                                and is paying for it. The caret IS the choice: per-recipe, at the moment
                                you care, rather than a preference buried in Settings. *@
-                            @if (r.Steps.Count > 0)
+                            @if (r.Steps.Count > 0 && !Voice.Ear.CanHear())
+                            {
+                                @* No ear on this box: cook-along IS the microphone, so offer the read
+                                   instead of a 🎙 button whose whole promise is listening back. *@
+                                <button class="secondary" @onclick="() => StartReading(r)"
+                                        aria-label="Read @r.Name aloud"
+                                        title="Synthesized once, then free to re-read.">🔊 Read it to me</button>
+                            }
+                            else if (r.Steps.Count > 0)
                             {
                                 <SplitButton PrimaryLabel="🎙 Cook-along" MainClass="secondary" OnPrimary="() => StartHandsFree(r)"
                                              PrimaryAriaLabel="@($"Hands-free cook-along for {r.Name}")">

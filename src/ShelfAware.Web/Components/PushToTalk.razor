@@ -5,6 +5,7 @@
 @using ShelfAware.Core.Speech
 @implements IAsyncDisposable
 @inject ISpeechToText Stt
+@inject IVoiceCredentials Voice
 @inject IPantryChat Chat
 @inject ITextToSpeech Tts
 @inject IEntitlements Entitlements
@@ -14,6 +15,10 @@
 @inject NavigationManager Nav
 @inject ILogger<PushToTalk> Log
 
+@* No ear on this box, no mic: holding the button would record an utterance and answer it with
+   VoiceEar's refusal. The text box beside this is the same brain and still works. *@
+@if (Voice.Ear.CanHear())
+{
 <div class="voice">
     <button type="button"
             class="mic mic-@State.ToString().ToLowerInvariant()"
@@ -49,6 +54,7 @@
         }
     </div>
 </div>
+}
 
 @code {
     [Parameter] public EventCallback OnApplied { get; set; }

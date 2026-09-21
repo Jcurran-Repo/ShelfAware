@@ -27,6 +27,11 @@ public sealed class CircuitVoiceCredentials : IVoiceCredentials
     public string ApiKey { get; private set; } = "";
     public string AgentId { get; private set; } = "";
 
+    /// <summary>The host's keys are authoritative here, so <see cref="Apply"/> is a no-op and the ear is
+    /// the host's to provide or not. Read by <see cref="IVoiceCredentials.Ear"/>, which is what decides
+    /// whether a microphone is offered at all.</summary>
+    public bool Managed => _managed;
+
     /// <summary>True once the visitor's browser voice creds have been applied (vs the dev/config fallback).</summary>
     public bool FromBrowser { get; private set; }
 
