@@ -19,8 +19,8 @@ namespace ShelfAware.Llm.Tests;
 /// </summary>
 public class SherpaKokoroEngineTests
 {
-    private static SherpaKokoroEngine Engine(KokoroSpeechOptions options) =>
-        new(Options.Create(options), NullLogger<SherpaKokoroEngine>.Instance);
+    private static SherpaTtsEngine Engine(KokoroSpeechOptions options) =>
+        new(options, NullLogger<SherpaTtsEngine>.Instance);
 
     /// <summary>A directory holding however many of the four model parts are asked for — empty files, since
     /// nothing here gets as far as reading one.</summary>

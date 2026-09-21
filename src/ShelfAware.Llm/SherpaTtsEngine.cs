@@ -7,27 +7,32 @@ namespace ShelfAware.Llm;
 /// <summary>Raw synthesized audio, as the model produces it: mono float samples and the rate they were
 /// produced at. Nothing here knows about containers — <see cref="ShelfAware.Core.Speech.WaveAudio"/>
 /// turns this into bytes a browser will play.</summary>
-public sealed record KokoroAudio(float[] Samples, int SampleRate);
+public sealed record SynthesizedAudio(float[] Samples, int SampleRate);
 
 /// <summary>
 /// The seam between "what we say and how we say it" and "a neural model on this box".
 ///
-/// <para>It exists so <see cref="KokoroTextToSpeech"/>'s decisions — what text is actually spoken, what
+/// <para>It exists so <see cref="SherpaTextToSpeech"/>'s decisions — what text is actually spoken, what
 /// the failure copy is, what the cache fingerprint means, whose cancellation a cancellation was — are
 /// testable without a 150 MB model and a native library in the test runner. It is the analogue of the
 /// faked <c>HttpMessageHandler</c> that the HTTP-backed providers are tested through.</para>
 /// </summary>
-public interface IKokoroEngine : IDisposable
+public interface ITtsEngine : IDisposable
 {
     /// <summary>Speaks <paramref name="text"/>, loading the model on first use.</summary>
     /// <exception cref="OperationCanceledException">If <paramref name="cancellationToken"/> is signalled —
     /// including part-way through a synthesis already under way.</exception>
-    Task<KokoroAudio> GenerateAsync(string text, CancellationToken cancellationToken = default);
+    Task<SynthesizedAudio> GenerateAsync(string text, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
-/// <see cref="IKokoroEngine"/> over sherpa-onnx, running Kokoro-82M in this process. No sidecar, no HTTP
+/// <see cref="ITtsEngine"/> over sherpa-onnx, running a local voice in this process. No sidecar, no HTTP
 /// hop, no Python, no system espeak-ng — the phonemizer data ships inside the model archive.
+///
+/// <para><b>One engine, every family.</b> Kokoro and Piper differ in exactly two things — which files
+/// must exist, and which block of <see cref="OfflineTtsConfig"/> names them — and both live behind
+/// <see cref="ISherpaTtsModel"/>. Everything below is identical for either, which is why there is no
+/// second copy of it to drift out of step. A third family (a cloned voice, say) is a descriptor.</para>
 ///
 /// <para><b>Singleton, and it must be.</b> The model is the expensive thing: ~1.6 s to load and a few
 /// hundred MB resident. Loading it per request would be slower than the synthesis it enables.</para>
@@ -43,21 +48,25 @@ public interface IKokoroEngine : IDisposable
 /// returning 0 from it stops the run (verified: a 32 s synthesis stops in 4 s at the first callback), so
 /// the token is read there and a cancel actually cancels.</para>
 /// </summary>
-public sealed class SherpaKokoroEngine : IKokoroEngine
+public sealed class SherpaTtsEngine : ITtsEngine
 {
-    private readonly KokoroSpeechOptions _options;
-    private readonly ILogger<SherpaKokoroEngine> _logger;
+    private readonly SherpaTtsOptions _options;
+    private readonly ILogger<SherpaTtsEngine> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private OfflineTts? _tts;
     private int _disposed;
 
-    public SherpaKokoroEngine(IOptions<KokoroSpeechOptions> options, ILogger<SherpaKokoroEngine> logger)
+    /// <param name="options">The chosen family's settings. ⚠️ Taken as the bound object rather than
+    /// <c>IOptions&lt;T&gt;</c> because the family is decided once, at registration, by reading
+    /// <c>Speech:Provider</c> — an engine that resolved its own options would have to know which of the
+    /// two sections to ask for, which is the decision registration has already made.</param>
+    public SherpaTtsEngine(SherpaTtsOptions options, ILogger<SherpaTtsEngine> logger)
     {
-        _options = options.Value;
+        _options = options;
         _logger = logger;
     }
 
-    public async Task<KokoroAudio> GenerateAsync(string text, CancellationToken cancellationToken = default)
+    public async Task<SynthesizedAudio> GenerateAsync(string text, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         if (_options.Invalid() is { } wrong) throw new InvalidOperationException(wrong);
@@ -98,8 +107,10 @@ public sealed class SherpaKokoroEngine : IKokoroEngine
     /// of being failed softly.</summary>
     private TimeoutException Timeout(string doing)
     {
-        _logger.LogError("Kokoro gave up after {Seconds}s {Doing}.", _options.SynthesisTimeoutSeconds, doing);
-        return new TimeoutException($"Kokoro gave up after {_options.SynthesisTimeoutSeconds}s {doing}.");
+        _logger.LogError("{Family} gave up after {Seconds}s {Doing}.",
+            _options.Family, _options.SynthesisTimeoutSeconds, doing);
+        return new TimeoutException(
+            $"{_options.Family} gave up after {_options.SynthesisTimeoutSeconds}s {doing}.");
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) == 1, this);
@@ -108,25 +119,22 @@ public sealed class SherpaKokoroEngine : IKokoroEngine
     /// Loads the model, once. ⚠️ The file check is not defensive tidiness: the native library answers a
     /// missing model path by printing to stderr and killing the process with a SIGSEGV, so there is no
     /// exception to catch and no log line of ours to find afterwards. Registration checks the same paths
-    /// (<see cref="KokoroModelFiles"/>) at startup; this is the second reading, for the case where the
+    /// (<see cref="ISherpaTtsModel"/>) at startup; this is the second reading, for the case where the
     /// files went away between boot and the first read-aloud.
     /// </summary>
     private OfflineTts Load()
     {
         if (_tts is not null) return _tts;
 
-        var files = KokoroModelFiles.In(_options.ModelDirectory, _options.ModelFile);
+        var files = _options.Model();
         if (files.Missing() is { Count: > 0 } missing)
             throw new InvalidOperationException(
-                $"The Kokoro model is incomplete, so it cannot be loaded: {string.Join(", ", missing)} "
-                + $"not found. Speech:Kokoro:ModelDirectory is '{_options.ModelDirectory}'. "
-                + "See docs/deploy-kokoro.md for the archive to unpack there.");
+                $"The {_options.Family} model is incomplete, so it cannot be loaded: "
+                + $"{string.Join(", ", missing)} not found. {_options.Section}:ModelDirectory is "
+                + $"'{_options.ModelDirectory}'. See docs/ for the archive to unpack there.");
 
         var config = new OfflineTtsConfig();
-        config.Model.Kokoro.Model = files.Model;
-        config.Model.Kokoro.Voices = files.Voices;
-        config.Model.Kokoro.Tokens = files.Tokens;
-        config.Model.Kokoro.DataDir = files.DataDir;
+        files.Apply(config);
         config.Model.NumThreads = _options.NumThreads;
         config.Model.Provider = "cpu";
         config.Model.Debug = 0;
@@ -151,14 +159,14 @@ public sealed class SherpaKokoroEngine : IKokoroEngine
         {
             tts.Dispose();
             throw new InvalidOperationException(
-                $"Speech:Kokoro:SpeakerId is {_options.SpeakerId}, but this model has {speakers} "
+                $"{_options.Section}:SpeakerId is {_options.SpeakerId}, but this model has {speakers} "
                 + $"voice(s) — valid values are 0 to {speakers - 1}.");
         }
 
         _logger.LogInformation(
-            "Loaded Kokoro from {Directory} in {ElapsedMs} ms: {Speakers} voice(s) at {SampleRate} Hz, "
+            "Loaded {Family} from {Directory} in {ElapsedMs} ms: {Speakers} voice(s) at {SampleRate} Hz, "
             + "{Threads} thread(s), speaking as voice {SpeakerId}.",
-            _options.ModelDirectory, started.ElapsedMilliseconds, speakers, sampleRate,
+            _options.Family, _options.ModelDirectory, started.ElapsedMilliseconds, speakers, sampleRate,
             config.Model.NumThreads, _options.SpeakerId);
 
         return _tts = tts;
@@ -173,7 +181,7 @@ public sealed class SherpaKokoroEngine : IKokoroEngine
     /// <c>ProviderCancellationSiteTests</c> exists to stop, and a filter reading the inverse of that rule
     /// is the same defect wearing the rule's clothes.
     /// </summary>
-    private KokoroAudio Speak(OfflineTts tts, string text, CancellationToken caller, CancellationToken bounded)
+    private SynthesizedAudio Speak(OfflineTts tts, string text, CancellationToken caller, CancellationToken bounded)
     {
         bounded.ThrowIfCancellationRequested();
 
@@ -190,7 +198,7 @@ public sealed class SherpaKokoroEngine : IKokoroEngine
             caller.ThrowIfCancellationRequested();
             if (bounded.IsCancellationRequested) throw Timeout("synthesizing");
 
-            return new KokoroAudio(audio.Samples, audio.SampleRate);
+            return new SynthesizedAudio(audio.Samples, audio.SampleRate);
         }
         finally
         {
@@ -220,7 +228,8 @@ public sealed class SherpaKokoroEngine : IKokoroEngine
         {
             // Freeing it anyway would segfault the process on its way out, which looks like a crash rather
             // than a shutdown. Leaving it is a leak in a process that is ending.
-            _logger.LogWarning("A Kokoro synthesis was still running at shutdown; leaving the model loaded.");
+            _logger.LogWarning("A {Family} synthesis was still running at shutdown; leaving the model "
+                + "loaded.", _options.Family);
             return;
         }
 
