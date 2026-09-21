@@ -121,6 +121,15 @@ jobs:
             echo "Swap already present; left alone."
           fi
 
+          # The model archives are .tar.bz2 and GNU tar shells out to bzip2 to read them, which a
+          # minimal Ubuntu image does not ship — the first run of this found that out by getting a
+          # verified archive onto the box and then failing to open it.
+          if ! command -v bzip2 >/dev/null 2>&1; then
+            echo "Installing bzip2, which the model archives need..."
+            DEBIAN_FRONTEND=noninteractive apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bzip2
+          fi
+
           mkdir -p /var/lib/shelfaware/models
           cd /var/lib/shelfaware/models
 
@@ -141,7 +150,14 @@ jobs:
             curl -fsSL -o model.tar.bz2 "$url"
             echo "$sha  model.tar.bz2" | sha256sum -c - \
               || { echo "::error::$dir did not match its recorded sha256; not unpacking it."; rm -f model.tar.bz2; exit 1; }
-            tar xjf model.tar.bz2 --no-same-owner --no-same-permissions && rm -f model.tar.bz2
+            # ⚠️ Unpacked into a staging directory and moved into place only once it is whole. The
+            # guard above is "is the directory there", so a half-extracted one — a disk that filled,
+            # a connection that dropped — would read as unpacked forever, and the app would refuse to
+            # boot naming files that were never going to arrive.
+            rm -rf .staging && mkdir .staging
+            tar xjf model.tar.bz2 -C .staging --no-same-owner --no-same-permissions
+            mv ".staging/$dir" "$dir"
+            rm -rf .staging model.tar.bz2
           }
           fetch kokoro-int8-en-v0_19 \
             c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd \
