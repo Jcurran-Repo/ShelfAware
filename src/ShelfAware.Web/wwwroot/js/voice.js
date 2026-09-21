@@ -1,7 +1,9 @@
-// Voice I/O helpers for the browser side of the ElevenLabs loop.
+// Voice I/O helpers for the browser side of the voice loop.
 // Recording: capture one push-to-talk utterance via MediaRecorder and hand the bytes to .NET as
 // base64 (the server does STT -> chat -> TTS). Playback: play the synthesized audio .NET hands back.
 // Kept deliberately small and stateless-per-call; the reasoning lives on the server.
+
+import { toMonoWav16k, bytesToBase64 } from './pcm.js';
 
 let mediaRecorder = null;
 let chunks = [];
@@ -35,6 +37,12 @@ export async function stop() {
             const type = (recorder.mimeType || 'audio/webm').split(';')[0];
             const blob = new Blob(chunks, { type });
             if (blob.size === 0) { resolve(null); return; }
+            // 16 kHz PCM, so an ear running inside the app can read it without a codec. A cloud ear
+            // reads WAV just as happily, so there is one capture shape rather than one per provider.
+            // Null means this browser couldn't decode its own recording: send the original and let the
+            // server say what it can do with it.
+            const wav = await toMonoWav16k(blob);
+            if (wav) { resolve({ audio: bytesToBase64(wav.bytes), mimeType: wav.mimeType, size: wav.bytes.length }); return; }
             const buffer = await blob.arrayBuffer();
             resolve({ audio: bytesToBase64(new Uint8Array(buffer)), mimeType: type, size: blob.size });
         };
@@ -73,14 +81,4 @@ function pickMimeType() {
         if (window.MediaRecorder && MediaRecorder.isTypeSupported(c)) return c;
     }
     return '';
-}
-
-// Chunked to avoid blowing the argument limit of String.fromCharCode on large buffers.
-function bytesToBase64(bytes) {
-    let binary = '';
-    const chunkSize = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
-    }
-    return btoa(binary);
 }

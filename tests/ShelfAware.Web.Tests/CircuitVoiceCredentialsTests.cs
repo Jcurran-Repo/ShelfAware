@@ -1,4 +1,6 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
+using ShelfAware.Core.Speech;
 using ShelfAware.Llm;
 using ShelfAware.Web.Services;
 
@@ -10,10 +12,44 @@ namespace ShelfAware.Web.Tests;
 /// pins for the AI key).</summary>
 public class CircuitVoiceCredentialsTests
 {
-    private static CircuitVoiceCredentials Creds(string serverVoiceKey = "server-el-key", string llmKeyMode = "Byok") =>
+    private static CircuitVoiceCredentials Creds(
+        string serverVoiceKey = "server-el-key", string llmKeyMode = "Byok", string? ear = null) =>
         new(
             Options.Create(new ElevenLabsOptions { ApiKey = serverVoiceKey, AgentId = "server-agent" }),
-            Options.Create(new LlmOptions { ApiKey = "host-key", KeyMode = llmKeyMode }));
+            Options.Create(new LlmOptions { ApiKey = "host-key", KeyMode = llmKeyMode }),
+            new ConfigurationBuilder()
+                .AddInMemoryCollection(ear is null ? [] : new Dictionary<string, string?> { ["Speech:Ear"] = ear })
+                .Build());
+
+    // ---- Which ear this box runs, which is what decides whether a mic is offered at all ----------
+
+    [Fact]
+    public void An_unset_ear_is_the_cloud_one_so_no_deployment_changes_on_upgrade()
+    {
+        Assert.False(Creds().LocalEar);
+        Assert.False(Creds(ear: "ElevenLabs").LocalEar);
+    }
+
+    [Fact]
+    public void A_moonshine_box_reports_a_local_ear_and_so_hears_with_no_key_at_all()
+    {
+        // ⚠️ The demo box: managed, no ElevenLabs key, Speech:Ear=Moonshine. Read through the SAME
+        // SpeechRegistration.EarOf that registration uses — two readings of one setting is how a box
+        // ends up offering a microphone one of them then refuses to use.
+        var creds = Creds(serverVoiceKey: "", llmKeyMode: "Managed", ear: "Moonshine");
+
+        Assert.True(creds.LocalEar);
+        Assert.Equal(EarAvailability.Ready, ((IVoiceCredentials)creds).Ear);
+    }
+
+    [Fact]
+    public void A_managed_box_with_no_key_and_no_local_ear_cannot_hear()
+    {
+        var creds = Creds(serverVoiceKey: "", llmKeyMode: "Managed");
+
+        Assert.False(creds.LocalEar);
+        Assert.Equal(EarAvailability.NotOnThisBox, ((IVoiceCredentials)creds).Ear);
+    }
 
     [Fact]
     public void Defaults_to_the_server_config()

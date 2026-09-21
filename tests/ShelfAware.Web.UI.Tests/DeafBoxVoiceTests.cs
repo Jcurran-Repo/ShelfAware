@@ -87,6 +87,26 @@ public class DeafBoxVoiceTests : VoiceTestBase
     }
 
     [Fact]
+    public void A_local_ear_offers_everything_on_a_box_with_no_key_at_all()
+    {
+        // ⚠️ The demo box after Speech:Ear=Moonshine: managed, keyless, and fully able to listen — a
+        // model in this process is nobody's credential. This is the case that fails if anyone
+        // "simplifies" the gate back to asking about an API key.
+        Voice.ApiKey = "";
+        Voice.Managed = true;
+        Voice.LocalEar = true;
+        SeedRecipe();
+        JSInterop.SetupModule("/js/voice.js").Setup<bool>("isSupported").SetResult(true);
+
+        var mic = Render<PushToTalk>();
+        Assert.Contains("mic-label", mic.Markup);
+
+        var cut = Render<Recipes>();
+        cut.WaitForState(() => cut.FindAll(".saved-recipes li").Count > 0);
+        Assert.Contains("Cook-along", cut.Markup);
+    }
+
+    [Fact]
     public void A_box_that_can_hear_still_offers_all_of_it()
     {
         // The other half of the gate: these assertions are what fails if someone "fixes" a deaf box by

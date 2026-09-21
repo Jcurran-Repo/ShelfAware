@@ -19,6 +19,11 @@ is useless if it is down. The model is a directory.
 > *that box's* CPU and RAM, and the CPU note below is the reason that is not a formality. Run the check
 > in step 3 on the droplet before flipping the app over.
 
+This is the MOUTH. The ear — push-to-talk, the assistant, the cook-along's "next" — has a sibling
+that runs the same way, on the same package, for $0: [docs/deploy-moonshine.md](deploy-moonshine.md).
+The two are chosen separately (`Speech:Provider` and `Speech:Ear`), so a box can move one before the
+other; with both on it needs no ElevenLabs key at all.
+
 ## What talks to what
 
 ```

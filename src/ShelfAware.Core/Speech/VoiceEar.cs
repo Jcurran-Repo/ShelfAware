@@ -35,10 +35,16 @@ public enum EarAvailability
 /// </summary>
 public static class VoiceEar
 {
-    /// <summary>The state of the ear, from the two things that decide it: whether the host's keys are
-    /// authoritative on this deployment, and whether there is a key at all.</summary>
-    public static EarAvailability Availability(bool managed, string? apiKey) =>
-        !string.IsNullOrWhiteSpace(apiKey) ? EarAvailability.Ready
+    /// <summary>The state of the ear, from the three things that decide it: whether this box runs an ear
+    /// of its OWN (a model in this process, which needs no key from anyone), whether the host's keys are
+    /// authoritative, and whether there is a key at all.
+    ///
+    /// <para>⚠️ <paramref name="localEar"/> is asked FIRST and answers on its own. A box running Moonshine
+    /// hears every visitor with no credential anywhere, so a keyless managed deployment — the demo box —
+    /// is fully able to listen. Reading the key first would hide the microphone on exactly the box this
+    /// was built for.</para></summary>
+    public static EarAvailability Availability(bool localEar, bool managed, string? apiKey) =>
+        localEar || !string.IsNullOrWhiteSpace(apiKey) ? EarAvailability.Ready
             : managed ? EarAvailability.NotOnThisBox
             : EarAvailability.NeedsVisitorKey;
 

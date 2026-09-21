@@ -3,6 +3,8 @@
 // .NET. Because there's no barge-in, the mic simply isn't recorded while the reply plays — so no echo
 // cancellation needed. The server keeps IPantryChat as the brain; this is just the "ears".
 
+import { toMonoWav16k, bytesToBase64 } from './pcm.js';
+
 let stream = null, audioCtx = null, analyser = null, timeData = null;
 let recorder = null, chunks = [], rafId = null, aborted = false, currentAudio = null;
 let currentFinish = null; // pending captureTurn's finish — stop() must resolve it or .NET awaits forever
@@ -57,6 +59,11 @@ export async function captureTurn() {
                 const type = (rec.mimeType || 'audio/webm').split(';')[0];
                 const blob = new Blob(chunks, { type });
                 if (!blob.size) { resolve(null); return; }
+                // 16 kHz PCM (see pcm.js): the ear may be a model in this process, which has no
+                // decoder. Null means the browser couldn't decode its own recording — send the original
+                // rather than lose the utterance.
+                const wav = await toMonoWav16k(blob);
+                if (wav) { resolve({ audio: bytesToBase64(wav.bytes), mimeType: wav.mimeType }); return; }
                 const buf = await blob.arrayBuffer();
                 resolve({ audio: bytesToBase64(new Uint8Array(buf)), mimeType: type });
             };
@@ -123,9 +130,3 @@ function pickMime() {
     return '';
 }
 
-function bytesToBase64(bytes) {
-    let binary = '';
-    const chunkSize = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunkSize) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
-    return btoa(binary);
-}

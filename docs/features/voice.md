@@ -26,13 +26,29 @@ the built-in reader.
   `ITextToSpeech.OutputFingerprint`. **A cache hit needs no API key**, which is what lets seeded/demo
   recipes talk for a keyless visitor. Registered via `SpeechRegistration.AddSpeech` so a test can prove
   nothing bypasses it. Bounded by `Speech:CacheMegabytes` (default 256), trimmed at startup.
-- **The mouth has two providers; the ear has one.** `Speech:Provider` picks between ElevenLabs (cloud,
-  per-character, the visitor's own key) and `Kokoro` — Kokoro-82M running IN THIS PROCESS via
-  sherpa-onnx, for $0 with nothing to meter and nothing to deploy beside the app. The STT ear stays
-  ElevenLabs Scribe either way; moving speech RECOGNITION off ElevenLabs is a separate seam. Both
-  mouths answer through `CachingTextToSpeech`, and each namespaces its own `OutputFingerprint`, so a
-  clip voiced by one is never served for the other's key. Setup + the model archive:
-  `docs/deploy-kokoro.md`.
+- **The mouth and the ear each have two providers, chosen SEPARATELY.** `Speech:Provider` picks the
+  mouth: ElevenLabs (cloud, per-character, the visitor's own key) or `Kokoro` — Kokoro-82M running IN
+  THIS PROCESS via sherpa-onnx, for $0 with nothing to meter and nothing to deploy beside the app.
+  `Speech:Ear` picks the ear: ElevenLabs Scribe or `Moonshine`, in this process, on the same package —
+  so the ear adds *nothing* to the publish a Kokoro box already carries. Two settings rather than one
+  because a box has to be able to move one before the other. With both local, a deployment needs **no
+  ElevenLabs key at all**. Both mouths answer through `CachingTextToSpeech`, and each namespaces its own
+  `OutputFingerprint`, so a clip voiced by one is never served for the other's key. Setup + the model
+  archives: `docs/deploy-kokoro.md` (mouth), `docs/deploy-moonshine.md` (ear).
+  - **The ear is far cheaper than the mouth.** Measured on one core: Kokoro needs ~17 s to *say* a 7.4 s
+    sentence; Moonshine needs 0.7 s to *hear* it. If a small box feels slow, it is synthesis.
+  - **The browser sends 16 kHz mono PCM** (`wwwroot/js/pcm.js`, imported by all three capture paths),
+    because a model in this process has no codec and decoding opus server-side would mean ffmpeg — a
+    second thing to install, which is the property this whole shape exists to keep. A browser can always
+    decode what it just recorded. If that conversion fails it falls back to the compressed bytes, which
+    a cloud ear still reads and a local one refuses by name.
+- **Whether a box can hear at all is ONE definition: `VoiceEar`,** asked by every microphone affordance
+  (push-to-talk, the roaming assistant, the hands-free reader, the Recipes cook-along button) and by the
+  transcriber's failure copy. A box that cannot hear offers no microphone rather than recording someone
+  and then refusing. ⚠️ The two shut states are deliberately different sentences: BYOK with no key says
+  "add your key in Settings", a managed box with no host key says "not available on this box" — on a
+  managed deployment that Settings panel is hidden and a pasted key is a no-op, so the instruction would
+  be impossible to follow. A local ear is `Ready` regardless of any key.
   - ⚠️ **sherpa-onnx does not throw on a bad model path — it kills the process** (stderr line, then
     SIGSEGV; no managed exception to catch). So `SpeechRegistration` refuses to boot with an incomplete
     model directory and `SherpaKokoroEngine` checks again before loading, both asking the one

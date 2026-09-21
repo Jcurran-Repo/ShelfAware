@@ -83,6 +83,94 @@ public static class WaveAudio
         return wav;
     }
 
+
+    /// <summary>
+    /// Reads a WAV back into mono float samples — the mirror of <see cref="Encode"/>, and here beside it
+    /// for that reason: two places that disagree about what a WAV is would disagree silently, one writing
+    /// a header the other misreads.
+    ///
+    /// <para>This exists because an in-process RECOGNIZER is the reverse of an in-process synthesizer: it
+    /// wants samples, and what arrives from a browser is a container. Decoding a COMPRESSED container
+    /// (the webm/opus a MediaRecorder produces) would mean a codec dependency — ffmpeg or similar — and
+    /// that would throw away the property that makes the in-process shape worth having: nothing to install
+    /// beside the app. So the browser hands over PCM, and this reads it.</para>
+    ///
+    /// <para>Stereo is downmixed rather than refused: a headset or a laptop with two microphones can
+    /// produce it, and averaging the channels is what every recognizer wants anyway. The sample RATE is
+    /// passed back rather than converted — resampling belongs where the audio is captured, and a caller
+    /// that needs a particular rate should say so about a number it can see.</para>
+    /// </summary>
+    /// <returns>The mono samples and their rate.</returns>
+    /// <exception cref="InvalidDataException">If the bytes are not a PCM WAV this can read. The message
+    /// names what was wrong, because the one thing a person needs to know here is whether the browser sent
+    /// the wrong SHAPE or nothing at all.</exception>
+    public static (float[] Samples, int SampleRate) Decode(ReadOnlySpan<byte> wav)
+    {
+        if (wav.Length < HeaderBytes) throw new InvalidDataException(
+            $"Not a WAV: {wav.Length} byte(s), which is shorter than a WAV header.");
+        if (!wav[..4].SequenceEqual("RIFF"u8) || !wav[8..12].SequenceEqual("WAVE"u8))
+            throw new InvalidDataException("Not a WAV: no RIFF/WAVE marker. Compressed audio is not read here.");
+
+        int channels = 0, sampleRate = 0, bits = 0;
+        var format = (short)0;
+
+        // Walk the chunks rather than assuming the canonical 44-byte layout: real encoders interleave
+        // LIST/fact chunks before the data, and a reader that jumped to byte 44 would read those as audio.
+        var at = 12;
+        while (at + 8 <= wav.Length)
+        {
+            var id = wav.Slice(at, 4);
+            var size = ReadInt32(wav[(at + 4)..]);
+            if (size < 0 || at + 8 + size > wav.Length) size = wav.Length - at - 8; // truncated: take what's there
+            var body = wav.Slice(at + 8, size);
+
+            if (id.SequenceEqual("fmt "u8))
+            {
+                if (size < 16) throw new InvalidDataException("Not a WAV this can read: its fmt chunk is too short.");
+                format = ReadInt16(body);
+                channels = ReadInt16(body[2..]);
+                sampleRate = ReadInt32(body[4..]);
+                bits = ReadInt16(body[14..]);
+            }
+            else if (id.SequenceEqual("data"u8))
+            {
+                if (channels == 0) throw new InvalidDataException("Not a WAV this can read: data before fmt.");
+                // 1 = PCM. 0xFFFE is WAVE_FORMAT_EXTENSIBLE, whose samples are still PCM when the bit
+                // depth says 16 — which is what a browser's OfflineAudioContext export looks like.
+                if (format is not (PcmFormat or unchecked((short)0xFFFE)))
+                    throw new InvalidDataException(
+                        $"Not a WAV this can read: format {format} is not uncompressed PCM.");
+                if (bits != BitsPerSample) throw new InvalidDataException(
+                    $"Not a WAV this can read: {bits}-bit samples, expected {BitsPerSample}-bit.");
+                if (sampleRate <= 0) throw new InvalidDataException(
+                    $"Not a WAV this can read: its header says {sampleRate} Hz.");
+
+                var frames = body.Length / sizeof(short) / channels;
+                var samples = new float[frames];
+                for (var i = 0; i < frames; i++)
+                {
+                    // Downmix by averaging, in float so a loud stereo pair can't wrap on the way to mono.
+                    var sum = 0f;
+                    for (var c = 0; c < channels; c++)
+                        sum += ReadInt16(body[((i * channels + c) * sizeof(short))..]) / 32768f;
+                    samples[i] = sum / channels;
+                }
+
+                return (samples, sampleRate);
+            }
+
+            at += 8 + size + (size % 2); // chunks are word-aligned; an odd size carries a pad byte
+        }
+
+        throw new InvalidDataException("Not a WAV this can read: no data chunk.");
+    }
+
+    private static int ReadInt32(ReadOnlySpan<byte> source) =>
+        System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(source);
+
+    private static short ReadInt16(ReadOnlySpan<byte> source) =>
+        System.Buffers.Binary.BinaryPrimitives.ReadInt16LittleEndian(source);
+
     private static void WriteInt32(Span<byte> destination, int value) =>
         System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(destination, value);
 

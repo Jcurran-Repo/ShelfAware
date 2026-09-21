@@ -319,6 +319,10 @@ internal sealed class FakeVoiceCredentials : IVoiceCredentials
     public string ApiKey { get; set; } = "test-voice-key";
     public string AgentId { get; set; } = "";
     public bool Managed { get; set; }
+
+    /// <summary>This box hears with a model of its own (Speech:Ear=Moonshine), so it needs no key from
+    /// anyone — the demo box's shape.</summary>
+    public bool LocalEar { get; set; }
 }
 
 /// <summary>The box-wide demo valve for AiErrorText's pre-check. Blocks with <paramref name="message"/>, or

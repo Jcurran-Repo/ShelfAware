@@ -13,7 +13,7 @@ namespace ShelfAware.Web.Services;
 public static class SpeechRegistration
 {
     /// <summary>
-    /// Registers speech: Scribe = STT (ear), and TTS = mouth wrapped in a disk cache at
+    /// Registers speech: STT = ear, and TTS = mouth wrapped in a disk cache at
     /// <paramref name="cacheDirectory"/>. The cloud services are their own REST APIs rather than
     /// IChatClient workloads, so each rides a typed HttpClient; typed clients are transient (the factory
     /// owns handler lifetime) — fine, the services are stateless. Kokoro rides nothing, because it runs
@@ -21,9 +21,9 @@ public static class SpeechRegistration
     ///
     /// <para>The TTS PROVIDER is chosen by <c>Speech:Provider</c> (default ElevenLabs, so no existing
     /// deployment changes on upgrade): <see cref="SpeechProvider.Kokoro"/> runs Kokoro-82M IN THIS PROCESS
-    /// for $0 synthesis; <see cref="SpeechProvider.ElevenLabs"/> keeps the cloud voice. The STT ear stays
-    /// ElevenLabs Scribe either way — moving speech RECOGNITION off ElevenLabs is a separate seam.
-    /// Whichever provider is chosen, it's the CACHE that answers <see cref="ITextToSpeech"/>; the provider
+    /// for $0 synthesis; <see cref="SpeechProvider.ElevenLabs"/> keeps the cloud voice. The EAR is chosen
+    /// separately by <c>Speech:Ear</c> (<see cref="EarProvider"/>), so a box can move one before the
+    /// other. Whichever TTS provider is chosen, it's the CACHE that answers <see cref="ITextToSpeech"/>; the provider
     /// is only ever reached through it.</para>
     ///
     /// Requires a scoped <see cref="IVoiceCredentials"/> registered by the caller: the ElevenLabs key is
@@ -40,10 +40,25 @@ public static class SpeechRegistration
     {
         services.Configure<ElevenLabsOptions>(configuration.GetSection(ElevenLabsOptions.SectionName));
         services.Configure<KokoroSpeechOptions>(configuration.GetSection(KokoroSpeechOptions.SectionName));
+        services.Configure<MoonshineSpeechOptions>(configuration.GetSection(MoonshineSpeechOptions.SectionName));
         RefuseRetiredSidecarSettings(configuration);
 
-        // The ear is always ElevenLabs Scribe; only the mouth's provider is selectable.
-        services.AddHttpClient<ISpeechToText, ElevenLabsSpeechToText>(ConfigureElevenLabs);
+        // The EAR, chosen by Speech:Ear independently of the mouth (see EarProvider): a box can voice
+        // recipes for free while still renting recognition, or the reverse, and one setting covering both
+        // would mean a deployment could not be half-way through the move. Default ElevenLabs, so no
+        // existing deployment changes on upgrade.
+        if (EarOf(configuration) == EarProvider.Moonshine)
+        {
+            // No HttpClient: there is nothing to talk to. The ENGINE is a singleton because the model is
+            // the expensive thing; the ISpeechToText over it stays transient like its siblings.
+            RequireAnEarModelOnDisk(configuration);
+            services.AddSingleton<IMoonshineEngine, SherpaMoonshineEngine>();
+            services.AddTransient<ISpeechToText, MoonshineSpeechToText>();
+        }
+        else
+        {
+            services.AddHttpClient<ISpeechToText, ElevenLabsSpeechToText>(ConfigureElevenLabs);
+        }
 
         var provider = configuration.GetValue<SpeechProvider?>("Speech:Provider") ?? SpeechProvider.ElevenLabs;
 
@@ -88,6 +103,14 @@ public static class SpeechRegistration
         return services;
     }
 
+    /// <summary>Which ear this deployment runs, from the ONE reading of the setting — asked by
+    /// registration and by <see cref="CircuitVoiceCredentials"/>, which needs it to answer "can this box
+    /// hear" for every microphone affordance. Two readings of the same key is how a box ends up offering
+    /// a mic because one of them said Moonshine and refusing to use it because the other said
+    /// ElevenLabs.</summary>
+    public static EarProvider EarOf(IConfiguration configuration) =>
+        configuration.GetValue<EarProvider?>("Speech:Ear") ?? EarProvider.ElevenLabs;
+
     private static void ConfigureElevenLabs(IServiceProvider sp, HttpClient http)
     {
         // Base address only — the xi-api-key is attached PER REQUEST from the visitor's per-circuit
@@ -122,6 +145,29 @@ public static class SpeechRegistration
                 + $"{string.Join(", ", missing)} not found. See docs/deploy-kokoro.md for the archive to "
                 + "unpack there. (Starting without them would not fail here — it would kill the process on "
                 + "the first read-aloud.)");
+    }
+
+    /// <summary>
+    /// The ear's <see cref="RequireAModelOnDisk"/>, and it exists for exactly the same reason: sherpa's
+    /// native library answers a missing model file with a line on stderr and a SIGSEGV, so a box told to
+    /// listen with a model that isn't there would boot clean and then die whole on the first spoken word.
+    /// Asks <see cref="MoonshineModelFiles"/> — the same definition the engine loads from — because a
+    /// validation checking different paths than the load uses would pass and then crash.
+    /// </summary>
+    private static void RequireAnEarModelOnDisk(IConfiguration configuration)
+    {
+        var options = configuration.GetSection(MoonshineSpeechOptions.SectionName).Get<MoonshineSpeechOptions>()
+                      ?? new MoonshineSpeechOptions();
+
+        if (options.Invalid() is { } wrong)
+            throw new InvalidOperationException($"Speech:Ear is Moonshine, but {wrong}");
+
+        if (MoonshineModelFiles.In(options.ModelDirectory).Missing() is { Count: > 0 } missing)
+            throw new InvalidOperationException(
+                $"Speech:Moonshine:ModelDirectory ('{options.ModelDirectory}') is not a complete Moonshine "
+                + $"model: {string.Join(", ", missing)} not found. See docs/deploy-moonshine.md for the "
+                + "archive to unpack there. (Starting without them would not fail here — it would kill the "
+                + "process on the first spoken word.)");
     }
 
     /// <summary>

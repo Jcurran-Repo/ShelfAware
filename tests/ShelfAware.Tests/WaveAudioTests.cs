@@ -102,4 +102,153 @@ public class WaveAudioTests
 
     private static short Int16At(byte[] wav, int offset) =>
         BinaryPrimitives.ReadInt16LittleEndian(wav.AsSpan(offset));
+
+    // ---- Decode: the mirror, and the ear's only way in ------------------------------------------
+
+    [Fact]
+    public void A_clip_survives_the_round_trip_it_will_actually_make()
+    {
+        // Encode → Decode is the path a Kokoro clip takes to tools/MoonshineCheck, and the shape a
+        // browser's capture arrives in. Tolerance is one 16-bit step: the container stores shorts, so
+        // a float that isn't exactly on a step cannot come back bit-identical, and pretending otherwise
+        // would be a test that only passes for the values someone happened to pick.
+        float[] original = [0f, 0.5f, -0.5f, 1f, -1f, 0.123456f];
+
+        var (samples, rate) = WaveAudio.Decode(WaveAudio.Encode(original, 16000));
+
+        Assert.Equal(16000, rate);
+        Assert.Equal(original.Length, samples.Length);
+        for (var i = 0; i < original.Length; i++)
+            Assert.True(Math.Abs(original[i] - samples[i]) < 1f / short.MaxValue,
+                $"sample {i}: {original[i]} came back as {samples[i]}");
+    }
+
+    [Fact]
+    public void Stereo_is_downmixed_rather_than_refused()
+    {
+        // A headset or a two-microphone laptop can produce it, and averaging is what a recognizer wants.
+        var wav = StereoWav(16000, [(1f, 0f), (0.5f, -0.5f), (-1f, -1f)]);
+
+        var (samples, rate) = WaveAudio.Decode(wav);
+
+        Assert.Equal(16000, rate);
+        Assert.Equal(3, samples.Length);
+        Assert.True(Math.Abs(0.5f - samples[0]) < 0.001f);   // (1 + 0) / 2
+        Assert.True(Math.Abs(0f - samples[1]) < 0.001f);     // (0.5 - 0.5) / 2
+        Assert.True(Math.Abs(-1f - samples[2]) < 0.001f);    // both rails
+    }
+
+    [Fact]
+    public void A_chunk_before_the_data_is_walked_past_rather_than_read_as_audio()
+    {
+        // ⚠️ Real encoders interleave LIST/fact chunks, so a reader that jumped to byte 44 would read
+        // that metadata as samples — a burst of noise at the front of every clip, and to a recognizer a
+        // word nobody said.
+        var canonical = WaveAudio.Encode([0.25f, -0.25f], 16000);
+        var withExtra = WithChunkBeforeData(canonical, "LIST", "INFOhere"u8.ToArray());
+
+        var (samples, _) = WaveAudio.Decode(withExtra);
+
+        Assert.Equal(2, samples.Length);
+        Assert.True(Math.Abs(0.25f - samples[0]) < 0.001f);
+        Assert.True(Math.Abs(-0.25f - samples[1]) < 0.001f);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("not audio at all")]
+    public void Anything_that_is_not_a_wav_says_so_instead_of_returning_noise(string text)
+    {
+        // The browser falling back to webm/opus lands here. It must be a NAMED failure: silently
+        // returning whatever bytes were there would transcribe compressed audio as gibberish, which
+        // reads as a broken model rather than a wrong container.
+        var ex = Assert.Throws<InvalidDataException>(() => WaveAudio.Decode(Encoding.UTF8.GetBytes(text)));
+
+        Assert.Contains("Not a WAV", ex.Message);
+    }
+
+    [Fact]
+    public void A_compressed_wav_is_refused_rather_than_read_as_pcm()
+    {
+        var wav = WaveAudio.Encode([0.25f], 16000);
+        BinaryPrimitives.WriteInt16LittleEndian(wav.AsSpan(20), 2); // ADPCM, not PCM
+
+        var ex = Assert.Throws<InvalidDataException>(() => WaveAudio.Decode(wav));
+
+        Assert.Contains("not uncompressed PCM", ex.Message);
+    }
+
+    [Fact]
+    public void An_eight_bit_wav_is_refused_rather_than_read_as_sixteen()
+    {
+        var wav = WaveAudio.Encode([0.25f, -0.25f], 16000);
+        BinaryPrimitives.WriteInt16LittleEndian(wav.AsSpan(34), 8);
+
+        var ex = Assert.Throws<InvalidDataException>(() => WaveAudio.Decode(wav));
+
+        Assert.Contains("8-bit", ex.Message);
+    }
+
+    [Fact]
+    public void A_truncated_clip_yields_the_samples_that_are_there()
+    {
+        // A recording cut off mid-upload is worth transcribing as far as it got — the words before the
+        // cut are still words. What matters is that it does not throw an index out of range.
+        var wav = WaveAudio.Encode([0.1f, 0.2f, 0.3f, 0.4f], 16000);
+        var truncated = wav[..(wav.Length - 4)]; // two samples short of what the header claims
+
+        var (samples, rate) = WaveAudio.Decode(truncated);
+
+        Assert.Equal(16000, rate);
+        Assert.Equal(2, samples.Length);
+    }
+
+    /// <summary>A two-channel 16-bit PCM WAV, built here rather than by the encoder — which only writes
+    /// mono, and is the thing under test.</summary>
+    private static byte[] StereoWav(int sampleRate, (float Left, float Right)[] frames)
+    {
+        var data = new byte[frames.Length * 4];
+        for (var i = 0; i < frames.Length; i++)
+        {
+            BinaryPrimitives.WriteInt16LittleEndian(data.AsSpan(i * 4), (short)(frames[i].Left * short.MaxValue));
+            BinaryPrimitives.WriteInt16LittleEndian(data.AsSpan(i * 4 + 2), (short)(frames[i].Right * short.MaxValue));
+        }
+
+        var wav = new byte[44 + data.Length];
+        var span = wav.AsSpan();
+        Encoding.ASCII.GetBytes("RIFF").CopyTo(span);
+        BinaryPrimitives.WriteInt32LittleEndian(span[4..], wav.Length - 8);
+        Encoding.ASCII.GetBytes("WAVE").CopyTo(span[8..]);
+        Encoding.ASCII.GetBytes("fmt ").CopyTo(span[12..]);
+        BinaryPrimitives.WriteInt32LittleEndian(span[16..], 16);
+        BinaryPrimitives.WriteInt16LittleEndian(span[20..], 1);
+        BinaryPrimitives.WriteInt16LittleEndian(span[22..], 2);              // channels
+        BinaryPrimitives.WriteInt32LittleEndian(span[24..], sampleRate);
+        BinaryPrimitives.WriteInt32LittleEndian(span[28..], sampleRate * 4);
+        BinaryPrimitives.WriteInt16LittleEndian(span[32..], 4);
+        BinaryPrimitives.WriteInt16LittleEndian(span[34..], 16);
+        Encoding.ASCII.GetBytes("data").CopyTo(span[36..]);
+        BinaryPrimitives.WriteInt32LittleEndian(span[40..], data.Length);
+        data.CopyTo(span[44..]);
+        return wav;
+    }
+
+    /// <summary>The same WAV with an extra chunk spliced in between "fmt " and "data".</summary>
+    private static byte[] WithChunkBeforeData(byte[] canonical, string id, byte[] body)
+    {
+        var head = canonical[..36];                       // through the fmt chunk
+        var tail = canonical[36..];                       // "data" onwards
+        var chunk = new byte[8 + body.Length];
+        Encoding.ASCII.GetBytes(id).CopyTo(chunk.AsSpan());
+        BinaryPrimitives.WriteInt32LittleEndian(chunk.AsSpan(4), body.Length);
+        body.CopyTo(chunk.AsSpan(8));
+
+        var result = new byte[head.Length + chunk.Length + tail.Length];
+        head.CopyTo(result.AsSpan());
+        chunk.CopyTo(result.AsSpan(head.Length));
+        tail.CopyTo(result.AsSpan(head.Length + chunk.Length));
+        BinaryPrimitives.WriteInt32LittleEndian(result.AsSpan(4), result.Length - 8);
+        return result;
+    }
+
 }
