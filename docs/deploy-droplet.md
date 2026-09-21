@@ -141,19 +141,30 @@ Setting it up, once:
    ```bash
    ssh-keygen -t ed25519 -f ~/.ssh/shelfaware-deploy -C 'github-actions deploy' -N ''
    ssh-copy-id -i ~/.ssh/shelfaware-deploy.pub root@<droplet>     # or append it to authorized_keys
-   ssh-keyscan -H <droplet> > /tmp/known_hosts                    # for step 2's third secret
+   ssh-keyscan -H <droplet> > /tmp/known_hosts                    # for step 3's third secret
    ```
-2. **Three repository secrets** (Settings → Secrets and variables → Actions):
-   `DROPLET_SSH_KEY` (the contents of the private half), `DROPLET_HOST` (`root@<ip>`), and
-   `DROPLET_KNOWN_HOSTS` (that `ssh-keyscan` output). The third is optional and worth setting: without
-   it each run trusts whatever host key answers.
-3. **An environment named `droplet`** (Settings → Environments) with yourself as a required reviewer,
-   if you want every deploy to need one click from you. Nothing reaches the box until you press it.
-   Delete the `environment:` line in the workflow if you'd rather it just run.
+2. **An environment named `droplet`** (Settings → Environments) with yourself as a required reviewer.
+   Nothing reaches the box until you press the button.
+3. **Three secrets on THAT ENVIRONMENT** — Settings → Environments → droplet → *Environment secrets*,
+   **not** repository secrets: `DROPLET_SSH_KEY` (the contents of the private half), `DROPLET_HOST`
+   (`root@<ip>`), and `DROPLET_KNOWN_HOSTS` (that `ssh-keyscan` output, required).
+
+   ⚠️ **The distinction is the whole security of this.** On a `workflow_dispatch`, GitHub runs the
+   workflow file *from the branch being dispatched* — so anyone who can push a branch can push a copy
+   of `deploy-droplet.yml` with the `environment:` line removed and dispatch that. A **repository**
+   secret would be handed to it anyway, no reviewer prompted, and the private half of a key that is
+   `root` on the box would be one `echo` away. An **environment** secret would not: no environment, no
+   key, no deploy. The approval stops being a line in a file that the next branch can delete.
 
 Run it from Actions → *Deploy to the droplet* → **Run workflow**, choosing the branch. Tick
 **bootstrap** the first time: it adds the 2 GB swap file and unpacks the Kokoro and Moonshine models,
-idempotently, so a rebuilt droplet is one dispatch away rather than an afternoon with this page.
+idempotently, so a rebuilt droplet is one dispatch away rather than an afternoon with this page. Both
+archives are checked against a recorded sha256 before anything is unpacked — they are fetched as root
+onto a box holding real data, and a release tag is mutable.
+
+⚠️ **The workflow only becomes dispatchable once it is on `master`.** GitHub lists a
+`workflow_dispatch` workflow from the default branch, so there is no *Run workflow* button — and no way
+to trigger it for any branch — until this file has been merged. Merging it deploys nothing by itself.
 
 ⚠️ **The env file is not in this**, by design. `/etc/shelfaware/env` holds the box's secrets, lives
 only on the box, and a deploy never touches it — which is also why a setting change still needs an ssh

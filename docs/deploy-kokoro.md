@@ -87,7 +87,11 @@ sudo mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models
 curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-en-v0_19.tar.bz2
 tar xjf kokoro-int8-en-v0_19.tar.bz2 && rm kokoro-int8-en-v0_19.tar.bz2
 ls kokoro-int8-en-v0_19   # model.int8.onnx  voices.bin  tokens.txt  espeak-ng-data/  README.md  LICENSE
-sudo chown -R shelfaware:shelfaware /var/lib/shelfaware/models
+# Root-owned, world-readable: the app READS its model and never rewrites it — install.sh's
+# posture for the binaries, for the same reason. A process that gets compromised should not be
+# able to leave anything behind in a directory the app loads from.
+sudo chown -R root:root /var/lib/shelfaware/models
+sudo chmod -R a+rX /var/lib/shelfaware/models
 ```
 
 | Archive | Download | On disk | Voices | Notes |

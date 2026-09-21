@@ -53,10 +53,18 @@ rounding error.
 ```bash
 sudo mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models
 curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-tiny-en-int8.tar.bz2
-tar xjf sherpa-onnx-moonshine-tiny-en-int8.tar.bz2 && rm sherpa-onnx-moonshine-tiny-en-int8.tar.bz2
+# Release assets sit on a mutable tag, and this one is unpacked as root. Measured 2026-09-21; the CI
+# bootstrap checks the same hash (.github/workflows/deploy-droplet.yml).
+echo 'd5fe6ec4334fef36255b2a4010412cad4c007e33103fec62fb5d17cad88086f2  sherpa-onnx-moonshine-tiny-en-int8.tar.bz2' | sha256sum -c -
+tar xjf sherpa-onnx-moonshine-tiny-en-int8.tar.bz2 --no-same-owner --no-same-permissions \
+  && rm sherpa-onnx-moonshine-tiny-en-int8.tar.bz2
 ls sherpa-onnx-moonshine-tiny-en-int8
 # preprocess.onnx  encode.int8.onnx  uncached_decode.int8.onnx  cached_decode.int8.onnx  tokens.txt
-sudo chown -R shelfaware:shelfaware /var/lib/shelfaware/models
+# Root-owned, world-readable: the app READS its model and never rewrites it — install.sh's
+# posture for the binaries, for the same reason. A process that gets compromised should not be
+# able to leave anything behind in a directory the app loads from.
+sudo chown -R root:root /var/lib/shelfaware/models
+sudo chmod -R a+rX /var/lib/shelfaware/models
 ```
 
 The `sherpa-onnx-moonshine-base-en-int8` archive is the larger sibling (~400 MB) — more accurate, and
