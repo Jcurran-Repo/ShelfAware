@@ -165,6 +165,12 @@ jobs:
           fetch sherpa-onnx-moonshine-tiny-en-int8 \
             d5fe6ec4334fef36255b2a4010412cad4c007e33103fec62fb5d17cad88086f2 \
             https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-tiny-en-int8.tar.bz2
+          # The fast mouth. Kokoro is warmer and this box cannot afford it: measured at 3.1x real time
+          # here against Piper's 0.05x on hardware with the int8 instructions Kokoro's quantization
+          # wants. Both are unpacked, so Speech:Provider can be moved either way without a deploy.
+          fetch vits-piper-en_US-lessac-medium \
+            9e3febfacf0abf4270172d2958bcec246032b7e88efc2720840cc80c93de334e \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-medium.tar.bz2
 
           # Root-owned and world-readable, which is install.sh's posture for the app itself and for its
           # reason: the service account reads its model, it does not get to rewrite it. A compromised app

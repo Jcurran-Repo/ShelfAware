@@ -134,7 +134,7 @@ public sealed class SherpaTtsEngine : ITtsEngine
                 + $"'{_options.ModelDirectory}'. See docs/ for the archive to unpack there.");
 
         var config = new OfflineTtsConfig();
-        files.Apply(config);
+        files.Apply(ref config);
         config.Model.NumThreads = _options.NumThreads;
         config.Model.Provider = "cpu";
         config.Model.Debug = 0;

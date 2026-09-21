@@ -88,7 +88,7 @@ public sealed record KokoroModelFiles(string Model, string Voices, string Tokens
     }
 
     /// <inheritdoc />
-    public void Apply(OfflineTtsConfig config)
+    public void Apply(ref OfflineTtsConfig config)
     {
         config.Model.Kokoro.Model = Model;
         config.Model.Kokoro.Voices = Voices;

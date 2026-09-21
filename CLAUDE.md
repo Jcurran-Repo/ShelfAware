@@ -112,7 +112,7 @@ the app's only page outside the auth wall.
 | What's still open and what's parked | `docs/backlog.md` |
 | Why some past decision was made that way | `docs/journal/build-log.md` |
 | Mutation testing | `docs/mutation-testing.md` |
-| Deploying | `docs/deploy-droplet.md`, `docs/family-cloudflare.md`, `docs/deploy-kokoro.md` (mouth), `docs/deploy-moonshine.md` (ear) |
+| Deploying | `docs/deploy-droplet.md`, `docs/family-cloudflare.md`, `docs/deploy-kokoro.md` + `docs/deploy-piper.md` (mouth), `docs/deploy-moonshine.md` (ear) |
 | The GraphQL API | `docs/graphql-api.md` |
 
 ⚠️ **A code comment saying "CLAUDE.md item 38" means item 38 of `docs/journal/build-log.md`.** Twenty-four comments across the source carry that form; they were written when the history lived here. They were deliberately left alone rather than rewritten in bulk — the item numbers are what matters and they are unchanged.

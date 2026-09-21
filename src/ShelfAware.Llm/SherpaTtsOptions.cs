@@ -19,8 +19,14 @@ public interface ISherpaTtsModel
     IReadOnlyList<string> Missing();
 
     /// <summary>Points <paramref name="config"/> at these files. Each family fills a different sub-block
-    /// and leaves the others empty, which is how sherpa-onnx decides what it is loading.</summary>
-    void Apply(OfflineTtsConfig config);
+    /// and leaves the others empty, which is how sherpa-onnx decides what it is loading.
+    /// <para>⚠️ <c>ref</c>, and it has to be: every one of sherpa-onnx 1.13.8's config types is a STRUCT
+    /// (<c>OfflineTtsConfig</c>, <c>OfflineTtsModelConfig</c> and each family's block alike). Taken by
+    /// value, this method would fill a copy, return, and leave the caller's config empty — and an empty
+    /// config is not something the native library reports, so the first read-aloud on every box would
+    /// die with no managed exception and nothing of ours in the log. Written by value first, and caught
+    /// by <c>SherpaTtsModelTests</c> rather than by the suite, which is the argument for the test.</para></summary>
+    void Apply(ref OfflineTtsConfig config);
 }
 
 /// <summary>

@@ -65,7 +65,7 @@ public sealed record PiperModelFiles(string Model, string Tokens, string DataDir
     }
 
     /// <inheritdoc />
-    public void Apply(OfflineTtsConfig config)
+    public void Apply(ref OfflineTtsConfig config)
     {
         config.Model.Vits.Model = Model;
         config.Model.Vits.Tokens = Tokens;
