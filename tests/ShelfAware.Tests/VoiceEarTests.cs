@@ -79,4 +79,28 @@ public class VoiceEarTests
         Assert.Null(VoiceEar.Availability(localEar: false, managed: true, "host-key").WhyNot());
         Assert.True(VoiceEar.Availability(localEar: false, managed: true, "host-key").CanHear());
     }
+
+    [Fact]
+    public void An_implementation_that_answers_only_the_key_is_read_as_the_byok_box_it_is()
+    {
+        // ⚠️ Managed and LocalEar are DEFAULT interface members, so an implementation written before
+        // either existed — a stub, an older provider, a test fake — silently takes both defaults. This
+        // pins what those defaults mean: the self-host/BYOK shape, where a key is the only way to hear.
+        // If someone ever flips a default to true, the boxes that never opted in start offering a
+        // microphone they cannot use, and nothing else in the suite would notice.
+        IVoiceCredentials keyless = new OnlyAKey("");
+        IVoiceCredentials keyed = new OnlyAKey("visitor-key");
+
+        Assert.False(keyless.Managed);
+        Assert.False(keyless.LocalEar);
+        Assert.Equal(EarAvailability.NeedsVisitorKey, keyless.Ear);
+        Assert.Equal("Add your ElevenLabs key in Settings to use voice.", keyless.Ear.WhyNot());
+        Assert.Equal(EarAvailability.Ready, keyed.Ear);
+    }
+
+    /// <summary>The smallest thing that can implement the interface: a key and nothing else.</summary>
+    private sealed record OnlyAKey(string ApiKey) : IVoiceCredentials
+    {
+        public string AgentId => "";
+    }
 }

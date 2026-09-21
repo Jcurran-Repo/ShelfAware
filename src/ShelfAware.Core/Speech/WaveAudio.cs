@@ -24,6 +24,11 @@ public static class WaveAudio
     private const short BitsPerSample = 16;
     private const short Channels = 1;
 
+    /// <summary>The most channels <see cref="Decode"/> will downmix. A microphone array is the most a
+    /// browser can plausibly hand over; past that the header is describing something this app did not
+    /// record, and refusing is cheaper than averaging it.</summary>
+    private const int MaxChannels = 16;
+
 
     /// <summary>
     /// Encodes mono float samples (nominally −1…1) as 16-bit PCM in a WAV container.
@@ -113,6 +118,7 @@ public static class WaveAudio
 
         int channels = 0, sampleRate = 0, bits = 0;
         var format = (short)0;
+        var sawFmt = false;
 
         // Walk the chunks rather than assuming the canonical 44-byte layout: real encoders interleave
         // LIST/fact chunks before the data, and a reader that jumped to byte 44 would read those as audio.
@@ -121,7 +127,12 @@ public static class WaveAudio
         {
             var id = wav.Slice(at, 4);
             var size = ReadInt32(wav[(at + 4)..]);
-            if (size < 0 || at + 8 + size > wav.Length) size = wav.Length - at - 8; // truncated: take what's there
+            // ⚠️ Written as a SUBTRACTION, never `at + 8 + size > wav.Length`: the size is four bytes of
+            // whatever the client sent, and an addition overflows to a negative on a declared size near
+            // int.MaxValue — which passes both halves of this guard and leaves the Slice below to throw
+            // ArgumentOutOfRangeException, an exception this method's contract does not allow and its
+            // only caller does not catch. The loop condition guarantees the right-hand side is >= 0.
+            if (size < 0 || size > wav.Length - at - 8) size = wav.Length - at - 8; // truncated: take what's there
             var body = wav.Slice(at + 8, size);
 
             if (id.SequenceEqual("fmt "u8))
@@ -131,10 +142,18 @@ public static class WaveAudio
                 channels = ReadInt16(body[2..]);
                 sampleRate = ReadInt32(body[4..]);
                 bits = ReadInt16(body[14..]);
+                sawFmt = true;
             }
             else if (id.SequenceEqual("data"u8))
             {
-                if (channels == 0) throw new InvalidDataException("Not a WAV this can read: data before fmt.");
+                if (!sawFmt) throw new InvalidDataException("Not a WAV this can read: data before fmt.");
+                // ⚠️ `<= 0`, not `== 0`: the channel count is a SIGNED 16-bit field, so 0xFFFF reads as
+                // -1, and a negative divisor below makes `frames` negative and `new float[frames]` throw
+                // OverflowException — again an exception this contract does not allow. A count is also
+                // bounded: a capture with more channels than this is a header that is lying about
+                // something, and downmixing a thousand of them is work nobody asked for.
+                if (channels is <= 0 or > MaxChannels) throw new InvalidDataException(
+                    $"Not a WAV this can read: its header says {channels} channel(s).");
                 // 1 = PCM. 0xFFFE is WAVE_FORMAT_EXTENSIBLE, whose samples are still PCM when the bit
                 // depth says 16 — which is what a browser's OfflineAudioContext export looks like.
                 if (format is not (PcmFormat or unchecked((short)0xFFFE)))
