@@ -51,6 +51,8 @@ rounding error.
 ## 1. Unpack a model
 
 ```bash
+# A minimal Ubuntu image ships no bzip2, and GNU tar shells out to it to read a .tar.bz2.
+command -v bzip2 >/dev/null || sudo apt-get update && sudo apt-get install -y bzip2
 sudo mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models
 curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-tiny-en-int8.tar.bz2
 # Release assets sit on a mutable tag, and this one is unpacked as root. Measured 2026-09-21; the CI
