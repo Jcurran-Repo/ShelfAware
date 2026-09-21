@@ -26,6 +26,16 @@ Three constraints shape all of it:
 - A droplet: **Ubuntu 24.04 LTS**, 1 GB RAM works, 2 GB is comfortable. Root SSH.
 - A domain or subdomain whose **A record already points at the droplet** — certificate
   issuance fails without it, and the mic needs the resulting HTTPS.
+  As shipped, `deploy/Caddyfile` fronts the box with two names: **heyreginald.com**
+  (the brand domain, registered 2026-09-21) and **demo.shelfaware.net** (the original,
+  kept so existing links keep working). ⚠️ If the zone is on Cloudflare, the A record
+  must be **gray-cloud / DNS-only**: an orange-cloud record puts Cloudflare's proxy in
+  front, which terminates TLS itself and so starves Caddy's HTTP-01 challenge. Orange
+  cloud is correct for the family box's *tunnel* (`docs/family-cloudflare.md`) and
+  wrong here — the two boxes want opposite settings, which is exactly the sort of
+  detail that gets copied from the wrong page.
+  Every name Caddy proxies must also appear in `AllowedHosts` (`deploy/env.example`);
+  a name in one and not the other 400s at the app and reads as a broken deploy.
 - Locally: Windows 10+ (`ssh`, `scp`, and `tar` are built in) with the .NET 10 SDK.
 
 ## First-time setup (once, on the droplet)

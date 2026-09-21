@@ -8,6 +8,23 @@
 # the URLs the app generates for OAuth all key on them). Swapping in a proxy that
 # omits any of that breaks the corresponding feature -- see the Nginx note in
 # docs/deploy-droplet.md.
-demo.shelfaware.net {
+#
+# Two names front the same demo box: heyreginald.com (the brand domain, registered
+# 2026-09-21) and demo.shelfaware.net (the original, kept so existing links and the
+# 2026-08-11 deploy keep working). Both are listed deliberately -- retiring the old
+# one is a separate decision, and dropping it here would break it silently.
+#
+# ORDER MATTERS: each name here gets its own certificate at reload, and issuance needs
+# that name's A record already pointing at this droplet, gray-cloud/DNS-only if the
+# zone is on Cloudflare. Add a name to DNS first, reload second. A name whose DNS is
+# not ready doesn't take the others down -- Caddy retries it in the background -- but
+# it does serve nothing until the retry succeeds.
+heyreginald.com, demo.shelfaware.net {
 	reverse_proxy 127.0.0.1:5000
+}
+
+# www exists only to send people to the apex, so there is one canonical URL in links,
+# bookmarks and the account-activation emails the app builds from the request Host.
+www.heyreginald.com {
+	redir https://heyreginald.com{uri} permanent
 }
