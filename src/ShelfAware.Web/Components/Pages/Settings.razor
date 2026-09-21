@@ -25,6 +25,7 @@
 @inject TourCoordinator Tour
 @inject ApiTokenService Tokens
 @inject IConfiguration Configuration
+@inject IVoiceCredentials Voice
 
 <PageTitle>Settings — Reginald</PageTitle>
 
@@ -267,7 +268,16 @@
 
 @* Calibration is per DEVICE, not per household — two people in one kitchen still have different
    microphones, and one of them is on a phone. So this panel shows even on a managed deployment, where
-   the keys panel is hidden: it isn't a key, it's what this room sounds like. *@
+   the keys panel is hidden: it isn't a key, it's what this room sounds like.
+
+   ⚠️ It does NOT show on a box with no ear. Calibration measures a room for a cook-along that such a
+   box doesn't offer, and its button was the one microphone left in the app that decided for itself —
+   on browser support alone — while every other affordance asked VoiceEar. A visitor could be asked
+   for their microphone, recorded saying "next", and handed a calibration for a feature that isn't
+   there. Four sites converted and one left behind is the shape CLAUDE.md warns about; this is the
+   fifth. *@
+@if (Voice.Ear.CanHear())
+{
 <section class="panel">
     <h2>Hands-free listening</h2>
     <p class="muted">
@@ -339,6 +349,7 @@
         </div>
     }
 </section>
+}
 
 <BillingPanel Enabled="Payments.Value.IsConfigured"
               Managed="AiSettings.Managed"
@@ -866,6 +877,16 @@
         // analyser are single globals, so the second overwrites the first's, and the first's cleanup then
         // tears down the session the second is still measuring with.
         if (calibrationStage is not CalibrationStage.Idle) return;
+
+        // The panel above is hidden on a box with no ear; this is the same question asked of the
+        // BEHAVIOUR, because hiding markup is not the same as not doing the thing — the mistake this
+        // branch's review found in VoiceAgent. Browser support is asked next, and only next: whether
+        // this browser can listen never decided whether this deployment can.
+        if (Voice.Ear.WhyNot() is { } shut)
+        {
+            calibrationError = shut;
+            return;
+        }
 
         calibrationError = null;
         var ear = await EarAsync();

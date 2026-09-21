@@ -752,3 +752,52 @@ public class SettingsApiAccessTests : SettingsTestBase
         });
     }
 }
+
+/// <summary>
+/// Settings' one microphone. Calibration is the last mic affordance in the app that decided for itself
+/// whether to offer — on browser support alone — while push-to-talk, the roaming assistant, the reader
+/// and the cook-along button all asked <see cref="ShelfAware.Core.Speech.VoiceEar"/>. Four sites
+/// converted and one left behind is the failure CLAUDE.md names; this file is the fifth site's guard.
+/// </summary>
+public class SettingsCalibrationEarTests : SettingsTestBase
+{
+    private protected override LlmOptions ServerLlm => new() { KeyMode = "managed", ApiKey = "sk-host-key" };
+
+    [Fact]
+    public void A_box_with_no_ear_does_not_offer_to_measure_a_room()
+    {
+        // The demo box: managed, no ElevenLabs key, no local model. Pressing it asked a visitor for
+        // their microphone, recorded them saying "next" and a question, and wrote a calibration for a
+        // cook-along the same deployment doesn't offer.
+        Voice.ApiKey = "";
+        Voice.Managed = true;
+
+        var cut = RenderSettings();
+
+        Assert.DoesNotContain("Calibrate listening", cut.Markup);
+        Assert.DoesNotContain("Hands-free listening", cut.Markup);
+    }
+
+    [Fact]
+    public void A_local_ear_is_enough_to_offer_it_with_no_key_anywhere()
+    {
+        // Speech:Ear=Moonshine: keyless, managed, and fully able to listen — so calibration is exactly
+        // as useful as it is on the family box. This is what fails if the gate is ever "simplified"
+        // back to asking about a key.
+        Voice.ApiKey = "";
+        Voice.Managed = true;
+        Voice.LocalEar = true;
+
+        var cut = RenderSettings();
+
+        Assert.Contains("Calibrate listening", cut.Markup);
+    }
+
+    [Fact]
+    public void A_box_that_can_hear_still_offers_it()
+    {
+        var cut = RenderSettings();   // the harness default carries a voice key
+
+        Assert.Contains("Calibrate listening", cut.Markup);
+    }
+}

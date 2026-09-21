@@ -22,8 +22,13 @@
     <div class="ra-head">
         <h3>@(HandsFree ? "🎙 Cooking" : "🔊 Reading"): @Recipe.Name</h3>
         <div class="ra-head-actions">
-            <button class="secondary" @onclick="BackToAssistantAsync"
-                    aria-label="Stop reading and hand back to the voice assistant" title="Stop reading and talk to the assistant">🎤 Back to assistant</button>
+            @* There is no assistant to hand back to on a box with no ear — and handing back used to
+               start it invisibly, since the agent lives in the layout whether or not it renders. *@
+            @if (Voice.Ear.CanHear())
+            {
+                <button class="secondary" @onclick="BackToAssistantAsync"
+                        aria-label="Stop reading and hand back to the voice assistant" title="Stop reading and talk to the assistant">🎤 Back to assistant</button>
+            }
             <button class="icon-btn" @onclick="CloseAsync" aria-label="Stop reading @Recipe.Name" title="Stop reading">✕</button>
         </div>
     </div>
@@ -68,7 +73,13 @@
                 @if (micError is not null)
                 {
                     <p class="muted small" role="status">@micError Use the buttons above.</p>
-                    <button class="secondary" @onclick="ListenAgainAsync" aria-label="Try the microphone again">🎙 Try again</button>
+                    @* "Try again" is for a mic a cook can actually fix — a denied permission, a headset
+                       that wasn't plugged in. On a box with no ear it would fail identically forever,
+                       and VoiceEar's own rule is that a control which cannot do its job isn't offered. *@
+                    @if (Voice.Ear.CanHear())
+                    {
+                        <button class="secondary" @onclick="ListenAgainAsync" aria-label="Try the microphone again">🎙 Try again</button>
+                    }
                 }
                 else if (voiceStopped)
                 {

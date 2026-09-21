@@ -69,6 +69,8 @@ public class DeafBoxVoiceTests : VoiceTestBase
         Assert.Contains("Use the buttons above.", cut.Markup);
         // ⚠️ Never ask a managed visitor for a key they cannot supply.
         Assert.DoesNotContain("key in Settings", cut.Markup);
+        // And no "Try again", which here would fail identically every time it was pressed.
+        Assert.DoesNotContain("Try again", cut.Markup);
         // And it never asked the browser for the microphone at all.
         Assert.DoesNotContain(JSInterop.Invocations, i => i.Identifier == "startSession");
     }
@@ -84,6 +86,55 @@ public class DeafBoxVoiceTests : VoiceTestBase
 
         Assert.DoesNotContain("Cook-along", cut.Markup);
         Assert.Contains("Read it to me", cut.Markup);
+    }
+
+    [Fact]
+    public async Task Handing_back_to_the_assistant_cannot_open_a_microphone_nobody_can_see()
+    {
+        // ⚠️ THE one this branch's review found, and the reason the gate exists as a rule rather than a
+        // habit: an `@if` around the agent's markup left the component alive, subscribed and holding its
+        // JS module. "Back to assistant" reached ResumeRequested, the mic opened, `StateHasChanged`
+        // rendered nothing, and the capture loop ran with no panel, no error line and no End button —
+        // an open microphone with no way to close it, on exactly the deployment the gate was written for.
+        // The markup assertion above stays green through all of that, which is the whole point of this
+        // test driving the EVENT instead.
+        MakeBoxDeaf();
+        JSInterop.SetupModule("/js/conversation.js").Setup<bool>("isSupported").SetResult(true);
+
+        var cut = Render<VoiceAgent>();
+        await cut.InvokeAsync(() => Coordinator.RequestResumeAsync());
+
+        Assert.DoesNotContain(JSInterop.Invocations, i => i.Identifier == "start");
+        Assert.Empty(cut.Markup.Trim());
+    }
+
+    [Fact]
+    public void The_reader_offers_no_hand_back_to_an_assistant_that_cannot_run()
+    {
+        // The other end of the same rope: the button that raised ResumeRequested. A box with no ear has
+        // no assistant to go back TO, so offering the trip is offering nothing.
+        MakeBoxDeaf();
+        SeedRecipe();
+        JSInterop.SetupModule("/js/voice.js");
+        JSInterop.SetupModule("/js/reader.js");
+
+        var cut = Render<RecipeReadAloud>(p => p.Add(c => c.Recipe, TheRecipe()));
+
+        Assert.DoesNotContain("Back to assistant", cut.Markup);
+    }
+
+    [Fact]
+    public void A_box_that_can_hear_still_offers_the_hand_back()
+    {
+        // ...and the over-correction guard, since hiding it everywhere would cost the family box the
+        // one control that gets a cook out of a recipe and back into a conversation.
+        SeedRecipe();
+        JSInterop.SetupModule("/js/voice.js");
+        JSInterop.SetupModule("/js/reader.js");
+
+        var cut = Render<RecipeReadAloud>(p => p.Add(c => c.Recipe, TheRecipe()));
+
+        Assert.Contains("Back to assistant", cut.Markup);
     }
 
     [Fact]

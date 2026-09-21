@@ -43,9 +43,14 @@ the built-in reader.
     decode what it just recorded. If that conversion fails it falls back to the compressed bytes, which
     a cloud ear still reads and a local one refuses by name.
 - **Whether a box can hear at all is ONE definition: `VoiceEar`,** asked by every microphone affordance
-  (push-to-talk, the roaming assistant, the hands-free reader, the Recipes cook-along button) and by the
+  — push-to-talk, the roaming assistant, the hands-free reader, the Recipes cook-along button, the
+  reader's "Back to assistant" and "Try again", and Settings' listening calibration — and by the
   transcriber's failure copy. A box that cannot hear offers no microphone rather than recording someone
-  and then refusing. ⚠️ The two shut states are deliberately different sentences: BYOK with no key says
+  and then refusing. ⚠️ It gates BEHAVIOUR, not only markup: the pre-merge review found that hiding the
+  roaming assistant's panel behind an `@if` left the component alive and subscribed, so "Back to
+  assistant" opened the microphone and rendered nothing — an open mic with no panel and no way to end
+  it. `VoiceAgent.StartListeningAsync` and `Settings.CalibrateAsync` ask the predicate themselves, and
+  the tests that hold this drive the EVENT rather than reading the markup (`DeafBoxVoiceTests`). ⚠️ The two shut states are deliberately different sentences: BYOK with no key says
   "add your key in Settings", a managed box with no host key says "not available on this box" — on a
   managed deployment that Settings panel is hidden and a pasted key is a no-op, so the instruction would
   be impossible to follow. A local ear is `Ready` regardless of any key.
