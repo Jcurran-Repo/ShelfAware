@@ -17,6 +17,8 @@
 //   2. Endpointing. The window closes when they stop talking, not on a fixed timer, so a short "next"
 //      returns immediately and a long question isn't guillotined mid-sentence.
 
+import { toMonoWav16k, bytesToBase64 } from './pcm.js';
+
 let stream = null;
 let audioCtx = null;
 let analyser = null;
@@ -172,6 +174,11 @@ export async function listen(settings) {
     const blob = await stopAndCollect(recorder, chunks);
     if (cancelled || !spoke || !blob || blob.size === 0) return { heard: false };
 
+    // 16 kHz PCM (see pcm.js): the ear may be a model in this process, which has no decoder. Null means
+    // the browser couldn't decode its own recording — send the original rather than lose the utterance.
+    const wav = await toMonoWav16k(blob);
+    if (wav) return { heard: true, audio: bytesToBase64(wav.bytes), mimeType: wav.mimeType };
+
     const buffer = await blob.arrayBuffer();
     return {
         heard: true,
@@ -290,16 +297,6 @@ function pickMimeType() {
         if (window.MediaRecorder && MediaRecorder.isTypeSupported(c)) return c;
     }
     return '';
-}
-
-// Chunked to avoid blowing the argument limit of String.fromCharCode on large buffers.
-function bytesToBase64(bytes) {
-    let binary = '';
-    const chunkSize = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
-    }
-    return btoa(binary);
 }
 
 const wait = ms => new Promise(r => setTimeout(r, ms));

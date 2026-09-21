@@ -122,6 +122,54 @@ moving that back and `systemctl start shelfaware`. Data is untouched either way:
 lives in `/var/lib/shelfaware`, not the app directory. (The publish output lands in
 `src/ShelfAware.Web/bin/publish/linux-x64` locally, which is gitignored.)
 
+## Deploying from CI, so it doesn't need anyone at a desk
+
+[`deploy/deploy.ps1`](../deploy/deploy.ps1) needs a Windows checkout, an ssh key on the machine, and a
+person at it. [`.github/workflows/deploy-droplet.yml`](../.github/workflows/deploy-droplet.yml) is the
+same sequence — publish `linux-x64`, ship the tarball, run `install.sh`, check `/healthz` — run by a
+GitHub runner instead. It exists because a **project session cannot reach the droplet**: it has no ssh
+client and port 22 is unreachable from it, while a runner has both.
+
+**Manual dispatch only, never on push.** A merge to `master` must not deploy anything: what LANDS on
+master and what is LIVE are separate decisions and stay separate here. The workflow takes a `ref`, so
+an *unmerged* branch can be put on the demo box and tried before it is merged — which is the right
+order for a demo box.
+
+Setting it up, once:
+
+1. **A dedicated deploy key**, not a personal one:
+   ```bash
+   ssh-keygen -t ed25519 -f ~/.ssh/shelfaware-deploy -C 'github-actions deploy' -N ''
+   ssh-copy-id -i ~/.ssh/shelfaware-deploy.pub root@<droplet>     # or append it to authorized_keys
+   ssh-keyscan -H <droplet> > /tmp/known_hosts                    # for step 3's third secret
+   ```
+2. **An environment named `droplet`** (Settings → Environments) with yourself as a required reviewer.
+   Nothing reaches the box until you press the button.
+3. **Three secrets on THAT ENVIRONMENT** — Settings → Environments → droplet → *Environment secrets*,
+   **not** repository secrets: `DROPLET_SSH_KEY` (the contents of the private half), `DROPLET_HOST`
+   (`root@<ip>`), and `DROPLET_KNOWN_HOSTS` (that `ssh-keyscan` output, required).
+
+   ⚠️ **The distinction is the whole security of this.** On a `workflow_dispatch`, GitHub runs the
+   workflow file *from the branch being dispatched* — so anyone who can push a branch can push a copy
+   of `deploy-droplet.yml` with the `environment:` line removed and dispatch that. A **repository**
+   secret would be handed to it anyway, no reviewer prompted, and the private half of a key that is
+   `root` on the box would be one `echo` away. An **environment** secret would not: no environment, no
+   key, no deploy. The approval stops being a line in a file that the next branch can delete.
+
+Run it from Actions → *Deploy to the droplet* → **Run workflow**, choosing the branch. Tick
+**bootstrap** the first time: it adds the 2 GB swap file and unpacks the Kokoro and Moonshine models,
+idempotently, so a rebuilt droplet is one dispatch away rather than an afternoon with this page. Both
+archives are checked against a recorded sha256 before anything is unpacked — they are fetched as root
+onto a box holding real data, and a release tag is mutable.
+
+⚠️ **The workflow only becomes dispatchable once it is on `master`.** GitHub lists a
+`workflow_dispatch` workflow from the default branch, so there is no *Run workflow* button — and no way
+to trigger it for any branch — until this file has been merged. Merging it deploys nothing by itself.
+
+⚠️ **The env file is not in this**, by design. `/etc/shelfaware/env` holds the box's secrets, lives
+only on the box, and a deploy never touches it — which is also why a setting change still needs an ssh
+session and a `systemctl restart`.
+
 ## The demo posture, spelled out
 
 - **BYOK, enforced by absence.** The box holds no AI keys, so there is nothing to leak

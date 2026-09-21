@@ -309,10 +309,20 @@ internal sealed class FakeSubstituteAdvisor : IProductSubstituteAdvisor
         Task.FromResult(Substitutes);
 }
 
+/// <summary>Voice credentials for a page test. Defaults to a box that CAN hear — the mic affordances
+/// only render when <see cref="IVoiceCredentials.Ear"/> says so, and nearly every voice page test is
+/// about what the microphone DOES, not about its absence. A test that wants a deaf box clears
+/// <see cref="ApiKey"/> (self-host: "add your key") or also sets <see cref="Managed"/> (a managed box
+/// whose host configured none, which is the demo box).</summary>
 internal sealed class FakeVoiceCredentials : IVoiceCredentials
 {
-    public string ApiKey { get; set; } = "";
+    public string ApiKey { get; set; } = "test-voice-key";
     public string AgentId { get; set; } = "";
+    public bool Managed { get; set; }
+
+    /// <summary>This box hears with a model of its own (Speech:Ear=Moonshine), so it needs no key from
+    /// anyone — the demo box's shape.</summary>
+    public bool LocalEar { get; set; }
 }
 
 /// <summary>The box-wide demo valve for AiErrorText's pre-check. Blocks with <paramref name="message"/>, or

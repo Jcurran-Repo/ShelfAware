@@ -80,19 +80,15 @@ Console.WriteLine();
 Console.WriteLine($"Wrote {result.Audio.Length:N0} bytes of {result.MediaType} to {Path.GetFullPath(outputPath)}");
 Console.WriteLine($"Took {started.Elapsed.TotalSeconds:F1}s including the one-off model load.");
 
-// Read the duration back out of the header rather than dividing by a rate typed in here: the model reports
+// Read the duration back out of the CLIP rather than dividing by a rate typed in here: the model reports
 // its own sample rate (the log line above says it), and two places computing the same number from
-// different sources is how one of them ends up describing a clip the other didn't produce.
-var (seconds, rate) = DurationOf(result.Audio);
+// different sources is how one of them ends up describing a clip the other didn't produce. Through
+// WaveAudio's own decoder, which also means a clip this tool describes is provably one the app can read
+// back -- the ear (tools/MoonshineCheck) opens it with exactly this call.
+var decoded = WaveAudio.Decode(result.Audio);
+var seconds = decoded.Samples.Length / (double)decoded.SampleRate;
+var rate = decoded.SampleRate;
 Console.WriteLine($"Roughly {seconds:F1}s of audio at {rate} Hz. Play it: the voice should read that "
                   + "sentence, with \"350 degrees Fahrenheit\" spelled out.");
 return 0;
 
-// Length and rate straight off the WAV header, the way a player reads them.
-static (double Seconds, int Rate) DurationOf(byte[] wav)
-{
-    var rate = BitConverter.ToInt32(wav, 24);
-    var bytesPerSecond = BitConverter.ToInt32(wav, 28);
-    var dataBytes = BitConverter.ToInt32(wav, 40);
-    return (dataBytes / (double)bytesPerSecond, rate);
-}

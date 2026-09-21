@@ -16,16 +16,30 @@ public sealed class CircuitVoiceCredentials : IVoiceCredentials
     private readonly string _fallbackAgentId;
     private readonly bool _managed;
 
-    public CircuitVoiceCredentials(IOptions<ElevenLabsOptions> fallback, IOptions<LlmOptions> deployment)
+    public CircuitVoiceCredentials(
+        IOptions<ElevenLabsOptions> fallback, IOptions<LlmOptions> deployment, IConfiguration configuration)
     {
         _fallbackKey = fallback.Value.ApiKey;
         _fallbackAgentId = fallback.Value.AgentId;
         _managed = deployment.Value.IsManaged; // managed = the host's voice key too; ignore browser creds
+        // Asked of SpeechRegistration rather than read here, so registration and this object cannot come
+        // to different conclusions about which ear is running — one offering a microphone the other then
+        // refuses to use is precisely the split this codebase keeps paying for.
+        LocalEar = SpeechRegistration.EarOf(configuration) == EarProvider.Moonshine;
         Reset();
     }
 
     public string ApiKey { get; private set; } = "";
     public string AgentId { get; private set; } = "";
+
+    /// <summary>The host's keys are authoritative here, so <see cref="Apply"/> is a no-op and the ear is
+    /// the host's to provide or not. Read by <see cref="IVoiceCredentials.Ear"/>, which is what decides
+    /// whether a microphone is offered at all.</summary>
+    public bool Managed => _managed;
+
+    /// <summary>This box hears with its own model, so no credential is needed to listen — read by
+    /// <see cref="IVoiceCredentials.Ear"/>, which is the one question every microphone affordance asks.</summary>
+    public bool LocalEar { get; }
 
     /// <summary>True once the visitor's browser voice creds have been applied (vs the dev/config fallback).</summary>
     public bool FromBrowser { get; private set; }

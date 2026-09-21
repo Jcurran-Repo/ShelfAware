@@ -13,4 +13,20 @@ public interface IVoiceCredentials
 
     /// <summary>Optional cook-along conversational-agent id.</summary>
     string AgentId { get; }
+
+    /// <summary>True when the host's keys are authoritative on this deployment and a browser-supplied
+    /// one is ignored. Defaulted to false — the BYOK/self-host shape — so a stub or a test fake states
+    /// only what it cares about; <c>CircuitVoiceCredentials</c> in the Web layer is the implementation
+    /// that knows.</summary>
+    bool Managed => false;
+
+    /// <summary>True when this box transcribes with a model of its OWN (Speech:Ear=Moonshine), so no
+    /// credential is needed to listen. Defaulted false — the historical shape — so a stub or a test fake
+    /// states only what it cares about.</summary>
+    bool LocalEar => false;
+
+    /// <summary>Whether this deployment can hear, from the ONE definition every site asks — the mic
+    /// affordances, the hands-free reader, and the transcriber's own failure copy. A default member
+    /// rather than a property each implementer answers for itself: that is the whole point of it.</summary>
+    EarAvailability Ear => VoiceEar.Availability(LocalEar, Managed, ApiKey);
 }

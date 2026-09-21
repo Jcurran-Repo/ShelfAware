@@ -14,6 +14,7 @@
 @using ShelfAware.Web.Services
 @implements IAsyncDisposable
 @inject ISpeechToText Stt
+@inject IVoiceCredentials Voice
 @inject IPantryChat Chat
 @inject ITextToSpeech Tts
 @inject IEntitlements Entitlements
@@ -24,6 +25,10 @@
 @inject VoiceCoordinator Coordinator
 @inject ILogger<VoiceAgent> Log
 
+@* A box with no ear offers no microphone. The button would record a whole sentence and then hand
+   back VoiceEar's refusal, which on a managed box names a Settings panel that isn't there. *@
+@if (Voice.Ear.CanHear())
+{
 <aside class="voice-agent @(active ? "is-active" : null)" aria-label="Voice assistant">
     @if (!active)
     {
@@ -71,6 +76,7 @@
         </div>
     }
 </aside>
+}
 
 @code {
     private enum Phase { Listening, Thinking, Speaking }
@@ -102,6 +108,12 @@
 
     protected override void OnInitialized()
     {
+        // ⚠️ The ear gates the BEHAVIOUR, not only the markup above. An `@if` around the panel leaves
+        // this component alive and subscribed: "Back to assistant" would reach ResumeAsync, open the
+        // microphone, and render nothing — an open mic with no panel and no way to end it, on exactly
+        // the deployment the gate was written for. Found by the pre-merge review, 2026-09-21.
+        if (!Voice.Ear.CanHear()) return;
+
         Coordinator.ResumeRequested += ResumeAsync;
         // A reader is taking the mic. Let go of it, but keep the conversation — "Back to assistant"
         // should pick up where we left off, not start over.
@@ -112,7 +124,7 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender) return;
+        if (!firstRender || !Voice.Ear.CanHear()) return;
         _module = await JS.InvokeAsync<IJSObjectReference>("import", "/js/conversation.js");
         _supported = await _module.InvokeAsync<bool>("isSupported");
         _checked = true;
@@ -128,6 +140,9 @@
 
     private async Task StartListeningAsync(bool resetHistory)
     {
+        // The last word on it, beside the two guards above: whatever reaches this method — a coordinator
+        // event, a resumed circuit, a future caller — a box with no ear does not open a microphone.
+        if (!Voice.Ear.CanHear()) return;
         if (_module is null || !_supported || active) return;
         if (resetHistory) history.Clear();
         pendingUser = null;

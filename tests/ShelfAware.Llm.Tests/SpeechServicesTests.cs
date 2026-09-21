@@ -23,7 +23,42 @@ public class SpeechServicesTests
 
     private static IVoiceCredentials Creds(string key = "test-key") => new FakeVoiceCredentials(key);
 
-    private sealed record FakeVoiceCredentials(string ApiKey, string AgentId = "") : IVoiceCredentials;
+    private sealed record FakeVoiceCredentials(string ApiKey, string AgentId = "", bool Managed = false)
+        : IVoiceCredentials;
+
+    // ---- The transcriber speaks VoiceEar's words, not its own ----------------------------------
+
+    [Fact]
+    public async Task A_keyless_byok_box_is_told_where_to_put_a_key_and_never_calls_out()
+    {
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Json(@"{ ""text"": ""should not happen"" }"));
+        var stt = new ElevenLabsSpeechToText(Client(handler), Opts(),
+            new FakeVoiceCredentials(ApiKey: ""), NullLogger<ElevenLabsSpeechToText>.Instance);
+
+        var result = await stt.TranscribeAsync(new AudioClip([1, 2, 3], "audio/webm"));
+
+        Assert.False(result.Success);
+        Assert.Equal("Add your ElevenLabs key in Settings to use voice.", result.Error);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task A_managed_box_with_no_host_key_is_not_sent_to_a_panel_it_does_not_have()
+    {
+        // The demo box (2026-09-21): managed, deliberately no ElevenLabs key. The old code answered
+        // this identically to the BYOK case above, naming a Settings panel a managed deployment hides
+        // and a key it ignores by design. One IsNullOrWhiteSpace(ApiKey) check cannot tell them apart.
+        var handler = FakeHttpMessageHandler.Returning(HttpResponses.Json(@"{ ""text"": ""should not happen"" }"));
+        var stt = new ElevenLabsSpeechToText(Client(handler), Opts(),
+            new FakeVoiceCredentials(ApiKey: "", Managed: true), NullLogger<ElevenLabsSpeechToText>.Instance);
+
+        var result = await stt.TranscribeAsync(new AudioClip([1, 2, 3], "audio/webm"));
+
+        Assert.False(result.Success);
+        Assert.Equal("Voice input isn't available on this box.", result.Error);
+        Assert.DoesNotContain("Settings", result.Error);
+        Assert.Empty(handler.Requests);
+    }
 
     // ---- Speech-to-text (Scribe) ---------------------------------------------------------------
 

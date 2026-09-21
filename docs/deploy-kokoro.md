@@ -11,10 +11,18 @@ That last part is the whole reason this shape was chosen over the HTTP sidecar i
 is a second thing to install, start, keep running, keep patched and keep off the internet, and the app
 is useless if it is down. The model is a directory.
 
-> **Status:** built and CI-green, and verified end to end on a development box — a recipe step was
-> synthesized through `KokoroTextToSpeech` and transcribed back to check the words came out. It has
-> **not yet run on the droplet or the family box**: the first deploy is the first real test of *those
-> boxes'* CPU and RAM. Run the check in step 3 there before flipping the app over.
+> **Status:** built, CI-green, and **running on the family box (Windows) since 2026-09-20** — recipes
+> read aloud there for $0. On **linux-x64** the publish and the model have been verified on a build box
+> (`dotnet publish -r linux-x64 --self-contained` carries both native libraries; `tools/KokoroCheck`
+> loads the model and speaks the test sentence), so nothing platform-shaped is left to discover. What
+> has **not** happened is a run on **the droplet itself** — the first deploy there is the first test of
+> *that box's* CPU and RAM, and the CPU note below is the reason that is not a formality. Run the check
+> in step 3 on the droplet before flipping the app over.
+
+This is the MOUTH. The ear — push-to-talk, the assistant, the cook-along's "next" — has a sibling
+that runs the same way, on the same package, for $0: [docs/deploy-moonshine.md](deploy-moonshine.md).
+The two are chosen separately (`Speech:Provider` and `Speech:Ear`), so a box can move one before the
+other; with both on it needs no ElevenLabs key at all.
 
 ## What talks to what
 
@@ -34,12 +42,21 @@ has ever been loaded.
   workable but not roomy, so **add a 2 GB swap file** (step 0). On a 1 GB box, keep ElevenLabs.
   The model loads on the **first read-aloud**, not at boot, and stays loaded after that — a box that
   never reads a recipe never pays the RAM.
-- **CPU: synthesis is roughly real-time.** Measured on a 4-core development box with the int8 model:
-  **1.39× real time at one thread, 1.08× at two, 0.96× at four** — so a ten-second step takes about ten
+- **CPU: synthesis is roughly real-time on a multi-core box, and about 2.4× real time on one core.**
+  Measured on a 4-core development box with the int8 model: **1.39× real time at one thread, 1.08× at
+  two, 0.96× at four**. Re-measured on **linux-x64** at the shipped default of two threads: **1.4× on
+  four cores, 2.4× pinned to a single core** (7.4 s of audio in 17.6 s, model load excluded). So on a
+  **1-vCPU droplet, budget roughly 2–2.5× real time**: a ten-second step takes about twenty-five
   seconds the first time it is read. The narration streams (the intro plays while later steps
   synthesize) and every clip is cached forever, so this is a first-read cost per step, not a per-read
-  one. A slower box makes the first read of a long recipe noticeably laggy; that is the honest trade
-  for $0.
+  one.
+
+  ⚠️ **On a public demo box that amortization does not happen.** The clip cache is per household and a
+  visitor arrives with an empty one, so *every* visitor pays the full first-read cost on *every* step
+  they hear — the ElevenLabs case ("slow once, then instant for everyone") is the family box's case,
+  not the demo's. On a 1-vCPU droplet that is a visibly laggy first read, which is the honest trade for
+  $0 and no key; a 2-vCPU box roughly halves it, and is the cheaper fix than going back to a metered
+  voice.
 - **Disk: ~152 MB** for the quantized model (below), or ~330 MB for full precision.
 - **No runtime dependencies to install.** The native library rides in the app's own publish output —
   `libonnxruntime.so` (26 MB) and `libsherpa-onnx-c-api.so` (5 MB), so **~31 MB on the publish**. A
@@ -70,7 +87,11 @@ sudo mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models
 curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-en-v0_19.tar.bz2
 tar xjf kokoro-int8-en-v0_19.tar.bz2 && rm kokoro-int8-en-v0_19.tar.bz2
 ls kokoro-int8-en-v0_19   # model.int8.onnx  voices.bin  tokens.txt  espeak-ng-data/  README.md  LICENSE
-sudo chown -R shelfaware:shelfaware /var/lib/shelfaware/models
+# Root-owned, world-readable: the app READS its model and never rewrites it — install.sh's
+# posture for the binaries, for the same reason. A process that gets compromised should not be
+# able to leave anything behind in a directory the app loads from.
+sudo chown -R root:root /var/lib/shelfaware/models
+sudo chmod -R a+rX /var/lib/shelfaware/models
 ```
 
 | Archive | Download | On disk | Voices | Notes |
@@ -91,6 +112,26 @@ Run the app's own synthesis path against the model directory:
 ```bash
 dotnet run --project tools/KokoroCheck -- /var/lib/shelfaware/models/kokoro-int8-en-v0_19 /tmp/kokoro-check.wav
 ```
+
+⚠️ **That line wants an SDK and a checkout, and the droplet is deliberately given neither** — the app
+ships self-contained precisely so the box needs no .NET install ([deploy.ps1](../deploy/deploy.ps1)).
+Don't install one to run a smoke test. Publish the check the same way the app is published, from the
+machine you deploy from, and send it up (~122 MB, delete it afterwards):
+
+```powershell
+dotnet publish tools\KokoroCheck -c Release -r linux-x64 --self-contained -o $env:TEMP\kcheck
+tar -czf $env:TEMP\kcheck.tar.gz -C $env:TEMP\kcheck .
+scp $env:TEMP\kcheck.tar.gz root@<droplet>:/tmp/
+```
+
+```bash
+mkdir -p /tmp/kcheck && tar -xzf /tmp/kcheck.tar.gz -C /tmp/kcheck && chmod +x /tmp/kcheck/KokoroCheck
+/tmp/kcheck/KokoroCheck /var/lib/shelfaware/models/kokoro-int8-en-v0_19 /tmp/kokoro-check.wav
+rm -rf /tmp/kcheck /tmp/kcheck.tar.gz      # it carries its own copy of the 26 MB runtime
+```
+
+It is the same binary the app uses, so what it proves about the box is what the app will do. `scp` the
+WAV back to listen to it — a droplet has no sound card.
 
 It prints the load time, the cache fingerprint and how long the synthesis took, and writes a WAV.
 **Play it.** The voice should read "Shelf Aware is talking. Sear the chicken six to seven minutes per

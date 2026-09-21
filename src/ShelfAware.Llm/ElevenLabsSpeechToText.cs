@@ -30,8 +30,10 @@ public class ElevenLabsSpeechToText : ISpeechToText
     public async Task<SpeechToTextResult> TranscribeAsync(AudioClip audio, CancellationToken cancellationToken = default)
     {
         if (audio.Data.Length == 0) return SpeechToTextResult.Fail("No audio to transcribe.");
-        if (string.IsNullOrWhiteSpace(_credentials.ApiKey))
-            return SpeechToTextResult.Fail("Add your ElevenLabs key in Settings to use voice.");
+        // The reason matters, not just the miss: on a managed box there is no key panel to send anyone
+        // to. VoiceEar owns both the predicate and the sentence, so this failure and the UI that should
+        // have stood down before reaching it can never tell a visitor two different stories.
+        if (_credentials.Ear.WhyNot() is { } shut) return SpeechToTextResult.Fail(shut);
 
         _logger.LogInformation("Transcribing {Bytes} bytes of {MediaType} via Scribe ({Model}).",
             audio.Data.Length, audio.MediaType, _options.SpeechToTextModel);
