@@ -5,7 +5,7 @@ using ShelfAware.Core.Speech;
 namespace ShelfAware.Llm.Tests;
 
 /// <summary>
-/// Drives <see cref="KokoroTextToSpeech"/> through a faked <see cref="IKokoroEngine"/> — no model, no
+/// Drives <see cref="SherpaTextToSpeech"/> through a faked <see cref="ITtsEngine"/> — no model, no
 /// native library — asserting what it asks the model to say and how it hands the result back. The
 /// in-process analogue of the ElevenLabs half of <see cref="SpeechServicesTests"/>, and the reason the
 /// engine is behind an interface at all: these are the observable facts (which words are spoken, what a
@@ -15,11 +15,11 @@ namespace ShelfAware.Llm.Tests;
 /// actually stops a synthesis — is <see cref="SherpaKokoroEngineTests"/>, which needs the real model and
 /// says so when it hasn't got one.</para>
 /// </summary>
-public class KokoroTextToSpeechTests
+public class SherpaTextToSpeechTests
 {
-    private static KokoroTextToSpeech Tts(FakeKokoroEngine engine, KokoroSpeechOptions? o = null) =>
-        new(engine, Options.Create(o ?? Model("kokoro-int8-en-v0_19")),
-            NullLogger<KokoroTextToSpeech>.Instance);
+    private static SherpaTextToSpeech Tts(FakeKokoroEngine engine, KokoroSpeechOptions? o = null) =>
+        new(engine, o ?? Model("kokoro-int8-en-v0_19"),
+            NullLogger<SherpaTextToSpeech>.Instance);
 
     /// <summary>Options naming a model directory that need not exist: nothing here loads one.</summary>
     private static KokoroSpeechOptions Model(string archive) =>
@@ -236,23 +236,23 @@ public class KokoroTextToSpeechTests
 }
 
 /// <summary>A model that says whatever it was told to say, and remembers what it was asked.</summary>
-internal sealed class FakeKokoroEngine : IKokoroEngine
+internal sealed class FakeKokoroEngine : ITtsEngine
 {
-    private readonly Func<string, KokoroAudio> _speak;
+    private readonly Func<string, SynthesizedAudio> _speak;
     private readonly List<string> _spoken = [];
 
-    private FakeKokoroEngine(Func<string, KokoroAudio> speak) => _speak = speak;
+    private FakeKokoroEngine(Func<string, SynthesizedAudio> speak) => _speak = speak;
 
     /// <summary>What the engine was actually asked to say, in order.</summary>
     public IReadOnlyList<string> Spoken => _spoken;
 
     public static FakeKokoroEngine Returning(float[] samples, int sampleRate = 24000) =>
-        new(_ => new KokoroAudio(samples, sampleRate));
+        new(_ => new SynthesizedAudio(samples, sampleRate));
 
     public static FakeKokoroEngine Throwing(Exception error) =>
         new(_ => throw error);
 
-    public Task<KokoroAudio> GenerateAsync(string text, CancellationToken cancellationToken = default)
+    public Task<SynthesizedAudio> GenerateAsync(string text, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         _spoken.Add(text);

@@ -190,9 +190,9 @@ public class ProviderErrorCopyTests
     {
         // Kokoro runs in this process, so there is no provider account to leak — but the exception text
         // still names filesystem paths, which is the same class of thing and the same rule.
-        var tts = new KokoroTextToSpeech(
-            FailingKokoroEngine.Instance, Options.Create(new KokoroSpeechOptions()),
-            NullLogger<KokoroTextToSpeech>.Instance);
+        var tts = new SherpaTextToSpeech(
+            FailingKokoroEngine.Instance, new KokoroSpeechOptions(),
+            NullLogger<SherpaTextToSpeech>.Instance);
 
         var result = await tts.SynthesizeAsync("Step 1. Sear the chicken.");
 
@@ -200,11 +200,11 @@ public class ProviderErrorCopyTests
         AssertSafe(result.Error);
     }
 
-    private sealed class FailingKokoroEngine : IKokoroEngine
+    private sealed class FailingKokoroEngine : ITtsEngine
     {
         public static readonly FailingKokoroEngine Instance = new();
 
-        public Task<KokoroAudio> GenerateAsync(string text, CancellationToken cancellationToken = default) =>
+        public Task<SynthesizedAudio> GenerateAsync(string text, CancellationToken cancellationToken = default) =>
             throw new InvalidOperationException(Secret);
 
         public void Dispose() { }

@@ -1,41 +1,42 @@
 using System.Globalization;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using ShelfAware.Core.Speech;
 
 namespace ShelfAware.Llm;
 
 /// <summary>
-/// <see cref="ITextToSpeech"/> over Kokoro-82M running IN THIS PROCESS (see <see cref="SherpaKokoroEngine"/>).
+/// <see cref="ITextToSpeech"/> over a local voice running IN THIS PROCESS (see <see cref="SherpaTtsEngine"/>).
 /// $0 per call — no key, no per-character fee, nothing to meter, and nothing deployed beside the app.
+/// Which model family speaks is <see cref="SherpaTtsOptions.Family"/>'s answer, and nothing in this class
+/// needs to know more than that.
 ///
 /// <para>This class is the policy half and owns everything a cache or a screen can observe: which words
 /// are actually spoken, what a failure says to the person, and what the fingerprint means. The model
-/// itself sits behind <see cref="IKokoroEngine"/> so all of that is testable without one.</para>
+/// itself sits behind <see cref="ITtsEngine"/> so all of that is testable without one.</para>
 ///
-/// <para>Kokoro has no continuity-hint concept, so the neighbouring segments in <see cref="SpeechContext"/>
-/// aren't used — each step is voiced on its own. They still key the cache upstream (harmless: at worst an
+/// <para>Neither local family has a continuity-hint concept, so the neighbouring segments in
+/// <see cref="SpeechContext"/> aren't used — each step is voiced on its own. They still key the cache upstream (harmless: at worst an
 /// edited neighbour re-synthesizes a clip that costs nothing anyway), so the cache stays
 /// provider-agnostic.</para>
 /// </summary>
-public class KokoroTextToSpeech : ITextToSpeech
+public class SherpaTextToSpeech : ITextToSpeech
 {
-    private readonly IKokoroEngine _engine;
-    private readonly KokoroSpeechOptions _options;
-    private readonly ILogger<KokoroTextToSpeech> _logger;
+    private readonly ITtsEngine _engine;
+    private readonly SherpaTtsOptions _options;
+    private readonly ILogger<SherpaTextToSpeech> _logger;
 
-    public KokoroTextToSpeech(
-        IKokoroEngine engine, IOptions<KokoroSpeechOptions> options, ILogger<KokoroTextToSpeech> logger)
+    public SherpaTextToSpeech(
+        ITtsEngine engine, SherpaTtsOptions options, ILogger<SherpaTextToSpeech> logger)
     {
         _engine = engine;
-        _options = options.Value;
+        _options = options;
         _logger = logger;
     }
 
     /// <inheritdoc />
     /// <remarks>
-    /// Leads with the provider name so a Kokoro clip can never be served for an ElevenLabs fingerprint or
-    /// vice versa. Carries NormalizeText (and through it <see cref="SpeechText.Version"/>) because it
+    /// Leads with the family name so a Kokoro clip can never be served for a Piper fingerprint, or either
+    /// for an ElevenLabs one. Carries NormalizeText (and through it <see cref="SpeechText.Version"/>) because it
     /// decides which words are actually spoken.
     /// <para>The model's identity is its ARCHIVE — the directory's own name (e.g.
     /// <c>kokoro-int8-en-v0_19</c>) plus the ONNX file inside it — not the full path it was unpacked to.
@@ -44,7 +45,7 @@ public class KokoroTextToSpeech : ITextToSpeech
     /// <para>NumThreads is deliberately absent: it changes how LONG synthesis takes, not what comes out.</para>
     /// </remarks>
     public string OutputFingerprint => string.Join('|',
-        "kokoro",
+        _options.Family,
         ArchiveName,
         _options.ModelFile,
         _options.SpeakerId.ToString(CultureInfo.InvariantCulture),
@@ -71,8 +72,8 @@ public class KokoroTextToSpeech : ITextToSpeech
         var spoken = _options.NormalizeText ? SpeechText.ForSpeech(text) : text;
         if (string.IsNullOrWhiteSpace(spoken)) return TextToSpeechResult.Fail("Nothing to speak.");
 
-        _logger.LogInformation("Synthesizing {Chars} character(s) with Kokoro (voice {SpeakerId}).",
-            spoken.Length, _options.SpeakerId);
+        _logger.LogInformation("Synthesizing {Chars} character(s) with {Family} (voice {SpeakerId}).",
+            spoken.Length, _options.Family, _options.SpeakerId);
 
         try
         {
@@ -85,7 +86,8 @@ public class KokoroTextToSpeech : ITextToSpeech
             // and synthesizes to nothing: the blank cases were turned away above.
             if (audio.Samples.Length == 0)
             {
-                _logger.LogError("Kokoro returned no samples for {Chars} character(s).", spoken.Length);
+                _logger.LogError("{Family} returned no samples for {Chars} character(s).",
+                    _options.Family, spoken.Length);
                 return TextToSpeechResult.Fail("Couldn't reach text-to-speech just now — please try again.");
             }
 
@@ -107,7 +109,7 @@ public class KokoroTextToSpeech : ITextToSpeech
             // Exception text to the log, plain copy to the screen — see AnthropicReceiptExtractor. The model
             // is local, so this most often means its files are missing or unreadable; the message says what
             // the person can do, and the log says which of the two it was.
-            _logger.LogError(ex, "Kokoro synthesis failed.");
+            _logger.LogError(ex, "{Family} synthesis failed.", _options.Family);
             return TextToSpeechResult.Fail("Couldn't reach text-to-speech just now — please try again.");
         }
     }

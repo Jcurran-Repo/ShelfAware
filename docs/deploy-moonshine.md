@@ -102,12 +102,12 @@ dotnet run --project tools/MoonshineCheck -- `
 ```
 
 It prints the load time, how long the transcription took, and **what it heard**. Hand it the WAV
-`tools/KokoroCheck` wrote and the two tools together test the whole voice stack: the mouth says a
+`tools/VoiceCheck` wrote and the two tools together test the whole voice stack: the mouth says a
 sentence, the ear reads it back.
 
 On the **droplet** there is no .NET SDK on purpose, so publish the check and send it up — the same
 recipe as [deploy-kokoro.md](deploy-kokoro.md) step 3, with `tools\MoonshineCheck` in place of
-`tools\KokoroCheck`.
+`tools\VoiceCheck`.
 
 ## 4. Point the app at it
 

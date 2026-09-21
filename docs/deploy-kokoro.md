@@ -13,7 +13,7 @@ is useless if it is down. The model is a directory.
 
 > **Status:** built, CI-green, and **running on the family box (Windows) since 2026-09-20** — recipes
 > read aloud there for $0. On **linux-x64** the publish and the model have been verified on a build box
-> (`dotnet publish -r linux-x64 --self-contained` carries both native libraries; `tools/KokoroCheck`
+> (`dotnet publish -r linux-x64 --self-contained` carries both native libraries; `tools/VoiceCheck`
 > loads the model and speaks the test sentence), so nothing platform-shaped is left to discover. What
 > has **not** happened is a run on **the droplet itself** — the first deploy there is the first test of
 > *that box's* CPU and RAM, and the CPU note below is the reason that is not a formality. Run the check
@@ -110,7 +110,7 @@ sudo chmod -R a+rX /var/lib/shelfaware/models
 Run the app's own synthesis path against the model directory:
 
 ```bash
-dotnet run --project tools/KokoroCheck -- /var/lib/shelfaware/models/kokoro-int8-en-v0_19 /tmp/kokoro-check.wav
+dotnet run --project tools/VoiceCheck -- kokoro /var/lib/shelfaware/models/kokoro-int8-en-v0_19 /tmp/kokoro-check.wav
 ```
 
 ⚠️ **That line wants an SDK and a checkout, and the droplet is deliberately given neither** — the app
@@ -119,14 +119,14 @@ Don't install one to run a smoke test. Publish the check the same way the app is
 machine you deploy from, and send it up (~122 MB, delete it afterwards):
 
 ```powershell
-dotnet publish tools\KokoroCheck -c Release -r linux-x64 --self-contained -o $env:TEMP\kcheck
+dotnet publish tools\VoiceCheck -c Release -r linux-x64 --self-contained -o $env:TEMP\kcheck
 tar -czf $env:TEMP\kcheck.tar.gz -C $env:TEMP\kcheck .
 scp $env:TEMP\kcheck.tar.gz root@<droplet>:/tmp/
 ```
 
 ```bash
-mkdir -p /tmp/kcheck && tar -xzf /tmp/kcheck.tar.gz -C /tmp/kcheck && chmod +x /tmp/kcheck/KokoroCheck
-/tmp/kcheck/KokoroCheck /var/lib/shelfaware/models/kokoro-int8-en-v0_19 /tmp/kokoro-check.wav
+mkdir -p /tmp/kcheck && tar -xzf /tmp/kcheck.tar.gz -C /tmp/kcheck && chmod +x /tmp/kcheck/VoiceCheck
+/tmp/kcheck/VoiceCheck kokoro /var/lib/shelfaware/models/kokoro-int8-en-v0_19 /tmp/kokoro-check.wav
 rm -rf /tmp/kcheck /tmp/kcheck.tar.gz      # it carries its own copy of the 26 MB runtime
 ```
 
@@ -230,7 +230,7 @@ four things — the app checks all four by name and refuses to boot if any is mi
 From the repo checkout, against the folder you just unpacked:
 
 ```powershell
-dotnet run --project tools/KokoroCheck -- `
+dotnet run --project tools/VoiceCheck -- kokoro `
   "$env:USERPROFILE\ShelfAware-server\app-data\models\kokoro-int8-en-v0_19" `
   "$env:TEMP\kokoro-check.wav"
 ```

@@ -20,8 +20,9 @@ public static class SpeechRegistration
     /// here.
     ///
     /// <para>The TTS PROVIDER is chosen by <c>Speech:Provider</c> (default ElevenLabs, so no existing
-    /// deployment changes on upgrade): <see cref="SpeechProvider.Kokoro"/> runs Kokoro-82M IN THIS PROCESS
-    /// for $0 synthesis; <see cref="SpeechProvider.ElevenLabs"/> keeps the cloud voice. The EAR is chosen
+    /// deployment changes on upgrade): <see cref="SpeechProvider.Kokoro"/> and
+    /// <see cref="SpeechProvider.Piper"/> both run a model IN THIS PROCESS for $0 synthesis, differing
+    /// only in warmth against speed; <see cref="SpeechProvider.ElevenLabs"/> keeps the cloud voice. The EAR is chosen
     /// separately by <c>Speech:Ear</c> (<see cref="EarProvider"/>), so a box can move one before the
     /// other. Whichever TTS provider is chosen, it's the CACHE that answers <see cref="ITextToSpeech"/>; the provider
     /// is only ever reached through it.</para>
@@ -39,7 +40,11 @@ public static class SpeechRegistration
         this IServiceCollection services, IConfiguration configuration, string? cacheDirectory)
     {
         services.Configure<ElevenLabsOptions>(configuration.GetSection(ElevenLabsOptions.SectionName));
-        services.Configure<KokoroSpeechOptions>(configuration.GetSection(KokoroSpeechOptions.SectionName));
+        // ⚠️ No Configure<> for the two MOUTH families, deliberately. The chosen one is bound once below
+        // (LocalVoiceOf) and handed to the engine and the voice over it as an object, because the family
+        // is a registration-time decision — an IOptions<T> nobody resolves is a setting a later
+        // services.Configure<PiperSpeechOptions>(o => …) would appear to change while changing nothing.
+        // The EAR still goes through IOptions because SherpaMoonshineEngine resolves it that way.
         services.Configure<MoonshineSpeechOptions>(configuration.GetSection(MoonshineSpeechOptions.SectionName));
         RefuseRetiredSidecarSettings(configuration);
 
@@ -66,15 +71,24 @@ public static class SpeechRegistration
         // cache, or the direct registration below, can wrap it as the inner ITextToSpeech without either
         // caring which provider it is, or whether it reaches a network at all.
         Func<IServiceProvider, ITextToSpeech> resolveProvider;
-        if (provider == SpeechProvider.Kokoro)
+        if (LocalVoiceOf(configuration, provider) is { } localVoice)
         {
             // No HttpClient: there is nothing to talk to. The ENGINE is a singleton because the model is
-            // the expensive thing (~1.6 s to load, a few hundred MB resident); the ITextToSpeech over it
-            // stays transient like its siblings.
-            RequireAModelOnDisk(configuration);
-            services.AddSingleton<IKokoroEngine, SherpaKokoroEngine>();
-            services.AddTransient<KokoroTextToSpeech>();
-            resolveProvider = sp => sp.GetRequiredService<KokoroTextToSpeech>();
+            // the expensive thing (a second or more to load, a few hundred MB resident); the ITextToSpeech
+            // over it stays transient like its siblings.
+            //
+            // ⚠️ The chosen family's settings are resolved ONCE, here, and handed to both the engine and
+            // the voice over it. Letting either ask for its own options would mean two readings of "which
+            // family is this box running", which is how a box ends up loading Piper's model and
+            // fingerprinting its clips as Kokoro's.
+            RequireAModelOnDisk(localVoice, provider);
+            services.AddSingleton<ITtsEngine>(sp => new SherpaTtsEngine(
+                localVoice, sp.GetRequiredService<ILogger<SherpaTtsEngine>>()));
+            services.AddTransient(sp => new SherpaTextToSpeech(
+                sp.GetRequiredService<ITtsEngine>(),
+                localVoice,
+                sp.GetRequiredService<ILogger<SherpaTextToSpeech>>()));
+            resolveProvider = sp => sp.GetRequiredService<SherpaTextToSpeech>();
         }
         else
         {
@@ -118,31 +132,43 @@ public static class SpeechRegistration
         http.BaseAddress = new Uri("https://api.elevenlabs.io");
     }
 
+    /// <summary>The settings for whichever local family <paramref name="provider"/> names, or null when
+    /// it names the cloud voice. ⚠️ ONE reading of "which family is this box running", handed to the
+    /// engine and the voice over it, so the model that loads and the fingerprint its clips are filed
+    /// under can never disagree.</summary>
+    private static SherpaTtsOptions? LocalVoiceOf(IConfiguration configuration, SpeechProvider provider) =>
+        provider switch
+        {
+            SpeechProvider.Kokoro => Bind<KokoroSpeechOptions>(configuration, KokoroSpeechOptions.SectionName),
+            SpeechProvider.Piper => Bind<PiperSpeechOptions>(configuration, PiperSpeechOptions.SectionName),
+            _ => null,
+        };
+
+    private static T Bind<T>(IConfiguration configuration, string section) where T : new() =>
+        configuration.GetSection(section).Get<T>() ?? new T();
+
     /// <summary>
     /// ⚠️ Refuse to boot with a model directory that isn't there. This is not defensive tidiness: the
     /// native library answers a missing model file by printing one line to stderr and killing the process
     /// with a SIGSEGV — no managed exception, nothing to catch, nothing of ours in the log. Without this
     /// check the app would start clean and then die whole on the first read-aloud, taking every circuit
     /// with it, and the only clue would be a stderr line nobody was watching.
-    /// <para>It asks <see cref="KokoroModelFiles"/> — the same definition the engine loads from — because
-    /// a validation that checked a different set of paths than the load uses would pass and then crash.
-    /// The settings it can judge without the disk go through <see cref="KokoroSpeechOptions.Invalid"/>,
+    /// <para>It asks <see cref="SherpaTtsOptions.Model"/> — the same definition the engine loads from —
+    /// because a validation that checked a different set of paths than the load uses would pass and then
+    /// crash. The settings it can judge without the disk go through <see cref="SherpaTtsOptions.Invalid"/>,
     /// which the engine also asks, for the same reason.</para>
     /// </summary>
-    private static void RequireAModelOnDisk(IConfiguration configuration)
+    private static void RequireAModelOnDisk(SherpaTtsOptions options, SpeechProvider provider)
     {
-        var options = configuration.GetSection(KokoroSpeechOptions.SectionName).Get<KokoroSpeechOptions>()
-                      ?? new KokoroSpeechOptions();
-
         // Everything judgeable from the settings alone, asked of the one definition so registration and
         // the engine cannot come to different conclusions about the same configuration.
         if (options.Invalid() is { } wrong)
-            throw new InvalidOperationException($"Speech:Provider is Kokoro, but {wrong}");
+            throw new InvalidOperationException($"Speech:Provider is {provider}, but {wrong}");
 
-        if (KokoroModelFiles.In(options.ModelDirectory, options.ModelFile).Missing() is { Count: > 0 } missing)
+        if (options.Model().Missing() is { Count: > 0 } missing)
             throw new InvalidOperationException(
-                $"Speech:Kokoro:ModelDirectory ('{options.ModelDirectory}') is not a complete Kokoro model: "
-                + $"{string.Join(", ", missing)} not found. See docs/deploy-kokoro.md for the archive to "
+                $"{options.Section}:ModelDirectory ('{options.ModelDirectory}') is not a complete "
+                + $"{provider} model: {string.Join(", ", missing)} not found. See docs/ for the archive to "
                 + "unpack there. (Starting without them would not fail here — it would kill the process on "
                 + "the first read-aloud.)");
     }

@@ -5,9 +5,9 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>ShelfAware.Tools.KokoroCheck</RootNamespace>
-    <AssemblyName>KokoroCheck</AssemblyName>
-    <!-- An operator's tool: proves a box's Kokoro model speaks before the app is pointed at it. Never shipped. -->
+    <RootNamespace>ShelfAware.Tools.VoiceCheck</RootNamespace>
+    <AssemblyName>VoiceCheck</AssemblyName>
+    <!-- An operator's tool: proves a box's local voice model speaks before the app is pointed at it. Never shipped. -->
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 

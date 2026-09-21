@@ -6,7 +6,7 @@ namespace ShelfAware.Llm;
 
 /// <summary>
 /// The seam between "what we do with what someone said" and "a neural model on this box" — the ear's
-/// counterpart to <see cref="IKokoroEngine"/>, and here for the same reason: so
+/// counterpart to <see cref="ITtsEngine"/>, and here for the same reason: so
 /// <see cref="MoonshineSpeechToText"/>'s decisions (what counts as audio, what the failure copy is,
 /// whose cancellation a cancellation was) are testable without a 120 MB model and a native library in
 /// the test runner.
@@ -22,11 +22,11 @@ public interface IMoonshineEngine : IDisposable
 
 /// <summary>
 /// <see cref="IMoonshineEngine"/> over sherpa-onnx, running Moonshine in this process. No sidecar, no
-/// HTTP hop, no Python, no key — the ear's half of the bargain Kokoro made for the mouth.
+/// HTTP hop, no Python, no key — the ear's half of the bargain the local mouth made.
 ///
-/// <para><b>Singleton, and it must be</b>, for <see cref="SherpaKokoroEngine"/>'s reason: the model is
+/// <para><b>Singleton, and it must be</b>, for <see cref="SherpaTtsEngine"/>'s reason: the model is
 /// the expensive thing (~1 s to load, a couple of hundred MB resident, most of it the ONNX runtime a
-/// Kokoro box has already paid for). Loading it per utterance would cost six times the transcription.</para>
+/// local-mouth box has already paid for). Loading it per utterance would cost six times the transcription.</para>
 ///
 /// <para><b>One transcription at a time</b>, on <see cref="_gate"/>. sherpa-onnx does not document
 /// <c>OfflineRecognizer</c> as thread-safe, and the gate makes the lazy load race-free without a second

@@ -6,13 +6,13 @@ using ShelfAware.Llm;
 
 // Proves a box's Moonshine model actually HEARS, through the SAME code the app uses --
 // SherpaMoonshineEngine loading the model and MoonshineSpeechToText turning a WAV into text. The ear's
-// counterpart to tools/KokoroCheck, and it exists for the same reason: the first spoken word on a live
+// counterpart to tools/VoiceCheck, and it exists for the same reason: the first spoken word on a live
 // box should not be the first time the model has been loaded there.
 //
 //   dotnet run --project tools/MoonshineCheck -- <modelDirectory> <wavFile> [more.wav ...]
 //
 // Give it a 16 kHz mono WAV -- which is exactly what the browser now sends (wwwroot/js/pcm.js), so a
-// clip captured from the app is the most honest input you can hand this. KokoroCheck's output is one
+// clip captured from the app is the most honest input you can hand this. VoiceCheck's output is one
 // too, which makes "say something, then hear it back" a two-command test of the whole voice stack.
 //
 // It is deliberately NOT a unit test. The model is 120 MB and is not in the repo, so a test would either
@@ -24,7 +24,7 @@ if (string.IsNullOrWhiteSpace(modelDirectory) || args.Length < 2)
 {
     Console.Error.WriteLine("Usage: dotnet run --project tools/MoonshineCheck -- <modelDirectory> <wavFile> [more.wav ...]");
     Console.Error.WriteLine("The model directory holds an unpacked sherpa-onnx Moonshine archive (see docs/deploy-moonshine.md).");
-    Console.Error.WriteLine("The WAV should be 16 kHz mono -- tools/KokoroCheck writes one, and so does the app's own capture.");
+    Console.Error.WriteLine("The WAV should be 16 kHz mono -- tools/VoiceCheck writes one, and so does the app's own capture.");
     return 1;
 }
 

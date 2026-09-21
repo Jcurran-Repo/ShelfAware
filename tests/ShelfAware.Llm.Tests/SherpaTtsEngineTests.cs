@@ -13,14 +13,14 @@ namespace ShelfAware.Llm.Tests;
 ///
 /// <para>What the engine does once it HAS a model — that it loads, that it refuses an out-of-range voice,
 /// that a cancel actually stops a synthesis mid-run — needs the 150 MB archive and so is not here. It is
-/// <c>tools/KokoroCheck</c>, run against a real model on the box it is going to run on. A skipped test
+/// <c>tools/VoiceCheck</c>, run against a real model on the box it is going to run on. A skipped test
 /// that reports green is worse than a tool somebody has to run, because the green stops anyone
 /// looking.</para>
 /// </summary>
-public class SherpaKokoroEngineTests
+public class SherpaTtsEngineTests
 {
-    private static SherpaKokoroEngine Engine(KokoroSpeechOptions options) =>
-        new(Options.Create(options), NullLogger<SherpaKokoroEngine>.Instance);
+    private static SherpaTtsEngine Engine(KokoroSpeechOptions options) =>
+        new(options, NullLogger<SherpaTtsEngine>.Instance);
 
     /// <summary>A directory holding however many of the four model parts are asked for — empty files, since
     /// nothing here gets as far as reading one.</summary>
