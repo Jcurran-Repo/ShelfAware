@@ -104,6 +104,26 @@ Run the app's own synthesis path against the model directory:
 dotnet run --project tools/KokoroCheck -- /var/lib/shelfaware/models/kokoro-int8-en-v0_19 /tmp/kokoro-check.wav
 ```
 
+⚠️ **That line wants an SDK and a checkout, and the droplet is deliberately given neither** — the app
+ships self-contained precisely so the box needs no .NET install ([deploy.ps1](../deploy/deploy.ps1)).
+Don't install one to run a smoke test. Publish the check the same way the app is published, from the
+machine you deploy from, and send it up (~122 MB, delete it afterwards):
+
+```powershell
+dotnet publish tools\KokoroCheck -c Release -r linux-x64 --self-contained -o $env:TEMP\kcheck
+tar -czf $env:TEMP\kcheck.tar.gz -C $env:TEMP\kcheck .
+scp $env:TEMP\kcheck.tar.gz root@<droplet>:/tmp/
+```
+
+```bash
+mkdir -p /tmp/kcheck && tar -xzf /tmp/kcheck.tar.gz -C /tmp/kcheck && chmod +x /tmp/kcheck/KokoroCheck
+/tmp/kcheck/KokoroCheck /var/lib/shelfaware/models/kokoro-int8-en-v0_19 /tmp/kokoro-check.wav
+rm -rf /tmp/kcheck /tmp/kcheck.tar.gz      # it carries its own copy of the 26 MB runtime
+```
+
+It is the same binary the app uses, so what it proves about the box is what the app will do. `scp` the
+WAV back to listen to it — a droplet has no sound card.
+
 It prints the load time, the cache fingerprint and how long the synthesis took, and writes a WAV.
 **Play it.** The voice should read "Shelf Aware is talking. Sear the chicken six to seven minutes per
 side, then roast at three hundred and fifty degrees Fahrenheit" — if the numbers and `°F` come out
