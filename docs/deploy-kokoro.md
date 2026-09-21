@@ -11,10 +11,13 @@ That last part is the whole reason this shape was chosen over the HTTP sidecar i
 is a second thing to install, start, keep running, keep patched and keep off the internet, and the app
 is useless if it is down. The model is a directory.
 
-> **Status:** built and CI-green, and verified end to end on a development box — a recipe step was
-> synthesized through `KokoroTextToSpeech` and transcribed back to check the words came out. It has
-> **not yet run on the droplet or the family box**: the first deploy is the first real test of *those
-> boxes'* CPU and RAM. Run the check in step 3 there before flipping the app over.
+> **Status:** built, CI-green, and **running on the family box (Windows) since 2026-09-20** — recipes
+> read aloud there for $0. On **linux-x64** the publish and the model have been verified on a build box
+> (`dotnet publish -r linux-x64 --self-contained` carries both native libraries; `tools/KokoroCheck`
+> loads the model and speaks the test sentence), so nothing platform-shaped is left to discover. What
+> has **not** happened is a run on **the droplet itself** — the first deploy there is the first test of
+> *that box's* CPU and RAM, and the CPU note below is the reason that is not a formality. Run the check
+> in step 3 on the droplet before flipping the app over.
 
 ## What talks to what
 
@@ -34,12 +37,21 @@ has ever been loaded.
   workable but not roomy, so **add a 2 GB swap file** (step 0). On a 1 GB box, keep ElevenLabs.
   The model loads on the **first read-aloud**, not at boot, and stays loaded after that — a box that
   never reads a recipe never pays the RAM.
-- **CPU: synthesis is roughly real-time.** Measured on a 4-core development box with the int8 model:
-  **1.39× real time at one thread, 1.08× at two, 0.96× at four** — so a ten-second step takes about ten
+- **CPU: synthesis is roughly real-time on a multi-core box, and about 2.4× real time on one core.**
+  Measured on a 4-core development box with the int8 model: **1.39× real time at one thread, 1.08× at
+  two, 0.96× at four**. Re-measured on **linux-x64** at the shipped default of two threads: **1.4× on
+  four cores, 2.4× pinned to a single core** (7.4 s of audio in 17.6 s, model load excluded). So on a
+  **1-vCPU droplet, budget roughly 2–2.5× real time**: a ten-second step takes about twenty-five
   seconds the first time it is read. The narration streams (the intro plays while later steps
   synthesize) and every clip is cached forever, so this is a first-read cost per step, not a per-read
-  one. A slower box makes the first read of a long recipe noticeably laggy; that is the honest trade
-  for $0.
+  one.
+
+  ⚠️ **On a public demo box that amortization does not happen.** The clip cache is per household and a
+  visitor arrives with an empty one, so *every* visitor pays the full first-read cost on *every* step
+  they hear — the ElevenLabs case ("slow once, then instant for everyone") is the family box's case,
+  not the demo's. On a 1-vCPU droplet that is a visibly laggy first read, which is the honest trade for
+  $0 and no key; a 2-vCPU box roughly halves it, and is the cheaper fix than going back to a metered
+  voice.
 - **Disk: ~152 MB** for the quantized model (below), or ~330 MB for full precision.
 - **No runtime dependencies to install.** The native library rides in the app's own publish output —
   `libonnxruntime.so` (26 MB) and `libsherpa-onnx-c-api.so` (5 MB), so **~31 MB on the publish**. A
