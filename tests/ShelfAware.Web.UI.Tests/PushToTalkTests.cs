@@ -43,7 +43,7 @@ public class PushToTalkTests : VoiceTestBase
 
     private void Capture(string mime = "audio/webm") =>
         VoiceModule.Setup<PushToTalk.VoiceCapture?>("stop")
-            .SetResult(new PushToTalk.VoiceCapture(OneByteBase64, mime, 1));
+            .SetResult(new PushToTalk.VoiceCapture(OneByteBase64, mime));
 
     [Fact]
     public void An_unsupported_browser_disables_the_button_and_says_why()

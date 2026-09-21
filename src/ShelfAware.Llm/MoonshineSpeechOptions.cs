@@ -44,8 +44,11 @@ public class MoonshineSpeechOptions
     /// fifth of real time even on a single core.</summary>
     public int NumThreads { get; set; } = 2;
 
-    /// <summary>How long one transcription may take in total — the wait behind whatever is already being
-    /// transcribed, plus the work itself. ⚠️ There must be a bound, for the reason
+    /// <summary>How long one transcription may wait, applied TWICE: once queueing behind whatever is
+    /// already being transcribed, and again to the decode itself — so the worst case a caller can see is
+    /// two of these, not one. (Said plainly because the wording here used to claim "in total", which the
+    /// code has never done; <see cref="KokoroSpeechOptions.SynthesisTimeoutSeconds"/>, whose shape this
+    /// mirrors, still says it.) ⚠️ There must be a bound, for the reason
     /// <see cref="KokoroSpeechOptions.SynthesisTimeoutSeconds"/> spells out: an in-process model inherits
     /// no HttpClient timeout, and several callers pass no cancellation token. Thirty seconds is roughly
     /// forty times the measured cost of the longest utterance anyone speaks at a microphone, which leaves

@@ -38,9 +38,12 @@ export async function toMonoWav16k(blob) {
 
         const samples = await resampleToMono(decoded);
         return { bytes: encodeWav(samples, TARGET_RATE), mimeType: 'audio/wav' };
-    } catch {
+    } catch (err) {
         // A browser that can't decode what it recorded is a real possibility at the edges (an exotic
-        // codec, a truncated blob). Fall back rather than lose the utterance.
+        // codec, a truncated blob). Fall back rather than lose the utterance — but say so: on a box with
+        // a local ear this is the difference between "the model is broken" and "this browser didn't
+        // convert", and the server can only see the second half of that.
+        console.warn('[pcm] could not convert the recording to 16 kHz PCM; sending it as recorded.', err);
         return null;
     }
 }
@@ -58,7 +61,8 @@ async function resampleToMono(decoded) {
         source.start();
         const rendered = await offline.startRendering();
         return rendered.getChannelData(0);
-    } catch {
+    } catch (err) {
+        console.warn('[pcm] OfflineAudioContext refused 16 kHz; resampling by hand.', err);
         return linearResample(decoded);
     }
 }

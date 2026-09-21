@@ -299,6 +299,5 @@ function pickMimeType() {
     return '';
 }
 
-
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const round = n => Math.round(n * 10000) / 10000;
