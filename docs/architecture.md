@@ -49,6 +49,14 @@ export `data.json`, delete-my-data, and `CountAll`.
   columns only. ⚠️ Pin it with a **drop-COLUMN** parity test, not only the drop-TABLE one: the
   drop-table test rebuilds via `EnsureTable` with the column already present, so the ALTER branch —
   the path every live deployment takes — never runs.
+  - It returns **true only on the boot that actually added the column**, which is the one safe moment
+    to **backfill** the new column from an existing one (`Receipts.UploadedAt` from `ConfirmedAt`,
+    2026-09-22). Still additive: nothing existing changes, and only the new column is written. The
+    guard is the whole point — a backfill that re-ran on every boot would rewrite values the app has
+    since written, so pin BOTH halves (it backfills once; a later boot leaves a written value alone).
+    Reach for it only when an empty column would make a learned-from-history feature dead on arrival
+    for exactly the deployments that are already running, and only where the source column is an
+    honest reading of the new one.
 - **`EnsureTable`** — the DDL is lifted from EF's own `GenerateCreateScript()` at runtime, so there is
   no hand-written second copy of the schema. A parity test compares `sqlite_master` fingerprints of
   the migrated and fresh paths.

@@ -21,6 +21,10 @@
 <PageTitle>Reginald</PageTitle>
 
 <OnboardingBanner CatalogEmpty="@(products is { Count: 0 })" OnSeeded="LoadAsync" />
+@* Below the first-run pitch: a household still being onboarded has no upload rhythm yet, so in practice
+   only one of the two is ever on screen. The banner asks for itself — it decides from the household's own
+   upload history whether there is anything to say. *@
+<ReceiptReminderBanner />
 
 <header class="page-head">
     <h1>Running Low</h1>

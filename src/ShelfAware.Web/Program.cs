@@ -497,6 +497,7 @@ builder.Services.AddScoped<ReceiptDuplicateDetector>(); // "is this a re-upload?
 builder.Services.AddScoped<ReceiptConfirmationService>();
 builder.Services.AddScoped<ReceiptIngestionService>(); // images → PendingReview receipt + auto-confirm route (the page and the upload endpoint share it)
 builder.Services.AddScoped<ReceiptRemovalService>(); // the confirm's inverse — the duplicate-upload escape hatch
+builder.Services.AddScoped<ReceiptReminderService>(); // "it's been longer than you usually leave it" — the dashboard nudge
 // The census's OWN confirm path, deliberately not the receipt one: a shelf photo writes counts and must
 // never write a PurchaseEvent (§13.8's ★ rule).
 builder.Services.AddScoped<CensusConfirmationService>();

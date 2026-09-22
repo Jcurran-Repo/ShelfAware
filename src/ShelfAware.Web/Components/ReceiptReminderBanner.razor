@@ -1,0 +1,77 @@
+@using ShelfAware.Core.Ingest
+@inject ShelfAware.Web.Data.ReceiptReminderService Reminders
+@inject NavigationManager Nav
+@inject ILogger<ReceiptReminderBanner> Logger
+
+@* "You usually upload one by now." The quiet stretch that triggers this is the household's OWN median
+   gap between upload days plus a day of slack — learned, never a constant, so a Saturday shopper isn't
+   nagged on Wednesday and a daily shopper isn't ignored for a week.
+
+   Every number below comes from the ONE ReceiptReminder the cadence produced: the banner never re-derives
+   "is it due" from the days it is printing, and "Not now" snoozes for the engine's own SnoozeUntil rather
+   than a span this component picked. Nothing here calls out to anything — it's arithmetic over dates. *@
+@if (reminder is { } r)
+{
+    <section class="panel reminder-banner" role="region" aria-label="Receipt reminder">
+        <button type="button" class="banner-x" @onclick="Snooze" aria-label="Not now — hide this reminder">×</button>
+        <h2>Receipt reminder 🧾</h2>
+        <p>
+            It's been <strong>@Days(r.DaysSinceLastUpload)</strong> since your last receipt, on
+            @(r.LastUploadedOn.ToString("MMMM d")) — you usually upload one about every
+            <strong>@Days(r.UsualGapDays)</strong>.
+        </p>
+        <p class="muted small">
+            Been shopping? Adding the receipt keeps the run-out dates honest. If you haven't, nothing's wrong —
+            this'll wait.
+        </p>
+        <div class="onboarding-actions">
+            <button type="button" @onclick="OpenUpload">Upload a receipt</button>
+            <button type="button" class="secondary" @onclick="Snooze">Not now</button>
+        </div>
+    </section>
+}
+
+@code {
+    private ReceiptReminder? reminder;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            reminder = await Reminders.GetAsync(DateOnly.FromDateTime(DateTime.Today));
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // A reminder that can't be read is a reminder that isn't shown. There is nothing for the
+            // household to do about it and nothing of theirs at risk, so it stays out of their way and
+            // goes in the log instead — the one place it can actually be acted on.
+            Logger.LogError(ex, "Couldn't work out the receipt-upload cadence; the reminder stays hidden.");
+        }
+    }
+
+    private void OpenUpload() => Nav.NavigateTo("/receipt");
+
+    /// <summary>Snoozing hides it for one more of the household's usual gaps. The banner goes immediately,
+    /// whatever the write does — a dismiss that appears to do nothing is worse than one the next page load
+    /// undoes, and the failure is logged either way.</summary>
+    private async Task Snooze()
+    {
+        var snoozing = reminder;
+        reminder = null;
+        if (snoozing is null) return;
+        try
+        {
+            await Reminders.SnoozeAsync(snoozing);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Couldn't persist the receipt-reminder snooze; it will return on the next load.");
+        }
+    }
+
+    /// <summary>"1 day" / "9 days" — one definition, because every count on this banner is in days and
+    /// a row reading "1 days" is a defect this repo has actually shipped (build-log item 39's cousin).</summary>
+    private static string Days(int count) => $"{count} day{(count == 1 ? "" : "s")}";
+}

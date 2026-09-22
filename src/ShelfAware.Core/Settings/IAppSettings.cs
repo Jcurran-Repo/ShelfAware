@@ -53,6 +53,13 @@ public static class SettingKeys
     /// protein/carb targets, food groups, effort, appliances, invent). Absent = the all-optional defaults.
     /// A preference, so it's wiped by "delete my data" like every other settings row.</summary>
     public const string MealPlanSettings = "MealPlanSettings";
+
+    /// <summary>An ISO day (yyyy-MM-dd): the household dismissed the receipt-reminder banner, and it
+    /// stays hidden through this date. Written by <c>ReceiptReminderService.SnoozeAsync</c> from the
+    /// cadence's own <c>ReceiptReminder.SnoozeUntil</c> — one more of the household's usual gaps — so a
+    /// "Not now" is a snooze, never a permanent mute. Absent = never dismissed; unparseable is read as
+    /// absent, so a corrupt value shows the reminder rather than retiring it invisibly.</summary>
+    public const string ReceiptReminderSnoozedUntil = "ReceiptReminderSnoozedUntil";
 }
 
 public static class AppSettingsExtensions

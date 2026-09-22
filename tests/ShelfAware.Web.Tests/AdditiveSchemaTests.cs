@@ -92,6 +92,54 @@ public class AdditiveSchemaTests : IDisposable
     }
 
     [Fact]
+    public async Task Backfills_the_upload_stamp_from_the_confirm_on_a_pre_reminder_db()
+    {
+        await using var db = _db.CreateDbContext();
+        var confirmedAt = new DateTimeOffset(new DateTime(2026, 9, 1, 18, 30, 0), TimeSpan.Zero);
+        db.Receipts.Add(new Receipt { ImagePath = "a", Status = ReceiptStatus.Confirmed, ConfirmedAt = confirmedAt });
+        db.Receipts.Add(new Receipt { ImagePath = "b", Status = ReceiptStatus.PendingReview });
+        await db.SaveChangesAsync();
+
+        // Simulate a pre-2026-09-22 DB: the column simply wasn't there. This is the ALTER path a live
+        // deployment takes; the drop-TABLE parity tests never run it (item 49's lesson).
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Receipts DROP COLUMN UploadedAt;");
+
+        AdditiveSchema.Apply(db);
+        AdditiveSchema.Apply(db); // second boot — idempotent, and must NOT re-run the backfill
+
+        await using var read = _db.CreateDbContext();
+        var rows = await read.Receipts.AsNoTracking().OrderBy(r => r.ImagePath).ToListAsync();
+        // An established household keeps a rhythm to measure: the confirm is the closest honest reading
+        // of an upload an old row has. Without this the reminder would do nothing for weeks on exactly
+        // the boxes that are already running.
+        Assert.Equal(confirmedAt, rows[0].UploadedAt);
+        // A row with no confirm is left NULL rather than guessed at from the printed purchase date —
+        // the one date that is not an upload.
+        Assert.Null(rows[1].UploadedAt);
+    }
+
+    [Fact]
+    public async Task The_upload_backfill_does_not_overwrite_a_stamp_the_app_has_since_written()
+    {
+        // The guard that makes the backfill safe on every later boot: it runs ONLY on the boot that adds
+        // the column. A receipt uploaded weeks after the migration has an UploadedAt that is deliberately
+        // NOT its confirm time, and a re-run would quietly rewrite it — moving a household's rhythm under it.
+        await using var db = _db.CreateDbContext();
+        var uploadedAt = new DateTimeOffset(new DateTime(2026, 9, 20, 9, 0, 0), TimeSpan.Zero);
+        var confirmedAt = new DateTimeOffset(new DateTime(2026, 9, 21, 20, 0, 0), TimeSpan.Zero);
+        db.Receipts.Add(new Receipt
+        {
+            ImagePath = "c", Status = ReceiptStatus.Confirmed, UploadedAt = uploadedAt, ConfirmedAt = confirmedAt,
+        });
+        await db.SaveChangesAsync();
+
+        AdditiveSchema.Apply(db); // the column is already there — nothing is added, nothing is backfilled
+
+        await using var read = _db.CreateDbContext();
+        Assert.Equal(uploadedAt, (await read.Receipts.AsNoTracking().SingleAsync()).UploadedAt);
+    }
+
+    [Fact]
     public async Task Creates_the_MealEvents_table_on_a_pre_meal_log_db_with_the_fresh_schema()
     {
         await using var db = _db.CreateDbContext();
