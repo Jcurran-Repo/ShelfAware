@@ -51,11 +51,11 @@ public static class UploadCadence
         if (days.Count < MinimumUploadDays) return null;
 
         var last = days[^1];
+        // Can go NEGATIVE, and deliberately has no guard of its own: a receipt stamped in the future (a
+        // restored backup, a box whose clock was wrong) is a quiet stretch below zero, and the
+        // remind-after test below — whose floor is never less than a day — already refuses it. A guard
+        // here would be a branch no input can reach and no test can fail on.
         var daysSince = today.DayNumber - last.DayNumber;
-        // A clock that has gone backwards (a restored backup, a receipt stamped in the future by a box
-        // whose clock was wrong) would otherwise report a negative quiet stretch, which nothing below
-        // would show but every number derived from it would be nonsense. Nothing to remind about.
-        if (daysSince < 0) return null;
 
         var gaps = new List<int>();
         for (var i = 1; i < days.Count; i++) gaps.Add(days[i].DayNumber - days[i - 1].DayNumber);
@@ -89,6 +89,10 @@ public static class UploadCadence
     /// side that under-nags.</summary>
     private static int Median(List<int> gaps)
     {
+        // Stryker disable once Linq: `OrderBy` → `OrderByDescending` is unobservable — a median is
+        // sort-direction invariant, the same reason ReplenishmentPredictor.Median carries this note.
+        // Odd count: desc[mid] == asc[mid], since mid == count - 1 - mid. Even count: the two middles
+        // swap places and the mean of the pair is unchanged.
         var sorted = gaps.OrderBy(g => g).ToList();
         var mid = sorted.Count / 2;
         return sorted.Count % 2 == 1

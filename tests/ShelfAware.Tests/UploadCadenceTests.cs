@@ -92,17 +92,35 @@ public class UploadCadenceTests
     }
 
     [Fact]
-    public void An_even_number_of_gaps_rounds_the_median_up_to_a_whole_day()
+    public void An_even_number_of_gaps_takes_the_middle_pair_and_rounds_up()
     {
-        // Gaps 4, 5, 6, 9 → the two middles are 5 and 6, so the median is 5.5. The banner speaks in whole
-        // days, and rounding up waits the longer of the two middles — the side that under-nags.
-        var uploads = Uploads(0, 4, 9, 15, 24);
+        // Gaps 3, 5, 8, 10 → the two middles are 5 and 8, so the median is 6.5. The banner speaks in
+        // whole days, and rounding up waits the longer of the two — the side that under-nags. Chosen so
+        // the right answer (7) differs from the upper middle (8) AND from rounding 6.5 to even (6): an
+        // off-by-one anywhere in this branch changes the number, rather than landing on it by luck.
+        var uploads = Uploads(0, 3, 8, 16, 26);
 
-        var reminder = UploadCadence.Evaluate(uploads, D(31));
+        var reminder = UploadCadence.Evaluate(uploads, D(34));
         Assert.NotNull(reminder);
-        Assert.Equal(6, reminder.UsualGapDays);
-        Assert.Equal(7, reminder.RemindAfterDays);
-        Assert.Null(UploadCadence.Evaluate(uploads, D(30)));
+        Assert.Equal(7, reminder.UsualGapDays);
+        Assert.Equal(8, reminder.RemindAfterDays);
+        Assert.Null(UploadCadence.Evaluate(uploads, D(33)));
+    }
+
+    [Fact]
+    public void An_odd_number_of_gaps_takes_the_middle_one_not_the_pair_below_it()
+    {
+        // Gaps 4, 8, 9 → the median is the middle value, 8. Deliberately NOT three equal gaps, which is
+        // what most of these fixtures use: with equal gaps both halves of the median agree by accident,
+        // so an odd count taking the even count's arithmetic would go unnoticed. Here it would read 6.
+        var uploads = Uploads(0, 4, 12, 21);
+
+        Assert.Null(UploadCadence.Evaluate(uploads, D(29)));   // 8 quiet days — still inside the rhythm
+
+        var reminder = UploadCadence.Evaluate(uploads, D(30));
+        Assert.NotNull(reminder);
+        Assert.Equal(8, reminder.UsualGapDays);
+        Assert.Equal(9, reminder.RemindAfterDays);
     }
 
     [Fact]
@@ -135,8 +153,9 @@ public class UploadCadenceTests
     [Fact]
     public void A_receipt_stamped_in_the_future_produces_no_reminder()
     {
-        // A restored backup or a box whose clock was wrong. A negative quiet stretch is not a sentence
-        // the banner can say, and every number derived from it would be nonsense.
+        // A restored backup, or a box whose clock was wrong: the quiet stretch comes out negative. No
+        // special-case guard handles this — the remind-after test does, since its floor is never less
+        // than a day — so this pins the outcome rather than the branch.
         var uploads = Uploads(0, 7, 14, 21);
 
         Assert.Null(UploadCadence.Evaluate(uploads, D(20)));
