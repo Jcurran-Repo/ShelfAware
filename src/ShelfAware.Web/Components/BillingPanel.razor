@@ -53,10 +53,13 @@
                     Subscribe — @BillingCatalog.Monthly.PriceDisplay
                 </a>
                 <a href="/billing/checkout?product=SubscriptionAnnual" data-enhance-nav="false">
-                    Annual — @BillingCatalog.Annual.PriceDisplay<span class="save-badge">save 22%</span>
+                    @* Badge and note are DERIVED from the two prices (SubscriptionPricing), never typed:
+                       a hand-written "save 22%" survives a price change without failing anything, and then
+                       states a discount the buttons beside it contradict. *@
+                    Annual — @BillingCatalog.Annual.PriceDisplay<span class="save-badge">@SubscriptionPricing.AnnualSavingBadge</span>
                 </a>
             </div>
-            <p class="muted small">Start monthly; the annual saves about two months. Cancel any time.</p>
+            <p class="muted small">Start monthly; @SubscriptionPricing.AnnualSavingNote. Cancel any time.</p>
         }
     </section>
 }

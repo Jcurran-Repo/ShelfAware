@@ -24,7 +24,7 @@ throughout is now LS's real subscription rate (5.5% + 50¢ — §6).
 | Tier | Display name | Price | Managed AI | Granted by |
 |---|---|---|---|---|
 | Free | **Shelf** | $0 | None past the welcome grant (§1/§2) — the full manual app | default |
-| AI | **Aware** | **$2.99/mo · $27.99/yr** | On, on the host's keys, **incl. conversational voice** (chat back-and-forth); includes **~$1.00/mo of AI at cost** | subscription (Lemon Squeezy — §6) |
+| AI | **Aware** | **$3.99/mo · $27.99/yr** | On, on the host's keys, **incl. conversational voice** (chat back-and-forth); includes **~$1.00/mo of AI at cost** | subscription (Lemon Squeezy — §6) |
 | Founder | **Founder** | $0 | **Unlimited**, usage still recorded | admin toggle (the thank-you tier for early helpers) |
 
 **Sous Chef removed — voice folds into Aware (2026-09-02, Jordan's call, supersedes the 2026-08-30 split):**
@@ -42,6 +42,16 @@ the paid early-supporter funnel there is a generic "back it early" link, not "be
 app's name — *your Shelf becomes Aware*. (The set once had a third "voice tier" — Sous Chef, the
 cook-along made literal — dropped 2026-09-02; see §1.) The doc below keeps descriptive labels
 (Free tier / AI tier) for clarity; the display names are what surfaces render.
+
+**The base is $3.99/mo (raised from $2.99, Jordan, 2026-09-22).** The paragraphs below are the
+2026-08-23 record of how the price got to $2.99 and are left as written — they are the reasoning of
+that day, not a description of today's price. What carries forward unchanged is the *shape* of the
+argument (the floor has to survive model-price rises, fixed costs and disputes) and the never-raise
+promise, which binds an EXISTING subscriber's price and not the sticker a new one is quoted; nobody is
+subscribed yet, so this raise breaks no promise to anyone. At $3.99 the monthly floor at full grant use
+goes from ~$1.33/mo (44%) to **~$2.27/mo (57%)** — see the §3 table.
+⚠️ **The annual was NOT re-struck to match, and it is the open question this raise leaves** — see the
+annual paragraph below and §8.
 
 **Why $2.99, not the $1.99 first floated (decided 2026-08-23):** Jordan's constraint is *never raise
 prices on early supporters*, and $1.99 couldn't keep that promise — its margin floor after payment
@@ -65,14 +75,24 @@ voice folds into Aware, so there is no planned voice tier today; the mechanism (
 survives, not the tier.
 
 **Annual pricing (decided 2026-08-23): steep discount, annual-first posture.** Base **$27.99/yr ≈
-$2.33/mo effective** (Jordan's number; ~22% off — MoR net ~$25.95, floor at full grant use
-**~$1.16/mo**). A possible future voice tier (dropped for now — see above) sketched at **$4.99/mo /
+$2.33/mo effective** (Jordan's number — MoR net ~$25.95, floor at full grant use **~$1.16/mo**).
+⚠️ **The discount is a derived number and the 2026-09-22 raise moved it: $27.99 against twelve $2.99
+charges was ~22% off; against twelve $3.99 charges it is ~41% off** — the annual now costs about seven
+months of the monthly rather than nine and a half. The app no longer states that percentage by hand
+(`SubscriptionPricing` derives the badge from the two prices), so no screen can claim the old number,
+but the PRODUCT question is open: holding the annual at $27.99 is a much steeper discount than the one
+this paragraph reasoned itself into. Re-striking it at **$36.99** would restore the ~22%/~2-months-free
+shape at the new base. **Jordan's call — §8.** A possible future voice tier (dropped for now — see above) sketched at **$4.99/mo /
 ~$47.99/yr ≈ $4.00/mo effective** (Jordan's "steep annual, ~$3.99 effective") — the two discounts
 deliberately rhyme at ~20%.
-**The discount is cheaper than it looks:** a perfect 12-month monthly subscriber nets ~$27.91/yr
-(twelve fixed fees) vs the annual's ~$25.95 — so the 22% sticker discount costs only **~$2/yr ≈ 7%
-net**, and break-even tenure is ~11.2 months: any monthly subscriber who'd churn before month 11
-makes the annual the BETTER outcome. 100% annual take-up is the good scenario (max cash, max
+**The discount was cheaper than it looked at $2.99 — and is not at $3.99.** At the old base a
+perfect 12-month monthly subscriber netted ~$27.91/yr (twelve fixed fees) vs the annual's ~$25.95, so
+the 22% sticker discount cost only ~$2/yr ≈ 7% net and break-even tenure was ~11.2 months: almost any
+churn-risk subscriber made the annual the better outcome. ⚠️ **At $3.99 with the annual unmoved, twelve
+monthly charges net ~$39.25/yr against the same ~$25.95, so the discount costs ~$13.30/yr ≈ 34% net and
+break-even tenure falls to ~7.9 months.** That is still a real case for annual-first (cash up front,
+retention, one fixed fee instead of twelve), but it is no longer nearly-free, which is the substance
+behind the open question above. 100% annual take-up is the good scenario (max cash, max
 retention, floor still positive) — there is no monthly/annual mix that loses. **On annual billing
 the grant still drips monthly** — no $12 lump to binge through in week one. ⚠️ A
 discount this steep means most subscribers take annual, so **the annual floor is the real floor** —
@@ -83,7 +103,7 @@ problem. Corollary worth naming: under never-raise, the two safe levers are both
 tiers; soften discounts for new subscribers** — neither touches an existing subscriber's price.
 ⚠️ **Define the promise publicly as PRICE, not action-count, from day one** (review finding): the
 grant is dollar-denominated and consumption reprices at call time, so a model-price rise silently
-shrinks what $2.99 buys — experienced as exactly the stealth raise the promise forbids unless the
+shrinks what $3.99 buys — experienced as exactly the stealth raise the promise forbids unless the
 promise was always "your price never rises," with the option kept open of pinning included usage to
 a cheaper model.
 
@@ -139,7 +159,7 @@ Three review findings harden the grant (2026-08-23, accepted):
   "your receipt is saved; it'll extract when you subscribe" — because the wall fires mid-chore,
   receipt in hand, the moment most likely to read as breakage (expect /bugs reports otherwise).
 
-**The one-sentence strategy this encodes:** the subscription *is* the business ($2.99 covers a typical
+**The one-sentence strategy this encodes:** the subscription *is* the business ($3.99 covers a typical
 household's whole month — §3); credits exist so a heavy user can never cost more than they paid, not as a
 revenue stream. Self-host + BYOK stays free forever (the source-available posture) — the paid product is
 *hosted convenience on the host's keys*: **"if it's my box, it's my keys, and you need to pay me"**
@@ -196,7 +216,8 @@ cards, +1.5% PayPal — worst realistic case 8.5% + 50¢ still leaves every floo
 
 | Transaction | Fee | Net | AI cost if fully used | Margin |
 |---|---|---|---|---|
-| **$2.99/mo sub (chosen)** | ~$0.66 | ~$2.33 | $1.00 | **~$1.33/mo (44%)**; typical use is under $1, so usually better |
+| **$3.99/mo sub (chosen 2026-09-22)** | ~$0.72 | ~$3.27 | $1.00 | **~$2.27/mo (57%)**; typical use is under $1, so usually better |
+| $2.99/mo (the base until 2026-09-22) | ~$0.66 | ~$2.33 | $1.00 | ~$1.33/mo (44%) — kept for the comparison the raise was argued from |
 | **$27.99/yr annual (chosen)** | ~$2.04 | ~$25.95 | $12.00 | ~$13.95/yr ≈ **$1.16/mo** — the fixed fee paid once instead of twelve times, cash up front, annual retention (§1 ⚠️) |
 | $1.99/mo (rejected — see §1) | ~$0.61 | ~$1.38 | $1.00 | ~$0.38/mo — untenable; MoR fees strengthen the rejection |
 | $5 / $10 / $20 credit packs | $0.75 / $1.00 / $1.50 | $4.25 / $9.00 / $18.50 | $3.03 / $6.06 / $12.12 | **$1.22 (24%) / $2.94 (29%) / $6.38 (32%)** — the 1.65× is a 39% margin only PRE-fee; net-of-fee it's 24–32%, which argues for steering buyers to $10/$20 |
@@ -602,8 +623,9 @@ GA (the preview in the table below shipped): all-in ≈ 2.9% + $0.30 base card +
 stripe.com/pricing at wire-up — the third-party fee blogs run pessimistic; the components check out on
 Stripe's own pages). Highest *headline* rate of the MoRs, but the LOWEST *fixed* fee ($0.30 vs
 everyone else's $0.50) — and on these sub-$28 tickets the fixed fee dominates, so SMP lands within
-pennies and is actually CHEAPER than a 5% MoR on the $2.99 monthly (~$0.51 vs ~$0.66; roughly a wash
-on annual). Chosen for **stability** over the ~1%: Stripe just consolidated the MoR space by absorbing
+pennies and is actually CHEAPER than a 5% MoR on the monthly (at the $3.99 base, ~$0.58 vs ~$0.72;
+roughly a wash on annual — it was ~$0.51 vs ~$0.66 at the $2.99 base this was first computed
+against). Chosen for **stability** over the ~1%: Stripe just consolidated the MoR space by absorbing
 Lemon Squeezy into SMP, so the genuinely-cheaper options are startups (Creem/Dodo/Polar) carrying
 re-integration risk a portfolio piece shouldn't take, and LS is now a transition path INTO SMP, not a
 durable standalone. **No recurring/setup/minimum fee** — the integration is built and tested in test
@@ -621,8 +643,10 @@ PayPal fees — so "annual = cash up front" means net-30-ish, after ~2 annual su
 
 Mechanics are provider-agnostic (all three offer them):
 
-- **Objects:** the sub ($2.99/mo, $27.99/yr) + credit packs ($5/$10/$20, **offered to active
-  subscribers only** — §8) as hosted-checkout products; customer portal for cancel/card management.
+- **Objects:** the sub ($3.99/mo, $27.99/yr — the two numbers in `SubscriptionPricing`) + credit packs
+  ($5/$10/$20, **offered to active subscribers only** — §8) as hosted-checkout products; customer portal
+  for cancel/card management. The packs are priced off the CREDIT anchor (cost × markup — §4), not off
+  the subscription, so the 2026-09-22 base raise left all three untouched.
 - **The subscription attaches to the HOUSEHOLD** (the tenancy unit — AI allowance is shared like the
   pantry is): provider customer id + `Tier` + period state on `Household`. Who may purchase:
   **any member — decided** (§8); the purchaser-departure lifecycle below is the safety net.
@@ -705,7 +729,8 @@ judge-by-the-log rule. On the planned separate public box, this doesn't arise.
 - **BYOK: by deployment mode, not by tier** (§2 — initially "BYOK on Free: yes", refined the same day
   after the integration finding): BYOK-mode boxes always take browser keys; the managed paid box never
   does. The guard-relaxation work item this deletes never gets built.
-- **Annual $27.99/yr** ≈ $2.33/mo effective (§1).
+- **Annual $27.99/yr** ≈ $2.33/mo effective (§1). ⚠️ Struck against a $2.99 base; see the open
+  question below.
 - **Merchant of record: Lemon Squeezy** — "for now"; the §6 seam keeps it swappable. Verify current
   fees + payout terms at signup before locking the §3 tables.
 - **Grandfathering: yes** — every current family-box household becomes a Founder, granted by Jordan
@@ -731,8 +756,11 @@ judge-by-the-log rule. On the planned separate public box, this doesn't arise.
 - **The paid product deploys to its own fresh public box, stood up at the first paying customer**;
   the family box never gets billing — all its households are Founders (§7).
 - **Checkout defaults to MONTHLY** (Jordan: "no one wants to fork out 30 for something they haven't
-  tested much yet, and free is only a month or two") — the annual sits beside it with a
-  "save 22% — ~2 months free" badge, and gets its real pitch at first renewal, when trust exists.
+  tested much yet, and free is only a month or two") — the annual sits beside it with a saving badge
+  and a "saves about N months" line, and gets its real pitch at first renewal, when trust exists.
+  ⚠️ Both were typed by hand as "save 22%" and "about two months" until 2026-09-22; they are now
+  DERIVED from the two prices (`SubscriptionPricing`), because a hand-written discount survives a
+  price change without failing anything and then contradicts the buttons beside it.
 - **Credit packs are sold to ACTIVE SUBSCRIBERS ONLY — Free households are not offered packs**
   (Jordan: "it means they're skipping paying for hosting costs, essentially"). The economics behind
   it: the subscription carries the FIXED costs — hosting, the EL plan minimum, the infrastructure
@@ -758,6 +786,14 @@ recorded: the reviewer's one free scan/month (keeps data continuously warm, but 
 AI" into a standing special case), or Jordan's own alternative — **"welcome back" credits**: a small
 one-time grant when a lapsed household returns, which keeps Free cleanly AI-free and spends the money
 only on someone who actually came back.
+
+**OPEN — does the annual move with the base? (raised 2026-09-22):** the monthly went $2.99 → $3.99
+and the annual stayed at $27.99, which turns a ~22% discount into ~41% and drops annual break-even
+tenure from ~11.2 months to ~7.9 (§1). Three answers, all defensible: **hold $27.99** and accept a
+much steeper annual as a deliberate land-grab; **re-strike at $36.99**, which restores the ~22% /
+~2-months-free shape the annual was designed around; or **$39.99**, a flat two-months-free ladder that
+is the easiest to explain. Nothing is built against either number — the sub's provider price ids are
+still null (§6) and the two prices live in one place — so this is a decision, not a migration.
 
 **Parked — the dormant-subscriber conscience nudge (Jordan's call, 2026-09-01):** proactively email an
 ACTIVE, PAYING subscriber who has gone dormant (no app activity for ~a few months) to ask whether they

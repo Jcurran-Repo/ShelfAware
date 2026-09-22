@@ -30,11 +30,12 @@ public class WishlistTiersTests
     }
 
     [Fact]
-    public void Aware_carries_the_plans_base_price_so_the_reserve_cant_silently_drift_from_it()
+    public void Aware_quotes_a_price_at_all()
     {
-        // Mirrors docs/subscription-plan.md — if the plan's base price changes, this fails until the
-        // reserve catalog is updated to match.
-        Assert.Contains("$2.99", WishlistTiers.ByKey("aware")!.Price);
+        // WHAT that price is, and that it is the same one the billing catalog and the panel show, is
+        // SubscriptionPricingTests' job — the reserve no longer carries its own copy to drift from.
+        // This only holds the ladder to quoting something, so a tier can't render a blank price cell.
+        Assert.False(string.IsNullOrWhiteSpace(WishlistTiers.ByKey("aware")!.Price));
     }
 
     [Fact]

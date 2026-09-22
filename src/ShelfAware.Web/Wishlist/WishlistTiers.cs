@@ -1,9 +1,13 @@
+using ShelfAware.Web.Billing;
+
 namespace ShelfAware.Web.Wishlist;
 
-/// <summary>The tiers offered on the /about reserve — the pre-launch intent picker. Names and prices
-/// MIRROR docs/subscription-plan.md (the source of truth for the plan); kept as a small in-code catalog
-/// because that doc isn't machine-readable and the reserve needs the copy at render time. ⚠️ If the plan
-/// changes a price, update it here too. This stays the MARKETING catalog (display copy) while
+/// <summary>The tiers offered on the /about reserve — the pre-launch intent picker. Names MIRROR
+/// docs/subscription-plan.md (the source of truth for the plan); kept as a small in-code catalog because
+/// that doc isn't machine-readable and the reserve needs the copy at render time. The PRICE is not copied
+/// here — it is asked of <see cref="SubscriptionPricing"/>, the one definition every surface reads, because
+/// the ⚠️ that used to sit on this line ("if the plan changes a price, update it here too") was a prose
+/// rule, and prose rules get broken. This stays the MARKETING catalog (display copy) while
 /// <see cref="ShelfAware.Web.Auth.HouseholdTier"/> (Free/Aware/Founder) stays the ENTITLEMENT — they
 /// answer different questions.</summary>
 public sealed record ReserveTier(string Key, string Name, string Price, string Blurb);
@@ -22,7 +26,7 @@ public static class WishlistTiers
     [
         new("shelf", "Shelf", "Free",
             "The full app — track what you buy, predict what's running low, build your list. Self-host it free, forever."),
-        new("aware", "Aware", "$2.99/mo · $27.99/yr",
+        new("aware", "Aware", SubscriptionPricing.LadderDisplay,
             "Managed AI on our keys: scan receipts, count from a shelf photo, recipe help, and chat with it out loud, back and forth. Nothing to set up."),
     ];
 

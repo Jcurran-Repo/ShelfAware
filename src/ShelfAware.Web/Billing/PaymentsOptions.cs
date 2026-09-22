@@ -52,10 +52,10 @@ public sealed class PaymentsOptions
     // real adapter's checkout (steps 3/5) to open the right hosted page; the fake ignores them (it echoes
     // the requested BillingProduct straight back). Left null until the pay-to-play box's products exist.
 
-    /// <summary>The provider price/variant id for the $2.99/mo subscription.</summary>
+    /// <summary>The provider price/variant id for the monthly subscription (SubscriptionPricing.MonthlyDisplay).</summary>
     public string? MonthlyPriceId { get; set; }
 
-    /// <summary>The provider price/variant id for the $27.99/yr subscription.</summary>
+    /// <summary>The provider price/variant id for the annual subscription (SubscriptionPricing.AnnualDisplay).</summary>
     public string? AnnualPriceId { get; set; }
 
     /// <summary>The provider price/variant id for the $5 credit pack.</summary>
