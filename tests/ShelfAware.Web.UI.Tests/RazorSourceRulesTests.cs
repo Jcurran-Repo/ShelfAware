@@ -54,13 +54,6 @@ public class RazorSourceRulesTests
 
     /// <summary>Every <c>.razor</c> under <c>src/</c>, found by walking up to the solution file — so the
     /// test does not depend on the build's output layout.</summary>
-    private static IEnumerable<string> RazorFiles()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "ShelfAware.slnx")))
-            dir = dir.Parent;
-
-        Assert.NotNull(dir); // no solution above the test assembly — the walk is wrong, not the sources
-        return Directory.EnumerateFiles(Path.Combine(dir!.FullName, "src"), "*.razor", SearchOption.AllDirectories);
-    }
+    private static IEnumerable<string> RazorFiles() =>
+        Directory.EnumerateFiles(Path.Combine(RepoTree.Root().FullName, "src"), "*.razor", SearchOption.AllDirectories);
 }

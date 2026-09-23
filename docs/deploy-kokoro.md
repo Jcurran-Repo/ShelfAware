@@ -82,17 +82,34 @@ the voice embeddings, the token table and the `espeak-ng-data` directory.
 Steps 1–5 are the **droplet**. The family box is Windows and keeps its files somewhere else — see
 [The family box (Windows)](#the-family-box-windows) below, which is the same five steps in its idiom.
 
+As root, which is what the droplet's SSH session is. ⚠️ **Paste the block whole** — every step is
+joined to the next with `&&`, so an archive that fails its checksum is deleted and nothing after it runs.
+The same shape, and the reasons for each part, as [deploy-moonshine.md](deploy-moonshine.md) step 1.
+
 ```bash
-sudo mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models
-curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-en-v0_19.tar.bz2
-tar xjf kokoro-int8-en-v0_19.tar.bz2 && rm kokoro-int8-en-v0_19.tar.bz2
-ls kokoro-int8-en-v0_19   # model.int8.onnx  voices.bin  tokens.txt  espeak-ng-data/  README.md  LICENSE
-# Root-owned, world-readable: the app READS its model and never rewrites it — install.sh's
-# posture for the binaries, for the same reason. A process that gets compromised should not be
-# able to leave anything behind in a directory the app loads from.
-sudo chown -R root:root /var/lib/shelfaware/models
-sudo chmod -R a+rX /var/lib/shelfaware/models
+# Checked against the hash measured for this archive -- the same one the CI bootstrap checks
+# (.github/workflows/deploy-droplet.yml) -- because it sits on a mutable release tag and is unpacked
+# as root. Staged, then moved in whole, so a half-extracted directory can never read as installed.
+# Root-owned, world-readable: the app READS its model and never rewrites it -- install.sh's posture
+# for the binaries, for the same reason. A process that gets compromised should not be able to leave
+# anything behind in a directory the app loads from.
+mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models \
+  && V=kokoro-int8-en-v0_19 \
+  && { [ ! -e "$V" ] || { echo "$V is already installed here."; false; }; } \
+  && curl -fsSL --proto '=https' -o "$V.tar.bz2" \
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$V.tar.bz2" \
+  && { echo "c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd  $V.tar.bz2" | sha256sum -c - \
+       || { rm -f "$V.tar.bz2"; false; }; } \
+  && rm -rf .staging && mkdir .staging \
+  && tar xjf "$V.tar.bz2" -C .staging --no-same-owner --no-same-permissions \
+  && mv ".staging/$V" . \
+  && rm -rf .staging "$V.tar.bz2" \
+  && chown -R root:root "$V" && chmod -R a+rX "$V" \
+  && ls "$V"   # model.int8.onnx  voices.bin  tokens.txt  espeak-ng-data/  README.md  LICENSE
 ```
+
+`tar` shells out to `bzip2`, which a minimal Ubuntu image does not ship — `apt-get install -y bzip2`
+first if it is missing (the deploy's bootstrap does).
 
 | Archive | Download | On disk | Voices | Notes |
 |---|---|---|---|---|
@@ -201,14 +218,33 @@ The same reasoning gives the answer for a **development checkout**: `src\ShelfAw
 
 Windows 10 and 11 ship both `curl.exe` and `tar` (bsdtar), so there is nothing to install:
 
+⚠️ **Paste the block whole**: it is one `& { … }` script block so that a `throw` stops *all* of it —
+pasted as loose lines, a failed checksum would stop only its own line and the next would unpack the
+archive anyway. Why each part is there: [deploy-moonshine.md](deploy-moonshine.md) step 2.
+
 ```powershell
-$models = "$env:USERPROFILE\ShelfAware-server\app-data\models"
-New-Item -ItemType Directory -Path $models -Force | Out-Null
-curl.exe -L -o "$models\kokoro.tar.bz2" `
-  https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-en-v0_19.tar.bz2
-tar -xf "$models\kokoro.tar.bz2" -C $models
-Remove-Item "$models\kokoro.tar.bz2"
-Get-ChildItem "$models\kokoro-int8-en-v0_19"   # model.int8.onnx  voices.bin  tokens.txt  espeak-ng-data\
+& {
+  $ErrorActionPreference = 'Stop'
+  $models  = "$env:USERPROFILE\ShelfAware-server\app-data\models"
+  $name    = 'kokoro-int8-en-v0_19'
+  $archive = "$models\$name.tar.bz2"
+  $staging = "$models\.staging"
+  if (Test-Path "$models\$name") { throw "$name is already installed in $models." }
+  New-Item -ItemType Directory -Path $models -Force | Out-Null
+  curl.exe -fL --proto '=https' -o $archive "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$name.tar.bz2"
+  if ($LASTEXITCODE -ne 0) { throw "The download failed (curl exit $LASTEXITCODE)." }
+  if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne 'c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd') {
+    Remove-Item $archive
+    throw "$name did not match its recorded sha256 -- not unpacked."
+  }
+  Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Path $staging | Out-Null
+  & "$env:SystemRoot\System32\tar.exe" -xf $archive -C $staging
+  if ($LASTEXITCODE -ne 0) { throw "tar could not unpack $archive." }
+  Move-Item "$staging\$name" "$models\$name"
+  Remove-Item $staging, $archive -Recurse -Force
+  Get-ChildItem "$models\$name"   # model.int8.onnx  voices.bin  tokens.txt  espeak-ng-data\
+}
 ```
 
 ⚠️ **`curl.exe`, with the extension, not `curl`.** In Windows PowerShell `curl` is an *alias for
@@ -219,11 +255,15 @@ redirect GitHub answers a release download with) and `-o` mean what they do ever
 
 `Invoke-WebRequest -OutFile` works too, and needs no `-L` because it follows redirects on its own. If you
 use it, set `$ProgressPreference = 'SilentlyContinue'` first — its progress bar re-renders per chunk and
-can turn a 103 MB download into a several-minute one.
+can turn a 103 MB download into a several-minute one. Swap it in for the `curl.exe` line *inside* the
+block, so the checksum still stands between the download and the unpack.
 
-If that `tar` build turns out not to carry bzip2, 7-Zip unpacks it in two passes (`.tar.bz2` → `.tar` →
-the folder). Either way what must end up on disk is a `kokoro-int8-en-v0_19` directory containing those
-four things — the app checks all four by name and refuses to boot if any is missing.
+The block names `System32\tar.exe` rather than a bare `tar`: with Git's Unix tools on the PATH, `tar`
+can resolve to GNU tar, which reads `C:\…` as a remote host named `C` and fails. Windows' own is bsdtar,
+and the build shipped with Windows 11 (3.8.8) reads `.bz2`. If an older one turns out not to, 7-Zip
+unpacks it in two passes (`.tar.bz2` → `.tar` → the folder) — after the checksum, not instead of it.
+Either way what must end up on disk is a `kokoro-int8-en-v0_19` directory containing those four things —
+the app checks all four by name and refuses to boot if any is missing.
 
 ### Prove it speaks — before the app is told about it
 
