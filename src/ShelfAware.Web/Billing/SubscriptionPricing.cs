@@ -21,7 +21,10 @@ public static class SubscriptionPricing
     /// not the sticker a new one is quoted — changing this number is a decision about who signs up next.</summary>
     public const decimal MonthlyDollars = 3.99m;
 
-    /// <summary>What Aware costs per year (docs/subscription-plan.md §1).</summary>
+    /// <summary>What Aware costs per year (docs/subscription-plan.md §1). ⚠️ Deliberately NOT re-struck
+    /// when the monthly rose on 2026-09-22: Jordan held it at $27.99 the next day, so the ~41% the badge
+    /// derives is the intended discount and not a number that got left behind. §8 records the $36.99 and
+    /// $39.99 alternatives that were weighed and declined.</summary>
     public const decimal AnnualDollars = 27.99m;
 
     /// <summary>"$3.99/mo" — the monthly price as a surface shows it.</summary>

@@ -50,7 +50,8 @@ argument (the floor has to survive model-price rises, fixed costs and disputes) 
 promise, which binds an EXISTING subscriber's price and not the sticker a new one is quoted; nobody is
 subscribed yet, so this raise breaks no promise to anyone. At $3.99 the monthly floor at full grant use
 goes from ~$1.33/mo (44%) to **~$2.27/mo (57%)** — see the §3 table.
-⚠️ **The annual was NOT re-struck to match, and it is the open question this raise leaves** — see the
+**The annual stays at $27.99 (Jordan, 2026-09-23): the discount is meant to be big.** Against twelve
+$3.99 charges that is ~41% off rather than the ~22% it was struck as, and that is the point — see the
 annual paragraph below and §8.
 
 **Why $2.99, not the $1.99 first floated (decided 2026-08-23):** Jordan's constraint is *never raise
@@ -78,11 +79,13 @@ survives, not the tier.
 $2.33/mo effective** (Jordan's number — MoR net ~$25.95, floor at full grant use **~$1.16/mo**).
 ⚠️ **The discount is a derived number and the 2026-09-22 raise moved it: $27.99 against twelve $2.99
 charges was ~22% off; against twelve $3.99 charges it is ~41% off** — the annual now costs about seven
-months of the monthly rather than nine and a half. The app no longer states that percentage by hand
-(`SubscriptionPricing` derives the badge from the two prices), so no screen can claim the old number,
-but the PRODUCT question is open: holding the annual at $27.99 is a much steeper discount than the one
-this paragraph reasoned itself into. Re-striking it at **$36.99** would restore the ~22%/~2-months-free
-shape at the new base. **Jordan's call — §8.** A possible future voice tier (dropped for now — see above) sketched at **$4.99/mo /
+months of the monthly rather than nine and a half. **Jordan held $27.99 rather than re-strike it
+(2026-09-23), and chose the bigger discount deliberately** — this paragraph's "steep discount,
+annual-first posture" is now steeper than the 2026-08-23 version of itself meant, and that is the
+decision, not an oversight. The re-strike that was weighed and declined was $36.99, which would have
+restored the ~22% / ~2-months-free shape at the new base. What the app says about the discount is
+derived from the two prices (`SubscriptionPricing`), so the badge and the "saves about N months" line
+followed the raise on their own and no screen can quote the old number. A possible future voice tier (dropped for now — see above) sketched at **$4.99/mo /
 ~$47.99/yr ≈ $4.00/mo effective** (Jordan's "steep annual, ~$3.99 effective") — the two discounts
 deliberately rhyme at ~20%.
 **The discount was cheaper than it looked at $2.99 — and is not at $3.99.** At the old base a
@@ -91,8 +94,10 @@ the 22% sticker discount cost only ~$2/yr ≈ 7% net and break-even tenure was ~
 churn-risk subscriber made the annual the better outcome. ⚠️ **At $3.99 with the annual unmoved, twelve
 monthly charges net ~$39.25/yr against the same ~$25.95, so the discount costs ~$13.30/yr ≈ 34% net and
 break-even tenure falls to ~7.9 months.** That is still a real case for annual-first (cash up front,
-retention, one fixed fee instead of twelve), but it is no longer nearly-free, which is the substance
-behind the open question above. 100% annual take-up is the good scenario (max cash, max
+retention, one fixed fee instead of twelve), but it is no longer nearly-free — it is a real ~$13/yr
+bought per annual subscriber, and **that is the cost Jordan accepted on 2026-09-23** when he held the
+annual at $27.99. Anyone who stays past month eight is cheaper served monthly; the bet is that most
+will not, and that the cash and the retention are worth more than the spread. 100% annual take-up is the good scenario (max cash, max
 retention, floor still positive) — there is no monthly/annual mix that loses. **On annual billing
 the grant still drips monthly** — no $12 lump to binge through in week one. ⚠️ A
 discount this steep means most subscribers take annual, so **the annual floor is the real floor** —
@@ -729,8 +734,8 @@ judge-by-the-log rule. On the planned separate public box, this doesn't arise.
 - **BYOK: by deployment mode, not by tier** (§2 — initially "BYOK on Free: yes", refined the same day
   after the integration finding): BYOK-mode boxes always take browser keys; the managed paid box never
   does. The guard-relaxation work item this deletes never gets built.
-- **Annual $27.99/yr** ≈ $2.33/mo effective (§1). ⚠️ Struck against a $2.99 base; see the open
-  question below.
+- **Annual $27.99/yr** ≈ $2.33/mo effective (§1). Struck against a $2.99 base and **held at $27.99
+  through the 2026-09-22 raise to $3.99** (Jordan, 2026-09-23) — the discount is ~41% off by design.
 - **Merchant of record: Lemon Squeezy** — "for now"; the §6 seam keeps it swappable. Verify current
   fees + payout terms at signup before locking the §3 tables.
 - **Grandfathering: yes** — every current family-box household becomes a Founder, granted by Jordan
@@ -787,13 +792,19 @@ AI" into a standing special case), or Jordan's own alternative — **"welcome ba
 one-time grant when a lapsed household returns, which keeps Free cleanly AI-free and spends the money
 only on someone who actually came back.
 
-**OPEN — does the annual move with the base? (raised 2026-09-22):** the monthly went $2.99 → $3.99
-and the annual stayed at $27.99, which turns a ~22% discount into ~41% and drops annual break-even
-tenure from ~11.2 months to ~7.9 (§1). Three answers, all defensible: **hold $27.99** and accept a
-much steeper annual as a deliberate land-grab; **re-strike at $36.99**, which restores the ~22% /
-~2-months-free shape the annual was designed around; or **$39.99**, a flat two-months-free ladder that
-is the easiest to explain. Nothing is built against either number — the sub's provider price ids are
-still null (§6) and the two prices live in one place — so this is a decision, not a migration.
+**DECIDED — the annual holds at $27.99, and the big discount is the point (Jordan, 2026-09-23):**
+> "Feels like 27.99 is still the right idea, and we should use a big discount"
+
+The 2026-09-22 raise took the monthly to $3.99 and left the annual where it was, which turns a ~22%
+discount into **~41% off** and drops annual break-even tenure from ~11.2 months to ~7.9 (§1). The two
+alternatives were weighed and declined: **$36.99**, which would have restored the ~22% /
+~2-months-free shape the annual was originally designed around, and **$39.99**, a flat two-months-free
+ladder that is the easiest to explain. Holding $27.99 is the annual-first land-grab — the steepest of
+the three, costing ~$13/yr per annual subscriber against twelve monthly charges, bought for cash up
+front and a year of retention. ⚠️ **The §1 caveat stands and is now load-bearing:** the annual floor is
+the real floor, and it holds ONLY while the grant stays modest. A discount this steep plus a fatter
+allowance rebuilds the $1.99 problem, so the 100 credits/month is no longer a number to be generous
+with casually — raising it is a pricing decision now, not a nicety.
 
 **Parked — the dormant-subscriber conscience nudge (Jordan's call, 2026-09-01):** proactively email an
 ACTIVE, PAYING subscriber who has gone dormant (no app activity for ~a few months) to ask whether they
