@@ -133,6 +133,7 @@ public abstract class PageTestContext : BunitContext
 
         ComponentFactories.AddStub<PushToTalk>();
         ComponentFactories.AddStub<OnboardingBanner>();
+        ComponentFactories.AddStub<ReceiptReminderBanner>();
         ComponentFactories.AddStub<RecipeReadAloud>();
         ComponentFactories.AddStub<CookAlong>();
 
