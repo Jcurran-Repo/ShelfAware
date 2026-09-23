@@ -1,5 +1,5 @@
 ---
-description: Run the required code review + security review + Core mutation-coverage gate before any push or merge to master.
+description: Run the required code review + security review + Core mutation-coverage gate before any merge to master.
 ---
 
 # Pre-push gate
@@ -14,10 +14,29 @@ Run both, in this order, and report honestly. A finding you talk yourself out of
 ## 1. Confirm what is actually about to move
 
 ```
+git fetch origin master
 git status --porcelain
-git log --oneline master..HEAD
-git diff --stat master..HEAD
+git log --oneline origin/master..HEAD      # stacked PR: the parent's frozen head, per the note below
+git diff --stat origin/master..HEAD        # both lines, or the diffstat disagrees with the log
 ```
+
+⚠️ **Decide the base here, write it into the report, and then type that ref literally into every
+step below** — §2's review scope and §3's `--since:`. Do not carry it in a shell variable: each block
+in this file runs as its own shell, so a `BASE=` set here is empty by §3, and `--since:` with an empty
+value silently falls back to Stryker's own default of `master` — the stale ref this paragraph exists to
+prevent, now failing invisibly. There is no shared state between these blocks except what you retype.
+
+- **`origin/master`, not `master`.** The local ref only moves when someone checks `master` out and
+  pulls, which no session here does — this gate's own review once scoped itself against a local
+  `master` 38 commits behind and reported 324 KB of someone else's already-merged work as part of the
+  branch.
+- **On a PR stacked on a frozen, unmerged head, the base is that head — and the PR is opened against
+  it, not against `master`.** Against `origin/master` the gate reads the parent's commits as this
+  branch's and certifies a diff that changes the moment the parent merges; opened against `master`
+  while gated against the parent, it certifies a strictly smaller diff than the merge lands. Both
+  halves or neither. ⚠️ A stacked PR also gets no mutation check from CI — `mutation-pr.yml` is
+  `on: pull_request: branches: [ master ]` — so a stacked, Core-touching branch must run §3 on a
+  machine with the SDK, or wait and retarget to `master` once the parent merges.
 
 State the branch, the commit count, and the diffstat back to the user before reviewing. If the
 working tree is dirty, stop and say so — an unreviewed change is about to ride along.
@@ -25,7 +44,15 @@ working tree is dirty, stop and say so — an unreviewed change is about to ride
 ## 2. Run the reviews
 
 Invoke the `/code-review` skill, then the `/security-review` skill, over the full branch diff
-against `master` (not just the last commit).
+against the base from §1 (not just the last commit, and not the local `master` ref).
+
+⚠️ **Name that base in the arguments you pass the skill.** Neither takes a base parameter, so left
+alone each picks its own — the branch's upstream, which on a pushed branch is the branch itself and an
+empty diff, or the last commit alone, which §2 has just forbidden. Both end the same way: `ready, head
+<sha>` reported over a diff nothing read. So say it in words — *"review the diff against
+`origin/master`"* — and **read the scope line the review states back** before believing a single
+finding. A review that says it read 3 files when the branch changed 9 has reviewed nothing of value,
+and it will not say so twice.
 
 For this repo, security review means the multi-tenancy boundary above all else:
 
@@ -44,15 +71,30 @@ For this repo, security review means the multi-tenancy boundary above all else:
 ## 3. Mutation coverage on Core changes
 
 `ShelfAware.Core` is held at a 100% mutation score (`tests/ShelfAware.Tests/stryker-config.json`, break
-threshold 100). If the branch diff touches `src/ShelfAware.Core/**`, run that same gate over **only what
+threshold 100). If the branch diff touches `src/ShelfAware.Core/**` **or** `tests/ShelfAware.Tests/**`
+— the same pair as the skip rule below, and as CI — run that same gate over **only what
 this branch changed** — diff-scoped, so it is seconds-to-minutes rather than the ~13-minute full run:
 
 ```
-cd tests/ShelfAware.Tests
-dotnet stryker --since:master
+git fetch origin master                   # §1's fetch does not reach here: a machine handed only this
+cd tests/ShelfAware.Tests                 # step never ran it, and a stale base fails on foreign code
+dotnet stryker --since:origin/master      # or the parent's frozen head, per §1
 ```
 
-**If no `src/ShelfAware.Core/**` files changed, skip this — there is nothing to mutate.**
+**Skip this only if the branch changed nothing under `src/ShelfAware.Core/**` AND nothing under
+`tests/ShelfAware.Tests/**`** — that is the pair `mutation-pr.yml`'s scope step tests, and the narrower
+"Core src only" reading lets a branch that merely deletes the test killing a Core mutant pass here and
+go red in CI.
+
+⚠️ **Type the ref; `--since:master` is the failure.** Against a stale local ref it scopes the run
+over Core changes that merged weeks ago, and at a break threshold of 100 it then fails on code this
+branch never touched. CI gets this right already — `mutation-pr.yml` passes the PR's base sha.
+
+⚠️ **If the session running this gate has no .NET SDK, it cannot run this step** — the cloud session
+does not. Say so in the report rather than skipping it silently, and treat `mutation-pr.yml`'s
+diff-scoped check on the PR as the run that counts: no `ready, head <sha>` until that check is green on
+the sha being named. That fallback does not exist for a stacked PR (§1): there, hand the run to a
+machine with the SDK, or do not call it ready.
 
 Anything under 100% is a survivor: a mutant this branch introduced or newly exposed that no test kills.
 Treat each like a review finding — it is either a real coverage gap (**add the test**) or a true
@@ -80,4 +122,20 @@ found by running the app.
 Give the user the findings — file, line, and a concrete scenario — ranked, with the ones you couldn't
 construct a scenario for ranked lowest and labelled as such.
 
-**Do not push or merge.** Ask. Pushing is the user's call, always.
+**Name the head commit the gate covered, and post it on the PR.** A gate covers the branch diff *as it
+stood at one commit* — §2 is what it reads, this is what it certifies — so report it as `ready, head
+<sha>`, in the thread **and as a comment on the pull request**. Whoever merges is looking at GitHub, not
+at this file: a sha sitting beside the merge button is the only form of this rule they can act on, and
+a mismatch with the PR's current head is then visible without asking anyone. Any push after
+that retracts the report: re-run the gate and name the new head. New work goes in its own PR, off the
+frozen head while this one is unmerged and off `master` once it has merged. See the branch-ownership
+directive in CLAUDE.md for why — on 2026-09-23 two PRs were merged at one head while the next round of
+reviewed commits was still being pushed to them, which stranded that work on already-merged branches and
+gave `master` a version no gate had covered.
+
+**Do not merge.** Merging is Jordan's call, always — report, then stop.
+
+⚠️ This line used to read "do not push or merge", which contradicted CLAUDE.md's own gate rule two
+files away: **pushing the topic branch is fine and encouraged**, and is in fact how the gated head
+reaches `origin` for him to merge at all. A direct push to `master` is a merge by another name, and is
+what "do not merge" covers.
