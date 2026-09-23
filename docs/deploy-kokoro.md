@@ -39,7 +39,7 @@ has ever been loaded.
 ## Requirements
 
 - **RAM: ~600 MB resident while the model is loaded**, on top of the app. On a 2 GB droplet that is
-  workable but not roomy, so **add a 2 GB swap file** (step 0). On a 1 GB box, keep ElevenLabs.
+  workable but not roomy, so **add a 2 GB swap file** (step 1). On a 1 GB box, keep ElevenLabs.
   The model loads on the **first read-aloud**, not at boot, and stays loaded after that — a box that
   never reads a recipe never pays the RAM.
 - **CPU: synthesis is roughly real-time on a multi-core box, and about 2.4× real time on one core.**
@@ -80,36 +80,33 @@ The models are sherpa-onnx's own packaging of Kokoro — the archive already con
 the voice embeddings, the token table and the `espeak-ng-data` directory.
 
 Steps 1–5 are the **droplet**. The family box is Windows and keeps its files somewhere else — see
-[The family box (Windows)](#the-family-box-windows) below, which is the same five steps in its idiom.
+[The family box (Windows)](#the-family-box-windows) below, which is the same steps in its idiom.
 
 As root, which is what the droplet's SSH session is. ⚠️ **Paste the block whole** — every step is
 joined to the next with `&&`, so an archive that fails its checksum is deleted and nothing after it runs.
 The same shape, and the reasons for each part, as [deploy-moonshine.md](deploy-moonshine.md) step 1.
 
 ```bash
+# A minimal Ubuntu image ships no bzip2, and GNU tar shells out to it to read a .tar.bz2.
 # Checked against the hash measured for this archive -- the same one the CI bootstrap checks
 # (.github/workflows/deploy-droplet.yml) -- because it sits on a mutable release tag and is unpacked
-# as root. Staged, then moved in whole, so a half-extracted directory can never read as installed.
-# Root-owned, world-readable: the app READS its model and never rewrites it -- install.sh's posture
-# for the binaries, for the same reason. A process that gets compromised should not be able to leave
-# anything behind in a directory the app loads from.
-mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models \
-  && V=kokoro-int8-en-v0_19 \
-  && { [ ! -e "$V" ] || { echo "$V is already installed here."; false; }; } \
-  && curl -fsSL --proto '=https' -o "$V.tar.bz2" \
+# as root. Downloaded and unpacked in a fresh root-only directory, moved in only once verified, whole
+# and root-owned; why each of those matters is in deploy-moonshine.md step 1.
+{ command -v bzip2 >/dev/null || { apt-get update && apt-get install -y bzip2; }; } \
+  && M=/var/lib/shelfaware/models && V=kokoro-int8-en-v0_19 \
+  && { { [ ! -e "$M/$V" ] && [ ! -L "$M/$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
+  && mkdir -p "$M" && T=$(mktemp -d) \
+  && curl -fsSL --proto '=https' -o "$T/$V.tar.bz2" \
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$V.tar.bz2" \
-  && { echo "c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd  $V.tar.bz2" | sha256sum -c - \
-       || { rm -f "$V.tar.bz2"; false; }; } \
-  && rm -rf .staging && mkdir .staging \
-  && tar xjf "$V.tar.bz2" -C .staging --no-same-owner --no-same-permissions \
-  && mv ".staging/$V" . \
-  && rm -rf .staging "$V.tar.bz2" \
-  && chown -R root:root "$V" && chmod -R a+rX "$V" \
-  && ls "$V"   # model.int8.onnx  voices.bin  tokens.txt  espeak-ng-data/  README.md  LICENSE
+  && { echo "c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd  $T/$V.tar.bz2" | sha256sum -c - \
+       || { rm -rf "$T"; false; }; } \
+  && tar xjf "$T/$V.tar.bz2" -C "$T" --no-same-owner --no-same-permissions \
+  && chown -R root:root "$T/$V" && chmod -R a+rX "$T/$V" \
+  && mv "$T/$V" "$M/" \
+  && rm -rf "$T" \
+  && ls "$M/$V"
+# model.int8.onnx  voices.bin  tokens.txt  espeak-ng-data/  README.md  LICENSE
 ```
-
-`tar` shells out to `bzip2`, which a minimal Ubuntu image does not ship — `apt-get install -y bzip2`
-first if it is missing (the deploy's bootstrap does).
 
 | Archive | Download | On disk | Voices | Notes |
 |---|---|---|---|---|
@@ -248,10 +245,11 @@ archive anyway. Why each part is there: [deploy-moonshine.md](deploy-moonshine.m
 ```
 
 ⚠️ **`curl.exe`, with the extension, not `curl`.** In Windows PowerShell `curl` is an *alias for
-`Invoke-WebRequest`*, which is a different program with different switches — it has no `-L`, so pasting
-step 2's Linux line gets you "A parameter cannot be found that matches parameter name 'L'" rather than a
-download. Spelling out `curl.exe` bypasses the alias and runs the real curl, where `-L` (follow the
-redirect GitHub answers a release download with) and `-o` mean what they do everywhere else.
+`Invoke-WebRequest`*, which is a different program with different switches — `curl -L …` typed at a
+PowerShell prompt gets you "A parameter cannot be found that matches parameter name 'L'" rather than a
+download. (Step 2's Linux block will not even parse there: Windows PowerShell has no `&&`.) Spelling out
+`curl.exe` bypasses the alias and runs the real curl, where `-f`, `-L` (follow the redirect GitHub
+answers a release download with) and `-o` mean what they do everywhere else.
 
 `Invoke-WebRequest -OutFile` works too, and needs no `-L` because it follows redirects on its own. If you
 use it, set `$ProgressPreference = 'SilentlyContinue'` first — its progress bar re-renders per chunk and

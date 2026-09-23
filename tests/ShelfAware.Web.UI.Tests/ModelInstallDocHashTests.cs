@@ -10,9 +10,9 @@ namespace ShelfAware.Web.UI.Tests;
 /// are held to the bootstrap here rather than by a sentence promising they agree.
 ///
 /// <para>Paired by ARCHIVE, not merely "is this hash one we know": each block names its archive once —
-/// <c>V=&lt;archive&gt;</c> in bash, <c>$name = '&lt;archive&gt;'</c> in PowerShell — and checks it against the
-/// first hash after that line. A block that named one model and pasted another's hash would fail its own
-/// check on the box (safely), and would also be a block nobody could use.</para>
+/// <c>V=&lt;archive&gt;</c> in bash, <c>$name = '&lt;archive&gt;'</c> in PowerShell — and checks it against
+/// the hash inside the same fenced block. A block that named one model and pasted another's hash would
+/// fail its own check on the box (safely), and would also be a block nobody could use.</para>
 /// </summary>
 public class ModelInstallDocHashTests
 {
@@ -28,19 +28,35 @@ public class ModelInstallDocHashTests
             RepoTree.FileAt(Path.Combine(".github", "workflows", "deploy-droplet.yml"))));
         var text = File.ReadAllText(RepoTree.FileAt(Path.Combine("docs", doc)));
 
-        var pairs = Regex.Matches(text, @"(?:\bV=|\$name\s*=\s*')([\w.\-]+)")
-            .Select(m => (Archive: m.Groups[1].Value, Sha: Sha.Match(text, m.Index + m.Length).Value))
+        // ⚠️ Judged one fenced block at a time. Searching the whole file for "the first hash after the
+        // name" let the Windows block's copy stand in for the Linux block's — so the Linux block with its
+        // check DELETED still passed, which is the exact regression this rule exists for. Each block has
+        // to carry its own hash, and its own check command, or it fails here.
+        var installs = Regex.Matches(text, @"```\w*\r?\n(.*?)```", RegexOptions.Singleline)
+            .Select(b => b.Groups[1].Value)
+            .Select(body => (Body: body, Name: Regex.Match(body, @"(?:\bV=|\$name\s*=\s*')([\w.\-]+)")))
+            .Where(b => b.Name.Success)
+            .Select(b => (
+                Archive: b.Name.Groups[1].Value,
+                Sha: Sha.Match(b.Body).Value,
+                Checks: b.Body.Contains("sha256sum -c", StringComparison.Ordinal)
+                        || b.Body.Contains("Get-FileHash", StringComparison.Ordinal)))
             .ToList();
 
         // Reach guards: a pattern that stopped matching would otherwise pass having compared nothing —
-        // and the bootstrap's own list collapsing would make every pair look unknown for the wrong reason.
+        // and the bootstrap's own list collapsing would make every block look unknown for the wrong reason.
         Assert.True(bootstrap.Count >= 3,
             $"Only {bootstrap.Count} bootstrap fetch(es) found in deploy-droplet.yml — the scan is broken, not the workflow.");
-        Assert.True(pairs.Count == blocks,
-            $"Found {pairs.Count} install block(s) naming an archive in docs/{doc}, expected {blocks} — "
+        Assert.True(installs.Count == blocks,
+            $"Found {installs.Count} install block(s) naming an archive in docs/{doc}, expected {blocks} — "
             + "either the scan is broken or a block stopped naming its archive the way the others do.");
 
-        var wrong = pairs.Where(p => !bootstrap.TryGetValue(p.Archive, out var sha) || sha != p.Sha).ToList();
+        var withoutCheck = installs.Where(p => !p.Checks).Select(p => p.Archive).ToList();
+        Assert.True(withoutCheck.Count == 0,
+            $"An install block in docs/{doc} no longer runs its checksum (sha256sum -c / Get-FileHash): "
+            + string.Join(", ", withoutCheck));
+
+        var wrong = installs.Where(p => !bootstrap.TryGetValue(p.Archive, out var sha) || sha != p.Sha).ToList();
         Assert.True(wrong.Count == 0,
             $"docs/{doc} installs an archive under a hash the deploy's bootstrap does not use for it — "
             + "one has been edited and the other has not:" + Environment.NewLine

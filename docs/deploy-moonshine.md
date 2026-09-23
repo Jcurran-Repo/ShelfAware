@@ -59,27 +59,27 @@ check would be unpacked, as root, with the only sign a few lines back up the scr
 ```bash
 # A minimal Ubuntu image ships no bzip2, and GNU tar shells out to it to read a .tar.bz2.
 # Release assets sit on a mutable tag, so the archive is checked against the hash measured on
-# 2026-09-21 -- the same one the CI bootstrap checks (.github/workflows/deploy-droplet.yml) -- and
-# unpacked into a staging directory, moved in only once it is whole: "is the directory there" is the
-# check everything else makes, so a half-extracted one would read as installed. That same check stops a
-# re-run up front, where mv would otherwise nest a second copy inside the first.
+# 2026-09-21 -- the same one the CI bootstrap checks (.github/workflows/deploy-droplet.yml).
+# Downloaded and unpacked in a fresh root-only directory (mktemp -d), and moved into the models
+# directory only once it is verified, whole, and root-owned: /var/lib/shelfaware is the service
+# account's home, so root writes nothing there that the app could have prepared a path for, and "is
+# the directory there" -- the check everything else makes -- never sees a half-extracted model.
+# That same check stops a re-run up front, where mv would otherwise nest a second copy in the first.
 # Root-owned, world-readable: the app READS its model and never rewrites it -- install.sh's posture
-# for the binaries, for the same reason. A process that gets compromised should not be able to leave
-# anything behind in a directory the app loads from.
+# for the binaries, for the same reason.
 { command -v bzip2 >/dev/null || { apt-get update && apt-get install -y bzip2; }; } \
-  && mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models \
-  && V=sherpa-onnx-moonshine-tiny-en-int8 \
-  && { [ ! -e "$V" ] || { echo "$V is already installed here."; false; }; } \
-  && curl -fsSL --proto '=https' -o "$V.tar.bz2" \
+  && M=/var/lib/shelfaware/models && V=sherpa-onnx-moonshine-tiny-en-int8 \
+  && { { [ ! -e "$M/$V" ] && [ ! -L "$M/$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
+  && mkdir -p "$M" && T=$(mktemp -d) \
+  && curl -fsSL --proto '=https' -o "$T/$V.tar.bz2" \
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$V.tar.bz2" \
-  && { echo "d5fe6ec4334fef36255b2a4010412cad4c007e33103fec62fb5d17cad88086f2  $V.tar.bz2" | sha256sum -c - \
-       || { rm -f "$V.tar.bz2"; false; }; } \
-  && rm -rf .staging && mkdir .staging \
-  && tar xjf "$V.tar.bz2" -C .staging --no-same-owner --no-same-permissions \
-  && mv ".staging/$V" . \
-  && rm -rf .staging "$V.tar.bz2" \
-  && chown -R root:root "$V" && chmod -R a+rX "$V" \
-  && ls "$V"
+  && { echo "d5fe6ec4334fef36255b2a4010412cad4c007e33103fec62fb5d17cad88086f2  $T/$V.tar.bz2" | sha256sum -c - \
+       || { rm -rf "$T"; false; }; } \
+  && tar xjf "$T/$V.tar.bz2" -C "$T" --no-same-owner --no-same-permissions \
+  && chown -R root:root "$T/$V" && chmod -R a+rX "$T/$V" \
+  && mv "$T/$V" "$M/" \
+  && rm -rf "$T" \
+  && ls "$M/$V"
 # preprocess.onnx  encode.int8.onnx  uncached_decode.int8.onnx  cached_decode.int8.onnx  tokens.txt
 ```
 
