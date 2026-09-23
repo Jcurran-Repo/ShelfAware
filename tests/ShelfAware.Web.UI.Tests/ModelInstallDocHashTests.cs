@@ -16,32 +16,20 @@ namespace ShelfAware.Web.UI.Tests;
 /// </summary>
 public class ModelInstallDocHashTests
 {
-    private static readonly Regex Sha = new(@"\b[0-9a-f]{64}\b");
-
     // Both blocks in each doc: the Linux one and the Windows (family box) one.
     [Theory]
     [InlineData("deploy-kokoro.md", 2)]
     [InlineData("deploy-moonshine.md", 2)]
     public void Every_pasted_install_checks_its_archive_against_the_hash_the_bootstrap_uses(string doc, int blocks)
     {
-        var bootstrap = FetchedByArchive(File.ReadAllText(
-            RepoTree.FileAt(Path.Combine(".github", "workflows", "deploy-droplet.yml"))));
+        var bootstrap = PastedInstalls.BootstrapFetches();
         var text = File.ReadAllText(RepoTree.FileAt(Path.Combine("docs", doc)));
 
-        // ⚠️ Judged one fenced block at a time. Searching the whole file for "the first hash after the
-        // name" let the Windows block's copy stand in for the Linux block's — so the Linux block with its
-        // check DELETED still passed, which is the exact regression this rule exists for. Each block has
-        // to carry its own hash, and its own check command, or it fails here.
-        var installs = Regex.Matches(text, @"```\w*\r?\n(.*?)```", RegexOptions.Singleline)
-            .Select(b => b.Groups[1].Value)
-            .Select(body => (Body: body, Name: Regex.Match(body, @"(?:\bV=|\$name\s*=\s*')([\w.\-]+)")))
-            .Where(b => b.Name.Success)
-            .Select(b => (
-                Archive: b.Name.Groups[1].Value,
-                Sha: Sha.Match(b.Body).Value,
-                Checks: b.Body.Contains("sha256sum -c", StringComparison.Ordinal)
-                        || b.Body.Contains("Get-FileHash", StringComparison.Ordinal)))
-            .ToList();
+        // ⚠️ Judged one fenced block at a time (PastedInstalls.In). Searching the whole file for "the
+        // first hash after the name" let the Windows block's copy stand in for the Linux block's — so the
+        // Linux block with its check DELETED still passed, which is the exact regression this rule exists
+        // for. Each block has to carry its own hash, and its own check command, or it fails here.
+        var installs = PastedInstalls.In(text);
 
         // Reach guards: a pattern that stopped matching would otherwise pass having compared nothing —
         // and the bootstrap's own list collapsing would make every block look unknown for the wrong reason.
@@ -51,10 +39,18 @@ public class ModelInstallDocHashTests
             $"Found {installs.Count} install block(s) naming an archive in docs/{doc}, expected {blocks} — "
             + "either the scan is broken or a block stopped naming its archive the way the others do.");
 
-        var withoutCheck = installs.Where(p => !p.Checks).Select(p => p.Archive).ToList();
+        var withoutCheck = installs.Where(p => !p.ChecksItsHash).Select(p => p.Archive).ToList();
         Assert.True(withoutCheck.Count == 0,
             $"An install block in docs/{doc} no longer runs its checksum (sha256sum -c / Get-FileHash): "
             + string.Join(", ", withoutCheck));
+
+        // ⚠️ The bash block runs as root into the service account's home, so it must pin models/ by
+        // inode rather than trust its name — the bootstrap's rule. (The PowerShell block installs under
+        // the family box's own user profile, where no second account can re-point anything.)
+        var unpinned = installs.Where(p => p.IsBash && !p.PinsModels).Select(p => p.Archive).ToList();
+        Assert.True(unpinned.Count == 0,
+            $"docs/{doc} has a bash install block that does not pin models/ by inode "
+            + "(cd -P \"$M\" + /proc/$$/cwd): " + string.Join(", ", unpinned));
 
         var wrong = installs.Where(p => !bootstrap.TryGetValue(p.Archive, out var sha) || sha != p.Sha).ToList();
         Assert.True(wrong.Count == 0,
@@ -62,9 +58,4 @@ public class ModelInstallDocHashTests
             + "one has been edited and the other has not:" + Environment.NewLine
             + string.Join(Environment.NewLine, wrong.Select(p => $"{p.Archive} → {p.Sha}")));
     }
-
-    /// <summary>The bootstrap's calls: <c>fetch &lt;archive&gt; \</c>, then the sha on the next line.</summary>
-    private static Dictionary<string, string> FetchedByArchive(string workflow) =>
-        Regex.Matches(workflow, @"^\s*fetch\s+([\w.\-]+)\s*\\\s*\r?\n\s*([0-9a-f]{64})", RegexOptions.Multiline)
-            .ToDictionary(m => m.Groups[1].Value, m => m.Groups[2].Value, StringComparer.Ordinal);
 }

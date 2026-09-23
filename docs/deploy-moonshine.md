@@ -64,9 +64,10 @@ check would be unpacked, as root, with the only sign a few lines back up the scr
 # of its own there at any moment -- including while this downloads. So models/ is pinned by INODE:
 # cd into it, confirm with the kernel (/proc/$$/cwd) that this shell is in the root-owned directory at
 # exactly that path, and move the model in relative to "." -- which re-pointing the name cannot move.
-# The download and unpack happen in a fresh root-only directory (mktemp -d); only a verified, whole,
-# root-owned model is moved in, so "is the directory there" -- the check everything else makes --
-# never sees a half-extracted one, and a re-run is stopped up front instead of nesting a second copy.
+# The download and unpack happen in a fresh root-only directory (mktemp -d) INSIDE the pinned one, so
+# the final move is a single rename on one filesystem: only a verified, whole, root-owned model is
+# moved in, "is the directory there" -- the check everything else makes -- never sees a half-extracted
+# one, and a re-run is stopped up front instead of nesting a second copy.
 # (The same rule as the deploy's bootstrap, .github/workflows/deploy-droplet.yml.)
 # Root-owned, world-readable: the app READS its model and never rewrites it -- install.sh's posture
 # for the binaries, for the same reason.
@@ -76,7 +77,7 @@ check would be unpacked, as root, with the only sign a few lines back up the scr
   && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u .)" = 0 ]; } \
        || { echo "$M is not a root-owned directory at that path; not installing into it."; false; }; } \
   && { { [ ! -e "./$V" ] && [ ! -L "./$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
-  && T=$(mktemp -d) \
+  && T=$(mktemp -d ./.incoming.XXXXXX) \
   && curl -fsSL --proto '=https' -o "$T/$V.tar.bz2" \
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$V.tar.bz2" \
   && { echo "d5fe6ec4334fef36255b2a4010412cad4c007e33103fec62fb5d17cad88086f2  $T/$V.tar.bz2" | sha256sum -c - \

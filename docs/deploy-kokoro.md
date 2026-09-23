@@ -90,15 +90,16 @@ The same shape, and the reasons for each part, as [deploy-moonshine.md](deploy-m
 # A minimal Ubuntu image ships no bzip2, and GNU tar shells out to it to read a .tar.bz2.
 # Checked against the hash measured for this archive -- the same one the CI bootstrap checks
 # (.github/workflows/deploy-droplet.yml) -- because it sits on a mutable release tag and is unpacked
-# as root. Downloaded and unpacked in a fresh root-only directory, moved in only once verified, whole
-# and root-owned; why each of those matters is in deploy-moonshine.md step 1.
+# as root. models/ is pinned by inode; the archive is downloaded and unpacked in a fresh root-only
+# directory inside it, and moved in with one rename only once verified, whole and root-owned. Why each
+# of those matters is in deploy-moonshine.md step 1.
 { command -v bzip2 >/dev/null || { apt-get update && apt-get install -y bzip2; }; } \
   && M=/var/lib/shelfaware/models && V=kokoro-int8-en-v0_19 \
   && mkdir -p "$M" && cd -P "$M" \
   && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u .)" = 0 ]; } \
        || { echo "$M is not a root-owned directory at that path; not installing into it."; false; }; } \
   && { { [ ! -e "./$V" ] && [ ! -L "./$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
-  && T=$(mktemp -d) \
+  && T=$(mktemp -d ./.incoming.XXXXXX) \
   && curl -fsSL --proto '=https' -o "$T/$V.tar.bz2" \
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$V.tar.bz2" \
   && { echo "c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd  $T/$V.tar.bz2" | sha256sum -c - \
