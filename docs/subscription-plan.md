@@ -299,7 +299,11 @@ the rate against real time on that box, and destroy it — pennies, and it repla
 a fact. Then either Kokoro at a measured sub-1.0× box, or **go-live ships Piper at $18** and "Kokoro at
 go-live" is a product decision with a price attached. ⚠️ **The price tag has teeth:** at $84 fixed,
 break-even is **~37 monthly households or ~73 annual**, against ~11/~21 at $24 — so this is not a
-rounding difference in the plan, it is a different plan. Every figure below is quoted at $24 with the
+rounding difference in the plan, it is a different plan. (⚠️ Every break-even on this page divides by
+the **exact** floor, $2.27055 — $3.99 less the 5.5%+50¢ fee less $1.00 of AI — not by the $2.27 it is
+displayed as. It only ever matters here: $84 ÷ $2.27055 = 36.995, which rounds up to 37, while
+$84 ÷ $2.27 = 37.004, which rounds up to 38. Recompute from the displayed figure and you will get 38
+and think this line is wrong.) Every figure below is quoted at $24 with the
 $18 alternative beside it, and none of them survives an $84 box unrestated. (Premium Intel/AMD Basic
 tiers were **not offered in Jordan's region** as of 2026-09-21; if that has changed, ~$56 for 4 vCPU is
 the cheaper thing to measure first.)
