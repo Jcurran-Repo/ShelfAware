@@ -97,8 +97,11 @@ switch (family.ToLowerInvariant())
         // catching: the tool could load it happily and the app would then REFUSE to boot, which is the
         // exact outcome a pre-flight check exists to prevent. So the tool accepts only what the app
         // would accept, and says which setting line the box needs rather than quietly checking a voice
-        // nobody configured. (A directory renamed away from vits-piper-<voice> lands here too.)
-        if (!File.Exists(Path.Combine(modelDirectory, options.ModelFile))
+        // nobody configured. (A directory renamed away from vits-piper-<voice> lands here too.) A name
+        // given explicitly BLANK is not this case -- it is a bad setting, and Invalid() below refuses it
+        // by name rather than this branch misdescribing the directory.
+        if (!(options.ModelFileIsSet && string.IsNullOrWhiteSpace(options.ModelFile))
+            && !File.Exists(Path.Combine(modelDirectory, options.ModelFile))
             && Directory.Exists(modelDirectory)
             && Directory.GetFiles(modelDirectory, "*.onnx") is [var only])
         {
@@ -203,8 +206,13 @@ Console.WriteLine($"Roughly {seconds:F1}s of audio at {rate} Hz. Play it: the vo
 // process, so the load is not what a household waits for on a read-aloud -- but on a clip this short it
 // is most of the first read's time. This tool used to report only that first read, and it made the
 // droplet's Piper voices look alike: ryan-high and lessac-medium read 1.43x and 0.66x there, which
-// hid that ryan-high's synthesis alone is ~0.93x against lessac's ~0.18x -- five times the cost, right
-// at the line. The first read is still printed, because the first read-aloud after a restart does pay it.
+// hid that ryan-high's synthesis alone is 0.81-0.95x against lessac's 0.13-0.19x -- five times the
+// cost, right at the line. The first read is still printed, because the first read-aloud after a
+// restart does pay it -- and printed BEFORE the second read, so a second read that fails does not take
+// the first one's number with it.
+Console.WriteLine($"The first read, which also loaded the model, took {started.Elapsed.TotalSeconds / seconds:F2}x "
+                  + "its own length -- what the first read-aloud after a restart costs.");
+
 var steady = Stopwatch.StartNew();
 var again = await tts.SynthesizeAsync(Line);
 steady.Stop();
@@ -218,8 +226,6 @@ if (!again.Success)
 
 var againDecoded = WaveAudio.Decode(again.Audio);
 var againSeconds = againDecoded.Samples.Length / (double)againDecoded.SampleRate;
-Console.WriteLine($"The first read, which also loaded the model, took {started.Elapsed.TotalSeconds / seconds:F2}x "
-                  + "its own length -- what the first read-aloud after a restart costs.");
 Console.WriteLine($"Once loaded, that is roughly {steady.Elapsed.TotalSeconds / againSeconds:F2}x real time on this "
                   + "box -- the number to hold against 1.0.");
 return 0;

@@ -52,13 +52,14 @@ anyway — so an archive that failed its check would be unpacked, as root, with 
 back up the scrollback. The deploy's `bootstrap` exits on a mismatch; this has to do the same.
 
 ```bash
-cd /var/lib/shelfaware/models
-V=vits-piper-en_US-ryan-medium
 # Unpacked into a staging directory and moved into place only once it is whole -- the same shape the
 # workflow uses, and for the same reason: "is the directory there" is the check everything else makes,
 # so a half-extracted one (a disk that filled, a connection that dropped) would read as unpacked
-# forever and the app would refuse to boot naming files that were never going to arrive.
-curl -fsSL --proto '=https' -o piper.tar.bz2 \
+# forever and the app would refuse to boot naming files that were never going to arrive. The cd is in
+# the chain too: on a box where the directory does not exist yet, the rest must not run in root's home.
+mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models \
+  && V=vits-piper-en_US-ryan-medium \
+  && curl -fsSL --proto '=https' -o piper.tar.bz2 \
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$V.tar.bz2" \
   && { echo "c546af78b6395b4e7c4ce1ed899438b64426a362f5d4ec5fecd090ded9ad7505  piper.tar.bz2" | sha256sum -c - \
        || { rm -f piper.tar.bz2; false; }; } \
@@ -126,6 +127,12 @@ name off the directory: `vits-piper-<voice>` holds `<voice>.onnx`, and the quant
 builds keep the plain name. `Speech__Piper__ModelFile` is only for an archive that names its weights
 some other way — set, it wins. A directory the app cannot read a name from is refused at boot naming
 that setting, and so is a worked-out name that is not on disk; neither reaches native code.
+
+⚠️ **Moving a box that already runs Piper to a new voice — two things first.** Run the deploy once
+with `bootstrap` ticked, so the new voice's directory exists (a box bootstrapped before it became the
+default does not have it). And **delete any `Speech__Piper__ModelFile` line**: an older `env.example`
+shipped one naming lessac's file, and left in it wins over the directory — the new directory does not
+hold that file, so the app refuses to start, naming it. Both fail loudly at boot, never silently.
 
 This used to take two lines, with the second defaulting to one voice's file. Changing the default voice
 would then have stranded every box whose env named the old directory: the deploy lands, the new default

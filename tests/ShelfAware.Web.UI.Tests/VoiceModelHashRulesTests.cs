@@ -47,13 +47,16 @@ public class VoiceModelHashRulesTests
             + string.Join(Environment.NewLine, stale));
     }
 
+    /// <summary>The bootstrap's fetches that are NOT voices, so not the bake-off's to record — named, so
+    /// that a voice added to the bootstrap without a <c>sha_for()</c> row fails below instead of dropping
+    /// out of the comparison unnoticed.</summary>
+    private static readonly string[] BootstrapFetchesThatAreNotVoices = ["sherpa-onnx-moonshine-tiny-en-int8"];
+
     /// <summary>
-    /// The droplet deploy's <c>bootstrap</c> fetches the demo box's voice with a hash of its own, and
-    /// <c>docs/deploy-piper.md</c> pastes it for the by-hand route — two more copies of facts
-    /// <c>sha_for()</c> already records. The bootstrap's copy is the one that runs as root on every
-    /// deploy, so it is held to the workflow by ARCHIVE: a fetch of an archive <c>sha_for()</c> knows must
-    /// name the hash <c>sha_for()</c> gives it. (The bootstrap also fetches the ear's model, which is no
-    /// voice and not the bake-off's to record — it drops out because sha_for() has no row for it.)
+    /// The droplet deploy's <c>bootstrap</c> fetches the demo box's voices with hashes of its own — more
+    /// copies of facts <c>sha_for()</c> already records, and the ones that run as root on every deploy. So
+    /// they are held to the workflow by ARCHIVE: a fetch of a voice must name the hash <c>sha_for()</c>
+    /// gives that voice, and every fetch must be either a recorded voice or named above as something else.
     /// </summary>
     [Fact]
     public void Every_voice_the_deploy_fetches_carries_the_hash_the_bake_off_records()
@@ -61,21 +64,51 @@ public class VoiceModelHashRulesTests
         var recorded = RecordedByArchive(File.ReadAllText(RepoFile(Path.Combine(".github", "workflows", "voice-bakeoff.yml"))));
         var fetched = FetchedByArchive(File.ReadAllText(RepoFile(Path.Combine(".github", "workflows", "deploy-droplet.yml"))));
 
-        // Reach guards: the bootstrap fetches three voices' worth of archives (two Piper, one Kokoro),
-        // and a pattern that stopped matching would otherwise pass having compared nothing.
-        var shared = fetched.Keys.Intersect(recorded.Keys, StringComparer.Ordinal).ToList();
-        Assert.True(shared.Count >= 3,
-            $"Only {shared.Count} bootstrap fetch(es) matched an archive sha_for() records — the scan is broken, not the workflows.");
+        // Reach guard: the bootstrap fetches three voices (two Piper, one Kokoro) plus the ear, and a
+        // pattern that stopped matching would otherwise pass having compared nothing.
+        Assert.True(fetched.Count >= 4,
+            $"Only {fetched.Count} bootstrap fetch(es) found in deploy-droplet.yml — the scan is broken, not the workflow.");
 
-        var disagreeing = shared.Where(a => fetched[a] != recorded[a]).ToList();
+        var unaccounted = fetched.Keys
+            .Where(a => !recorded.ContainsKey(a) && !BootstrapFetchesThatAreNotVoices.Contains(a))
+            .ToList();
+        Assert.True(unaccounted.Count == 0,
+            "deploy-droplet.yml fetches an archive voice-bakeoff.yml's sha_for() does not record. A voice "
+            + "belongs in the bake-off with its hash; anything else belongs in BootstrapFetchesThatAreNotVoices:"
+            + Environment.NewLine + string.Join(Environment.NewLine, unaccounted));
+
+        var disagreeing = fetched.Keys.Where(a => recorded.TryGetValue(a, out var sha) && sha != fetched[a]).ToList();
         Assert.True(disagreeing.Count == 0,
             "deploy-droplet.yml fetches an archive under a different sha256 than voice-bakeoff.yml records "
             + "for it — one has been edited and the other has not:" + Environment.NewLine
             + string.Join(Environment.NewLine, disagreeing));
+    }
 
-        var documented = HashesIn(RepoFile(Path.Combine("docs", "deploy-piper.md")));
-        Assert.NotEmpty(documented);
-        Assert.Empty(documented.Except(recorded.Values));
+    /// <summary>
+    /// The pasteable install blocks name their archive once, as <c>V=&lt;archive&gt;</c>, and check it
+    /// against the first hash after that line. Held to <c>sha_for()</c> by that PAIR, not merely by the
+    /// hash being one the workflow knows somewhere: a block that named one voice and pasted another's hash
+    /// would fail its own check on the box (safely), but it would also be a block nobody could use.
+    /// </summary>
+    [Theory]
+    [InlineData("deploy-piper.md", 1)]
+    [InlineData("voice-bakeoff.md", 2)]
+    public void Every_pasted_install_checks_its_archive_against_the_hash_recorded_for_it(string doc, int atLeast)
+    {
+        var recorded = RecordedByArchive(File.ReadAllText(RepoFile(Path.Combine(".github", "workflows", "voice-bakeoff.yml"))));
+        var text = File.ReadAllText(RepoFile(Path.Combine("docs", doc)));
+
+        var pairs = Regex.Matches(text, @"\bV=([\w.\-]+)")
+            .Select(v => (Archive: v.Groups[1].Value, Sha: Sha.Match(text, v.Index + v.Length).Value))
+            .ToList();
+
+        Assert.True(pairs.Count >= atLeast,
+            $"Only {pairs.Count} V=<archive> install block(s) found in docs/{doc} — the scan is broken, not the doc.");
+
+        var wrong = pairs.Where(p => !recorded.TryGetValue(p.Archive, out var sha) || sha != p.Sha).ToList();
+        Assert.True(wrong.Count == 0,
+            $"docs/{doc} installs an archive under a hash sha_for() does not record for it:" + Environment.NewLine
+            + string.Join(Environment.NewLine, wrong.Select(p => $"{p.Archive} → {p.Sha}")));
     }
 
     /// <summary><c>sha_for()</c>'s arms: <c>archive) echo &lt;sha&gt;;;</c>.</summary>

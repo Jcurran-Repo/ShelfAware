@@ -34,7 +34,7 @@ on:
         required: false
         default: ''
       bootstrap:
-        description: 'Also do one-time box setup: swap file + the Kokoro and Moonshine models'
+        description: 'Also do box setup: swap file + the voice models (Piper voices, Kokoro) and Moonshine. Re-run to fetch a newly added voice'
         type: boolean
         required: false
         default: false
@@ -147,7 +147,9 @@ jobs:
             local dir="$1" sha="$2" url="$3"
             if [ -d "$dir" ]; then echo "$dir already unpacked."; return; fi
             echo "Fetching $dir..."
-            curl -fsSL -o model.tar.bz2 "$url"
+            # --proto on both, as voice-bakeoff.yml's get() does: a redirect must not walk a root-run
+            # download off HTTPS, even with the checksum below as the backstop.
+            curl -fsSL --proto '=https' --proto-redir '=https' -o model.tar.bz2 "$url"
             echo "$sha  model.tar.bz2" | sha256sum -c - \
               || { echo "::error::$dir did not match its recorded sha256; not unpacking it."; rm -f model.tar.bz2; exit 1; }
             # ⚠️ Unpacked into a staging directory and moved into place only once it is whole. The

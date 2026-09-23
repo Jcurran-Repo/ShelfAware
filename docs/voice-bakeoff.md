@@ -37,7 +37,7 @@ demo-box problem and not a family-box one.
 
 | Family | Shape | Speed on the demo droplet | Notes |
 |---|---|---|---|
-| **Piper** (VITS) | weights + tokens + espeak data | **0.12–0.17×** (medium), **0.8–0.95×** (high) | The demo box's voice: **`ryan-medium`**, picked by ear in the bake-off. Clear, flatter than Kokoro. The spread is the model size, not the speaker — see *A worked example* below for what that cost when it was nearly missed. The weights' file is read off the directory's name (`vits-piper-<voice>` holds `<voice>.onnx`), so a voice is one setting. |
+| **Piper** (VITS) | weights + tokens + espeak data | **0.12–0.19×** (medium), **0.8–0.95×** (high) | The demo box's voice: **`ryan-medium`**, picked by ear in the bake-off. Clear, flatter than Kokoro. The spread is the model size, not the speaker — see *A worked example* below for what that cost when it was nearly missed. The weights' file is read off the directory's name (`vits-piper-<voice>` holds `<voice>.onnx`), so a voice is one setting. |
 | **Kokoro** | weights + voices.bin + tokens + espeak data | **3.1×** | The family box's voice. The warmest, and the one that made this page necessary: on the droplet an 8.9-second reply costs 28 seconds of silence. |
 | **Kitten** | Kokoro's four files exactly, under its own config block | not measured there | 24 MB for nano, which has 8 voices, 4 male and 4 female. On a desktop it lands between Piper-medium and Piper-high; mini is slower than both. |
 | **Matcha** | acoustic model **+ a separate vocoder** + tokens + espeak data | not measured there | ⚠️ The vocoder is published in a *different release* from the voice. A directory holding everything the voice archive shipped still cannot speak. It is in the cache fingerprint, so changing vocoder re-voices the clips rather than serving the old ones. On a desktop it runs level with Piper-medium. |
@@ -70,9 +70,9 @@ rule is worth, because it was nearly broken while the page existed.
 
 Ryan-high was the voice picked by ear, and the bake-off's desktop run had it at **0.39×**, in the same
 band as lessac-medium's **0.33×** — a modest step up, apparently. On the demo droplet, with the model
-loaded, it came back at **0.92–0.95×** (and 0.81–0.88× on a second visit) against lessac-medium's
-**0.18–0.19×**: nearly **five times** the cost, a hair under the threshold rather than clear of it, on
-two cores the website shares. A second visitor asking at the same moment would have pushed it over.
+loaded, it came back at **0.92–0.95×** against lessac-medium's **0.18–0.19×** (0.81–0.88× against
+0.13–0.17× on a second visit): nearly **five times** the cost, a hair under the threshold rather than
+clear of it, on two cores the website shares. A second visitor asking at the same moment would have pushed it over.
 Ryan-*medium* — the same speaker, the smaller model — measured **0.12–0.14×** there, level with lessac,
 and shipped instead.
 
@@ -120,17 +120,24 @@ sign would be four lines back up the scrollback. `deploy-droplet.yml`'s `bootstr
 mismatch; these commands have to do the same thing to be worth calling equivalent to it. **Paste each
 block whole.**
 
-```bash
-cd /var/lib/shelfaware/models
-R=https://github.com/k2-fsa/sherpa-onnx/releases/download
+The `cd` is in the chain too — on a box where the directory does not exist yet, a bare `cd` fails and the
+rest would run in root's home — and each archive is unpacked into a staging directory and moved in only
+once it is whole, as the workflows do: "is the directory there" is the check everything else makes, so a
+half-extracted one would read as installed.
 
+```bash
 # Kitten
-A=kitten-nano-en-v0_1-fp16.tar.bz2
-curl -fsSL --proto '=https' -O "$R/tts-models/$A" \
-  && { echo "f35dac93754fe2ac97c66e1f468311d0d2130f7f0f5a89bfa1197e09a0cbdec5  $A" | sha256sum -c - \
-       || { rm -f "$A"; false; }; } \
-  && tar xjf "$A" --no-same-owner --no-same-permissions \
-  && rm "$A"
+mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models \
+  && R=https://github.com/k2-fsa/sherpa-onnx/releases/download \
+  && V=kitten-nano-en-v0_1-fp16 \
+  && curl -fsSL --proto '=https' -o "$V.tar.bz2" "$R/tts-models/$V.tar.bz2" \
+  && { echo "f35dac93754fe2ac97c66e1f468311d0d2130f7f0f5a89bfa1197e09a0cbdec5  $V.tar.bz2" | sha256sum -c - \
+       || { rm -f "$V.tar.bz2"; false; }; } \
+  && rm -rf .staging && mkdir .staging \
+  && tar xjf "$V.tar.bz2" -C .staging --no-same-owner --no-same-permissions \
+  && mv ".staging/$V" . \
+  && rm -rf .staging "$V.tar.bz2" \
+  && chown -R root:root "$V" && chmod -R a+rX "$V"
 ```
 
 Matcha needs the vocoder fetched separately, into the model's own directory. ⚠️ **Verify that one too**:
@@ -138,31 +145,36 @@ without `-f`, curl writes an error page to the output file and exits 0, and a 40
 path passes the app's own check — which is `File.Exists` and nothing more — and then reaches sherpa-onnx,
 which answers garbage by killing the process rather than by saying so.
 
+One chain for both halves, so a voice that failed its check never gets a vocoder fetched beside it:
+
 ```bash
-cd /var/lib/shelfaware/models
-R=https://github.com/k2-fsa/sherpa-onnx/releases/download
-M=matcha-icefall-en_US-ljspeech
-
-curl -fsSL --proto '=https' -O "$R/tts-models/$M.tar.bz2" \
-  && { echo "ea75702da7456a8b1874728278a835220dc8a26f4e8bd93c83bf53dc27679845  $M.tar.bz2" | sha256sum -c - \
-       || { rm -f "$M.tar.bz2"; false; }; } \
-  && tar xjf "$M.tar.bz2" --no-same-owner --no-same-permissions \
-  && rm "$M.tar.bz2"
-
-# ⚠️ Downloaded to .part and moved only once it verifies. Written straight to its live name, a
-# body that failed the check would still be sitting where the app loads it: Missing() is File.Exists
-# and nothing more, so the box boots clean and dies on the first read-aloud.
-curl -fsSL --proto '=https' -o "$M/vocos-22khz-univ.onnx.part" "$R/vocoder-models/vocos-22khz-univ.onnx" \
-  && { echo "0574a135aa1db2de6e181050db2ec528496cacd4a4701fc5d7faf9f9804c0081  $M/vocos-22khz-univ.onnx.part" | sha256sum -c - \
-       || { rm -f "$M/vocos-22khz-univ.onnx.part"; false; }; } \
-  && mv "$M/vocos-22khz-univ.onnx.part" "$M/vocos-22khz-univ.onnx"
+# Matcha, then its vocoder.
+# ⚠️ The vocoder is downloaded to .part and moved only once it verifies. Written straight to its live
+# name, a body that failed the check would still be sitting where the app loads it: Missing() is
+# File.Exists and nothing more, so the box boots clean and dies on the first read-aloud.
+mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models \
+  && R=https://github.com/k2-fsa/sherpa-onnx/releases/download \
+  && V=matcha-icefall-en_US-ljspeech \
+  && curl -fsSL --proto '=https' -o "$V.tar.bz2" "$R/tts-models/$V.tar.bz2" \
+  && { echo "ea75702da7456a8b1874728278a835220dc8a26f4e8bd93c83bf53dc27679845  $V.tar.bz2" | sha256sum -c - \
+       || { rm -f "$V.tar.bz2"; false; }; } \
+  && rm -rf .staging && mkdir .staging \
+  && tar xjf "$V.tar.bz2" -C .staging --no-same-owner --no-same-permissions \
+  && mv ".staging/$V" . \
+  && rm -rf .staging "$V.tar.bz2" \
+  && curl -fsSL --proto '=https' -o "$V/vocos-22khz-univ.onnx.part" "$R/vocoder-models/vocos-22khz-univ.onnx" \
+  && { echo "0574a135aa1db2de6e181050db2ec528496cacd4a4701fc5d7faf9f9804c0081  $V/vocos-22khz-univ.onnx.part" | sha256sum -c - \
+       || { rm -f "$V/vocos-22khz-univ.onnx.part"; false; }; } \
+  && mv "$V/vocos-22khz-univ.onnx.part" "$V/vocos-22khz-univ.onnx" \
+  && chown -R root:root "$V" && chmod -R a+rX "$V"
 ```
 
 ⚠️ **Those hashes are written twice** — here and in `sha_for()` in
 `.github/workflows/voice-bakeoff.yml` — because the commands above have to be complete enough to paste,
 and sending an operator to read a YAML file for a hash is how a hash gets skipped. Two sites answering
 one question is the failure CLAUDE.md names as this repo's most expensive, so the pair is held by a
-test: `VoiceModelHashRulesTests` fails the build if this file names a hash the workflow does not record.
+test: `VoiceModelHashRulesTests` fails the build if this file names a hash the workflow does not record,
+or installs a `V=` archive under a hash other than the one recorded for it.
 A sentence promising they cannot drift would not have been worth anything.
 
 Then prove it speaks **before** pointing the app at it. From a machine with the repo checked out (a dev
