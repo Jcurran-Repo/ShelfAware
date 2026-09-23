@@ -105,7 +105,7 @@ public class VoiceModelHashRulesTests
         // pin models/ by inode rather than trust its name — the bootstrap's rule (deploy-droplet.yml).
         // A block written the old way, cd'ing by name and chmod'ing a path, is how that rule came to be
         // half-converted once already; this is what stops it happening again.
-        var unsafeBlocks = pairs.Where(p => !p.IsBash || !p.PinsModels).Select(p => p.Archive).ToList();
+        var unsafeBlocks = pairs.Where(p => !p.IsBash || !p.ChecksItsHash || !p.PinsModels).Select(p => p.Archive).ToList();
         Assert.True(unsafeBlocks.Count == 0,
             $"docs/{doc} has an install block that does not both check its hash and pin models/ by inode "
             + "(cd -P \"$M\" + /proc/$$/cwd): " + string.Join(", ", unsafeBlocks));

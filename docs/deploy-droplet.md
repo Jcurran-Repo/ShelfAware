@@ -262,7 +262,10 @@ Same box, three differences, all in `/etc/shelfaware/env`:
 2. `Auth__AllowRegistration=false` once your accounts exist.
 3. **Migrating existing data** (say, off a Windows box): stop the app on both ends,
    copy the contents of its `app-data/` into `/var/lib/shelfaware`, and
-   `chown -R shelfaware:shelfaware` the result. Copy `shelfaware.db*`, `auth.db*`,
+   `chown -R shelfaware:shelfaware` **just what you copied** (for example
+   `cd /var/lib/shelfaware && chown -R shelfaware:shelfaware shelfaware.db* auth.db* receipts tts-cache`)
+   — never the whole directory: `models/` must stay root-owned, and the bootstrap refuses to write into
+   it otherwise. Copy `shelfaware.db*`, `auth.db*`,
    `receipts/`, and `tts-cache/` — but **not `keys/`**: Windows DataProtection keys
    are DPAPI-encrypted and no Linux box can decrypt them. The droplet mints fresh keys
    on first boot; the only consequence is that everyone signs in again once (accounts
@@ -299,7 +302,13 @@ job, with `--backup-dir`, so a bad local night can't erase good offsite copies.
 
 To restore: stop the service, copy the chosen `db-*` snapshot's two `.db` files into
 `/var/lib/shelfaware` (deleting any `-wal`/`-shm` beside them — those belong to the database
-you are replacing), restore the `files/` trees, `chown -R shelfaware:shelfaware`, start.
+you are replacing), restore the `files/` trees, `chown -R shelfaware:shelfaware` **the restored files
+and directories only** (never `/var/lib/shelfaware` as a whole — `models/` stays root-owned), start.
+
+If `models/` has ended up owned by the app anyway, the next bootstrap refuses to touch it, by design.
+Recover by removing it — `rm -rf /var/lib/shelfaware/models` (no trailing slash: if the name has become
+a symlink, that removes the link, not what it points at) — and re-running the deploy with **bootstrap**
+ticked, which re-downloads every model into a fresh root-owned directory.
 
 DO's droplet snapshots make a fine second layer, not a substitute — they're crash-consistent,
 not application-aware.

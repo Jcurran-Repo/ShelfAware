@@ -74,8 +74,8 @@ check would be unpacked, as root, with the only sign a few lines back up the scr
 { command -v bzip2 >/dev/null || { apt-get update && apt-get install -y bzip2; }; } \
   && M=/var/lib/shelfaware/models && V=sherpa-onnx-moonshine-tiny-en-int8 \
   && mkdir -p "$M" && cd -P "$M" \
-  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u .)" = 0 ]; } \
-       || { echo "$M is not a root-owned directory at that path; not installing into it."; false; }; } \
+  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u:%a .)" = 0:755 ]; } \
+       || { echo "$M is not a root-owned 755 directory at that path; not installing into it."; false; }; } \
   && { { [ ! -e "./$V" ] && [ ! -L "./$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
   && T=$(mktemp -d ./.incoming.XXXXXX) \
   && curl -fsSL --proto '=https' -o "$T/$V.tar.bz2" \
@@ -86,12 +86,19 @@ check would be unpacked, as root, with the only sign a few lines back up the scr
   && chown -R root:root "$T/$V" && chmod -R a+rX "$T/$V" \
   && mv -T "$T/$V" "./$V" \
   && rm -rf "$T" \
+  && { [ "$(readlink "/proc/$$/cwd")" = "$M" ] \
+       || { echo "$M was re-pointed during the install; the model went into the directory it used to name."; false; }; } \
   && ls "./$V"
 # preprocess.onnx  encode.int8.onnx  uncached_decode.int8.onnx  cached_decode.int8.onnx  tokens.txt
 ```
 
 `-f` matters as much as the hash: without it curl writes a GitHub error page to the archive's name and
 exits 0. The hash would still catch that — but only because it is now joined to what follows it.
+
+A download or unpack that fails part way leaves its root-only `.incoming.XXXXXX` directory behind inside
+`models/` (a failed checksum removes it). It is harmless — nothing lists that directory, and the app
+loads each model by its own name — and `rm -rf /var/lib/shelfaware/models/.incoming.*` clears it. The
+same goes for every pasted install that follows this shape.
 
 The `sherpa-onnx-moonshine-base-en-int8` archive is the larger sibling (~400 MB) — more accurate, and
 not worth it on a small box for "next" and "stop".

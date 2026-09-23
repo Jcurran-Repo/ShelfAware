@@ -134,8 +134,8 @@ under its name. A re-run is refused up front rather than nesting a second copy.
   && R=https://github.com/k2-fsa/sherpa-onnx/releases/download \
   && M=/var/lib/shelfaware/models && V=kitten-nano-en-v0_1-fp16 \
   && mkdir -p "$M" && cd -P "$M" \
-  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u .)" = 0 ]; } \
-       || { echo "$M is not a root-owned directory at that path; not installing into it."; false; }; } \
+  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u:%a .)" = 0:755 ]; } \
+       || { echo "$M is not a root-owned 755 directory at that path; not installing into it."; false; }; } \
   && { { [ ! -e "./$V" ] && [ ! -L "./$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
   && T=$(mktemp -d ./.incoming.XXXXXX) \
   && curl -fsSL --proto '=https' -o "$T/$V.tar.bz2" "$R/tts-models/$V.tar.bz2" \
@@ -145,6 +145,8 @@ under its name. A re-run is refused up front rather than nesting a second copy.
   && chown -R root:root "$T/$V" && chmod -R a+rX "$T/$V" \
   && mv -T "$T/$V" "./$V" \
   && rm -rf "$T" \
+  && { [ "$(readlink "/proc/$$/cwd")" = "$M" ] \
+       || { echo "$M was re-pointed during the install; the model went into the directory it used to name."; false; }; } \
   && ls "./$V"
 ```
 
@@ -164,8 +166,8 @@ One chain for both halves, so a voice that failed its check never gets a vocoder
   && R=https://github.com/k2-fsa/sherpa-onnx/releases/download \
   && M=/var/lib/shelfaware/models && V=matcha-icefall-en_US-ljspeech \
   && mkdir -p "$M" && cd -P "$M" \
-  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u .)" = 0 ]; } \
-       || { echo "$M is not a root-owned directory at that path; not installing into it."; false; }; } \
+  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u:%a .)" = 0:755 ]; } \
+       || { echo "$M is not a root-owned 755 directory at that path; not installing into it."; false; }; } \
   && { { [ ! -e "./$V" ] && [ ! -L "./$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
   && T=$(mktemp -d ./.incoming.XXXXXX) \
   && curl -fsSL --proto '=https' -o "$T/$V.tar.bz2" "$R/tts-models/$V.tar.bz2" \
@@ -179,6 +181,8 @@ One chain for both halves, so a voice that failed its check never gets a vocoder
   && chown -R root:root "$T/$V" && chmod -R a+rX "$T/$V" \
   && mv -T "$T/$V" "./$V" \
   && rm -rf "$T" \
+  && { [ "$(readlink "/proc/$$/cwd")" = "$M" ] \
+       || { echo "$M was re-pointed during the install; the model went into the directory it used to name."; false; }; } \
   && ls "./$V"
 ```
 

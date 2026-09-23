@@ -96,8 +96,8 @@ The same shape, and the reasons for each part, as [deploy-moonshine.md](deploy-m
 { command -v bzip2 >/dev/null || { apt-get update && apt-get install -y bzip2; }; } \
   && M=/var/lib/shelfaware/models && V=kokoro-int8-en-v0_19 \
   && mkdir -p "$M" && cd -P "$M" \
-  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u .)" = 0 ]; } \
-       || { echo "$M is not a root-owned directory at that path; not installing into it."; false; }; } \
+  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u:%a .)" = 0:755 ]; } \
+       || { echo "$M is not a root-owned 755 directory at that path; not installing into it."; false; }; } \
   && { { [ ! -e "./$V" ] && [ ! -L "./$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
   && T=$(mktemp -d ./.incoming.XXXXXX) \
   && curl -fsSL --proto '=https' -o "$T/$V.tar.bz2" \
@@ -108,6 +108,8 @@ The same shape, and the reasons for each part, as [deploy-moonshine.md](deploy-m
   && chown -R root:root "$T/$V" && chmod -R a+rX "$T/$V" \
   && mv -T "$T/$V" "./$V" \
   && rm -rf "$T" \
+  && { [ "$(readlink "/proc/$$/cwd")" = "$M" ] \
+       || { echo "$M was re-pointed during the install; the model went into the directory it used to name."; false; }; } \
   && ls "./$V"
 # model.int8.onnx  voices.bin  tokens.txt  espeak-ng-data/  README.md  LICENSE
 ```
