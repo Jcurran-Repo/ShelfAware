@@ -143,4 +143,12 @@ public abstract class SherpaTtsOptions
     /// one-definition rule is about. Overriding this puts a family's own rule on the same path
     /// registration and the engine already both take.</para></summary>
     protected virtual string? FamilyInvalid() => null;
+
+    /// <summary>Anything else about THIS family that decides how a clip sounds, appended to
+    /// <see cref="SherpaTextToSpeech.OutputFingerprint"/>. Empty for a family fully described by the
+    /// settings above.
+    /// <para>⚠️ Empty means "append nothing", not "append an empty segment" — a family that started
+    /// contributing a blank part would change the fingerprint of every clip the other families have
+    /// already voiced, and every household's cache would silently re-synthesize from scratch.</para></summary>
+    public virtual IReadOnlyList<string> FingerprintExtras => [];
 }

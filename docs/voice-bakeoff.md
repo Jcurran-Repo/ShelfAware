@@ -39,7 +39,7 @@ demo-box problem and not a family-box one.
 | **Piper** (VITS) | weights + tokens + espeak data | ~0.05× on a good core, ~0.1× on the droplet | The demo box's voice today. Clear, noticeably flatter. Weights are named after the voice, so `Speech:Piper:ModelFile` must say which. |
 | **Kokoro** | weights + voices.bin + tokens + espeak data | 1.4× on a good core, **3.1× on a DO-Regular droplet** | The family box's voice. The warmest, and the only one that has failed the 1.0× test on real hardware. |
 | **Kitten** | Kokoro's four files exactly, under its own config block | Published comparisons: faster than Kokoro, slower than Piper — unmeasured here | 24 MB. The nano archive has 8 voices, 4 male and 4 female. |
-| **Matcha** | acoustic model **+ a separate vocoder** + tokens + espeak data | unmeasured here | ⚠️ The vocoder is published in a *different release* from the voice. A directory holding everything the voice archive shipped still cannot speak. |
+| **Matcha** | acoustic model **+ a separate vocoder** + tokens + espeak data | unmeasured here | ⚠️ The vocoder is published in a *different release* from the voice. A directory holding everything the voice archive shipped still cannot speak. It is in the cache fingerprint, so changing vocoder re-voices the clips rather than serving the old ones. |
 
 Speed for Kitten and Matcha is deliberately blank: nobody here has measured them on a box that matters,
 and a number copied off someone else's benchmark is exactly the kind of figure this repo has been burned
@@ -47,23 +47,46 @@ by. The bake-off is how they get filled in.
 
 ## Putting a model on a box by hand
 
-The droplet deploy's `bootstrap` step unpacks **Piper and Kokoro** only. For the other two:
+The droplet deploy's `bootstrap` step unpacks **Piper and Kokoro** only. For the other two you do it by
+hand — and ⚠️ **check the sha256 before unpacking**, because these are release assets on a mutable tag
+and you are running as root on a box holding real households' receipts. `deploy-droplet.yml`'s
+`bootstrap` does exactly this for the archives it fetches, and for exactly this reason: *"the bytes we
+measured" and "whatever that URL serves today" are different promises, and only the first one is worth
+running as root.* `--no-same-owner --no-same-permissions` is part of it — GNU tar refuses `..` members
+and symlink escapes, but it will happily preserve a setuid bit.
 
 ```bash
 cd /var/lib/shelfaware/models
-curl -sSLO https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kitten-nano-en-v0_1-fp16.tar.bz2
-tar -xjf kitten-nano-en-v0_1-fp16.tar.bz2 && rm kitten-nano-en-v0_1-fp16.tar.bz2
+R=https://github.com/k2-fsa/sherpa-onnx/releases/download
+
+# Kitten
+curl -fsSL --proto '=https' -O "$R/tts-models/kitten-nano-en-v0_1-fp16.tar.bz2"
+echo "f35dac93754fe2ac97c66e1f468311d0d2130f7f0f5a89bfa1197e09a0cbdec5  kitten-nano-en-v0_1-fp16.tar.bz2" | sha256sum -c -
+tar xjf kitten-nano-en-v0_1-fp16.tar.bz2 --no-same-owner --no-same-permissions
+rm kitten-nano-en-v0_1-fp16.tar.bz2
 ```
 
-Matcha needs the vocoder fetched separately, into the model's own directory:
+Matcha needs the vocoder fetched separately, into the model's own directory. ⚠️ **Verify that one too**:
+without `-f`, curl writes an error page to the output file and exits 0, and a 404 body sitting at that
+path passes the app's own check — which is `File.Exists` and nothing more — and then reaches sherpa-onnx,
+which answers garbage by killing the process rather than by saying so.
 
 ```bash
 cd /var/lib/shelfaware/models
-curl -sSLO https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/matcha-icefall-en_US-ljspeech.tar.bz2
-tar -xjf matcha-icefall-en_US-ljspeech.tar.bz2 && rm matcha-icefall-en_US-ljspeech.tar.bz2
-curl -sSL -o matcha-icefall-en_US-ljspeech/vocos-22khz-univ.onnx \
-  https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos-22khz-univ.onnx
+R=https://github.com/k2-fsa/sherpa-onnx/releases/download
+
+curl -fsSL --proto '=https' -O "$R/tts-models/matcha-icefall-en_US-ljspeech.tar.bz2"
+echo "ea75702da7456a8b1874728278a835220dc8a26f4e8bd93c83bf53dc27679845  matcha-icefall-en_US-ljspeech.tar.bz2" | sha256sum -c -
+tar xjf matcha-icefall-en_US-ljspeech.tar.bz2 --no-same-owner --no-same-permissions
+rm matcha-icefall-en_US-ljspeech.tar.bz2
+
+curl -fsSL --proto '=https' -o matcha-icefall-en_US-ljspeech/vocos-22khz-univ.onnx \
+  "$R/vocoder-models/vocos-22khz-univ.onnx"
+echo "0574a135aa1db2de6e181050db2ec528496cacd4a4701fc5d7faf9f9804c0081  matcha-icefall-en_US-ljspeech/vocos-22khz-univ.onnx" | sha256sum -c -
 ```
+
+Those hashes are the ones the bake-off workflow records, so the two cannot drift apart without the
+workflow failing first.
 
 Then prove it speaks **before** pointing the app at it:
 

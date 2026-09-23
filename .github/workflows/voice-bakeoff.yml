@@ -26,6 +26,9 @@ jobs:
   bakeoff:
     name: Render every voice
     runs-on: ubuntu-latest
+    # ~700 MB of models and fourteen syntheses. Bounded like the mutation workflows are, so a stall
+    # cannot hold a runner for six hours.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
@@ -52,6 +55,49 @@ jobs:
           mkdir -p clips models
           RELEASES=https://github.com/k2-fsa/sherpa-onnx/releases/download
 
+          # ⚠️ Recorded sha256 per archive, for the reason deploy-droplet.yml's bootstrap gives: these
+          # are release ASSETS on a MUTABLE tag, so "the bytes we measured" and "whatever that URL
+          # serves today" are different promises. Verified before anything is unpacked, here and in the
+          # by-hand instructions in docs/voice-bakeoff.md -- which are run as root on a box holding real
+          # households' receipts, and are the ones a person will copy and paste.
+          # One entry per ARCHIVE, not per clip: three rows below share the LibriTTS-R file and three
+          # share Kitten nano, and a hash written out per row is a hash that will disagree with itself.
+          sha_for() {
+            case "$1" in
+              vits-piper-en_US-lessac-medium) echo 9e3febfacf0abf4270172d2958bcec246032b7e88efc2720840cc80c93de334e;;
+              vits-piper-en_US-lessac-high)   echo 8619d204c7005866fe4f420181dfa79622af6a6222389f0b0818d2af31e0db0e;;
+              vits-piper-en_US-ryan-high)     echo 6a71edf4d308b9cb2eaeadc8d1f3c6bf96120ecb7fe52c29a2b6e139c59760ed;;
+              vits-piper-en_US-amy-medium)    echo 9a5d1fc497f85e8022b785bff5f8105203b1e33099ee6265203efc70b0cb0264;;
+              vits-piper-en_GB-cori-high)     echo 42922f07738fcde2e49eed4e959635692f73b933de35a6b7c1010162ff566292;;
+              vits-piper-en_US-libritts_r-medium) echo 10dc268f3e371696d721486123e2705a9fc1faa113491979fde4d88dba1f1b1c;;
+              kitten-nano-en-v0_1-fp16)       echo f35dac93754fe2ac97c66e1f468311d0d2130f7f0f5a89bfa1197e09a0cbdec5;;
+              kitten-mini-en-v0_1-fp16)       echo a12bdf4f68a509527802c01b258d63a99e2c86550d7960726f23a7ad21bdbcb8;;
+              matcha-icefall-en_US-ljspeech)  echo ea75702da7456a8b1874728278a835220dc8a26f4e8bd93c83bf53dc27679845;;
+              kokoro-int8-en-v0_19)           echo c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd;;
+              *) echo "::error::No recorded sha256 for $1; refusing to unpack it." >&2; return 1;;
+            esac
+          }
+
+          # -f so an HTTP error page cannot become a model file (curl writes the body and exits 0
+          # without it), and --proto so a redirect cannot walk the download off HTTPS.
+          get() { curl -fsSL --proto '=https' --proto-redir '=https' --retry 3 -o "$1" "$2"; }
+
+          fetch() {
+            local dir="$1" url="$2" sha
+            [ -d "models/$dir" ] && return 0
+            sha=$(sha_for "$dir")
+            get archive.tar.bz2 "$url"
+            echo "$sha  archive.tar.bz2" | sha256sum -c - \
+              || { echo "::error::$dir did not match its recorded sha256; not unpacking it."; rm -f archive.tar.bz2; exit 1; }
+            # Staged, then moved whole: the guard above is "is the directory there", so a
+            # half-extraction would read as unpacked forever. --no-same-owner --no-same-permissions
+            # because an archive may carry a setuid bit and tar will happily preserve it.
+            rm -rf .staging && mkdir .staging
+            tar xjf archive.tar.bz2 -C .staging --no-same-owner --no-same-permissions
+            mv ".staging/$dir" "models/$dir"
+            rm -rf .staging archive.tar.bz2
+          }
+
           # id | family | archive | speaker | note
           # One row per clip. A Piper archive names its weights after the voice, so the model file is
           # derived from the archive name rather than typed twice.
@@ -77,18 +123,16 @@ jobs:
           echo "|---|---|---|---|" >> summary.md
 
           while IFS='|' read -r id family archive speaker note; do
-            # An `if`, not `[ -z "$id" ] && continue`: under `set -e` that list's exit status IS the
-            # test's, so a non-empty id would end the whole run on the first row.
             if [ -z "$id" ]; then continue; fi
-            if [ "$WANTED" != "all" ] && ! printf '%s ' $WANTED | grep -qw "$id"; then continue; fi
-
-            if [ ! -d "models/$archive" ]; then
-              echo "::group::Fetching $archive"
-              curl -sSL --retry 3 "$RELEASES/tts-models/$archive.tar.bz2" -o archive.tar.bz2
-              tar -xjf archive.tar.bz2 -C models
-              rm archive.tar.bz2
-              echo "::endgroup::"
+            # Quoted, and matched with `case` rather than by splitting the input into a grep pattern:
+            # an unsplit string cannot glob against the workspace on the way past.
+            if [ "$WANTED" != "all" ]; then
+              case " $WANTED " in (*" $id "*) ;; (*) continue;; esac
             fi
+
+            echo "::group::Fetching $archive"
+            fetch "$archive" "$RELEASES/tts-models/$archive.tar.bz2"
+            echo "::endgroup::"
 
             ARGS=(-- "$family" "models/$archive" "clips/$id.wav" "$speaker")
             case "$family" in
@@ -100,9 +144,16 @@ jobs:
                 # ⚠️ The vocoder lives in a DIFFERENT release from the voice. Without it Matcha
                 # produces a spectrogram, and sherpa-onnx answers a missing file by killing the
                 # process rather than by saying so.
-                if [ ! -f "models/$archive/vocos-22khz-univ.onnx" ]; then
-                  curl -sSL --retry 3 "$RELEASES/vocoder-models/vocos-22khz-univ.onnx" \
-                    -o "models/$archive/vocos-22khz-univ.onnx"
+                # ⚠️ Verified like the archives, and it matters MORE here: an unverified 404 body
+                # landing at this path passes MatchaModelFiles.Missing(), which is File.Exists and
+                # nothing else, and sherpa-onnx answers the resulting garbage by killing the process.
+                VOCODER="models/$archive/vocos-22khz-univ.onnx"
+                if [ ! -f "$VOCODER" ]; then
+                  get "$VOCODER.part" "$RELEASES/vocoder-models/vocos-22khz-univ.onnx"
+                  echo "0574a135aa1db2de6e181050db2ec528496cacd4a4701fc5d7faf9f9804c0081  $VOCODER.part" \
+                    | sha256sum -c - \
+                    || { echo "::error::The vocoder did not match its recorded sha256."; rm -f "$VOCODER.part"; exit 1; }
+                  mv "$VOCODER.part" "$VOCODER"
                 fi
                 ;;
             esac

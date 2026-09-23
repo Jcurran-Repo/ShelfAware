@@ -233,6 +233,53 @@ public class SherpaTextToSpeechTests
     [Fact]
     public void The_output_media_type_is_wav() =>
         Assert.Equal("audio/wav", Tts(FakeKokoroEngine.Returning([1f])).OutputMediaType);
+
+    // ---- What a family may add to the fingerprint -----------------------------------------------
+
+    /// <summary>⚠️ A family that adds nothing must produce EXACTLY the string it produced before the
+    /// hook existed. If an empty extras list appended a blank part, every clip every household has had
+    /// voiced by these three families would stop matching its own cache key and be re-synthesized —
+    /// silently, and on a box where synthesis is the expensive thing.</summary>
+    [Theory]
+    [InlineData("kokoro")]
+    [InlineData("piper")]
+    [InlineData("kitten")]
+    public void A_family_with_nothing_to_add_fingerprints_in_exactly_seven_parts(string family)
+    {
+        SherpaTtsOptions options = family switch
+        {
+            "kokoro" => new KokoroSpeechOptions { ModelDirectory = Path.Combine("models", "kokoro") },
+            "piper" => new PiperSpeechOptions { ModelDirectory = Path.Combine("models", "piper") },
+            "kitten" => new KittenSpeechOptions { ModelDirectory = Path.Combine("models", "kitten") },
+            _ => throw new ArgumentOutOfRangeException(nameof(family), family, "Not a family."),
+        };
+
+        var fingerprint = new SherpaTextToSpeech(
+            FakeKokoroEngine.Returning([1f]), options, NullLogger<SherpaTextToSpeech>.Instance)
+            .OutputFingerprint;
+
+        Assert.Equal(7, fingerprint.Split('|').Length);
+        Assert.StartsWith(family, fingerprint);
+    }
+
+    /// <summary>⚠️ A Matcha vocoder is half of what the voice sounds like — it is the half that turns a
+    /// spectrogram into audio — so two boxes differing only in vocoder must not share a cache key. Left
+    /// out, a box that changed vocoder would serve the old one's audio forever with nothing to say why.</summary>
+    [Fact]
+    public void Two_matcha_voices_differing_only_in_their_vocoder_fingerprint_differently()
+    {
+        string Print(string vocoder) => new SherpaTextToSpeech(
+            FakeKokoroEngine.Returning([1f]),
+            new MatchaSpeechOptions
+            {
+                ModelDirectory = Path.Combine("models", "matcha-icefall-en_US-ljspeech"),
+                VocoderFile = vocoder,
+            },
+            NullLogger<SherpaTextToSpeech>.Instance).OutputFingerprint;
+
+        Assert.NotEqual(Print("vocos-22khz-univ.onnx"), Print("hifigan_v2.onnx"));
+        Assert.EndsWith("|hifigan_v2.onnx", Print("hifigan_v2.onnx"));
+    }
 }
 
 /// <summary>A model that says whatever it was told to say, and remembers what it was asked.</summary>

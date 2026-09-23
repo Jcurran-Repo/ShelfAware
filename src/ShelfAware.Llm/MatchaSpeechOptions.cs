@@ -21,11 +21,15 @@ public sealed class MatchaSpeechOptions() : SherpaTtsOptions(SectionName, "match
     /// <summary>The vocoder ONNX file inside <see cref="SherpaTtsOptions.ModelDirectory"/>. Defaulted to
     /// the universal Vocos build, which is the one sherpa-onnx's own instructions pair with the English
     /// voice; the hifigan builds are alternatives at a different size and quality.
-    /// <para>⚠️ Part of no fingerprint of its own — it does not need to be, because the family name and
-    /// the voice index already are, and a box that swaps its vocoder is a box whose operator wants the
-    /// clips re-voiced anyway. If that stops being true, this is the setting to add to
-    /// <see cref="SherpaTextToSpeech.OutputFingerprint"/>.</para></summary>
+    /// <para>⚠️ In the cache fingerprint, via <see cref="FingerprintExtras"/>. A vocoder is half of what
+    /// a Matcha voice SOUNDS like — it is the half that turns a spectrogram into audio — so swapping it
+    /// has to retire the clips made with the old one, exactly as swapping the acoustic model does. Left
+    /// out, a box that changed vocoder would go on serving the previous one's audio forever, with nothing
+    /// anywhere to say why the voice did not change.</para></summary>
     public string VocoderFile { get; set; } = "vocos-22khz-univ.onnx";
+
+    /// <inheritdoc />
+    public override IReadOnlyList<string> FingerprintExtras => [VocoderFile];
 
     /// <inheritdoc />
     protected override string DirectoryHint =>
