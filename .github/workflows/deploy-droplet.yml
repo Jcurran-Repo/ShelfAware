@@ -130,30 +130,38 @@ jobs:
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bzip2
           fi
 
-          # ⚠️ /var/lib/shelfaware is the SERVICE ACCOUNT's home (deploy-droplet.md: adduser --home), so
-          # the app can rename anything directly inside it -- including models/ -- and put a directory
-          # or a symlink of its own in its place, AT ANY MOMENT, including the minutes a download takes.
-          # Everything below runs as root, so a check of the NAME is not enough: checked once and then
-          # used again later, the name can point somewhere else by then -- and the recursive chmod at
-          # the end follows a symlink given as its argument (chmod has no -h), which would make
-          # whatever the app pointed it at world-readable: /etc/shadow, the SSH host keys.
+          # ⚠️ The models live in /var/lib/shelfaware-models: root-owned, under root-owned /var/lib, and
+          # deliberately NOT inside /var/lib/shelfaware -- that is the SERVICE ACCOUNT's home
+          # (deploy-droplet.md: adduser --home), and anything directly inside a directory the app owns,
+          # the app can rename away and replace. They used to live there, as models/, which meant a
+          # compromised app could swap the directory the app then loaded its voice from between deploys
+          # -- and, during this step, re-point the name root was about to chmod -R (chmod follows a
+          # symlink given as its argument, so that would have made /etc/shadow and the SSH host keys
+          # world-readable).
           #
-          # So models/ is pinned by INODE: cd into it, confirm with the kernel's own answer
-          # (/proc/$$/cwd, not a path bash re-reads as a string) that this shell is in the root-owned
-          # directory at exactly that path, and from then on do every write, chown and chmod relative
-          # to "." -- which renaming or re-pointing the name cannot move. The app cannot write inside
-          # the directory itself (root-owned, 755). Downloads and unpacks happen in a fresh root-only
-          # mktemp directory, and only a verified, whole, root-owned model is moved in.
-          MODELS=/var/lib/shelfaware/models
+          # The pin below stays, as defense in depth: it costs nothing, and it turns a mis-owned or
+          # re-pointed directory into a refusal rather than a trusted path. cd in, confirm with the
+          # kernel's own answer (/proc/$$/cwd, not a path bash re-reads as a string) that this shell is
+          # in the root-owned 755 directory at exactly that path, and from then on do every write, chown
+          # and chmod relative to "." -- which renaming or re-pointing the name cannot move. Downloads
+          # and unpacks happen in a fresh root-only mktemp directory inside it, and only a verified,
+          # whole, root-owned model is moved in.
+          MODELS=/var/lib/shelfaware-models
           mkdir -p "$MODELS"
           cd -P "$MODELS"
-          if [ "$(readlink "/proc/$$/cwd")" != "$MODELS" ] || [ "$(stat -c %u .)" != 0 ]; then
-            echo "::error::$MODELS is not a root-owned directory at that path (a symlink, or owned by uid $(stat -c %u . 2>/dev/null)); refusing to write to it as root. Look at what changed it before re-running."
+          # Owner AND mode: root-owned is not enough on its own -- a root-owned 700 directory (a hand-made
+          # mkdir under a tight umask, say) would pass an owner check and then have everything in it
+          # made world-readable by the chmod -R at the end. 755 is what mkdir makes here.
+          models_is_ours() {
+            [ "$(readlink "/proc/$$/cwd")" = "$MODELS" ] && [ "$(stat -c %u:%a .)" = 0:755 ]
+          }
+          if ! models_is_ours; then
+            echo "::error::$MODELS is not a root-owned 755 directory at that path (it is $(stat -c %U:%a . 2>/dev/null)); refusing to write to it as root. Look at what changed it before re-running."
             exit 1
           fi
 
           # A failed download or unpack exits (set -e) with its temp directory still there; this takes
-          # it with it. Root-only and in /tmp, so harmless -- but nothing should be left behind.
+          # it with it. Root-only, but nothing should be left behind.
           tmp=""
           trap 'rm -rf -- "$tmp"' EXIT
 
@@ -173,7 +181,10 @@ jobs:
             # symlink is "not there" to -e.
             if [ -e "./$dir" ] || [ -L "./$dir" ]; then echo "$dir already unpacked."; return; fi
             echo "Fetching $dir..."
-            tmp=$(mktemp -d)
+            # Inside the pinned directory, so the final mv is a rename on one filesystem -- atomic --
+            # rather than a copy that a full disk could leave half-done under the model's own name.
+            # mktemp makes it root-only (700), and the leading dot keeps it out of the way.
+            tmp=$(mktemp -d ./.incoming.XXXXXX)
             # --proto on both, as voice-bakeoff.yml's get() does: a redirect must not walk a root-run
             # download off HTTPS, even with the checksum below as the backstop.
             curl -fsSL --proto '=https' --proto-redir '=https' -o "$tmp/model.tar.bz2" "$url"
@@ -213,14 +224,27 @@ jobs:
             9e3febfacf0abf4270172d2958bcec246032b7e88efc2720840cc80c93de334e \
             https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-medium.tar.bz2
 
-          # Root-owned and world-readable, which is install.sh's posture for the app itself and for its
-          # reason: the service account reads its model, it does not get to rewrite it. A compromised app
-          # process should not be able to leave something behind in a directory it loads from.
+          # The name must still lead here. The writes above went to the pinned directory whatever the
+          # name did, but a name re-pointed mid-run would leave the app loading something else while
+          # this step went green.
+          if ! models_is_ours; then
+            echo "::error::$MODELS no longer leads to the directory this step installed into; something re-pointed it during the run."
+            exit 1
+          fi
+
+          # Root-owned and world-readable, which is install.sh's posture for the app itself: the service
+          # account reads its models, it does not get to rewrite them.
           # ⚠️ "." -- the directory pinned above -- and never "$MODELS": chmod follows a symlink given as
-          # its argument, and by now the NAME may be one. Below ".", neither command follows symlinks,
-          # and the app cannot have put any there (the directory is root-owned).
+          # its argument. Below ".", neither command follows symlinks.
           chown -R root:root .
           chmod -R a+rX .
+
+          # A box set up before the move still has its models where the app owns the parent. Nothing
+          # here touches them -- the app may still be pointed at them until the env file changes -- but
+          # say so, so they don't quietly stay the ones in use. deploy-droplet.md has the switch-over.
+          if [ -e /var/lib/shelfaware/models ] || [ -L /var/lib/shelfaware/models ]; then
+            echo "::warning::Models are still present at /var/lib/shelfaware/models, inside the app's own home. The fresh, verified copies are in $MODELS: point every Speech__*__ModelDirectory in /etc/shelfaware/env there, restart, then remove the old directory (rm -rf /var/lib/shelfaware/models -- no trailing slash). See docs/deploy-droplet.md."
+          fi
           df -h / | tail -1
           REMOTE
 
