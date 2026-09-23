@@ -56,15 +56,27 @@
                     @* Badge and note are DERIVED from the two prices (SubscriptionPricing), never typed:
                        a hand-written "save 22%" survives a price change without failing anything, and then
                        states a discount the buttons beside it contradict. *@
-                    Annual — @BillingCatalog.Annual.PriceDisplay<span class="save-badge">@SubscriptionPricing.AnnualSavingBadge</span>
+                    Annual — @BillingCatalog.Annual.PriceDisplay
+                    @if (SubscriptionPricing.AnnualSaves)
+                    {
+                        <span class="save-badge">@SubscriptionPricing.AnnualSavingBadge</span>
+                    }
                 </a>
             </div>
-            <p class="muted small">Start monthly; @SubscriptionPricing.AnnualSavingNote. Cancel any time.</p>
+            <p class="muted small">@AnnualPitch</p>
         }
     </section>
 }
 
 @code {
+    /// <summary>The muted line under the two subscribe buttons. The saving clause is dropped when the
+    /// annual saves nothing against twelve monthly charges — "saves about 0 months" beside a green
+    /// badge is worse copy than no claim at all, and the badge is gated on the same question.</summary>
+    private static string AnnualPitch =>
+        SubscriptionPricing.AnnualSaves
+            ? $"Start monthly; {SubscriptionPricing.AnnualSavingNote}. Cancel any time."
+            : "Start monthly, or pay for the year up front. Cancel any time.";
+
     /// <summary>Whether payments exist on this deployment (PaymentsOptions.IsConfigured). Off → the panel
     /// renders nothing, so a self-host/BYOK box shows no billing surface.</summary>
     [Parameter] public bool Enabled { get; set; }

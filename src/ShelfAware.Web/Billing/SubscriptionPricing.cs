@@ -45,7 +45,13 @@ public static class SubscriptionPricing
     /// <summary>How many months of the monthly price the annual gives away.</summary>
     public static int AnnualMonthsSaved => MonthsSavedFor(MonthlyDollars, AnnualDollars);
 
-    /// <summary>The muted line under the two buttons — "the annual saves about 4 months".</summary>
+    /// <summary>Whether today's annual saves enough to be worth advertising. False means the panel drops
+    /// the badge and the saving clause together rather than rendering "save -12%" in the green win
+    /// colour — see <see cref="SavesFor"/> for what "enough" means and why.</summary>
+    public static bool AnnualSaves => SavesFor(MonthlyDollars, AnnualDollars);
+
+    /// <summary>The saving clause the panel puts under the two buttons — "the annual saves about 5
+    /// months". Only meaningful when <see cref="AnnualSaves"/>.</summary>
     public static string AnnualSavingNote =>
         $"the annual saves about {AnnualMonthsSaved} {(AnnualMonthsSaved == 1 ? "month" : "months")}";
 
@@ -58,10 +64,28 @@ public static class SubscriptionPricing
     public static int SavingPercentFor(decimal monthlyDollars, decimal annualDollars) =>
         (int)decimal.Floor((1m - annualDollars / TwelveMonthsOf(monthlyDollars)) * 100m);
 
-    /// <summary>How many whole months of the monthly price an annual gives away — rounded DOWN, for the
-    /// same reason as <see cref="SavingPercentFor"/>.</summary>
+    /// <summary>How many months of the monthly price an annual gives away, to the nearest month. ⚠️ NOT
+    /// floored, unlike <see cref="SavingPercentFor"/>: this number is rendered directly beneath that one,
+    /// and flooring 4.98 to 4 put "saves about 4 months" under "save 41%" — two numbers derived from the
+    /// same two prices telling a reader different stories (4/12 is 33%). The percentage is a promise and
+    /// rounds down; this sentence says "about", which is what licenses rounding to the nearest month and
+    /// what makes the pair agree.</summary>
     public static int MonthsSavedFor(decimal monthlyDollars, decimal annualDollars) =>
-        (int)decimal.Floor(12m - annualDollars / Positive(monthlyDollars));
+        (int)decimal.Round(12m - annualDollars / Positive(monthlyDollars), MidpointRounding.AwayFromZero);
+
+    /// <summary>Whether an annual at this price saves anything worth stating against twelve monthly
+    /// charges. ⚠️ The class throws on a non-positive monthly but cannot refuse an annual dearer than
+    /// twelve months — $39.99/yr against a $2.99 base is one of the alternatives
+    /// docs/subscription-plan.md §8 records as considered, so this is a knob someone may turn, not a case
+    /// that cannot happen. The derivations stay honest about it (they go negative rather than clamping to
+    /// a flattering zero) and a surface asks this before offering the annual as a saving at all.
+    /// <para>⚠️ BOTH units must be positive, not just the percentage. Gating on the percentage alone
+    /// reopened the very contradiction this class exists to close: $10.00/mo against $118.00/yr is a 1%
+    /// saving and zero whole months, so the panel offered a green "save 1%" badge above "the annual saves
+    /// about 0 months". One predicate, so the badge and the note appear together or not at all.</para></summary>
+    public static bool SavesFor(decimal monthlyDollars, decimal annualDollars) =>
+        SavingPercentFor(monthlyDollars, annualDollars) > 0
+        && MonthsSavedFor(monthlyDollars, annualDollars) > 0;
 
     private static decimal TwelveMonthsOf(decimal monthlyDollars) => Positive(monthlyDollars) * 12m;
 

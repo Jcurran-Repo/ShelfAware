@@ -61,25 +61,74 @@ public class SubscriptionPricingTests
 
     public static TheoryData<decimal, decimal, int> MonthsSavedCases => new()
     {
-        // 27.99 ÷ 3.99 = 7.01 months paid, so 4.98 are saved — "about 4 months", not five.
-        { 3.99m, 27.99m, 4 },
-        // 27.99 ÷ 2.99 = 9.36 months paid, 2.64 saved — the "about two months" the old copy claimed by
-        // hand, which is the one thing the hand-written line did get right.
-        { 2.99m, 27.99m, 2 },
+        // 27.99 ÷ 3.99 = 7.01 months paid, so 4.98 are saved — "about 5 months".
+        { 3.99m, 27.99m, 5 },
+        // 27.99 ÷ 2.99 = 9.36 months paid, 2.64 saved. The hand-written copy this replaced said "about
+        // two months"; 2.64 is nearer three, so the old line was the rounded-down one, not the right one.
+        { 2.99m, 27.99m, 3 },
         { 4.00m, 44.00m, 1 },
         { 4.00m, 48.00m, 0 },
     };
 
     [Theory]
     [MemberData(nameof(MonthsSavedCases))]
-    public void The_months_saved_note_rounds_down_too(decimal monthly, decimal annual, int expected) =>
+    public void The_months_saved_note_rounds_to_the_nearest_month(decimal monthly, decimal annual, int expected) =>
         Assert.Equal(expected, SubscriptionPricing.MonthsSavedFor(monthly, annual));
+
+    [Fact]
+    public void The_badge_and_the_note_tell_the_same_story()
+    {
+        // ⚠️ The two numbers sit one above the other in the panel, derived from the same two prices, so a
+        // reader compares them: flooring 4.98 months to 4 put "saves about 4 months" under "save 41%",
+        // and 4/12 is 33%. Whatever the prices are, the months must be what the percentage implies.
+        // The percentage floors (up to 1 point, ≈0.12 months low) and the months round (up to 0.5), so
+        // the honest gap between them is under 0.7 of a month. Flooring the months instead put them
+        // 0.92 apart, which is what a reader saw as a contradiction.
+        var impliedByPercent = 12m * SubscriptionPricing.AnnualSavingPercent / 100m;
+        var months = (decimal)SubscriptionPricing.AnnualMonthsSaved;
+        Assert.InRange(months, impliedByPercent - 0.7m, impliedByPercent + 0.7m);
+    }
+
+    public static TheoryData<decimal, decimal, bool> SavesCases => new()
+    {
+        { 3.99m, 27.99m, true },
+        { 2.99m, 27.99m, true },
+        // An annual at exactly twelve months, and one dearer than twelve, are not savings. ⚠️ $39.99
+        // against a $2.99 base is an alternative §8 records as considered, so this is a knob someone may
+        // turn — the panel asks this before rendering "save -12%" in the green win colour.
+        { 4.00m, 48.00m, false },
+        { 4.00m, 50.00m, false },
+        { 2.99m, 39.99m, false },
+        // ⚠️ A saving in percent but not in whole months. 118 against 12 × 10 is 1% off and 0.2 of a
+        // month, so gating on the percentage alone put a green "save 1%" badge over "the annual saves
+        // about 0 months" — the contradiction this class exists to close, reintroduced by its own guard.
+        { 10.00m, 118.00m, false },
+    };
+
+    [Theory]
+    [MemberData(nameof(SavesCases))]
+    public void An_annual_that_saves_nothing_is_not_offered_as_a_saving(
+        decimal monthly, decimal annual, bool saves) =>
+        Assert.Equal(saves, SubscriptionPricing.SavesFor(monthly, annual));
+
+    [Fact]
+    public void Todays_prices_do_save() => Assert.True(SubscriptionPricing.AnnualSaves);
+
+    [Fact]
+    public void A_saving_too_small_to_state_in_months_is_not_offered_in_percent_either()
+    {
+        // The discriminating half of the case above: the percentage IS positive there, so a guard reading
+        // only SavingPercentFor would pass this and still contradict itself on screen.
+        Assert.Equal(1, SubscriptionPricing.SavingPercentFor(10.00m, 118.00m));
+        Assert.Equal(0, SubscriptionPricing.MonthsSavedFor(10.00m, 118.00m));
+        Assert.False(SubscriptionPricing.SavesFor(10.00m, 118.00m));
+    }
 
     [Fact]
     public void The_note_says_month_in_the_singular_when_only_one_is_saved()
     {
-        // Guards the pluralisation independently of today's prices, which save four.
-        Assert.Equal("the annual saves about 4 months", SubscriptionPricing.AnnualSavingNote);
+        // Guards the pluralisation independently of today's prices, which save five.
+        Assert.Equal("the annual saves about 5 months", SubscriptionPricing.AnnualSavingNote);
         Assert.Equal(1, SubscriptionPricing.MonthsSavedFor(4.00m, 44.00m));
     }
 
@@ -97,5 +146,6 @@ public class SubscriptionPricingTests
         // would quietly render a discount that means nothing.
         Assert.Throws<ArgumentOutOfRangeException>(() => SubscriptionPricing.SavingPercentFor(monthly, 27.99m));
         Assert.Throws<ArgumentOutOfRangeException>(() => SubscriptionPricing.MonthsSavedFor(monthly, 27.99m));
+        Assert.Throws<ArgumentOutOfRangeException>(() => SubscriptionPricing.SavesFor(monthly, 27.99m));
     }
 }

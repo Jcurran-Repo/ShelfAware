@@ -652,6 +652,13 @@ Mechanics are provider-agnostic (all three offer them):
   ($5/$10/$20, **offered to active subscribers only** — §8) as hosted-checkout products; customer portal
   for cancel/card management. The packs are priced off the CREDIT anchor (cost × markup — §4), not off
   the subscription, so the 2026-09-22 base raise left all three untouched.
+  ⚠️ **Wire-up checklist item (raised by the 2026-09-23 review gate):** `SubscriptionPricing` is what
+  every screen SHOWS; `PaymentsOptions.MonthlyPriceId`/`AnnualPriceId` are what the provider CHARGES, and
+  nothing checks one against the other — there is no equivalent of `BillingCatalog.PacksMatchTheAnchor`,
+  because the provider's price lives on the provider. Harmless while both ids are null and no products
+  exist. The day they are created, the displayed price and the charged price can diverge with a green
+  suite over it, so **creating a provider product is the moment to re-read `SubscriptionPricing`**, and
+  the adapter should assert the two agree at startup if the provider exposes the amount.
 - **The subscription attaches to the HOUSEHOLD** (the tenancy unit — AI allowance is shared like the
   pantry is): provider customer id + `Tier` + period state on `Household`. Who may purchase:
   **any member — decided** (§8); the purchaser-departure lifecycle below is the safety net.

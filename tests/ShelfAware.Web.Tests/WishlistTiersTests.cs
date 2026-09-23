@@ -3,7 +3,9 @@ using ShelfAware.Web.Wishlist;
 namespace ShelfAware.Web.Tests;
 
 /// <summary>The reserve tier catalog — the pre-launch intent picker. Pins the keys the store validates
-/// against, that every tier has display copy, and that the base price still mirrors the plan doc.</summary>
+/// against and that every tier has display copy. The PRICE is no longer this suite's business: the
+/// ladder asks <c>SubscriptionPricing</c> for it, and SubscriptionPricingTests pins that it is the same
+/// one the billing catalog and the panel show.</summary>
 public class WishlistTiersTests
 {
     [Fact]
@@ -27,15 +29,6 @@ public class WishlistTiersTests
         // nor pass validation — otherwise a tampered form could reserve a tier no one is meant to pick.
         Assert.DoesNotContain(WishlistTiers.All, t => t.Key == "founder");
         Assert.False(WishlistTiers.IsValidKey("founder"));
-    }
-
-    [Fact]
-    public void Aware_quotes_a_price_at_all()
-    {
-        // WHAT that price is, and that it is the same one the billing catalog and the panel show, is
-        // SubscriptionPricingTests' job — the reserve no longer carries its own copy to drift from.
-        // This only holds the ladder to quoting something, so a tier can't render a blank price cell.
-        Assert.False(string.IsNullOrWhiteSpace(WishlistTiers.ByKey("aware")!.Price));
     }
 
     [Fact]
