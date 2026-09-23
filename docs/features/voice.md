@@ -36,7 +36,7 @@ the built-in reader.
   `OutputFingerprint` with its family name, so a clip voiced by one is never served for another's key.
   Setup + the model archives: `docs/deploy-kokoro.md` and `docs/deploy-piper.md` (mouth),
   `docs/deploy-moonshine.md` (ear).
-  - **The two local families are one engine and two descriptors** (`ISherpaTtsModel`): they differ only
+  - **The four local families are one engine and four descriptors** (`ISherpaTtsModel`): they differ only
     in which files must be on disk and which block of `OfflineTtsConfig` names them. The gate, the
     timeout that is not a cancellation, the empty-clip refusal and the fingerprint rules exist once.
     A third family — a cloned voice, say — is a descriptor, not a copy.

@@ -145,6 +145,36 @@ public class SherpaTtsEngineTests
         Assert.Null(new KokoroSpeechOptions { ModelDirectory = "models/kokoro", Speed = 1.0, NumThreads = 1 }.Invalid());
     }
 
+    /// <summary>⚠️ Matcha's own rule rides the SAME <c>Invalid</c> the other families' rules do, which is
+    /// what makes "the settings are valid" one question. A family rule answered by a second method would
+    /// be a rule registration asks and the engine does not, or the reverse — and the engine is the one
+    /// holding the synthesis gate when it finds out.</summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Matcha_needs_a_vocoder_and_says_so_through_the_shared_settings_rule(string vocoder)
+    {
+        var options = new MatchaSpeechOptions { ModelDirectory = "models/matcha", VocoderFile = vocoder };
+
+        Assert.Contains("Speech:Matcha:VocoderFile", options.Invalid());
+    }
+
+    [Fact]
+    public void A_matcha_voice_with_its_vocoder_named_is_reported_as_fine()
+    {
+        Assert.Null(new MatchaSpeechOptions { ModelDirectory = "models/matcha" }.Invalid());
+    }
+
+    /// <summary>The families with no rule of their own must not have acquired one: the hook defaults to
+    /// null, and a family that started refusing settings the others accept would be a boot failure nobody
+    /// could read.</summary>
+    [Fact]
+    public void The_families_without_a_rule_of_their_own_add_no_refusal()
+    {
+        Assert.Null(new PiperSpeechOptions { ModelDirectory = "models/piper" }.Invalid());
+        Assert.Null(new KittenSpeechOptions { ModelDirectory = "models/kitten" }.Invalid());
+    }
+
     // A caller that walked away before the model was even asked must see the cancel, not a load.
     [Fact]
     public async Task A_cancelled_caller_is_not_made_to_wait_for_a_model_load()

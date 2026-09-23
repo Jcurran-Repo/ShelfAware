@@ -1,0 +1,98 @@
+# Picking a voice
+
+Four local TTS families run in this app, all through the same sherpa-onnx engine and all at $0 per read:
+**Piper**, **Kokoro**, **Kitten** and **Matcha**. `Speech:Provider` picks one per box. This page is how
+you decide which.
+
+It exists because the decision has two halves and only one of them can be reasoned about. *Does it sound
+good* has to be heard. *Is it fast enough* has to be measured, **on the box that will run it** — the same
+model is 0.05× real time on one machine and 3.1× on another.
+
+## The short version
+
+1. Run the **Voice bake-off** workflow (Actions → Voice bake-off → Run workflow). It renders the same
+   sentence through every voice and uploads the clips.
+2. Download the `voice-bakeoff` artifact and listen. Pick the one you want.
+3. Put that model on the box and run `tools/VoiceCheck` **there**. If it prints under **1.0×**, ship it.
+4. If it does not, the voice is too slow for that box whatever it sounds like — see *Why 1.0×* below.
+
+⚠️ **The workflow's rates are the GitHub runner's, not your box's.** A runner is a modern dedicated core.
+The demo droplet is a 2 GHz shared core with no AVX-512 VNNI, where Kokoro measured 3.1× against a
+fraction of that on a runner. Use the workflow to choose by ear; use `VoiceCheck` on the box to choose by
+speed. Never quote a rate that was not measured where it will run.
+
+## Why 1.0× is the threshold, and not a ratio
+
+Below 1.0× synthesis outruns playback: a reply can start speaking while the rest of it is still being
+made. Above it, every sentence arrives later than the one before it finished, so chunked playback trades
+a shorter first wait for stuttering rather than fixing anything. This is why "Piper is 26× faster than
+Kokoro" is the wrong number to optimise — the only question is which side of 1.0× a box lands on.
+
+⚠️ And on a **public** box the per-household clip cache never amortizes: a visitor arrives with an empty
+one, so every visitor pays the full first-read cost on every step. That is what makes a slow voice a
+demo-box problem and not a family-box one.
+
+## The families
+
+| Family | Shape | Speed | Notes |
+|---|---|---|---|
+| **Piper** (VITS) | weights + tokens + espeak data | ~0.05× on a good core, ~0.1× on the droplet | The demo box's voice today. Clear, noticeably flatter. Weights are named after the voice, so `Speech:Piper:ModelFile` must say which. |
+| **Kokoro** | weights + voices.bin + tokens + espeak data | 1.4× on a good core, **3.1× on a DO-Regular droplet** | The family box's voice. The warmest, and the only one that has failed the 1.0× test on real hardware. |
+| **Kitten** | Kokoro's four files exactly, under its own config block | Published comparisons: faster than Kokoro, slower than Piper — unmeasured here | 24 MB. The nano archive has 8 voices, 4 male and 4 female. |
+| **Matcha** | acoustic model **+ a separate vocoder** + tokens + espeak data | unmeasured here | ⚠️ The vocoder is published in a *different release* from the voice. A directory holding everything the voice archive shipped still cannot speak. |
+
+Speed for Kitten and Matcha is deliberately blank: nobody here has measured them on a box that matters,
+and a number copied off someone else's benchmark is exactly the kind of figure this repo has been burned
+by. The bake-off is how they get filled in.
+
+## Putting a model on a box by hand
+
+The droplet deploy's `bootstrap` step unpacks **Piper and Kokoro** only. For the other two:
+
+```bash
+cd /var/lib/shelfaware/models
+curl -sSLO https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kitten-nano-en-v0_1-fp16.tar.bz2
+tar -xjf kitten-nano-en-v0_1-fp16.tar.bz2 && rm kitten-nano-en-v0_1-fp16.tar.bz2
+```
+
+Matcha needs the vocoder fetched separately, into the model's own directory:
+
+```bash
+cd /var/lib/shelfaware/models
+curl -sSLO https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/matcha-icefall-en_US-ljspeech.tar.bz2
+tar -xjf matcha-icefall-en_US-ljspeech.tar.bz2 && rm matcha-icefall-en_US-ljspeech.tar.bz2
+curl -sSL -o matcha-icefall-en_US-ljspeech/vocos-22khz-univ.onnx \
+  https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos-22khz-univ.onnx
+```
+
+Then prove it speaks **before** pointing the app at it:
+
+```bash
+dotnet run --project tools/VoiceCheck -- kitten /var/lib/shelfaware/models/kitten-nano-en-v0_1-fp16 out.wav 0
+dotnet run --project tools/VoiceCheck -- matcha /var/lib/shelfaware/models/matcha-icefall-en_US-ljspeech out.wav 0
+```
+
+⚠️ **Unpack the model, then set `Speech__Provider`, in that order.** The app refuses to boot pointed at an
+incomplete model directory on purpose: sherpa-onnx answers a missing file by printing one line to stderr
+and killing the process with a SIGSEGV, so a box configured early boots clean and then dies whole on the
+first read-aloud with nothing of ours in the log. `deploy/env.example` lists every setting.
+
+A voice change needs a **restart** — the family is read once, at registration, so that "which family this
+box runs" has exactly one answer for the life of the process.
+
+## Adding a fifth family
+
+A family is a descriptor, not an engine. `ISherpaTtsModel` answers the only two questions that differ —
+which files must be on disk, and which block of `OfflineTtsConfig` names them — and everything else (the
+synthesis gate, the timeout that is not a cancellation, cancellation that actually cancels, the cache
+fingerprint) is shared. So a new family is: an options class, a `…ModelFiles` record, one enum member,
+one line in `SpeechRegistration.LocalVoiceOf`, one row in `SherpaTtsModelTests.EveryFamily`, one row in
+`LocalVoiceFamilyRegistrationTests.EveryLocalFamily`, and a row in the bake-off lineup.
+
+⚠️ **Both theory rows are the point, not paperwork.** Every family fills the same config struct and hands
+it to the same native constructor, and sherpa-onnx does not report a config it cannot make sense of — it
+dies. Kitten's file list is Kokoro's *exactly*, so a descriptor that filled the wrong block would be
+correct in every name it used and wrong in the only way that matters. The theories assert that each
+family fills its own block and leaves every other one empty, and that no two families share a cache
+fingerprint prefix — a household that switched voices being served its old clips forever is a silent
+failure with a green suite over it.

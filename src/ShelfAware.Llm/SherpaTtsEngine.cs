@@ -28,10 +28,11 @@ public interface ITtsEngine : IDisposable
 /// <see cref="ITtsEngine"/> over sherpa-onnx, running a local voice in this process. No sidecar, no HTTP
 /// hop, no Python, no system espeak-ng — the phonemizer data ships inside the model archive.
 ///
-/// <para><b>One engine, every family.</b> Kokoro and Piper differ in exactly two things — which files
-/// must exist, and which block of <see cref="OfflineTtsConfig"/> names them — and both live behind
-/// <see cref="ISherpaTtsModel"/>. Everything below is identical for either, which is why there is no
-/// second copy of it to drift out of step. A third family (a cloned voice, say) is a descriptor.</para>
+/// <para><b>One engine, every family.</b> Kokoro, Piper, Kitten and Matcha differ in exactly two things
+/// — which files must exist, and which block of <see cref="OfflineTtsConfig"/> names them — and all of
+/// them live behind <see cref="ISherpaTtsModel"/>. Everything below is identical for any of them, which
+/// is why there is no second copy of it to drift out of step. A fifth family (a cloned voice, say) is a
+/// descriptor — see docs/voice-bakeoff.md.</para>
 ///
 /// <para><b>Singleton, and it must be.</b> The model is the expensive thing: ~1.6 s to load and a few
 /// hundred MB resident. Loading it per request would be slower than the synthesis it enables.</para>

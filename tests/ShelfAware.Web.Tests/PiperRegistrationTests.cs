@@ -8,8 +8,10 @@ using ShelfAware.Web.Services;
 namespace ShelfAware.Web.Tests;
 
 /// <summary>
-/// Composition of the Piper mouth — the second local voice, and the first time
-/// <see cref="SpeechRegistration.AddSpeech"/> has had to choose between two families of the same shape.
+/// Composition of the Piper mouth, in depth: every part of its model directory and every setting it can
+/// get wrong. The rules that are about the SET of families rather than about Piper — which one the
+/// provider selects, and that no two can be served each other's cached clips — are in
+/// <see cref="LocalVoiceFamilyRegistrationTests"/>, over all four at once.
 ///
 /// <para>Kokoro's half of this lives in <see cref="CachingTextToSpeechTests"/> and these are deliberately
 /// its twin, for the reason the ear's tests give: the refusals exist because sherpa-onnx answers a
@@ -78,19 +80,9 @@ public sealed class PiperRegistrationTests : IDisposable
         Assert.StartsWith("kokoro", fingerprint);
     }
 
-    /// <summary>⚠️ The two families must not share a fingerprint prefix, or a household that switched
-    /// voices would be served its old clips forever — same key, different voice, no error anywhere.</summary>
-    [Fact]
-    public void The_two_local_families_fingerprint_differently()
-    {
-        var piper = FingerprintFor("Piper", AModel());
-        var kokoro = FingerprintFor("Kokoro", extra: new()
-        {
-            ["Speech:Kokoro:ModelDirectory"] = AKokoroModel(),
-        });
-
-        Assert.NotEqual(piper, kokoro);
-    }
+    // ⚠️ "No two families share a fingerprint prefix" lived here as a Kokoro-vs-Piper pair until Matcha
+    // and Kitten arrived. It is now LocalVoiceFamilyRegistrationTests.No_two_families_fingerprint_the_same,
+    // over every family at once — six pairs is where writing them out stops being honest work.
 
     [Fact]
     public void The_model_is_loaded_once_per_box_not_once_per_read()

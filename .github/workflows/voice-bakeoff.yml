@@ -1,0 +1,146 @@
+name: Voice bake-off
+
+# Renders the SAME sentence through every local voice we can run, and uploads the clips so a person can
+# listen to them side by side. It exists because "which voice should this box run" is two questions --
+# does it sound good, and is it fast enough -- and only one of them can be answered by reading.
+#
+# ⚠️ THE RATES THIS PRINTS ARE THE RUNNER'S, NOT A DROPLET'S. A GitHub runner is a modern dedicated core;
+# the demo droplet is a 2 GHz shared one with no AVX-512 VNNI, where Kokoro measured 3.1x real time
+# against the runner's fraction of that. Use this run to pick a voice by EAR, then confirm the winner is
+# under 1.0x on the box itself with tools/VoiceCheck. See docs/voice-bakeoff.md.
+#
+# Manual only. It downloads ~700 MB of models and has no business running on a push.
+
+on:
+  workflow_dispatch:
+    inputs:
+      voices:
+        description: 'Which lineup: "all", or a space-separated list of ids from docs/voice-bakeoff.md'
+        required: false
+        default: 'all'
+
+permissions:
+  contents: read
+
+jobs:
+  bakeoff:
+    name: Render every voice
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          # The repo's own toolchain, for the reason ci.yml gives: a workflow that names its own
+          # version is a workflow whose green says nothing about the repo.
+          global-json-file: global.json
+
+      - name: Install bzip2
+        # tar shells out to bzip2 for .tar.bz2 and the runner image does not always carry it -- the
+        # droplet deploy hit exactly this (PR #73).
+        run: sudo apt-get update && sudo apt-get install -y bzip2
+
+      - name: Build VoiceCheck
+        run: dotnet build tools/VoiceCheck --configuration Release
+
+      - name: Render the lineup
+        env:
+          WANTED: ${{ inputs.voices }}
+        run: |
+          set -euo pipefail
+          mkdir -p clips models
+          RELEASES=https://github.com/k2-fsa/sherpa-onnx/releases/download
+
+          # id | family | archive | speaker | note
+          # One row per clip. A Piper archive names its weights after the voice, so the model file is
+          # derived from the archive name rather than typed twice.
+          LINEUP=$(cat <<'ROWS'
+          piper-lessac-medium|piper|vits-piper-en_US-lessac-medium|0|Today's demo voice, the control
+          piper-lessac-high|piper|vits-piper-en_US-lessac-high|0|Same speaker, higher-quality model
+          piper-ryan-high|piper|vits-piper-en_US-ryan-high|0|Male, high quality
+          piper-amy-medium|piper|vits-piper-en_US-amy-medium|0|Female, medium
+          piper-cori-high|piper|vits-piper-en_GB-cori-high|0|British English, high
+          piper-libritts-0|piper|vits-piper-en_US-libritts_r-medium|0|LibriTTS-R, 904 speakers in one file
+          piper-libritts-40|piper|vits-piper-en_US-libritts_r-medium|40|LibriTTS-R, another speaker
+          piper-libritts-109|piper|vits-piper-en_US-libritts_r-medium|109|LibriTTS-R, another speaker
+          kitten-nano-0|kitten|kitten-nano-en-v0_1-fp16|0|KittenTTS nano, voice 0
+          kitten-nano-2|kitten|kitten-nano-en-v0_1-fp16|2|KittenTTS nano, voice 2
+          kitten-nano-5|kitten|kitten-nano-en-v0_1-fp16|5|KittenTTS nano, voice 5
+          kitten-mini-0|kitten|kitten-mini-en-v0_1-fp16|0|KittenTTS mini, the larger of the two
+          matcha-ljspeech|matcha|matcha-icefall-en_US-ljspeech|0|Matcha-TTS, acoustic model plus vocoder
+          kokoro-0|kokoro|kokoro-int8-en-v0_19|0|Kokoro, the family box's voice, the other control
+          ROWS
+          )
+
+          echo "| Voice | Family | x real time | Notes |" > summary.md
+          echo "|---|---|---|---|" >> summary.md
+
+          while IFS='|' read -r id family archive speaker note; do
+            # An `if`, not `[ -z "$id" ] && continue`: under `set -e` that list's exit status IS the
+            # test's, so a non-empty id would end the whole run on the first row.
+            if [ -z "$id" ]; then continue; fi
+            if [ "$WANTED" != "all" ] && ! printf '%s ' $WANTED | grep -qw "$id"; then continue; fi
+
+            if [ ! -d "models/$archive" ]; then
+              echo "::group::Fetching $archive"
+              curl -sSL --retry 3 "$RELEASES/tts-models/$archive.tar.bz2" -o archive.tar.bz2
+              tar -xjf archive.tar.bz2 -C models
+              rm archive.tar.bz2
+              echo "::endgroup::"
+            fi
+
+            ARGS=(-- "$family" "models/$archive" "clips/$id.wav" "$speaker")
+            case "$family" in
+              piper)
+                # The archive is named vits-piper-<voice>; the weights inside are <voice>.onnx.
+                ARGS+=(--model-file "${archive#vits-piper-}.onnx")
+                ;;
+              matcha)
+                # ⚠️ The vocoder lives in a DIFFERENT release from the voice. Without it Matcha
+                # produces a spectrogram, and sherpa-onnx answers a missing file by killing the
+                # process rather than by saying so.
+                if [ ! -f "models/$archive/vocos-22khz-univ.onnx" ]; then
+                  curl -sSL --retry 3 "$RELEASES/vocoder-models/vocos-22khz-univ.onnx" \
+                    -o "models/$archive/vocos-22khz-univ.onnx"
+                fi
+                ;;
+            esac
+
+            echo "::group::Rendering $id"
+            # Never let one voice fail the whole run: a lineup of fourteen is most useful when the
+            # thirteen that worked are still listenable.
+            if dotnet run --project tools/VoiceCheck --configuration Release --no-build "${ARGS[@]}" \
+                 | tee "clips/$id.txt"; then
+              RATE=$(grep -oE 'roughly [0-9.]+x real time' "clips/$id.txt" | grep -oE '[0-9.]+' || echo '?')
+              echo "| $id | $family | $RATE | $note |" >> summary.md
+            else
+              echo "| $id | $family | FAILED | $note |" >> summary.md
+            fi
+            echo "::endgroup::"
+          done <<< "$(echo "$LINEUP" | sed 's/^ *//')"
+
+          {
+            echo '## Voice bake-off'
+            echo
+            cat summary.md
+            echo
+            # A QUOTED heredoc, because the note below has apostrophes in it and a shell reading one
+            # as a closing quote is a workflow that dies after every clip has already been rendered.
+            cat <<'NOTE'
+          > [!WARNING]
+          > These rates are **this runner's**, not a droplet's. The runner is a modern dedicated core;
+          > the demo droplet is a 2 GHz shared one with no AVX-512 VNNI, where Kokoro measured 3.1x real
+          > time. Pick a voice by EAR from the artifact, then confirm the winner is under 1.0x on the
+          > box itself with `tools/VoiceCheck` -- below 1.0x is where synthesis outruns playback.
+          NOTE
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the clips
+        uses: actions/upload-artifact@v7
+        with:
+          name: voice-bakeoff
+          path: |
+            clips/
+            summary.md
+          if-no-files-found: error

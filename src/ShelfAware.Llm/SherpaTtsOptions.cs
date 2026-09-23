@@ -8,7 +8,7 @@ namespace ShelfAware.Llm;
 ///
 /// <para>⚠️ This interface is the reason there is one engine rather than one per family. Everything else
 /// about running a local voice — the synthesis gate, the timeout that is not a cancellation, the refusal
-/// to serve an empty clip, what the cache fingerprint means — is identical for Kokoro and Piper, and a
+/// to serve an empty clip, what the cache fingerprint means — is identical for every family, and a
 /// second copy of it would be a second place to fix every bug found in the first. See CLAUDE.md on
 /// converting call sites one at a time.</para>
 /// </summary>
@@ -133,5 +133,14 @@ public abstract class SherpaTtsOptions
         : SynthesisTimeoutSeconds < 1
             ? $"{Section}:SynthesisTimeoutSeconds is {SynthesisTimeoutSeconds}; it must be at least 1. "
               + "There is no value meaning 'wait forever' on purpose."
-        : null;
+        : FamilyInvalid();
+
+    /// <summary>What is wrong with a setting only THIS family has, or null when it has none. The default
+    /// is null because three of the four families are fully described by the settings above.
+    /// <para>⚠️ It is the last link of <see cref="Invalid"/> rather than a second method callers must
+    /// remember to ask, because "the settings are valid" is one question and two places answering it is
+    /// how registration boots a box the engine then refuses to load — the exact shape CLAUDE.md's
+    /// one-definition rule is about. Overriding this puts a family's own rule on the same path
+    /// registration and the engine already both take.</para></summary>
+    protected virtual string? FamilyInvalid() => null;
 }

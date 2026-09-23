@@ -141,6 +141,8 @@ public static class SpeechRegistration
         {
             SpeechProvider.Kokoro => Bind<KokoroSpeechOptions>(configuration, KokoroSpeechOptions.SectionName),
             SpeechProvider.Piper => Bind<PiperSpeechOptions>(configuration, PiperSpeechOptions.SectionName),
+            SpeechProvider.Matcha => Bind<MatchaSpeechOptions>(configuration, MatchaSpeechOptions.SectionName),
+            SpeechProvider.Kitten => Bind<KittenSpeechOptions>(configuration, KittenSpeechOptions.SectionName),
             _ => null,
         };
 

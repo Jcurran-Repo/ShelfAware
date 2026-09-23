@@ -9,8 +9,9 @@ using ShelfAware.Llm;
 // and it exists for the same reason: the first read-aloud on a live box should not be the first
 // time the model has been loaded there.
 //
-//   dotnet run --project tools/VoiceCheck -- <kokoro|piper> <modelDirectory> [outputWav] [speakerId]
-//                                           [--model-file <name.onnx>]
+//   dotnet run --project tools/VoiceCheck -- <kokoro|piper|matcha|kitten> <modelDirectory>
+//                                           [outputWav] [speakerId]
+//                                           [--model-file <name.onnx>] [--vocoder-file <name.onnx>]
 //
 // ⚠️ Run it BEFORE pointing Speech:Provider at a model directory. sherpa-onnx answers a missing
 // model file with a line on stderr and a SIGSEGV, so a box configured against an incomplete
@@ -27,21 +28,23 @@ using ShelfAware.Llm;
 if (args.Length < 2)
 {
     Console.Error.WriteLine(
-        "Usage: dotnet run --project tools/VoiceCheck -- <kokoro|piper> <modelDirectory> [outputWav] "
-        + "[speakerId] [--model-file <name.onnx>]");
+        "Usage: dotnet run --project tools/VoiceCheck -- <kokoro|piper|matcha|kitten> <modelDirectory> "
+        + "[outputWav] [speakerId] [--model-file <name.onnx>] [--vocoder-file <name.onnx>]");
     Console.Error.WriteLine(
-        "The model directory holds an unpacked sherpa-onnx archive -- see docs/deploy-kokoro.md or "
-        + "docs/deploy-piper.md.");
+        "The model directory holds an unpacked sherpa-onnx archive -- see docs/deploy-kokoro.md, "
+        + "docs/deploy-piper.md or docs/voice-bakeoff.md.");
     return 1;
 }
 
 // --model-file is lifted out BEFORE the positional arguments are read, so it can never be mistaken
 // for the voice index and so the Piper check below sees an override the operator has just applied.
 string? modelFileOverride = null;
+string? vocoderFileOverride = null;
 var positional = new List<string>();
 for (var i = 0; i < args.Length; i++)
 {
     if (args[i] == "--model-file" && i + 1 < args.Length) { modelFileOverride = args[++i]; continue; }
+    if (args[i] == "--vocoder-file" && i + 1 < args.Length) { vocoderFileOverride = args[++i]; continue; }
     positional.Add(args[i]);
 }
 args = [.. positional];
@@ -53,8 +56,8 @@ var speakerId = 0;
 if (args.Length > 3 && !int.TryParse(args[3], out speakerId))
 {
     Console.Error.WriteLine($"'{args[3]}' is not a voice index. The archives ship no voice names, so a "
-                            + "voice is a number -- 0 to 10 for kokoro-int8-en-v0_19, and 0 for a "
-                            + "single-speaker Piper voice.");
+                            + "voice is a number -- 0 to 10 for kokoro-int8-en-v0_19, 0 to 7 for "
+                            + "kitten-nano-en-v0_1, and 0 for a single-speaker Piper or Matcha voice.");
     return 1;
 }
 
@@ -93,8 +96,24 @@ switch (family.ToLowerInvariant())
             return 1;
         }
         break;
+    case "matcha":
+        // ⚠️ Matcha is an acoustic model plus a VOCODER, and the vocoder ships in a different release
+        // from the voice -- so a directory holding everything the voice archive contained is still not
+        // something that can speak. Both names are overridable because neither is fixed: the voice
+        // archives name the acoustic model after its step count, and the vocoder is whichever of the
+        // published builds was downloaded beside it.
+        var matcha = new MatchaSpeechOptions { ModelDirectory = modelDirectory, SpeakerId = speakerId };
+        if (vocoderFileOverride is not null) matcha.VocoderFile = vocoderFileOverride;
+        options = matcha;
+        if (modelFileOverride is not null) options.ModelFile = modelFileOverride;
+        break;
+    case "kitten":
+        options = new KittenSpeechOptions { ModelDirectory = modelDirectory, SpeakerId = speakerId };
+        if (modelFileOverride is not null) options.ModelFile = modelFileOverride;
+        break;
     default:
-        Console.Error.WriteLine($"'{family}' is not a model family. Use 'kokoro' or 'piper'.");
+        Console.Error.WriteLine(
+            $"'{family}' is not a model family. Use 'kokoro', 'piper', 'matcha' or 'kitten'.");
         return 1;
 }
 
@@ -110,7 +129,9 @@ if (options.Invalid() is { } wrong)
 if (options.Model().Missing() is { Count: > 0 } missing)
 {
     Console.Error.WriteLine($"That is not a complete {family} model -- not found: {string.Join(", ", missing)}");
-    Console.Error.WriteLine("See docs/deploy-kokoro.md or docs/deploy-piper.md for the archive to unpack there.");
+    Console.Error.WriteLine(
+        "See docs/deploy-kokoro.md, docs/deploy-piper.md or docs/voice-bakeoff.md for the archive to "
+        + "unpack there.");
     return 1;
 }
 
