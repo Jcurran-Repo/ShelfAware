@@ -50,42 +50,51 @@ rounding error.
 
 ## 1. Unpack a model
 
-⚠️ **Paste the block whole.** Every step is joined to the next with `&&`, which is load-bearing
-rather than style: `sha256sum -c` on a line of its own prints `FAILED` and returns 1, and a shell runs
-the next line regardless — so an archive that failed its check would be unpacked, as root, with the
-only warning several lines back up the scrollback. `deploy-droplet.yml`'s `bootstrap` exits on a
-mismatch, and these commands are meant to be its equivalent by hand. It also stages the unpack and
-moves it whole, for the reason the workflow gives: everything downstream checks "are the files there",
-so a half-extraction — a disk that filled, a connection that dropped — reads as a model and reaches
-sherpa-onnx, which answers it by killing the process.
+⚠️ **Paste each block whole, and run it as root** (on the droplet you already are; otherwise
+`sudo -i` first). From the download to the last `chmod` it is **one `&&` chain**, which is
+load-bearing rather than style: `sha256sum -c` on a line of its own prints `FAILED` and returns 1, and
+a shell runs the next line regardless — so an archive that failed its check would be unpacked, as
+root, with the only warning several lines back up the scrollback. Worse, the `ls` that follows would
+then list a *previous* install's five files and read as success. `deploy-droplet.yml`'s `bootstrap`
+exits on a mismatch, and these commands are meant to be its equivalent by hand.
+
+Two other things the chain copies from the workflow. It **skips a directory that is already there**,
+because `mv` onto a non-empty one fails with `Directory not empty` and leaves the staging folder
+behind — a confusing way to learn the model was already unpacked. And it **stages the unpack and moves
+it whole**: everything downstream asks "are the files there", so a half-extraction from a full disk or
+a dropped connection is a directory the app's boot check passes or fails on the wrong grounds — and
+files that are present but truncated reach sherpa-onnx, which answers them by killing the process
+rather than by saying so.
 
 ```bash
 # A minimal Ubuntu image ships no bzip2, and GNU tar shells out to it to read a .tar.bz2.
 # ⚠️ Braces: `A || B && C` parses as `(A || B) && C`, so without them the install runs even when
 # bzip2 is already there.
-command -v bzip2 >/dev/null || { sudo apt-get update && sudo apt-get install -y bzip2; }
+command -v bzip2 >/dev/null || { apt-get update && apt-get install -y bzip2; }
 
 # Release assets sit on a mutable tag, and this one is unpacked as root on a box holding real
 # households' data. Measured 2026-09-21; the CI bootstrap checks the same hash
 # (.github/workflows/deploy-droplet.yml).
 A=sherpa-onnx-moonshine-tiny-en-int8
 R=https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models
+M=/var/lib/shelfaware/models
 
-sudo mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models \
-  && curl -fsSL --proto '=https' --proto-redir '=https' -O "$R/$A.tar.bz2" \
-  && { echo "d5fe6ec4334fef36255b2a4010412cad4c007e33103fec62fb5d17cad88086f2  $A.tar.bz2" \
-         | sha256sum -c - || { rm -f "$A.tar.bz2"; false; }; } \
-  && rm -rf .staging && mkdir .staging \
-  && tar xjf "$A.tar.bz2" -C .staging --no-same-owner --no-same-permissions \
-  && mv ".staging/$A" . \
-  && rm -rf .staging "$A.tar.bz2"
-ls sherpa-onnx-moonshine-tiny-en-int8
-# preprocess.onnx  encode.int8.onnx  uncached_decode.int8.onnx  cached_decode.int8.onnx  tokens.txt
-# Root-owned, world-readable: the app READS its model and never rewrites it — install.sh's
-# posture for the binaries, for the same reason. A process that gets compromised should not be
-# able to leave anything behind in a directory the app loads from.
-sudo chown -R root:root /var/lib/shelfaware/models
-sudo chmod -R a+rX /var/lib/shelfaware/models
+mkdir -p "$M" && cd "$M" \
+  && { [ -d "$A" ] && echo "$A is already unpacked." || {
+         curl -fsSL --proto '=https' --proto-redir '=https' -O "$R/$A.tar.bz2" \
+           && { echo "d5fe6ec4334fef36255b2a4010412cad4c007e33103fec62fb5d17cad88086f2  $A.tar.bz2" \
+                  | sha256sum -c - || { rm -f "$A.tar.bz2"; false; }; } \
+           && rm -rf .staging && mkdir .staging \
+           && tar xjf "$A.tar.bz2" -C .staging --no-same-owner --no-same-permissions \
+           && mv ".staging/$A" . \
+           && rm -rf .staging "$A.tar.bz2"; }; } \
+  && ls "$A" \
+  && chown -R root:root "$M" \
+  && chmod -R a+rX "$M"
+# Expect: preprocess.onnx  encode.int8.onnx  uncached_decode.int8.onnx  cached_decode.int8.onnx  tokens.txt
+# The chown/chmod are inside the chain on purpose: root-owned and world-readable is the posture the app
+# needs (it READS its model and never rewrites it — install.sh's reasoning for the binaries), and a
+# failed download must not leave the directory in some other state while looking like it finished.
 ```
 
 The `sherpa-onnx-moonshine-base-en-int8` archive is the larger sibling (~400 MB) — more accurate, and
@@ -101,35 +110,55 @@ not worth it on a small box for "next" and "stop".
 Same model, and the same rule about *where*: under `app-data`, because that is the one thing
 `publish-family.ps1` carries across the folder swap.
 
+⚠️ **Paste this block whole too.** PowerShell does not stop on a native command's failure the way
+`set -e` does, so every step that can fail is checked explicitly and the block stops with a `throw`.
+Run line by line and a `throw` stops nothing after it.
+
 ```powershell
 $models  = "$env:USERPROFILE\ShelfAware-server\app-data\models"
-$archive = "$models\moonshine.tar.bz2"
+$name    = 'sherpa-onnx-moonshine-tiny-en-int8'
 $sha     = 'd5fe6ec4334fef36255b2a4010412cad4c007e33103fec62fb5d17cad88086f2'
+$archive = Join-Path $models "$name.tar.bz2"
+$staging = Join-Path $models '.staging'
 
-curl.exe -fL --proto '=https' -o $archive `
-  https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-tiny-en-int8.tar.bz2
-if ($LASTEXITCODE -ne 0) { throw "Download failed; nothing to unpack." }
+New-Item -ItemType Directory -Force $models | Out-Null
 
-# The same hash the droplet checks, and the same reason. PowerShell's -ne on strings is
-# case-insensitive, so Get-FileHash's uppercase output compares fine against the lowercase literal.
-if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne $sha) {
-  Remove-Item $archive
-  throw "The archive did not match its recorded sha256; not unpacking it."
+if (Test-Path (Join-Path $models $name)) {
+  "$name is already unpacked."
+} else {
+  curl.exe -fL --proto '=https' --proto-redir '=https' -o $archive `
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$name.tar.bz2"
+  if ($LASTEXITCODE -ne 0) { throw "Download failed; nothing to unpack." }
+
+  # The same hash the droplet checks. PowerShell's -ne on strings is case-insensitive, so
+  # Get-FileHash's uppercase output compares fine against the lowercase literal.
+  if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne $sha) {
+    Remove-Item $archive -Force
+    throw "The archive did not match its recorded sha256; not unpacking it."
+  }
+
+  Remove-Item $staging -Recurse -Force -ErrorAction Ignore
+  New-Item -ItemType Directory -Force $staging | Out-Null
+  tar -xf $archive -C $staging
+  # Kept, not deleted: the download is verified and 119 MB, so a failed extract should not cost it.
+  if ($LASTEXITCODE -ne 0) { throw "Unpack failed; the verified archive is still at $archive." }
+
+  # -ErrorAction Stop, because a cmdlet error is NON-terminating by default: a failed move would
+  # print red and carry on to the two Remove-Items below, deleting the extracted model AND the
+  # verified archive while reading as a finished block. That is the shape this whole page is fixing.
+  Move-Item (Join-Path $staging $name) $models -ErrorAction Stop
+  Remove-Item $staging -Recurse -Force
+  Remove-Item $archive -Force
 }
-
-tar -xf $archive -C $models
-Remove-Item $archive
 ```
 
 ⚠️ **This block had no checksum at all until 2026-09-23**, while the Linux one beside it did and the
 deploy workflow did. The family box is Jordan's own machine rather than a public droplet, which makes
 it less exposed — not differently exposed: `curl` without `-f` writes an HTTP error page to the output
-file and exits **0**, so a 404 body became `moonshine.tar.bz2` and `tar` was handed it. Verified here
-now, and the download stops the block rather than being checked after the fact.
+file and exits **0**, so a 404 body became `moonshine.tar.bz2` and `tar` was handed it.
 
 ⚠️ `curl.exe`, with the extension — in Windows PowerShell `curl` is an alias for `Invoke-WebRequest`,
-which has no `-L`. Same trap as the Kokoro doc's step 2. `$LASTEXITCODE` is checked explicitly because
-PowerShell does not stop on a native command's failure the way `set -e` does.
+which has no `-L`. Same trap as the Kokoro doc's step 2.
 
 ## 3. Prove it hears, before pointing the app at it
 
