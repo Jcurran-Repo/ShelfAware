@@ -50,6 +50,13 @@ argument (the floor has to survive model-price rises, fixed costs and disputes) 
 promise, which binds an EXISTING subscriber's price and not the sticker a new one is quoted; nobody is
 subscribed yet, so this raise breaks no promise to anyone. At $3.99 the monthly floor at full grant use
 goes from ~$1.33/mo (44%) to **~$2.27/mo (57%)** — see the §3 table.
+⚠️ **The cost side moved further than the price did, and it moved first.** Two of the three forces the
+2026-08-23 paragraphs below argue from have since been answered rather than absorbed: ElevenLabs is out
+of the paid tier (2026-09-19) and both voice and recognition now run in-process at $0 per use, which
+removes a ~$22/mo fixed cost that was eating ~17 subscribers' floors. **The raise is the smaller half of
+the improvement** — see §3's restated break-even. The one force that is unchanged is model-price drift,
+which is the reason the floor still has to be defended.
+
 **The annual stays at $27.99 (Jordan, 2026-09-23): the discount is meant to be big.** Against twelve
 $3.99 charges that is ~41% off rather than the ~22% it was struck as, and that is the point — see the
 annual paragraph below and §8.
@@ -211,7 +218,22 @@ Model pricing (both pinned modules run `claude-haiku-4-5`): **$1.00/MTok input, 
 
 So **$1.00 of cost ≈ 50–150 AI actions/month ≈ 2–5/day** — comfortably covers a normal household
 (a few receipts a week + regular chat). Credits are genuinely for outliers, so the margin holds for the
-typical subscriber. ⚠️ **Calibrate against real data before freezing numbers:** the family box's `AiUsage`
+typical subscriber.
+
+**Worked example at the shipped prices (2026-09-23), since the tables above are per-action and nobody
+lives per-action.** Priced off `AiPricing.CreditPrices`: a receipt is **1** credit, a census photo 1, a
+chat or voice turn 2, a recipe suggest/adapt/import 2 each, a meal plan **1 per three meals**, a single
+meal re-roll 1; tag suggestions, stand-ins and ingredient alternatives are **0**. Read-aloud is priced
+but **never charged** — `TtsSynthesis` is absent from `CreditPricing.MeteredActions`, and since the
+voice is local it costs nothing to serve either. So a household reading two receipts a week (~8.7/mo =
+~9 credits) and generating one week-long plan of three meals a day (21 meals = **7** credits) spends
+**~16 credits a month against a 100-credit allowance** — about **16%** of it, or **~$0.16 of provider
+cost against $3.99 collected**. ⚠️ The §3 floors above are all quoted at FULL grant use, which is the
+worst case and not the common one: the realistic monthly margin is nearer **~$3.11** (after the ~$0.72
+MoR fee) than the ~$2.27 floor. Keep quoting the floor when deciding prices; quote this when deciding
+whether the business works.
+
+⚠️ **Calibrate against real data before freezing numbers:** the family box's `AiUsage`
 rows record every household's actual daily calls + tokens — multiply by the rates above and check what a
 real month costs. That table was built to answer exactly this question.
 
@@ -234,10 +256,19 @@ with that pinned, tax is the merchant of record's job end to end (§6) and the m
 tax asterisk. **Disputes are worse than "months":** on a fully-used annual, one dispute ≈ −$26 clawed
 − $15 fee − up to $12 of AI already served ≈ **−$53 — several YEARS of another annual subscriber's
 floor** (and the $15 fee alone exceeds one annual's entire floor margin). Refund/clawback design is
-therefore mandatory, not optional — §4. **Fixed-cost break-even, quantified:** the EL plan minimum
-(~$22/mo) alone consumes ~17 monthly (or ~19 annual) subscribers' floors; with droplet-class hosting,
-**~20–25 paying households before the first dollar of profit** at full-grant usage — the number
-"make enough to make it worth it" turns on.
+therefore mandatory, not optional — §4. **Fixed-cost break-even — RESTATED 2026-09-23, the ElevenLabs
+minimum is gone.** As computed on 2026-08-23 it was: the EL plan minimum (~$22/mo) alone consumes ~17
+monthly (or ~19 annual) subscribers' floors, and with droplet-class hosting **~20–25 paying households
+before the first dollar of profit** at full-grant usage. **That $22 is no longer a cost of this
+product.** Voice runs in-process (Kokoro on the family box, Piper on the demo box — PRs #71/#74) and so
+does recognition (Moonshine — PR #72); both are $0 per use, and ElevenLabs came out of the paid tier on
+2026-09-19. What remains fixed is hosting. Backing hosting out of the 2026-08-23 arithmetic (~$26.60–
+$33.25 of fixed cost at a $1.33 floor, less the $22) puts it at **~$5–11/mo**, so against the $3.99
+base's ~$2.27/mo floor break-even is **~2–5 monthly households, or ~4–10 annual** — a handful rather
+than a roomful, and the single biggest improvement to this plan's economics since it was written.
+⚠️ **That range is INFERRED from this doc's own numbers, not from an invoice.** It is the one figure
+here that a five-minute look at the DigitalOcean bill would replace with a fact; do that before quoting
+it to anyone. Disputes (~$15) are per-event, not fixed, and are unaffected.
 
 **The cost hierarchy (Jordan's call): text/receipts < voice < realtime agents.** This is mostly just
 real costs showing through one markup rate — Haiku tokens are fractions of a cent per action; ElevenLabs
@@ -775,8 +806,8 @@ judge-by-the-log rule. On the planned separate public box, this doesn't arise.
   price change without failing anything and then contradicts the buttons beside it.
 - **Credit packs are sold to ACTIVE SUBSCRIBERS ONLY — Free households are not offered packs**
   (Jordan: "it means they're skipping paying for hosting costs, essentially"). The economics behind
-  it: the subscription carries the FIXED costs — hosting, the EL plan minimum, the infrastructure
-  §3's ~20–25-household break-even is denominated in — while credits at 1.65× price only the
+  it: the subscription carries the FIXED costs — hosting, and (until 2026-09-19) the EL plan minimum,
+  the infrastructure §3's break-even is denominated in — while credits at 1.65× price only the
   *marginal* AI. An à-la-carte pack buyer would consume the infrastructure without contributing to
   it. The sub is the hosting fee; credits are fuel. (A Free household with a SURVIVING balance —
   bought while subscribed, kept through a tier drop — still spends it: §6's "they were bought" rule

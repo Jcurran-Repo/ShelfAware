@@ -12,7 +12,11 @@ namespace ShelfAware.Web.Billing;
 /// comment asking the next editor to keep them in step. A prose rule is not a rule: raising the monthly
 /// from $2.99 to $3.99 (2026-09-22, Jordan) would have left that badge claiming a 22% annual discount
 /// that had quietly become 41%, on the same screen as the two prices it was wrong about. The two
-/// constants below are now the only edit a price change needs. See CLAUDE.md, "one accessible definition".
+/// constants below are now the only edit a DISPLAYED price change needs. ⚠️ They are not what the
+/// provider charges: <see cref="PaymentsOptions.MonthlyPriceId"/>/<c>AnnualPriceId</c> are, and nothing
+/// reconciles the two the way <see cref="BillingCatalog.PacksMatchTheAnchor"/> reconciles the packs —
+/// docs/subscription-plan.md §6 carries that as a wire-up checklist item. See CLAUDE.md, "one
+/// accessible definition".
 /// </summary>
 public static class SubscriptionPricing
 {
@@ -52,8 +56,7 @@ public static class SubscriptionPricing
 
     /// <summary>The saving clause the panel puts under the two buttons — "the annual saves about 5
     /// months". Only meaningful when <see cref="AnnualSaves"/>.</summary>
-    public static string AnnualSavingNote =>
-        $"the annual saves about {AnnualMonthsSaved} {(AnnualMonthsSaved == 1 ? "month" : "months")}";
+    public static string AnnualSavingNote => SavingNoteFor(MonthlyDollars, AnnualDollars);
 
     /// <summary>The discount an annual buys against twelve monthly charges, in whole percent. ⚠️ Rounded
     /// DOWN, deliberately: a badge that rounds up advertises a saving the buyer does not get. At
@@ -62,7 +65,7 @@ public static class SubscriptionPricing
     /// today's prices — the rounding direction is the part that has to keep holding after a price
     /// change, and a test that only reads the constants cannot see it.</summary>
     public static int SavingPercentFor(decimal monthlyDollars, decimal annualDollars) =>
-        (int)decimal.Floor((1m - annualDollars / TwelveMonthsOf(monthlyDollars)) * 100m);
+        (int)decimal.Floor((1m - PositiveAnnual(annualDollars) / TwelveMonthsOf(monthlyDollars)) * 100m);
 
     /// <summary>How many months of the monthly price an annual gives away, to the nearest month. ⚠️ NOT
     /// floored, unlike <see cref="SavingPercentFor"/>: this number is rendered directly beneath that one,
@@ -71,7 +74,18 @@ public static class SubscriptionPricing
     /// rounds down; this sentence says "about", which is what licenses rounding to the nearest month and
     /// what makes the pair agree.</summary>
     public static int MonthsSavedFor(decimal monthlyDollars, decimal annualDollars) =>
-        (int)decimal.Round(12m - annualDollars / Positive(monthlyDollars), MidpointRounding.AwayFromZero);
+        (int)decimal.Round(
+            12m - PositiveAnnual(annualDollars) / Positive(monthlyDollars), MidpointRounding.AwayFromZero);
+
+    /// <summary>The saving clause for a given pair of prices. ⚠️ Parameterized like every other rule
+    /// here, and for the same reason: at today's prices the count is five, so a test reading only the
+    /// constants never evaluates the singular branch and a mutant that always says "months" survives it.
+    /// A later $4.00/$44.00 pair would have shipped "the annual saves about 1 months".</summary>
+    public static string SavingNoteFor(decimal monthlyDollars, decimal annualDollars)
+    {
+        var months = MonthsSavedFor(monthlyDollars, annualDollars);
+        return $"the annual saves about {months} {(months == 1 ? "month" : "months")}";
+    }
 
     /// <summary>Whether an annual at this price saves anything worth stating against twelve monthly
     /// charges. ⚠️ The class throws on a non-positive monthly but cannot refuse an annual dearer than
@@ -88,6 +102,18 @@ public static class SubscriptionPricing
         && MonthsSavedFor(monthlyDollars, annualDollars) > 0;
 
     private static decimal TwelveMonthsOf(decimal monthlyDollars) => Positive(monthlyDollars) * 12m;
+
+    /// <summary>An annual price is a price, so a zero or negative one is a programming error rather than
+    /// a number to render. ⚠️ Guarded for the same reason the monthly is, which the first version of this
+    /// class missed: an annual of −$27.99 produced a green "save 120%" badge over "saves about 15 months"
+    /// beside "Annual — $-27.99/yr", with every derivation agreeing and <see cref="SavesFor"/> true. An
+    /// annual DEARER than twelve months is a different thing and stays legal — see
+    /// <see cref="SavesFor"/>.</summary>
+    private static decimal PositiveAnnual(decimal annualDollars) =>
+        annualDollars > 0m
+            ? annualDollars
+            : throw new ArgumentOutOfRangeException(
+                nameof(annualDollars), annualDollars, "The annual price must be greater than zero.");
 
     /// <summary>Both derivations divide by the monthly price, so a zero or negative one is a programming
     /// error rather than a number to render — fail loudly instead of showing a nonsense discount.</summary>

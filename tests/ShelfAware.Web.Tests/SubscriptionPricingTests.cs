@@ -75,17 +75,31 @@ public class SubscriptionPricingTests
     public void The_months_saved_note_rounds_to_the_nearest_month(decimal monthly, decimal annual, int expected) =>
         Assert.Equal(expected, SubscriptionPricing.MonthsSavedFor(monthly, annual));
 
-    [Fact]
-    public void The_badge_and_the_note_tell_the_same_story()
+    public static TheoryData<decimal, decimal> PricePairsTheBadgeAndNoteMustAgreeOn => new()
+    {
+        { 3.99m, 27.99m },   // today
+        { 2.99m, 27.99m },   // the base until 2026-09-22
+        { 3.99m, 36.99m },   // the re-strike §8 records as declined
+        { 3.99m, 39.99m },
+        { 4.99m, 47.99m },   // the voice tier §1 once sketched
+        { 10.00m, 60.00m },
+        { 1.00m, 11.99m },
+    };
+
+    [Theory]
+    [MemberData(nameof(PricePairsTheBadgeAndNoteMustAgreeOn))]
+    public void The_badge_and_the_note_tell_the_same_story(decimal monthly, decimal annual)
     {
         // ⚠️ The two numbers sit one above the other in the panel, derived from the same two prices, so a
         // reader compares them: flooring 4.98 months to 4 put "saves about 4 months" under "save 41%",
-        // and 4/12 is 33%. Whatever the prices are, the months must be what the percentage implies.
+        // and 4/12 is 33%. Whatever the prices are, the months must be what the percentage implies —
+        // hence a Theory over pairs rather than one assertion about today's two constants, which is all
+        // the first version of this test checked while its comment promised "whatever the prices are".
         // The percentage floors (up to 1 point, ≈0.12 months low) and the months round (up to 0.5), so
         // the honest gap between them is under 0.7 of a month. Flooring the months instead put them
         // 0.92 apart, which is what a reader saw as a contradiction.
-        var impliedByPercent = 12m * SubscriptionPricing.AnnualSavingPercent / 100m;
-        var months = (decimal)SubscriptionPricing.AnnualMonthsSaved;
+        var impliedByPercent = 12m * SubscriptionPricing.SavingPercentFor(monthly, annual) / 100m;
+        var months = (decimal)SubscriptionPricing.MonthsSavedFor(monthly, annual);
         Assert.InRange(months, impliedByPercent - 0.7m, impliedByPercent + 0.7m);
     }
 
@@ -127,19 +141,23 @@ public class SubscriptionPricingTests
     [Fact]
     public void The_note_says_month_in_the_singular_when_only_one_is_saved()
     {
-        // Guards the pluralisation independently of today's prices, which save five.
-        Assert.Equal("the annual saves about 5 months", SubscriptionPricing.AnnualSavingNote);
-        Assert.Equal(1, SubscriptionPricing.MonthsSavedFor(4.00m, 44.00m));
+        // ⚠️ Asserted through SavingNoteFor, not through AnnualSavingNote: today's prices save five, so a
+        // test that only reads the constants never evaluates the singular branch and a mutant that always
+        // says "months" lives through it — shipping "the annual saves about 1 months" at $4.00/$44.00.
+        Assert.Equal("the annual saves about 1 month", SubscriptionPricing.SavingNoteFor(4.00m, 44.00m));
+        Assert.Equal("the annual saves about 2 months", SubscriptionPricing.SavingNoteFor(4.00m, 40.00m));
+        Assert.Equal("the annual saves about 0 months", SubscriptionPricing.SavingNoteFor(4.00m, 48.00m));
+        Assert.Equal(SubscriptionPricing.SavingNoteFor(3.99m, 27.99m), SubscriptionPricing.AnnualSavingNote);
     }
 
     [Fact]
     public void The_badge_reads_as_the_copy_beside_it() =>
         Assert.Equal($"save {SubscriptionPricing.AnnualSavingPercent}%", SubscriptionPricing.AnnualSavingBadge);
 
-    public static TheoryData<decimal> NonPositiveMonthlyPrices => new() { 0.00m, -1.00m };
+    public static TheoryData<decimal> NonPositivePrices => new() { 0.00m, -1.00m };
 
     [Theory]
-    [MemberData(nameof(NonPositiveMonthlyPrices))]
+    [MemberData(nameof(NonPositivePrices))]
     public void A_monthly_price_of_zero_or_less_is_refused_rather_than_rendered(decimal monthly)
     {
         // Both derivations divide by it; a zero would throw deep inside the arithmetic and a negative
@@ -147,5 +165,19 @@ public class SubscriptionPricingTests
         Assert.Throws<ArgumentOutOfRangeException>(() => SubscriptionPricing.SavingPercentFor(monthly, 27.99m));
         Assert.Throws<ArgumentOutOfRangeException>(() => SubscriptionPricing.MonthsSavedFor(monthly, 27.99m));
         Assert.Throws<ArgumentOutOfRangeException>(() => SubscriptionPricing.SavesFor(monthly, 27.99m));
+    }
+
+    [Theory]
+    [MemberData(nameof(NonPositivePrices))]
+    public void An_annual_price_of_zero_or_less_is_refused_too(decimal annual)
+    {
+        // ⚠️ The monthly failed loudly from the start and the annual did not, which is the asymmetry that
+        // matters: an annual of −$27.99 rendered a green "save 120%" badge over "saves about 15 months",
+        // every derivation agreeing with every other and SavesFor returning true. An annual DEARER than
+        // twelve months stays legal — that is SavesFor's job, not an argument error.
+        Assert.Throws<ArgumentOutOfRangeException>(() => SubscriptionPricing.SavingPercentFor(3.99m, annual));
+        Assert.Throws<ArgumentOutOfRangeException>(() => SubscriptionPricing.MonthsSavedFor(3.99m, annual));
+        Assert.Throws<ArgumentOutOfRangeException>(() => SubscriptionPricing.SavesFor(3.99m, annual));
+        Assert.Throws<ArgumentOutOfRangeException>(() => SubscriptionPricing.SavingNoteFor(3.99m, annual));
     }
 }
