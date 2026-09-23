@@ -182,7 +182,7 @@ await File.WriteAllBytesAsync(outputPath, result.Audio);
 
 Console.WriteLine();
 Console.WriteLine($"Wrote {result.Audio.Length:N0} bytes of {result.MediaType} to {Path.GetFullPath(outputPath)}");
-Console.WriteLine($"Took {started.Elapsed.TotalSeconds:F1}s including the one-off model load.");
+Console.WriteLine($"Took {started.Elapsed.TotalSeconds:F1}s, including the one-off model load.");
 
 // Read the duration back out of the CLIP rather than dividing by a rate typed in here: the model reports
 // its own sample rate (the log line above says it), and two places computing the same number from
@@ -195,9 +195,31 @@ var rate = decoded.SampleRate;
 Console.WriteLine($"Roughly {seconds:F1}s of audio at {rate} Hz. Play it: the voice should read that "
                   + "sentence, with \"350 degrees Fahrenheit\" spelled out.");
 
-// ⚠️ The rate is the number that decides whether streaming playback can keep up: below 1.0 synthesis
-// outruns speech, above it every sentence arrives later than the one before it finished. Printed here
-// because it is measured per BOX -- the same model is 0.05x on one core and 3x on another.
-var rateOfRealTime = started.Elapsed.TotalSeconds / seconds;
-Console.WriteLine($"That is roughly {rateOfRealTime:F2}x real time on this box, model load included.");
+// ⚠️ The rate is the number that decides whether playback can keep up: below 1.0 synthesis outruns
+// speech, above it every sentence arrives later than the one before it finished. Printed here because
+// it is measured per BOX -- the same model is 0.05x on one core and 3x on another.
+//
+// ⚠️ And it is measured on a SECOND read, once the model is loaded. The app loads its model once per
+// process, so the load is not what a household waits for on a read-aloud -- but on a clip this short it
+// is most of the first read's time. This tool used to report only that first read, and it made the
+// droplet's Piper voices look alike: ryan-high and lessac-medium read 1.43x and 0.66x there, which
+// hid that ryan-high's synthesis alone is ~0.93x against lessac's ~0.18x -- five times the cost, right
+// at the line. The first read is still printed, because the first read-aloud after a restart does pay it.
+var steady = Stopwatch.StartNew();
+var again = await tts.SynthesizeAsync(Line);
+steady.Stop();
+
+if (!again.Success)
+{
+    Console.Error.WriteLine($"The second read failed: {again.Error}");
+    Console.Error.WriteLine("The log line above says which failure it was.");
+    return 1;
+}
+
+var againDecoded = WaveAudio.Decode(again.Audio);
+var againSeconds = againDecoded.Samples.Length / (double)againDecoded.SampleRate;
+Console.WriteLine($"The first read, which also loaded the model, took {started.Elapsed.TotalSeconds / seconds:F2}x "
+                  + "its own length -- what the first read-aloud after a restart costs.");
+Console.WriteLine($"Once loaded, that is roughly {steady.Elapsed.TotalSeconds / againSeconds:F2}x real time on this "
+                  + "box -- the number to hold against 1.0.");
 return 0;
