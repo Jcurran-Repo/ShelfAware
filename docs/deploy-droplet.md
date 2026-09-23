@@ -157,10 +157,21 @@ Setting it up, once:
    key, no deploy. The approval stops being a line in a file that the next branch can delete.
 
 Run it from Actions → *Deploy to the droplet* → **Run workflow**, choosing the branch. Tick
-**bootstrap** the first time: it adds the 2 GB swap file and unpacks the Kokoro and Moonshine models,
-idempotently, so a rebuilt droplet is one dispatch away rather than an afternoon with this page. Both
-archives are checked against a recorded sha256 before anything is unpacked — they are fetched as root
-onto a box holding real data, and a release tag is mutable.
+**bootstrap** the first time — and again whenever a new voice becomes the default: it adds the 2 GB
+swap file and unpacks the voice models (the Piper voices and Kokoro) and Moonshine, idempotently, so a
+rebuilt droplet is one dispatch away rather than an afternoon with this page. Every archive is checked
+against a recorded sha256 before anything is unpacked — they are fetched as root onto a box holding
+real data, and a release tag is mutable.
+
+⚠️ **The models live in the service account's home, and that has a cost worth knowing.** The bootstrap
+runs as root, so it pins `/var/lib/shelfaware/models` by inode, refuses unless it is a root-owned 755
+directory at exactly that path, and downloads into a root-only directory inside it — nothing the app
+could re-point changes where root writes. But `/var/lib/shelfaware` is the app's own home (`chmod 700`,
+above), so **between** deploys a compromised app could rename `models/` away and put its own in its
+place, and the app loads its model by that name. The next bootstrap would refuse loudly; an ordinary
+deploy would not notice. Closing it means moving the models to a root-owned parent (say
+`/opt/shelfaware-models`, with every box's `Speech__*__ModelDirectory` following) — **an open decision,
+not yet made.**
 
 ⚠️ **The workflow only becomes dispatchable once it is on `master`.** GitHub lists a
 `workflow_dispatch` workflow from the default branch, so there is no *Run workflow* button — and no way
