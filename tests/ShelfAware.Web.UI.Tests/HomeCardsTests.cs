@@ -34,6 +34,20 @@ public class HomeCardsTests : PageTestContext
     }
 
     [Fact]
+    public void The_heading_can_take_focus_back_from_a_dismissed_banner()
+    {
+        // The receipt reminder removes its whole region on a dismissal, and focus inside a removed
+        // element falls to the body — the next Tab would start again from the top of the page. The page
+        // owns where focus goes, so it hands the banner a handler and makes its own heading focusable;
+        // a heading without tabindex silently accepts FocusAsync and moves nothing.
+        var cut = RenderHome();
+
+        var heading = cut.Find("h1");
+        Assert.Equal("-1", heading.GetAttribute("tabindex"));
+        Assert.Single(cut.FindComponents<Bunit.TestDoubles.Stub<ShelfAware.Web.Components.ReceiptReminderBanner>>());
+    }
+
+    [Fact]
     public void Cards_order_pinned_outages_first_then_severity_then_date()
     {
         // Overdue by rhythm (-10), due soon (+2), and a human-said outage that is merely due today

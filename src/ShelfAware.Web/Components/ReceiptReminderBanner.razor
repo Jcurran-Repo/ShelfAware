@@ -1,5 +1,6 @@
 @using ShelfAware.Core.Ingest
 @inject ShelfAware.Web.Data.ReceiptReminderService Reminders
+@inject ShelfAware.Web.Services.CircuitAiSettings AiSettings
 @inject NavigationManager Nav
 @inject ILogger<ReceiptReminderBanner> Logger
 
@@ -9,16 +10,22 @@
 
    Every number below comes from the ONE ReceiptReminder the cadence produced: the banner never re-derives
    "is it due" from the days it is printing, and "Not now" snoozes for the engine's own SnoozeUntil rather
-   than a span this component picked. Nothing here calls out to anything — it's arithmetic over dates. *@
-@if (reminder is { } r)
+   than a span this component picked. Nothing here calls out to anything — it's arithmetic over dates.
+
+   The key test is NOT latched in OnInitializedAsync, deliberately: a BYOK visitor's key reaches
+   CircuitAiSettings from their browser in AiSettingsLoader's OnAfterRenderAsync, i.e. AFTER this
+   component has initialized. Reading it here, in the render, is what OnboardingBanner.Show does and for
+   the same reason — a latched copy would read "no key" for every BYOK household and retire the feature
+   on exactly the boxes it was built for. *@
+@if (reminder is { } r && AiSettings.HasKey)
 {
     <section class="panel reminder-banner" role="region" aria-label="Receipt reminder">
         <button type="button" class="banner-x" @onclick="Snooze" aria-label="Not now — hide this reminder">×</button>
         <h2>Receipt reminder 🧾</h2>
         <p>
-            It's been <strong>@Days(r.DaysSinceLastUpload)</strong> since your last receipt, on
+            It's been <strong>@Days(r.DaysSinceLastUpload)</strong> since you last uploaded a receipt, on
             @(r.LastUploadedOn.ToString("MMMM d")) — you usually upload one about every
-            <strong>@Days(r.UsualGapDays)</strong>.
+            <strong>@Every(r.UsualGapDays)</strong>.
         </p>
         <p class="muted small">
             Been shopping? Adding the receipt keeps the run-out dates honest. If you haven't, nothing's wrong —
@@ -32,6 +39,12 @@
 }
 
 @code {
+    /// <summary>Raised after the banner dismisses itself, so the page can take focus back. The banner is
+    /// a region that removes itself from the DOM: without this, keyboard focus falls to the body and the
+    /// next Tab starts again from the top of the page — the person who just used the × loses their place.
+    /// The page owns where focus should land, so it decides, not this component.</summary>
+    [Parameter] public EventCallback OnDismissed { get; set; }
+
     private ReceiptReminder? reminder;
 
     protected override async Task OnInitializedAsync()
@@ -52,9 +65,9 @@
 
     private void OpenUpload() => Nav.NavigateTo("/receipt");
 
-    /// <summary>Snoozing hides it for one more of the household's usual gaps. The banner goes immediately,
-    /// whatever the write does — a dismiss that appears to do nothing is worse than one the next page load
-    /// undoes, and the failure is logged either way.</summary>
+    /// <summary>Snoozing hides it for one more of the household's quiet stretches. The banner goes
+    /// immediately, whatever the write does — a dismiss that appears to do nothing is worse than one the
+    /// next page load undoes, and the failure is logged either way.</summary>
     private async Task Snooze()
     {
         var snoozing = reminder;
@@ -69,9 +82,19 @@
         {
             Logger.LogError(ex, "Couldn't persist the receipt-reminder snooze; it will return on the next load.");
         }
+        // Last, and only after the write: the await above has already re-rendered this region away, so
+        // the page is focusing something that exists — and a failure out there can no longer cost the
+        // household the dismissal they just made.
+        await OnDismissed.InvokeAsync();
     }
 
     /// <summary>"1 day" / "9 days" — one definition, because every count on this banner is in days and
     /// a row reading "1 days" is a defect this repo has actually shipped (build-log item 39's cousin).</summary>
     private static string Days(int count) => $"{count} day{(count == 1 ? "" : "s")}";
+
+    /// <summary>The same count as a FREQUENCY: "every day", "every 7 days". A separate phrasing rather
+    /// than a second use of <see cref="Days"/>, because "about every 1 day" is not a sentence anyone
+    /// says — and the singular is the daily shopper, who is precisely the household this feature talks
+    /// to most often.</summary>
+    private static string Every(int count) => count == 1 ? "day" : $"{count} days";
 }

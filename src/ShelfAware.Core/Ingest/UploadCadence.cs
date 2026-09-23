@@ -44,6 +44,12 @@ public static class UploadCadence
     {
         var days = uploadedAt
             .Select(u => DateOnly.FromDateTime(u.LocalDateTime))
+            // A day in the FUTURE is not part of any rhythm and must never become `last`. A single row
+            // stamped ahead of the clock — a restored snapshot, a box whose time was wrong — would
+            // otherwise make the quiet stretch negative and hold it there until that date arrives,
+            // silently retiring the reminder with nothing on any surface saying why and no UI that can
+            // edit the stamp. Dropping it leaves the household's real history to speak for itself.
+            .Where(d => d <= today)
             .Distinct()
             .OrderBy(d => d)
             .ToList();
@@ -51,10 +57,6 @@ public static class UploadCadence
         if (days.Count < MinimumUploadDays) return null;
 
         var last = days[^1];
-        // Can go NEGATIVE, and deliberately has no guard of its own: a receipt stamped in the future (a
-        // restored backup, a box whose clock was wrong) is a quiet stretch below zero, and the
-        // remind-after test below — whose floor is never less than a day — already refuses it. A guard
-        // here would be a branch no input can reach and no test can fail on.
         var daysSince = today.DayNumber - last.DayNumber;
 
         var gaps = new List<int>();
@@ -70,7 +72,7 @@ public static class UploadCadence
         var remindAfter = Math.Max(usualGap + SlackDays, MinimumQuietDays);
         if (daysSince < remindAfter) return null;
 
-        // Dismissal is a snooze, not a mute: it buys one more of the household's own gaps. A permanent
+        // Dismissal is a snooze, not a mute: it buys one more full quiet stretch. A permanent
         // "never show me this" belongs in Settings, where a household can see it is off and turn it back
         // on — a banner's × that silently retires a feature is a dead end nobody can find their way out of.
         if (snoozedUntil is { } until && today <= until) return null;
@@ -80,7 +82,11 @@ public static class UploadCadence
             DaysSinceLastUpload: daysSince,
             UsualGapDays: usualGap,
             RemindAfterDays: remindAfter,
-            SnoozeUntil: today.AddDays(usualGap));
+            // Hidden through the day BEFORE the next stretch completes, so it returns exactly one
+            // RemindAfterDays later. ⚠️ `remindAfter`, never the raw gap: a household that uploads most
+            // days has a gap of 1, so snoozing for the gap brought the banner back on the SECOND day —
+            // inside the very floor above, and sooner than not dismissing it would have.
+            SnoozeUntil: today.AddDays(remindAfter - 1));
     }
 
     /// <summary>Median of a non-empty list of whole-day gaps, rounded away from zero on an even count so
@@ -108,8 +114,10 @@ public static class UploadCadence
 /// <param name="UsualGapDays">The household's learned median gap between upload days.</param>
 /// <param name="RemindAfterDays">The quiet stretch that triggered this — the usual gap plus a day of
 /// slack, never less than <see cref="UploadCadence.MinimumQuietDays"/>.</param>
-/// <param name="SnoozeUntil">The day a "Not now" would hide the reminder through (inclusive). Computed
-/// here rather than by the button, so what the dismissal does is one of the engine's own numbers.</param>
+/// <param name="SnoozeUntil">The day a "Not now" would hide the reminder through (inclusive) — one
+/// <see cref="RemindAfterDays"/> of quiet from the dismissal, so the floor holds for a dismissal exactly
+/// as it holds for the first showing. Computed here rather than by the button, so what the dismissal does
+/// is one of the engine's own numbers.</param>
 public sealed record ReceiptReminder(
     DateOnly LastUploadedOn,
     int DaysSinceLastUpload,

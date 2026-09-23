@@ -99,6 +99,7 @@ public class AdditiveSchemaTests : IDisposable
         db.Receipts.Add(new Receipt { ImagePath = "a", Status = ReceiptStatus.Confirmed, ConfirmedAt = confirmedAt });
         db.Receipts.Add(new Receipt { ImagePath = "b", Status = ReceiptStatus.PendingReview });
         await db.SaveChangesAsync();
+        var fresh = await ColumnTypesAsync(db, "Receipts");
 
         // Simulate a pre-2026-09-22 DB: the column simply wasn't there. This is the ALTER path a live
         // deployment takes; the drop-TABLE parity tests never run it (item 49's lesson).
@@ -106,6 +107,11 @@ public class AdditiveSchemaTests : IDisposable
 
         AdditiveSchema.Apply(db);
         AdditiveSchema.Apply(db); // second boot — idempotent, and must NOT re-run the backfill
+
+        // The migrated column is declared exactly as EnsureCreated declares it on a fresh file. Without
+        // this a migrated box and a new box could drift on the column's type — the trap docs/architecture.md
+        // names, and the assertion its fifteen sibling drop-COLUMN tests all make.
+        Assert.Equal(fresh, await ColumnTypesAsync(db, "Receipts"));
 
         await using var read = _db.CreateDbContext();
         var rows = await read.Receipts.AsNoTracking().OrderBy(r => r.ImagePath).ToListAsync();

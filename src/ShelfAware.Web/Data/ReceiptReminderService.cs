@@ -32,7 +32,8 @@ public sealed class ReceiptReminderService(IHouseholdDbFactory dbFactory, IAppSe
     }
 
     /// <summary>Hide the reminder through <see cref="ReceiptReminder.SnoozeUntil"/> — the engine's own
-    /// number, not the button's, so "Not now" means exactly one more of this household's usual gaps.</summary>
+    /// number, not the button's, so "Not now" means exactly one more of this household's quiet
+    /// stretches, floor included.</summary>
     public Task SnoozeAsync(ReceiptReminder reminder, CancellationToken ct = default) =>
         settings.SetAsync(
             SettingKeys.ReceiptReminderSnoozedUntil,

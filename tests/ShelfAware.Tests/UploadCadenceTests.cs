@@ -130,6 +130,7 @@ public class UploadCadenceTests
         var reminder = UploadCadence.Evaluate(uploads, D(29));
         Assert.NotNull(reminder);
         Assert.Equal(D(36), reminder.SnoozeUntil);   // dismissed on day 29, hidden through day 36
+        Assert.Equal(reminder.RemindAfterDays, reminder.SnoozeUntil.DayNumber - D(29).DayNumber + 1);
 
         // Hidden through the snooze day itself, back the morning after — the household has now been
         // quiet for two of its own gaps, which is worth saying again.
@@ -139,11 +140,33 @@ public class UploadCadenceTests
     }
 
     [Fact]
+    public void A_dismissal_by_a_daily_household_still_gets_the_three_day_floor()
+    {
+        // The case the raw gap got wrong. Median gap 1, so a snooze of one gap brought the banner back on
+        // day 8 — two days after it was dismissed, INSIDE the floor that governs its first showing, and
+        // sooner than leaving it alone would have. The snooze is the quiet stretch, floor and all.
+        var uploads = Uploads(0, 1, 2, 3);
+        var reminder = UploadCadence.Evaluate(uploads, D(6));
+        Assert.NotNull(reminder);
+        Assert.Equal(D(8), reminder.SnoozeUntil);
+
+        Assert.Null(UploadCadence.Evaluate(uploads, D(7), snoozedUntil: D(8)));
+        Assert.Null(UploadCadence.Evaluate(uploads, D(8), snoozedUntil: D(8)));
+        // Back on day 9 — three quiet days after the dismissal, exactly the stretch it waits anywhere else.
+        Assert.NotNull(UploadCadence.Evaluate(uploads, D(9), snoozedUntil: D(8)));
+    }
+
+    [Fact]
     public void An_upload_clears_the_reminder_without_touching_the_snooze()
     {
-        // The household uploads on day 29 instead of dismissing. The next reminder is due on day 37 at
-        // the earliest, which is past any snooze a dismissal on day 29 could have written — so a stale
-        // snooze can never swallow the reminder after the rhythm has moved on.
+        // The household uploads on day 29 instead of dismissing. The reminder goes quiet because the
+        // rhythm moved on, not because anything was written down — and the snooze a dismissal on day 29
+        // WOULD have written expires in step with it, because both are one quiet stretch long.
+        //
+        // ⚠️ That is a stable or lengthening rhythm. A SHRINKING one can still be swallowed: a monthly
+        // household dismisses (snoozed ~30 days), then starts uploading every other day, and the old
+        // snooze outlives the shorter stretch it was measured against. It only costs them a reminder if
+        // they go quiet again inside that window, so it is left as is rather than given a rule of its own.
         var uploads = Uploads(0, 7, 14, 21, 29);
 
         Assert.Null(UploadCadence.Evaluate(uploads, D(30), snoozedUntil: D(36)));
@@ -151,13 +174,31 @@ public class UploadCadenceTests
     }
 
     [Fact]
-    public void A_receipt_stamped_in_the_future_produces_no_reminder()
+    public void A_receipt_stamped_in_the_future_is_not_part_of_the_rhythm()
     {
-        // A restored backup, or a box whose clock was wrong: the quiet stretch comes out negative. No
-        // special-case guard handles this — the remind-after test does, since its floor is never less
-        // than a day — so this pins the outcome rather than the branch.
-        var uploads = Uploads(0, 7, 14, 21);
+        // A restored snapshot or a box whose clock was wrong. Taken as the last upload it would make the
+        // quiet stretch negative and hold the reminder silent until that date arrived — months of nothing,
+        // with no surface saying why and no UI that can edit the stamp. The real history still speaks.
+        var real = Uploads(0, 7, 14, 21);
+        var withABogusRow = real.Concat(new[] { Up(400) }).ToList();
 
-        Assert.Null(UploadCadence.Evaluate(uploads, D(20)));
+        var reminder = UploadCadence.Evaluate(withABogusRow, D(29));
+        Assert.NotNull(reminder);
+        Assert.Equal(D(21), reminder.LastUploadedOn);
+        Assert.Equal(7, reminder.UsualGapDays);
+        // …and the bogus day is not a gap either: 379 days between day 21 and day 400 would otherwise be
+        // in the median's population.
+        Assert.Equal(UploadCadence.Evaluate(real, D(29))!.UsualGapDays, reminder.UsualGapDays);
+    }
+
+    [Fact]
+    public void A_receipt_uploaded_today_counts_and_clears_the_reminder()
+    {
+        // The other side of that cut: TODAY is not the future. A household eight days quiet is overdue —
+        // until it uploads this morning, and then there is nothing to say.
+        var overdue = Uploads(0, 7, 14, 21);
+        Assert.NotNull(UploadCadence.Evaluate(overdue, D(30)));
+
+        Assert.Null(UploadCadence.Evaluate(Uploads(0, 7, 14, 21, 30), D(30)));
     }
 }

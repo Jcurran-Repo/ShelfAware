@@ -722,6 +722,10 @@ public sealed class DemoDataSeeder(
         PurchasedAt = today.AddDays(-2),
         ImagePath = "demo/no-image",
         Status = ReceiptStatus.PendingReview,
+        // Uploaded on the day of the trip and left in review. An unfinished upload is still an upload, so
+        // it counts toward the household's rhythm exactly as the other pending receipt's does — leaving
+        // this one NULL would have made the seed contradict the sibling's own comment.
+        UploadedAt = new DateTimeOffset(today.AddDays(-2).ToDateTime(new TimeOnly(18, 25))),
         RawModelJson = BrandMemoryRawJson,
         Lines =
         [
