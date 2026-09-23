@@ -121,9 +121,11 @@ mismatch; these commands have to do the same thing to be worth calling equivalen
 block whole.**
 
 They are the deploy bootstrap's shape, for its reasons (`.github/workflows/deploy-droplet.yml`):
-`/var/lib/shelfaware` is the service account's home, so the app can re-point `models/` at any moment.
-So `models/` is pinned by inode — `cd` into it, the kernel's `/proc/$$/cwd` must be exactly that path
-and root-owned — and everything after is relative to `.`. Each archive is downloaded and unpacked in a
+The models live in `/opt`, root-owned and writable by nobody else, so the app cannot re-point the
+name — during an install or between them. Checked rather than assumed: the directory is pinned by
+inode (`cd` into it, the kernel's `/proc/$$/cwd` must be exactly that path, root-owned 755) and its
+parent must be root's and root-only, which is the property the location is chosen for. Everything
+after is relative to `.`. Each archive is downloaded and unpacked in a
 root-only directory inside it, and moved in only once verified, whole and root-owned, as one rename:
 "is the directory there" is the check everything else makes, so a half-extracted model must never sit
 under its name. A re-run is refused up front rather than nesting a second copy.
@@ -132,10 +134,12 @@ under its name. A re-run is refused up front rather than nesting a second copy.
 # Kitten
 { command -v bzip2 >/dev/null || { apt-get update && apt-get install -y bzip2; }; } \
   && R=https://github.com/k2-fsa/sherpa-onnx/releases/download \
-  && M=/var/lib/shelfaware/models && V=kitten-nano-en-v0_1-fp16 \
+  && M=/opt/shelfaware-models && V=kitten-nano-en-v0_1-fp16 \
   && mkdir -p "$M" && cd -P "$M" \
-  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u:%a .)" = 0:755 ]; } \
-       || { echo "$M is not a root-owned 755 directory at that path; not installing into it."; false; }; } \
+  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u:%a .)" = 0:755 ] \
+         && [ "$(stat -c %u ..)" = 0 ] \
+         && [ -z "$(find .. -maxdepth 0 \( -perm -020 -o -perm -002 \) -print)" ]; } \
+       || { echo "$M is not a root-owned 755 directory at that path under a root-only parent; not installing into it."; false; }; } \
   && { { [ ! -e "./$V" ] && [ ! -L "./$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
   && T=$(mktemp -d ./.incoming.XXXXXX) \
   && curl -fsSL --proto '=https' -o "$T/$V.tar.bz2" "$R/tts-models/$V.tar.bz2" \
@@ -164,10 +168,12 @@ One chain for both halves, so a voice that failed its check never gets a vocoder
 # a bad one would boot clean and die on the first read-aloud.
 { command -v bzip2 >/dev/null || { apt-get update && apt-get install -y bzip2; }; } \
   && R=https://github.com/k2-fsa/sherpa-onnx/releases/download \
-  && M=/var/lib/shelfaware/models && V=matcha-icefall-en_US-ljspeech \
+  && M=/opt/shelfaware-models && V=matcha-icefall-en_US-ljspeech \
   && mkdir -p "$M" && cd -P "$M" \
-  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u:%a .)" = 0:755 ]; } \
-       || { echo "$M is not a root-owned 755 directory at that path; not installing into it."; false; }; } \
+  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u:%a .)" = 0:755 ] \
+         && [ "$(stat -c %u ..)" = 0 ] \
+         && [ -z "$(find .. -maxdepth 0 \( -perm -020 -o -perm -002 \) -print)" ]; } \
+       || { echo "$M is not a root-owned 755 directory at that path under a root-only parent; not installing into it."; false; }; } \
   && { { [ ! -e "./$V" ] && [ ! -L "./$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
   && T=$(mktemp -d ./.incoming.XXXXXX) \
   && curl -fsSL --proto '=https' -o "$T/$V.tar.bz2" "$R/tts-models/$V.tar.bz2" \
@@ -198,8 +204,8 @@ Then prove it speaks **before** pointing the app at it. From a machine with the 
 box, or the family box):
 
 ```bash
-dotnet run --project tools/VoiceCheck -- kitten /var/lib/shelfaware/models/kitten-nano-en-v0_1-fp16 out.wav 0
-dotnet run --project tools/VoiceCheck -- matcha /var/lib/shelfaware/models/matcha-icefall-en_US-ljspeech out.wav 0
+dotnet run --project tools/VoiceCheck -- kitten /opt/shelfaware-models/kitten-nano-en-v0_1-fp16 out.wav 0
+dotnet run --project tools/VoiceCheck -- matcha /opt/shelfaware-models/matcha-icefall-en_US-ljspeech out.wav 0
 ```
 
 ⚠️ **Not on the droplet — those two lines want an SDK and a checkout, and the droplet is deliberately

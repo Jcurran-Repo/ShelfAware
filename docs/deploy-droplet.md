@@ -163,15 +163,46 @@ rebuilt droplet is one dispatch away rather than an afternoon with this page. Ev
 against a recorded sha256 before anything is unpacked — they are fetched as root onto a box holding
 real data, and a release tag is mutable.
 
-⚠️ **The models live in the service account's home, and that has a cost worth knowing.** The bootstrap
-runs as root, so it pins `/var/lib/shelfaware/models` by inode, refuses unless it is a root-owned 755
-directory at exactly that path, and downloads into a root-only directory inside it — nothing the app
-could re-point changes where root writes. But `/var/lib/shelfaware` is the app's own home (`chmod 700`,
-above), so **between** deploys a compromised app could rename `models/` away and put its own in its
-place, and the app loads its model by that name. The next bootstrap would refuse loudly; an ordinary
-deploy would not notice. Closing it means moving the models to a root-owned parent (say
-`/opt/shelfaware-models`, with every box's `Speech__*__ModelDirectory` following) — **an open decision,
-not yet made.**
+⚠️ **The models live in `/opt/shelfaware-models`, not in the app's home, and that is deliberate.**
+They used to sit in `/var/lib/shelfaware/models`. The bootstrap pinned that directory by inode while it
+ran, so nothing the app re-pointed could change where root *wrote* — but `/var/lib/shelfaware` is the
+app's own home, so **between** deploys a compromised app could rename `models/` away and put its own in
+its place, and the app would load its model by that name. The next bootstrap would refuse loudly; an
+ordinary deploy would never notice. `/opt` is root's and writable by nobody else, so the app now has
+nowhere to put a directory of its own and no way to make the name lead to one. The pin stays, and the
+bootstrap checks the parent too — the location is only worth anything if it is *true* on the box, and
+an `/opt` someone had made group-writable would hand the exposure straight back.
+
+**Moving a Linux box that is already running** (the demo droplet; the family box keeps its models under
+its own user profile and is not affected) takes three steps. ⚠️ **Do them in this order.** Each one
+leaves the box in a state it can run in, so nothing here is a moment you have to get through quickly —
+the reverse order points the app at a directory that does not exist yet, and the first restart after
+that is a box that will not boot.
+
+1. **Fill the new location first.** Re-run the deploy with **bootstrap** ticked. It creates
+   `/opt/shelfaware-models` and downloads every model into it, hash-checked, exactly as it would on a
+   fresh box. The box carries on running off the old directory throughout — its settings have not
+   changed yet — so a bootstrap that fails costs nothing but a re-run. Nothing *moves* the old
+   directory: `mv`-ing a directory *out of* one the app controls, as root, is the very race this
+   location exists to end, and re-downloading has no such question in it.
+2. **Then point the box at it, and restart.** In `/etc/shelfaware/env`, rewrite each
+   `Speech__*__ModelDirectory` line to read `/opt/shelfaware-models/...` instead of
+   `/var/lib/shelfaware/models/...` — ⚠️ **change those lines, do not add new ones.** A second
+   definition of the same key is how this box last refused to boot, and it is easy to do by pasting.
+   One `sed` does all of them without opening an editor:
+
+   ```bash
+   sudo sed -i 's|/var/lib/shelfaware/models|/opt/shelfaware-models|' /etc/shelfaware/env
+   grep ModelDirectory /etc/shelfaware/env
+   sudo systemctl restart shelfaware
+   ```
+
+   Settings are read at startup, so the restart is what makes the change real. If the app refuses to
+   boot it says which setting and which files it could not find; the way back is the same `sed` with
+   the two paths swapped, and another restart.
+3. **Only once the box is up and speaking, delete the old copy.** `sudo rm -rf /var/lib/shelfaware/models`
+   — no trailing slash, so that if the name has become a symlink it removes the link and not whatever it
+   points at. Leaving this until last is what makes step 2 reversible.
 
 ⚠️ **The workflow only becomes dispatchable once it is on `master`.** GitHub lists a
 `workflow_dispatch` workflow from the default branch, so there is no *Run workflow* button — and no way
@@ -302,13 +333,14 @@ job, with `--backup-dir`, so a bad local night can't erase good offsite copies.
 
 To restore: stop the service, copy the chosen `db-*` snapshot's two `.db` files into
 `/var/lib/shelfaware` (deleting any `-wal`/`-shm` beside them — those belong to the database
-you are replacing), restore the `files/` trees, `chown -R shelfaware:shelfaware` **the restored files
-and directories only** (never `/var/lib/shelfaware` as a whole — `models/` stays root-owned), start.
+you are replacing), restore the `files/` trees, `chown -R shelfaware:shelfaware` the restored files
+and directories, start.
 
-If `models/` has ended up owned by the app anyway, the next bootstrap refuses to touch it, by design.
-Recover by removing it — `rm -rf /var/lib/shelfaware/models` (no trailing slash: if the name has become
-a symlink, that removes the link, not what it points at) — and re-running the deploy with **bootstrap**
-ticked, which re-downloads every model into a fresh root-owned directory.
+Nothing in a restore can reach the models any more: they are in `/opt/shelfaware-models`, which is not
+under the data directory a restore or a `chown -R` walks. That used to be a live hazard worth its own
+warning here — `models/` sat inside `/var/lib/shelfaware`, so a restore that chowned the home as a
+whole handed the models to the app and the next bootstrap refused to touch them. If the bootstrap does
+refuse, it names what it found; re-run it with **bootstrap** ticked after fixing that.
 
 DO's droplet snapshots make a fine second layer, not a substitute — they're crash-consistent,
 not application-aware.

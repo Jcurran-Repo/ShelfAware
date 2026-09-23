@@ -60,8 +60,10 @@ check would be unpacked, as root, with the only sign a few lines back up the scr
 # A minimal Ubuntu image ships no bzip2, and GNU tar shells out to it to read a .tar.bz2.
 # Release assets sit on a mutable tag, so the archive is checked against the hash measured on
 # 2026-09-21 -- the same one the CI bootstrap checks (.github/workflows/deploy-droplet.yml).
-# /var/lib/shelfaware is the service account's home, so the app can rename models/ and put a symlink
-# of its own there at any moment -- including while this downloads. So models/ is pinned by INODE:
+# The models live in /opt, root-owned and writable by nobody else, so the app cannot rename the
+# directory or put a symlink of its own in its place -- during an install or between them. That is what
+# this location is for, and it is checked rather than assumed: the directory is pinned by INODE, and
+# the PARENT must be root's and root-only.
 # cd into it, confirm with the kernel (/proc/$$/cwd) that this shell is in the root-owned directory at
 # exactly that path, and move the model in relative to "." -- which re-pointing the name cannot move.
 # The download and unpack happen in a fresh root-only directory (mktemp -d) INSIDE the pinned one, so
@@ -72,10 +74,12 @@ check would be unpacked, as root, with the only sign a few lines back up the scr
 # Root-owned, world-readable: the app READS its model and never rewrites it -- install.sh's posture
 # for the binaries, for the same reason.
 { command -v bzip2 >/dev/null || { apt-get update && apt-get install -y bzip2; }; } \
-  && M=/var/lib/shelfaware/models && V=sherpa-onnx-moonshine-tiny-en-int8 \
+  && M=/opt/shelfaware-models && V=sherpa-onnx-moonshine-tiny-en-int8 \
   && mkdir -p "$M" && cd -P "$M" \
-  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u:%a .)" = 0:755 ]; } \
-       || { echo "$M is not a root-owned 755 directory at that path; not installing into it."; false; }; } \
+  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u:%a .)" = 0:755 ] \
+         && [ "$(stat -c %u ..)" = 0 ] \
+         && [ -z "$(find .. -maxdepth 0 \( -perm -020 -o -perm -002 \) -print)" ]; } \
+       || { echo "$M is not a root-owned 755 directory at that path under a root-only parent; not installing into it."; false; }; } \
   && { { [ ! -e "./$V" ] && [ ! -L "./$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
   && T=$(mktemp -d ./.incoming.XXXXXX) \
   && curl -fsSL --proto '=https' -o "$T/$V.tar.bz2" \
@@ -97,7 +101,7 @@ exits 0. The hash would still catch that — but only because it is now joined t
 
 A download or unpack that fails part way leaves its root-only `.incoming.XXXXXX` directory behind inside
 `models/` (a failed checksum removes it). It is harmless — nothing lists that directory, and the app
-loads each model by its own name — and `rm -rf /var/lib/shelfaware/models/.incoming.*` clears it. The
+loads each model by its own name — and `rm -rf /opt/shelfaware-models/.incoming.*` clears it. The
 same goes for every pasted install that follows this shape.
 
 The `sherpa-onnx-moonshine-base-en-int8` archive is the larger sibling (~400 MB) — more accurate, and
@@ -171,7 +175,7 @@ recipe as [deploy-kokoro.md](deploy-kokoro.md) step 3, with `tools\MoonshineChec
 
 ```
 Speech__Ear=Moonshine
-Speech__Moonshine__ModelDirectory=/var/lib/shelfaware/models/sherpa-onnx-moonshine-tiny-en-int8
+Speech__Moonshine__ModelDirectory=/opt/shelfaware-models/sherpa-onnx-moonshine-tiny-en-int8
 Speech__Moonshine__NumThreads=2
 ```
 

@@ -90,14 +90,17 @@ The same shape, and the reasons for each part, as [deploy-moonshine.md](deploy-m
 # A minimal Ubuntu image ships no bzip2, and GNU tar shells out to it to read a .tar.bz2.
 # Checked against the hash measured for this archive -- the same one the CI bootstrap checks
 # (.github/workflows/deploy-droplet.yml) -- because it sits on a mutable release tag and is unpacked
-# as root. models/ is pinned by inode; the archive is downloaded and unpacked in a fresh root-only
-# directory inside it, and moved in with one rename only once verified, whole and root-owned. Why each
-# of those matters is in deploy-moonshine.md step 1.
+# as root. The models live in /opt, root-owned and writable by nobody else; the directory is pinned by
+# inode and its parent checked, so that is verified rather than assumed. The archive is downloaded and
+# unpacked in a fresh root-only directory inside it, and moved in with one rename only once verified,
+# whole and root-owned. Why each of those matters is in deploy-moonshine.md step 1.
 { command -v bzip2 >/dev/null || { apt-get update && apt-get install -y bzip2; }; } \
-  && M=/var/lib/shelfaware/models && V=kokoro-int8-en-v0_19 \
+  && M=/opt/shelfaware-models && V=kokoro-int8-en-v0_19 \
   && mkdir -p "$M" && cd -P "$M" \
-  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u:%a .)" = 0:755 ]; } \
-       || { echo "$M is not a root-owned 755 directory at that path; not installing into it."; false; }; } \
+  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u:%a .)" = 0:755 ] \
+         && [ "$(stat -c %u ..)" = 0 ] \
+         && [ -z "$(find .. -maxdepth 0 \( -perm -020 -o -perm -002 \) -print)" ]; } \
+       || { echo "$M is not a root-owned 755 directory at that path under a root-only parent; not installing into it."; false; }; } \
   && { { [ ! -e "./$V" ] && [ ! -L "./$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
   && T=$(mktemp -d ./.incoming.XXXXXX) \
   && curl -fsSL --proto '=https' -o "$T/$V.tar.bz2" \
@@ -130,7 +133,7 @@ The same shape, and the reasons for each part, as [deploy-moonshine.md](deploy-m
 Run the app's own synthesis path against the model directory:
 
 ```bash
-dotnet run --project tools/VoiceCheck -- kokoro /var/lib/shelfaware/models/kokoro-int8-en-v0_19 /tmp/kokoro-check.wav
+dotnet run --project tools/VoiceCheck -- kokoro /opt/shelfaware-models/kokoro-int8-en-v0_19 /tmp/kokoro-check.wav
 ```
 
 ⚠️ **That line wants an SDK and a checkout, and the droplet is deliberately given neither** — the app
@@ -146,7 +149,7 @@ scp $env:TEMP\kcheck.tar.gz root@<droplet>:/tmp/
 
 ```bash
 mkdir -p /tmp/kcheck && tar -xzf /tmp/kcheck.tar.gz -C /tmp/kcheck && chmod +x /tmp/kcheck/VoiceCheck
-/tmp/kcheck/VoiceCheck kokoro /var/lib/shelfaware/models/kokoro-int8-en-v0_19 /tmp/kokoro-check.wav
+/tmp/kcheck/VoiceCheck kokoro /opt/shelfaware-models/kokoro-int8-en-v0_19 /tmp/kokoro-check.wav
 rm -rf /tmp/kcheck /tmp/kcheck.tar.gz      # it carries its own copy of the 26 MB runtime
 ```
 
@@ -167,7 +170,7 @@ In the box's env file (`/etc/shelfaware/env` — see [`deploy/env.example`](../d
 
 ```
 Speech__Provider=Kokoro
-Speech__Kokoro__ModelDirectory=/var/lib/shelfaware/models/kokoro-int8-en-v0_19
+Speech__Kokoro__ModelDirectory=/opt/shelfaware-models/kokoro-int8-en-v0_19
 Speech__Kokoro__SpeakerId=0
 Speech__Kokoro__Speed=0.9
 Speech__Kokoro__NumThreads=2

@@ -130,32 +130,43 @@ jobs:
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bzip2
           fi
 
-          # ⚠️ /var/lib/shelfaware is the SERVICE ACCOUNT's home (deploy-droplet.md: adduser --home), so
-          # the app can rename anything directly inside it -- including models/ -- and put a directory
-          # or a symlink of its own in its place, AT ANY MOMENT, including the minutes a download takes.
-          # Everything below runs as root, so a check of the NAME is not enough: checked once and then
-          # used again later, the name can point somewhere else by then -- and the recursive chmod at
-          # the end follows a symlink given as its argument (chmod has no -h), which would make
-          # whatever the app pointed it at world-readable: /etc/shadow, the SSH host keys.
+          # ⚠️ The models live OUTSIDE the service account's home, beside the app itself
+          # (install.sh installs to /opt/shelfaware). That is the whole reason for the location: /opt
+          # is root-owned and writable by nobody else, so the app cannot rename this directory, swap a
+          # symlink in for it, or put one of its own in its place -- not during the minutes a download
+          # takes, and not between deploys either. The old home under /var/lib/shelfaware could not
+          # promise the second half: the app owned that parent, so it could re-point models/ the moment
+          # this step finished, and the app would then load whatever it had put there.
           #
-          # So models/ is pinned by INODE: cd into it, confirm with the kernel's own answer
-          # (/proc/$$/cwd, not a path bash re-reads as a string) that this shell is in the root-owned
-          # directory at exactly that path, and from then on do every write, chown and chmod relative
-          # to "." -- which renaming or re-pointing the name cannot move. The app cannot write inside
-          # the directory itself (root-owned, 755). Downloads and unpacks happen in a fresh root-only
-          # mktemp directory, and only a verified, whole, root-owned model is moved in.
-          MODELS=/var/lib/shelfaware/models
+          # Pinned by INODE all the same, and the pin is not ceremony now that the parent is root's:
+          # it is what makes the paragraph above CHECKABLE instead of assumed, on this box, on this
+          # run. cd in, confirm with the kernel's own answer (/proc/$$/cwd, not a path bash re-reads as
+          # a string) that this shell is in the root-owned directory at exactly that path, and from
+          # then on write, chown and chmod relative to "." -- which re-pointing the name cannot move.
+          # It matters because the recursive chmod at the end follows a symlink given as its ARGUMENT
+          # (chmod has no -h): were "$MODELS" ever a link, that one line would make whatever it pointed
+          # at world-readable -- /etc/shadow, the SSH host keys. Downloads and unpacks happen in a
+          # fresh root-only mktemp directory, and only a verified, whole, root-owned model is moved in.
+          MODELS=/opt/shelfaware-models
           mkdir -p "$MODELS"
           cd -P "$MODELS"
-          # Owner AND mode: a root-owned directory the app could rename into place is not enough -- a
-          # root-owned 700 one (say, left by a restore run as root) would pass an owner check and then
-          # have everything in it made world-readable by the chmod -R at the end. 755 is what mkdir
-          # makes here and what every box has.
+          # Owner AND mode on the directory: a root-owned 700 one (say, left behind by a restore run as
+          # root) would pass an owner check and then have everything in it made world-readable by the
+          # chmod -R at the end. 755 is what mkdir makes here and what every box has.
+          #
+          # And the PARENT, because the parent is what this location buys -- an /opt anyone else could
+          # write to would hand back exactly the exposure the move was made to close, silently. By
+          # PROPERTY, not by an exact mode: 755 is what /opt has, but "root's, and writable by nobody
+          # else" is the thing that actually has to be true, and a box that keeps /opt at 750 is not
+          # wrong.
           models_is_ours() {
-            [ "$(readlink "/proc/$$/cwd")" = "$MODELS" ] && [ "$(stat -c %u:%a .)" = 0:755 ]
+            [ "$(readlink "/proc/$$/cwd")" = "$MODELS" ] \
+              && [ "$(stat -c %u:%a .)" = 0:755 ] \
+              && [ "$(stat -c %u ..)" = 0 ] \
+              && [ -z "$(find .. -maxdepth 0 \( -perm -020 -o -perm -002 \) -print)" ]
           }
           if ! models_is_ours; then
-            echo "::error::$MODELS is not a root-owned 755 directory at that path (it is $(stat -c %U:%a . 2>/dev/null)); refusing to write to it as root. Look at what changed it before re-running."
+            echo "::error::$MODELS is not a root-owned 755 directory at that path under a root-only parent; refusing to write to it as root. It leads to $(readlink "/proc/$$/cwd"), which is $(stat -c %U:%a . 2>/dev/null) under a parent that is $(stat -c %U:%a .. 2>/dev/null). Look at what changed it before re-running."
             exit 1
           fi
 
@@ -232,15 +243,11 @@ jobs:
           fi
 
           # Root-owned and world-readable, which is install.sh's posture for the app itself: the service
-          # account reads its models, it does not get to rewrite them.
+          # account reads its models, it does not get to rewrite them. Under a root-only parent that
+          # now holds BETWEEN deploys too, not just while this step runs -- the app has nowhere to put
+          # a directory of its own, and no way to make the name lead to one.
           # ⚠️ "." -- the directory pinned above -- and never "$MODELS": chmod follows a symlink given as
-          # its argument, and by now the NAME may be one. Below ".", neither command follows symlinks.
-          #
-          # ⚠️ What this does NOT give: models/ sits in the service account's home, so BETWEEN deploys a
-          # compromised app can still rename it away and put its own in its place, and the app loads its
-          # model by that name. This step refuses loudly the next time it runs, but an ordinary deploy
-          # does not run it. Closing that means moving the models to a root-owned parent (with each box's
-          # Speech__*__ModelDirectory following) -- a decision, recorded in docs/deploy-droplet.md.
+          # its argument. Below ".", neither command follows symlinks.
           chown -R root:root .
           chmod -R a+rX .
           df -h / | tail -1

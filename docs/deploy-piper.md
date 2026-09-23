@@ -53,16 +53,20 @@ back up the scrollback. The deploy's `bootstrap` exits on a mismatch; this has t
 
 ```bash
 # The same shape as the deploy's bootstrap, and for its reasons (.github/workflows/deploy-droplet.yml):
-# /var/lib/shelfaware is the service account's home, so the app can re-point models/ at any moment --
-# models/ is pinned by INODE (cd, then the kernel's /proc/$$/cwd must be exactly that path, root-owned),
-# and everything after is relative to ".". Downloaded and unpacked in a root-only directory inside it,
-# and moved in only once verified, whole and root-owned -- one rename on one filesystem, so a
-# half-extracted model can never sit under the name everything else checks.
+# the models live in /opt, root-owned and writable by nobody else, so the app cannot re-point the name
+# -- during an install or between them. Checked rather than assumed: the directory is pinned by INODE
+# (cd, then the kernel's /proc/$$/cwd must be exactly that path), and the PARENT must be root's and
+# root-only, since that is the property the location is chosen for. Everything after is relative to
+# ".". Downloaded and unpacked in a root-only directory inside it, and moved in only once verified,
+# whole and root-owned -- one rename on one filesystem, so a half-extracted model can never sit under
+# the name everything else checks.
 { command -v bzip2 >/dev/null || { apt-get update && apt-get install -y bzip2; }; } \
-  && M=/var/lib/shelfaware/models && V=vits-piper-en_US-ryan-medium \
+  && M=/opt/shelfaware-models && V=vits-piper-en_US-ryan-medium \
   && mkdir -p "$M" && cd -P "$M" \
-  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u:%a .)" = 0:755 ]; } \
-       || { echo "$M is not a root-owned 755 directory at that path; not installing into it."; false; }; } \
+  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u:%a .)" = 0:755 ] \
+         && [ "$(stat -c %u ..)" = 0 ] \
+         && [ -z "$(find .. -maxdepth 0 \( -perm -020 -o -perm -002 \) -print)" ]; } \
+       || { echo "$M is not a root-owned 755 directory at that path under a root-only parent; not installing into it."; false; }; } \
   && { { [ ! -e "./$V" ] && [ ! -L "./$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
   && T=$(mktemp -d ./.incoming.XXXXXX) \
   && curl -fsSL --proto '=https' -o "$T/$V.tar.bz2" \
@@ -98,7 +102,7 @@ descriptor has three paths where Kokoro's has four.
 
 ```bash
 dotnet run --project tools/VoiceCheck -- piper \
-  /var/lib/shelfaware/models/vits-piper-en_US-ryan-medium /tmp/piper-check.wav
+  /opt/shelfaware-models/vits-piper-en_US-ryan-medium /tmp/piper-check.wav
 ```
 
 It loads the model through the app's own engine, says a sentence with numbers and a unit abbreviation
@@ -124,7 +128,7 @@ back silently:
 
 ```
 Speech__Provider=Piper
-Speech__Piper__ModelDirectory=/var/lib/shelfaware/models/vits-piper-en_US-ryan-medium
+Speech__Piper__ModelDirectory=/opt/shelfaware-models/vits-piper-en_US-ryan-medium
 ```
 
 Then `systemctl restart shelfaware` and check `/healthz`.
