@@ -80,4 +80,10 @@ found by running the app.
 Give the user the findings — file, line, and a concrete scenario — ranked, with the ones you couldn't
 construct a scenario for ranked lowest and labelled as such.
 
+**Name the head commit the gate covered, and stop pushing to that PR.** A gate is a statement about one
+commit, not about a branch: report it as `ready, head <sha>`, and put anything found afterwards in a new
+PR off current `master`. See the branch-ownership directive in CLAUDE.md for why — on 2026-09-23 two PRs
+were merged at one head while the next round of reviewed commits was still being pushed to them, which
+stranded that work on already-merged branches and gave `master` a version no gate had covered.
+
 **Do not push or merge.** Ask. Pushing is the user's call, always.

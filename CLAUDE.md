@@ -36,6 +36,28 @@ dismiss polish as overkill "because it's single-user."
   shipped past a fully green test suite and was only caught by running the app. Green tests are not a
   review. Report the findings and then **stop: merging is Jordan's call, always.**
 
+- **One session owns a branch; a PR called ready is frozen.** Two Claude sessions work this repo at
+  once — a cloud session, and a Remote Control session on Jordan's PC, which is the only machine here
+  with the .NET SDK. On 2026-09-23 they collided four times in one afternoon: the same helper edited on
+  two branches, the same follow-up picked up twice within two minutes of each other, and two PRs
+  merged while their last gated commits were still being pushed. Nothing half-finished reached
+  `master`, but two branches were closed as duplicates and one set of commits was stranded on an
+  already-merged branch and had to be carried into a fresh PR. The rules that stop a repeat:
+  - **A "ready" or "gated" report names the exact head sha, and that head is then frozen.** Anything
+    found afterwards goes in a NEW PR. A PR that keeps growing after it was called ready is a PR whose
+    review covered different code than the commit that merges.
+  - **Re-read a PR's state immediately before every push, not at the start of the work.** Never push to
+    a merged PR: those commits are stranded, and the follow-up has to restart from `master` as its own
+    branch.
+  - **Never merge a PR a sibling session has been pushing to** until it has reported `ready, head
+    <sha>` — and then merge only that sha. Merging is Jordan's call either way, and "merge away"
+    authorizes the PRs as they stood when he said it, not whatever lands on them next.
+  - **Don't work a file in parallel with a sibling session.** Anything needing a real build, a test run
+    or a mutation sweep belongs on the PC; the rest is done in the cloud session — one at a time.
+  ⚠️ This one cannot be held by a test, which is the usual and better answer here: nothing in the
+  build can see another session. What it can be held by is the sha — a "ready" without one is the
+  failure itself, because it is exactly what let a moving head look mergeable.
+
 - **One prediction, one story — never let a screen state something the engine didn't do.** Anything a
   surface says *about* a prediction must come from the same `PredictionResult` that produced the due
   date it sits beside. Don't re-derive "is it due" from a median, don't render a factor you computed
