@@ -69,18 +69,44 @@ public sealed class LocalVoiceFamilyRegistrationTests : IDisposable
         Assert.StartsWith(prefix, FingerprintFor(provider, configureEveryFamily: true));
     }
 
-    /// <summary>⚠️ No two families may share a fingerprint prefix. A household that switched voices would
+    /// <summary>
+    /// ⚠️ No two families may share a fingerprint PREFIX. A household that switched voices would
     /// otherwise be served its old clips forever — same cache key, different voice, and no error anywhere
-    /// to say so. Asserted across all of them rather than pair by pair.</summary>
+    /// to say so.
+    /// <para>The prefix, not the whole string, and that distinction is the test. Every family here also
+    /// has a different archive name and a different weights filename, so comparing whole fingerprints
+    /// would pass even if two families reported the same <c>Family</c> — which is exactly the
+    /// copy-paste this is meant to catch, since a new family's options class starts life as a copy of
+    /// an existing one.</para>
+    /// </summary>
     [Fact]
-    public void No_two_families_fingerprint_the_same()
+    public void No_two_families_fingerprint_under_the_same_name()
     {
-        var fingerprints = EveryLocalFamily
-            .Select(row => (string)row[0])
-            .Select(provider => FingerprintFor(provider))
-            .ToList();
+        var prefixes = Families.Select(f => FingerprintFor(f.Family).Split('|')[0]).ToList();
 
-        Assert.Equal(fingerprints.Count, fingerprints.Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(prefixes.Count, prefixes.Distinct(StringComparer.Ordinal).Count());
+    }
+
+    /// <summary>
+    /// ⚠️ The table this file is driven from must name every local family EXACTLY once — checked
+    /// against <see cref="SpeechProvider"/> itself rather than against a number typed here.
+    ///
+    /// <para>This is the reach guard for every theory above, and it is the one that matters: a theory
+    /// whose table is missing a row does not fail, it passes having tested one family fewer, and the
+    /// family it skipped is always the one just added. Adding a member to the enum without adding its
+    /// row here is the whole failure, so the enum is what it is compared to. A duplicate row is the
+    /// other half — it tests one family twice and reports four rows for three families.</para>
+    /// </summary>
+    [Fact]
+    public void The_family_table_names_every_local_family_exactly_once()
+    {
+        // ElevenLabs is the one mouth that is not a model on disk, so it is the one member with no row.
+        var local = Enum.GetNames<SpeechProvider>().Where(n => n != nameof(SpeechProvider.ElevenLabs));
+
+        Assert.Equal(local.Order(), Families.Select(f => f.Family).Order());
+        Assert.Equal(
+            Families.Count(),
+            Families.Select(f => f.Section).Distinct(StringComparer.Ordinal).Count());
     }
 
     /// <summary>Choosing a family without telling it where its model is must name that family's own

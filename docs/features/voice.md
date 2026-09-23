@@ -26,9 +26,10 @@ the built-in reader.
   `ITextToSpeech.OutputFingerprint`. **A cache hit needs no API key**, which is what lets seeded/demo
   recipes talk for a keyless visitor. Registered via `SpeechRegistration.AddSpeech` so a test can prove
   nothing bypasses it. Bounded by `Speech:CacheMegabytes` (default 256), trimmed at startup.
-- **The mouth has three providers and the ear two, chosen SEPARATELY.** `Speech:Provider` picks the
-  mouth: ElevenLabs (cloud, per-character, the visitor's own key), or `Kokoro` or `Piper` — both running
-  IN THIS PROCESS via sherpa-onnx, for $0 with nothing to meter and nothing to deploy beside the app.
+- **The mouth has five providers and the ear two, chosen SEPARATELY.** `Speech:Provider` picks the
+  mouth: ElevenLabs (cloud, per-character, the visitor's own key), or `Kokoro`, `Piper`, `Kitten` or
+  `Matcha` — all running IN THIS PROCESS via sherpa-onnx, for $0 with nothing to meter and nothing to
+  deploy beside the app. Which one a given box should run is measured, not assumed: `docs/voice-bakeoff.md`.
   `Speech:Ear` picks the ear: ElevenLabs Scribe or `Moonshine`, in this process, on the same package —
   so the ear adds *nothing* to the publish a local-mouth box already carries. Two settings rather than one
   because a box has to be able to move one before the other. With both local, a deployment needs **no
@@ -39,7 +40,7 @@ the built-in reader.
   - **The four local families are one engine and four descriptors** (`ISherpaTtsModel`): they differ only
     in which files must be on disk and which block of `OfflineTtsConfig` names them. The gate, the
     timeout that is not a cancellation, the empty-clip refusal and the fingerprint rules exist once.
-    A third family — a cloned voice, say — is a descriptor, not a copy.
+    A fifth family — a cloned voice, say — is a descriptor, not a copy.
   - **Kokoro is warmer; Piper is ~26× faster.** Measured on identical cores: Kokoro 1.37× real time,
     Piper 0.05×. ⚠️ The threshold that matters is **1.0×**, because below it synthesis outruns playback
     and a reply can start speaking before it is finished being made. The demo droplet measured Kokoro at

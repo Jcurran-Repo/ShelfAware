@@ -18,12 +18,12 @@ namespace ShelfAware.Web.Tests;
 /// missing model file by printing one line to stderr and killing the process, so an incomplete directory
 /// has to be refused HERE, while something can still report it. Hence one case per part.</para>
 ///
-/// <para>⚠️ The cases that are NOT a twin are the ones that matter most: the two families each have their
-/// own settings section, and a box may carry both at once (that is the point — switching voices is meant
-/// to be a one-line change). So there are tests that the chosen family is the one that loads, and that
-/// its clips are fingerprinted under its own name. A box that loaded Piper's model and filed its clips as
-/// Kokoro's would serve the wrong voice from cache forever, silently, and no green test elsewhere would
-/// notice.</para>
+/// <para>⚠️ Each family has its own settings section and a box may carry them all at once (that is the
+/// point — switching voices is meant to be a one-line change). That the chosen family is the one that
+/// loads, and that its clips are fingerprinted under its own name, is asserted for every family at once
+/// in <see cref="LocalVoiceFamilyRegistrationTests"/>. A box that loaded Piper's model and filed its
+/// clips as Kokoro's would serve the wrong voice from cache forever, silently, and no green test
+/// elsewhere would notice.</para>
 /// </summary>
 public sealed class PiperRegistrationTests : IDisposable
 {
@@ -39,46 +39,15 @@ public sealed class PiperRegistrationTests : IDisposable
     // AModel writes are EMPTY, and a real load would die on them (sherpa answers an unreadable model with
     // a SIGSEGV). That property matters because the cache asks for the fingerprint on every lookup,
     // including every HIT — the case that exists to avoid doing work.
-    [Fact]
-    public void Speech_provider_piper_selects_the_in_process_model()
-    {
-        Assert.StartsWith("piper", FingerprintFor(provider: "Piper", modelDirectory: AModel()));
-    }
-
-    // "The provider setting is read case-insensitively" was a Piper fact here; it is now asserted for
-    // every family at once in LocalVoiceFamilyRegistrationTests.
-
-    /// <summary>⚠️ The sharp one. Both sections configured, and the provider decides — not the presence of
-    /// a section. A box moving from Kokoro to Piper keeps its old settings in the env file (that is how a
-    /// person rolls back), so "Kokoro is configured" must not mean "Kokoro is running".</summary>
-    [Fact]
-    public void A_box_carrying_both_sections_runs_the_one_the_provider_names()
-    {
-        var fingerprint = FingerprintFor("Piper", AModel(), extra: new()
-        {
-            ["Speech:Kokoro:ModelDirectory"] = AKokoroModel(),
-        });
-
-        Assert.StartsWith("piper", fingerprint);
-    }
-
-    /// <summary>The same, the other way round — because a rule that only holds in one direction is half a
-    /// rule, and this is the direction the family box takes.</summary>
-    [Fact]
-    public void Kokoro_still_wins_when_both_sections_are_present_and_it_is_named()
-    {
-        var fingerprint = FingerprintFor("Kokoro", extra: new()
-        {
-            ["Speech:Kokoro:ModelDirectory"] = AKokoroModel(),
-            ["Speech:Piper:ModelDirectory"] = AModel(),
-        });
-
-        Assert.StartsWith("kokoro", fingerprint);
-    }
-
-    // ⚠️ "No two families share a fingerprint prefix" lived here as a Kokoro-vs-Piper pair until Matcha
-    // and Kitten arrived. It is now LocalVoiceFamilyRegistrationTests.No_two_families_fingerprint_the_same,
-    // over every family at once — six pairs is where writing them out stops being honest work.
+    //
+    // Three Piper-vs-Kokoro cases used to open this class: that the provider setting selects the
+    // in-process model, that a box carrying both sections runs the one the provider NAMES rather than the
+    // one it happens to have configured, and the same the other way round. So did a case pinning that the
+    // provider is read case-insensitively, and a pair asserting that Piper and Kokoro fingerprint under
+    // different names. All five were about the SET of families, and all five are now
+    // LocalVoiceFamilyRegistrationTests, over every family at once — six pairs is where writing them out
+    // one at a time stops being honest work, and a pair that only covered the two families that existed
+    // when it was written is a rule with a hole in it the moment a third arrives.
 
     [Fact]
     public void The_model_is_loaded_once_per_box_not_once_per_read()
@@ -191,19 +160,6 @@ public sealed class PiperRegistrationTests : IDisposable
 
         if (except != "espeak-ng-data") Directory.CreateDirectory(Path.Combine(directory, "espeak-ng-data"));
 
-        return directory;
-    }
-
-    /// <summary>The Kokoro twin of <see cref="AModel"/>, for the cases that configure both families.</summary>
-    private string AKokoroModel()
-    {
-        var directory = Path.Combine(_dir, "models", "kokoro", "kokoro-int8-en-v0_19");
-        Directory.CreateDirectory(directory);
-
-        foreach (var part in new[] { "model.int8.onnx", "voices.bin", "tokens.txt" })
-            File.WriteAllBytes(Path.Combine(directory, part), []);
-
-        Directory.CreateDirectory(Path.Combine(directory, "espeak-ng-data"));
         return directory;
     }
 

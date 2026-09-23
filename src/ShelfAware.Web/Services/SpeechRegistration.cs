@@ -16,21 +16,22 @@ public static class SpeechRegistration
     /// Registers speech: STT = ear, and TTS = mouth wrapped in a disk cache at
     /// <paramref name="cacheDirectory"/>. The cloud services are their own REST APIs rather than
     /// IChatClient workloads, so each rides a typed HttpClient; typed clients are transient (the factory
-    /// owns handler lifetime) — fine, the services are stateless. Kokoro rides nothing, because it runs
-    /// here.
+    /// owns handler lifetime) — fine, the services are stateless. A local voice rides nothing, because it
+    /// runs here.
     ///
     /// <para>The TTS PROVIDER is chosen by <c>Speech:Provider</c> (default ElevenLabs, so no existing
-    /// deployment changes on upgrade): <see cref="SpeechProvider.Kokoro"/> and
-    /// <see cref="SpeechProvider.Piper"/> both run a model IN THIS PROCESS for $0 synthesis, differing
-    /// only in warmth against speed; <see cref="SpeechProvider.ElevenLabs"/> keeps the cloud voice. The EAR is chosen
+    /// deployment changes on upgrade): <see cref="SpeechProvider.Kokoro"/>, <see cref="SpeechProvider.Piper"/>,
+    /// <see cref="SpeechProvider.Kitten"/> and <see cref="SpeechProvider.Matcha"/> all run a model IN THIS
+    /// PROCESS for $0 synthesis, differing in warmth against speed (docs/voice-bakeoff.md);
+    /// <see cref="SpeechProvider.ElevenLabs"/> keeps the cloud voice. The EAR is chosen
     /// separately by <c>Speech:Ear</c> (<see cref="EarProvider"/>), so a box can move one before the
     /// other. Whichever TTS provider is chosen, it's the CACHE that answers <see cref="ITextToSpeech"/>; the provider
     /// is only ever reached through it.</para>
     ///
     /// Requires a scoped <see cref="IVoiceCredentials"/> registered by the caller: the ElevenLabs key is
     /// per-circuit (the visitor's own), so it is attached per request rather than baked into a default
-    /// header. Kokoro needs no such credential — there is nobody to pay (see
-    /// <see cref="KokoroSpeechOptions"/>).
+    /// header. A local voice needs no such credential — there is nobody to pay (see
+    /// <see cref="SherpaTtsOptions"/>).
     /// </summary>
     /// <param name="cacheDirectory">Where synthesized audio lives, or null to synthesize every time. Null
     /// is what <c>Speech:CacheMegabytes = 0</c> means: someone asking for no cache should GET no cache,

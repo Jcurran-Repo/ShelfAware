@@ -36,10 +36,11 @@ public interface ISherpaTtsModel
 /// app's own process, so there is no second service to reach, secure, or keep running. What it needs is a
 /// directory of model files on disk.</para>
 ///
-/// <para>Bound from <see cref="Section"/> — <c>Speech:Kokoro</c> or <c>Speech:Piper</c>. The two sections
-/// are separate on purpose: a box can carry settings for both and switch between them with
-/// <c>Speech:Provider</c> alone, which is what makes "try the fast one, keep the warm one" a one-line
-/// change rather than a rewrite of the env file.</para>
+/// <para>Bound from <see cref="Section"/> — <c>Speech:Kokoro</c>, <c>Speech:Piper</c>,
+/// <c>Speech:Kitten</c> or <c>Speech:Matcha</c>. The sections are separate on purpose: a box can carry
+/// settings for all of them and switch with <c>Speech:Provider</c> alone, which is what makes "try the
+/// fast one, keep the warm one" a one-line change rather than a rewrite of the env file — and what makes
+/// a bake-off (docs/voice-bakeoff.md) something an operator can actually run.</para>
 /// </summary>
 public abstract class SherpaTtsOptions
 {
@@ -66,7 +67,7 @@ public abstract class SherpaTtsOptions
     public string ModelDirectory { get; set; } = "";
 
     /// <summary>The ONNX file's name inside <see cref="ModelDirectory"/>. Defaulted per family, because
-    /// the archives name it differently and there is no name that is right for both.</summary>
+    /// the archives name it differently and there is no name that is right for all of them.</summary>
     public string ModelFile { get; set; }
 
     /// <summary>Which of the model's voices speaks, by index. ⚠️ An index, not a name: the archives ship

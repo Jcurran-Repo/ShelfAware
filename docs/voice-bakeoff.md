@@ -41,6 +41,23 @@ demo-box problem and not a family-box one.
 | **Kitten** | Kokoro's four files exactly, under its own config block | Published comparisons: faster than Kokoro, slower than Piper — unmeasured here | 24 MB. The nano archive has 8 voices, 4 male and 4 female. |
 | **Matcha** | acoustic model **+ a separate vocoder** + tokens + espeak data | unmeasured here | ⚠️ The vocoder is published in a *different release* from the voice. A directory holding everything the voice archive shipped still cannot speak. It is in the cache fingerprint, so changing vocoder re-voices the clips rather than serving the old ones. |
 
+## The lineup
+
+The workflow's `voices` input takes `all` (the default) or a space-separated list of these ids:
+
+| id | Model | Voice |
+|---|---|---|
+| `piper-lessac-medium` | `vits-piper-en_US-lessac-medium` | 0 — today's demo voice, the control |
+| `piper-lessac-high` | `vits-piper-en_US-lessac-high` | 0 — same speaker, higher-quality model |
+| `piper-ryan-high` | `vits-piper-en_US-ryan-high` | 0 — male, high |
+| `piper-amy-medium` | `vits-piper-en_US-amy-medium` | 0 — female, medium |
+| `piper-cori-high` | `vits-piper-en_GB-cori-high` | 0 — British English, high |
+| `piper-libritts-0` / `-40` / `-109` | `vits-piper-en_US-libritts_r-medium` | three of its 904 speakers |
+| `kitten-nano-0` / `-2` / `-5` | `kitten-nano-en-v0_1-fp16` | three of its 8 voices |
+| `kitten-mini-0` | `kitten-mini-en-v0_1-fp16` | 0 — the larger Kitten |
+| `matcha-ljspeech` | `matcha-icefall-en_US-ljspeech` | 0 — with the Vocos vocoder |
+| `kokoro-0` | `kokoro-int8-en-v0_19` | 0 — the family box's voice, the other control |
+
 Speed for Kitten and Matcha is deliberately blank: nobody here has measured them on a box that matters,
 and a number copied off someone else's benchmark is exactly the kind of figure this repo has been burned
 by. The bake-off is how they get filled in.
@@ -85,8 +102,12 @@ curl -fsSL --proto '=https' -o matcha-icefall-en_US-ljspeech/vocos-22khz-univ.on
 echo "0574a135aa1db2de6e181050db2ec528496cacd4a4701fc5d7faf9f9804c0081  matcha-icefall-en_US-ljspeech/vocos-22khz-univ.onnx" | sha256sum -c -
 ```
 
-Those hashes are the ones the bake-off workflow records, so the two cannot drift apart without the
-workflow failing first.
+⚠️ **Those hashes are written twice** — here and in `sha_for()` in
+`.github/workflows/voice-bakeoff.yml` — because the commands above have to be complete enough to paste,
+and sending an operator to read a YAML file for a hash is how a hash gets skipped. Two sites answering
+one question is the failure CLAUDE.md names as this repo's most expensive, so the pair is held by a
+test: `VoiceModelHashRulesTests` fails the build if this file names a hash the workflow does not record.
+A sentence promising they cannot drift would not have been worth anything.
 
 Then prove it speaks **before** pointing the app at it:
 
@@ -108,9 +129,23 @@ box runs" has exactly one answer for the life of the process.
 A family is a descriptor, not an engine. `ISherpaTtsModel` answers the only two questions that differ —
 which files must be on disk, and which block of `OfflineTtsConfig` names them — and everything else (the
 synthesis gate, the timeout that is not a cancellation, cancellation that actually cancels, the cache
-fingerprint) is shared. So a new family is: an options class, a `…ModelFiles` record, one enum member,
-one line in `SpeechRegistration.LocalVoiceOf`, one row in `SherpaTtsModelTests.EveryFamily`, one row in
-`LocalVoiceFamilyRegistrationTests.EveryLocalFamily`, and a row in the bake-off lineup.
+fingerprint) is shared. So a new family is:
+
+1. an options class and a `…ModelFiles` record (override `FamilyInvalid` if it has a rule of its own,
+   and `FingerprintExtras` if it has a second file that decides how it sounds, as Matcha's vocoder does);
+2. one member on the `SpeechProvider` enum;
+3. one arm in `SpeechRegistration.LocalVoiceOf`;
+4. one row in `SherpaTtsModelTests.EveryFamily`;
+5. one row in `LocalVoiceFamilyRegistrationTests.EveryLocalFamily` **and one arm in its `AModelFor`** —
+   a row without the arm throws in the helper and takes every one of that family's cases with it.
+   Step 2 is what forces this one: `The_family_table_names_every_local_family_exactly_once` compares
+   the table against the `SpeechProvider` enum, so a member added without a row fails rather than
+   quietly testing one family fewer;
+6. one case in `SherpaTextToSpeechTests.OptionsFor`, plus its `[InlineData]` rows;
+7. one case in `tools/VoiceCheck`'s family switch, or the family cannot be pre-flighted and step 3 above
+   is not runnable for it;
+8. a block in `deploy/env.example`;
+9. a row in the bake-off lineup and its hash in `sha_for()` — and in this page's table above.
 
 ⚠️ **Both theory rows are the point, not paperwork.** Every family fills the same config struct and hands
 it to the same native constructor, and sherpa-onnx does not report a config it cannot make sense of — it

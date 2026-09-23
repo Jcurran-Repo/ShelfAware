@@ -236,31 +236,52 @@ public class SherpaTextToSpeechTests
 
     // ---- What a family may add to the fingerprint -----------------------------------------------
 
-    /// <summary>⚠️ A family that adds nothing must produce EXACTLY the string it produced before the
-    /// hook existed. If an empty extras list appended a blank part, every clip every household has had
-    /// voiced by these three families would stop matching its own cache key and be re-synthesized —
-    /// silently, and on a box where synthesis is the expensive thing.</summary>
+    /// <summary>Every family, by name, so this cannot be the list that a fifth one is quietly missing
+    /// from. <see cref="OptionsFor"/> is the one place that maps a name to its settings.</summary>
     [Theory]
     [InlineData("kokoro")]
     [InlineData("piper")]
     [InlineData("kitten")]
-    public void A_family_with_nothing_to_add_fingerprints_in_exactly_seven_parts(string family)
+    [InlineData("matcha")]
+    public void A_fingerprint_is_seven_parts_plus_whatever_the_family_adds(string family)
     {
-        SherpaTtsOptions options = family switch
-        {
-            "kokoro" => new KokoroSpeechOptions { ModelDirectory = Path.Combine("models", "kokoro") },
-            "piper" => new PiperSpeechOptions { ModelDirectory = Path.Combine("models", "piper") },
-            "kitten" => new KittenSpeechOptions { ModelDirectory = Path.Combine("models", "kitten") },
-            _ => throw new ArgumentOutOfRangeException(nameof(family), family, "Not a family."),
-        };
+        var options = OptionsFor(family);
 
         var fingerprint = new SherpaTextToSpeech(
             FakeKokoroEngine.Returning([1f]), options, NullLogger<SherpaTextToSpeech>.Instance)
             .OutputFingerprint;
 
-        Assert.Equal(7, fingerprint.Split('|').Length);
+        Assert.Equal(7 + options.FingerprintExtras.Count, fingerprint.Split('|').Length);
         Assert.StartsWith(family, fingerprint);
     }
+
+    /// <summary>⚠️ And the three families that add nothing must land on exactly seven — the number the
+    /// fingerprint had before <see cref="SherpaTtsOptions.FingerprintExtras"/> existed. If an empty
+    /// extras list appended a blank part, every clip every household has had voiced by those families
+    /// would stop matching its own cache key and be re-synthesized: silently, and on a box where
+    /// synthesis is the expensive thing.</summary>
+    [Theory]
+    [InlineData("kokoro")]
+    [InlineData("piper")]
+    [InlineData("kitten")]
+    public void A_family_that_adds_nothing_fingerprints_exactly_as_it_did_before_the_hook(string family)
+    {
+        var options = OptionsFor(family);
+
+        Assert.Empty(options.FingerprintExtras);
+        Assert.Equal(7, new SherpaTextToSpeech(
+            FakeKokoroEngine.Returning([1f]), options, NullLogger<SherpaTextToSpeech>.Instance)
+            .OutputFingerprint.Split('|').Length);
+    }
+
+    private static SherpaTtsOptions OptionsFor(string family) => family switch
+    {
+        "kokoro" => new KokoroSpeechOptions { ModelDirectory = Path.Combine("models", "kokoro") },
+        "piper" => new PiperSpeechOptions { ModelDirectory = Path.Combine("models", "piper") },
+        "kitten" => new KittenSpeechOptions { ModelDirectory = Path.Combine("models", "kitten") },
+        "matcha" => new MatchaSpeechOptions { ModelDirectory = Path.Combine("models", "matcha") },
+        _ => throw new ArgumentOutOfRangeException(nameof(family), family, "Not a family."),
+    };
 
     /// <summary>⚠️ A Matcha vocoder is half of what the voice sounds like — it is the half that turns a
     /// spectrogram into audio — so two boxes differing only in vocoder must not share a cache key. Left

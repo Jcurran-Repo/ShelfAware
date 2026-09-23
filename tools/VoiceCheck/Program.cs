@@ -61,13 +61,29 @@ if (args.Length > 3 && !int.TryParse(args[3], out speakerId))
     return 1;
 }
 
+// ⚠️ Only Matcha has a vocoder. Accepting the flag for the others and ignoring it would be this tool
+// checking something other than what the operator asked for, which is the one thing a pre-flight check
+// must never do.
+if (vocoderFileOverride is not null && !string.Equals(family, "matcha", StringComparison.OrdinalIgnoreCase))
+{
+    Console.Error.WriteLine(
+        $"--vocoder-file means nothing to '{family}'. Only matcha has a separate vocoder; the other "
+        + "families carry everything they need in one archive.");
+    return 1;
+}
+
 // The family decides which settings object is built, and everything after this line is family-agnostic
 // -- the same seam the app itself runs on, so a model this tool accepts is one the app can load.
 SherpaTtsOptions options;
 switch (family.ToLowerInvariant())
 {
     case "kokoro":
+        // --model-file honoured here too: docs/deploy-kokoro.md and deploy/env.example both document
+        // Speech__Kokoro__ModelFile=model.onnx for the full-precision archive, so a tool that ignored
+        // the override would pre-flight model.int8.onnx and report a voice the box is not configured
+        // to run -- the exact substitution the piper case below exists to refuse.
         options = new KokoroSpeechOptions { ModelDirectory = modelDirectory, SpeakerId = speakerId };
+        if (modelFileOverride is not null) options.ModelFile = modelFileOverride;
         break;
     case "piper":
         // ⚠️ The app's OWN default, not whatever .onnx happens to be in the directory. Piper names its

@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       voices:
-        description: 'Which lineup: "all", or a space-separated list of ids from docs/voice-bakeoff.md'
+        description: 'Which lineup: "all", or a space-separated list of ids (see the table in docs/voice-bakeoff.md)'
         required: false
         default: 'all'
 
@@ -119,6 +119,14 @@ jobs:
           ROWS
           )
 
+          # An empty input would match no id, skip all fourteen rows, and finish green with nothing to
+          # listen to -- a run that looks like it worked. Not reachable from the UI's default, but it is
+          # from the API.
+          if [ -z "$WANTED" ]; then
+            echo "::error::voices was empty. Use 'all', or a space-separated list of lineup ids."
+            exit 1
+          fi
+
           echo "| Voice | Family | x real time | Notes |" > summary.md
           echo "|---|---|---|---|" >> summary.md
 
@@ -187,11 +195,26 @@ jobs:
           NOTE
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # ⚠️ Runs even when the render step failed. Everything OUTSIDE the per-voice `if` is fatal under
+      # `set -e` -- a checksum mismatch, a download, the job timeout -- and a failure on the fourteenth
+      # voice would otherwise discard the thirteen clips that already rendered, which is precisely what
+      # the render step's own isolation exists to prevent. Not `always()`: a cancelled run has nothing
+      # worth keeping.
       - name: Upload the clips
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: voice-bakeoff
-          path: |
-            clips/
-            summary.md
+          # Clips only. summary.md goes with them but cannot be the reason the guard below passes:
+          # it is written unconditionally, so including it here would make `error` unreachable and the
+          # guard a decoration. A run that rendered nothing must fail loudly.
+          path: clips/
           if-no-files-found: error
+
+      - name: Upload the summary
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: voice-bakeoff-summary
+          path: summary.md
+          if-no-files-found: warn
