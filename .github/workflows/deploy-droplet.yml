@@ -149,8 +149,8 @@ jobs:
           MODELS=/var/lib/shelfaware-models
           mkdir -p "$MODELS"
           cd -P "$MODELS"
-          # Owner AND mode: root-owned is not enough on its own -- a root-owned 700 directory (say, one
-          # left by a restore run as root) would pass an owner check and then have everything in it
+          # Owner AND mode: root-owned is not enough on its own -- a root-owned 700 directory (a hand-made
+          # mkdir under a tight umask, say) would pass an owner check and then have everything in it
           # made world-readable by the chmod -R at the end. 755 is what mkdir makes here.
           models_is_ours() {
             [ "$(readlink "/proc/$$/cwd")" = "$MODELS" ] && [ "$(stat -c %u:%a .)" = 0:755 ]

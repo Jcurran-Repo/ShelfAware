@@ -77,15 +77,41 @@ public class ModelsLocationTests
     public void Only_the_switch_over_names_the_old_location()
     {
         string[] allowed = ["deploy-droplet.md", "deploy-droplet.yml"];
-        var mentions = DocsAndEnvExamples()
-            .Append(RepoTree.FileAt(Path.Combine(".github", "workflows", "deploy-droplet.yml")))
+        var mentions = EverythingABoxIsBuiltFrom()
             .Where(f => File.ReadAllText(f).Contains(OldModels, StringComparison.Ordinal))
-            .Select(Path.GetFileName)
             .ToList();
 
-        Assert.Contains("deploy-droplet.md", mentions); // the switch-over itself must still be written down
-        var stray = mentions.Where(f => !allowed.Contains(f)).ToList();
+        // The switch-over itself must still be written down — and only as prose: inside it, the old path
+        // may never be something to install into or run against.
+        var switchOver = Assert.Single(mentions, f => Path.GetFileName(f) == "deploy-droplet.md");
+        var runnable = File.ReadAllLines(switchOver)
+            .Where(l => l.Contains(OldModels, StringComparison.Ordinal)
+                        && (l.Contains("M=", StringComparison.Ordinal) || l.Contains("VoiceCheck", StringComparison.Ordinal)
+                            || l.Contains("ModelDirectory=", StringComparison.Ordinal)))
+            .ToList();
+        Assert.True(runnable.Count == 0,
+            "deploy-droplet.md uses the old models location as something to install into or run against:"
+            + Environment.NewLine + string.Join(Environment.NewLine, runnable));
+
+        var stray = mentions.Select(Path.GetFileName).Where(f => !allowed.Contains(f)).ToList();
         Assert.True(stray.Count == 0, $"{OldModels} is still named in: {string.Join(", ", stray)}");
+    }
+
+    /// <summary>Everything a box is configured from or built from: the docs and env examples, the README,
+    /// every file under deploy/, the workflows, and the source of the app and its tools.</summary>
+    private static IEnumerable<string> EverythingABoxIsBuiltFrom()
+    {
+        var root = RepoTree.Root().FullName;
+        return DocsAndEnvExamples()
+            .Append(Path.Combine(root, "README.md"))
+            .Concat(Directory.EnumerateFiles(Path.Combine(root, "deploy"), "*", SearchOption.AllDirectories))
+            .Concat(Directory.EnumerateFiles(Path.Combine(root, ".github", "workflows"), "*.yml"))
+            .Concat(new[] { "src", "tools" }
+                .SelectMany(d => Directory.EnumerateFiles(Path.Combine(root, d), "*", SearchOption.AllDirectories))
+                .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                            && !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                            && Path.GetExtension(f) is ".cs" or ".razor" or ".json" or ".sh" or ".ps1" or ".md"))
+            .Distinct(StringComparer.Ordinal);
     }
 
     /// <summary>The docs a person configures a box from, and the env examples — not the journal, which is

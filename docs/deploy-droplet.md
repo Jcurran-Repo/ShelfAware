@@ -174,13 +174,18 @@ root-only directory inside it, moving in only verified, whole, root-owned models
 **Moving a box that already has models in the old place (`/var/lib/shelfaware/models`)** — no downtime,
 in this order:
 
-1. Deploy with **bootstrap** ticked. It fetches fresh, hash-checked copies of every model into
-   `/var/lib/shelfaware-models` — it does not copy the old ones, which sat where the app could have
-   changed them — and warns that the old directory is still there. The app keeps running on the old
-   paths meanwhile.
-2. In `/etc/shelfaware/env`, change every `Speech__*__ModelDirectory` from
-   `/var/lib/shelfaware/models/…` to `/var/lib/shelfaware-models/…`, then `systemctl restart shelfaware`
-   and check `/healthz`.
+1. Deploy with **bootstrap** ticked. It fetches fresh, hash-checked copies of **the four models it
+   installs** (the two Piper voices, Kokoro and Moonshine) into `/var/lib/shelfaware-models` — it does
+   not copy the old ones, which sat where the app could have changed them — and warns that the old
+   directory is still there. The app keeps running on the old paths meanwhile. ⚠️ A box running a
+   model the bootstrap does not install (Kitten or Matcha, put there by hand from
+   [voice-bakeoff.md](voice-bakeoff.md)) needs that pasted install re-run first — its blocks already
+   install into the new location.
+2. **Only once that run is green**, change every `Speech__*__ModelDirectory` in `/etc/shelfaware/env`
+   from `/var/lib/shelfaware/models/…` to `/var/lib/shelfaware-models/…`, then
+   `systemctl restart shelfaware` and check `/healthz`. If it does not come back, the journal
+   (`journalctl -u shelfaware -n 50`) names the file it could not find — the app refuses to start on a
+   missing model, by design. Put the old lines back and restart; nothing has been removed yet.
 3. Remove the old directory: `rm -rf /var/lib/shelfaware/models` (no trailing slash — if the name has
    become a symlink, that removes the link, not what it points at).
 
@@ -317,8 +322,8 @@ you are replacing), restore the `files/` trees, `chown -R shelfaware:shelfaware`
 and directories only**, start. (The models are not in the backup and not in the app's home: they are in
 root's `/var/lib/shelfaware-models`, and a bootstrap re-downloads any that are missing.)
 
-If `/var/lib/shelfaware-models` has ended up with the wrong owner or mode (a restore run carelessly as
-root, say), the next bootstrap refuses to touch it, by design. Recover by removing it —
+If `/var/lib/shelfaware-models` has ended up with the wrong owner or mode (a hand-made `mkdir` under a
+tight umask, or a `chmod` aimed at the wrong directory), the next bootstrap refuses to touch it, by design. Recover by removing it —
 `rm -rf /var/lib/shelfaware-models` (no trailing slash) — and re-running the deploy with **bootstrap**
 ticked, which re-downloads every model into a fresh root-owned directory.
 
