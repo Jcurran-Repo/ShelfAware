@@ -39,7 +39,7 @@ has ever been loaded.
 ## Requirements
 
 - **RAM: ~600 MB resident while the model is loaded**, on top of the app. On a 2 GB droplet that is
-  workable but not roomy, so **add a 2 GB swap file** (step 0). On a 1 GB box, keep ElevenLabs.
+  workable but not roomy, so **add a 2 GB swap file** (step 1). On a 1 GB box, keep ElevenLabs.
   The model loads on the **first read-aloud**, not at boot, and stays loaded after that — a box that
   never reads a recipe never pays the RAM.
 - **CPU: synthesis is roughly real-time on a multi-core box, and about 2.4× real time on one core.**
@@ -80,18 +80,35 @@ The models are sherpa-onnx's own packaging of Kokoro — the archive already con
 the voice embeddings, the token table and the `espeak-ng-data` directory.
 
 Steps 1–5 are the **droplet**. The family box is Windows and keeps its files somewhere else — see
-[The family box (Windows)](#the-family-box-windows) below, which is the same five steps in its idiom.
+[The family box (Windows)](#the-family-box-windows) below, which is the same steps in its idiom.
+
+As root, which is what the droplet's SSH session is. ⚠️ **Paste the block whole** — every step is
+joined to the next with `&&`, so an archive that fails its checksum is deleted and nothing after it runs.
+The same shape, and the reasons for each part, as [deploy-moonshine.md](deploy-moonshine.md) step 1.
 
 ```bash
-sudo mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models
-curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-en-v0_19.tar.bz2
-tar xjf kokoro-int8-en-v0_19.tar.bz2 && rm kokoro-int8-en-v0_19.tar.bz2
-ls kokoro-int8-en-v0_19   # model.int8.onnx  voices.bin  tokens.txt  espeak-ng-data/  README.md  LICENSE
-# Root-owned, world-readable: the app READS its model and never rewrites it — install.sh's
-# posture for the binaries, for the same reason. A process that gets compromised should not be
-# able to leave anything behind in a directory the app loads from.
-sudo chown -R root:root /var/lib/shelfaware/models
-sudo chmod -R a+rX /var/lib/shelfaware/models
+# A minimal Ubuntu image ships no bzip2, and GNU tar shells out to it to read a .tar.bz2.
+# Checked against the hash measured for this archive -- the same one the CI bootstrap checks
+# (.github/workflows/deploy-droplet.yml) -- because it sits on a mutable release tag and is unpacked
+# as root. Downloaded and unpacked in a fresh root-only directory, moved in only once verified, whole
+# and root-owned; why each of those matters is in deploy-moonshine.md step 1.
+{ command -v bzip2 >/dev/null || { apt-get update && apt-get install -y bzip2; }; } \
+  && M=/var/lib/shelfaware/models && V=kokoro-int8-en-v0_19 \
+  && mkdir -p "$M" && cd -P "$M" \
+  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u .)" = 0 ]; } \
+       || { echo "$M is not a root-owned directory at that path; not installing into it."; false; }; } \
+  && { { [ ! -e "./$V" ] && [ ! -L "./$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
+  && T=$(mktemp -d) \
+  && curl -fsSL --proto '=https' -o "$T/$V.tar.bz2" \
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$V.tar.bz2" \
+  && { echo "c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd  $T/$V.tar.bz2" | sha256sum -c - \
+       || { rm -rf "$T"; false; }; } \
+  && tar xjf "$T/$V.tar.bz2" -C "$T" --no-same-owner --no-same-permissions \
+  && chown -R root:root "$T/$V" && chmod -R a+rX "$T/$V" \
+  && mv -T "$T/$V" "./$V" \
+  && rm -rf "$T" \
+  && ls "./$V"
+# model.int8.onnx  voices.bin  tokens.txt  espeak-ng-data/  README.md  LICENSE
 ```
 
 | Archive | Download | On disk | Voices | Notes |
@@ -201,29 +218,53 @@ The same reasoning gives the answer for a **development checkout**: `src\ShelfAw
 
 Windows 10 and 11 ship both `curl.exe` and `tar` (bsdtar), so there is nothing to install:
 
+⚠️ **Paste the block whole**: it is one `& { … }` script block so that a `throw` stops *all* of it —
+pasted as loose lines, a failed checksum would stop only its own line and the next would unpack the
+archive anyway. Why each part is there: [deploy-moonshine.md](deploy-moonshine.md) step 2.
+
 ```powershell
-$models = "$env:USERPROFILE\ShelfAware-server\app-data\models"
-New-Item -ItemType Directory -Path $models -Force | Out-Null
-curl.exe -L -o "$models\kokoro.tar.bz2" `
-  https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-en-v0_19.tar.bz2
-tar -xf "$models\kokoro.tar.bz2" -C $models
-Remove-Item "$models\kokoro.tar.bz2"
-Get-ChildItem "$models\kokoro-int8-en-v0_19"   # model.int8.onnx  voices.bin  tokens.txt  espeak-ng-data\
+& {
+  $ErrorActionPreference = 'Stop'
+  $models  = "$env:USERPROFILE\ShelfAware-server\app-data\models"
+  $name    = 'kokoro-int8-en-v0_19'
+  $archive = "$models\$name.tar.bz2"
+  $staging = "$models\.staging"
+  if (Test-Path "$models\$name") { throw "$name is already installed in $models." }
+  New-Item -ItemType Directory -Path $models -Force | Out-Null
+  curl.exe -fL --proto '=https' -o $archive "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$name.tar.bz2"
+  if ($LASTEXITCODE -ne 0) { throw "The download failed (curl exit $LASTEXITCODE)." }
+  if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne 'c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd') {
+    Remove-Item $archive
+    throw "$name did not match its recorded sha256 -- not unpacked."
+  }
+  Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Path $staging | Out-Null
+  & "$env:SystemRoot\System32\tar.exe" -xf $archive -C $staging
+  if ($LASTEXITCODE -ne 0) { throw "tar could not unpack $archive." }
+  Move-Item "$staging\$name" "$models\$name"
+  Remove-Item $staging, $archive -Recurse -Force
+  Get-ChildItem "$models\$name"   # model.int8.onnx  voices.bin  tokens.txt  espeak-ng-data\
+}
 ```
 
 ⚠️ **`curl.exe`, with the extension, not `curl`.** In Windows PowerShell `curl` is an *alias for
-`Invoke-WebRequest`*, which is a different program with different switches — it has no `-L`, so pasting
-step 2's Linux line gets you "A parameter cannot be found that matches parameter name 'L'" rather than a
-download. Spelling out `curl.exe` bypasses the alias and runs the real curl, where `-L` (follow the
-redirect GitHub answers a release download with) and `-o` mean what they do everywhere else.
+`Invoke-WebRequest`*, which is a different program with different switches — `curl -L …` typed at a
+PowerShell prompt gets you "A parameter cannot be found that matches parameter name 'L'" rather than a
+download. (Step 2's Linux block will not even parse there: Windows PowerShell has no `&&`.) Spelling out
+`curl.exe` bypasses the alias and runs the real curl, where `-f`, `-L` (follow the redirect GitHub
+answers a release download with) and `-o` mean what they do everywhere else.
 
 `Invoke-WebRequest -OutFile` works too, and needs no `-L` because it follows redirects on its own. If you
 use it, set `$ProgressPreference = 'SilentlyContinue'` first — its progress bar re-renders per chunk and
-can turn a 103 MB download into a several-minute one.
+can turn a 103 MB download into a several-minute one. Swap it in for the `curl.exe` line *inside* the
+block, so the checksum still stands between the download and the unpack.
 
-If that `tar` build turns out not to carry bzip2, 7-Zip unpacks it in two passes (`.tar.bz2` → `.tar` →
-the folder). Either way what must end up on disk is a `kokoro-int8-en-v0_19` directory containing those
-four things — the app checks all four by name and refuses to boot if any is missing.
+The block names `System32\tar.exe` rather than a bare `tar`: with Git's Unix tools on the PATH, `tar`
+can resolve to GNU tar, which reads `C:\…` as a remote host named `C` and fails. Windows' own is bsdtar,
+and the build shipped with Windows 11 (3.8.8) reads `.bz2`. If an older one turns out not to, 7-Zip
+unpacks it in two passes (`.tar.bz2` → `.tar` → the folder) — after the checksum, not instead of it.
+Either way what must end up on disk is a `kokoro-int8-en-v0_19` directory containing those four things —
+the app checks all four by name and refuses to boot if any is missing.
 
 ### Prove it speaks — before the app is told about it
 
