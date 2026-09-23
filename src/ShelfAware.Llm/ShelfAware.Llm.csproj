@@ -7,6 +7,7 @@
   <ItemGroup>
     <PackageReference Include="Anthropic" Version="12.29.0" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.7.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.9" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.9" />
     <!-- Kokoro-82M runs in this process through sherpa-onnx (Apache-2.0): raw text in, samples out, no

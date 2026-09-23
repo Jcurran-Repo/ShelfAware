@@ -12,20 +12,72 @@ namespace ShelfAware.Llm;
 /// reply can start speaking while the rest of it is still being made, instead of arriving in gaps. See
 /// <c>docs/deploy-piper.md</c>.</para>
 /// </summary>
-public sealed class PiperSpeechOptions() : SherpaTtsOptions(SectionName, "piper", "en_US-lessac-medium.onnx")
+public sealed class PiperSpeechOptions() : SherpaTtsOptions(SectionName, "piper", defaultModelFile: null)
 {
     public const string SectionName = "Speech:Piper";
+
+    /// <summary>What sherpa-onnx puts in front of the voice's name when it packages a Piper voice:
+    /// <c>vits-piper-en_US-ryan-high</c> holds <c>en_US-ryan-high.onnx</c>.</summary>
+    public const string ArchivePrefix = "vits-piper-";
 
     /// <inheritdoc />
     protected override string DirectoryHint =>
         "an unpacked sherpa-onnx Piper/VITS model. See docs/deploy-piper.md.";
 
     /// <inheritdoc />
-    /// <remarks>⚠️ Defaulted to the voice the deploy bootstrap unpacks, not to a name that is right for
-    /// every archive — Piper names its weights after the voice (<c>en_US-lessac-medium.onnx</c>,
-    /// <c>en_US-libritts_r-medium.onnx</c>), so a box running a different archive must say which.</remarks>
+    /// <remarks>
+    /// ⚠️ Worked out from the directory, not fixed. Piper names its weights after the voice, so a fixed
+    /// default is only right for one voice — and it used to be, which made every voice change a TWO-line
+    /// edit where forgetting the second line was a box that refused to boot. Worse, changing that one
+    /// default would have stranded every box whose env file named the old voice's directory: the deploy
+    /// lands, the file the new default names is not in the old directory, and the app will not start.
+    /// Read off the archive's own name instead, a voice is one line (the directory) on every box, and no
+    /// box is stranded by a new voice becoming the recommended one.
+    /// <para>The rule is sherpa-onnx's packaging. ⚠️ Including its quantized builds, which keep the
+    /// voice's plain name: <c>vits-piper-en_US-ryan-high-int8</c> holds <c>en_US-ryan-high.onnx</c>, not
+    /// <c>en_US-ryan-high-int8.onnx</c> — found by unpacking one, not by reading about it. The archive
+    /// name still differs, so the cache still tells the two builds apart. A directory that does not
+    /// follow the rule — renamed by hand, or a voice packaged some other way — resolves to nothing, and
+    /// <see cref="SherpaTtsOptions.Invalid"/> refuses naming the setting rather than letting a guess reach
+    /// native code.</para>
+    /// </remarks>
+    protected override string DefaultModelFile
+    {
+        get
+        {
+            if (!ArchiveName.StartsWith(ArchivePrefix, StringComparison.Ordinal)) return "";
+
+            var voice = ArchiveName[ArchivePrefix.Length..];
+            if (QuantizedBuildSuffixes.FirstOrDefault(s => voice.EndsWith(s, StringComparison.Ordinal)) is { } suffix)
+                voice = voice[..^suffix.Length];
+
+            return voice.Length == 0 ? "" : voice + ".onnx";
+        }
+    }
+
+    /// <summary>What sherpa-onnx appends to a Piper archive's name for a quantized build of the same voice
+    /// — which, unlike the prefix, is NOT carried into the weights' file name.</summary>
+    private static readonly string[] QuantizedBuildSuffixes = ["-int8", "-fp16"];
+
+    /// <inheritdoc />
+    /// <remarks>Two sentences, because the refusal it completes has two causes: a setting given blank,
+    /// or a directory whose name there was nothing to work the weights' name out from.</remarks>
     protected override string ModelFileHint =>
-        "(Piper names it after the voice, e.g. en_US-lessac-medium.onnx).";
+        ModelFileIsSet
+            ? "(Piper names it after the voice, e.g. en_US-ryan-high.onnx)."
+            : $"— it is worked out from a {ArchivePrefix}<voice> directory name when not set, and "
+              + $"'{ArchiveName}' is not one. Set it to the weights' file name (Piper names them after the "
+              + "voice, e.g. en_US-ryan-high.onnx).";
+
+    /// <inheritdoc />
+    /// <remarks>Only when the name was WORKED OUT and is the thing missing: then the path alone does not
+    /// say that it was a guess, or which line to add if the archive names its weights some other way. A
+    /// name the operator set needs no advice to set it.</remarks>
+    protected override string? MissingAdvice(IReadOnlyList<string> missing) =>
+        !ModelFileIsSet && missing.Contains(PiperModelFiles.In(ModelDirectory, ModelFile).Model)
+            ? $"{ModelFile} was worked out from the directory's name; if this archive names its weights "
+              + $"differently, set {Section}:ModelFile to their file name."
+            : null;
 
     /// <inheritdoc />
     public override ISherpaTtsModel Model() => PiperModelFiles.In(ModelDirectory, ModelFile);

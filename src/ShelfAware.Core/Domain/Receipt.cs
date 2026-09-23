@@ -29,6 +29,21 @@ public class Receipt : IHouseholdOwned
     /// only; a re-confirm is a no-op and must not move it.</summary>
     public DateTimeOffset? ConfirmedAt { get; set; }
 
+    /// <summary>When this receipt was UPLOADED — stamped once, where the row is created, so it is true
+    /// of a receipt that is still sitting in review as much as of a confirmed one. Distinct from both
+    /// <see cref="PurchasedAt"/> (the date printed on the paper, which can be weeks older than the
+    /// upload) and <see cref="ConfirmedAt"/> (when the review was finished, which never happens for an
+    /// abandoned one).
+    /// <para>It exists because the receipt-reminder banner measures a household's UPLOAD rhythm, and
+    /// neither of the other two dates is that: reminding someone to upload a receipt seconds after they
+    /// uploaded one — because the trip it records was a fortnight ago, or because they haven't finished
+    /// reviewing it — is the one thing the banner must never do. See
+    /// <see cref="Ingest.UploadCadence"/>.</para>
+    /// <para>Null on receipts that predate the column (2026-09-22); <c>AdditiveSchema</c> backfills what
+    /// it honestly can from <see cref="ConfirmedAt"/>, and a row with neither simply contributes no
+    /// upload day — the cadence is taken over the days it can actually see.</para></summary>
+    public DateTimeOffset? UploadedAt { get; set; }
+
     /// <summary>The receipt's OWN printed money figures, captured once at extraction — distinct from the
     /// line-item sum <see cref="ReceiptTotals"/> computes, which can differ by tax, per-unit rounding,
     /// and discount lines that are never stored as items. Null when the receipt didn't print the figure,

@@ -73,7 +73,7 @@ public class SherpaTtsEngineTests
         var directory = ModelDirectory("model.onnx", "voices.bin", "tokens.txt", "espeak-ng-data");
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => Engine(
-            new KokoroSpeechOptions { ModelDirectory = directory, ModelFile = "model.int8.onnx" }).GenerateAsync("hello"));
+            new KokoroSpeechOptions { ModelDirectory = directory, ModelFileSetting = "model.int8.onnx" }).GenerateAsync("hello"));
         Assert.Contains("model.int8.onnx", ex.Message);
 
         // The same directory, asked for the file it actually holds, has nothing missing. (Loading it would
@@ -143,6 +143,40 @@ public class SherpaTtsEngineTests
     {
         Assert.Null(new KokoroSpeechOptions { ModelDirectory = "models/kokoro" }.Invalid());
         Assert.Null(new KokoroSpeechOptions { ModelDirectory = "models/kokoro", Speed = 1.0, NumThreads = 1 }.Invalid());
+    }
+
+    /// <summary>⚠️ Matcha's own rule rides the SAME <c>Invalid</c> the other families' rules do, which is
+    /// what makes "the settings are valid" one question. A family rule answered by a second method would
+    /// be a rule registration asks and the engine does not, or the reverse — and the engine is the one
+    /// holding the synthesis gate when it finds out.</summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Matcha_needs_a_vocoder_and_says_so_through_the_shared_settings_rule(string vocoder)
+    {
+        var options = new MatchaSpeechOptions { ModelDirectory = "models/matcha", VocoderFile = vocoder };
+
+        // Coalesced rather than asserted non-null first: Invalid() is nullable by design (null means
+        // "nothing wrong"), and this keeps the failure message the one worth reading.
+        Assert.Contains("Speech:Matcha:VocoderFile", options.Invalid() ?? "(no refusal at all)");
+    }
+
+    [Fact]
+    public void A_matcha_voice_with_its_vocoder_named_is_reported_as_fine()
+    {
+        Assert.Null(new MatchaSpeechOptions { ModelDirectory = "models/matcha" }.Invalid());
+    }
+
+    /// <summary>The families with no rule of their own must not have acquired one: the hook defaults to
+    /// null, and a family that started refusing settings the others accept would be a boot failure nobody
+    /// could read.</summary>
+    [Fact]
+    public void The_families_without_a_rule_of_their_own_add_no_refusal()
+    {
+        // Named like a real archive: Piper reads its weights' name off the directory, and a bare "piper"
+        // has no name to read — a refusal of its own (PiperModelFileTests), not the one this case is about.
+        Assert.Null(new PiperSpeechOptions { ModelDirectory = "models/vits-piper-en_US-ryan-high" }.Invalid());
+        Assert.Null(new KittenSpeechOptions { ModelDirectory = "models/kitten" }.Invalid());
     }
 
     // A caller that walked away before the model was even asked must see the cancel, not a load.

@@ -105,7 +105,7 @@ the app's only page outside the auth wall.
 |---|---|
 | An entity, a write path, tenancy, the schema seam | `docs/architecture.md` |
 | Your first build; a shell, path or deploy oddity | `docs/environment.md` |
-| Anything that speaks or listens | `docs/features/voice.md` |
+| Anything that speaks or listens | `docs/features/voice.md`; choosing a voice, `docs/voice-bakeoff.md` |
 | Recipes, tags, substitutes, the cookbook | `docs/features/recipes.md` |
 | Billing, credits, tiers, the payment seam | `docs/subscription-plan.md` |
 | The audit findings and the plan to close them | `docs/remediation-plan.md` |

@@ -477,6 +477,9 @@ public sealed class DemoDataSeeder(
                     // already accounted for. Null would be read as "confirmed before the column
                     // existed" — true of old rows, a lie about these.
                     ConfirmedAt = new DateTimeOffset(date.ToDateTime(new TimeOnly(18, 30))),
+                    // Uploaded on the way in from the trip, which is the sample household's habit and what
+                    // gives the seeded catalog an upload rhythm the receipt-reminder banner can read.
+                    UploadedAt = new DateTimeOffset(date.ToDateTime(new TimeOnly(18, 25))),
                 };
             return receipt;
         }
@@ -617,6 +620,7 @@ public sealed class DemoDataSeeder(
             ImagePath = "demo/no-image",
             Status = ReceiptStatus.Confirmed,
             ConfirmedAt = new DateTimeOffset(when.ToDateTime(new TimeOnly(18, 30))),
+            UploadedAt = new DateTimeOffset(when.ToDateTime(new TimeOnly(18, 25))),
         };
         receipt.Lines.Add(new ReceiptLine
         {
@@ -678,6 +682,10 @@ public sealed class DemoDataSeeder(
             PurchasedAt = new DateOnly(2026, 6, 10),
             ImagePath = imagePath,
             Status = ReceiptStatus.PendingReview,
+            // Uploaded the day of the trip and then abandoned in review — the fixed date is the one
+            // printed on the picture (see the note above), and an upload that was never finished is
+            // still an upload, so it belongs in the household's rhythm like any other.
+            UploadedAt = new DateTimeOffset(new DateOnly(2026, 6, 10).ToDateTime(new TimeOnly(18, 25))),
             RawModelJson = DemoReceiptRawJson,
             Lines =
             [
@@ -714,6 +722,10 @@ public sealed class DemoDataSeeder(
         PurchasedAt = today.AddDays(-2),
         ImagePath = "demo/no-image",
         Status = ReceiptStatus.PendingReview,
+        // Uploaded on the day of the trip and left in review. An unfinished upload is still an upload, so
+        // it counts toward the household's rhythm exactly as the other pending receipt's does — leaving
+        // this one NULL would have made the seed contradict the sibling's own comment.
+        UploadedAt = new DateTimeOffset(today.AddDays(-2).ToDateTime(new TimeOnly(18, 25))),
         RawModelJson = BrandMemoryRawJson,
         Lines =
         [
