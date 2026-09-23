@@ -162,9 +162,13 @@ public sealed class LocalVoiceFamilyRegistrationTests : IDisposable
 
         if (withModels)
         {
+            // ⚠️ Looked up case-INSENSITIVELY, because one of the cases above deliberately passes
+            // "kitten" to prove the app reads the setting that way. The model directory it configures
+            // still has to be Kitten's; a helper that matched on spelling would fail those cases for a
+            // reason that has nothing to do with what they are testing.
             List<(string Family, string Section)> families = configureEveryFamily
-                ? [.. EveryLocalFamily.Select(row => ((string)row[0], (string)row[1]))]
-                : [(provider, SectionOf(provider))];
+                ? [.. Families]
+                : [Canonical(provider)];
 
             foreach (var (family, section) in families)
                 settings[$"{section}:ModelDirectory"] = AModelFor(family);
@@ -181,8 +185,13 @@ public sealed class LocalVoiceFamilyRegistrationTests : IDisposable
         return scope.ServiceProvider.GetRequiredService<ITextToSpeech>().OutputFingerprint;
     }
 
-    private static string SectionOf(string provider) =>
-        (string)EveryLocalFamily.Single(row => (string)row[0] == provider)[1];
+    /// <summary>The families as a typed sequence rather than as theory rows.</summary>
+    private static IEnumerable<(string Family, string Section)> Families =>
+        EveryLocalFamily.Select(row => ((string)row[0], (string)row[1]));
+
+    /// <summary>The canonically-spelled family a provider setting names, however it was typed.</summary>
+    private static (string Family, string Section) Canonical(string provider) =>
+        Families.Single(f => string.Equals(f.Family, provider, StringComparison.OrdinalIgnoreCase));
 
     // DI may wrap a registration exception in a factory error, so assert against the whole chain.
     private static string DeepMessage(Exception ex)

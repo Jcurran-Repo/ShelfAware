@@ -45,12 +45,8 @@ public sealed class PiperRegistrationTests : IDisposable
         Assert.StartsWith("piper", FingerprintFor(provider: "Piper", modelDirectory: AModel()));
     }
 
-    // Case-insensitively, like every other enum-from-config in the app.
-    [Fact]
-    public void The_provider_setting_is_case_insensitive()
-    {
-        Assert.StartsWith("piper", FingerprintFor(provider: "piper", modelDirectory: AModel()));
-    }
+    // "The provider setting is read case-insensitively" was a Piper fact here; it is now asserted for
+    // every family at once in LocalVoiceFamilyRegistrationTests.
 
     /// <summary>⚠️ The sharp one. Both sections configured, and the provider decides — not the presence of
     /// a section. A box moving from Kokoro to Piper keeps its old settings in the env file (that is how a
