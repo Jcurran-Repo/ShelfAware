@@ -196,8 +196,9 @@ public class SherpaTtsModelTests
         files.Apply(ref config);
 
         Assert.NotEmpty(PathsIn(config.Model, blockName));
+        // PathsIn already drops the empty strings, so an empty result IS an untouched block.
         foreach (var other in FamilyBlockNames.Where(n => n != blockName))
-            Assert.Empty(PathsIn(config.Model, other).Where(p => p.Length > 0));
+            Assert.Empty(PathsIn(config.Model, other));
     }
 
     /// <summary>Every model-family block <see cref="OfflineTtsModelConfig"/> carries, read from the type

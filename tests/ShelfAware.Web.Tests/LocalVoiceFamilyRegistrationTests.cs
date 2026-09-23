@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using ShelfAware.Core.Speech;
 using ShelfAware.Llm;
+using ShelfAware.Web.Data;
 using ShelfAware.Web.Services;
 
 namespace ShelfAware.Web.Tests;
@@ -161,8 +162,8 @@ public sealed class LocalVoiceFamilyRegistrationTests : IDisposable
 
         if (withModels)
         {
-            var families = configureEveryFamily
-                ? EveryLocalFamily.Select(row => ((string)row[0], (string)row[1]))
+            List<(string Family, string Section)> families = configureEveryFamily
+                ? [.. EveryLocalFamily.Select(row => ((string)row[0], (string)row[1]))]
                 : [(provider, SectionOf(provider))];
 
             foreach (var (family, section) in families)

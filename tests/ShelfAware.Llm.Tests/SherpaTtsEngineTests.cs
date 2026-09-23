@@ -156,7 +156,9 @@ public class SherpaTtsEngineTests
     {
         var options = new MatchaSpeechOptions { ModelDirectory = "models/matcha", VocoderFile = vocoder };
 
-        Assert.Contains("Speech:Matcha:VocoderFile", options.Invalid());
+        // Coalesced rather than asserted non-null first: Invalid() is nullable by design (null means
+        // "nothing wrong"), and this keeps the failure message the one worth reading.
+        Assert.Contains("Speech:Matcha:VocoderFile", options.Invalid() ?? "(no refusal at all)");
     }
 
     [Fact]
