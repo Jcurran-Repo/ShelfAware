@@ -1,0 +1,221 @@
+name: Voice bake-off
+
+# Renders the SAME sentence through every local voice we can run, and uploads the clips so a person can
+# listen to them side by side. It exists because "which voice should this box run" is two questions --
+# does it sound good, and is it fast enough -- and only one of them can be answered by reading.
+#
+# ⚠️ THE RATES THIS PRINTS ARE THE RUNNER'S, NOT A DROPLET'S. A GitHub runner is a modern dedicated core;
+# the demo droplet is a 2 GHz shared one with no AVX-512 VNNI, where Kokoro measured 3.1x real time
+# against the runner's fraction of that. Use this run to pick a voice by EAR, then confirm the winner is
+# under 1.0x on the box itself with tools/VoiceCheck. See docs/voice-bakeoff.md.
+#
+# Manual only. It downloads about a gigabyte of models and has no business running on a push.
+
+on:
+  workflow_dispatch:
+    inputs:
+      voices:
+        description: 'Which lineup: "all", or a space-separated list of ids (see the table in docs/voice-bakeoff.md)'
+        required: false
+        default: 'all'
+
+permissions:
+  contents: read
+
+jobs:
+  bakeoff:
+    name: Render every voice
+    runs-on: ubuntu-latest
+    # About a gigabyte of models and two syntheses per lineup row. Bounded like the mutation workflows
+    # are, so a stall cannot hold a runner for six hours.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          # The repo's own toolchain, for the reason ci.yml gives: a workflow that names its own
+          # version is a workflow whose green says nothing about the repo.
+          global-json-file: global.json
+
+      - name: Install bzip2
+        # tar shells out to bzip2 for .tar.bz2 and the runner image does not always carry it -- the
+        # droplet deploy hit exactly this (PR #73).
+        run: sudo apt-get update && sudo apt-get install -y bzip2
+
+      - name: Build VoiceCheck
+        run: dotnet build tools/VoiceCheck --configuration Release
+
+      - name: Render the lineup
+        env:
+          WANTED: ${{ inputs.voices }}
+        run: |
+          set -euo pipefail
+          mkdir -p clips models
+          RELEASES=https://github.com/k2-fsa/sherpa-onnx/releases/download
+
+          # ⚠️ Recorded sha256 per archive, for the reason deploy-droplet.yml's bootstrap gives: these
+          # are release ASSETS on a MUTABLE tag, so "the bytes we measured" and "whatever that URL
+          # serves today" are different promises. Verified before anything is unpacked, here and in the
+          # by-hand instructions in docs/voice-bakeoff.md -- which are run as root on a box holding real
+          # households' receipts, and are the ones a person will copy and paste.
+          # One entry per ARCHIVE, not per clip: three rows below share the LibriTTS-R file and three
+          # share Kitten nano, and a hash written out per row is a hash that will disagree with itself.
+          sha_for() {
+            case "$1" in
+              vits-piper-en_US-lessac-medium) echo 9e3febfacf0abf4270172d2958bcec246032b7e88efc2720840cc80c93de334e;;
+              vits-piper-en_US-lessac-high)   echo 8619d204c7005866fe4f420181dfa79622af6a6222389f0b0818d2af31e0db0e;;
+              vits-piper-en_US-ryan-high)     echo 6a71edf4d308b9cb2eaeadc8d1f3c6bf96120ecb7fe52c29a2b6e139c59760ed;;
+              vits-piper-en_US-ryan-medium)   echo c546af78b6395b4e7c4ce1ed899438b64426a362f5d4ec5fecd090ded9ad7505;;
+              vits-piper-en_US-amy-medium)    echo 9a5d1fc497f85e8022b785bff5f8105203b1e33099ee6265203efc70b0cb0264;;
+              vits-piper-en_GB-cori-high)     echo 42922f07738fcde2e49eed4e959635692f73b933de35a6b7c1010162ff566292;;
+              vits-piper-en_US-libritts_r-medium) echo 10dc268f3e371696d721486123e2705a9fc1faa113491979fde4d88dba1f1b1c;;
+              kitten-nano-en-v0_1-fp16)       echo f35dac93754fe2ac97c66e1f468311d0d2130f7f0f5a89bfa1197e09a0cbdec5;;
+              kitten-mini-en-v0_1-fp16)       echo a12bdf4f68a509527802c01b258d63a99e2c86550d7960726f23a7ad21bdbcb8;;
+              matcha-icefall-en_US-ljspeech)  echo ea75702da7456a8b1874728278a835220dc8a26f4e8bd93c83bf53dc27679845;;
+              kokoro-int8-en-v0_19)           echo c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd;;
+              *) echo "::error::No recorded sha256 for $1; refusing to unpack it." >&2; return 1;;
+            esac
+          }
+
+          # -f so an HTTP error page cannot become a model file (curl writes the body and exits 0
+          # without it), and --proto so a redirect cannot walk the download off HTTPS.
+          get() { curl -fsSL --proto '=https' --proto-redir '=https' --retry 3 -o "$1" "$2"; }
+
+          fetch() {
+            local dir="$1" url="$2" sha
+            [ -d "models/$dir" ] && return 0
+            sha=$(sha_for "$dir")
+            get archive.tar.bz2 "$url"
+            echo "$sha  archive.tar.bz2" | sha256sum -c - \
+              || { echo "::error::$dir did not match its recorded sha256; not unpacking it."; rm -f archive.tar.bz2; exit 1; }
+            # Staged, then moved whole: the guard above is "is the directory there", so a
+            # half-extraction would read as unpacked forever. --no-same-owner --no-same-permissions
+            # because an archive may carry a setuid bit and tar will happily preserve it.
+            rm -rf .staging && mkdir .staging
+            tar xjf archive.tar.bz2 -C .staging --no-same-owner --no-same-permissions
+            mv ".staging/$dir" "models/$dir"
+            rm -rf .staging archive.tar.bz2
+          }
+
+          # id | family | archive | speaker | note
+          # One row per clip. A Piper archive names its weights after the voice, and VoiceCheck reads
+          # that name off the archive's, so no row types it.
+          LINEUP=$(cat <<'ROWS'
+          piper-ryan-medium|piper|vits-piper-en_US-ryan-medium|0|Male, medium: the demo box's voice, the control
+          piper-lessac-medium|piper|vits-piper-en_US-lessac-medium|0|The demo's voice before Ryan
+          piper-lessac-high|piper|vits-piper-en_US-lessac-high|0|Same speaker, higher-quality model
+          piper-ryan-high|piper|vits-piper-en_US-ryan-high|0|Male, high: 0.8-0.95x on the demo droplet, at the line
+          piper-amy-medium|piper|vits-piper-en_US-amy-medium|0|Female, medium
+          piper-cori-high|piper|vits-piper-en_GB-cori-high|0|British English, high
+          piper-libritts-0|piper|vits-piper-en_US-libritts_r-medium|0|LibriTTS-R, 904 speakers in one file
+          piper-libritts-40|piper|vits-piper-en_US-libritts_r-medium|40|LibriTTS-R, another speaker
+          piper-libritts-109|piper|vits-piper-en_US-libritts_r-medium|109|LibriTTS-R, another speaker
+          kitten-nano-0|kitten|kitten-nano-en-v0_1-fp16|0|KittenTTS nano, voice 0
+          kitten-nano-2|kitten|kitten-nano-en-v0_1-fp16|2|KittenTTS nano, voice 2
+          kitten-nano-5|kitten|kitten-nano-en-v0_1-fp16|5|KittenTTS nano, voice 5
+          kitten-mini-0|kitten|kitten-mini-en-v0_1-fp16|0|KittenTTS mini, the larger of the two
+          matcha-ljspeech|matcha|matcha-icefall-en_US-ljspeech|0|Matcha-TTS, acoustic model plus vocoder
+          kokoro-0|kokoro|kokoro-int8-en-v0_19|0|Kokoro, the family box's voice, the other control
+          ROWS
+          )
+
+          # An empty input would match no id, skip every row, and finish green with nothing to
+          # listen to -- a run that looks like it worked. Not reachable from the UI's default, but it is
+          # from the API.
+          if [ -z "$WANTED" ]; then
+            echo "::error::voices was empty. Use 'all', or a space-separated list of lineup ids."
+            exit 1
+          fi
+
+          echo "| Voice | Family | x real time | Notes |" > summary.md
+          echo "|---|---|---|---|" >> summary.md
+
+          while IFS='|' read -r id family archive speaker note; do
+            if [ -z "$id" ]; then continue; fi
+            # Quoted, and matched with `case` rather than by splitting the input into a grep pattern:
+            # an unsplit string cannot glob against the workspace on the way past.
+            if [ "$WANTED" != "all" ]; then
+              case " $WANTED " in (*" $id "*) ;; (*) continue;; esac
+            fi
+
+            echo "::group::Fetching $archive"
+            fetch "$archive" "$RELEASES/tts-models/$archive.tar.bz2"
+            echo "::endgroup::"
+
+            # No --model-file for Piper: VoiceCheck works the weights' name out of the archive's own
+            # name exactly as the app does (PiperSpeechOptions), so a second copy of that rule here
+            # would only be a place for it to drift.
+            ARGS=(-- "$family" "models/$archive" "clips/$id.wav" "$speaker")
+            case "$family" in
+              matcha)
+                # ⚠️ The vocoder lives in a DIFFERENT release from the voice. Without it Matcha
+                # produces a spectrogram, and sherpa-onnx answers a missing file by killing the
+                # process rather than by saying so.
+                # ⚠️ Verified like the archives, and it matters MORE here: an unverified 404 body
+                # landing at this path passes MatchaModelFiles.Missing(), which is File.Exists and
+                # nothing else, and sherpa-onnx answers the resulting garbage by killing the process.
+                VOCODER="models/$archive/vocos-22khz-univ.onnx"
+                if [ ! -f "$VOCODER" ]; then
+                  get "$VOCODER.part" "$RELEASES/vocoder-models/vocos-22khz-univ.onnx"
+                  echo "0574a135aa1db2de6e181050db2ec528496cacd4a4701fc5d7faf9f9804c0081  $VOCODER.part" \
+                    | sha256sum -c - \
+                    || { echo "::error::The vocoder did not match its recorded sha256."; rm -f "$VOCODER.part"; exit 1; }
+                  mv "$VOCODER.part" "$VOCODER"
+                fi
+                ;;
+            esac
+
+            echo "::group::Rendering $id"
+            # Never let one voice fail the whole run: a lineup is most useful when the
+            # voices that worked are still listenable.
+            if dotnet run --project tools/VoiceCheck --configuration Release --no-build "${ARGS[@]}" \
+                 | tee "clips/$id.txt"; then
+              RATE=$(grep -oE 'roughly [0-9.]+x real time' "clips/$id.txt" | grep -oE '[0-9.]+' || echo '?')
+              echo "| $id | $family | $RATE | $note |" >> summary.md
+            else
+              echo "| $id | $family | FAILED | $note |" >> summary.md
+            fi
+            echo "::endgroup::"
+          done <<< "$(echo "$LINEUP" | sed 's/^ *//')"
+
+          {
+            echo '## Voice bake-off'
+            echo
+            cat summary.md
+            echo
+            # A QUOTED heredoc, because the note below has apostrophes in it and a shell reading one
+            # as a closing quote is a workflow that dies after every clip has already been rendered.
+            cat <<'NOTE'
+          > [!WARNING]
+          > These rates are **this runner's**, not a droplet's. The runner is a modern dedicated core;
+          > the demo droplet is a 2 GHz shared one with no AVX-512 VNNI, where Kokoro measured 3.1x real
+          > time. Pick a voice by EAR from the artifact, then confirm the winner is under 1.0x on the
+          > box itself with `tools/VoiceCheck` -- below 1.0x is where synthesis outruns playback.
+          NOTE
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ⚠️ Runs even when the render step failed. Everything OUTSIDE the per-voice `if` is fatal under
+      # `set -e` -- a checksum mismatch, a download, the job timeout -- and a failure on the last
+      # voice would otherwise discard every clip that already rendered, which is precisely what
+      # the render step's own isolation exists to prevent. Not `always()`: a cancelled run has nothing
+      # worth keeping.
+      - name: Upload the clips
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: voice-bakeoff
+          # Clips only. summary.md goes with them but cannot be the reason the guard below passes:
+          # it is written unconditionally, so including it here would make `error` unreachable and the
+          # guard a decoration. A run that rendered nothing must fail loudly.
+          path: clips/
+          if-no-files-found: error
+
+      - name: Upload the summary
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: voice-bakeoff-summary
+          path: summary.md
+          if-no-files-found: warn

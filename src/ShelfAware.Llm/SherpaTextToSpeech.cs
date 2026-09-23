@@ -43,21 +43,24 @@ public class SherpaTextToSpeech : ITextToSpeech
     /// Moving a model to a different disk does not change how it sounds, so it must not retire the clips
     /// it voiced; swapping in a different archive does, and it does.</para>
     /// <para>NumThreads is deliberately absent: it changes how LONG synthesis takes, not what comes out.</para>
+    /// <para>A family may add parts of its own through
+    /// <see cref="SherpaTtsOptions.FingerprintExtras"/> — Matcha's vocoder is a second file that decides
+    /// how the voice sounds, and there is no other family it would mean anything to. Appended rather than
+    /// interpolated, so a family with nothing to add produces exactly the string it produced before the
+    /// hook existed and no household's cache is retired by adding one.</para>
     /// </remarks>
-    public string OutputFingerprint => string.Join('|',
-        _options.Family,
-        ArchiveName,
-        _options.ModelFile,
-        _options.SpeakerId.ToString(CultureInfo.InvariantCulture),
-        _options.Speed.ToString(CultureInfo.InvariantCulture),
-        "wav",
-        _options.NormalizeText ? "norm" + SpeechText.Version : "raw");
-
-    /// <summary>The model directory's leaf name, which is the archive's name as sherpa-onnx ships it.
-    /// Trailing separators are trimmed first so <c>/models/kokoro/</c> and <c>/models/kokoro</c> — the
-    /// same model, written two ways — cannot fingerprint differently and silently re-synthesize everything.</summary>
-    private string ArchiveName =>
-        Path.GetFileName(_options.ModelDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+    public string OutputFingerprint => string.Join('|', new[]
+        {
+            _options.Family,
+            _options.ArchiveName,
+            // The RESOLVED name — for Piper, the one read off the directory when the setting is absent.
+            // Reading the raw setting here would key two different voices to the same clips.
+            _options.ModelFile,
+            _options.SpeakerId.ToString(CultureInfo.InvariantCulture),
+            _options.Speed.ToString(CultureInfo.InvariantCulture),
+            "wav",
+            _options.NormalizeText ? "norm" + SpeechText.Version : "raw",
+        }.Concat(_options.FingerprintExtras));
 
     /// <inheritdoc />
     public string OutputMediaType => WaveAudio.MediaType;
