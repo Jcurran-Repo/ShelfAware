@@ -570,12 +570,7 @@ public class AiActionScopeSiteTests
     /// body, which is what they are.</summary>
     private static IEnumerable<(string File, SyntaxTree Tree)> Trees()
     {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "ShelfAware.slnx")))
-            dir = dir.Parent;
-        Assert.NotNull(dir); // no solution above the test assembly — the walk is wrong, not the sources
-
-        var src = Path.Combine(dir!.FullName, "src");
+        var src = RepoTree.DirectoryAt("src");
         foreach (var file in Directory.EnumerateFiles(src, "*.cs", SearchOption.AllDirectories))
         {
             if (file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")

@@ -17,10 +17,20 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Using Include="ShelfAware.TestSupport" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\ShelfAware.Core\ShelfAware.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- ⚠️ The repo-root walk, linked as SOURCE rather than copied. ShelfAware.Tests sees only Core and
+         ShelfAware.Web.UI.Tests sees Web, so there is no dependency path between the two projects that
+         both need it — and inventing one so an engine suite could reference a Blazor suite would be the
+         wrong shape. A linked file is how they get ONE definition of where the repository is. It had
+         four; RepoRootWalkRulesTests is what keeps it at one. -->
+    <Compile Include="..\Shared\RepoTree.cs" Link="Shared\RepoTree.cs" />
   </ItemGroup>
 
 </Project>

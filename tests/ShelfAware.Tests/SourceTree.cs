@@ -35,7 +35,7 @@ internal static class SourceTree
 
     internal static IEnumerable<(string File, SyntaxTree Tree)> Of(string[] scope, bool includeRazor)
     {
-        var dir = Root();
+        var dir = RepoTree.Root();
 
         foreach (var entry in scope)
         {
@@ -78,16 +78,6 @@ internal static class SourceTree
                 yield return (file, tree);
             }
         }
-    }
-
-    /// <summary>The solution directory above the test assembly.</summary>
-    internal static DirectoryInfo Root()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "ShelfAware.slnx")))
-            dir = dir.Parent;
-        Assert.NotNull(dir); // no solution above the test assembly — the walk is wrong, not the sources
-        return dir!;
     }
 
     private static bool Generated(string file) =>
