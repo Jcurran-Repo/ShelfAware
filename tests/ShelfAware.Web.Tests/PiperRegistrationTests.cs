@@ -8,20 +8,22 @@ using ShelfAware.Web.Services;
 namespace ShelfAware.Web.Tests;
 
 /// <summary>
-/// Composition of the Piper mouth — the second local voice, and the first time
-/// <see cref="SpeechRegistration.AddSpeech"/> has had to choose between two families of the same shape.
+/// Composition of the Piper mouth, in depth: every part of its model directory and every setting it can
+/// get wrong. The rules that are about the SET of families rather than about Piper — which one the
+/// provider selects, and that no two can be served each other's cached clips — are in
+/// <see cref="LocalVoiceFamilyRegistrationTests"/>, over all four at once.
 ///
 /// <para>Kokoro's half of this lives in <see cref="CachingTextToSpeechTests"/> and these are deliberately
 /// its twin, for the reason the ear's tests give: the refusals exist because sherpa-onnx answers a
 /// missing model file by printing one line to stderr and killing the process, so an incomplete directory
 /// has to be refused HERE, while something can still report it. Hence one case per part.</para>
 ///
-/// <para>⚠️ The cases that are NOT a twin are the ones that matter most: the two families each have their
-/// own settings section, and a box may carry both at once (that is the point — switching voices is meant
-/// to be a one-line change). So there are tests that the chosen family is the one that loads, and that
-/// its clips are fingerprinted under its own name. A box that loaded Piper's model and filed its clips as
-/// Kokoro's would serve the wrong voice from cache forever, silently, and no green test elsewhere would
-/// notice.</para>
+/// <para>⚠️ Each family has its own settings section and a box may carry them all at once (that is the
+/// point — switching voices is meant to be a one-line change). That the chosen family is the one that
+/// loads, and that its clips are fingerprinted under its own name, is asserted for every family at once
+/// in <see cref="LocalVoiceFamilyRegistrationTests"/>. A box that loaded Piper's model and filed its
+/// clips as Kokoro's would serve the wrong voice from cache forever, silently, and no green test
+/// elsewhere would notice.</para>
 /// </summary>
 public sealed class PiperRegistrationTests : IDisposable
 {
@@ -37,60 +39,15 @@ public sealed class PiperRegistrationTests : IDisposable
     // AModel writes are EMPTY, and a real load would die on them (sherpa answers an unreadable model with
     // a SIGSEGV). That property matters because the cache asks for the fingerprint on every lookup,
     // including every HIT — the case that exists to avoid doing work.
-    [Fact]
-    public void Speech_provider_piper_selects_the_in_process_model()
-    {
-        Assert.StartsWith("piper", FingerprintFor(provider: "Piper", modelDirectory: AModel()));
-    }
-
-    // Case-insensitively, like every other enum-from-config in the app.
-    [Fact]
-    public void The_provider_setting_is_case_insensitive()
-    {
-        Assert.StartsWith("piper", FingerprintFor(provider: "piper", modelDirectory: AModel()));
-    }
-
-    /// <summary>⚠️ The sharp one. Both sections configured, and the provider decides — not the presence of
-    /// a section. A box moving from Kokoro to Piper keeps its old settings in the env file (that is how a
-    /// person rolls back), so "Kokoro is configured" must not mean "Kokoro is running".</summary>
-    [Fact]
-    public void A_box_carrying_both_sections_runs_the_one_the_provider_names()
-    {
-        var fingerprint = FingerprintFor("Piper", AModel(), extra: new()
-        {
-            ["Speech:Kokoro:ModelDirectory"] = AKokoroModel(),
-        });
-
-        Assert.StartsWith("piper", fingerprint);
-    }
-
-    /// <summary>The same, the other way round — because a rule that only holds in one direction is half a
-    /// rule, and this is the direction the family box takes.</summary>
-    [Fact]
-    public void Kokoro_still_wins_when_both_sections_are_present_and_it_is_named()
-    {
-        var fingerprint = FingerprintFor("Kokoro", extra: new()
-        {
-            ["Speech:Kokoro:ModelDirectory"] = AKokoroModel(),
-            ["Speech:Piper:ModelDirectory"] = AModel(),
-        });
-
-        Assert.StartsWith("kokoro", fingerprint);
-    }
-
-    /// <summary>⚠️ The two families must not share a fingerprint prefix, or a household that switched
-    /// voices would be served its old clips forever — same key, different voice, no error anywhere.</summary>
-    [Fact]
-    public void The_two_local_families_fingerprint_differently()
-    {
-        var piper = FingerprintFor("Piper", AModel());
-        var kokoro = FingerprintFor("Kokoro", extra: new()
-        {
-            ["Speech:Kokoro:ModelDirectory"] = AKokoroModel(),
-        });
-
-        Assert.NotEqual(piper, kokoro);
-    }
+    //
+    // Three Piper-vs-Kokoro cases used to open this class: that the provider setting selects the
+    // in-process model, that a box carrying both sections runs the one the provider NAMES rather than the
+    // one it happens to have configured, and the same the other way round. So did a case pinning that the
+    // provider is read case-insensitively, and a pair asserting that Piper and Kokoro fingerprint under
+    // different names. All five were about the SET of families, and all five are now
+    // LocalVoiceFamilyRegistrationTests, over every family at once — six pairs is where writing them out
+    // one at a time stops being honest work, and a pair that only covered the two families that existed
+    // when it was written is a rule with a hole in it the moment a third arrives.
 
     [Fact]
     public void The_model_is_loaded_once_per_box_not_once_per_read()
@@ -124,9 +81,96 @@ public sealed class PiperRegistrationTests : IDisposable
         Assert.Contains(absent, DeepMessage(ex));
     }
 
-    /// <summary>A Piper archive names its weights after the voice, so a box running something other than
-    /// the bootstrapped default says which — and is refused by the same check when it is wrong, naming
-    /// the file it looked for rather than the one it expected.</summary>
+    /// <summary>⚠️ The case this rule exists for: pointing a box at a different voice is ONE line — the
+    /// directory — and the weights inside are found by the archive's own name. Changing voice used to take
+    /// two lines, and the second one forgotten was a box that would not start.</summary>
+    [Fact]
+    public void A_voice_is_found_by_its_directory_alone_with_no_model_file_setting()
+    {
+        var fingerprint = FingerprintFor("Piper", AModel(voice: "en_US-ryan-high"));
+
+        Assert.Contains("|vits-piper-en_US-ryan-high|en_US-ryan-high.onnx|", fingerprint);
+    }
+
+    /// <summary>
+    /// ⚠️ Binding a section that names only the directory must leave the model file UNSET. Found by a
+    /// probe, not by reasoning: the configuration binder reads a property's current value and writes it
+    /// back even when the section has no such key, so while the resolved name had a setter, every bind
+    /// came out "explicitly set" — to whatever it resolved to at that instant, which depended on whether
+    /// the binder had reached the directory yet. The advice to add the setting went missing, and a binder
+    /// that visited the properties in the other order would have frozen a blank name into a box that then
+    /// refused to boot. Bound here exactly as registration binds it.
+    /// </summary>
+    [Fact]
+    public void Binding_a_section_that_names_only_the_directory_leaves_the_model_file_unset()
+    {
+        var bound = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Speech:Piper:ModelDirectory"] = Path.Combine("models", "vits-piper-en_US-ryan-high"),
+            })
+            .Build()
+            .GetSection(PiperSpeechOptions.SectionName)
+            .Get<PiperSpeechOptions>()!;
+
+        Assert.False(bound.ModelFileIsSet);
+        Assert.Equal("en_US-ryan-high.onnx", bound.ModelFile);
+    }
+
+    /// <summary>And the setting still arrives under the key every env file already uses —
+    /// <c>Speech__Piper__ModelFile</c> — though the property it lands in is named for what it is.</summary>
+    [Fact]
+    public void The_model_file_setting_is_still_bound_from_the_ModelFile_key()
+    {
+        var bound = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Speech:Piper:ModelDirectory"] = Path.Combine("models", "vits-piper-en_US-ryan-high"),
+                ["Speech:Piper:ModelFile"] = "custom.onnx",
+            })
+            .Build()
+            .GetSection(PiperSpeechOptions.SectionName)
+            .Get<PiperSpeechOptions>()!;
+
+        Assert.True(bound.ModelFileIsSet);
+        Assert.Equal("custom.onnx", bound.ModelFile);
+    }
+
+    /// <summary>A directory named for one voice but holding another's weights is refused at boot, naming
+    /// the file it worked out AND the setting to add — a sentence, where the alternative is a SIGSEGV on
+    /// the first read-aloud.</summary>
+    [Fact]
+    public void A_worked_out_name_that_is_not_on_disk_is_refused_naming_it_and_the_setting()
+    {
+        var directory = AModel(voice: "en_US-ryan-high");
+        File.Move(
+            Path.Combine(directory, "en_US-ryan-high.onnx"),
+            Path.Combine(directory, "en_US-lessac-medium.onnx"));
+
+        var ex = Assert.ThrowsAny<Exception>(() => FingerprintFor("Piper", directory));
+
+        Assert.Contains("en_US-ryan-high.onnx", DeepMessage(ex));
+        Assert.Contains("Speech:Piper:ModelFile", DeepMessage(ex));
+    }
+
+    /// <summary>A directory renamed away from sherpa-onnx's <c>vits-piper-&lt;voice&gt;</c> packaging has
+    /// no name to work out, and is refused at boot naming the setting that would give it one.</summary>
+    [Fact]
+    public void A_directory_with_no_voice_in_its_name_is_refused_naming_the_setting()
+    {
+        var renamed = Path.Combine(_dir, "models", "renamed", "our-voice");
+        Directory.CreateDirectory(Path.GetDirectoryName(renamed)!);
+        Directory.Move(AModel(), renamed);
+
+        var ex = Assert.ThrowsAny<Exception>(() => FingerprintFor("Piper", renamed));
+
+        Assert.Contains("Speech:Piper:ModelFile", DeepMessage(ex));
+        Assert.Contains("'our-voice'", DeepMessage(ex));
+    }
+
+    /// <summary>A Piper archive names its weights after the voice, so a box running one whose weights are
+    /// named some other way says which — and is refused by the same check when it is wrong, naming the
+    /// file it looked for rather than the one it expected.</summary>
     [Fact]
     public void A_model_file_that_is_not_there_is_refused_naming_what_was_looked_for()
     {
@@ -150,8 +194,10 @@ public sealed class PiperRegistrationTests : IDisposable
         });
 
         // In the fingerprint, because a different set of weights is a different voice: clips made by one
-        // must not be served for the other.
+        // must not be served for the other. And the SETTING is what is there, not the name the directory
+        // would have given — an explicit ModelFile is the answer, derivation only the fallback.
         Assert.Contains("en_US-libritts_r-medium.onnx", fingerprint);
+        Assert.DoesNotContain("en_US-lessac-medium.onnx", fingerprint);
     }
 
     [Fact]
@@ -190,32 +236,20 @@ public sealed class PiperRegistrationTests : IDisposable
     /// checks that the three parts are on disk, which is all it can check without loading a model, and
     /// nothing in these tests gets as far as reading one — which is itself the assertion that resolving
     /// the voice does not touch native code.</summary>
-    private string AModel(string? except = null)
+    private string AModel(string? except = null, string voice = "en_US-lessac-medium")
     {
         // A directory of its own per case, so a test asking for an incomplete model can never be handed
-        // one another test already completed.
+        // one another test already completed. Named as sherpa-onnx packages it, because the weights'
+        // name is read off the directory's.
         var directory = Path.Combine(
-            _dir, "models", except ?? "complete", "vits-piper-en_US-lessac-medium");
+            _dir, "models", except ?? "complete", PiperSpeechOptions.ArchivePrefix + voice);
         Directory.CreateDirectory(directory);
 
-        foreach (var part in new[] { "en_US-lessac-medium.onnx", "tokens.txt" })
+        foreach (var part in new[] { voice + ".onnx", "tokens.txt" })
             if (part != except) File.WriteAllBytes(Path.Combine(directory, part), []);
 
         if (except != "espeak-ng-data") Directory.CreateDirectory(Path.Combine(directory, "espeak-ng-data"));
 
-        return directory;
-    }
-
-    /// <summary>The Kokoro twin of <see cref="AModel"/>, for the cases that configure both families.</summary>
-    private string AKokoroModel()
-    {
-        var directory = Path.Combine(_dir, "models", "kokoro", "kokoro-int8-en-v0_19");
-        Directory.CreateDirectory(directory);
-
-        foreach (var part in new[] { "model.int8.onnx", "voices.bin", "tokens.txt" })
-            File.WriteAllBytes(Path.Combine(directory, part), []);
-
-        Directory.CreateDirectory(Path.Combine(directory, "espeak-ng-data"));
         return directory;
     }
 

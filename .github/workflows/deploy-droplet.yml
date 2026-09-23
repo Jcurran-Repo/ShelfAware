@@ -34,7 +34,7 @@ on:
         required: false
         default: ''
       bootstrap:
-        description: 'Also do one-time box setup: swap file + the Kokoro and Moonshine models'
+        description: 'Also do box setup: swap file + the voice models (Piper voices, Kokoro) and Moonshine. Re-run to fetch a newly added voice'
         type: boolean
         required: false
         default: false
@@ -130,8 +130,32 @@ jobs:
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bzip2
           fi
 
-          mkdir -p /var/lib/shelfaware/models
-          cd /var/lib/shelfaware/models
+          # ⚠️ /var/lib/shelfaware is the SERVICE ACCOUNT's home (deploy-droplet.md: adduser --home), so
+          # the app can rename anything directly inside it -- including models/ -- and put a directory
+          # or a symlink of its own in its place, AT ANY MOMENT, including the minutes a download takes.
+          # Everything below runs as root, so a check of the NAME is not enough: checked once and then
+          # used again later, the name can point somewhere else by then -- and the recursive chmod at
+          # the end follows a symlink given as its argument (chmod has no -h), which would make
+          # whatever the app pointed it at world-readable: /etc/shadow, the SSH host keys.
+          #
+          # So models/ is pinned by INODE: cd into it, confirm with the kernel's own answer
+          # (/proc/$$/cwd, not a path bash re-reads as a string) that this shell is in the root-owned
+          # directory at exactly that path, and from then on do every write, chown and chmod relative
+          # to "." -- which renaming or re-pointing the name cannot move. The app cannot write inside
+          # the directory itself (root-owned, 755). Downloads and unpacks happen in a fresh root-only
+          # mktemp directory, and only a verified, whole, root-owned model is moved in.
+          MODELS=/var/lib/shelfaware/models
+          mkdir -p "$MODELS"
+          cd -P "$MODELS"
+          if [ "$(readlink "/proc/$$/cwd")" != "$MODELS" ] || [ "$(stat -c %u .)" != 0 ]; then
+            echo "::error::$MODELS is not a root-owned directory at that path (a symlink, or owned by uid $(stat -c %u . 2>/dev/null)); refusing to write to it as root. Look at what changed it before re-running."
+            exit 1
+          fi
+
+          # A failed download or unpack exits (set -e) with its temp directory still there; this takes
+          # it with it. Root-only and in /tmp, so harmless -- but nothing should be left behind.
+          tmp=""
+          trap 'rm -rf -- "$tmp"' EXIT
 
           # The mouth (docs/deploy-kokoro.md) and the ear (docs/deploy-moonshine.md). Each unpacks only
           # if it isn't already there, so this step is safe to re-run and costs nothing when it is.
@@ -145,19 +169,27 @@ jobs:
           # ownership or set a setuid bit on the way in.
           fetch() {
             local dir="$1" sha="$2" url="$3"
-            if [ -d "$dir" ]; then echo "$dir already unpacked."; return; fi
+            # Relative to the pinned directory, never through the name. -L as well as -e: a dangling
+            # symlink is "not there" to -e.
+            if [ -e "./$dir" ] || [ -L "./$dir" ]; then echo "$dir already unpacked."; return; fi
             echo "Fetching $dir..."
-            curl -fsSL -o model.tar.bz2 "$url"
-            echo "$sha  model.tar.bz2" | sha256sum -c - \
-              || { echo "::error::$dir did not match its recorded sha256; not unpacking it."; rm -f model.tar.bz2; exit 1; }
-            # ⚠️ Unpacked into a staging directory and moved into place only once it is whole. The
-            # guard above is "is the directory there", so a half-extracted one — a disk that filled,
-            # a connection that dropped — would read as unpacked forever, and the app would refuse to
-            # boot naming files that were never going to arrive.
-            rm -rf .staging && mkdir .staging
-            tar xjf model.tar.bz2 -C .staging --no-same-owner --no-same-permissions
-            mv ".staging/$dir" "$dir"
-            rm -rf .staging model.tar.bz2
+            tmp=$(mktemp -d)
+            # --proto on both, as voice-bakeoff.yml's get() does: a redirect must not walk a root-run
+            # download off HTTPS, even with the checksum below as the backstop.
+            curl -fsSL --proto '=https' --proto-redir '=https' -o "$tmp/model.tar.bz2" "$url"
+            echo "$sha  $tmp/model.tar.bz2" | sha256sum -c - \
+              || { echo "::error::$dir did not match its recorded sha256; not unpacking it."; rm -rf "$tmp"; exit 1; }
+            # ⚠️ Unpacked beside the download and moved into place only once it is whole and
+            # root-owned. The guard above is "is the directory there", so a half-extracted one — a disk
+            # that filled, a connection that dropped — would read as unpacked forever, and the app would
+            # refuse to boot naming files that were never going to arrive.
+            tar xjf "$tmp/model.tar.bz2" -C "$tmp" --no-same-owner --no-same-permissions
+            chown -R root:root "$tmp/$dir"
+            chmod -R a+rX "$tmp/$dir"
+            # -T: the destination is exactly this name, never a directory to move INTO.
+            mv -T "$tmp/$dir" "./$dir"
+            rm -rf "$tmp"
+            tmp=""
           }
           fetch kokoro-int8-en-v0_19 \
             c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd \
@@ -168,6 +200,15 @@ jobs:
           # The fast mouth. Kokoro is warmer and this box cannot afford it: measured at 3.1x real time
           # here against Piper's 0.05x on hardware with the int8 instructions Kokoro's quantization
           # wants. Both are unpacked, so Speech:Provider can be moved either way without a deploy.
+          #
+          # Ryan-medium is this box's voice, picked by ear in the bake-off (docs/voice-bakeoff.md) and
+          # measured HERE at 0.12-0.14x once loaded. ⚠️ Medium, not high: Ryan-high measured 0.8-0.95x
+          # on this box -- five times the cost, right at the 1.0x line, on two cores the website shares.
+          # Lessac stays unpacked because it was the voice before, so going back is the one env line
+          # that names the directory -- the weights' name is read off it (PiperSpeechOptions).
+          fetch vits-piper-en_US-ryan-medium \
+            c546af78b6395b4e7c4ce1ed899438b64426a362f5d4ec5fecd090ded9ad7505 \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-ryan-medium.tar.bz2
           fetch vits-piper-en_US-lessac-medium \
             9e3febfacf0abf4270172d2958bcec246032b7e88efc2720840cc80c93de334e \
             https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-medium.tar.bz2
@@ -175,8 +216,11 @@ jobs:
           # Root-owned and world-readable, which is install.sh's posture for the app itself and for its
           # reason: the service account reads its model, it does not get to rewrite it. A compromised app
           # process should not be able to leave something behind in a directory it loads from.
-          chown -R root:root /var/lib/shelfaware/models
-          chmod -R a+rX /var/lib/shelfaware/models
+          # ⚠️ "." -- the directory pinned above -- and never "$MODELS": chmod follows a symlink given as
+          # its argument, and by now the NAME may be one. Below ".", neither command follows symlinks,
+          # and the app cannot have put any there (the directory is root-owned).
+          chown -R root:root .
+          chmod -R a+rX .
           df -h / | tail -1
           REMOTE
 

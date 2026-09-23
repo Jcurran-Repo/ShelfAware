@@ -20,6 +20,18 @@ public enum SpeechProvider
     /// identical hardware, for audio that is noticeably flatter. That trade is what makes a local voice
     /// usable on a small shared CPU, where Kokoro leaves a visitor listening to silence.</summary>
     Piper,
+
+    /// <summary>Matcha-TTS, run IN THIS PROCESS through sherpa-onnx, on the same terms as the others. An
+    /// acoustic model plus a separate vocoder rather than one archive — see
+    /// <see cref="MatchaSpeechOptions"/>. Added so the choice is not just "the slow warm one or the fast
+    /// flat one"; which of the four a given box should run is measured, not assumed, and
+    /// <c>docs/voice-bakeoff.md</c> says how.</summary>
+    Matcha,
+
+    /// <summary>KittenTTS, run IN THIS PROCESS through sherpa-onnx, on the same terms as the others. A
+    /// 24 MB model measured between Piper and Kokoro for speed on a desktop — well clear of Kokoro,
+    /// between Piper's medium and high voices. See <see cref="KittenSpeechOptions"/>.</summary>
+    Kitten,
 }
 
 /// <summary>
