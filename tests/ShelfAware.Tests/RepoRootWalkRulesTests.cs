@@ -33,20 +33,39 @@ public class RepoRootWalkRulesTests
     /// needs an exemption for its own source is a rule with a hole the shape of its own scanner.</summary>
     private static readonly string Marker = "." + "slnx";
 
-    /// <summary>The walk itself, for a copy that anchors on something other than the solution. Naming the
-    /// solution is how all four copies happened to spell it, but <c>global.json</c> and <c>.git</c> sit at
-    /// the repository root too, and a walk anchored on either is the same duplication with the marker
-    /// above nowhere in it. What no spelling can avoid is starting at the running assembly's own directory
-    /// and climbing to parents: those two together ARE the walk, whatever it looks for on the way up.
+    /// <summary>Where a walk starts: some way of asking "where is the code I am running from". Any one of
+    /// these, PAIRED with the climb below, is the walk — whatever it looks for on the way up.
     ///
-    /// <para>The pair is the test, never either half. <c>ShelfAware.Evals</c> reads a directory beside its
-    /// own assembly and never climbs; the Roslyn rules climb syntax nodes and never ask where the assembly
-    /// is. Each half alone is ordinary; together they are a repository-root walk and nothing else.</para>
+    /// <para>⚠️ There is more than one spelling, and the first version of this rule knew only the first.
+    /// A copy written with an assembly's own location, or the current directory, anchored on
+    /// <c>global.json</c> or <c>.git</c> rather than the solution, matched neither half of
+    /// this rule and shipped green — while the paragraph above it claimed the pairing was unavoidable. A
+    /// rule is only as wide as its vocabulary, so the vocabulary is a list and not a sentence: add to it
+    /// when a new spelling appears rather than trusting the claim.</para></summary>
+    private static readonly string[] WaysToAskWhereTheAssemblyIs =
+    [
+        "AppContext" + ".BaseDirectory",
+        "Assembly" + ".Location",
+        "Assembly" + ".GetExecutingAssembly",
+        "Directory" + ".GetCurrentDirectory",
+    ];
+
+    /// <summary>The climb. Paired with any of the above it is a repository-root walk and nothing else.
     ///
-    /// <para>⚠️ Spelled in pieces, like <see cref="Marker"/> and for the same reason — written whole,
-    /// these two strings would sit in this very file and the rule would report ITSELF. The first version
-    /// of this array did exactly that.</para></summary>
-    private static readonly string[] TheWalkItself = ["AppContext" + ".BaseDirectory", "." + "Parent"];
+    /// <para>Each half alone is ordinary, which is why the pair is the test. <c>ShelfAware.Evals</c> reads
+    /// a directory beside its own assembly and never climbs; the Roslyn rules climb syntax nodes and never
+    /// ask where the assembly is. Neither is flagged.</para>
+    ///
+    /// <para>⚠️ Every literal here is spelled in pieces, like <see cref="Marker"/> and for the same
+    /// reason — written whole they would sit in this very file and the rule would report ITSELF. The
+    /// first version of this array did exactly that.</para></summary>
+    private const string TheClimb = "." + "Parent";
+
+    /// <summary>The two projects whose rules read the repository tree, and where all four copies of the
+    /// walk lived. Named rather than counted: a bare source count is dominated by the two biggest
+    /// projects, so a scan that stopped covering <c>Web.UI.Tests</c> — home to two of the four — would
+    /// still clear any count this rule could sensibly assert.</summary>
+    private static readonly string[] RuleBearingProjects = ["ShelfAware.Tests", "ShelfAware.Web.UI.Tests"];
 
     [Fact]
     public void Only_one_file_under_tests_walks_up_to_the_solution()
@@ -54,8 +73,12 @@ public class RepoRootWalkRulesTests
         var tests = RepoTree.DirectoryAt("tests");
         var offenders = new List<string>();
         var namingTheSolution = new List<string>();
+        var projectsScanned = new HashSet<string>(StringComparer.Ordinal);
         var scanned = 0;
         var theOneWalkStillNamesIt = false;
+
+        string relativeToTests(string path) =>
+            Path.GetRelativePath(tests, path).Replace(Path.DirectorySeparatorChar, '/');
 
         foreach (var file in Directory.EnumerateFiles(tests, "*.cs", SearchOption.AllDirectories))
         {
@@ -63,12 +86,15 @@ public class RepoRootWalkRulesTests
                 || file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}")) continue;
 
             scanned++;
+            var relative = relativeToTests(file);
+            projectsScanned.Add(relative.Split('/')[0]);
+
             var text = File.ReadAllText(file);
             var namesTheSolution = text.Contains(Marker, StringComparison.Ordinal);
-            var climbs = TheWalkItself.All(part => text.Contains(part, StringComparison.Ordinal));
+            var climbs = text.Contains(TheClimb, StringComparison.Ordinal)
+                && WaysToAskWhereTheAssemblyIs.Any(w => text.Contains(w, StringComparison.Ordinal));
             if (!namesTheSolution && !climbs) continue;
 
-            var relative = Path.GetRelativePath(tests, file).Replace(Path.DirectorySeparatorChar, '/');
             if (namesTheSolution) namingTheSolution.Add(relative);
             if (relative == TheOneWalk) theOneWalkStillNamesIt = namesTheSolution;
             else offenders.Add(relative + (namesTheSolution
@@ -81,8 +107,18 @@ public class RepoRootWalkRulesTests
         // at all, so this rule is hunting a string that no longer exists and would pass over any number of
         // copies. Only then the finding itself. Getting this order wrong is how a moved file gets reported
         // as a duplicate of itself.
-        Assert.True(scanned > 50,
+        //
+        // The floor is 200 against the 248 sources across six projects counted when this was written:
+        // room for the suites to shrink, none for the scan to quietly stop reaching. The count alone is
+        // not enough, because it is dominated by the two biggest projects — so the two that hold the
+        // rules are named as well, Web.UI.Tests being where two of the four original copies lived.
+        Assert.True(scanned > 200,
             $"Only {scanned} test source(s) scanned — the scan is broken, not the tree.");
+        var unreached = RuleBearingProjects.Where(p => !projectsScanned.Contains(p)).ToList();
+        Assert.True(unreached.Count == 0,
+            "The scan never reached " + string.Join(" or ", unreached) + ", where the rules that read the "
+            + "tree live. It covered: "
+            + string.Join(", ", projectsScanned.OrderBy(p => p, StringComparer.Ordinal)) + ".");
         Assert.True(namingTheSolution.Count > 0,
             "No source under tests/ names the solution file at all, so this rule is looking for something "
             + "that isn't there and would pass however many copies of the walk existed. Either the solution "
@@ -98,7 +134,11 @@ public class RepoRootWalkRulesTests
             + "copies this replaced had already drifted apart — half of them checked that the path they "
             + "handed back was really there and half did not — and a walk that returns a stale path makes "
             + "a rule scan nothing and pass. Use "
-            + $"RepoTree.Root(), RepoTree.FileAt() or RepoTree.DirectoryAt() from tests/{TheOneWalk}:"
+            + $"RepoTree.Root(), RepoTree.FileAt() or RepoTree.DirectoryAt() from tests/{TheOneWalk}. It "
+            + "is linked into ShelfAware.Tests and ShelfAware.Web.UI.Tests only, so from any other test "
+            + $"project add <Compile Include=\"..\\Shared\\RepoTree.cs\" Link=\"Shared\\RepoTree.cs\" /> "
+            + "and <Using Include=\"ShelfAware.TestSupport\" /> to its .csproj — linking it is the fix, "
+            + "writing the walk again is not:"
             + Environment.NewLine + string.Join(Environment.NewLine, offenders));
     }
 }
