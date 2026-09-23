@@ -53,9 +53,12 @@ goes from ~$1.33/mo (44%) to **~$2.27/mo (57%)** — see the §3 table.
 ⚠️ **The cost side moved further than the price did, and it moved first.** Two of the three forces the
 2026-08-23 paragraphs below argue from have since been answered rather than absorbed: ElevenLabs is out
 of the paid tier (2026-09-19) and both voice and recognition now run in-process at $0 per use, which
-removes a ~$22/mo fixed cost that was eating ~17 subscribers' floors. **The raise is the smaller half of
-the improvement** — see §3's restated break-even. The one force that is unchanged is model-price drift,
-which is the reason the floor still has to be defended.
+removes a ~$22/mo line item that was eating ~17 subscribers' floors. ⚠️ **But NOT a ~$22/mo saving:
+local synthesis needs a droplet that can run it, so the cost moved rather than vanished — real fixed
+cost goes ~$30 → ~$24/mo, and the RAISE turns out to be the bigger half of the improvement, not the
+smaller one** (§3 decomposes it: EL alone ~23 → ~18 households, the raise alone ~23 → ~13, together
+~11). The one force that is unchanged is model-price drift, which is the reason the floor still has to
+be defended.
 
 **The annual stays at $27.99 (Jordan, 2026-09-23): the discount is meant to be big.** Against twelve
 $3.99 charges that is ~41% off rather than the ~22% it was struck as, and that is the point — see the
@@ -262,13 +265,32 @@ monthly (or ~19 annual) subscribers' floors, and with droplet-class hosting **~2
 before the first dollar of profit** at full-grant usage. **That $22 is no longer a cost of this
 product.** Voice runs in-process (Kokoro on the family box, Piper on the demo box — PRs #71/#74) and so
 does recognition (Moonshine — PR #72); both are $0 per use, and ElevenLabs came out of the paid tier on
-2026-09-19. What remains fixed is hosting. Backing hosting out of the 2026-08-23 arithmetic (~$26.60–
-$33.25 of fixed cost at a $1.33 floor, less the $22) puts it at **~$5–11/mo**, so against the $3.99
-base's ~$2.27/mo floor break-even is **~2–5 monthly households, or ~4–10 annual** — a handful rather
-than a roomful, and the single biggest improvement to this plan's economics since it was written.
-⚠️ **That range is INFERRED from this doc's own numbers, not from an invoice.** It is the one figure
-here that a five-minute look at the DigitalOcean bill would replace with a fact; do that before quoting
-it to anyone. Disputes (~$15) are per-event, not fixed, and are unaffected.
+2026-09-19. What remains fixed is hosting — and ⚠️ **that is the sentence to read
+slowly, because the voice cost did not disappear, it MOVED onto the droplet.** Local synthesis is $0
+per read but it is not free: it needs a box that can run it. Jordan's real figures (2026-09-23):
+**$18/mo for the dual-CPU droplet, ~$24/mo for one with the headroom Kokoro wants at go-live**, since
+the better voice quality is what he intends to ship on. So fixed cost goes from ~$30/mo (EL's $22 plus
+a small box) to **~$24/mo** — a saving of about **$6**, not the $22 the removed line item suggests.
+
+At $24/mo, against the $3.99 base's floors: break-even is **~11 all-monthly households, or ~21
+all-annual** (at $18/mo, ~8 and ~16), versus the ~20–25 computed in 2026-08-23. On TYPICAL rather than
+full-grant usage — the ~16-credit household below — it is **~8 monthly or ~12 annual**.
+
+⚠️ **The raise did more of that work than the cost saving did**, which is the opposite of what an
+earlier draft of this section said. Decomposed against the ~23-household 2026-08-23 baseline: dropping
+EL alone takes it to ~18, the price rise alone takes it to ~13, and the two together to ~11.
+⚠️ **The annual mix roughly doubles that headcount — ~21 against ~11 — but a headcount is not a
+verdict, and this one flatters monthly.** The annual price did not move when the monthly did, so §1's
+~41% discount steers buyers to the side that did not improve; that much is a real cost of the discount
+and is recorded here beside the decision rather than against it. What the headcount leaves out is
+whether those households are still there. **~11 monthly is eleven households that each have to renew
+twelve times; ~21 annual is twenty-one payments already collected and unable to churn** (Jordan,
+2026-09-23: "annual users are long term users, thats essentially garaunteed money"). Weight each side
+by survival and the two meet at §1's **~7.9-month break-even tenure**: a monthly household only beats
+an annual one by outliving it. So read ~21 as needing about twice as many *signups*, not twice as much
+*money* — and it is the same conclusion §1 reached on 2026-08-23, that "100% annual take-up is the good
+scenario (max cash, max retention, floor still positive) — there is no monthly/annual mix that loses."
+Disputes (~$15) are per-event, not fixed, and are unaffected.
 
 **The cost hierarchy (Jordan's call): text/receipts < voice < realtime agents.** This is mostly just
 real costs showing through one markup rate — Haiku tokens are fractions of a cent per action; ElevenLabs
@@ -843,6 +865,13 @@ front and a year of retention. ⚠️ **The §1 caveat stands and is now load-be
 the real floor, and it holds ONLY while the grant stays modest. A discount this steep plus a fatter
 allowance rebuilds the $1.99 problem, so the 100 credits/month is no longer a number to be generous
 with casually — raising it is a pricing decision now, not a nicety.
+
+**Why the ~$13 spread is worth paying (Jordan, 2026-09-23):** "annual users are long term users, thats
+essentially garaunteed money." That is the answer to §3's ~21-vs-~11 break-even headcount: the spread
+is only a loss against a monthly household that actually renews twelve times, and §1 puts that crossing
+at ~7.9 months. The discount buys certainty — a year collected up front, with no churn inside it — at
+a price that stays positive even when the grant is fully spent. It is a bet on which side of ~7.9
+months a typical household falls, taken knowingly.
 
 **Parked — the dormant-subscriber conscience nudge (Jordan's call, 2026-09-01):** proactively email an
 ACTIVE, PAYING subscriber who has gone dormant (no app activity for ~a few months) to ask whether they
