@@ -1,5 +1,5 @@
 ---
-description: Run the required code review + security review + Core mutation-coverage gate before any push or merge to master.
+description: Run the required code review + security review + Core mutation-coverage gate before any merge to master.
 ---
 
 # Pre-push gate
@@ -16,8 +16,8 @@ Run both, in this order, and report honestly. A finding you talk yourself out of
 ```
 git fetch origin master
 git status --porcelain
-git log --oneline origin/master..HEAD
-git diff --stat origin/master..HEAD
+git log --oneline origin/master..HEAD      # stacked PR: the parent's frozen head, per the note below
+git diff --stat origin/master..HEAD        # both lines, or the diffstat disagrees with the log
 ```
 
 ⚠️ **Decide the base here, write it into the report, and then type that ref literally into every
@@ -46,11 +46,13 @@ working tree is dirty, stop and say so — an unreviewed change is about to ride
 Invoke the `/code-review` skill, then the `/security-review` skill, over the full branch diff
 against the base from §1 (not just the last commit, and not the local `master` ref).
 
-⚠️ **Name that base in the arguments you pass the skill.** They take no base parameter and will
-otherwise scope themselves — `/code-review` diffs against the branch's upstream, which on a branch
-already pushed to `origin` (which §5 requires) is the branch itself, an empty diff. The gate then
-reports `ready, head <sha>` over a diff nothing read. Say it in words: *"review the diff against
-`origin/master`"*, and check the review's own scope line agrees before believing its findings.
+⚠️ **Name that base in the arguments you pass the skill.** Neither takes a base parameter, so left
+alone each picks its own — the branch's upstream, which on a pushed branch is the branch itself and an
+empty diff, or the last commit alone, which §2 has just forbidden. Both end the same way: `ready, head
+<sha>` reported over a diff nothing read. So say it in words — *"review the diff against
+`origin/master`"* — and **read the scope line the review states back** before believing a single
+finding. A review that says it read 3 files when the branch changed 9 has reviewed nothing of value,
+and it will not say so twice.
 
 For this repo, security review means the multi-tenancy boundary above all else:
 
@@ -69,11 +71,13 @@ For this repo, security review means the multi-tenancy boundary above all else:
 ## 3. Mutation coverage on Core changes
 
 `ShelfAware.Core` is held at a 100% mutation score (`tests/ShelfAware.Tests/stryker-config.json`, break
-threshold 100). If the branch diff touches `src/ShelfAware.Core/**`, run that same gate over **only what
+threshold 100). If the branch diff touches `src/ShelfAware.Core/**` **or** `tests/ShelfAware.Tests/**`
+— the same pair as the skip rule below, and as CI — run that same gate over **only what
 this branch changed** — diff-scoped, so it is seconds-to-minutes rather than the ~13-minute full run:
 
 ```
-cd tests/ShelfAware.Tests
+git fetch origin master                   # §1's fetch does not reach here: a machine handed only this
+cd tests/ShelfAware.Tests                 # step never ran it, and a stale base fails on foreign code
 dotnet stryker --since:origin/master      # or the parent's frozen head, per §1
 ```
 

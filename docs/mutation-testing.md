@@ -266,8 +266,10 @@ Reconciling "target 100%" with "don't wall off feature work":
 - **Pre-push local gate step** (`.claude/commands/pre-push.md` §3) — the same `dotnet stryker --since:`
   run by hand as part of the pre-merge gate, against the base §1 of that file chooses (`origin/master`,
   or the parent's head on a stacked PR), when the branch touches Core or its tests. Each survivor is treated like
-  a review finding: a real gap gets a test, a true equivalent gets an in-code annotation with a reason. It is
-  the identical check CI enforces, so a clean local gate predicts a green PR check.
+  a review finding: a real gap gets a test, a true equivalent gets an in-code annotation with a reason. On a PR
+  based on `master` it is the identical check CI enforces, so a clean local gate predicts a green PR
+  check. On a PR stacked on another branch it is the ONLY run there is — `mutation-pr.yml` is
+  `on: pull_request: branches: [ master ]` and never fires — so there is no CI check for it to predict.
 - **Weekly full Core run** (`.github/workflows/mutation.yml`), break threshold = 100 — the backstop. The two
   diff-scoped checks above only mutate the *changed* files, so neither can see a Core edit that makes a
   DIFFERENT, unchanged file's previously-killed mutant survive; the weekly run re-tests all ~2600 mutants and

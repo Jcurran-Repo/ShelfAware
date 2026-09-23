@@ -59,7 +59,9 @@ dismiss polish as overkill "because it's single-user."
     a merged PR: those commits are stranded, and the follow-up has to restart from `master` as its own
     branch.
   - **Never merge a PR a sibling session has been pushing to** until it has reported `ready, head
-    <sha>`. Merging is Jordan's call either way, and "merge away" authorizes the PRs as they stood when
+    <sha>` — on the PR, for the same reason as the bullet above: whoever merges is on GitHub, and a
+    rule filed only here is one they cannot follow. No such comment means not gated, whatever a thread
+    said. Merging is Jordan's call either way, and "merge away" authorizes the PRs as they stood when
     he said it, not whatever lands on them next.
   - **Don't work a file in parallel with a sibling session.** Anything needing a real build, a test run
     or a mutation sweep belongs on the PC — it is the only machine here that can run them; the rest is
