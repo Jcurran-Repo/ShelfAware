@@ -32,9 +32,7 @@ internal static class PastedInstalls
         /// <summary>It runs its checksum and STOPS on a mismatch: in bash, <c>sha256sum -c</c> joined to a
         /// clean-up-and-fail (a check on a line of its own prints FAILED and lets the next line run); in
         /// PowerShell, <c>Get-FileHash</c> compared and a <c>throw</c>.</summary>
-        internal bool ChecksItsHash => IsBash
-            ? ChainedCheck.IsMatch(Code)
-            : Code.Contains("Get-FileHash", StringComparison.Ordinal) && Code.Contains("throw", StringComparison.Ordinal);
+        internal bool ChecksItsHash => IsBash ? ChainedCheck.IsMatch(Code) : ThrowingHashCheck.IsMatch(Code);
 
         /// <summary>It pins models/ by inode — cd into it, then the kernel's view of where that landed must
         /// be exactly that path, root-owned and 755, or it refuses — and checks again before it reports
@@ -48,9 +46,16 @@ internal static class PastedInstalls
     private static readonly Regex ChainedCheck = new(
         @"sha256sum -c - \\\r?\n\s*\|\| \{ rm -rf ""\$T""; false; \}");
 
+    // The mismatch branch itself must throw — a throw somewhere else in the block (there are several)
+    // would let a Write-Warning here stand in for it.
+    private static readonly Regex ThrowingHashCheck = new(
+        @"Get-FileHash [^\r\n]*-ne '[0-9a-f]{64}'\) \{\s*\r?\n\s*Remove-Item \$archive\s*\r?\n\s*throw ");
+
+    // Ends with the continuation into the next step: a guard whose "&&" onward was dropped still parses
+    // and still prints its refusal — and then lets the install carry on.
     private static readonly Regex PinGuard = new(
         @"\{ \{ \[ ""\$\(readlink ""/proc/\$\$/cwd""\)"" = ""\$M"" \] && \[ ""\$\(stat -c %u:%a \.\)"" = 0:755 \]; \} \\\r?\n"
-        + @"\s*\|\| \{ echo [^\r\n]*; false; \}; \}");
+        + @"\s*\|\| \{ echo [^\r\n]*; false; \}; \} \\\r?\n\s*&& ");
 
     private static readonly Regex ClosingRecheck = new(
         @"\{ \[ ""\$\(readlink ""/proc/\$\$/cwd""\)"" = ""\$M"" \] \\\r?\n\s*\|\| \{ echo [^\r\n]*; false; \}; \} \\\r?\n\s*&& ls ""\./\$V""");
