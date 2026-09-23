@@ -50,16 +50,35 @@ rounding error.
 
 ## 1. Unpack a model
 
+⚠️ **Paste the block whole.** Every step is joined to the next with `&&`, which is load-bearing
+rather than style: `sha256sum -c` on a line of its own prints `FAILED` and returns 1, and a shell runs
+the next line regardless — so an archive that failed its check would be unpacked, as root, with the
+only warning several lines back up the scrollback. `deploy-droplet.yml`'s `bootstrap` exits on a
+mismatch, and these commands are meant to be its equivalent by hand. It also stages the unpack and
+moves it whole, for the reason the workflow gives: everything downstream checks "are the files there",
+so a half-extraction — a disk that filled, a connection that dropped — reads as a model and reaches
+sherpa-onnx, which answers it by killing the process.
+
 ```bash
 # A minimal Ubuntu image ships no bzip2, and GNU tar shells out to it to read a .tar.bz2.
-command -v bzip2 >/dev/null || sudo apt-get update && sudo apt-get install -y bzip2
-sudo mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models
-curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-tiny-en-int8.tar.bz2
-# Release assets sit on a mutable tag, and this one is unpacked as root. Measured 2026-09-21; the CI
-# bootstrap checks the same hash (.github/workflows/deploy-droplet.yml).
-echo 'd5fe6ec4334fef36255b2a4010412cad4c007e33103fec62fb5d17cad88086f2  sherpa-onnx-moonshine-tiny-en-int8.tar.bz2' | sha256sum -c -
-tar xjf sherpa-onnx-moonshine-tiny-en-int8.tar.bz2 --no-same-owner --no-same-permissions \
-  && rm sherpa-onnx-moonshine-tiny-en-int8.tar.bz2
+# ⚠️ Braces: `A || B && C` parses as `(A || B) && C`, so without them the install runs even when
+# bzip2 is already there.
+command -v bzip2 >/dev/null || { sudo apt-get update && sudo apt-get install -y bzip2; }
+
+# Release assets sit on a mutable tag, and this one is unpacked as root on a box holding real
+# households' data. Measured 2026-09-21; the CI bootstrap checks the same hash
+# (.github/workflows/deploy-droplet.yml).
+A=sherpa-onnx-moonshine-tiny-en-int8
+R=https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models
+
+sudo mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models \
+  && curl -fsSL --proto '=https' --proto-redir '=https' -O "$R/$A.tar.bz2" \
+  && { echo "d5fe6ec4334fef36255b2a4010412cad4c007e33103fec62fb5d17cad88086f2  $A.tar.bz2" \
+         | sha256sum -c - || { rm -f "$A.tar.bz2"; false; }; } \
+  && rm -rf .staging && mkdir .staging \
+  && tar xjf "$A.tar.bz2" -C .staging --no-same-owner --no-same-permissions \
+  && mv ".staging/$A" . \
+  && rm -rf .staging "$A.tar.bz2"
 ls sherpa-onnx-moonshine-tiny-en-int8
 # preprocess.onnx  encode.int8.onnx  uncached_decode.int8.onnx  cached_decode.int8.onnx  tokens.txt
 # Root-owned, world-readable: the app READS its model and never rewrites it — install.sh's
@@ -83,15 +102,34 @@ Same model, and the same rule about *where*: under `app-data`, because that is t
 `publish-family.ps1` carries across the folder swap.
 
 ```powershell
-$models = "$env:USERPROFILE\ShelfAware-server\app-data\models"
-curl.exe -L -o "$models\moonshine.tar.bz2" `
+$models  = "$env:USERPROFILE\ShelfAware-server\app-data\models"
+$archive = "$models\moonshine.tar.bz2"
+$sha     = 'd5fe6ec4334fef36255b2a4010412cad4c007e33103fec62fb5d17cad88086f2'
+
+curl.exe -fL --proto '=https' -o $archive `
   https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-tiny-en-int8.tar.bz2
-tar -xf "$models\moonshine.tar.bz2" -C $models
-Remove-Item "$models\moonshine.tar.bz2"
+if ($LASTEXITCODE -ne 0) { throw "Download failed; nothing to unpack." }
+
+# The same hash the droplet checks, and the same reason. PowerShell's -ne on strings is
+# case-insensitive, so Get-FileHash's uppercase output compares fine against the lowercase literal.
+if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne $sha) {
+  Remove-Item $archive
+  throw "The archive did not match its recorded sha256; not unpacking it."
+}
+
+tar -xf $archive -C $models
+Remove-Item $archive
 ```
 
+⚠️ **This block had no checksum at all until 2026-09-23**, while the Linux one beside it did and the
+deploy workflow did. The family box is Jordan's own machine rather than a public droplet, which makes
+it less exposed — not differently exposed: `curl` without `-f` writes an HTTP error page to the output
+file and exits **0**, so a 404 body became `moonshine.tar.bz2` and `tar` was handed it. Verified here
+now, and the download stops the block rather than being checked after the fact.
+
 ⚠️ `curl.exe`, with the extension — in Windows PowerShell `curl` is an alias for `Invoke-WebRequest`,
-which has no `-L`. Same trap as the Kokoro doc's step 2.
+which has no `-L`. Same trap as the Kokoro doc's step 2. `$LASTEXITCODE` is checked explicitly because
+PowerShell does not stop on a native command's failure the way `set -e` does.
 
 ## 3. Prove it hears, before pointing the app at it
 
