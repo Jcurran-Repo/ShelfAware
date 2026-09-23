@@ -16,8 +16,8 @@ public sealed record BillingProductInfo(BillingProduct Product, string DisplayNa
 /// </summary>
 public static class BillingCatalog
 {
-    public static readonly BillingProductInfo Monthly = new(BillingProduct.SubscriptionMonthly, "Aware — monthly", "$2.99/mo", 0);
-    public static readonly BillingProductInfo Annual = new(BillingProduct.SubscriptionAnnual, "Aware — annual", "$27.99/yr", 0);
+    public static readonly BillingProductInfo Monthly = new(BillingProduct.SubscriptionMonthly, "Aware — monthly", SubscriptionPricing.MonthlyDisplay, 0);
+    public static readonly BillingProductInfo Annual = new(BillingProduct.SubscriptionAnnual, "Aware — annual", SubscriptionPricing.AnnualDisplay, 0);
     // ⚠️ Pack sizes are DERIVED from the anchor — floor(pack dollars ÷ the retail price of a credit), i.e.
     // CreditPricing.PackCredits — not rounded to a marketing number, so no pack quietly carries a better
     // exchange rate than another. They are literals here because a product decision should not move when an
