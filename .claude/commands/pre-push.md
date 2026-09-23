@@ -15,22 +15,28 @@ Run both, in this order, and report honestly. A finding you talk yourself out of
 
 ```
 git fetch origin master
-BASE=origin/master          # a PR stacked on a frozen, unmerged head: that head instead
 git status --porcelain
-git log --oneline $BASE..HEAD
-git diff --stat $BASE..HEAD
+git log --oneline origin/master..HEAD
+git diff --stat origin/master..HEAD
 ```
 
-⚠️ **`$BASE` is the one base every step below diffs against** — §2's review scope and §3's mutation
-scope included. Set it once here; never let a later step name its own.
+⚠️ **Decide the base here, write it into the report, and then type that ref literally into every
+step below** — §2's review scope and §3's `--since:`. Do not carry it in a shell variable: each block
+in this file runs as its own shell, so a `BASE=` set here is empty by §3, and `--since:` with an empty
+value silently falls back to Stryker's own default of `master` — the stale ref this paragraph exists to
+prevent, now failing invisibly. There is no shared state between these blocks except what you retype.
 
 - **`origin/master`, not `master`.** The local ref only moves when someone checks `master` out and
   pulls, which no session here does — this gate's own review once scoped itself against a local
   `master` 38 commits behind and reported 324 KB of someone else's already-merged work as part of the
   branch.
-- **On a stacked PR, the parent's frozen head.** Against `origin/master` the gate would read the
-  parent's commits as this branch's, and certify a diff that silently changes the moment the parent
-  merges.
+- **On a PR stacked on a frozen, unmerged head, the base is that head — and the PR is opened against
+  it, not against `master`.** Against `origin/master` the gate reads the parent's commits as this
+  branch's and certifies a diff that changes the moment the parent merges; opened against `master`
+  while gated against the parent, it certifies a strictly smaller diff than the merge lands. Both
+  halves or neither. ⚠️ A stacked PR also gets no mutation check from CI — `mutation-pr.yml` is
+  `on: pull_request: branches: [ master ]` — so a stacked, Core-touching branch must run §3 on a
+  machine with the SDK, or wait and retarget to `master` once the parent merges.
 
 State the branch, the commit count, and the diffstat back to the user before reviewing. If the
 working tree is dirty, stop and say so — an unreviewed change is about to ride along.
@@ -38,7 +44,13 @@ working tree is dirty, stop and say so — an unreviewed change is about to ride
 ## 2. Run the reviews
 
 Invoke the `/code-review` skill, then the `/security-review` skill, over the full branch diff
-against `$BASE` from §1 (not just the last commit, and not the local `master` ref).
+against the base from §1 (not just the last commit, and not the local `master` ref).
+
+⚠️ **Name that base in the arguments you pass the skill.** They take no base parameter and will
+otherwise scope themselves — `/code-review` diffs against the branch's upstream, which on a branch
+already pushed to `origin` (which §5 requires) is the branch itself, an empty diff. The gate then
+reports `ready, head <sha>` over a diff nothing read. Say it in words: *"review the diff against
+`origin/master`"*, and check the review's own scope line agrees before believing its findings.
 
 For this repo, security review means the multi-tenancy boundary above all else:
 
@@ -62,19 +74,23 @@ this branch changed** — diff-scoped, so it is seconds-to-minutes rather than t
 
 ```
 cd tests/ShelfAware.Tests
-dotnet stryker --since:$BASE
+dotnet stryker --since:origin/master      # or the parent's frozen head, per §1
 ```
 
-**If no `src/ShelfAware.Core/**` files changed, skip this — there is nothing to mutate.**
+**Skip this only if the branch changed nothing under `src/ShelfAware.Core/**` AND nothing under
+`tests/ShelfAware.Tests/**`** — that is the pair `mutation-pr.yml`'s scope step tests, and the narrower
+"Core src only" reading lets a branch that merely deletes the test killing a Core mutant pass here and
+go red in CI.
 
-⚠️ **`$BASE` here too.** `--since:master` against a stale local ref scopes the run over Core changes
-that merged weeks ago; the break threshold is 100, so it then fails on code this branch never touched.
-CI gets this right already — `.github/workflows/mutation-pr.yml` passes the PR's base sha.
+⚠️ **Type the ref; `--since:master` is the failure.** Against a stale local ref it scopes the run
+over Core changes that merged weeks ago, and at a break threshold of 100 it then fails on code this
+branch never touched. CI gets this right already — `mutation-pr.yml` passes the PR's base sha.
 
 ⚠️ **If the session running this gate has no .NET SDK, it cannot run this step** — the cloud session
 does not. Say so in the report rather than skipping it silently, and treat `mutation-pr.yml`'s
 diff-scoped check on the PR as the run that counts: no `ready, head <sha>` until that check is green on
-the sha being named.
+the sha being named. That fallback does not exist for a stacked PR (§1): there, hand the run to a
+machine with the SDK, or do not call it ready.
 
 Anything under 100% is a survivor: a mutant this branch introduced or newly exposed that no test kills.
 Treat each like a review finding — it is either a real coverage gap (**add the test**) or a true
@@ -102,8 +118,11 @@ found by running the app.
 Give the user the findings — file, line, and a concrete scenario — ranked, with the ones you couldn't
 construct a scenario for ranked lowest and labelled as such.
 
-**Name the head commit the gate covered.** A gate covers the branch diff *as it stood at one commit* —
-§2 is what it reads, this is what it certifies — so report it as `ready, head <sha>`. Any push after
+**Name the head commit the gate covered, and post it on the PR.** A gate covers the branch diff *as it
+stood at one commit* — §2 is what it reads, this is what it certifies — so report it as `ready, head
+<sha>`, in the thread **and as a comment on the pull request**. Whoever merges is looking at GitHub, not
+at this file: a sha sitting beside the merge button is the only form of this rule they can act on, and
+a mismatch with the PR's current head is then visible without asking anyone. Any push after
 that retracts the report: re-run the gate and name the new head. New work goes in its own PR, off the
 frozen head while this one is unmerged and off `master` once it has merged. See the branch-ownership
 directive in CLAUDE.md for why — on 2026-09-23 two PRs were merged at one head while the next round of

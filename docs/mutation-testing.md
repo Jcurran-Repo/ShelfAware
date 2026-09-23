@@ -234,9 +234,15 @@ score below 100). The HTML report is written under `StrykerOutput/` (gitignored)
 **Diff-scoped run** (only the Core code a branch changed — fast, for local checks before a push):
 
 ```bash
+git fetch origin master
 cd tests/ShelfAware.Tests
 dotnet stryker --since:origin/master
 ```
+
+⚠️ `origin/master`, and fetch it first. The local `master` ref only moves when someone checks it out
+and pulls; against a stale one the run scopes over Core changes that merged weeks ago and fails at the
+100% threshold on code the branch never touched. On a PR stacked on another branch the base is that
+branch's head instead — see `.claude/commands/pre-push.md` §1, which is where that choice is made.
 
 ## Gate posture
 
@@ -257,8 +263,9 @@ Reconciling "target 100%" with "don't wall off feature work":
   as an inline GitHub annotation on its exact line in the PR diff, plus a plain-English job summary naming
   the two fixes (add a test, or annotate the equivalent) — so a contributor sees *why* the merge is
   blocked without opening the log.
-- **Pre-push local gate step** (`.claude/commands/pre-push.md` §3) — the same `dotnet stryker --since:origin/master`,
-  run by hand as part of the pre-merge gate when the branch diff touches Core. Each survivor is treated like
+- **Pre-push local gate step** (`.claude/commands/pre-push.md` §3) — the same `dotnet stryker --since:`
+  run by hand as part of the pre-merge gate, against the base §1 of that file chooses (`origin/master`,
+  or the parent's head on a stacked PR), when the branch touches Core or its tests. Each survivor is treated like
   a review finding: a real gap gets a test, a true equivalent gets an in-code annotation with a reason. It is
   the identical check CI enforces, so a clean local gate predicts a green PR check.
 - **Weekly full Core run** (`.github/workflows/mutation.yml`), break threshold = 100 — the backstop. The two

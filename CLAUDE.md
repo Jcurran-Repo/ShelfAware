@@ -50,9 +50,11 @@ dismiss polish as overkill "because it's single-user."
     stands, because a review covered different code than the commit that merges. New *work* — the next
     ask, or a finding that isn't this PR's to fix — goes in its own PR: off `master` when this PR has
     merged, off the frozen head when it hasn't, since `master` does not yet hold the code it builds on.
-  - **Before merging, compare the PR's current head to the sha in its ready report.** GitHub's button
-    always takes whatever the branch points at now, so this comparison is the only thing standing
-    between a gated review and an ungated merge. Heads differ → wait for the new report.
+  - **Post the `ready, head <sha>` on the pull request itself, then compare before merging.** GitHub's
+    button always takes whatever the branch points at now, so that comparison is the only thing
+    standing between a gated review and an ungated merge — and it can only be made by someone who can
+    see the sha. This file is read by Claude; the merge happens on GitHub, so the sha has to be there
+    too. Heads differ → wait for the new report.
   - **Re-read a PR's state immediately before every push, not at the start of the work.** Never push to
     a merged PR: those commits are stranded, and the follow-up has to restart from `master` as its own
     branch.
