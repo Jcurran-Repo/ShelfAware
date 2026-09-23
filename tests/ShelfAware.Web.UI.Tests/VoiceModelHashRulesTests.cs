@@ -20,13 +20,11 @@ namespace ShelfAware.Web.UI.Tests;
 /// </summary>
 public class VoiceModelHashRulesTests
 {
-    private static readonly Regex Sha = new("\\b[0-9a-f]{64}\\b");
-
     [Fact]
     public void Every_hash_in_the_voice_docs_is_one_the_bake_off_workflow_records()
     {
-        var recorded = HashesIn(RepoFile(Path.Combine(".github", "workflows", "voice-bakeoff.yml")));
-        var documented = HashesIn(RepoFile(Path.Combine("docs", "voice-bakeoff.md")));
+        var recorded = HashesIn(RepoTree.FileAt(Path.Combine(".github", "workflows", "voice-bakeoff.yml")));
+        var documented = HashesIn(RepoTree.FileAt(Path.Combine("docs", "voice-bakeoff.md")));
 
         // Reach guards, separate from the finding: a regex that stopped matching, or a file that moved,
         // would otherwise make this pass by scanning nothing — the exact way a rule ships having tested
@@ -61,8 +59,8 @@ public class VoiceModelHashRulesTests
     [Fact]
     public void Every_voice_the_deploy_fetches_carries_the_hash_the_bake_off_records()
     {
-        var recorded = RecordedByArchive(File.ReadAllText(RepoFile(Path.Combine(".github", "workflows", "voice-bakeoff.yml"))));
-        var fetched = FetchedByArchive(File.ReadAllText(RepoFile(Path.Combine(".github", "workflows", "deploy-droplet.yml"))));
+        var recorded = RecordedByArchive(File.ReadAllText(RepoTree.FileAt(Path.Combine(".github", "workflows", "voice-bakeoff.yml"))));
+        var fetched = PastedInstalls.BootstrapFetches();
 
         // Reach guard: the bootstrap fetches three voices (two Piper, one Kokoro) plus the ear, and a
         // pattern that stopped matching would otherwise pass having compared nothing.
@@ -95,15 +93,22 @@ public class VoiceModelHashRulesTests
     [InlineData("voice-bakeoff.md", 2)]
     public void Every_pasted_install_checks_its_archive_against_the_hash_recorded_for_it(string doc, int atLeast)
     {
-        var recorded = RecordedByArchive(File.ReadAllText(RepoFile(Path.Combine(".github", "workflows", "voice-bakeoff.yml"))));
-        var text = File.ReadAllText(RepoFile(Path.Combine("docs", doc)));
+        var recorded = RecordedByArchive(File.ReadAllText(RepoTree.FileAt(Path.Combine(".github", "workflows", "voice-bakeoff.yml"))));
+        var text = File.ReadAllText(RepoTree.FileAt(Path.Combine("docs", doc)));
 
-        var pairs = Regex.Matches(text, @"\bV=([\w.\-]+)")
-            .Select(v => (Archive: v.Groups[1].Value, Sha: Sha.Match(text, v.Index + v.Length).Value))
-            .ToList();
+        var pairs = PastedInstalls.In(text);
 
         Assert.True(pairs.Count >= atLeast,
-            $"Only {pairs.Count} V=<archive> install block(s) found in docs/{doc} — the scan is broken, not the doc.");
+            $"Only {pairs.Count} install block(s) found in docs/{doc} — the scan is broken, not the doc.");
+
+        // ⚠️ Every block runs as root, so each must check its hash AND
+        // pin models/ by inode rather than trust its name — the bootstrap's rule (deploy-droplet.yml).
+        // A block written the old way, cd'ing by name and chmod'ing a path, is how that rule came to be
+        // half-converted once already; this is what stops it happening again.
+        var unsafeBlocks = pairs.Where(p => !p.IsBash || !p.ChecksItsHash || !p.PinsModels).Select(p => p.Archive).ToList();
+        Assert.True(unsafeBlocks.Count == 0,
+            $"docs/{doc} has an install block that does not both check its hash and pin models/ by inode "
+            + "(cd -P \"$M\" + /proc/$$/cwd): " + string.Join(", ", unsafeBlocks));
 
         var wrong = pairs.Where(p => !recorded.TryGetValue(p.Archive, out var sha) || sha != p.Sha).ToList();
         Assert.True(wrong.Count == 0,
@@ -116,26 +121,6 @@ public class VoiceModelHashRulesTests
         Regex.Matches(workflow, @"^\s*([\w.\-]+)\)\s+echo\s+([0-9a-f]{64});;", RegexOptions.Multiline)
             .ToDictionary(m => m.Groups[1].Value, m => m.Groups[2].Value, StringComparer.Ordinal);
 
-    /// <summary>The bootstrap's calls: <c>fetch &lt;archive&gt; \</c>, then the sha on the next line.</summary>
-    private static Dictionary<string, string> FetchedByArchive(string workflow) =>
-        Regex.Matches(workflow, @"^\s*fetch\s+([\w.\-]+)\s*\\\s*\r?\n\s*([0-9a-f]{64})", RegexOptions.Multiline)
-            .ToDictionary(m => m.Groups[1].Value, m => m.Groups[2].Value, StringComparer.Ordinal);
-
     private static IReadOnlyCollection<string> HashesIn(string path) =>
-        [.. Sha.Matches(File.ReadAllText(path)).Select(m => m.Value).Distinct(StringComparer.Ordinal)];
-
-    /// <summary>A path inside the repository, found by walking up to the solution file — so the test does
-    /// not depend on the build's output layout.</summary>
-    private static string RepoFile(string relativePath)
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "ShelfAware.slnx")))
-            dir = dir.Parent;
-
-        Assert.NotNull(dir); // no solution above the test assembly — the walk is wrong, not the sources
-
-        var file = Path.Combine(dir!.FullName, relativePath);
-        Assert.True(File.Exists(file), $"{relativePath} is not where this test expects it.");
-        return file;
-    }
+        [.. PastedInstalls.Sha.Matches(File.ReadAllText(path)).Select(m => m.Value).Distinct(StringComparer.Ordinal)];
 }

@@ -157,10 +157,37 @@ Setting it up, once:
    key, no deploy. The approval stops being a line in a file that the next branch can delete.
 
 Run it from Actions → *Deploy to the droplet* → **Run workflow**, choosing the branch. Tick
-**bootstrap** the first time: it adds the 2 GB swap file and unpacks the Kokoro and Moonshine models,
-idempotently, so a rebuilt droplet is one dispatch away rather than an afternoon with this page. Both
-archives are checked against a recorded sha256 before anything is unpacked — they are fetched as root
-onto a box holding real data, and a release tag is mutable.
+**bootstrap** the first time — and again whenever a new voice becomes the default: it adds the 2 GB
+swap file and unpacks the voice models (the Piper voices and Kokoro) and Moonshine, idempotently, so a
+rebuilt droplet is one dispatch away rather than an afternoon with this page. Every archive is checked
+against a recorded sha256 before anything is unpacked — they are fetched as root onto a box holding
+real data, and a release tag is mutable.
+
+⚠️ **The models live in `/var/lib/shelfaware-models` — root's, and deliberately not in the app's
+home.** `/var/lib/shelfaware` is the service account's own (`chmod 700`, above), and anything directly
+inside a directory the app owns, the app can rename away and replace: models kept there could be
+swapped between deploys for ones it made, and it loads its voice by that name. Under root-owned
+`/var/lib` it can do neither. The bootstrap still pins the directory by inode and refuses unless it is a
+root-owned 755 directory at exactly that path — defense in depth, costing nothing — and downloads into a
+root-only directory inside it, moving in only verified, whole, root-owned models.
+
+**Moving a box that already has models in the old place (`/var/lib/shelfaware/models`)** — no downtime,
+in this order:
+
+1. Deploy with **bootstrap** ticked. It fetches fresh, hash-checked copies of **the four models it
+   installs** (the two Piper voices, Kokoro and Moonshine) into `/var/lib/shelfaware-models` — it does
+   not copy the old ones, which sat where the app could have changed them — and warns that the old
+   directory is still there. The app keeps running on the old paths meanwhile. ⚠️ A box running a
+   model the bootstrap does not install (Kitten or Matcha, put there by hand from
+   [voice-bakeoff.md](voice-bakeoff.md)) needs that pasted install re-run first — its blocks already
+   install into the new location.
+2. **Only once that run is green**, change every `Speech__*__ModelDirectory` in `/etc/shelfaware/env`
+   from `/var/lib/shelfaware/models/…` to `/var/lib/shelfaware-models/…`, then
+   `systemctl restart shelfaware` and check `/healthz`. If it does not come back, the journal
+   (`journalctl -u shelfaware -n 50`) names the file it could not find — the app refuses to start on a
+   missing model, by design. Put the old lines back and restart; nothing has been removed yet.
+3. Remove the old directory: `rm -rf /var/lib/shelfaware/models` (no trailing slash — if the name has
+   become a symlink, that removes the link, not what it points at).
 
 ⚠️ **The workflow only becomes dispatchable once it is on `master`.** GitHub lists a
 `workflow_dispatch` workflow from the default branch, so there is no *Run workflow* button — and no way
@@ -251,7 +278,10 @@ Same box, three differences, all in `/etc/shelfaware/env`:
 2. `Auth__AllowRegistration=false` once your accounts exist.
 3. **Migrating existing data** (say, off a Windows box): stop the app on both ends,
    copy the contents of its `app-data/` into `/var/lib/shelfaware`, and
-   `chown -R shelfaware:shelfaware` the result. Copy `shelfaware.db*`, `auth.db*`,
+   `chown -R shelfaware:shelfaware` **just what you copied** (for example
+   `cd /var/lib/shelfaware && chown -R shelfaware:shelfaware shelfaware.db* auth.db* receipts tts-cache`)
+   — not the whole directory, which may hold things that are not the app's to own. Copy
+   `shelfaware.db*`, `auth.db*`,
    `receipts/`, and `tts-cache/` — but **not `keys/`**: Windows DataProtection keys
    are DPAPI-encrypted and no Linux box can decrypt them. The droplet mints fresh keys
    on first boot; the only consequence is that everyone signs in again once (accounts
@@ -288,7 +318,14 @@ job, with `--backup-dir`, so a bad local night can't erase good offsite copies.
 
 To restore: stop the service, copy the chosen `db-*` snapshot's two `.db` files into
 `/var/lib/shelfaware` (deleting any `-wal`/`-shm` beside them — those belong to the database
-you are replacing), restore the `files/` trees, `chown -R shelfaware:shelfaware`, start.
+you are replacing), restore the `files/` trees, `chown -R shelfaware:shelfaware` **the restored files
+and directories only**, start. (The models are not in the backup and not in the app's home: they are in
+root's `/var/lib/shelfaware-models`, and a bootstrap re-downloads any that are missing.)
+
+If `/var/lib/shelfaware-models` has ended up with the wrong owner or mode (a hand-made `mkdir` under a
+tight umask, or a `chmod` aimed at the wrong directory), the next bootstrap refuses to touch it, by design. Recover by removing it —
+`rm -rf /var/lib/shelfaware-models` (no trailing slash) — and re-running the deploy with **bootstrap**
+ticked, which re-downloads every model into a fresh root-owned directory.
 
 DO's droplet snapshots make a fine second layer, not a substitute — they're crash-consistent,
 not application-aware.
