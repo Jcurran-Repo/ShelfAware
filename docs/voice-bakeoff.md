@@ -36,10 +36,10 @@ demo-box problem and not a family-box one.
 
 | Family | Shape | Speed | Notes |
 |---|---|---|---|
-| **Piper** (VITS) | weights + tokens + espeak data | ~0.05× on a good core, ~0.1× on the droplet | The demo box's voice today. Clear, noticeably flatter. Weights are named after the voice, so `Speech:Piper:ModelFile` must say which. |
-| **Kokoro** | weights + voices.bin + tokens + espeak data | 1.4× on a good core, **3.1× on a DO-Regular droplet** | The family box's voice. The warmest, and the only one that has failed the 1.0× test on real hardware. |
-| **Kitten** | Kokoro's four files exactly, under its own config block | ~0.3–0.4× on a dev PC (first measurement, see below) | 24 MB. The nano archive has 8 voices, 4 male and 4 female. |
-| **Matcha** | acoustic model **+ a separate vocoder** + tokens + espeak data | ~0.19× on a dev PC (first measurement, see below) | ⚠️ The vocoder is published in a *different release* from the voice. A directory holding everything the voice archive shipped still cannot speak. It is in the cache fingerprint, so changing vocoder re-voices the clips rather than serving the old ones. |
+| **Piper** (VITS) | weights + tokens + espeak data | **0.13–0.54×** | The demo box's voice today. Clear, noticeably flatter. The spread is the model, not the speaker: the `medium` builds run about twice as fast as the `high` ones. Weights are named after the voice, so `Speech:Piper:ModelFile` must say which. |
+| **Kokoro** | weights + voices.bin + tokens + espeak data | **1.14×** (and **3.1× on a DO-Regular droplet**) | The family box's voice. The warmest — and **the only one of the four still above 1.0× on a fast desktop core**, which is the whole shape of the droplet problem. |
+| **Kitten** | Kokoro's four files exactly, under its own config block | **0.24–0.28×** (nano), **0.62×** (mini) | 24 MB for nano, which has 8 voices, 4 male and 4 female. Mini is larger and slower than every Piper here bar one. |
+| **Matcha** | acoustic model **+ a separate vocoder** + tokens + espeak data | **0.17×** | ⚠️ The vocoder is published in a *different release* from the voice. A directory holding everything the voice archive shipped still cannot speak. It is in the cache fingerprint, so changing vocoder re-voices the clips rather than serving the old ones. |
 
 ## The lineup
 
@@ -58,14 +58,27 @@ The workflow's `voices` input takes `all` (the default) or a space-separated lis
 | `matcha-ljspeech` | `matcha-icefall-en_US-ljspeech` | 0 — with the Vocos vocoder |
 | `kokoro-0` | `kokoro-int8-en-v0_19` | 0 — the family box's voice, the other control |
 
-⚠️ **Kitten's and Matcha's figures are one run each on a Windows dev PC, model load included, and
-they are NOT measured the way Kokoro's and Piper's were** — those are best-of-three on two pinned cores
-(`docs/deploy-piper.md`). Do not read the column as a ranking: a first run including a cold model load is
-not comparable to a best-of-three that excludes one, and the difference is larger than the gap between
-some of these rows. What the two new numbers do establish, which nothing did before, is that both
-families clear 1.0× on a dev core with room to spare — which is the question the droplet posed. The
-droplet's own figures are still unmeasured, and the bake-off plus `VoiceCheck` on the box is how they
-get filled in.
+**Where that Speed column comes from.** One bake-off run, 2026-09-23, all fourteen voices on one
+machine (a desktop i5-13600KF), model load included — so the rows are comparable to each other, which
+is the only thing a column like that is good for. Per voice:
+
+| | | | |
+|---|---|---|---|
+| `piper-libritts-40` **0.13×** | `piper-libritts-109` **0.14×** | `piper-libritts-0` **0.16×** | `matcha-ljspeech` **0.17×** |
+| `piper-amy-medium` **0.18×** | `kitten-nano-2` **0.24×** | `kitten-nano-0` **0.27×** | `kitten-nano-5` **0.28×** |
+| `piper-lessac-medium` **0.33×** | `piper-ryan-high` **0.39×** | `piper-lessac-high` **0.48×** | `piper-cori-high` **0.54×** |
+| `kitten-mini-0` **0.62×** | `kokoro-0` **1.14×** | | |
+
+⚠️ **These are a desktop's, and they are not the numbers that decide anything.** The demo droplet is a
+2 GHz shared core with no AVX-512 VNNI, where Kokoro measured **3.1×** against this run's 1.14× — so
+expect every row above to be several times worse there, and a voice comfortably under 1.0× here can
+still miss on the box. Use this column to narrow the field by ear and by rough order; use `VoiceCheck`
+on the droplet to decide.
+
+⚠️ And do not mix this column with the figures in `docs/deploy-piper.md` (Piper 0.05×, Kokoro 1.37×).
+Those are best-of-three on two pinned cores with the model already loaded, on a different machine — a
+different question, honestly answered, and not this one. A row from each in the same sentence is the
+two-numbers-one-story failure this repo keeps paying for.
 
 ## Putting a model on a box by hand
 

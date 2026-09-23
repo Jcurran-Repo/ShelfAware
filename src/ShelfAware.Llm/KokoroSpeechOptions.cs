@@ -29,7 +29,8 @@ public enum SpeechProvider
     Matcha,
 
     /// <summary>KittenTTS, run IN THIS PROCESS through sherpa-onnx, on the same terms as the others. A
-    /// 24 MB model that published comparisons place between Piper and Kokoro for speed. See
+    /// 24 MB model measured between Piper and Kokoro for speed — 0.24–0.28× real time on a desktop core
+    /// against Kokoro's 1.14×, overlapping the faster Piper voices rather than clearing them. See
     /// <see cref="KittenSpeechOptions"/>.</summary>
     Kitten,
 }

@@ -7,11 +7,14 @@ namespace ShelfAware.Llm;
 /// and what is wrong with them, live in <see cref="SherpaTtsOptions"/> — all this adds is which files a
 /// Kitten archive ships and what to call them in a refusal.
 ///
-/// <para>Kitten is the middle of the three local families: published comparisons put it faster than
-/// Kokoro and slower than Piper, on a model of 24 MB against Kokoro's 103 MB. It exists here because the
-/// two families we had were the two ends — a voice good enough to ship and too slow for a shared core,
-/// and a voice fast enough for anything and noticeably flatter. Which of the three a box should run is a
-/// question only <c>tools/VoiceCheck</c> on that box can answer; see <c>docs/voice-bakeoff.md</c>.</para>
+/// <para>Kitten sits between Kokoro and Piper, on a model of 24 MB against Kokoro's 103 MB. Measured
+/// rather than taken from a published comparison: on one desktop core, nano ran 0.24–0.28× real time
+/// where Kokoro ran 1.14× and Piper's models spread 0.13–0.54× — so it beats Kokoro comfortably and
+/// overlaps Piper rather than clearing it, and the <c>mini</c> archive (0.62×) is slower than every
+/// Piper in that run. It exists here because the two families we had were the two ends: a voice good
+/// enough to ship and too slow for a shared core, and a voice fast enough for anything and noticeably
+/// flatter. ⚠️ Those figures are one desktop's; which family a given box should run is a question only
+/// <c>tools/VoiceCheck</c> on that box can answer. See <c>docs/voice-bakeoff.md</c>.</para>
 /// </summary>
 public sealed class KittenSpeechOptions() : SherpaTtsOptions(SectionName, "kitten", "model.fp16.onnx")
 {
