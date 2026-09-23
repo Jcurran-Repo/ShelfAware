@@ -152,6 +152,10 @@ public sealed class ReceiptIngestionService(
             ImagePath = imagePath,
             RawModelJson = result.RawModelJson,
             Status = ReceiptStatus.PendingReview,
+            // Stamped HERE, on the one path that creates a receipt row, so "when did this household last
+            // upload?" is true of a failed read and an abandoned review as much as of a confirmed trip —
+            // all three are uploads, and the reminder banner must not nudge someone who has just done one.
+            UploadedAt = DateTimeOffset.Now,
         };
         if (result.Success && result.Receipt is not null)
         {

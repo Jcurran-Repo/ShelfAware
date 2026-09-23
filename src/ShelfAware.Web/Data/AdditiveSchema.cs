@@ -135,6 +135,21 @@ public static class AdditiveSchema
         // 2026-09-07: Eggs's lookalike-CLUSTER memory (one row per head word: first-seen for his mood + a
         // permanent "they're all different" dismissal). A brand-new table — invisible to existing rows.
         EnsureTable(db, table: "LookalikeClusters");
+
+        // 2026-09-22: when a receipt was UPLOADED — the rhythm the receipt-reminder banner measures
+        // (Core's UploadCadence). Stamped where the row is created, so a receipt abandoned in review
+        // still counts as an upload.
+        //
+        // Pre-existing rows are BACKFILLED from ConfirmedAt, once, only on the boot that adds the column.
+        // Additive still: nothing existing changes shape or value, and the new column is the only thing
+        // written. Without it an established household — the whole point of a learned cadence — would
+        // have no rhythm at all until it had uploaded four more times, i.e. the feature would do nothing
+        // for weeks on exactly the boxes that are already running. A confirm is the closest honest
+        // reading of an upload we have for an old row (same sitting, in the overwhelming majority); rows
+        // with no ConfirmedAt stay NULL rather than being guessed at from the printed purchase date,
+        // which is the one date that is NOT an upload.
+        if (EnsureColumn(db, table: "Receipts", column: "UploadedAt", definition: "TEXT NULL"))
+            Execute(db, "UPDATE Receipts SET UploadedAt = ConfirmedAt WHERE ConfirmedAt IS NOT NULL;");
     }
 
     public static void Apply(AuthDbContext db)
@@ -229,6 +244,25 @@ public static class AdditiveSchema
         EnsureColumn(db, table: "ServiceMargin", column: "BillableCostMicros", definition: "INTEGER NOT NULL DEFAULT 0");
     }
 
+    /// <summary>Run one statement on the context's own connection — the backfill half of an additive
+    /// change, on the same connection the ALTER above used.</summary>
+    private static void Execute(DbContext db, string sql)
+    {
+        var conn = db.Database.GetDbConnection();
+        var wasClosed = conn.State != System.Data.ConnectionState.Open;
+        if (wasClosed) conn.Open();
+        try
+        {
+            using var command = conn.CreateCommand();
+            command.CommandText = sql;
+            command.ExecuteNonQuery();
+        }
+        finally
+        {
+            if (wasClosed) conn.Close();
+        }
+    }
+
     /// <summary>Create <paramref name="table"/> (and its indexes) on a DB built before it existed. The
     /// DDL is not hand-written: it's lifted from <c>GenerateCreateScript()</c> — the exact statements
     /// EnsureCreated runs on a fresh file — so there is no second copy of the schema to keep honest.
@@ -285,7 +319,11 @@ public static class AdditiveSchema
         }
     }
 
-    private static void EnsureColumn(DbContext db, string table, string column, string definition)
+    /// <summary>Add <paramref name="column"/> to <paramref name="table"/> if it isn't there yet.
+    /// Returns true only when this call actually added it — which is the one safe moment to BACKFILL the
+    /// new column from an existing one, since a later boot must never re-run a backfill over values the
+    /// app has since written.</summary>
+    private static bool EnsureColumn(DbContext db, string table, string column, string definition)
     {
         var conn = db.Database.GetDbConnection();
         var wasClosed = conn.State != System.Data.ConnectionState.Open;
@@ -295,11 +333,12 @@ public static class AdditiveSchema
             using var check = conn.CreateCommand();
             check.CommandText =
                 $"SELECT EXISTS (SELECT 1 FROM pragma_table_info('{table}') WHERE name = '{column}');";
-            if (Convert.ToInt64(check.ExecuteScalar()) > 0) return;
+            if (Convert.ToInt64(check.ExecuteScalar()) > 0) return false;
 
             using var alter = conn.CreateCommand();
             alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {definition};";
             alter.ExecuteNonQuery();
+            return true;
         }
         finally
         {

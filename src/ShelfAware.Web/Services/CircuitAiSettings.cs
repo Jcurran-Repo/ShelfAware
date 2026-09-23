@@ -49,6 +49,15 @@ public sealed class CircuitAiSettings
     /// <summary>Whether an AI call can be attempted (a key is present for the chosen provider).</summary>
     public bool HasKey => !string.IsNullOrWhiteSpace(ApiKey);
 
+    /// <summary>Raised whenever this circuit's AI configuration changes — the visitor's browser-held
+    /// settings arriving (BYOK) or being forgotten.
+    /// <para>⚠️ A component that decides what to SHOW from <see cref="HasKey"/> must subscribe. The key
+    /// lands in <c>AiSettingsLoader</c>'s <c>OnAfterRenderAsync</c>, i.e. after every component on the
+    /// first page has already rendered, and nothing else re-renders them — so reading the key in a render
+    /// expression is not enough on its own: something has to ask for that render. Without this a BYOK box
+    /// would show its key-gated surfaces to nobody, which is the whole population that box exists for.</para></summary>
+    public event Action? Changed;
+
     /// <summary>Overlay the visitor's own settings (from their browser). Blank models keep the defaults.
     /// On a managed deployment this is a NO-OP — the host's keys are authoritative, so a stale browser value
     /// (or a devtools injection) can never take over. Hiding the panel is only cosmetic; this is the real guard.</summary>
@@ -66,6 +75,7 @@ public sealed class CircuitAiSettings
             ? (string.IsNullOrWhiteSpace(baseUrl) ? _fallbackBaseUrl : baseUrl)
             : _fallbackBaseUrl;
         FromBrowser = true;
+        Changed?.Invoke();
     }
 
     /// <summary>Revert to the server-config fallback — used when the visitor forgets their key. On a public
@@ -78,5 +88,6 @@ public sealed class CircuitAiSettings
         ChatModel = _fallbackChatModel;
         BaseUrl = _fallbackBaseUrl;
         FromBrowser = false;
+        Changed?.Invoke();
     }
 }

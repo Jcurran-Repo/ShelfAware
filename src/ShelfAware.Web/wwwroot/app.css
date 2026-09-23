@@ -867,7 +867,14 @@ input:focus, select:focus {
 .onboarding { position: relative; border-left: 4px solid var(--accent); }
 .onboarding h2 { margin-top: 0; }
 .onboarding-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
-.onboarding-x {
+/* "You usually upload one by now" — the learned-cadence receipt reminder (dashboard). Uses the
+   due-soon palette so it reads as a gentle prompt rather than the accent-bordered first-run pitch it
+   sits under, and shares the first-run banner's corner ×. */
+.reminder-banner { position: relative; border-left: 4px solid var(--duesoon-line); }
+.reminder-banner h2 { margin-top: 0; }
+
+.onboarding-x,
+.banner-x {
     position: absolute;
     top: 0.4rem;
     right: 0.5rem;
@@ -879,7 +886,8 @@ input:focus, select:focus {
     cursor: pointer;
     padding: 0.15rem 0.4rem;
 }
-.onboarding-x:hover { color: var(--accent-ink); }
+.onboarding-x:hover,
+.banner-x:hover { color: var(--accent-ink); }
 
 /* Founder-tier thank-you badge (Settings AI-usage panel). Uses the positive/"stocked" status palette
    so it reads as a warm callout, theme-aware in both light and dark for free. */

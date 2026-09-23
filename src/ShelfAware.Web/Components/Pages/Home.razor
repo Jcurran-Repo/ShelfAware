@@ -21,9 +21,20 @@
 <PageTitle>Reginald</PageTitle>
 
 <OnboardingBanner CatalogEmpty="@(products is { Count: 0 })" OnSeeded="LoadAsync" />
+@* Below the first-run pitch. The two are NOT mutually exclusive and the code must not assume they are —
+   a comment here once claimed they were, and running the app showed both stacked, pushing Running Low
+   below the fold. What keeps them apart in the usual case is that each stands down where the other has
+   something to say: the reminder needs an AI key (its own gate, since receipt import can't run without
+   one) and the first-run pitch is shown mainly to a visitor who hasn't got one. They can still coincide —
+   a household with a rhythm that has emptied its catalog sees both — which is a thin banner too many, not
+   a broken screen. The banner asks for itself: it decides from the household's own upload history whether
+   there is anything to say. *@
+<ReceiptReminderBanner OnDismissed="FocusHeadingAsync" />
 
 <header class="page-head">
-    <h1>Running Low</h1>
+    @* tabindex="-1" so the reminder's dismissal can hand focus here rather than dropping it on the body;
+       the same pattern GuidedTour uses to move focus between steps. It stays out of the tab order. *@
+    <h1 tabindex="-1" @ref="heading">Running Low</h1>
     @if (products is not null)
     {
         <div class="summary">
@@ -432,6 +443,19 @@ else
     {
         lastAction = null;
         actionNote = null;
+    }
+
+    private ElementReference heading;
+
+    /// <summary>Takes focus back after the receipt reminder dismisses itself. The banner removes a whole
+    /// region from the DOM, and focus inside a removed element falls to the body — so the next Tab starts
+    /// again from the top of the page. The page's own heading is where a reader would be if the banner had
+    /// never been there.</summary>
+    private async Task FocusHeadingAsync()
+    {
+        try { await heading.FocusAsync(); }
+        catch (JSDisconnectedException) { return; } // circuit gone — there is no DOM left to focus
+        catch (JSException ex) { Logger.LogDebug(ex, "Couldn't focus the dashboard heading after a dismissal."); }
     }
 
     private async Task SendChat()
