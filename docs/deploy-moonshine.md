@@ -60,26 +60,32 @@ check would be unpacked, as root, with the only sign a few lines back up the scr
 # A minimal Ubuntu image ships no bzip2, and GNU tar shells out to it to read a .tar.bz2.
 # Release assets sit on a mutable tag, so the archive is checked against the hash measured on
 # 2026-09-21 -- the same one the CI bootstrap checks (.github/workflows/deploy-droplet.yml).
-# Downloaded and unpacked in a fresh root-only directory (mktemp -d), and moved into the models
-# directory only once it is verified, whole, and root-owned: /var/lib/shelfaware is the service
-# account's home, so root writes nothing there that the app could have prepared a path for, and "is
-# the directory there" -- the check everything else makes -- never sees a half-extracted model.
-# That same check stops a re-run up front, where mv would otherwise nest a second copy in the first.
+# /var/lib/shelfaware is the service account's home, so the app can rename models/ and put a symlink
+# of its own there at any moment -- including while this downloads. So models/ is pinned by INODE:
+# cd into it, confirm with the kernel (/proc/$$/cwd) that this shell is in the root-owned directory at
+# exactly that path, and move the model in relative to "." -- which re-pointing the name cannot move.
+# The download and unpack happen in a fresh root-only directory (mktemp -d); only a verified, whole,
+# root-owned model is moved in, so "is the directory there" -- the check everything else makes --
+# never sees a half-extracted one, and a re-run is stopped up front instead of nesting a second copy.
+# (The same rule as the deploy's bootstrap, .github/workflows/deploy-droplet.yml.)
 # Root-owned, world-readable: the app READS its model and never rewrites it -- install.sh's posture
 # for the binaries, for the same reason.
 { command -v bzip2 >/dev/null || { apt-get update && apt-get install -y bzip2; }; } \
   && M=/var/lib/shelfaware/models && V=sherpa-onnx-moonshine-tiny-en-int8 \
-  && { { [ ! -e "$M/$V" ] && [ ! -L "$M/$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
-  && mkdir -p "$M" && T=$(mktemp -d) \
+  && mkdir -p "$M" && cd -P "$M" \
+  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u .)" = 0 ]; } \
+       || { echo "$M is not a root-owned directory at that path; not installing into it."; false; }; } \
+  && { { [ ! -e "./$V" ] && [ ! -L "./$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
+  && T=$(mktemp -d) \
   && curl -fsSL --proto '=https' -o "$T/$V.tar.bz2" \
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$V.tar.bz2" \
   && { echo "d5fe6ec4334fef36255b2a4010412cad4c007e33103fec62fb5d17cad88086f2  $T/$V.tar.bz2" | sha256sum -c - \
        || { rm -rf "$T"; false; }; } \
   && tar xjf "$T/$V.tar.bz2" -C "$T" --no-same-owner --no-same-permissions \
   && chown -R root:root "$T/$V" && chmod -R a+rX "$T/$V" \
-  && mv "$T/$V" "$M/" \
+  && mv -T "$T/$V" "./$V" \
   && rm -rf "$T" \
-  && ls "$M/$V"
+  && ls "./$V"
 # preprocess.onnx  encode.int8.onnx  uncached_decode.int8.onnx  cached_decode.int8.onnx  tokens.txt
 ```
 

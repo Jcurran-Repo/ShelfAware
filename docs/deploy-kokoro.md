@@ -94,17 +94,20 @@ The same shape, and the reasons for each part, as [deploy-moonshine.md](deploy-m
 # and root-owned; why each of those matters is in deploy-moonshine.md step 1.
 { command -v bzip2 >/dev/null || { apt-get update && apt-get install -y bzip2; }; } \
   && M=/var/lib/shelfaware/models && V=kokoro-int8-en-v0_19 \
-  && { { [ ! -e "$M/$V" ] && [ ! -L "$M/$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
-  && mkdir -p "$M" && T=$(mktemp -d) \
+  && mkdir -p "$M" && cd -P "$M" \
+  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u .)" = 0 ]; } \
+       || { echo "$M is not a root-owned directory at that path; not installing into it."; false; }; } \
+  && { { [ ! -e "./$V" ] && [ ! -L "./$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
+  && T=$(mktemp -d) \
   && curl -fsSL --proto '=https' -o "$T/$V.tar.bz2" \
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$V.tar.bz2" \
   && { echo "c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd  $T/$V.tar.bz2" | sha256sum -c - \
        || { rm -rf "$T"; false; }; } \
   && tar xjf "$T/$V.tar.bz2" -C "$T" --no-same-owner --no-same-permissions \
   && chown -R root:root "$T/$V" && chmod -R a+rX "$T/$V" \
-  && mv "$T/$V" "$M/" \
+  && mv -T "$T/$V" "./$V" \
   && rm -rf "$T" \
-  && ls "$M/$V"
+  && ls "./$V"
 # model.int8.onnx  voices.bin  tokens.txt  espeak-ng-data/  README.md  LICENSE
 ```
 
