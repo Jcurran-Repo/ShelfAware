@@ -9,7 +9,7 @@ name: Voice bake-off
 # against the runner's fraction of that. Use this run to pick a voice by EAR, then confirm the winner is
 # under 1.0x on the box itself with tools/VoiceCheck. See docs/voice-bakeoff.md.
 #
-# Manual only. It downloads ~700 MB of models and has no business running on a push.
+# Manual only. It downloads ~980 MB of models and has no business running on a push.
 
 on:
   workflow_dispatch:
@@ -26,7 +26,7 @@ jobs:
   bakeoff:
     name: Render every voice
     runs-on: ubuntu-latest
-    # ~700 MB of models and fourteen syntheses. Bounded like the mutation workflows are, so a stall
+    # ~980 MB of models and fourteen syntheses. Bounded like the mutation workflows are, so a stall
     # cannot hold a runner for six hours.
     timeout-minutes: 45
     steps:

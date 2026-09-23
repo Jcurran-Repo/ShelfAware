@@ -38,8 +38,8 @@ demo-box problem and not a family-box one.
 |---|---|---|---|
 | **Piper** (VITS) | weights + tokens + espeak data | ~0.05× on a good core, ~0.1× on the droplet | The demo box's voice today. Clear, noticeably flatter. Weights are named after the voice, so `Speech:Piper:ModelFile` must say which. |
 | **Kokoro** | weights + voices.bin + tokens + espeak data | 1.4× on a good core, **3.1× on a DO-Regular droplet** | The family box's voice. The warmest, and the only one that has failed the 1.0× test on real hardware. |
-| **Kitten** | Kokoro's four files exactly, under its own config block | Published comparisons: faster than Kokoro, slower than Piper — unmeasured here | 24 MB. The nano archive has 8 voices, 4 male and 4 female. |
-| **Matcha** | acoustic model **+ a separate vocoder** + tokens + espeak data | unmeasured here | ⚠️ The vocoder is published in a *different release* from the voice. A directory holding everything the voice archive shipped still cannot speak. It is in the cache fingerprint, so changing vocoder re-voices the clips rather than serving the old ones. |
+| **Kitten** | Kokoro's four files exactly, under its own config block | ~0.3–0.4× on a dev PC (first measurement, see below) | 24 MB. The nano archive has 8 voices, 4 male and 4 female. |
+| **Matcha** | acoustic model **+ a separate vocoder** + tokens + espeak data | ~0.19× on a dev PC (first measurement, see below) | ⚠️ The vocoder is published in a *different release* from the voice. A directory holding everything the voice archive shipped still cannot speak. It is in the cache fingerprint, so changing vocoder re-voices the clips rather than serving the old ones. |
 
 ## The lineup
 
@@ -58,9 +58,14 @@ The workflow's `voices` input takes `all` (the default) or a space-separated lis
 | `matcha-ljspeech` | `matcha-icefall-en_US-ljspeech` | 0 — with the Vocos vocoder |
 | `kokoro-0` | `kokoro-int8-en-v0_19` | 0 — the family box's voice, the other control |
 
-Speed for Kitten and Matcha is deliberately blank: nobody here has measured them on a box that matters,
-and a number copied off someone else's benchmark is exactly the kind of figure this repo has been burned
-by. The bake-off is how they get filled in.
+⚠️ **Kitten's and Matcha's figures are one run each on a Windows dev PC, model load included, and
+they are NOT measured the way Kokoro's and Piper's were** — those are best-of-three on two pinned cores
+(`docs/deploy-piper.md`). Do not read the column as a ranking: a first run including a cold model load is
+not comparable to a best-of-three that excludes one, and the difference is larger than the gap between
+some of these rows. What the two new numbers do establish, which nothing did before, is that both
+families clear 1.0× on a dev core with room to spare — which is the question the droplet posed. The
+droplet's own figures are still unmeasured, and the bake-off plus `VoiceCheck` on the box is how they
+get filled in.
 
 ## Putting a model on a box by hand
 
@@ -72,15 +77,24 @@ measured" and "whatever that URL serves today" are different promises, and only 
 running as root.* `--no-same-owner --no-same-permissions` is part of it — GNU tar refuses `..` members
 and symlink escapes, but it will happily preserve a setuid bit.
 
+⚠️ **Every check below is joined to what follows it with `&&`, and that is load-bearing, not style.**
+`sha256sum -c` on a line of its own prints `FAILED` and returns 1, and a block pasted into a shell runs
+the next line anyway — so an archive that failed its check would be unpacked, as root, and the only
+sign would be four lines back up the scrollback. `deploy-droplet.yml`'s `bootstrap` exits on a
+mismatch; these commands have to do the same thing to be worth calling equivalent to it. **Paste each
+block whole.**
+
 ```bash
 cd /var/lib/shelfaware/models
 R=https://github.com/k2-fsa/sherpa-onnx/releases/download
 
 # Kitten
-curl -fsSL --proto '=https' -O "$R/tts-models/kitten-nano-en-v0_1-fp16.tar.bz2"
-echo "f35dac93754fe2ac97c66e1f468311d0d2130f7f0f5a89bfa1197e09a0cbdec5  kitten-nano-en-v0_1-fp16.tar.bz2" | sha256sum -c -
-tar xjf kitten-nano-en-v0_1-fp16.tar.bz2 --no-same-owner --no-same-permissions
-rm kitten-nano-en-v0_1-fp16.tar.bz2
+A=kitten-nano-en-v0_1-fp16.tar.bz2
+curl -fsSL --proto '=https' -O "$R/tts-models/$A" \
+  && { echo "f35dac93754fe2ac97c66e1f468311d0d2130f7f0f5a89bfa1197e09a0cbdec5  $A" | sha256sum -c - \
+       || { rm -f "$A"; false; }; } \
+  && tar xjf "$A" --no-same-owner --no-same-permissions \
+  && rm "$A"
 ```
 
 Matcha needs the vocoder fetched separately, into the model's own directory. ⚠️ **Verify that one too**:
@@ -91,15 +105,21 @@ which answers garbage by killing the process rather than by saying so.
 ```bash
 cd /var/lib/shelfaware/models
 R=https://github.com/k2-fsa/sherpa-onnx/releases/download
+M=matcha-icefall-en_US-ljspeech
 
-curl -fsSL --proto '=https' -O "$R/tts-models/matcha-icefall-en_US-ljspeech.tar.bz2"
-echo "ea75702da7456a8b1874728278a835220dc8a26f4e8bd93c83bf53dc27679845  matcha-icefall-en_US-ljspeech.tar.bz2" | sha256sum -c -
-tar xjf matcha-icefall-en_US-ljspeech.tar.bz2 --no-same-owner --no-same-permissions
-rm matcha-icefall-en_US-ljspeech.tar.bz2
+curl -fsSL --proto '=https' -O "$R/tts-models/$M.tar.bz2" \
+  && { echo "ea75702da7456a8b1874728278a835220dc8a26f4e8bd93c83bf53dc27679845  $M.tar.bz2" | sha256sum -c - \
+       || { rm -f "$M.tar.bz2"; false; }; } \
+  && tar xjf "$M.tar.bz2" --no-same-owner --no-same-permissions \
+  && rm "$M.tar.bz2"
 
-curl -fsSL --proto '=https' -o matcha-icefall-en_US-ljspeech/vocos-22khz-univ.onnx \
-  "$R/vocoder-models/vocos-22khz-univ.onnx"
-echo "0574a135aa1db2de6e181050db2ec528496cacd4a4701fc5d7faf9f9804c0081  matcha-icefall-en_US-ljspeech/vocos-22khz-univ.onnx" | sha256sum -c -
+# ⚠️ Downloaded to .part and moved only once it verifies. Written straight to its live name, a
+# body that failed the check would still be sitting where the app loads it: Missing() is File.Exists
+# and nothing more, so the box boots clean and dies on the first read-aloud.
+curl -fsSL --proto '=https' -o "$M/vocos-22khz-univ.onnx.part" "$R/vocoder-models/vocos-22khz-univ.onnx" \
+  && { echo "0574a135aa1db2de6e181050db2ec528496cacd4a4701fc5d7faf9f9804c0081  $M/vocos-22khz-univ.onnx.part" | sha256sum -c - \
+       || { rm -f "$M/vocos-22khz-univ.onnx.part"; false; }; } \
+  && mv "$M/vocos-22khz-univ.onnx.part" "$M/vocos-22khz-univ.onnx"
 ```
 
 ⚠️ **Those hashes are written twice** — here and in `sha_for()` in
@@ -109,12 +129,22 @@ one question is the failure CLAUDE.md names as this repo's most expensive, so th
 test: `VoiceModelHashRulesTests` fails the build if this file names a hash the workflow does not record.
 A sentence promising they cannot drift would not have been worth anything.
 
-Then prove it speaks **before** pointing the app at it:
+Then prove it speaks **before** pointing the app at it. From a machine with the repo checked out (a dev
+box, or the family box):
 
 ```bash
 dotnet run --project tools/VoiceCheck -- kitten /var/lib/shelfaware/models/kitten-nano-en-v0_1-fp16 out.wav 0
 dotnet run --project tools/VoiceCheck -- matcha /var/lib/shelfaware/models/matcha-icefall-en_US-ljspeech out.wav 0
 ```
+
+⚠️ **Not on the droplet — those two lines want an SDK and a checkout, and the droplet is deliberately
+given neither** (the app ships self-contained precisely so the box needs no .NET install). Don't install
+one for a smoke test: publish the check the way the app is published and send it up. That route is
+written out in [docs/deploy-kokoro.md §3](deploy-kokoro.md), and it is the same three commands whichever
+family you are checking — swap `kokoro` for `kitten` or `matcha` and give the matching directory. It is
+not repeated here, because a pre-flight procedure with two copies is one that will be half-corrected.
+
+A droplet has no sound card, so `scp` the WAV back to listen to it.
 
 ⚠️ **Unpack the model, then set `Speech__Provider`, in that order.** The app refuses to boot pointed at an
 incomplete model directory on purpose: sherpa-onnx answers a missing file by printing one line to stderr
