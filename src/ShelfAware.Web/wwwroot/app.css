@@ -650,7 +650,8 @@ button.danger:hover:not(:disabled) {
     background: var(--accent-ink);
     border-color: var(--accent-ink);
 }
-/* "save 22%" beside the annual option — green, like the positive callout, so it reads as a win not a warning. */
+/* The saving badge beside the annual option (its text is derived — SubscriptionPricing) — green, like
+   the positive callout, so it reads as a win not a warning. */
 .save-badge {
     font-size: 0.8rem;
     color: var(--stocked-ink);

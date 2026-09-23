@@ -1,4 +1,5 @@
 using ShelfAware.Web.Auth;
+using ShelfAware.Web.Billing;
 using ShelfAware.Web.Components;
 
 namespace ShelfAware.Web.UI.Tests;
@@ -47,6 +48,26 @@ public class BillingPanelTests : PageTestContext
         // §8: a Free household is never offered packs.
         Assert.DoesNotContain("CreditPack", cut.Markup);
         Assert.DoesNotContain("/billing/portal", cut.Markup);
+    }
+
+    [Fact]
+    public void The_subscribe_buttons_and_the_saving_beside_them_all_come_from_the_one_price()
+    {
+        // ⚠️ The badge and the note used to be typed into the markup as "save 22%" and "about two
+        // months". Both were true of $2.99/$27.99 and neither was checked by anything, so raising the
+        // monthly to $3.99 (2026-09-22) would have left this panel offering two prices and a discount
+        // claim that contradicted them. Asserting against SubscriptionPricing — not against "41%" —
+        // is what makes the next price change safe too.
+        var cut = Render(tier: HouseholdTier.Free);
+
+        Assert.Contains(SubscriptionPricing.MonthlyDisplay, cut.Markup);
+        Assert.Contains(SubscriptionPricing.AnnualDisplay, cut.Markup);
+
+        // ⚠️ Asserted as EQUAL to AnnualSaves, not as present: the panel drops the badge and the saving
+        // clause when the annual saves nothing, so a test demanding them unconditionally would fail on
+        // CORRECT behaviour the day a price makes that true — a red suite pointing at the wrong thing.
+        Assert.Equal(SubscriptionPricing.AnnualSaves, cut.Markup.Contains(SubscriptionPricing.AnnualSavingBadge));
+        Assert.Equal(SubscriptionPricing.AnnualSaves, cut.Markup.Contains(SubscriptionPricing.AnnualSavingNote));
     }
 
     [Fact]
