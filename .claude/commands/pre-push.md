@@ -110,4 +110,9 @@ directive in CLAUDE.md for why — on 2026-09-23 two PRs were merged at one head
 reviewed commits was still being pushed to them, which stranded that work on already-merged branches and
 gave `master` a version no gate had covered.
 
-**Do not push or merge.** Ask. Pushing is the user's call, always.
+**Do not merge.** Merging is Jordan's call, always — report, then stop.
+
+⚠️ This line used to read "do not push or merge", which contradicted CLAUDE.md's own gate rule two
+files away: **pushing the topic branch is fine and encouraged**, and is in fact how the gated head
+reaches `origin` for him to merge at all. A direct push to `master` is a merge by another name, and is
+what "do not merge" covers.
