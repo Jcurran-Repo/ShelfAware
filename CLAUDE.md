@@ -60,7 +60,12 @@ dismiss polish as overkill "because it's single-user."
     <sha>`. Merging is Jordan's call either way, and "merge away" authorizes the PRs as they stood when
     he said it, not whatever lands on them next.
   - **Don't work a file in parallel with a sibling session.** Anything needing a real build, a test run
-    or a mutation sweep belongs on the PC; the rest is done in the cloud session — one at a time.
+    or a mutation sweep belongs on the PC — it is the only machine here that can run them; the rest is
+    done in the cloud session. One at a time, not both at once.
+  - **The thread that started a device session owns coordinating it.** The device session cannot see
+    the thread, the other sessions, or what anyone else is doing; its only line out is reporting back.
+    So splitting the work is the thread's job, not Jordan's — he sees one Claude, and asking him which
+    of us should take something is asking him to do the coordinating he can't see well enough to do.
 
   ⚠️ This one cannot be held by a test, which is the usual and better answer here: nothing in the
   build can see another session. What it can be held by is the sha — a "ready" without one is the
