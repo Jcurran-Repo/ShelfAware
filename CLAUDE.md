@@ -64,8 +64,10 @@ dismiss polish as overkill "because it's single-user."
     done in the cloud session. One at a time, not both at once.
   - **The thread that started a device session owns coordinating it.** The device session cannot see
     the thread, the other sessions, or what anyone else is doing; its only line out is reporting back.
-    So splitting the work is the thread's job, not Jordan's — he sees one Claude, and asking him which
-    of us should take something is asking him to do the coordinating he can't see well enough to do.
+    So it is never expected to *detect* a sibling — the rules above are kept by the thread telling it
+    what is already taken, before it starts. Splitting the work is the thread's job, not Jordan's: he
+    sees one Claude, and asking him which of us should take a piece of work is asking him to do the
+    coordinating from the one seat that cannot see it.
 
   ⚠️ This one cannot be held by a test, which is the usual and better answer here: nothing in the
   build can see another session. What it can be held by is the sha — a "ready" without one is the

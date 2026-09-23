@@ -15,14 +15,22 @@ Run both, in this order, and report honestly. A finding you talk yourself out of
 
 ```
 git fetch origin master
+BASE=origin/master          # a PR stacked on a frozen, unmerged head: that head instead
 git status --porcelain
-git log --oneline origin/master..HEAD
-git diff --stat origin/master..HEAD
+git log --oneline $BASE..HEAD
+git diff --stat $BASE..HEAD
 ```
 
-⚠️ `origin/master`, not `master`. The local ref only moves when someone checks `master` out and pulls,
-which no session here does — this gate's own review once scoped itself against a local `master` 38
-commits behind and reported 324 KB of someone else's already-merged work as part of the branch.
+⚠️ **`$BASE` is the one base every step below diffs against** — §2's review scope and §3's mutation
+scope included. Set it once here; never let a later step name its own.
+
+- **`origin/master`, not `master`.** The local ref only moves when someone checks `master` out and
+  pulls, which no session here does — this gate's own review once scoped itself against a local
+  `master` 38 commits behind and reported 324 KB of someone else's already-merged work as part of the
+  branch.
+- **On a stacked PR, the parent's frozen head.** Against `origin/master` the gate would read the
+  parent's commits as this branch's, and certify a diff that silently changes the moment the parent
+  merges.
 
 State the branch, the commit count, and the diffstat back to the user before reviewing. If the
 working tree is dirty, stop and say so — an unreviewed change is about to ride along.
@@ -30,7 +38,7 @@ working tree is dirty, stop and say so — an unreviewed change is about to ride
 ## 2. Run the reviews
 
 Invoke the `/code-review` skill, then the `/security-review` skill, over the full branch diff
-against `master` (not just the last commit).
+against `$BASE` from §1 (not just the last commit, and not the local `master` ref).
 
 For this repo, security review means the multi-tenancy boundary above all else:
 
@@ -54,10 +62,19 @@ this branch changed** — diff-scoped, so it is seconds-to-minutes rather than t
 
 ```
 cd tests/ShelfAware.Tests
-dotnet stryker --since:master
+dotnet stryker --since:$BASE
 ```
 
 **If no `src/ShelfAware.Core/**` files changed, skip this — there is nothing to mutate.**
+
+⚠️ **`$BASE` here too.** `--since:master` against a stale local ref scopes the run over Core changes
+that merged weeks ago; the break threshold is 100, so it then fails on code this branch never touched.
+CI gets this right already — `.github/workflows/mutation-pr.yml` passes the PR's base sha.
+
+⚠️ **If the session running this gate has no .NET SDK, it cannot run this step** — the cloud session
+does not. Say so in the report rather than skipping it silently, and treat `mutation-pr.yml`'s
+diff-scoped check on the PR as the run that counts: no `ready, head <sha>` until that check is green on
+the sha being named.
 
 Anything under 100% is a survivor: a mutant this branch introduced or newly exposed that no test kills.
 Treat each like a review finding — it is either a real coverage gap (**add the test**) or a true

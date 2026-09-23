@@ -235,7 +235,7 @@ score below 100). The HTML report is written under `StrykerOutput/` (gitignored)
 
 ```bash
 cd tests/ShelfAware.Tests
-dotnet stryker --since:master
+dotnet stryker --since:origin/master
 ```
 
 ## Gate posture
@@ -257,7 +257,7 @@ Reconciling "target 100%" with "don't wall off feature work":
   as an inline GitHub annotation on its exact line in the PR diff, plus a plain-English job summary naming
   the two fixes (add a test, or annotate the equivalent) — so a contributor sees *why* the merge is
   blocked without opening the log.
-- **Pre-push local gate step** (`.claude/commands/pre-push.md` §3) — the same `dotnet stryker --since:master`,
+- **Pre-push local gate step** (`.claude/commands/pre-push.md` §3) — the same `dotnet stryker --since:origin/master`,
   run by hand as part of the pre-merge gate when the branch diff touches Core. Each survivor is treated like
   a review finding: a real gap gets a test, a true equivalent gets an in-code annotation with a reason. It is
   the identical check CI enforces, so a clean local gate predicts a green PR check.
