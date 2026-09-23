@@ -26,8 +26,11 @@ internal static class PastedInstalls
     /// and watched a text-matching version of these rules stay green.</para></summary>
     internal sealed record Block(string Archive, string Sha, string Code)
     {
-        /// <summary>A bash block — run as root on the droplet, into the service account's home.</summary>
+        /// <summary>A bash block — run as root on the droplet.</summary>
         internal bool IsBash => Code.Contains("sha256sum -c", StringComparison.Ordinal);
+
+        /// <summary>The models directory a bash block installs into — its <c>M=</c> — or null.</summary>
+        internal string? ModelsRoot => Regex.Match(Code, @"\bM=(\S+)") is { Success: true } m ? m.Groups[1].Value : null;
 
         /// <summary>It runs its checksum and STOPS on a mismatch: in bash, <c>sha256sum -c</c> joined to a
         /// clean-up-and-fail (a check on a line of its own prints FAILED and lets the next line run); in
@@ -77,8 +80,18 @@ internal static class PastedInstalls
     /// <summary>The archives the droplet deploy's bootstrap fetches, each with the hash it checks:
     /// <c>fetch &lt;archive&gt; \</c>, then the sha on the next line.</summary>
     internal static Dictionary<string, string> BootstrapFetches() =>
-        Regex.Matches(
-                File.ReadAllText(RepoTree.FileAt(Path.Combine(".github", "workflows", "deploy-droplet.yml"))),
-                @"^\s*fetch\s+([\w.\-]+)\s*\\\s*\r?\n\s*([0-9a-f]{64})", RegexOptions.Multiline)
+        Regex.Matches(Bootstrap(), @"^\s*fetch\s+([\w.\-]+)\s*\\\s*\r?\n\s*([0-9a-f]{64})", RegexOptions.Multiline)
             .ToDictionary(m => m.Groups[1].Value, m => m.Groups[2].Value, StringComparer.Ordinal);
+
+    /// <summary>Where the models live on a droplet: the bootstrap's <c>MODELS=</c>, the one definition every
+    /// pasted install's <c>M=</c> and every documented <c>Speech__*__ModelDirectory</c> must agree with.</summary>
+    internal static string ModelsRoot()
+    {
+        var root = Regex.Match(Bootstrap(), @"^\s*MODELS=(\S+)\s*$", RegexOptions.Multiline);
+        Assert.True(root.Success, "No MODELS= line found in deploy-droplet.yml — the scan is broken, not the workflow.");
+        return root.Groups[1].Value;
+    }
+
+    private static string Bootstrap() =>
+        File.ReadAllText(RepoTree.FileAt(Path.Combine(".github", "workflows", "deploy-droplet.yml")));
 }

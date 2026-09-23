@@ -44,7 +44,7 @@ public class ModelInstallDocHashTests
             $"An install block in docs/{doc} no longer runs its checksum (sha256sum -c / Get-FileHash): "
             + string.Join(", ", withoutCheck));
 
-        // ⚠️ The bash block runs as root into the service account's home, so it must pin models/ by
+        // ⚠️ The bash block runs as root, so it must pin the models directory by
         // inode rather than trust its name — the bootstrap's rule. (The PowerShell block installs under
         // the family box's own user profile, where no second account can re-point anything.)
         var unpinned = installs.Where(p => p.IsBash && !p.PinsModels).Select(p => p.Archive).ToList();

@@ -101,7 +101,7 @@ public class VoiceModelHashRulesTests
         Assert.True(pairs.Count >= atLeast,
             $"Only {pairs.Count} install block(s) found in docs/{doc} — the scan is broken, not the doc.");
 
-        // ⚠️ Every block runs as root into the service account's home, so each must check its hash AND
+        // ⚠️ Every block runs as root, so each must check its hash AND
         // pin models/ by inode rather than trust its name — the bootstrap's rule (deploy-droplet.yml).
         // A block written the old way, cd'ing by name and chmod'ing a path, is how that rule came to be
         // half-converted once already; this is what stops it happening again.

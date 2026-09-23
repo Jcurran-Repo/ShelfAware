@@ -53,13 +53,13 @@ back up the scrollback. The deploy's `bootstrap` exits on a mismatch; this has t
 
 ```bash
 # The same shape as the deploy's bootstrap, and for its reasons (.github/workflows/deploy-droplet.yml):
-# /var/lib/shelfaware is the service account's home, so the app can re-point models/ at any moment --
-# models/ is pinned by INODE (cd, then the kernel's /proc/$$/cwd must be exactly that path, root-owned),
-# and everything after is relative to ".". Downloaded and unpacked in a root-only directory inside it,
+# models live in root's /var/lib/shelfaware-models, outside the app's home, and the directory is still
+# pinned by INODE (cd, then the kernel's /proc/$$/cwd must be exactly that path, root-owned and 755),
+# with everything after relative to ".". Downloaded and unpacked in a root-only directory inside it,
 # and moved in only once verified, whole and root-owned -- one rename on one filesystem, so a
 # half-extracted model can never sit under the name everything else checks.
 { command -v bzip2 >/dev/null || { apt-get update && apt-get install -y bzip2; }; } \
-  && M=/var/lib/shelfaware/models && V=vits-piper-en_US-ryan-medium \
+  && M=/var/lib/shelfaware-models && V=vits-piper-en_US-ryan-medium \
   && mkdir -p "$M" && cd -P "$M" \
   && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u:%a .)" = 0:755 ]; } \
        || { echo "$M is not a root-owned 755 directory at that path; not installing into it."; false; }; } \
@@ -98,7 +98,7 @@ descriptor has three paths where Kokoro's has four.
 
 ```bash
 dotnet run --project tools/VoiceCheck -- piper \
-  /var/lib/shelfaware/models/vits-piper-en_US-ryan-medium /tmp/piper-check.wav
+  /var/lib/shelfaware-models/vits-piper-en_US-ryan-medium /tmp/piper-check.wav
 ```
 
 It loads the model through the app's own engine, says a sentence with numbers and a unit abbreviation
@@ -124,7 +124,7 @@ back silently:
 
 ```
 Speech__Provider=Piper
-Speech__Piper__ModelDirectory=/var/lib/shelfaware/models/vits-piper-en_US-ryan-medium
+Speech__Piper__ModelDirectory=/var/lib/shelfaware-models/vits-piper-en_US-ryan-medium
 ```
 
 Then `systemctl restart shelfaware` and check `/healthz`.
