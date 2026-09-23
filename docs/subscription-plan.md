@@ -53,9 +53,13 @@ goes from ~$1.33/mo (44%) to **~$2.27/mo (57%)** — see the §3 table.
 ⚠️ **The cost side moved further than the price did, and it moved first.** Two of the three forces the
 2026-08-23 paragraphs below argue from have since been answered rather than absorbed: ElevenLabs is out
 of the paid tier (2026-09-19) and both voice and recognition now run in-process at $0 per use, which
-removes a ~$22/mo fixed cost that was eating ~17 subscribers' floors. **The raise is the smaller half of
-the improvement** — see §3's restated break-even. The one force that is unchanged is model-price drift,
-which is the reason the floor still has to be defended.
+removes a ~$22/mo line item that was eating ~17 subscribers' floors. ⚠️ **But NOT a ~$22/mo saving:
+local synthesis needs a droplet that can run it, so the cost moved rather than vanished — fixed cost
+goes ~$30 → ~$24/mo, and the RAISE did at least as much of the work as the saving did, not less**
+(§3 decomposes it at a $24 box: EL alone ~23 → ~19 households, the raise alone ~23 → ~14, together
+~11; at today's $18 box the two are a wash). ⚠️ **And §3's go-live box is an open question, not a
+settled cost** — the ~$24 tier is not shown to run Kokoro at a usable speed. The one force that is
+unchanged is model-price drift, which is the reason the floor still has to be defended.
 
 **The annual stays at $27.99 (Jordan, 2026-09-23): the discount is meant to be big.** Against twelve
 $3.99 charges that is ~41% off rather than the ~22% it was struck as, and that is the point — see the
@@ -262,13 +266,79 @@ monthly (or ~19 annual) subscribers' floors, and with droplet-class hosting **~2
 before the first dollar of profit** at full-grant usage. **That $22 is no longer a cost of this
 product.** Voice runs in-process (Kokoro on the family box, Piper on the demo box — PRs #71/#74) and so
 does recognition (Moonshine — PR #72); both are $0 per use, and ElevenLabs came out of the paid tier on
-2026-09-19. What remains fixed is hosting. Backing hosting out of the 2026-08-23 arithmetic (~$26.60–
-$33.25 of fixed cost at a $1.33 floor, less the $22) puts it at **~$5–11/mo**, so against the $3.99
-base's ~$2.27/mo floor break-even is **~2–5 monthly households, or ~4–10 annual** — a handful rather
-than a roomful, and the single biggest improvement to this plan's economics since it was written.
-⚠️ **That range is INFERRED from this doc's own numbers, not from an invoice.** It is the one figure
-here that a five-minute look at the DigitalOcean bill would replace with a fact; do that before quoting
-it to anyone. Disputes (~$15) are per-event, not fixed, and are unaffected.
+2026-09-19. What remains fixed is hosting — and ⚠️ **that is the sentence to read slowly, because
+the voice cost did not disappear, it MOVED onto the droplet.** Local synthesis is $0
+per read but it is not free: it needs a box that can run it. Jordan's figures (2026-09-23): **$18/mo is
+what the droplet costs today**, and **~$24/mo is what he expects to pay at go-live** for one with the
+headroom to run Kokoro, since the better voice is what he wants to ship on. So fixed cost goes from
+~$30/mo to **~$24/mo** — a saving of about **$6**, not the $22 the removed line item suggests.
+
+⚠️ **Three of those four numbers are still not invoices, and this passage replaced one that said
+so.** The **$18 is a real bill**. The **~$24 is a planned spend** on a box that does not exist yet (§7
+stands the paid box up at the first paying customer). The **~$30 baseline is derived**: ElevenLabs'
+~$22 plus a small box whose price appears nowhere in this doc — back-solved from its own ~23-household
+figure it is about $8, which is exactly the inference the deleted warning was about. So read the ~$6 as
+*planned minus derived*, and replace it the first time a go-live bill exists.
+
+⚠️ **And the ~$24 is not yet shown to buy a Kokoro worth having.** `docs/deploy-piper.md` measured
+Kokoro at **3.1× real time on the 2-vCPU demo droplet** — 28 seconds of silence before an 8.9-second
+reply — against a threshold where "what matters is 1.0×, not the ratio", with Piper near 0.1× on the
+same box. That measurement pins the constraint to **CPU class** (a 2.0 GHz shared core, no AVX-512
+VNNI), not to RAM — and DigitalOcean's $18 and $24 Basic tiers are the *same* 2 vCPU shared core, 2 GB
+against 4 GB. **The $6 buys memory Kokoro does not need** (it wants ~600 MB; `docs/deploy-kokoro.md`).
+
+Nor does buying more of that core help, because **Kokoro barely scales with threads**: 1.39× at one
+thread, 1.08× at two, 0.96× at four on the 4-core dev box (`docs/deploy-kokoro.md`) — 45% for 4× the
+threads. Projected onto the droplet's 3.1× that is ~2.8× at 4 vCPU and ~2.6× at 8, and the 8-vCPU Basic
+is **$96/mo**. The only lever is a faster core: **CPU-Optimized** droplets are dedicated at 2.6 GHz+,
+**$42/mo for 2 vCPU and $84/mo for 4** (prices read 2026-09-23). Estimating from the ~2.9× per-core gap
+to the dev box, $84 plausibly lands near it and $42 is borderline — **an estimate, not a measurement.**
+
+**Open, and Jordan's call:** $84/mo is ~13¢/hour, so spin one up, run `tools/VoiceCheck kokoro`, read
+the rate against real time on that box, and destroy it — pennies, and it replaces all of the above with
+a fact. Then either Kokoro at a measured sub-1.0× box, or **go-live ships Piper at $18** and "Kokoro at
+go-live" is a product decision with a price attached. ⚠️ **The price tag has teeth:** at $84 fixed,
+break-even is **~37 monthly households or ~73 annual**, against ~11/~21 at $24 — so this is not a
+rounding difference in the plan, it is a different plan. (⚠️ Every break-even on this page divides by
+the **exact** floor, $2.27055 — $3.99 less the 5.5%+50¢ fee less $1.00 of AI — not by the $2.27 it is
+displayed as. It only ever matters here: $84 ÷ $2.27055 = 36.995, which rounds up to 37, while
+$84 ÷ $2.27 = 37.004, which rounds up to 38. Recompute from the displayed figure and you will get 38
+and think this line is wrong.) Every figure below is quoted at $24 with the
+$18 alternative beside it, and none of them survives an $84 box unrestated. (Premium Intel/AMD Basic
+tiers were **not offered in Jordan's region** as of 2026-09-21; if that has changed, ~$56 for 4 vCPU is
+the cheaper thing to measure first.)
+
+**Break-even headcounts round UP** — there is no profit on a fraction of a household. At $24/mo against
+the $3.99 base's floors: **~11 all-monthly households, or ~21 all-annual** (at $18/mo, ~8 and ~16),
+versus the ~20–25 computed in 2026-08-23. On TYPICAL rather than full-grant usage — the ~16-credit
+household described above — it is **~8 monthly or ~12 annual**.
+
+⚠️ **The raise did at least as much of that work as the cost saving did**, which is the opposite of
+what an earlier draft of this section said — but which of the two is bigger depends on a box nobody has
+bought. Decomposed against the ~23-household 2026-08-23 baseline, moving one factor at a time: at a $24
+box, dropping EL alone takes it to ~19 and the price rise alone to ~14, so the raise does roughly twice
+the work; at today's $18 box the two are a wash at ~14 each. Together, ~11. "The raise is the smaller
+half" was wrong either way; "the bigger half" is only safe at the go-live box.
+
+⚠️ **A go-live precondition, because every figure above assumes it:** `Speech:Provider` and
+`Speech:Ear` both default to **ElevenLabs** (`SpeechRegistration.cs` — deliberately, so an upgrade
+changes no existing box), and `deploy/env.example` ships both lines commented out. A paid box stood up
+without them runs the metered cloud voice on the host's key, and every break-even here is then wrong.
+Set both to the local engines before that box takes a customer.
+
+⚠️ **The annual mix roughly doubles that headcount — ~21 against ~11 — but a headcount is not a
+verdict, and this one flatters monthly.** The annual price did not move when the monthly did, so §1's
+~41% discount steers buyers to the side that did not improve; that much is a real cost of the discount
+and is recorded here beside the decision rather than against it. What the headcount leaves out is
+whether those households are still there. **~11 monthly is eleven households that each have to renew
+twelve times; ~21 annual is twenty-one payments already collected and not churnable inside the year**
+(Jordan, 2026-09-23: "annual users are long term users, thats essentially garaunteed money") — though
+refunds and chargebacks still reach them, and this section prices one at ~−$53. Weight each side
+by survival and the two meet at §1's **~7.9-month break-even tenure**: a monthly household only beats
+an annual one by outliving it. So read ~21 as needing about twice as many *signups*, not twice as much
+*money* — and it is the same conclusion §1 reached on 2026-08-23, that "100% annual take-up is the good
+scenario (max cash, max retention, floor still positive) — there is no monthly/annual mix that loses."
+Disputes (~$15) are per-event, not fixed, and are unaffected.
 
 **The cost hierarchy (Jordan's call): text/receipts < voice < realtime agents.** This is mostly just
 real costs showing through one markup rate — Haiku tokens are fractions of a cent per action; ElevenLabs
@@ -843,6 +913,13 @@ front and a year of retention. ⚠️ **The §1 caveat stands and is now load-be
 the real floor, and it holds ONLY while the grant stays modest. A discount this steep plus a fatter
 allowance rebuilds the $1.99 problem, so the 100 credits/month is no longer a number to be generous
 with casually — raising it is a pricing decision now, not a nicety.
+
+**Why the ~$13 spread is worth paying (Jordan, 2026-09-23):** "annual users are long term users, thats
+essentially garaunteed money." That is the answer to §3's ~21-vs-~11 break-even headcount: the spread
+is only a loss against a monthly household that outlives ~7.9 months (§1's crossing), and reaches the
+full ~$13 only at twelve renewals. The discount buys certainty — a year collected up front, with no churn inside it — at
+a price that stays positive even when the grant is fully spent. It is a bet on which side of ~7.9
+months a typical household falls, taken knowingly.
 
 **Parked — the dormant-subscriber conscience nudge (Jordan's call, 2026-09-01):** proactively email an
 ACTIVE, PAYING subscriber who has gone dormant (no app activity for ~a few months) to ask whether they
