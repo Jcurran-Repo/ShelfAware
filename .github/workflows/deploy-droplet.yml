@@ -130,8 +130,19 @@ jobs:
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bzip2
           fi
 
-          mkdir -p /var/lib/shelfaware/models
-          cd /var/lib/shelfaware/models
+          # ⚠️ /var/lib/shelfaware is the SERVICE ACCOUNT's home (deploy-droplet.md: adduser --home), so
+          # the app can rename anything directly inside it -- including models/ -- and put a directory
+          # or a symlink of its own in its place. Everything below runs as root. So: refuse unless
+          # models/ is a real, root-owned directory, and never write into it except to move in a model
+          # that is already verified, whole and root-owned. The download and the unpack happen in a
+          # fresh root-only mktemp directory, and nothing here cd's into a path the app could have
+          # prepared, so there is no name for a planted symlink to catch.
+          MODELS=/var/lib/shelfaware/models
+          mkdir -p "$MODELS"
+          if [ -L "$MODELS" ] || [ ! -d "$MODELS" ] || [ "$(stat -c %U "$MODELS")" != root ]; then
+            echo "::error::$MODELS is not a root-owned directory (a symlink, or owned by $(stat -c %U "$MODELS" 2>/dev/null)); refusing to write to it as root. Look at what changed it before re-running."
+            exit 1
+          fi
 
           # The mouth (docs/deploy-kokoro.md) and the ear (docs/deploy-moonshine.md). Each unpacks only
           # if it isn't already there, so this step is safe to re-run and costs nothing when it is.
@@ -144,22 +155,25 @@ jobs:
           # the hash. --no-same-owner/--no-same-permissions so an archive cannot choose its own
           # ownership or set a setuid bit on the way in.
           fetch() {
-            local dir="$1" sha="$2" url="$3"
-            if [ -d "$dir" ]; then echo "$dir already unpacked."; return; fi
+            local dir="$1" sha="$2" url="$3" tmp
+            # -L as well as -e: a dangling symlink is "not there" to -e, and would be moved INTO.
+            if [ -e "$MODELS/$dir" ] || [ -L "$MODELS/$dir" ]; then echo "$dir already unpacked."; return; fi
             echo "Fetching $dir..."
+            tmp=$(mktemp -d)
             # --proto on both, as voice-bakeoff.yml's get() does: a redirect must not walk a root-run
             # download off HTTPS, even with the checksum below as the backstop.
-            curl -fsSL --proto '=https' --proto-redir '=https' -o model.tar.bz2 "$url"
-            echo "$sha  model.tar.bz2" | sha256sum -c - \
-              || { echo "::error::$dir did not match its recorded sha256; not unpacking it."; rm -f model.tar.bz2; exit 1; }
-            # ⚠️ Unpacked into a staging directory and moved into place only once it is whole. The
-            # guard above is "is the directory there", so a half-extracted one — a disk that filled,
-            # a connection that dropped — would read as unpacked forever, and the app would refuse to
-            # boot naming files that were never going to arrive.
-            rm -rf .staging && mkdir .staging
-            tar xjf model.tar.bz2 -C .staging --no-same-owner --no-same-permissions
-            mv ".staging/$dir" "$dir"
-            rm -rf .staging model.tar.bz2
+            curl -fsSL --proto '=https' --proto-redir '=https' -o "$tmp/model.tar.bz2" "$url"
+            echo "$sha  $tmp/model.tar.bz2" | sha256sum -c - \
+              || { echo "::error::$dir did not match its recorded sha256; not unpacking it."; rm -rf "$tmp"; exit 1; }
+            # ⚠️ Unpacked beside the download and moved into place only once it is whole and
+            # root-owned. The guard above is "is the directory there", so a half-extracted one — a disk
+            # that filled, a connection that dropped — would read as unpacked forever, and the app would
+            # refuse to boot naming files that were never going to arrive.
+            tar xjf "$tmp/model.tar.bz2" -C "$tmp" --no-same-owner --no-same-permissions
+            chown -R root:root "$tmp/$dir"
+            chmod -R a+rX "$tmp/$dir"
+            mv "$tmp/$dir" "$MODELS/$dir"
+            rm -rf "$tmp"
           }
           fetch kokoro-int8-en-v0_19 \
             c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd \
@@ -186,8 +200,10 @@ jobs:
           # Root-owned and world-readable, which is install.sh's posture for the app itself and for its
           # reason: the service account reads its model, it does not get to rewrite it. A compromised app
           # process should not be able to leave something behind in a directory it loads from.
-          chown -R root:root /var/lib/shelfaware/models
-          chmod -R a+rX /var/lib/shelfaware/models
+          # (Safe to recurse: the guard above established that $MODELS is a real root-owned directory,
+          # which the app cannot write inside, and chown -R does not follow symlinks below its argument.)
+          chown -R root:root "$MODELS"
+          chmod -R a+rX "$MODELS"
           df -h / | tail -1
           REMOTE
 
