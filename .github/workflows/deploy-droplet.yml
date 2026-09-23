@@ -132,17 +132,30 @@ jobs:
 
           # ⚠️ /var/lib/shelfaware is the SERVICE ACCOUNT's home (deploy-droplet.md: adduser --home), so
           # the app can rename anything directly inside it -- including models/ -- and put a directory
-          # or a symlink of its own in its place. Everything below runs as root. So: refuse unless
-          # models/ is a real, root-owned directory, and never write into it except to move in a model
-          # that is already verified, whole and root-owned. The download and the unpack happen in a
-          # fresh root-only mktemp directory, and nothing here cd's into a path the app could have
-          # prepared, so there is no name for a planted symlink to catch.
+          # or a symlink of its own in its place, AT ANY MOMENT, including the minutes a download takes.
+          # Everything below runs as root, so a check of the NAME is not enough: checked once and then
+          # used again later, the name can point somewhere else by then -- and the recursive chmod at
+          # the end follows a symlink given as its argument (chmod has no -h), which would make
+          # whatever the app pointed it at world-readable: /etc/shadow, the SSH host keys.
+          #
+          # So models/ is pinned by INODE: cd into it, confirm with the kernel's own answer
+          # (/proc/$$/cwd, not a path bash re-reads as a string) that this shell is in the root-owned
+          # directory at exactly that path, and from then on do every write, chown and chmod relative
+          # to "." -- which renaming or re-pointing the name cannot move. The app cannot write inside
+          # the directory itself (root-owned, 755). Downloads and unpacks happen in a fresh root-only
+          # mktemp directory, and only a verified, whole, root-owned model is moved in.
           MODELS=/var/lib/shelfaware/models
           mkdir -p "$MODELS"
-          if [ -L "$MODELS" ] || [ ! -d "$MODELS" ] || [ "$(stat -c %U "$MODELS")" != root ]; then
-            echo "::error::$MODELS is not a root-owned directory (a symlink, or owned by $(stat -c %U "$MODELS" 2>/dev/null)); refusing to write to it as root. Look at what changed it before re-running."
+          cd -P "$MODELS"
+          if [ "$(readlink "/proc/$$/cwd")" != "$MODELS" ] || [ "$(stat -c %u .)" != 0 ]; then
+            echo "::error::$MODELS is not a root-owned directory at that path (a symlink, or owned by uid $(stat -c %u . 2>/dev/null)); refusing to write to it as root. Look at what changed it before re-running."
             exit 1
           fi
+
+          # A failed download or unpack exits (set -e) with its temp directory still there; this takes
+          # it with it. Root-only and in /tmp, so harmless -- but nothing should be left behind.
+          tmp=""
+          trap 'rm -rf -- "$tmp"' EXIT
 
           # The mouth (docs/deploy-kokoro.md) and the ear (docs/deploy-moonshine.md). Each unpacks only
           # if it isn't already there, so this step is safe to re-run and costs nothing when it is.
@@ -155,9 +168,10 @@ jobs:
           # the hash. --no-same-owner/--no-same-permissions so an archive cannot choose its own
           # ownership or set a setuid bit on the way in.
           fetch() {
-            local dir="$1" sha="$2" url="$3" tmp
-            # -L as well as -e: a dangling symlink is "not there" to -e, and would be moved INTO.
-            if [ -e "$MODELS/$dir" ] || [ -L "$MODELS/$dir" ]; then echo "$dir already unpacked."; return; fi
+            local dir="$1" sha="$2" url="$3"
+            # Relative to the pinned directory, never through the name. -L as well as -e: a dangling
+            # symlink is "not there" to -e.
+            if [ -e "./$dir" ] || [ -L "./$dir" ]; then echo "$dir already unpacked."; return; fi
             echo "Fetching $dir..."
             tmp=$(mktemp -d)
             # --proto on both, as voice-bakeoff.yml's get() does: a redirect must not walk a root-run
@@ -172,8 +186,10 @@ jobs:
             tar xjf "$tmp/model.tar.bz2" -C "$tmp" --no-same-owner --no-same-permissions
             chown -R root:root "$tmp/$dir"
             chmod -R a+rX "$tmp/$dir"
-            mv "$tmp/$dir" "$MODELS/$dir"
+            # -T: the destination is exactly this name, never a directory to move INTO.
+            mv -T "$tmp/$dir" "./$dir"
             rm -rf "$tmp"
+            tmp=""
           }
           fetch kokoro-int8-en-v0_19 \
             c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd \
@@ -200,10 +216,11 @@ jobs:
           # Root-owned and world-readable, which is install.sh's posture for the app itself and for its
           # reason: the service account reads its model, it does not get to rewrite it. A compromised app
           # process should not be able to leave something behind in a directory it loads from.
-          # (Safe to recurse: the guard above established that $MODELS is a real root-owned directory,
-          # which the app cannot write inside, and chown -R does not follow symlinks below its argument.)
-          chown -R root:root "$MODELS"
-          chmod -R a+rX "$MODELS"
+          # ⚠️ "." -- the directory pinned above -- and never "$MODELS": chmod follows a symlink given as
+          # its argument, and by now the NAME may be one. Below ".", neither command follows symlinks,
+          # and the app cannot have put any there (the directory is root-owned).
+          chown -R root:root .
+          chmod -R a+rX .
           df -h / | tail -1
           REMOTE
 
