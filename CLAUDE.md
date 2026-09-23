@@ -43,17 +43,25 @@ dismiss polish as overkill "because it's single-user."
   merged while their last gated commits were still being pushed. Nothing half-finished reached
   `master`, but two branches were closed as duplicates and one set of commits was stranded on an
   already-merged branch and had to be carried into a fresh PR. The rules that stop a repeat:
-  - **A "ready" or "gated" report names the exact head sha, and that head is then frozen.** Anything
-    found afterwards goes in a NEW PR. A PR that keeps growing after it was called ready is a PR whose
-    review covered different code than the commit that merges.
+  - **A "ready" or "gated" report names the exact head sha, and any push after it retracts that
+    report.** The freeze is on the *claim*, not on the branch: merging `master` in, or fixing CI on the
+    gated code, is expected and fine — it just means the gate is re-run and a new `ready, head <sha>`
+    is reported for the new head. What must never happen is a head moving while an old "ready" still
+    stands, because a review covered different code than the commit that merges. New *work* — the next
+    ask, or a finding that isn't this PR's to fix — goes in its own PR: off `master` when this PR has
+    merged, off the frozen head when it hasn't, since `master` does not yet hold the code it builds on.
+  - **Before merging, compare the PR's current head to the sha in its ready report.** GitHub's button
+    always takes whatever the branch points at now, so this comparison is the only thing standing
+    between a gated review and an ungated merge. Heads differ → wait for the new report.
   - **Re-read a PR's state immediately before every push, not at the start of the work.** Never push to
     a merged PR: those commits are stranded, and the follow-up has to restart from `master` as its own
     branch.
   - **Never merge a PR a sibling session has been pushing to** until it has reported `ready, head
-    <sha>` — and then merge only that sha. Merging is Jordan's call either way, and "merge away"
-    authorizes the PRs as they stood when he said it, not whatever lands on them next.
+    <sha>`. Merging is Jordan's call either way, and "merge away" authorizes the PRs as they stood when
+    he said it, not whatever lands on them next.
   - **Don't work a file in parallel with a sibling session.** Anything needing a real build, a test run
     or a mutation sweep belongs on the PC; the rest is done in the cloud session — one at a time.
+
   ⚠️ This one cannot be held by a test, which is the usual and better answer here: nothing in the
   build can see another session. What it can be held by is the sha — a "ready" without one is the
   failure itself, because it is exactly what let a moving head look mergeable.

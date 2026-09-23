@@ -14,10 +14,15 @@ Run both, in this order, and report honestly. A finding you talk yourself out of
 ## 1. Confirm what is actually about to move
 
 ```
+git fetch origin master
 git status --porcelain
-git log --oneline master..HEAD
-git diff --stat master..HEAD
+git log --oneline origin/master..HEAD
+git diff --stat origin/master..HEAD
 ```
+
+⚠️ `origin/master`, not `master`. The local ref only moves when someone checks `master` out and pulls,
+which no session here does — this gate's own review once scoped itself against a local `master` 38
+commits behind and reported 324 KB of someone else's already-merged work as part of the branch.
 
 State the branch, the commit count, and the diffstat back to the user before reviewing. If the
 working tree is dirty, stop and say so — an unreviewed change is about to ride along.
@@ -80,10 +85,12 @@ found by running the app.
 Give the user the findings — file, line, and a concrete scenario — ranked, with the ones you couldn't
 construct a scenario for ranked lowest and labelled as such.
 
-**Name the head commit the gate covered, and stop pushing to that PR.** A gate is a statement about one
-commit, not about a branch: report it as `ready, head <sha>`, and put anything found afterwards in a new
-PR off current `master`. See the branch-ownership directive in CLAUDE.md for why — on 2026-09-23 two PRs
-were merged at one head while the next round of reviewed commits was still being pushed to them, which
-stranded that work on already-merged branches and gave `master` a version no gate had covered.
+**Name the head commit the gate covered.** A gate covers the branch diff *as it stood at one commit* —
+§2 is what it reads, this is what it certifies — so report it as `ready, head <sha>`. Any push after
+that retracts the report: re-run the gate and name the new head. New work goes in its own PR, off the
+frozen head while this one is unmerged and off `master` once it has merged. See the branch-ownership
+directive in CLAUDE.md for why — on 2026-09-23 two PRs were merged at one head while the next round of
+reviewed commits was still being pushed to them, which stranded that work on already-merged branches and
+gave `master` a version no gate had covered.
 
 **Do not push or merge.** Ask. Pushing is the user's call, always.
