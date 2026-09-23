@@ -62,8 +62,12 @@ public class BillingPanelTests : PageTestContext
 
         Assert.Contains(SubscriptionPricing.MonthlyDisplay, cut.Markup);
         Assert.Contains(SubscriptionPricing.AnnualDisplay, cut.Markup);
-        Assert.Contains(SubscriptionPricing.AnnualSavingBadge, cut.Markup);
-        Assert.Contains(SubscriptionPricing.AnnualSavingNote, cut.Markup);
+
+        // ⚠️ Asserted as EQUAL to AnnualSaves, not as present: the panel drops the badge and the saving
+        // clause when the annual saves nothing, so a test demanding them unconditionally would fail on
+        // CORRECT behaviour the day a price makes that true — a red suite pointing at the wrong thing.
+        Assert.Equal(SubscriptionPricing.AnnualSaves, cut.Markup.Contains(SubscriptionPricing.AnnualSavingBadge));
+        Assert.Equal(SubscriptionPricing.AnnualSaves, cut.Markup.Contains(SubscriptionPricing.AnnualSavingNote));
     }
 
     [Fact]
