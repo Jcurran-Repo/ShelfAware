@@ -55,5 +55,5 @@ public class RazorSourceRulesTests
     /// <summary>Every <c>.razor</c> under <c>src/</c>, found by walking up to the solution file — so the
     /// test does not depend on the build's output layout.</summary>
     private static IEnumerable<string> RazorFiles() =>
-        Directory.EnumerateFiles(Path.Combine(RepoTree.Root().FullName, "src"), "*.razor", SearchOption.AllDirectories);
+        Directory.EnumerateFiles(RepoTree.DirectoryAt("src"), "*.razor", SearchOption.AllDirectories);
 }

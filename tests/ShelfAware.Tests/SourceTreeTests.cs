@@ -19,7 +19,7 @@ public class SourceTreeTests
     public void The_only_unliftable_pages_are_the_ones_named_here()
     {
         var pages = Directory.EnumerateFiles(
-            Path.Combine(SourceTree.Root().FullName, "src", "ShelfAware.Web", "Components"),
+            RepoTree.DirectoryAt(Path.Combine("src", "ShelfAware.Web", "Components")),
             "*.razor", SearchOption.AllDirectories).ToList();
 
         Assert.True(pages.Count > 50, $"Only {pages.Count} page(s) found — the walk is broken, not the sources.");
