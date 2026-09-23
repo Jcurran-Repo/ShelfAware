@@ -179,9 +179,13 @@ public class ReceiptReminderBannerTests : PageTestContext
         //
         // Driven key-first ON PURPOSE. The stand-down direction alone would be a test of an empty render,
         // which an unfinished load produces just as well; starting from a rendered banner proves the load
-        // is done, so the disappearance can only be the gate. The banner re-reads the key on every render
-        // (it is not latched), so this pins the production order too — a BYOK visitor's key lands after
-        // the first render, and the banner appears then rather than never.
+        // is done, so the disappearance can only be the gate.
+        //
+        // ⚠️ And nothing here re-renders the component by hand. That is the actual production path: the
+        // visitor's key reaches the circuit in AiSettingsLoader's OnAfterRenderAsync, AFTER this
+        // component's only render, so a gate that is merely read in the render would never be read
+        // again — the banner would be invisible on every BYOK box. What brings it back is the
+        // subscription to CircuitAiSettings.Changed. A `cut.Render()` here would hide exactly that.
         await WeeklyUploaderQuietFor(9);
         var ai = Services.GetRequiredService<CircuitAiSettings>();
 
@@ -189,11 +193,9 @@ public class ReceiptReminderBannerTests : PageTestContext
         cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".reminder-banner")));
 
         ai.Apply(AiProvider.Anthropic, apiKey: "", extractionModel: null, chatModel: null);
-        cut.Render();
-        Assert.Empty(cut.FindAll(".reminder-banner"));
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll(".reminder-banner")));
 
         ai.Apply(AiProvider.Anthropic, apiKey: "sk-a-key-at-last", extractionModel: null, chatModel: null);
-        cut.Render();
-        Assert.NotEmpty(cut.FindAll(".reminder-banner"));
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".reminder-banner")));
     }
 }

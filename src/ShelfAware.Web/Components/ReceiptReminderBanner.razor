@@ -1,4 +1,5 @@
 @using ShelfAware.Core.Ingest
+@implements IDisposable
 @inject ShelfAware.Web.Data.ReceiptReminderService Reminders
 @inject ShelfAware.Web.Services.CircuitAiSettings AiSettings
 @inject NavigationManager Nav
@@ -12,11 +13,11 @@
    "is it due" from the days it is printing, and "Not now" snoozes for the engine's own SnoozeUntil rather
    than a span this component picked. Nothing here calls out to anything — it's arithmetic over dates.
 
-   The key test is NOT latched in OnInitializedAsync, deliberately: a BYOK visitor's key reaches
-   CircuitAiSettings from their browser in AiSettingsLoader's OnAfterRenderAsync, i.e. AFTER this
-   component has initialized. Reading it here, in the render, is what OnboardingBanner.Show does and for
-   the same reason — a latched copy would read "no key" for every BYOK household and retire the feature
-   on exactly the boxes it was built for. *@
+   The key gate is read in the render AND subscribed to. Both halves are load-bearing: a BYOK visitor's
+   key reaches CircuitAiSettings in AiSettingsLoader's OnAfterRenderAsync, i.e. after this component has
+   initialized AND after its only render — so reading it fresh is useless unless something asks for
+   another render, and latching it in OnInitializedAsync would read "no key" for every BYOK household and
+   retire the feature on exactly the boxes it was built for. *@
 @if (reminder is { } r && AiSettings.HasKey)
 {
     <section class="panel reminder-banner" role="region" aria-label="Receipt reminder">
@@ -49,6 +50,7 @@
 
     protected override async Task OnInitializedAsync()
     {
+        AiSettings.Changed += OnAiSettingsChanged;
         try
         {
             reminder = await Reminders.GetAsync(DateOnly.FromDateTime(DateTime.Today));
@@ -62,6 +64,13 @@
             Logger.LogError(ex, "Couldn't work out the receipt-upload cadence; the reminder stays hidden.");
         }
     }
+
+    /// <summary>The visitor's own key has arrived from their browser (or gone). Ask for a render so the
+    /// gate above is re-read — on a BYOK box this is the ONLY thing that ever puts the banner on screen,
+    /// because the key lands after this component's first and last render.</summary>
+    private void OnAiSettingsChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => AiSettings.Changed -= OnAiSettingsChanged;
 
     private void OpenUpload() => Nav.NavigateTo("/receipt");
 

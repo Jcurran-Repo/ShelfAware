@@ -44,7 +44,11 @@ public class HomeCardsTests : PageTestContext
 
         var heading = cut.Find("h1");
         Assert.Equal("-1", heading.GetAttribute("tabindex"));
-        Assert.Single(cut.FindComponents<Bunit.TestDoubles.Stub<ShelfAware.Web.Components.ReceiptReminderBanner>>());
+
+        // …and the banner is actually TOLD. A focusable heading nothing ever focuses is the same bug with
+        // a passing test over it, so this pins the wiring, not just the attribute.
+        var banner = cut.FindComponent<Bunit.TestDoubles.Stub<ShelfAware.Web.Components.ReceiptReminderBanner>>();
+        Assert.True(banner.Instance.Parameters.Get(b => b.OnDismissed).HasDelegate);
     }
 
     [Fact]

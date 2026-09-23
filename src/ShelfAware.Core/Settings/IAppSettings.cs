@@ -56,7 +56,8 @@ public static class SettingKeys
 
     /// <summary>An ISO day (yyyy-MM-dd): the household dismissed the receipt-reminder banner, and it
     /// stays hidden through this date. Written by <c>ReceiptReminderService.SnoozeAsync</c> from the
-    /// cadence's own <c>ReceiptReminder.SnoozeUntil</c> — one more of the household's usual gaps — so a
+    /// cadence's own <c>ReceiptReminder.SnoozeUntil</c> — one more of the household's quiet stretches,
+    /// the three-day floor included, so a daily uploader's dismissal is not undone in two days — so a
     /// "Not now" is a snooze, never a permanent mute. Absent = never dismissed; unparseable is read as
     /// absent, so a corrupt value shows the reminder rather than retiring it invisibly.</summary>
     public const string ReceiptReminderSnoozedUntil = "ReceiptReminderSnoozedUntil";
