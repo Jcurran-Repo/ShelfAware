@@ -98,12 +98,31 @@ public class VoiceModelHashRulesTests
         var recorded = RecordedByArchive(File.ReadAllText(RepoFile(Path.Combine(".github", "workflows", "voice-bakeoff.yml"))));
         var text = File.ReadAllText(RepoFile(Path.Combine("docs", doc)));
 
-        var pairs = Regex.Matches(text, @"\bV=([\w.\-]+)")
-            .Select(v => (Archive: v.Groups[1].Value, Sha: Sha.Match(text, v.Index + v.Length).Value))
+        // Judged one fenced block at a time: searching the whole file for "the first hash after V=" lets
+        // a later block's hash stand in for a block whose check was deleted.
+        var pairs = Regex.Matches(text, @"```\w*\r?\n(.*?)```", RegexOptions.Singleline)
+            .Select(b => b.Groups[1].Value)
+            .Select(body => (Body: body, Name: Regex.Match(body, @"\bV=([\w.\-]+)")))
+            .Where(b => b.Name.Success)
+            .Select(b => (Archive: b.Name.Groups[1].Value, Sha: Sha.Match(b.Body).Value, b.Body))
             .ToList();
 
         Assert.True(pairs.Count >= atLeast,
             $"Only {pairs.Count} V=<archive> install block(s) found in docs/{doc} — the scan is broken, not the doc.");
+
+        // ⚠️ Every block runs as root into the service account's home, so each must check its hash AND
+        // pin models/ by inode rather than trust its name — the bootstrap's rule (deploy-droplet.yml).
+        // A block written the old way, cd'ing by name and chmod'ing a path, is how that rule came to be
+        // half-converted once already; this is what stops it happening again.
+        var unsafeBlocks = pairs
+            .Where(p => !p.Body.Contains("sha256sum -c", StringComparison.Ordinal)
+                        || !p.Body.Contains("cd -P \"$M\"", StringComparison.Ordinal)
+                        || !p.Body.Contains("/proc/$$/cwd", StringComparison.Ordinal))
+            .Select(p => p.Archive)
+            .ToList();
+        Assert.True(unsafeBlocks.Count == 0,
+            $"docs/{doc} has an install block that does not both check its hash and pin models/ by inode "
+            + "(cd -P \"$M\" + /proc/$$/cwd): " + string.Join(", ", unsafeBlocks));
 
         var wrong = pairs.Where(p => !recorded.TryGetValue(p.Archive, out var sha) || sha != p.Sha).ToList();
         Assert.True(wrong.Count == 0,

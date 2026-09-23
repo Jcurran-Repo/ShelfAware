@@ -120,24 +120,32 @@ sign would be four lines back up the scrollback. `deploy-droplet.yml`'s `bootstr
 mismatch; these commands have to do the same thing to be worth calling equivalent to it. **Paste each
 block whole.**
 
-The `cd` is in the chain too — on a box where the directory does not exist yet, a bare `cd` fails and the
-rest would run in root's home — and each archive is unpacked into a staging directory and moved in only
-once it is whole, as the workflows do: "is the directory there" is the check everything else makes, so a
-half-extracted one would read as installed.
+They are the deploy bootstrap's shape, for its reasons (`.github/workflows/deploy-droplet.yml`):
+`/var/lib/shelfaware` is the service account's home, so the app can re-point `models/` at any moment.
+So `models/` is pinned by inode — `cd` into it, the kernel's `/proc/$$/cwd` must be exactly that path
+and root-owned — and everything after is relative to `.`. Each archive is downloaded and unpacked in a
+root-only directory inside it, and moved in only once verified, whole and root-owned, as one rename:
+"is the directory there" is the check everything else makes, so a half-extracted model must never sit
+under its name. A re-run is refused up front rather than nesting a second copy.
 
 ```bash
 # Kitten
-mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models \
+{ command -v bzip2 >/dev/null || { apt-get update && apt-get install -y bzip2; }; } \
   && R=https://github.com/k2-fsa/sherpa-onnx/releases/download \
-  && V=kitten-nano-en-v0_1-fp16 \
-  && curl -fsSL --proto '=https' -o "$V.tar.bz2" "$R/tts-models/$V.tar.bz2" \
-  && { echo "f35dac93754fe2ac97c66e1f468311d0d2130f7f0f5a89bfa1197e09a0cbdec5  $V.tar.bz2" | sha256sum -c - \
-       || { rm -f "$V.tar.bz2"; false; }; } \
-  && rm -rf .staging && mkdir .staging \
-  && tar xjf "$V.tar.bz2" -C .staging --no-same-owner --no-same-permissions \
-  && mv ".staging/$V" . \
-  && rm -rf .staging "$V.tar.bz2" \
-  && chown -R root:root "$V" && chmod -R a+rX "$V"
+  && M=/var/lib/shelfaware/models && V=kitten-nano-en-v0_1-fp16 \
+  && mkdir -p "$M" && cd -P "$M" \
+  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u .)" = 0 ]; } \
+       || { echo "$M is not a root-owned directory at that path; not installing into it."; false; }; } \
+  && { { [ ! -e "./$V" ] && [ ! -L "./$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
+  && T=$(mktemp -d ./.incoming.XXXXXX) \
+  && curl -fsSL --proto '=https' -o "$T/$V.tar.bz2" "$R/tts-models/$V.tar.bz2" \
+  && { echo "f35dac93754fe2ac97c66e1f468311d0d2130f7f0f5a89bfa1197e09a0cbdec5  $T/$V.tar.bz2" | sha256sum -c - \
+       || { rm -rf "$T"; false; }; } \
+  && tar xjf "$T/$V.tar.bz2" -C "$T" --no-same-owner --no-same-permissions \
+  && chown -R root:root "$T/$V" && chmod -R a+rX "$T/$V" \
+  && mv -T "$T/$V" "./$V" \
+  && rm -rf "$T" \
+  && ls "./$V"
 ```
 
 Matcha needs the vocoder fetched separately, into the model's own directory. ⚠️ **Verify that one too**:
@@ -148,25 +156,30 @@ which answers garbage by killing the process rather than by saying so.
 One chain for both halves, so a voice that failed its check never gets a vocoder fetched beside it:
 
 ```bash
-# Matcha, then its vocoder.
-# ⚠️ The vocoder is downloaded to .part and moved only once it verifies. Written straight to its live
-# name, a body that failed the check would still be sitting where the app loads it: Missing() is
-# File.Exists and nothing more, so the box boots clean and dies on the first read-aloud.
-mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models \
+# Matcha, then its vocoder -- both verified inside the root-only directory BEFORE the model is moved
+# in, so the voice never sits under its name without the vocoder it cannot speak without. A vocoder
+# that failed its check is never where the app loads it: Missing() is File.Exists and nothing more, so
+# a bad one would boot clean and die on the first read-aloud.
+{ command -v bzip2 >/dev/null || { apt-get update && apt-get install -y bzip2; }; } \
   && R=https://github.com/k2-fsa/sherpa-onnx/releases/download \
-  && V=matcha-icefall-en_US-ljspeech \
-  && curl -fsSL --proto '=https' -o "$V.tar.bz2" "$R/tts-models/$V.tar.bz2" \
-  && { echo "ea75702da7456a8b1874728278a835220dc8a26f4e8bd93c83bf53dc27679845  $V.tar.bz2" | sha256sum -c - \
-       || { rm -f "$V.tar.bz2"; false; }; } \
-  && rm -rf .staging && mkdir .staging \
-  && tar xjf "$V.tar.bz2" -C .staging --no-same-owner --no-same-permissions \
-  && mv ".staging/$V" . \
-  && rm -rf .staging "$V.tar.bz2" \
-  && curl -fsSL --proto '=https' -o "$V/vocos-22khz-univ.onnx.part" "$R/vocoder-models/vocos-22khz-univ.onnx" \
-  && { echo "0574a135aa1db2de6e181050db2ec528496cacd4a4701fc5d7faf9f9804c0081  $V/vocos-22khz-univ.onnx.part" | sha256sum -c - \
-       || { rm -f "$V/vocos-22khz-univ.onnx.part"; false; }; } \
-  && mv "$V/vocos-22khz-univ.onnx.part" "$V/vocos-22khz-univ.onnx" \
-  && chown -R root:root "$V" && chmod -R a+rX "$V"
+  && M=/var/lib/shelfaware/models && V=matcha-icefall-en_US-ljspeech \
+  && mkdir -p "$M" && cd -P "$M" \
+  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u .)" = 0 ]; } \
+       || { echo "$M is not a root-owned directory at that path; not installing into it."; false; }; } \
+  && { { [ ! -e "./$V" ] && [ ! -L "./$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
+  && T=$(mktemp -d ./.incoming.XXXXXX) \
+  && curl -fsSL --proto '=https' -o "$T/$V.tar.bz2" "$R/tts-models/$V.tar.bz2" \
+  && { echo "ea75702da7456a8b1874728278a835220dc8a26f4e8bd93c83bf53dc27679845  $T/$V.tar.bz2" | sha256sum -c - \
+       || { rm -rf "$T"; false; }; } \
+  && tar xjf "$T/$V.tar.bz2" -C "$T" --no-same-owner --no-same-permissions \
+  && curl -fsSL --proto '=https' -o "$T/vocos-22khz-univ.onnx" "$R/vocoder-models/vocos-22khz-univ.onnx" \
+  && { echo "0574a135aa1db2de6e181050db2ec528496cacd4a4701fc5d7faf9f9804c0081  $T/vocos-22khz-univ.onnx" | sha256sum -c - \
+       || { rm -rf "$T"; false; }; } \
+  && mv "$T/vocos-22khz-univ.onnx" "$T/$V/vocos-22khz-univ.onnx" \
+  && chown -R root:root "$T/$V" && chmod -R a+rX "$T/$V" \
+  && mv -T "$T/$V" "./$V" \
+  && rm -rf "$T" \
+  && ls "./$V"
 ```
 
 ⚠️ **Those hashes are written twice** — here and in `sha_for()` in

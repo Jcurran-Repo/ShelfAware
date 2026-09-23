@@ -52,28 +52,33 @@ anyway — so an archive that failed its check would be unpacked, as root, with 
 back up the scrollback. The deploy's `bootstrap` exits on a mismatch; this has to do the same.
 
 ```bash
-# Unpacked into a staging directory and moved into place only once it is whole -- the same shape the
-# workflow uses, and for the same reason: "is the directory there" is the check everything else makes,
-# so a half-extracted one (a disk that filled, a connection that dropped) would read as unpacked
-# forever and the app would refuse to boot naming files that were never going to arrive. The cd is in
-# the chain too: on a box where the directory does not exist yet, the rest must not run in root's home.
-mkdir -p /var/lib/shelfaware/models && cd /var/lib/shelfaware/models \
-  && V=vits-piper-en_US-ryan-medium \
-  && curl -fsSL --proto '=https' -o piper.tar.bz2 \
+# The same shape as the deploy's bootstrap, and for its reasons (.github/workflows/deploy-droplet.yml):
+# /var/lib/shelfaware is the service account's home, so the app can re-point models/ at any moment --
+# models/ is pinned by INODE (cd, then the kernel's /proc/$$/cwd must be exactly that path, root-owned),
+# and everything after is relative to ".". Downloaded and unpacked in a root-only directory inside it,
+# and moved in only once verified, whole and root-owned -- one rename on one filesystem, so a
+# half-extracted model can never sit under the name everything else checks.
+{ command -v bzip2 >/dev/null || { apt-get update && apt-get install -y bzip2; }; } \
+  && M=/var/lib/shelfaware/models && V=vits-piper-en_US-ryan-medium \
+  && mkdir -p "$M" && cd -P "$M" \
+  && { { [ "$(readlink "/proc/$$/cwd")" = "$M" ] && [ "$(stat -c %u .)" = 0 ]; } \
+       || { echo "$M is not a root-owned directory at that path; not installing into it."; false; }; } \
+  && { { [ ! -e "./$V" ] && [ ! -L "./$V" ]; } || { echo "$V is already installed in $M."; false; }; } \
+  && T=$(mktemp -d ./.incoming.XXXXXX) \
+  && curl -fsSL --proto '=https' -o "$T/$V.tar.bz2" \
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$V.tar.bz2" \
-  && { echo "c546af78b6395b4e7c4ce1ed899438b64426a362f5d4ec5fecd090ded9ad7505  piper.tar.bz2" | sha256sum -c - \
-       || { rm -f piper.tar.bz2; false; }; } \
-  && rm -rf .staging && mkdir .staging \
-  && tar xjf piper.tar.bz2 -C .staging --no-same-owner --no-same-permissions \
-  && mv ".staging/$V" . \
-  && rm -rf .staging piper.tar.bz2 \
-  && chown -R root:root "$V" && chmod -R a+rX "$V"
+  && { echo "c546af78b6395b4e7c4ce1ed899438b64426a362f5d4ec5fecd090ded9ad7505  $T/$V.tar.bz2" | sha256sum -c - \
+       || { rm -rf "$T"; false; }; } \
+  && tar xjf "$T/$V.tar.bz2" -C "$T" --no-same-owner --no-same-permissions \
+  && chown -R root:root "$T/$V" && chmod -R a+rX "$T/$V" \
+  && mv -T "$T/$V" "./$V" \
+  && rm -rf "$T" \
+  && ls "./$V"
 ```
 
 The checksum is the archive as measured on 2026-09-23, computed from the download on the droplet
 itself. It sits on a mutable release tag, so "the bytes we measured" and "whatever that URL serves
-today" are different promises — which is the whole reason the line is there. `tar` shells out to `bzip2`, which a minimal Ubuntu image does not ship; the deploy
-installs it first.
+today" are different promises — which is the whole reason the line is there.
 
 A complete directory holds exactly three things the app cares about:
 

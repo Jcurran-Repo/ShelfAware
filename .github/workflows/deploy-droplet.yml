@@ -147,13 +147,20 @@ jobs:
           MODELS=/var/lib/shelfaware/models
           mkdir -p "$MODELS"
           cd -P "$MODELS"
-          if [ "$(readlink "/proc/$$/cwd")" != "$MODELS" ] || [ "$(stat -c %u .)" != 0 ]; then
-            echo "::error::$MODELS is not a root-owned directory at that path (a symlink, or owned by uid $(stat -c %u . 2>/dev/null)); refusing to write to it as root. Look at what changed it before re-running."
+          # Owner AND mode: a root-owned directory the app could rename into place is not enough -- a
+          # root-owned 700 one (say, left by a restore run as root) would pass an owner check and then
+          # have everything in it made world-readable by the chmod -R at the end. 755 is what mkdir
+          # makes here and what every box has.
+          models_is_ours() {
+            [ "$(readlink "/proc/$$/cwd")" = "$MODELS" ] && [ "$(stat -c %u:%a .)" = 0:755 ]
+          }
+          if ! models_is_ours; then
+            echo "::error::$MODELS is not a root-owned 755 directory at that path (it is $(stat -c %U:%a . 2>/dev/null)); refusing to write to it as root. Look at what changed it before re-running."
             exit 1
           fi
 
           # A failed download or unpack exits (set -e) with its temp directory still there; this takes
-          # it with it. Root-only and in /tmp, so harmless -- but nothing should be left behind.
+          # it with it. Root-only, but nothing should be left behind.
           tmp=""
           trap 'rm -rf -- "$tmp"' EXIT
 
@@ -173,7 +180,10 @@ jobs:
             # symlink is "not there" to -e.
             if [ -e "./$dir" ] || [ -L "./$dir" ]; then echo "$dir already unpacked."; return; fi
             echo "Fetching $dir..."
-            tmp=$(mktemp -d)
+            # Inside the pinned directory, so the final mv is a rename on one filesystem -- atomic --
+            # rather than a copy that a full disk could leave half-done under the model's own name.
+            # mktemp makes it root-only (700), and the leading dot keeps it out of the way.
+            tmp=$(mktemp -d ./.incoming.XXXXXX)
             # --proto on both, as voice-bakeoff.yml's get() does: a redirect must not walk a root-run
             # download off HTTPS, even with the checksum below as the backstop.
             curl -fsSL --proto '=https' --proto-redir '=https' -o "$tmp/model.tar.bz2" "$url"
@@ -213,12 +223,24 @@ jobs:
             9e3febfacf0abf4270172d2958bcec246032b7e88efc2720840cc80c93de334e \
             https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-medium.tar.bz2
 
-          # Root-owned and world-readable, which is install.sh's posture for the app itself and for its
-          # reason: the service account reads its model, it does not get to rewrite it. A compromised app
-          # process should not be able to leave something behind in a directory it loads from.
+          # The name must still lead here. The writes above went to the pinned directory whatever the
+          # name did, but a name re-pointed mid-run would leave the app loading something else while
+          # this step went green.
+          if ! models_is_ours; then
+            echo "::error::$MODELS no longer leads to the directory this step installed into; something re-pointed it during the run."
+            exit 1
+          fi
+
+          # Root-owned and world-readable, which is install.sh's posture for the app itself: the service
+          # account reads its models, it does not get to rewrite them.
           # ⚠️ "." -- the directory pinned above -- and never "$MODELS": chmod follows a symlink given as
-          # its argument, and by now the NAME may be one. Below ".", neither command follows symlinks,
-          # and the app cannot have put any there (the directory is root-owned).
+          # its argument, and by now the NAME may be one. Below ".", neither command follows symlinks.
+          #
+          # ⚠️ What this does NOT give: models/ sits in the service account's home, so BETWEEN deploys a
+          # compromised app can still rename it away and put its own in its place, and the app loads its
+          # model by that name. This step refuses loudly the next time it runs, but an ordinary deploy
+          # does not run it. Closing that means moving the models to a root-owned parent (with each box's
+          # Speech__*__ModelDirectory following) -- a decision, recorded in docs/deploy-droplet.md.
           chown -R root:root .
           chmod -R a+rX .
           df -h / | tail -1
