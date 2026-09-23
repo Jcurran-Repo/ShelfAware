@@ -52,19 +52,15 @@ public class SherpaTextToSpeech : ITextToSpeech
     public string OutputFingerprint => string.Join('|', new[]
         {
             _options.Family,
-            ArchiveName,
+            _options.ArchiveName,
+            // The RESOLVED name — for Piper, the one read off the directory when the setting is absent.
+            // Reading the raw setting here would key two different voices to the same clips.
             _options.ModelFile,
             _options.SpeakerId.ToString(CultureInfo.InvariantCulture),
             _options.Speed.ToString(CultureInfo.InvariantCulture),
             "wav",
             _options.NormalizeText ? "norm" + SpeechText.Version : "raw",
         }.Concat(_options.FingerprintExtras));
-
-    /// <summary>The model directory's leaf name, which is the archive's name as sherpa-onnx ships it.
-    /// Trailing separators are trimmed first so <c>/models/kokoro/</c> and <c>/models/kokoro</c> — the
-    /// same model, written two ways — cannot fingerprint differently and silently re-synthesize everything.</summary>
-    private string ArchiveName =>
-        Path.GetFileName(_options.ModelDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
 
     /// <inheritdoc />
     public string OutputMediaType => WaveAudio.MediaType;

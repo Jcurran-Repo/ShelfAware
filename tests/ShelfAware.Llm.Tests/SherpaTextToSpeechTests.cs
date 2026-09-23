@@ -184,7 +184,7 @@ public class SherpaTextToSpeechTests
         Assert.NotEqual(baseline, Print(o => o.SpeakerId = 3));
         Assert.NotEqual(baseline, Print(o => o.Speed = 0.8));
         Assert.NotEqual(baseline, Print(o => o.NormalizeText = false));
-        Assert.NotEqual(baseline, Print(o => o.ModelFile = "model.onnx"));
+        Assert.NotEqual(baseline, Print(o => o.ModelFileSetting = "model.onnx"));
         // A different archive is a different voice, whatever the settings around it say.
         Assert.NotEqual(baseline, Print(o => o.ModelDirectory = Path.Combine(Path.GetTempPath(), "models", "kokoro-multi-lang-v1_1")));
     }
@@ -277,7 +277,9 @@ public class SherpaTextToSpeechTests
     private static SherpaTtsOptions OptionsFor(string family) => family switch
     {
         "kokoro" => new KokoroSpeechOptions { ModelDirectory = Path.Combine("models", "kokoro") },
-        "piper" => new PiperSpeechOptions { ModelDirectory = Path.Combine("models", "piper") },
+        // Named like a real archive, because Piper reads its weights' name off the directory: a bare
+        // "piper" resolves to no name at all, and the fingerprint's parts would be counted over a blank.
+        "piper" => new PiperSpeechOptions { ModelDirectory = Path.Combine("models", "vits-piper-en_US-ryan-high") },
         "kitten" => new KittenSpeechOptions { ModelDirectory = Path.Combine("models", "kitten") },
         "matcha" => new MatchaSpeechOptions { ModelDirectory = Path.Combine("models", "matcha") },
         _ => throw new ArgumentOutOfRangeException(nameof(family), family, "Not a family."),

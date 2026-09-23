@@ -99,8 +99,8 @@ jobs:
           }
 
           # id | family | archive | speaker | note
-          # One row per clip. A Piper archive names its weights after the voice, so the model file is
-          # derived from the archive name rather than typed twice.
+          # One row per clip. A Piper archive names its weights after the voice, and VoiceCheck reads
+          # that name off the archive's, so no row types it.
           LINEUP=$(cat <<'ROWS'
           piper-lessac-medium|piper|vits-piper-en_US-lessac-medium|0|Today's demo voice, the control
           piper-lessac-high|piper|vits-piper-en_US-lessac-high|0|Same speaker, higher-quality model
@@ -142,12 +142,11 @@ jobs:
             fetch "$archive" "$RELEASES/tts-models/$archive.tar.bz2"
             echo "::endgroup::"
 
+            # No --model-file for Piper: VoiceCheck works the weights' name out of the archive's own
+            # name exactly as the app does (PiperSpeechOptions), so a second copy of that rule here
+            # would only be a place for it to drift.
             ARGS=(-- "$family" "models/$archive" "clips/$id.wav" "$speaker")
             case "$family" in
-              piper)
-                # The archive is named vits-piper-<voice>; the weights inside are <voice>.onnx.
-                ARGS+=(--model-file "${archive#vits-piper-}.onnx")
-                ;;
               matcha)
                 # ⚠️ The vocoder lives in a DIFFERENT release from the voice. Without it Matcha
                 # produces a spectrogram, and sherpa-onnx answers a missing file by killing the

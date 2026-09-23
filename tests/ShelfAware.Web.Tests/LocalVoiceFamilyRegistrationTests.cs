@@ -160,13 +160,17 @@ public sealed class LocalVoiceFamilyRegistrationTests : IDisposable
     /// one, which is itself the assertion that resolving the voice does not touch native code.</summary>
     private string AModelFor(string provider)
     {
-        var directory = Path.Combine(_dir, "models", provider);
+        // Piper's directory carries a real archive's name, because Piper reads its weights' name off it —
+        // the others' weights have one fixed name whatever the directory is called.
+        var directory = provider == "Piper"
+            ? Path.Combine(_dir, "models", provider, "vits-piper-en_US-ryan-high")
+            : Path.Combine(_dir, "models", provider);
         Directory.CreateDirectory(directory);
 
         string[] parts = provider switch
         {
             "Kokoro" => ["model.int8.onnx", "voices.bin", "tokens.txt"],
-            "Piper" => ["en_US-lessac-medium.onnx", "tokens.txt"],
+            "Piper" => ["en_US-ryan-high.onnx", "tokens.txt"],
             "Matcha" => ["model-steps-3.onnx", "vocos-22khz-univ.onnx", "tokens.txt"],
             "Kitten" => ["model.fp16.onnx", "voices.bin", "tokens.txt"],
             _ => throw new ArgumentOutOfRangeException(nameof(provider), provider, "Not a local family."),

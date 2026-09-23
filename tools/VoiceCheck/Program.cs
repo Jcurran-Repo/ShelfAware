@@ -83,30 +83,31 @@ switch (family.ToLowerInvariant())
         // the override would pre-flight model.int8.onnx and report a voice the box is not configured
         // to run -- the exact substitution the piper case below exists to refuse.
         options = new KokoroSpeechOptions { ModelDirectory = modelDirectory, SpeakerId = speakerId };
-        if (modelFileOverride is not null) options.ModelFile = modelFileOverride;
+        if (modelFileOverride is not null) options.ModelFileSetting = modelFileOverride;
         break;
     case "piper":
-        // ⚠️ The app's OWN default, not whatever .onnx happens to be in the directory. Piper names its
-        // weights after the voice, so a directory holding en_US-libritts_r-medium.onnx is one this tool
-        // could happily load and the app would then REFUSE to boot on -- which is the exact outcome a
-        // pre-flight check exists to prevent. So the tool accepts only what the app would accept, and
-        // when it finds the archive is a different voice it says which setting line to add rather than
-        // quietly checking something else.
+        // The app's OWN rule for the weights' name, not whatever .onnx happens to be in the directory:
+        // with no --model-file, a vits-piper-<voice> directory resolves to <voice>.onnx exactly as it
+        // does on the box, so the common case needs no flag. --model-file stays for an archive that
+        // names its weights some other way -- the same case the box needs Speech__Piper__ModelFile for.
         options = new PiperSpeechOptions { ModelDirectory = modelDirectory, SpeakerId = speakerId };
-        if (modelFileOverride is not null) options.ModelFile = modelFileOverride;
+        if (modelFileOverride is not null) options.ModelFileSetting = modelFileOverride;
 
-        // A directory holding a DIFFERENT voice than the one being checked is the case worth catching:
-        // the tool would load it happily and the app would then refuse to boot, which is the exact
-        // outcome a pre-flight check exists to prevent. So say which setting line the box needs rather
-        // than quietly checking a voice nobody configured.
+        // ⚠️ A directory holding a DIFFERENT voice than the one being checked is the case worth
+        // catching: the tool could load it happily and the app would then REFUSE to boot, which is the
+        // exact outcome a pre-flight check exists to prevent. So the tool accepts only what the app
+        // would accept, and says which setting line the box needs rather than quietly checking a voice
+        // nobody configured. (A directory renamed away from vits-piper-<voice> lands here too.)
         if (!File.Exists(Path.Combine(modelDirectory, options.ModelFile))
             && Directory.Exists(modelDirectory)
             && Directory.GetFiles(modelDirectory, "*.onnx") is [var only])
         {
             var name = Path.GetFileName(only);
-            Console.Error.WriteLine(
-                $"'{modelDirectory}' holds {name}, not {options.ModelFile}. That is a different voice, so "
-                + "the app needs telling -- add this to the box's environment:");
+            Console.Error.WriteLine(string.IsNullOrWhiteSpace(options.ModelFile)
+                ? $"'{modelDirectory}' holds {name}, and its name is not {PiperSpeechOptions.ArchivePrefix}<voice>, "
+                  + "so the app cannot work out which weights to load -- add this to the box's environment:"
+                : $"'{modelDirectory}' holds {name}, not {options.ModelFile}. That is a different voice, so "
+                  + "the app needs telling -- add this to the box's environment:");
             Console.Error.WriteLine($"  Speech__Piper__ModelFile={name}");
             Console.Error.WriteLine($"and re-run this with: --model-file {name}");
             return 1;
@@ -121,11 +122,11 @@ switch (family.ToLowerInvariant())
         var matcha = new MatchaSpeechOptions { ModelDirectory = modelDirectory, SpeakerId = speakerId };
         if (vocoderFileOverride is not null) matcha.VocoderFile = vocoderFileOverride;
         options = matcha;
-        if (modelFileOverride is not null) options.ModelFile = modelFileOverride;
+        if (modelFileOverride is not null) options.ModelFileSetting = modelFileOverride;
         break;
     case "kitten":
         options = new KittenSpeechOptions { ModelDirectory = modelDirectory, SpeakerId = speakerId };
-        if (modelFileOverride is not null) options.ModelFile = modelFileOverride;
+        if (modelFileOverride is not null) options.ModelFileSetting = modelFileOverride;
         break;
     default:
         Console.Error.WriteLine(
@@ -144,7 +145,7 @@ if (options.Invalid() is { } wrong)
 
 if (options.Model().Missing() is { Count: > 0 } missing)
 {
-    Console.Error.WriteLine($"That is not a complete {family} model -- not found: {string.Join(", ", missing)}");
+    Console.Error.WriteLine($"That is not a complete {family} model -- {options.DescribeMissing(missing)}");
     Console.Error.WriteLine(
         "See docs/deploy-kokoro.md, docs/deploy-piper.md or docs/voice-bakeoff.md for the archive to "
         + "unpack there.");

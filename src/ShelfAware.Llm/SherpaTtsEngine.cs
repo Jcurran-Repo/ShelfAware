@@ -130,7 +130,7 @@ public sealed class SherpaTtsEngine : ITtsEngine
         if (files.Missing() is { Count: > 0 } missing)
             throw new InvalidOperationException(
                 $"The {_options.Family} model is incomplete, so it cannot be loaded: "
-                + $"{string.Join(", ", missing)} not found. {_options.Section}:ModelDirectory is "
+                + $"{_options.DescribeMissing(missing)} {_options.Section}:ModelDirectory is "
                 + $"'{_options.ModelDirectory}'. See docs/ for the archive to unpack there.");
 
         var config = new OfflineTtsConfig();

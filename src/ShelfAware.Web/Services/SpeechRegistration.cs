@@ -171,7 +171,7 @@ public static class SpeechRegistration
         if (options.Model().Missing() is { Count: > 0 } missing)
             throw new InvalidOperationException(
                 $"{options.Section}:ModelDirectory ('{options.ModelDirectory}') is not a complete "
-                + $"{provider} model: {string.Join(", ", missing)} not found. See docs/ for the archive to "
+                + $"{provider} model: {options.DescribeMissing(missing)} See docs/ for the archive to "
                 + "unpack there. (Starting without them would not fail here — it would kill the process on "
                 + "the first read-aloud.)");
     }

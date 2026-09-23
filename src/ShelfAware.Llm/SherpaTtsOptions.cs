@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using SherpaOnnx;
 
 namespace ShelfAware.Llm;
@@ -44,12 +45,17 @@ public interface ISherpaTtsModel
 /// </summary>
 public abstract class SherpaTtsOptions
 {
-    protected SherpaTtsOptions(string section, string family, string defaultModelFile)
+    /// <param name="defaultModelFile">The weights' name when <c>ModelFile</c> is not set, for a family
+    /// whose archives all use the same one. Null for a family that works it out instead — see
+    /// <see cref="DefaultModelFile"/>.</param>
+    protected SherpaTtsOptions(string section, string family, string? defaultModelFile)
     {
         Section = section;
         Family = family;
-        ModelFile = defaultModelFile;
+        _defaultModelFile = defaultModelFile;
     }
+
+    private readonly string? _defaultModelFile;
 
     /// <summary>The configuration section these settings were bound from, used verbatim in every refusal
     /// so a message names the key a person actually has to edit.</summary>
@@ -66,9 +72,45 @@ public abstract class SherpaTtsOptions
     /// than letting the load reach the native library, which does not throw on a bad path.</summary>
     public string ModelDirectory { get; set; } = "";
 
-    /// <summary>The ONNX file's name inside <see cref="ModelDirectory"/>. Defaulted per family, because
-    /// the archives name it differently and there is no name that is right for all of them.</summary>
-    public string ModelFile { get; set; }
+    /// <summary>The <c>ModelFile</c> setting exactly as given (<c>Speech:&lt;Family&gt;:ModelFile</c>), or
+    /// null when it was not. Nothing reads this but <see cref="ModelFile"/> — ask that.
+    /// <para>⚠️ A property of its own, bound under the <c>ModelFile</c> key, rather than a setter on
+    /// <see cref="ModelFile"/>. The configuration binder reads a property's current value and writes it
+    /// back even when the section has no such key, so a settable resolved name would come out of every
+    /// bind looking EXPLICITLY SET to whatever it resolved to at that moment — which depends on whether
+    /// the binder happened to reach <see cref="ModelDirectory"/> first. Measured, not supposed: a probe
+    /// bound a directory-only section and got ModelFileIsSet = true.</para></summary>
+    [ConfigurationKeyName("ModelFile")]
+    public string? ModelFileSetting { get; set; }
+
+    /// <summary>The ONNX file's name inside <see cref="ModelDirectory"/> — the setting when one was given,
+    /// otherwise <see cref="DefaultModelFile"/>. Defaulted per family, because the archives name it
+    /// differently and there is no name that is right for all of them.
+    /// <para>⚠️ The RESOLVED name, and deliberately the only one to read. The fingerprint, the file check
+    /// and the load all ask this property, so none of them can see a blank setting while another sees the
+    /// name it resolved to — which for Piper would let two boxes running different voices share a cache
+    /// key and be served each other's clips. A setting given explicitly wins, blank included: blank is
+    /// refused by <see cref="Invalid"/> rather than quietly read as "work it out".</para></summary>
+    public string ModelFile => ModelFileSetting ?? DefaultModelFile;
+
+    /// <summary>True when <see cref="ModelFile"/> came from the setting rather than from
+    /// <see cref="DefaultModelFile"/> — which decides whether a refusal should tell a person to add it.</summary>
+    public bool ModelFileIsSet => ModelFileSetting is not null;
+
+    /// <summary>The weights' name when <c>ModelFile</c> is not set. Most families ship the same name in
+    /// every archive and take it from the constructor; Piper names its weights after the voice and
+    /// overrides this to read the name off the directory. Blank means there is no answer, which
+    /// <see cref="Invalid"/> refuses, naming the setting.</summary>
+    protected virtual string DefaultModelFile => _defaultModelFile ?? "";
+
+    /// <summary>The model directory's leaf name, which is the archive's name as sherpa-onnx ships it (e.g.
+    /// <c>kokoro-int8-en-v0_19</c>). Trailing separators are trimmed first so <c>/models/kokoro/</c> and
+    /// <c>/models/kokoro</c> — the same model, written two ways — cannot disagree.
+    /// <para>⚠️ ONE reading of it, asked by the cache fingerprint (where the model's identity is its
+    /// archive, not the path it was unpacked to) and by Piper's <see cref="DefaultModelFile"/>. Two
+    /// readings would let "which archive is this" have two answers on the same box.</para></summary>
+    public string ArchiveName =>
+        Path.GetFileName(ModelDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
 
     /// <summary>Which of the model's voices speaks, by index. ⚠️ An index, not a name: the archives ship
     /// no name table, so naming voices here would mean carrying a mapping in our source that nothing can
@@ -109,6 +151,19 @@ public abstract class SherpaTtsOptions
     /// to sherpa-onnx. ⚠️ ONE definition, asked by the thing that VALIDATES a model directory at startup
     /// and by the thing that LOADS it — see <see cref="ISherpaTtsModel"/>.</summary>
     public abstract ISherpaTtsModel Model();
+
+    /// <summary>What to tell a person when <see cref="ISherpaTtsModel.Missing"/> of <see cref="Model"/> is
+    /// not empty: the paths that were looked for, and anything this family knows about why. ⚠️ ONE
+    /// wording, asked by registration, the engine and <c>tools/VoiceCheck</c> alike, so the advice a
+    /// person gets does not depend on which of the three found the gap.</summary>
+    public string DescribeMissing(IReadOnlyList<string> missing) =>
+        MissingAdvice(missing) is { } advice
+            ? $"{string.Join(", ", missing)} not found. {advice}"
+            : $"{string.Join(", ", missing)} not found.";
+
+    /// <summary>This family's explanation for a gap in its model directory, or null when the paths say
+    /// everything there is to say.</summary>
+    protected virtual string? MissingAdvice(IReadOnlyList<string> missing) => null;
 
     /// <summary>
     /// What is wrong with these settings on their own terms, or null when nothing is. ⚠️ ONE definition,

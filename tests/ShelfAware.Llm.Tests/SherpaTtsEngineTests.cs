@@ -73,7 +73,7 @@ public class SherpaTtsEngineTests
         var directory = ModelDirectory("model.onnx", "voices.bin", "tokens.txt", "espeak-ng-data");
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => Engine(
-            new KokoroSpeechOptions { ModelDirectory = directory, ModelFile = "model.int8.onnx" }).GenerateAsync("hello"));
+            new KokoroSpeechOptions { ModelDirectory = directory, ModelFileSetting = "model.int8.onnx" }).GenerateAsync("hello"));
         Assert.Contains("model.int8.onnx", ex.Message);
 
         // The same directory, asked for the file it actually holds, has nothing missing. (Loading it would
@@ -173,7 +173,9 @@ public class SherpaTtsEngineTests
     [Fact]
     public void The_families_without_a_rule_of_their_own_add_no_refusal()
     {
-        Assert.Null(new PiperSpeechOptions { ModelDirectory = "models/piper" }.Invalid());
+        // Named like a real archive: Piper reads its weights' name off the directory, and a bare "piper"
+        // has no name to read — a refusal of its own (PiperModelFileTests), not the one this case is about.
+        Assert.Null(new PiperSpeechOptions { ModelDirectory = "models/vits-piper-en_US-ryan-high" }.Invalid());
         Assert.Null(new KittenSpeechOptions { ModelDirectory = "models/kitten" }.Invalid());
     }
 
